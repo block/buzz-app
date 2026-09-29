@@ -68,6 +68,10 @@ export type ContributionReader<T> = Readonly<{
 export type ComposerAccessoryProps = Readonly<{
   /** Conversation placement: absent at the live tail, present above a message body. */
   message?: ChannelMessage | undefined;
+  /** Shared work header anchored after this exact request, not a synthetic reply. */
+  workRequest?: ChannelMessage | undefined;
+  /** The host finished its bounded thread read without gaps or errors. */
+  threadComplete?: boolean | undefined;
   /** Thread host's own latest request awaiting these exact agent replies. Local
    * intent only; delivery/typing remain separate from observed execution. */
   request?:

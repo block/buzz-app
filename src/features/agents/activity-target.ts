@@ -57,7 +57,6 @@ export function activitySelection(
       (threadRootId !== null &&
         (!channelId ||
           messageId !== null ||
-          requestId !== null ||
           !/^[0-9a-f]{64}$/.test(threadRootId))) ||
       params.getAll("view").length > 1 ||
       (view !== null &&

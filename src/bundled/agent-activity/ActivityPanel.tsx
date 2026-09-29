@@ -1,3 +1,5 @@
+import { requestWork } from "./request-work";
+import { RequestWorkDetails } from "./RequestWorkDetails";
 import { useLoadedThread } from "../../features/messages/thread-views";
 import { threadActivity } from "./thread-activity";
 import { SavedActivity } from "./SavedActivity";
@@ -278,6 +280,48 @@ export function ActivityDetails({
         )}
       </section>
     );
+  if (selection?.threadRootId && selection.requestId && selection.channelId) {
+    const work = requestWork(
+      snapshot,
+      loadedThread?.root ? [loadedThread.root, ...loadedThread.replies] : [],
+      selection.channelId,
+      selection.threadRootId,
+      session.viewer,
+    ).find((work) => work.requestId === selection.requestId);
+    const keys = work?.agents.map((agent) => agent.agent) ?? [];
+    const suffix = publicKeyLabels(keys);
+    const names = new Map(
+      keys.map((key) => [
+        key,
+        `${resolveName(key, identities.get(key)?.name ?? "Agent")} · ${suffix.get(key) ?? ""}`,
+      ]),
+    );
+    return (
+      <section
+        ref={region}
+        tabIndex={-1}
+        data-buzz-ui=""
+        aria-label="Agent activity"
+        className="flex min-w-0 flex-col gap-4 p-6 text-body-sm text-standard"
+      >
+        <p className="text-label-sm">Request activity</p>
+        {feedStatus}
+        {work ? (
+          <RequestWorkDetails
+            key={selection.requestId}
+            work={work}
+            session={session}
+            names={names}
+            initialAgent={selection.agent}
+          />
+        ) : (
+          <p>
+            Open the originating thread to inspect this request’s retained work.
+          </p>
+        )}
+      </section>
+    );
+  }
   if (selection?.threadRootId && selection.channelId) {
     const entry = threadActivity(
       snapshot,

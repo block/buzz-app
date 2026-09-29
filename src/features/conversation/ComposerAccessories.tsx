@@ -31,7 +31,7 @@ export function ComposerAccessories({
     )
     .map((entry) => (
       <ContributionBoundary
-        key={`${contributionKey(entry)}:${messageViewKey(props.session, props.scope, props.channelId, props.threadRootId, props.message?.id)}`}
+        key={`${contributionKey(entry)}:${messageViewKey(props.session, props.scope, props.channelId, props.threadRootId, props.message?.id ?? props.workRequest?.id)}`}
         fallback={<p role="status">{entry.title} unavailable</p>}
       >
         <OwnedAccessory entry={entry} registry={registry} {...props} />

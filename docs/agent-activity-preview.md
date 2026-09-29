@@ -20,20 +20,26 @@ for trying Activity, not replacing an everyday installation.
   them. Relay history and unread evidence are not rewritten or acknowledged.
 - Sending a channel message stays in the channel. Open its thread explicitly with
   the working-agent, awaiting-response or View thread control; sending never opens it.
-- Hover/click response Activity popups, expandable tools/messages, and the profile Activity tab.
-  Profile Communication opens human request text by default; agent communications are not expanded.
-- Channel controls and live Activity share exact-thread work evidence. Loaded
-  hidden handoff IDs can link later turns and additional agents; no channel-wide
-  fallback or new history read is used. Participating agents keep a stable entry
-  while their thread evidence is retained; ended work becomes View activity,
-  never a success or reply-delivery claim. Errors and uncertainty remain distinct.
-- The channel uses **View thread**, not the relay's audience-unfiltered reply total.
-  The open thread counts visible replies; unread evidence remains unchanged.
-- Every conversation View activity entry, including those on an answer, opens that
-  exact agent’s retained thread activity, not only its final send interval. The
-  popup stays open across completion and pending-request changes. Exact-response
-  diagnostic targets retain their explicit send-boundary scope. Missing/trimmed
-  telemetry is not a complete transcript.
+- A single shared work header follows each viewer request with known agent recipients
+  or retained linked work. It is not a message. Actual authored replies remain below
+  in their original order/nesting; a follow-up gets a separate header. No per-agent
+  blank rows or repeated Activity links are attached to answers.
+- The header names currently working agents while live, then agents with retained
+  work. Hover/click opens a shared tool-first preview with an exact-agent selector;
+  Expand opens the same request in the existing side panel, preserving the thread.
+- Request linkage uses every explicit triggering message ID and uniquely reported
+  sends matched to loaded message author/channel IDs. Cross-request, missing or
+  conflicting links remain unassigned; there is no nearest-time, prose or root-only
+  attribution. This is reported work linked to a request, not proof of coauthorship.
+- “Worked for” is the elapsed local capture span from first retained start to last
+  terminal, including overlap/gaps, not summed agent time. It is withheld after
+  trimming, ambiguity, missing lifecycle evidence, incomplete thread reads or feed
+  interruption. Late linked work can resume; ended does not mean the task is final.
+- The channel keeps its exact-thread working indicator and neutral **View thread**
+  action. Thread reply counts include visible authored replies only. Unread evidence
+  is not cleared by Activity or hidden coordination.
+- Profile Activity remains the fallback for retained work that cannot be assigned
+  to a request. Explicit response diagnostics retain their bounded send interval.
 - Activity is tool-first: tool invocations and explicit plans are primary. Each
   tool keeps one row through updates and completion, including send operations.
   Command/input/output, reported message results and raw sources remain in its details.
@@ -45,7 +51,7 @@ for trying Activity, not replacing an everyday installation.
   headlines are bounded literal previews; full input stays expandable in Activity.
 - Human-facing descendants remain visible through hidden coordination ancestry.
   Ordinary visible reply nesting and exact reply targeting are preserved.
-- Side-panel opening by dragging or the Activity context menu, without losing the thread.
+- The shared popup’s Expand action opens Activity beside the thread without losing its draft.
 - Working, unknown, error and ended-without-reply states. Coordination/ended telemetry
   does not mean a human-facing answer was delivered.
 - Activity retains reported event/method names when no friendly label exists; known

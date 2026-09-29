@@ -82,6 +82,7 @@ function fixture() {
     };
   };
   const session = {
+    viewer: "viewer",
     presence: {
       status: () => presenceStatus,
       limited: () => false,
@@ -162,7 +163,35 @@ it("uses channel scope in link previews and activity, and participant scope in s
         session={f.session}
         scope="test"
         channelId="c"
-        threadRootId="m"
+        threadRootId={"1".repeat(64)}
+        workRequest={
+          {
+            id: "1".repeat(64),
+            authorId: "viewer",
+            channelId: "c",
+            mentions: [a],
+            createdAt: 1,
+            content: "request",
+            attachments: [],
+            reactions: [],
+            replyCount: 0,
+            participants: [],
+          } as import("../relay/contracts").ChannelMessage
+        }
+        threadMessages={[
+          {
+            id: "1".repeat(64),
+            authorId: "viewer",
+            channelId: "c",
+            mentions: [a],
+            createdAt: 1,
+            content: "request",
+            attachments: [],
+            reactions: [],
+            replyCount: 0,
+            participants: [],
+          } as import("../relay/contracts").ChannelMessage,
+        ]}
         canOpen={() => true}
         open={() => true}
       />
@@ -171,16 +200,17 @@ it("uses channel scope in link previews and activity, and participant scope in s
   expect(view.container.querySelector("strong")).toHaveTextContent("Larry");
   expect(screen.getByLabelText("DM label")).toHaveTextContent(/^Larry$/);
   const activity = within(
-    screen.getByRole("region", { name: "Agent activity in this thread" }),
+    screen.getByRole("region", { name: "Work linked to this request" }),
   );
-  expect(activity.getByText("Larry")).toBeVisible();
-  expect(activity.getByRole("button", { name: "Working…" })).toBeVisible();
-  act(() => f.setPresence("away"));
-  expect(activity.getByText("Larry")).toBeVisible();
   expect(
-    view.container.querySelector(
-      '[aria-label="Agent activity in this thread"] [data-status="away"]',
-    ),
+    activity.getByRole("button", { name: "Larry · awaiting activity" }),
+  ).toBeVisible();
+  expect(
+    activity.getByRole("button", { name: "Larry · awaiting activity" }),
+  ).toBeVisible();
+  act(() => f.setPresence("away"));
+  expect(
+    activity.getByRole("button", { name: "Larry · awaiting activity" }),
   ).toBeVisible();
   act(() => f.join());
   expect(view.container.querySelector("strong")).toHaveTextContent(
@@ -189,11 +219,8 @@ it("uses channel scope in link previews and activity, and participant scope in s
   expect(screen.getByLabelText("DM label")).toHaveTextContent(
     "Larry · rcaj, Larry · 04hu",
   );
-  expect(activity.getByText("Larry · rcaj")).toBeVisible();
   expect(
-    view.container.querySelector(
-      '[aria-label="Agent activity in this thread"] [data-status="away"]',
-    ),
+    activity.getByRole("button", { name: "Larry · rcaj · awaiting activity" }),
   ).toBeVisible();
 });
 it("scopes search DM labels and message authors to their own conversation", async () => {

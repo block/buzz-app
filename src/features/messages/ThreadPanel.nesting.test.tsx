@@ -458,13 +458,14 @@ it("preserves pending request identities until human-facing replies, not hidden 
       pluginId: "test",
       title: "Activity",
       placement: "conversation" as const,
-      component: ({ request }: ComposerAccessoryProps) => (
-        <section aria-label="Pending work">
-          {request?.agents.map((key) => (
-            <p key={key}>Pending {key}</p>
-          ))}
-        </section>
-      ),
+      component: ({ workRequest }: ComposerAccessoryProps) =>
+        workRequest ? (
+          <section aria-label="Pending work">
+            {workRequest.mentions.map((key) => (
+              <p key={key}>Pending {key}</p>
+            ))}
+          </section>
+        ) : null,
     },
   ];
   const h = setup("root", {
@@ -482,7 +483,7 @@ it("preserves pending request identities until human-facing replies, not hidden 
   h.update([hidden]);
   expect(screen.getAllByText(/^Pending /)).toHaveLength(2);
   expect(screen.queryByText("coord")).toBeNull();
-  expect(screen.getByText("0 replies · 2 pending")).toBeVisible();
+  expect(screen.getByText("0 replies")).toBeVisible();
   h.update([
     hidden,
     {
@@ -492,9 +493,9 @@ it("preserves pending request identities until human-facing replies, not hidden 
       audience: "everyone",
     },
   ]);
-  expect(screen.getAllByText(/^Pending /)).toHaveLength(1);
+  expect(screen.getAllByText(/^Pending /)).toHaveLength(2);
   expect(screen.getByText("answer")).toBeVisible();
-  expect(screen.getByText("1 reply · 1 pending")).toBeVisible();
+  expect(screen.getByText("1 reply")).toBeVisible();
 });
 it("fails exact navigation to coordination without mounting it or hiding its human answer", async () => {
   const complete = vi.fn(() => true);

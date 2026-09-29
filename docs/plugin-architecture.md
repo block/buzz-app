@@ -167,21 +167,13 @@ frontend hot reload alone cannot add the entry.
 ### Conversation accessories
 
 `ctx.conversation.registerAccessory({ id, title, order?, placement?, component })`
-contributes read-only contextual UI. Omitted `placement` (or `"composer"`) retains
-above-composer placement. `"conversation"` mounts at the thread-history tail and
-above individual message bodies; the latter receives `message`. The thread tail
-also receives `request?`, its latest viewer request with unresolved exact agent
-recipients. These are decorations, not fabricated messages, unread entries,
-delivery intent or persisted history.
-
-The host passes `{ session, scope, channelId, threadRootId?, threadMessages?, message?, request?,
-canOpen, open }`: no editor commands, new socket, or implied access grant. Channels supplies
-target resolution and panel placement; other consumers can omit navigation and
-return unavailable. The shared renderer owns deterministic order, error isolation
-and command revocation on removal/unmount. Session/channel/thread/message keys
-fence retargeting. Pending request changes update props without remounting the
-thread accessory or closing its popup. The accessory remains usable on read-only connections.
-History owners retain bottom-follow and older-reading intent when the tail changes.
+contributes read-only contextual UI. Composer placement is unchanged. Conversation
+placement receives `message?` at an authored row and `workRequest?` after each viewer
+request, plus already-loaded `threadMessages?` and `threadComplete?`. Activity renders
+only the request anchor. Session/channel/thread/message-or-request keys fence mounted
+commands; removal/unmount revokes navigation. These are decorations, never messages,
+unread entries, delivery intent or persisted history. The host passes `canOpen/open`,
+not a writer or access grant. Channels owns panel placement and thread preservation.
 
 Thread reply ancestry remains host-owned. Explicit original `audience=agents`
 messages from a known agent or agent envelope are omitted from channel/thread
@@ -199,33 +191,29 @@ open threads and flat Sessions retain their ordinary send behavior.
 The thread reader folds the
 outgoing root locally while signing/publishing and begins finite thread repair
 only after verified root observation. Local intent never becomes verified evidence.
-The pending agent entry distinguishes sending, unconfirmed/failed delivery, waiting
-and exact-thread typing. Pending intent stays separate from live activity; a
-human-facing reply settles intent, not an independently observed working turn.
-The channel retains a thread-opening action even before reply-count evidence,
-labelled awaiting response rather than a fabricated reply. Fresh exact-thread
-Activity shows working agents in that control without altering reply counts. Once
-work stops it says View thread rather than exposing audience-unfiltered relay totals.
-Plugin activation owns the telemetry lease; all decorations reuse that capability. Collapsed message entries
-do not build a transcript or fetch profiles. No global selected channel is added. The thread-working projection reuses the
-existing pure request association selector against all loaded exact thread IDs,
-including hidden coordination. A workspace-local bridge borrows active ThreadView
-handles, never copies a journal or creates reads. It unregisters on close/session
-retirement; without an open view only root/typing evidence is available. The live
-tail and channel control share this projection. Agents with retained thread evidence keep their entries after completion, labelled
-View activity. Error/unknown evidence stays distinct, and a newer pending request
-is evaluated only for its actual recipients. The thread Activity popup and explicitly thread-scoped panel expose
-all retained matching records; missing starts/evicted records remain unavailable.
-No capture lease, timer, subscription route or persistence owner is added. Channels reads the
-same activity snapshot for its sidebar marker and retains an open thread when the
-registered activity target opens in an additional column. Other panel behavior is
-unchanged. Pending activity/general inspection remains exact-agent/channel scoped.
-Conversation View activity controls (both agent entries and posted answers) open
-exact agent/thread inspection over retained linked turns. Explicit response-target
-inspection remains a separate diagnostic with its strict reported-send interval;
-it is no longer the default behind the generic View activity label. No time/prose
-inference or channel-wide fallback supplies missing work. Reported command/file
-input can label current work with a bounded literal preview; it is never executed.
+One shared request-work header replaces the old per-agent tail and answer links.
+It stays immediately after the initiating viewer request, without moving or merging
+real replies. Existing signed ancestry remains their placement owner. One request
+can have zero, one or multiple real replies. Follow-ups have separate headers.
+The channel retains neutral View thread and its existing exact-thread working signal.
+
+`request-work.ts` is a bounded, rebuilt presentation projection, not a new journal:
+all admitted start trigger IDs must resolve to one viewer-request scope. A handoff
+propagates only through the existing strict reported-send boundary and a loaded
+message with matching author/channel. Unresolved cycles, unknown/mixed triggers,
+reused turns and conflicting reports never acquire a guessed scope. Profile Activity
+remains available for unassigned work. No native/producer changes, new reads, leases,
+routes, timers, or persistence owners are added.
+
+Elapsed text uses local `receivedAt` from the first retained start to last retained
+terminal, never cross-producer wall clocks. It requires ended lifecycle evidence,
+valid ranges, no trimming/implicated ambiguity and a complete current bounded thread
+read. It is labelled as an observed local capture span in details, not execution CPU
+time or proof that all collaboration has finished. Unknown/failed evidence stays
+honest. The shared popup/panel selects exact agents and reuses the tool-first renderer.
+Explicit request+thread panel targets do not broaden into thread-wide activity when
+lineage is absent. Existing single-response and profile diagnostics remain separate.
+
 The readable projection is tool-first. Explicit tool invocations (including
 unknown tool names) and plans are operations. Tools remain flat keyed rows across
 completion; recognizing a send result adds communication details without replacing
@@ -238,8 +226,7 @@ This is a limited mapping of observed structured events, not complete harness
 coverage; no command is inferred from prose. Profile human-request defaults remain.
 Activity text opens a hover/click Base UI popup instead of expanding the thread.
 Hover dismissal preserves composer focus; keyboard dismissal returns to the trigger.
-The popup expands into the existing side panel. Pointer drag-right and the context
-menu retain their exact-target behavior; closing a popup unmounts its details. Narrow multi-pane layouts scroll horizontally rather
+The popup expands into the existing side panel; closing it unmounts its details. Narrow multi-pane layouts scroll horizontally rather
 than destroying the thread or its draft.
 
 This is a host-matched preview addition, not cross-version capability negotiation.

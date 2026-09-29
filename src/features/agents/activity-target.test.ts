@@ -83,11 +83,23 @@ it("round-trips explicit thread scope without mixing request, response or profil
     threadRootId: root,
   });
   for (const bad of [
-    `${target}&request=${root}`,
     `${target}&message=${root}`,
     `${target}&view=profile`,
     `${target}&thread=${root}`,
     activityTarget(agent, undefined, undefined, undefined, root),
   ])
     expect(activitySelection(bad)).toBeUndefined();
+});
+
+it("allows an explicit request within its loaded thread without accepting response/profile mixtures", () => {
+  const request = "e".repeat(64),
+    root = "f".repeat(64);
+  expect(
+    activitySelection(activityTarget(agent, "alpha", undefined, request, root)),
+  ).toEqual({
+    agent,
+    channelId: "alpha",
+    requestId: request,
+    threadRootId: root,
+  });
 });

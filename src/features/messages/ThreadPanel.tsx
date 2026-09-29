@@ -35,7 +35,6 @@ import { messageViewKey } from "./view-key";
 import type { MediaPlayback } from "./MediaAttachment";
 import { formatMediaTime } from "./media-timecode";
 import { useKnownAgentPubkeys } from "../agents/use-known";
-import { pendingAgentRequest } from "./agent-request";
 import {
   conversationReplies,
   isAgentCoordination,
@@ -278,16 +277,6 @@ function ThreadMessages({
   }, [session.profiles, authors]);
   const profiles = useRowProfiles(session.profiles, identityRows);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
-  const request = useMemo(
-    () =>
-      pendingAgentRequest(
-        rows,
-        session.viewer,
-        agentPubkeys,
-        snapshot.root?.id,
-      ),
-    [rows, session.viewer, agentPubkeys, snapshot.root?.id],
-  );
   const hidden = useMemo(
     () =>
       new Set(
@@ -595,7 +584,7 @@ function ThreadMessages({
     observer.observe(tail);
     return () => observer.disconnect();
   }, []);
-  const renderActivity = (pending: typeof request) =>
+  const renderActivity = (workRequest: ChannelMessage) =>
     snapshot.root && extensions?.accessories ? (
       <ComposerAccessories
         registry={extensions.accessories}
@@ -605,7 +594,13 @@ function ThreadMessages({
         channelId={channelId}
         threadRootId={snapshot.root.id}
         threadMessages={rows}
-        request={pending}
+        workRequest={workRequest}
+        threadComplete={
+          snapshot.status === "ready" &&
+          !snapshot.canLoadMore &&
+          !snapshot.limited &&
+          !snapshot.error
+        }
         canOpen={(target) => canOpenLink?.(target) ?? false}
         open={onOpenLink}
       />
@@ -637,28 +632,31 @@ function ThreadMessages({
       ? `${unreadCount} new in available replies`
       : undefined;
     const messageRow = (branchControl?: ReactNode) => (
-      <MessageRow
-        branchControl={branchControl}
-        extensions={extensions}
-        session={session}
-        scope={scope}
-        onReply={snapshot.root ? targetReply : undefined}
-        row={row}
-        {...(rootId ? { conversationThreadRootId: rootId } : {})}
-        profile={profiles.get(row.authorId)}
-        participantProfiles={profiles}
-        agentPubkeys={agentPubkeys}
-        media={session.media}
-        onOpenLink={onOpenLink}
-        canOpenLink={canOpenLink}
-        day={false}
-        layout={continuation ? "continuation" : "thread"}
-        retry={session.messages.retry}
-        {...(canSeekVideo ? { onMediaTime: handleMediaTime } : {})}
-        {...(onOpenMediaReview && rootId
-          ? { onOpenMediaReview: openRootMedia }
-          : {})}
-      />
+      <>
+        <MessageRow
+          branchControl={branchControl}
+          extensions={extensions}
+          session={session}
+          scope={scope}
+          onReply={snapshot.root ? targetReply : undefined}
+          row={row}
+          {...(rootId ? { conversationThreadRootId: rootId } : {})}
+          profile={profiles.get(row.authorId)}
+          participantProfiles={profiles}
+          agentPubkeys={agentPubkeys}
+          media={session.media}
+          onOpenLink={onOpenLink}
+          canOpenLink={canOpenLink}
+          day={false}
+          layout={continuation ? "continuation" : "thread"}
+          retry={session.messages.retry}
+          {...(canSeekVideo ? { onMediaTime: handleMediaTime } : {})}
+          {...(onOpenMediaReview && rootId
+            ? { onOpenMediaReview: openRootMedia }
+            : {})}
+        />
+        {row.authorId === session.viewer && renderActivity(row)}
+      </>
     );
     return (
       <li
@@ -781,6 +779,8 @@ function ThreadMessages({
                 ? { onOpenMediaReview: openRootMedia }
                 : {})}
             />
+            {snapshot.root.authorId === session.viewer &&
+              renderActivity(snapshot.root)}
             {videoOwner?.id === rootId && videoAttachment && mediaPlayback && (
               <span className={styles.mediaCommentAction}>
                 <Button
@@ -799,14 +799,8 @@ function ThreadMessages({
         <div className={styles.threadDivider}>
           {visibleReplies.length}{" "}
           {visibleReplies.length === 1 ? "reply" : "replies"}
-          {request?.agents.length && request.message.delivery !== "failed"
-            ? ` · ${request.agents.length} pending`
-            : ""}
         </div>
-        <ol ref={accessoryTail}>
-          {renderReplies(undefined)}
-          {extensions?.accessories && <li>{renderActivity(request)}</li>}
-        </ol>
+        <ol ref={accessoryTail}>{renderReplies(undefined)}</ol>
         {(snapshot.status === "loading" ||
           (snapshot.status === "ready" && snapshot.canLoadMore)) && (
           <p role="status">Loading thread…</p>

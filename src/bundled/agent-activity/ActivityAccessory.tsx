@@ -1,448 +1,213 @@
-import { useTypingReplacement } from "../../features/conversation/typing-presentation";
-import { activityTranscript } from "./transcript";
-import { workingActivityLabel } from "./activity-presentation";
-import { useChannelIdentityNames } from "../../features/identity-names/react";
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
-import { ContextMenu } from "@base-ui/react/context-menu";
-import type { RelaySession } from "../../features/relay/session";
+import { useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ComposerAccessoryProps } from "../../features/conversation/contracts";
-import { activityTarget } from "../../features/agents/activity-target";
-import { requestActivity, requestActivityState } from "./request-activity";
-import { threadActivity } from "./thread-activity";
-import { useLoadedThread } from "../../features/messages/thread-views";
-import { selectProfiles } from "../../features/relay/profile-selection";
+import { useChannelIdentityNames } from "../../features/identity-names/react";
+import { useKnownAgentPubkeys } from "../../features/agents/use-known";
+import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { usePresenceStatus } from "../../features/presence/react";
-import { ActivityStream } from "./ActivityStream";
+import { activityTarget } from "../../features/agents/activity-target";
+import { useTypingReplacement } from "../../features/conversation/typing-presentation";
+import { useLoadedThread } from "../../features/messages/thread-views";
 import { ActivityPopover } from "./ActivityPopover";
 import { ActivityFeedStatus } from "./ActivityFeedStatus";
+import { RequestWorkDetails } from "./RequestWorkDetails";
+import { requestWork, elapsedWork } from "./request-work";
 import styles from "./ActivityAccessory.module.css";
 
-/** Plugin activation owns capture. These are ephemeral decorations, never messages. */
+/** One request-anchored work header, never a synthetic reply or a thread-wide rollup. */
 export function ActivityAccessory(props: ComposerAccessoryProps) {
-  const { session, channelId, threadRootId, message, request } = props;
+  return props.workRequest && props.threadRootId && !props.message ? (
+    <WorkHeader {...props} />
+  ) : null;
+}
+function WorkHeader(props: ComposerAccessoryProps) {
+  const {
+    session,
+    channelId,
+    threadRootId,
+    workRequest,
+    threadComplete,
+    canOpen,
+    open,
+  } = props;
   const snapshot = useSyncExternalStore(
     session.agentActivity.subscribe,
     session.agentActivity.snapshot,
-    session.agentActivity.snapshot,
   );
+  const profiles = useSyncExternalStore(
+    session.profiles.subscribe,
+    session.profiles.snapshot,
+  );
+  const known = useKnownAgentPubkeys(session, profiles);
   const loaded = useLoadedThread(session, channelId, threadRootId ?? "");
-  const live = useMemo(
+  const projection = useMemo(
     () =>
-      threadActivity(
+      requestWork(
         snapshot,
+        props.threadMessages ??
+          (loaded?.root ? [loaded.root, ...loaded.replies] : []),
         channelId,
         threadRootId ?? "",
-        loaded?.replies ?? props.threadMessages ?? (message ? [message] : []),
-        request?.message.id,
+        session.viewer,
       ),
     [
       snapshot,
-      message,
+      props.threadMessages,
+      loaded,
       channelId,
       threadRootId,
-      loaded,
-      props.threadMessages,
-      request?.message.id,
+      session.viewer,
     ],
   );
-  const keys = !threadRootId
-    ? ""
-    : message
-      ? message.agentEnvelope ||
-        session.profiles.snapshot().get(message.authorId)?.isAgent ||
-        snapshot.records.some(
-          (row) =>
-            row.agent === message.authorId &&
-            row.channelIds.includes(channelId),
-        )
-        ? message.authorId
-        : ""
-      : [
-          ...new Set([
-            ...(request?.agents ?? []),
-            ...live.map((entry) => entry.agent),
-          ]),
-        ]
-          .sort()
-          .join(":");
-  useEffect(() => {
-    if (keys && !message)
-      void session.profiles
-        .ensure(keys.split(":"), "background")
-        .catch(() => {});
-  }, [session.profiles, keys, message]);
+  const work = projection.find((work) => work.requestId === workRequest?.id);
+  const keys = [
+    ...new Set([
+      ...(work?.agents.map((agent) => agent.agent) ?? []),
+      ...(workRequest?.mentions.filter((key) => known.has(key)) ?? []),
+    ]),
+  ].sort();
   const resolveName = useChannelIdentityNames(session, channelId);
-  const profiles = useMemo(
-    () => selectProfiles(session.profiles, keys ? keys.split(":") : []),
-    [session.profiles, keys],
+  const suffix = publicKeyLabels(keys);
+  const names = new Map(
+    keys.map((key) => [
+      key,
+      resolveName(key, profiles.get(key)?.name ?? suffix.get(key) ?? "Agent"),
+    ]),
   );
-  const identities = useSyncExternalStore(
-    profiles.subscribe,
-    profiles.snapshot,
-    profiles.snapshot,
+  // Exact-key labels remain distinct even when optional naming data is incomplete.
+  const labels = [...names.values()];
+  for (const [key, label] of names)
+    if (labels.filter((value) => value === label).length > 1)
+      names.set(key, `${label} · ${suffix.get(key)}`);
+  const linkedNames =
+    work?.agents.map((agent) => names.get(agent.agent) ?? "Agent") ?? [];
+  const displayNames = linkedNames.length
+    ? linkedNames
+    : keys.map((key) => names.get(key) ?? "Agent");
+  const title = new Intl.ListFormat(undefined, {
+    style: "long",
+    type: "conjunction",
+  }).format(displayNames);
+  const [expanded, setExpanded] = useState(false);
+  const panelOpened = useRef(false);
+  if (!workRequest || !work || !keys.length) return null;
+  const delivery = workRequest.delivery;
+  const healthy = snapshot.status === "listening";
+  const duration =
+    threadComplete && healthy && work.elapsed !== undefined
+      ? elapsedWork(work.elapsed)
+      : undefined;
+  const namedState = (state: string) =>
+    new Intl.ListFormat(undefined, {
+      style: "long",
+      type: "conjunction",
+    }).format(
+      work.agents
+        .filter((agent) => agent.state === state)
+        .map((agent) => names.get(agent.agent) ?? "Agent"),
+    );
+  const workingAgents = work.agents.filter(
+    (agent) => agent.state === "working",
   );
-  if (!keys) return null;
-  const agents = keys.split(":");
-  const entries = () =>
-    agents.map((agent) => {
-      const profile = identities.get(agent);
-      return (
-        <ActivityEntry
-          key={agent}
-          {...props}
-          request={request?.agents.includes(agent) ? request : undefined}
-          agent={agent}
-          name={resolveName(
-            agent,
-            profile?.name ?? `Agent ${agent.slice(0, 8)}`,
-          )}
-          picture={profile?.picture}
-          working={
-            live.find((entry) => entry.agent === agent)?.working ?? false
-          }
-          threadEvidence={live.find((entry) => entry.agent === agent)}
-          records={snapshot.records}
-          turns={snapshot.turns}
-          feedStatus={snapshot.status}
-          trimmed={snapshot.trimmed}
-        />
-      );
-    });
+  const label =
+    delivery === "sending"
+      ? "Sending request…"
+      : delivery === "failed"
+        ? "Request not sent"
+        : delivery === "unknown"
+          ? "Delivery unconfirmed"
+          : !healthy
+            ? `${title} · work status unknown`
+            : work.state === "working"
+              ? `${namedState("working")} ${workingAgents.length === 1 ? "is" : "are"} working…`
+              : work.state === "error"
+                ? `${namedState("error")} · error reported`
+                : work.state === "unknown"
+                  ? `${title} · work status unknown`
+                  : work.agents.length
+                    ? `${title} worked${duration ? ` for ${duration}` : " on this request"}`
+                    : `${title} · awaiting activity`;
+  const first = work.agents[0]?.agent ?? keys[0];
+  const target = activityTarget(
+    first ?? "",
+    channelId,
+    undefined,
+    workRequest.id,
+    threadRootId,
+  );
   return (
     <section
       className={styles.root}
       data-buzz-ui=""
-      aria-label={
-        message
-          ? "Message agent activity"
-          : threadRootId
-            ? "Agent activity in this thread"
-            : "Agent activity in this channel"
-      }
+      aria-label="Work linked to this request"
     >
-      {entries()}
+      {work.agents
+        .filter((agent) => healthy && agent.state === "working")
+        .map((agent) => (
+          <TypingReplacement key={agent.agent} {...props} agent={agent.agent} />
+        ))}
+      <span className={styles.avatars} aria-hidden="true">
+        {(work.agents.length ? work.agents.map((agent) => agent.agent) : keys)
+          .slice(0, 3)
+          .map((key) => (
+            <Avatar
+              key={key}
+              size="small"
+              shape="squircle"
+              alt=""
+              fallback={names.get(key) ?? "Agent"}
+              src={
+                profiles.get(key)?.picture
+                  ? session.media(profiles.get(key)?.picture ?? "")
+                  : undefined
+              }
+            />
+          ))}
+      </span>
+      <ActivityPopover
+        name="Request activity"
+        label={label}
+        working={healthy && work.state === "working"}
+        open={expanded}
+        onOpenChange={(value) => {
+          if (value) panelOpened.current = false;
+          setExpanded(value);
+        }}
+        finalFocus={() => !panelOpened.current}
+        onExpand={
+          canOpen(target)
+            ? () => {
+                if (open(target)) {
+                  panelOpened.current = true;
+                  setExpanded(false);
+                }
+              }
+            : undefined
+        }
+      >
+        <ActivityFeedStatus
+          status={snapshot.status}
+          trimmed={snapshot.trimmed}
+          retry={() => session.live.retry()}
+        />
+        <RequestWorkDetails work={work} session={session} names={names} />
+        {duration && (
+          <p className="text-caption text-subtle">
+            Local capture span across linked turns, including overlap and gaps.
+          </p>
+        )}
+      </ActivityPopover>
     </section>
   );
 }
-function ActivityEntry({
+function TypingReplacement({
   session,
   channelId,
   threadRootId,
-  message,
-  request,
-  canOpen,
-  open,
   agent,
-  name,
-  picture,
-  working,
-  threadEvidence,
-  records: source,
-  turns: allTurns,
-  feedStatus,
-  trimmed,
-}: ComposerAccessoryProps & {
-  feedStatus: ReturnType<RelaySession["agentActivity"]["snapshot"]>["status"];
-  trimmed: number;
-  agent: string;
-  name: string;
-  picture: string | undefined;
-  working: boolean;
-  threadEvidence: ReturnType<typeof threadActivity>[number] | undefined;
-  records: ReturnType<
-    ComposerAccessoryProps["session"]["agentActivity"]["snapshot"]
-  >["records"];
-  turns: ReturnType<
-    ComposerAccessoryProps["session"]["agentActivity"]["snapshot"]
-  >["turns"];
-}) {
-  const presence = usePresenceStatus(
-    message ? undefined : session.presence,
-    agent,
-  );
-  const [expanded, expand] = useState<string[]>([]);
-  const requestId = request?.message.id;
-  const selected = useMemo(
-    () =>
-      threadEvidence?.selected ??
-      (requestId
-        ? requestActivity(source, agent, channelId, requestId)
-        : undefined),
-    [threadEvidence, requestId, source, agent, channelId],
-  );
-  const records = useMemo(() => selected?.records ?? [], [selected]);
-  const turns = useMemo(
-    () =>
-      allTurns.filter(
-        (turn) =>
-          turn.agent === agent &&
-          turn.channelId === channelId &&
-          (!selected || selected.turnIds.has(turn.turnId)),
-      ),
-    [allTurns, agent, channelId, selected],
-  );
-  const transcript = useMemo(() => activityTranscript(records), [records]);
-  // A prior thread turn must not settle a newer human request waiting to start.
-  const pendingSelection = useMemo(
-    () =>
-      !message && requestId
-        ? requestActivity(source, agent, channelId, requestId)
-        : undefined,
-    [message, requestId, source, agent, channelId],
-  );
-  const requestState = pendingSelection
-    ? requestActivityState(pendingSelection, turns, trimmed)
-    : selected
-      ? requestActivityState(selected, turns, trimmed)
-      : undefined;
-  const requestWorking =
-    feedStatus === "listening" && (working || requestState === "working");
-  const evidenceState = threadEvidence?.state ?? requestState;
-  const displayState =
-    evidenceState === "ended" && requestState && requestState !== "ended"
-      ? requestState
-      : evidenceState;
-  const [menu, setMenu] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  const region = useRef<HTMLDivElement>(null);
-  const pointer = useRef<{
-    id: number;
-    x: number;
-    y: number;
-    moved: boolean;
-  } | null>(null);
-  const suppressClick = useRef(false);
-  const expandedPanel = useRef(false);
-  const target = activityTarget(
-    agent,
-    channelId,
-    undefined,
-    undefined,
-    threadRootId,
-  );
-  function detach() {
-    region.current
-      ?.querySelector<HTMLButtonElement>("button")
-      ?.focus({ preventScroll: true });
-    if (canOpen(target) && open(target)) {
-      expandedPanel.current = true;
-      expand([]);
-    }
-    setMenu(false);
-  }
-  const delivery = request?.message.delivery;
-  const label = message
-    ? "View activity"
-    : delivery === "failed"
-      ? "Request not sent"
-      : delivery === "sending"
-        ? "Sending request…"
-        : delivery === "unknown"
-          ? "Delivery unconfirmed"
-          : requestWorking
-            ? selected
-              ? workingActivityLabel(transcript, turns)
-              : "Working…"
-            : displayState === "unknown"
-              ? "Status unknown"
-              : displayState === "error"
-                ? "Observed activity ended · error reported"
-                : displayState === "ended"
-                  ? "View activity"
-                  : "Waiting for response…";
-  const replacesTyping =
-    !message &&
-    requestWorking &&
-    feedStatus === "listening" &&
-    (!delivery || delivery === "accepted" || delivery === "seen");
+}: ComposerAccessoryProps & { agent: string }) {
   useTypingReplacement(
-    {
-      session,
-      channelId,
-      threadRootId,
-      pubkey: agent,
-      channelComposer:
-        !!request &&
-        request.message.id === threadRootId &&
-        !request.message.threadRootId,
-    },
-    replacesTyping,
+    { session, channelId, threadRootId, pubkey: agent, channelComposer: false },
+    true,
   );
-  return (
-    <div className={message ? styles.attached : styles.response} ref={region}>
-      {!message && (
-        <Avatar
-          src={picture ? session.media(picture) : undefined}
-          alt=""
-          fallback={name}
-          shape="squircle"
-          statusBadge={presence === "unknown" ? undefined : presence}
-          size="large"
-        />
-      )}
-      <div className={styles.body}>
-        {!message && <p className="text-label-sm">{name}</p>}
-        {!message && (
-          <span
-            className="sr-only"
-            role="status"
-            aria-label="Agent activity status"
-          >
-            {replacesTyping
-              ? `${name} is working. ${label}`
-              : `${name}: ${label}`}
-          </span>
-        )}
-        <ContextMenu.Root open={menu} onOpenChange={setMenu}>
-          <ContextMenu.Trigger
-            className={styles.disclosure}
-            onKeyDown={(event) => {
-              if (
-                event.key === "ContextMenu" ||
-                (event.shiftKey && event.key === "F10")
-              ) {
-                event.preventDefault();
-                event.stopPropagation();
-                setMenu(true);
-              }
-            }}
-            onPointerDown={(event) => {
-              if (
-                event.button !== 0 ||
-                (event.target !== event.currentTarget.querySelector("button") &&
-                  !(
-                    event.target instanceof Element &&
-                    event.currentTarget
-                      .querySelector("button")
-                      ?.contains(event.target)
-                  ))
-              )
-                return;
-              pointer.current = {
-                id: event.pointerId,
-                x: event.clientX,
-                y: event.clientY,
-                moved: false,
-              };
-              suppressClick.current = false;
-            }}
-            onPointerMove={(event) => {
-              const start = pointer.current;
-              if (!event.buttons) {
-                pointer.current = null;
-                setDragging(false);
-                return;
-              }
-              if (!start || start.id !== event.pointerId || !canOpen(target))
-                return;
-              if (
-                event.clientX - start.x > 60 &&
-                Math.abs(event.clientY - start.y) < 100
-              ) {
-                event.currentTarget.setPointerCapture(event.pointerId);
-                start.moved = true;
-                setDragging(true);
-                suppressClick.current = true;
-              }
-            }}
-            onPointerUp={(event) => {
-              const start = pointer.current;
-              pointer.current = null;
-              setDragging(false);
-              if (start?.moved && event.clientX - start.x > 60) {
-                event.preventDefault();
-                detach();
-              }
-            }}
-            onLostPointerCapture={() => {
-              pointer.current = null;
-              setDragging(false);
-            }}
-            onPointerLeave={() => {
-              if (!pointer.current?.moved) pointer.current = null;
-            }}
-            onPointerCancel={() => {
-              pointer.current = null;
-              setDragging(false);
-            }}
-            onClickCapture={(event) => {
-              if (suppressClick.current) {
-                event.preventDefault();
-                event.stopPropagation();
-                suppressClick.current = false;
-              }
-            }}
-          >
-            <ActivityPopover
-              name={name}
-              label={label}
-              working={replacesTyping}
-              open={expanded.length > 0}
-              onOpenChange={(value) => {
-                if (value) expandedPanel.current = false;
-                expand(value ? ["activity"] : []);
-              }}
-              finalFocus={() => !expandedPanel.current}
-              onExpand={canOpen(target) ? detach : undefined}
-            >
-              <ActivityFeedStatus
-                status={feedStatus}
-                trimmed={trimmed}
-                retry={() => session.live.retry()}
-              />
-              {source.some((row) => row.saveError) && (
-                <p role="status" className="text-body-sm text-subtle">
-                  Some live Activity could not be saved. Saved history may have
-                  gaps.
-                </p>
-              )}
-              <div className={styles.details}>
-                <p className="text-caption text-subtle">
-                  This agent’s activity in this thread
-                </p>
-                {!records.length && (
-                  <p className="text-body-sm text-subtle">
-                    No retained activity is linked to this thread yet.
-                  </p>
-                )}
-                <ActivityStream
-                  records={records}
-                  session={session}
-                  transcript={transcript}
-                  turns={turns}
-                  showTurnHeading={false}
-                  showDiagnostics
-                />
-              </div>
-            </ActivityPopover>
-          </ContextMenu.Trigger>
-          <ContextMenu.Portal>
-            <ContextMenu.Positioner>
-              <ContextMenu.Popup data-buzz-ui="" className={styles.menu}>
-                <ContextMenu.Item
-                  className={styles.menuItem}
-                  disabled={!canOpen(target)}
-                  onClick={detach}
-                >
-                  Open activity in side panel
-                </ContextMenu.Item>
-              </ContextMenu.Popup>
-            </ContextMenu.Positioner>
-          </ContextMenu.Portal>
-        </ContextMenu.Root>
-        {dragging && (
-          <span className={styles.dragHint} role="status">
-            Release to open activity beside the conversation
-          </span>
-        )}
-      </div>
-    </div>
-  );
+  return null;
 }

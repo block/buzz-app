@@ -67,7 +67,10 @@ for (const action of ["archive", "delete"]) {
       await expect(dialog).toBeVisible();
       await expect(
         dialog.getByRole("button", { name: label, exact: true }),
-      ).toHaveAttribute("data-variant", variant);
+      ).toHaveAttribute(
+        "data-variant",
+        action === "delete" ? "destructive" : "prominent",
+      );
       await dialog.screenshot({
         path: testInfo.outputPath(`${action}-confirmation.png`),
       });

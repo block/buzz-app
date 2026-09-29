@@ -107,11 +107,7 @@ export function ChannelLifecycleDialog({
         </Button>
         <Button
           type="button"
-          variant={
-            action === "archive" || action === "leave"
-              ? "subtle"
-              : "destructive"
-          }
+          variant={action === "delete" ? "destructive" : "prominent"}
           disabled={busy || refreshRequired}
           onClick={() => void submit()}
         >

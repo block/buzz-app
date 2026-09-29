@@ -351,8 +351,9 @@ fallback if that entry has gone away). Archive retains messages and membership;
 restore requires another supported client until archived browsing/restore lands.
 Archive confirmation explains that a channel administrator can unarchive later
 using another supported client, and that this app cannot restore it yet. Archive and Leave
-use the default button style in both Settings and their confirmation dialogs;
-Delete uses the red destructive button style.
+use the default button style in Settings. Archive, Leave and Hide confirmation
+primary actions use the prominent variant; Delete remains destructive and Cancel
+keeps the default secondary style.
 Delete keeps the named-channel warning and destructive confirmation button without
 requiring the channel name to be typed. Metadata and member-role editing remain
 separate.

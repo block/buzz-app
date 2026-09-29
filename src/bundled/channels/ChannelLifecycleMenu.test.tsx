@@ -310,9 +310,7 @@ it.each(["leave", "hide", "archive"] as const)(
       archive: "Archive channel",
     }[action];
     const confirm = screen.getByRole("button", { name: label });
-    expect(confirm.getAttribute("data-variant")).toBe(
-      action === "hide" ? "destructive" : "subtle",
-    );
+    expect(confirm.getAttribute("data-variant")).toBe("prominent");
     if (action === "archive") {
       expect(
         screen.getByText(

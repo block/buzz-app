@@ -259,9 +259,13 @@ it.each([false, true])(
   },
 );
 
-it.each(["converged", "gesture", "removed"])(
-  "allows bottom follow after restoration is superseded: %s",
-  async (boundary) => {
+it.each(
+  ["converged", "removed", "pending"].flatMap((boundary) =>
+    [false, true].map((readerInput) => ({ boundary, readerInput })),
+  ),
+)(
+  "restoration $boundary enters bottom follow only after reader input=$readerInput",
+  async ({ boundary, readerInput }) => {
     const h = mount();
     await frame();
     const feed = screen.getByRole("region", {
@@ -275,18 +279,19 @@ it.each(["converged", "gesture", "removed"])(
     if (boundary === "converged") {
       feed.scrollTop = 900;
       fireEvent.scroll(feed);
-    } else if (boundary === "gesture") {
-      fireEvent.pointerDown(feed);
-    } else {
+    } else if (boundary === "removed") {
       h.replaceAnchor();
       await frame();
     }
+    // Layout convergence or anchor removal is not new reader intent. A real
+    // gesture retires restoration and allows the next bottom scroll to follow.
+    if (readerInput) fireEvent.pointerDown(feed);
     feed.scrollTop = 1400;
     fireEvent.scroll(feed);
     h.unmount();
     expect(
       readView<{ bottom: boolean }>("scope", "scroll:c", { bottom: false })
         .bottom,
-    ).toBe(true);
+    ).toBe(readerInput);
   },
 );

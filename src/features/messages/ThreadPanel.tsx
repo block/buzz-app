@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { MessageEditScope } from "./MessageEditScope";
 import { ReplySummary } from "./ReplySummary";
 import { ReplyBranch } from "./ReplyBranch";
 import { replyTree } from "./reply-tree";
@@ -33,8 +34,6 @@ import { useReading } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
-import type { MediaPlayback } from "./MediaAttachment";
-import { formatMediaTime } from "./media-timecode";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 
 export type ThreadPanelProps = {
@@ -53,6 +52,7 @@ export type ThreadPanelProps = {
     messageId: string,
     attachment: ChannelMessage["attachments"][number],
     seconds: number,
+    hasComments?: boolean,
   ): void;
   canOpenLink?: ((target: string) => boolean) | undefined;
 };
@@ -387,31 +387,61 @@ function ThreadMessages({
   useEffect(() => {
     if (replyRequest) focusReply();
   }, [replyRequest, focusReply]);
-  const [mediaPlayback, setMediaPlayback] = useState<MediaPlayback>();
-  const [mediaCommentTime, setMediaCommentTime] = useState<number>();
   const [mediaSeek, setMediaSeek] = useState<{
     seconds: number;
     request: number;
   }>();
-  const handleMediaTime = useCallback((seconds: number) => {
-    setMediaSeek((current) => ({
-      seconds,
-      request: (current?.request ?? 0) + 1,
-    }));
-  }, []);
   const rootId = snapshot.root?.id;
+  const hasMediaComments =
+    (snapshot.root?.replyCount ?? 0) > 0 ||
+    snapshot.replies.length > 0 ||
+    (!!snapshot.target && snapshot.target.id !== rootId);
   const openRootMedia = useCallback(
     (
       _rowId: string,
       attachment: ChannelMessage["attachments"][number],
       seconds: number,
     ) => {
-      if (rootId) onOpenMediaReview?.(_rowId, attachment, seconds);
+      if (rootId)
+        onOpenMediaReview?.(_rowId, attachment, seconds, hasMediaComments);
     },
-    [rootId, onOpenMediaReview],
+    [rootId, onOpenMediaReview, hasMediaComments],
   );
-  const videoAttachment = snapshot.root?.attachments.find(
+  // Without a selected viewer, bare timecodes need one unambiguous video.
+  const videoUrls = new Set(
+    [snapshot.root, snapshot.target, ...snapshot.replies].flatMap(
+      (row) =>
+        row?.attachments
+          .filter((item) => item.kind === "video")
+          .map((item) => item.url) ?? [],
+    ),
+  );
+  const videoOwner =
+    videoUrls.size === 1
+      ? [snapshot.root, snapshot.target, ...snapshot.replies].find((row) =>
+          row?.attachments.some((item) => item.kind === "video"),
+        )
+      : undefined;
+  const videoAttachment = videoOwner?.attachments.find(
     (item) => item.kind === "video",
+  );
+  const canSeekVideo =
+    !!videoAttachment && (videoOwner?.id === rootId || !!onOpenMediaReview);
+  const handleMediaTime = useCallback(
+    (seconds: number) => {
+      if (!videoOwner || !videoAttachment) return;
+      if (videoOwner.id !== rootId) {
+        // A reply's video may be inside a collapsed branch. Open its canonical
+        // viewer instead of seeking an absent preview or an unrelated root.
+        openRootMedia(videoOwner.id, videoAttachment, seconds);
+        return;
+      }
+      setMediaSeek((current) => ({
+        seconds,
+        request: (current?.request ?? 0) + 1,
+      }));
+    },
+    [videoOwner, videoAttachment, rootId, openRootMedia],
   );
   // The bridge walks oldest-first. Finish its bounded range automatically, rather
   // than exposing transport pagination as a conversation control.
@@ -526,10 +556,10 @@ function ThreadMessages({
           day={false}
           layout={continuation ? "continuation" : "thread"}
           retry={session.messages.retry}
-          {...(videoAttachment
+          {...(canSeekVideo
             ? {
                 onMediaTime: handleMediaTime,
-                mediaTimeFileName: videoAttachment.name,
+                mediaTimeFileName: videoAttachment?.name,
               }
             : {})}
           {...(onOpenMediaReview && rootId
@@ -596,7 +626,7 @@ function ThreadMessages({
   }
   const selectedParent = snapshot.replies.find((row) => row.id === replyParent);
   return (
-    <>
+    <MessageEditScope>
       <section
         ref={scroller}
         className={styles.threadHistory}
@@ -628,46 +658,30 @@ function ThreadMessages({
         tabIndex={0}
       >
         {snapshot.root ? (
-          <>
-            <MessageRow
-              extensions={extensions}
-              session={session}
-              scope={scope}
-              onReply={focusReply}
-              row={snapshot.root}
-              profile={profiles.get(snapshot.root.authorId)}
-              participantProfiles={profiles}
-              agentPubkeys={agentPubkeys}
-              media={session.media}
-              onOpenLink={onOpenLink}
-              canOpenLink={canOpenLink}
-              day={false}
-              layout="thread"
-              retry={session.messages.retry}
-              mediaMode="thread"
-              {...(mediaSeek
-                ? {
-                    mediaSeekTo: mediaSeek.seconds,
-                    mediaSeekRequest: mediaSeek.request,
-                  }
-                : {})}
-              onMediaPlayback={setMediaPlayback}
-              {...(onOpenMediaReview
-                ? { onOpenMediaReview: openRootMedia }
-                : {})}
-            />
-            {videoAttachment && mediaPlayback && (
-              <span className={styles.mediaCommentAction}>
-                <Button
-                  size="sm"
-                  type="button"
-                  onClick={() => setMediaCommentTime(mediaPlayback.seconds)}
-                >
-                  Comment at {formatMediaTime(mediaPlayback.seconds)}
-                </Button>
-              </span>
-            )}
-          </>
+          <MessageRow
+            extensions={extensions}
+            session={session}
+            scope={scope}
+            onReply={focusReply}
+            row={snapshot.root}
+            profile={profiles.get(snapshot.root.authorId)}
+            participantProfiles={profiles}
+            agentPubkeys={agentPubkeys}
+            media={session.media}
+            onOpenLink={onOpenLink}
+            canOpenLink={canOpenLink}
+            day={false}
+            layout="thread"
+            retry={session.messages.retry}
+            mediaMode="thread"
+            {...(mediaSeek
+              ? {
+                  mediaSeekTo: mediaSeek.seconds,
+                  mediaSeekRequest: mediaSeek.request,
+                }
+              : {})}
+            {...(onOpenMediaReview ? { onOpenMediaReview: openRootMedia } : {})}
+          />
         ) : snapshot.status !== "loading" ? (
           <p className={styles.empty}>Original message unavailable.</p>
         ) : null}
@@ -741,10 +755,6 @@ function ThreadMessages({
           focusRequest={replyFocus}
           onOpenLink={onOpenLink}
           canOpenLink={canOpenLink}
-          {...(videoAttachment && mediaCommentTime !== undefined
-            ? { mediaTimeSeconds: mediaCommentTime }
-            : {})}
-          clearMediaTime={() => setMediaCommentTime(undefined)}
           onSend={(id) => {
             targetAnchor.current = undefined;
             positioned.current = true;
@@ -763,6 +773,6 @@ function ThreadMessages({
           }}
         />
       )}
-    </>
+    </MessageEditScope>
   );
 }

@@ -155,7 +155,7 @@ export const groups: Group[] = [
         "own-rich",
         "Your message · Markdown",
         "The same own-message fill as plain text above.",
-        "Here is **my update** with [a link](https://example.com), `inline code`, and a quote:\n\n> Ready for review.",
+        "## Review notes\n\nHere is **my update** with [a link](https://example.com), `inline code`, and a quote:\n\n> Ready for review.\n\n| State | Meaning |\n| --- | --- |\n| Ready | Available for review |",
         { authorId: teammate },
       ),
       single(

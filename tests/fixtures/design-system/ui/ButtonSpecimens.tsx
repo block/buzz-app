@@ -4,6 +4,13 @@ import {
   PlusIcon,
   GearIcon,
 } from "../../../../src/shared/design-system/icons";
+import { Avatar } from "../../../../src/shared/design-system/ui/Avatar";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+} from "../../../../src/shared/design-system/ui/Menu";
 import { Button } from "../../../../src/shared/design-system/ui/Button";
 import { IconButton } from "../../../../src/shared/design-system/ui/IconButton";
 
@@ -160,7 +167,12 @@ export function ButtonSpecimen() {
         </div>
       </section>
       <section aria-label="Button content" className="component-specimen-group">
-        <h2 className="text-body-sm text-tertiary">Content and wrapping</h2>
+        <h2 className="text-body-sm text-tertiary">Single-line labels</h2>
+        <p className="text-body-sm text-subtle">
+          Labels stay on one line. Let the surrounding layout wrap whole
+          controls or scroll when space is limited, rather than squeezing the
+          label.
+        </p>
         <div className="component-specimen-frame">
           <div className="min-w-0 space-y-4">
             <div className="component-specimen-row">
@@ -172,6 +184,13 @@ export function ButtonSpecimen() {
                 Continue <ArrowRightIcon aria-hidden="true" />
               </Button>
               <Button variant="outline">Choose a workspace</Button>
+            </div>
+            <div className="flex w-full max-w-96 items-center gap-4">
+              <p className="m-0 min-w-0 flex-1 text-body-sm text-secondary">
+                Changes affect future starts and restarts. Running work is never
+                restarted automatically.
+              </p>
+              <Button variant="prominent">Apply changes</Button>
             </div>
             <div className="max-w-48">
               <Button>
@@ -234,6 +253,59 @@ export function IconButtonSpecimen() {
       </section>
       <section
         className="component-specimen-group"
+        aria-label="Avatar icon treatments"
+      >
+        <h2 className="text-body-sm text-tertiary">
+          Avatar · Transparent cutouts
+        </h2>
+        <p className="text-body-sm text-subtle">
+          Hover, press, or open the menu: the backdrop stays visible through the
+          avatar cutout. Tab to the enabled control to inspect keyboard focus.
+        </p>
+        <div
+          className="component-specimen-frame"
+          style={{ background: "var(--bg-app)" }}
+        >
+          <div className="component-specimen-row">
+            <MenuRoot>
+              <MenuTrigger
+                render={
+                  <IconButton
+                    variant="avatar"
+                    aria-label="Avatar profile menu"
+                    icon={
+                      <Avatar
+                        alt="Alex Morgan"
+                        fallback="A"
+                        size="fill"
+                        statusBadge="online"
+                      />
+                    }
+                  />
+                }
+              />
+              <MenuPopup size="compact">
+                <MenuItem>View profile</MenuItem>
+              </MenuPopup>
+            </MenuRoot>
+            <IconButton
+              variant="avatar"
+              disabled
+              aria-label="Disabled avatar profile"
+              icon={
+                <Avatar
+                  alt="Sam Rivera"
+                  fallback="S"
+                  size="fill"
+                  statusBadge="away"
+                />
+              }
+            />
+          </div>
+        </div>
+      </section>
+      <section
+        className="component-specimen-group"
         aria-label="Chrome icon treatments"
       >
         <h2 className="text-body-sm text-tertiary">
@@ -256,6 +328,24 @@ export function IconButtonSpecimen() {
               icon={<GearIcon aria-hidden="true" />}
             />
           </div>
+        </div>
+      </section>
+      <section
+        className="component-specimen-group"
+        aria-label="Media icon treatment"
+      >
+        <h2 className="text-body-sm text-tertiary">
+          Media · Static dark glass over video
+        </h2>
+        <div
+          className="component-specimen-frame"
+          style={{ background: "var(--bg-app)" }}
+        >
+          <IconButton
+            variant="media"
+            aria-label="Media settings"
+            icon={<GearIcon aria-hidden="true" />}
+          />
         </div>
       </section>
     </div>

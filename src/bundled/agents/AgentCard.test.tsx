@@ -8,9 +8,12 @@ import {
   render,
   screen,
 } from "@testing-library/react";
-import { afterEach, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
 import type { PresenceStatus } from "../../features/presence/presence";
+import type { AgentView } from "../../features/agents/control";
+import { controlFixture } from "../../features/agents/control-testing";
 import { AgentCard } from "./AgentCard";
 
 afterEach(cleanup);
@@ -67,10 +70,81 @@ it("badges a single agent only while live presence is known", () => {
   }
 });
 
-it("presents compatibility identities as npubs, not hex", () => {
+it("re-reads presence after native start or stop until the badge agrees, within a bound", () => {
+  vi.useFakeTimers();
+  try {
+    const agent = controlFixture().agent;
+    let status: PresenceStatus = "offline";
+    let changed = () => {};
+    const refresh = vi.fn();
+    const session = {
+      presence: {
+        status: () => status,
+        limited: () => false,
+        refresh,
+        subscribe: (_key: string, listener: () => void) => {
+          changed = listener;
+          return () => {};
+        },
+      },
+    } as unknown as RelaySession;
+    const card = (next: AgentView) => (
+      <AgentCard
+        name="Agent"
+        identities={[next]}
+        editable={[next]}
+        session={session}
+        onEdit={() => {}}
+      >
+        <p>{next.status}</p>
+      </AgentCard>
+    );
+    const view = render(card({ ...agent, status: "stopped" }));
+    expect(refresh).not.toHaveBeenCalled();
+    view.rerender(card({ ...agent, status: "running" }));
+    expect(refresh).toHaveBeenCalledOnce();
+    act(() => vi.advanceTimersByTime(30000));
+    expect(refresh).toHaveBeenCalledTimes(7);
+    act(() => vi.advanceTimersByTime(60000));
+    expect(refresh).toHaveBeenCalledTimes(7);
+
+    view.rerender(card({ ...agent, status: "stopped" }));
+    view.rerender(card({ ...agent, status: "running" }));
+    expect(refresh).toHaveBeenCalledTimes(8);
+    act(() => {
+      status = "online";
+      changed();
+    });
+    act(() => vi.advanceTimersByTime(30000));
+    expect(refresh).toHaveBeenCalledTimes(8);
+
+    view.rerender(card({ ...agent, status: "stopped" }));
+    expect(refresh).toHaveBeenCalledTimes(9);
+    act(() => {
+      status = "offline";
+      changed();
+    });
+    act(() => vi.advanceTimersByTime(30000));
+    expect(refresh).toHaveBeenCalledTimes(9);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("opens identities in a popover and returns focus on Escape", async () => {
+  const user = userEvent.setup();
   const pubkey = "ab".repeat(32);
   render(<AgentCard name="Agent" identities={[{ pubkey, name: "Agent" }]} />);
-  fireEvent.click(screen.getByRole("button", { name: "Agent:1 identity" }));
+  const trigger = screen.getByRole("button", { name: "Agent: 1 identity" });
+  expect(screen.queryByText(npubEncode(pubkey))).toBeNull();
+  const card = screen.getByRole("article");
+  await user.click(trigger);
+  const popup = await screen.findByRole("dialog", {
+    name: "Agent identities",
+  });
+  expect(card).not.toContainElement(popup);
   expect(screen.getByText(npubEncode(pubkey))).toBeVisible();
   expect(document.body.textContent).not.toContain(pubkey);
+  await user.keyboard("{Escape}");
+  expect(trigger).toHaveFocus();
 });

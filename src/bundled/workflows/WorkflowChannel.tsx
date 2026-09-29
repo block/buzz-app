@@ -9,14 +9,8 @@ import type {
   WorkflowCapability,
   WorkflowDefinition,
 } from "../../features/workflows/types";
-import { DotsThreeIcon, HashIcon } from "../../shared/design-system/icons";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
-import {
-  MenuItem,
-  MenuPopup,
-  MenuRoot,
-  MenuTrigger,
-} from "../../shared/design-system/ui/Menu";
+import { HashIcon } from "../../shared/design-system/icons";
+import { MenuItem, MenuSeparator } from "../../shared/design-system/ui/Menu";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ConfirmAction } from "./ConfirmAction";
 import { WorkflowEditor } from "./WorkflowEditor";
@@ -58,18 +52,20 @@ export function WorkflowChannel({
   onDraftRiskChange,
   onSaveReadback,
   onClose,
+  onDelete,
 }: {
   capability: WorkflowCapability;
   channelId: string;
   channelName: string;
   initialSelection?: WorkflowDefinition | "new" | undefined;
-  initialAction?: "run" | "delete" | undefined;
+  initialAction?: "run" | undefined;
   viewer: string;
   onDraftRiskChange?: (atRisk: boolean) => void;
   onSaveReadback?: (
     saved: Pick<WorkflowDefinition, "channelId" | "revision">,
   ) => void;
   onClose?: () => void;
+  onDelete: (definition: WorkflowDefinition) => void;
 }) {
   const { snapshot, refresh } = useWorkflowView(
     useCallback(
@@ -91,9 +87,7 @@ export function WorkflowChannel({
   const [pendingSelection, setPendingSelection] = useState<
     WorkflowDefinition | "new" | "close" | null
   >(null);
-  const [confirmDelete, setConfirmDelete] = useState(
-    initialAction === "delete",
-  );
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmRun, setConfirmRun] = useState(initialAction === "run");
   const [error, setError] = useState<string | null>(null);
   const [readRuns, setReadRuns] = useState(false);
@@ -111,7 +105,9 @@ export function WorkflowChannel({
   const atRisk = dirty || !!draft?.operationId;
   const unresolvedWrite = ownOperations.some(
     (item) =>
-      (item.outcome === "pending" || item.outcome === "unknown") &&
+      (item.outcome === "pending" ||
+        item.outcome === "unknown" ||
+        (item.action === "delete" && item.outcome === "succeeded")) &&
       (draft?.original
         ? item.workflow.id === draft.original.id &&
           item.workflow.owner === draft.original.owner
@@ -230,22 +226,15 @@ export function WorkflowChannel({
       draft.operationId
     )
       return;
-    try {
-      submission.current = "submitting";
-      const operationId = capability.delete(draft.original);
-      submission.current = operationId;
-      setDraft({ ...draft, operationId });
-      setConfirmDelete(false);
-      setError(null);
-    } catch (cause) {
-      submission.current = null;
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Deletion could not be submitted. Your draft is retained.",
-      );
-    }
+    // The page owns submission and recovery after this editor is discarded.
+    const definition = draft.original;
+    setDraft(null);
+    setLocalDraftAtRisk(false);
+    setPendingSelection(null);
+    setConfirmDelete(false);
+    onDelete(definition);
   };
+
   const trigger = () => {
     if (
       !draft?.original ||
@@ -283,16 +272,14 @@ export function WorkflowChannel({
     blocked = "Saving is unavailable from this host.";
   else if (unresolvedWrite && !draft?.operationId)
     blocked =
-      "Check the saved configuration or review the unresolved request in Recent activity before continuing.";
+      "Check saved configuration or review Recent activity before continuing.";
   else if (draft?.operationId)
     blocked =
       operation?.outcome === "succeeded"
-        ? operation.action === "delete"
-          ? "Deletion request accepted, not verified runtime deletion. The configuration may remain visible. Review Recent activity to continue."
-          : "Configuration saved; waiting for a readback of this exact revision. Check saved configuration or review the current version in Recent activity."
+        ? "Configuration saved; waiting for a readback of this exact revision. Check saved configuration or review the current version in Recent activity."
         : operation?.outcome === "rejected"
-          ? "Request rejected. Your draft is retained; review the error before continuing."
-          : "Your draft is retained. Check the saved configuration or review the request in Recent activity to continue.";
+          ? "Draft retained. Review the error below before continuing."
+          : undefined;
   if (!snapshot) return <p role="status">Reading configurations…</p>;
   return (
     <section aria-label={`Workflows in ${channelName}`}>
@@ -319,9 +306,8 @@ export function WorkflowChannel({
       )}
       {!detailOnly && (
         <p className="text-body-sm text-secondary">
-          Configured activation may differ from the existing backend’s runtime
-          state. Saving a disabled configuration does not confirm that automatic
-          runs have stopped or cancel work already running.
+          Saved configuration only. Turning off does not confirm runs have
+          stopped or cancel active runs.
         </p>
       )}
       {snapshot.status === "loading" && (
@@ -401,54 +387,45 @@ export function WorkflowChannel({
                 {channelName}
               </span>
             }
-            actions={
-              draft.original && (
-                <MenuRoot>
-                  <MenuTrigger
-                    render={
-                      <IconButton
-                        aria-label="Workflow actions"
-                        icon={<DotsThreeIcon size={20} aria-hidden="true" />}
-                      />
-                    }
-                  />
-                  <MenuPopup>
+            actions={(enable) => (
+              <>
+                <MenuItem
+                  disabled={!capability.availability.history}
+                  onClick={() => setReadRuns((value) => !value)}
+                >
+                  {readRuns ? "Hide runs" : "Read runs"}
+                </MenuItem>
+                {!readonly && (
+                  <>
                     <MenuItem
-                      disabled={!capability.availability.history}
-                      onClick={() => setReadRuns((value) => !value)}
+                      disabled={
+                        dirty ||
+                        !!draft.operationId ||
+                        unresolvedWrite ||
+                        !capability.availability.trigger
+                      }
+                      onClick={trigger}
                     >
-                      {readRuns ? "Hide runs" : "Read runs"}
+                      Run now
                     </MenuItem>
-                    {!readonly && (
-                      <>
-                        <MenuItem
-                          disabled={
-                            dirty ||
-                            !!draft.operationId ||
-                            unresolvedWrite ||
-                            !capability.availability.trigger
-                          }
-                          onClick={trigger}
-                        >
-                          Run now
-                        </MenuItem>
-                        <MenuItem
-                          tone="danger"
-                          disabled={
-                            !!draft.operationId ||
-                            unresolvedWrite ||
-                            !capability.availability.delete
-                          }
-                          onClick={() => setConfirmDelete(true)}
-                        >
-                          Delete workflow
-                        </MenuItem>
-                      </>
-                    )}
-                  </MenuPopup>
-                </MenuRoot>
-              )
-            }
+                    {enable}
+                    <MenuSeparator />
+                    <MenuItem
+                      tone="danger"
+                      disabled={
+                        !!draft.operationId ||
+                        unresolvedWrite ||
+                        !capability.availability.delete
+                      }
+                      onClick={() => setConfirmDelete(true)}
+                    >
+                      Delete workflow
+                    </MenuItem>
+                  </>
+                )}
+                {readonly && enable}
+              </>
+            )}
             status={
               <>
                 {(snapshot.status === "error" ||
@@ -470,15 +447,9 @@ export function WorkflowChannel({
                     </Button>
                   </div>
                 )}
-                {readonly && (
-                  <p className="text-secondary">
-                    This definition belongs to another identity. Only its author
-                    can manage it here.
-                  </p>
-                )}
                 {!capability.availability.delete && (
                   <p className="text-body-sm text-secondary">
-                    Delete requests are unavailable from this host.
+                    You can't delete workflows here.
                   </p>
                 )}
                 {error && (
@@ -505,10 +476,10 @@ export function WorkflowChannel({
                   />
                 )}
                 <WorkflowOperations
-                  operations={ownOperations}
-                  definitions={
-                    snapshot.status === "ready" ? snapshot.data.items : []
-                  }
+                  operations={ownOperations.filter(
+                    (item) => item.action !== "delete",
+                  )}
+                  snapshot={snapshot}
                   onCheckSaved={refresh}
                   onReviewSaved={select}
                   onDismiss={dismiss}
@@ -518,15 +489,12 @@ export function WorkflowChannel({
             details={
               <>
                 <p className="text-body-sm text-subtle">
-                  Configured activation may differ from the existing backend’s
-                  runtime state. Saving a disabled configuration does not
-                  confirm that automatic runs have stopped or cancel work
-                  already running.
+                  Configuration changes apply on save. Turning off does not
+                  confirm runs have stopped or cancel active runs.
                 </p>
                 <p className="text-body-sm text-subtle">
-                  Drafts stay in this editor only. Leaving the Workflows page or
-                  reloading discards unsaved text, but does not cancel submitted
-                  operations.
+                  Unsaved changes stay in this editor. Leaving or reloading
+                  discards them without cancelling submitted operations.
                 </p>
                 {draft.original && (
                   <details>
@@ -565,9 +533,12 @@ export function WorkflowChannel({
             )}
             {confirmDelete && (
               <ConfirmAction
-                title="Request deletion of this workflow?"
-                description="The existing backend may retain a visible saved configuration. An accepted request does not confirm runtime deletion or cancellation of work already running. Submit this deletion request?"
-                action="Request deletion"
+                title="Delete this workflow?"
+                description="The saved workflow may remain visible. Work already running may continue."
+                action="Delete workflow"
+                cancel="Cancel"
+                destructive
+                error={error}
                 onConfirm={remove}
                 onCancel={() => setConfirmDelete(false)}
               />
@@ -576,8 +547,8 @@ export function WorkflowChannel({
         )}
       {!draft && (
         <WorkflowOperations
-          operations={ownOperations}
-          definitions={snapshot.status === "ready" ? snapshot.data.items : []}
+          operations={ownOperations.filter((item) => item.action !== "delete")}
+          snapshot={snapshot}
           onCheckSaved={refresh}
           onReviewSaved={select}
           onDismiss={dismiss}

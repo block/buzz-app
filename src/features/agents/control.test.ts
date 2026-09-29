@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   canStopAgent,
   createAgentControl,
+  savedMessage,
   type GooseInstallReport,
 } from "./control";
 import { controlFixture } from "./control-testing";
@@ -12,6 +13,22 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
+it("words save results by restart count", () => {
+  expect(savedMessage(0)).toBe("Saved.");
+  expect(savedMessage(undefined)).toBe("Saved.");
+  expect(savedMessage(1)).toBe("Saved. Restarted 1 agent.");
+  expect(savedMessage(3)).toBe("Saved. Restarted 3 agents.");
+  expect(savedMessage(1, 1)).toBe(
+    "Saved. Restarted 1 agent. 1 agent couldn’t restart with the new settings; check Agents.",
+  );
+  expect(savedMessage(0, 1)).toBe(
+    "Saved. 1 agent couldn’t restart with the new settings; check Agents.",
+  );
+  expect(savedMessage(2, 3)).toBe(
+    "Saved. Restarted 2 agents. 3 agents couldn’t restart with the new settings; check Agents.",
+  );
+});
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -668,6 +685,7 @@ for (const cancel of ["scope", "stop", "dispose"] as const) {
 
 it("overlapping mentions coalesce the pending same-agent Start and Stop defeats its late completion", async () => {
   const fixture = controlFixture();
+  fixture.host.attachMention = vi.fn(async () => {});
   fixture.agent.enabled = false;
   fixture.agent.status = "stopped";
   const control = createAgentControl(fixture.host);
@@ -694,6 +712,11 @@ it("overlapping mentions coalesce the pending same-agent Start and Stop defeats 
     signal,
   )();
   expect(action).toHaveBeenCalledOnce();
+  expect(fixture.host.attachMention).toHaveBeenCalledWith(
+    fixture.agent.id,
+    1,
+    1235,
+  );
   await control.action(fixture.agent.id, "stop");
   launched.resolve({
     ...fixture.data,
@@ -794,39 +817,34 @@ it("a no-match mention is a native no-op and cannot erase an existing wake failu
   control.dispose();
 });
 
-const transientReads = [
-  "Agent runtime is initializing; retry shortly",
-  "Another native agent operation is in progress",
-];
-for (const error of transientReads) {
-  it(`keeps a coalesced read loading until native recovers from ${error}`, async () => {
-    vi.useFakeTimers();
-    const fixture = controlFixture();
-    const snapshot = vi
-      .spyOn(fixture.host, "snapshot")
-      .mockRejectedValueOnce(error)
-      .mockRejectedValueOnce(error);
-    const control = createAgentControl(fixture.host);
-    const pending = control.refresh();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(control.refresh()).toBe(pending);
-    expect(snapshot).toHaveBeenCalledTimes(1);
-    expect(control.snapshot()).toMatchObject({
-      status: "loading",
-      error: null,
-    });
-    await vi.advanceTimersByTimeAsync(250);
-    expect(snapshot).toHaveBeenCalledTimes(2);
-    expect(control.snapshot().status).toBe("loading");
-    await vi.advanceTimersByTimeAsync(250);
-    await pending;
-    expect(snapshot).toHaveBeenCalledTimes(3);
-    expect(control.snapshot().status).toBe("ready");
-    expect(control.snapshot().data).toEqual(fixture.data);
-    expect(fixture.calls).toEqual([{ action: "snapshot" }]);
-    control.dispose();
+const transientRead = "Agent runtime is initializing; retry shortly";
+it("keeps a coalesced read loading until native startup completes", async () => {
+  vi.useFakeTimers();
+  const fixture = controlFixture();
+  const snapshot = vi
+    .spyOn(fixture.host, "snapshot")
+    .mockRejectedValueOnce(transientRead)
+    .mockRejectedValueOnce(transientRead);
+  const control = createAgentControl(fixture.host);
+  const pending = control.refresh();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(control.refresh()).toBe(pending);
+  expect(snapshot).toHaveBeenCalledTimes(1);
+  expect(control.snapshot()).toMatchObject({
+    status: "loading",
+    error: null,
   });
-}
+  await vi.advanceTimersByTimeAsync(250);
+  expect(snapshot).toHaveBeenCalledTimes(2);
+  expect(control.snapshot().status).toBe("loading");
+  await vi.advanceTimersByTimeAsync(250);
+  await pending;
+  expect(snapshot).toHaveBeenCalledTimes(3);
+  expect(control.snapshot().status).toBe("ready");
+  expect(control.snapshot().data).toEqual(fixture.data);
+  expect(fixture.calls).toEqual([{ action: "snapshot" }]);
+  control.dispose();
+});
 for (const previousSnapshot of [false, true]) {
   it(`bounds transient reads and retains previous evidence: ${previousSnapshot}`, async () => {
     vi.useFakeTimers();
@@ -835,7 +853,7 @@ for (const previousSnapshot of [false, true]) {
     if (previousSnapshot) await control.refresh();
     const snapshot = vi
       .spyOn(fixture.host, "snapshot")
-      .mockRejectedValue(transientReads[0]);
+      .mockRejectedValue(transientRead);
     const pending = control.refresh();
     await vi.advanceTimersByTimeAsync(4999);
     expect(snapshot).toHaveBeenCalledTimes(20);
@@ -871,7 +889,7 @@ it("does not retry a genuine read failure or replay a write with a transient-loo
   await control.refresh();
   const action = vi
     .spyOn(fixture.host, "action")
-    .mockRejectedValue(transientReads[1]);
+    .mockRejectedValue(transientRead);
   await expect(control.action(fixture.agent.id, "start")).rejects.toThrow(
     "Could not confirm",
   );
@@ -889,7 +907,7 @@ for (const boundary of ["dispose", "newer write"] as const) {
     await control.refresh();
     const snapshot = vi
       .spyOn(fixture.host, "snapshot")
-      .mockRejectedValue(transientReads[1]);
+      .mockRejectedValue(transientRead);
     const pending = control.refresh();
     await vi.advanceTimersByTimeAsync(0);
     expect(snapshot).toHaveBeenCalledTimes(1);
@@ -1094,5 +1112,175 @@ it("keeps Stop available while Goose installs and refreshes once it settles", as
     reads + 1,
   );
   expect(control.snapshot().data?.agents[0]?.enabled).toBe(false);
+  control.dispose();
+});
+
+for (const status of ["waiting", "starting"] as const) {
+  it(`attaches the earliest mention floor to a native ${status} launch without duplicate Start`, async () => {
+    const fixture = controlFixture();
+    fixture.host.attachMention = vi.fn(async () => {});
+    fixture.agent.status = status;
+    const control = createAgentControl(fixture.host);
+    await control.refresh();
+    await control.prepareMention(
+      [fixture.agent.pubkey],
+      fixture.agent.relayUrl,
+      100,
+      new AbortController().signal,
+    )(90);
+    expect(fixture.host.attachMention).toHaveBeenCalledExactlyOnceWith(
+      fixture.agent.id,
+      fixture.agent.revision,
+      90,
+    );
+    expect(control.snapshot().mentionError).toBeUndefined();
+    expect(
+      fixture.calls.filter((call) => call.action === "start"),
+    ).toHaveLength(0);
+    control.dispose();
+  });
+}
+
+it("runs Pi installation outside agent writes, fences Goose, and preserves the report after Stop", async () => {
+  const fixture = controlFixture();
+  const install = deferred<GooseInstallReport>();
+  const goose = vi.fn();
+  fixture.host.installPi = () => install.promise;
+  fixture.host.installGoose = goose;
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  const installing = control.installPi?.();
+  expect(control.snapshot().piInstall?.installing).toBe(true);
+  expect(control.snapshot().busy).toBe(false);
+  expect(canStopAgent(control.snapshot(), fixture.agent.id)).toBe(true);
+  await expect(control.installGoose?.()).rejects.toThrow("in progress");
+  await control.action(fixture.agent.id, "stop");
+  expect(fixture.calls).toContainEqual(
+    expect.objectContaining({ action: "stop" }),
+  );
+  const reads = fixture.calls.filter(
+    (call) => call.action === "snapshot",
+  ).length;
+  install.resolve({
+    ready: true,
+    restarted: 0,
+    restartFailures: 0,
+    logPath: "/fixture/pi-install.log",
+    output: "done",
+    error: null,
+  });
+  await installing;
+  expect(control.snapshot().piInstall?.report?.ready).toBe(true);
+  expect(control.snapshot().data?.agents[0]?.enabled).toBe(false);
+  expect(
+    fixture.calls.filter((call) => call.action === "snapshot"),
+  ).toHaveLength(reads + 1);
+  expect(goose).not.toHaveBeenCalled();
+  control.dispose();
+});
+
+for (const operation of ["save", "saveDefaults"] as const) {
+  it(`${operation} restart credential wait admits Stop and drops the late result`, async () => {
+    const fixture = controlFixture();
+    const before = structuredClone(fixture.data);
+    const saved = structuredClone(before);
+    saved.restarted = 1;
+    const gate = deferred<void>();
+    const started = deferred<void>();
+    const write = vi.fn(async () => {
+      started.resolve();
+      await gate.promise;
+      return saved;
+    });
+    fixture.host.save = write;
+    fixture.host.saveDefaults = write;
+    const stopped = structuredClone(before);
+    stopped.agents[0] = {
+      ...fixture.agent,
+      enabled: false,
+      status: "stopped",
+      runningRevision: null,
+    };
+    const action = vi.spyOn(fixture.host, "action").mockResolvedValue(stopped);
+    const control = createAgentControl(fixture.host);
+    await control.refresh();
+    const pending = (
+      operation === "save"
+        ? control.save(
+            fixture.agent.id,
+            fixture.agent.revision,
+            agentEdit(agentDraft(fixture.agent)),
+          )
+        : control.saveDefaults?.({
+            harness: "buzz-agent",
+            provider: "",
+            model: "next",
+            effort: "",
+            environment: {},
+          })
+    )?.catch((error: Error) => error);
+    await started.promise;
+    expect(control.snapshot().busy).toBe(true);
+    expect(canStopAgent(control.snapshot(), fixture.agent.id)).toBe(true);
+    await control.action(fixture.agent.id, "stop");
+    expect(action).toHaveBeenCalledExactlyOnceWith(fixture.agent.id, "stop");
+    expect(control.snapshot().data?.agents[0]?.status).toBe("stopped");
+    gate.resolve();
+    expect(await pending).toBeInstanceOf(Error);
+    // The superseded save cannot overwrite the newer Stop's evidence.
+    expect(control.snapshot().data?.agents[0]?.status).toBe("stopped");
+    expect(control.snapshot().busy).toBe(false);
+    control.dispose();
+  });
+}
+
+for (const supported of [true, false]) {
+  it(`warns when a pending launch cannot attach replay (supported=${supported})`, async () => {
+    const fixture = controlFixture();
+    fixture.agent.status = "waiting";
+    if (supported)
+      fixture.host.attachMention = vi.fn(async () => {
+        throw new Error("RAW SECRET");
+      });
+    const control = createAgentControl(fixture.host);
+    await control.prepareMention(
+      [fixture.agent.pubkey],
+      fixture.agent.relayUrl,
+      100,
+      new AbortController().signal,
+    )();
+    expect(control.snapshot().mentionError).toContain(
+      "pending launch could not confirm replay",
+    );
+    expect(control.snapshot().mentionError).not.toContain("RAW SECRET");
+    expect(
+      fixture.calls.filter((call) => call.action === "start"),
+    ).toHaveLength(0);
+    control.dispose();
+  });
+}
+it("Stop retires a late replay-attachment failure without overwriting its result", async () => {
+  const fixture = controlFixture();
+  fixture.agent.status = "waiting";
+  const attached = deferred<void>();
+  fixture.host.attachMention = vi.fn(async () => {
+    await attached.promise;
+    throw new Error("cancelled");
+  });
+  const control = createAgentControl(fixture.host);
+  const wake = control.prepareMention(
+    [fixture.agent.pubkey],
+    fixture.agent.relayUrl,
+    100,
+    new AbortController().signal,
+  )();
+  await vi.waitFor(() =>
+    expect(fixture.host.attachMention).toHaveBeenCalledOnce(),
+  );
+  await control.action(fixture.agent.id, "stop");
+  attached.resolve();
+  await wake;
+  expect(control.snapshot().data?.agents[0]?.status).toBe("stopped");
+  expect(control.snapshot().mentionError).toBeUndefined();
   control.dispose();
 });

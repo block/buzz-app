@@ -91,6 +91,7 @@ export type ChannelTimelineProps = {
     messageId: string,
     attachment: Attachment,
     seconds: number,
+    hasComments?: boolean,
   ): void;
 };
 

@@ -234,11 +234,11 @@
 }
 .reactionNativeEmoji {
   display: inline-block;
-  min-width: 12px;
+  min-width: 18px;
   max-width: 96px;
-  height: 12px;
-  font-size: var(--text-caption);
-  line-height: 1;
+  height: 18px;
+  font-size: var(--text-body-sm);
+  line-height: 18px;
   text-align: center;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -392,6 +392,8 @@
   letter-spacing: var(--text-caption--letter-spacing);
 }
 .attachmentImage {
+  --media-preview-radius: 16px;
+  cursor: zoom-in;
   /* Reserve geometry even across virtualizer remounts and failed/lazy loads.
      imeta dimensions override this bounded fallback without waiting for decode. */
   position: relative;
@@ -400,11 +402,22 @@
   max-width: 100%;
   aspect-ratio: 360 / 320;
   margin-block: var(--space-1);
+  border-radius: var(--media-preview-radius);
+}
+/* Clip the pixels, not the focusable link's outside keyboard outline. */
+.attachmentImagePixels {
+  position: absolute;
+  inset: 0;
+}
+.attachmentImagePixels,
+.attachmentImage.mediaPlaceholder {
   overflow: hidden;
-  border-radius: var(--radius-row);
+  border-radius: inherit;
+  clip-path: var(--media-corner-clip, none);
   background: var(--affordance-subtle-hover);
 }
 .attachmentImage.mediaPlaceholder {
+  border-radius: var(--media-preview-radius);
   background: var(--surface-inset);
 }
 .attachmentImage canvas,
@@ -416,7 +429,48 @@
   height: 100%;
 }
 .attachmentImage img {
-  object-fit: scale-down;
+  object-fit: var(--attachment-image-fit, scale-down);
+}
+/* Fixed tiles keep lazy loading from moving the reading position. */
+.imageGroup {
+  min-width: 0;
+  margin-top: var(--space-2);
+}
+.imageStrip {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  padding: var(--space-1);
+  scroll-padding-inline: var(--space-1);
+  scrollbar-width: thin;
+}
+.attachmentImage[data-thumbnail],
+.imageUnavailable {
+  flex: 0 0 auto;
+  width: calc(var(--space-16) + var(--space-2));
+  aspect-ratio: 1;
+  margin: 0;
+}
+.attachmentImage[data-thumbnail] {
+  --attachment-image-fit: cover;
+}
+html[data-keyboard-navigation] .attachmentImage:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+.imageCount {
+  @apply text-caption;
+  color: var(--text-subtle);
+  margin-top: var(--space-1);
+}
+.imageUnavailable {
+  @apply text-caption;
+  display: grid;
+  place-items: center;
+  padding: var(--space-1);
+  border-radius: var(--radius-row);
+  background: var(--affordance-subtle-hover);
+  color: var(--text-subtle);
 }
 /* The existing editor owns text; this surface owns only composer layout. */
 .composer {
@@ -534,50 +588,10 @@
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
   font-weight: var(--type-weight-regular);
+  border-radius: var(--radius-pill);
   margin-top: var(--space-1);
   padding: var(--space-1);
   padding-right: var(--space-1h);
-}
-.messageBody [data-thread-summary][data-first-participant-shape="squircle"] {
-  border-radius: calc(var(--radius-row) + var(--space-1))
-    calc(var(--size-control-sm) * 0.5) calc(var(--size-control-sm) * 0.5)
-    calc(var(--radius-row) + var(--space-1));
-  isolation: isolate;
-  background: transparent;
-}
-.messageBody
-  [data-thread-summary][data-first-participant-shape="squircle"]::before {
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  content: "";
-  pointer-events: none;
-  mask-image:
-    url("../../shared/design-system/styles/avatar-squircle.svg"),
-    linear-gradient(currentColor 0 0),
-    radial-gradient(circle closest-side, currentColor 99%, transparent 100%);
-  mask-size:
-    var(--size-control-sm) var(--size-control-sm),
-    calc(100% - var(--size-control-sm)) 100%,
-    var(--size-control-sm) var(--size-control-sm);
-  mask-position:
-    left center,
-    center center,
-    right center;
-  mask-repeat: no-repeat;
-}
-@media (hover: hover) and (pointer: fine) {
-  .messageBody
-    [data-thread-summary][data-first-participant-shape="squircle"]:hover::before {
-    background: var(--affordance-subtle-hover);
-  }
-}
-.messageBody
-  [data-thread-summary][data-first-participant-shape="squircle"]:is(
-    :active,
-    [aria-expanded="true"]
-  )::before {
-  background: var(--affordance-subtle-pressed);
 }
 .threadHistory {
   flex: 1;
@@ -697,6 +711,15 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
+.fileGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.fileGroup .fileAttachment {
+  margin-top: 0;
+}
 .fileAttachmentBody {
   composes: details from "./ComposerAttachments.module.css";
 }
@@ -814,6 +837,8 @@ html[data-keyboard-navigation] .audioSeek:focus-visible {
   outline-offset: 2px;
 }
 .mediaPreview {
+  --media-preview-radius: 16px;
+  --media-controls-inset: 6px;
   position: relative;
   display: block;
   width: min(32rem, 100%, calc(min(28rem, 56vh) * var(--media-ratio, 16 / 9)));
@@ -823,7 +848,8 @@ html[data-keyboard-navigation] .audioSeek:focus-visible {
   overflow: hidden;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-card);
+  border-radius: var(--media-preview-radius);
+  clip-path: var(--media-corner-clip, none);
   background: var(--affordance-subtle);
   color: var(--text-inverse);
   isolation: isolate;
@@ -886,9 +912,19 @@ button.mediaPreview {
   cursor: pointer;
 }
 @media (hover: hover) and (pointer: fine) {
-  .mediaPreview[data-playing]:not(:hover):not(:focus-within) .mediaPlay,
-  .mediaPreview[data-playing]:not(:hover):not(:focus-within) .mediaExpand,
-  .mediaPreview[data-playing]:not(:hover):not(:focus-within) .mediaTime {
+  .mediaPreview[data-playing]:not(:hover):not(:has(:focus-visible)):not(
+      :has([aria-expanded="true"])
+    )
+    .mediaPlay,
+  .mediaPreview[data-playing]:not(:hover):not(:has(:focus-visible)):not(
+      :has([aria-expanded="true"])
+    )
+    .mediaExpand
+    button,
+  .mediaPreview[data-playing]:not(:hover):not(:has(:focus-visible)):not(
+      :has([aria-expanded="true"])
+    )
+    .mediaTime {
     opacity: 0;
   }
 }
@@ -978,6 +1014,8 @@ button.mediaPreview {
   grid-template-rows: auto minmax(0, 1fr);
   width: min(96rem, 100%);
   height: 100%;
+  min-height: 0;
+  min-width: 0;
   margin: 0 auto;
   overflow: hidden;
   border-radius: var(--radius-card);
@@ -1079,16 +1117,9 @@ button.mediaPreview {
   }
 }
 
-.mediaCommentAction {
-  align-self: flex-start;
-  margin: 0 0 var(--space-3) var(--space-16);
-  font-variant-numeric: tabular-nums;
-}
-
 .imageReviewStage {
   position: relative;
-  display: grid;
-  place-items: center;
+  display: block;
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -1103,7 +1134,6 @@ button.mediaPreview {
   height: 100%;
   object-fit: contain;
   transform-origin: center;
-  will-change: transform;
 }
 .imageReviewPannable {
   cursor: grab;
@@ -1112,7 +1142,13 @@ button.mediaPreview {
   cursor: grabbing;
 }
 .imageReviewToolbar {
-  @apply popover-surface;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  color: var(--text-standard);
+  border: 1px solid var(--rim-shade);
+  border-radius: var(--radius-control);
+  background: var(--surface-panel);
+  transition: opacity 160ms ease-out;
   position: absolute;
   z-index: 2;
   left: 50%;
@@ -1123,6 +1159,57 @@ button.mediaPreview {
   gap: var(--space-2);
   padding: var(--space-2);
 }
+.imageReviewToolbar button,
+.imageReviewToolbar a {
+  color: var(--text-standard);
+  background: transparent;
+  transition:
+    background-color 120ms ease-out,
+    scale 100ms ease-out;
+}
+@media (hover: hover) and (pointer: fine) {
+  .imageReviewToolbar button:enabled:hover,
+  .imageReviewToolbar a:hover {
+    background: var(--affordance-subtle-hover);
+  }
+}
+.imageReviewToolbar button:enabled:active,
+.imageReviewToolbar a:active {
+  background: var(--affordance-subtle-pressed);
+  scale: 0.94;
+}
+html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
+  outline: 2px solid var(--text-standard);
+  outline-offset: 2px;
+}
+.imageReviewZoom > button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.imageReviewZoom input {
+  accent-color: var(--text-standard);
+}
+@media (hover: hover) and (pointer: fine) {
+  /* Programmatic gallery focus can remain :focus-visible after a mouse click. */
+  html:not([data-keyboard-navigation])
+    .imageReviewStage:is(:not(:hover), [data-controls-idle])
+    .imageReviewToolbar,
+  .imageReviewStage:is(:not(:hover), [data-controls-idle]):not(
+      :focus-visible
+    ):not(:has(:focus-visible))
+    .imageReviewToolbar {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .imageReviewToolbar button,
+  .imageReviewToolbar a,
+  .imageReviewToolbar {
+    transition: none;
+  }
+}
+
 .imageReviewSwitcher,
 .imageReviewZoom {
   display: flex;
@@ -1133,7 +1220,7 @@ button.mediaPreview {
   padding-right: var(--space-2);
   border-right: 1px solid var(--border-prominent);
 }
-.imageReviewSwitcher span,
+.imageReviewSwitcher > span,
 .imageReviewPercent {
   min-width: 2.8rem;
   font-size: var(--text-caption);
@@ -1146,6 +1233,8 @@ button.mediaPreview {
 }
 @media (max-width: 650px) {
   .imageReviewToolbar {
+    width: auto;
+    max-width: none;
     right: var(--space-2);
     bottom: var(--space-2);
     left: var(--space-2);
@@ -1459,6 +1548,7 @@ button.mediaPreview {
 
 .messageActions {
   @apply popover-surface;
+  border-radius: var(--radius-pill);
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -1468,11 +1558,23 @@ button.mediaPreview {
   padding: var(--space-half);
   margin-inline-start: auto;
 }
-.messageActionNotice {
-  margin: var(--space-1) 0;
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  color: var(--text-subtle);
+.quickReactionGlyph {
+  pointer-events: none;
+  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+@media (hover: hover) and (pointer: fine) and (
+    prefers-reduced-motion: no-preference
+  ) {
+  .quickReaction:hover .quickReactionGlyph {
+    transform: scale(3) rotate(var(--reaction-hover-rotation, 0deg));
+  }
+  .quickReaction:hover {
+    position: relative;
+    z-index: 1;
+  }
 }
 @media (hover: hover) and (pointer: fine) and (min-width: 640px) {
   .messageActions {
@@ -1500,6 +1602,13 @@ button.mediaPreview {
 }
 .replyBranchSummary {
   margin-inline-start: var(--size-control);
+}
+/* Summary metadata can reflow as whole avatar/count groups at narrow widths. */
+.replyBranchSummary > button {
+  max-width: 100%;
+}
+.replyBranchSummary > button > [class~="buzz-button-label"] {
+  flex-wrap: wrap;
 }
 .replyBranchPanel {
   padding-inline-start: var(--reply-indent);
@@ -1867,6 +1976,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 .messageBubble
   > :is(
+    .imageGroup,
+    .fileGroup,
     .attachmentImage,
     .fileAttachment,
     .audioAttachment,
@@ -1875,6 +1986,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .messageBubble
   > .messageAvatar
   + :is(
+    .imageGroup,
+    .fileGroup,
     .attachmentImage,
     .fileAttachment,
     .audioAttachment,
@@ -1898,6 +2011,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   padding: 0;
   background: transparent;
 }
+.messageBubble[data-media-only] > .imageGroup,
 .messageBubble[data-media-only] > .attachmentImage:first-of-type,
 .messageBubble[data-media-only] > .messageAvatar + .attachmentImage {
   margin-top: 0;
@@ -1975,4 +2089,320 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 .messageBubble[data-own] .text th {
   color: var(--text-standard);
+}
+
+span.mediaTimeLink > :is(button, span) {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 var(--space-1h);
+  border-radius: calc(var(--radius-row) * 0.4);
+  background: var(--affordance-selected);
+  font: var(--text-mono--font-weight) var(--text-mono) var(--font-mono);
+}
+/* Shared dark media review and compact video surfaces. */
+.mediaPreview[data-video-preview] {
+  width: min(384px, 100%, calc(var(--media-ratio, 16 / 9) * 180px));
+  max-height: 256px;
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+}
+.mediaPreview[data-video-preview] .mediaVideo,
+.mediaPreview[data-video-preview] .mediaPoster {
+  object-fit: cover;
+}
+.mediaPreview[data-video-preview] .mediaExpand {
+  top: 8px;
+  right: 8px;
+}
+/* Shared chrome controls own their glass, colors, focus ring and shape. */
+.mediaPreview[data-video-preview] .mediaExpand button {
+  transition:
+    background-color 120ms ease-out,
+    scale 100ms ease-out;
+}
+.mediaPreview[data-video-preview] .mediaExpand button:enabled:active {
+  scale: 0.94;
+}
+.darkReviewBackdrop {
+  padding: calc(var(--space-8) + var(--space-2));
+  background: transparent;
+  display: grid;
+  place-items: center;
+}
+.mediaReviewViewer[data-color-mode="dark"] {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 24rem);
+  max-width: 1520px;
+  max-height: 980px;
+  border: 1px solid var(--affordance-subtle-hover);
+  border-radius: var(
+    --media-preview-radius,
+    calc(var(--radius-control) + var(--space-1))
+  );
+  background: var(--surface-inset);
+}
+.mediaReviewViewer[data-color-mode="dark"] .mediaReviewStage {
+  background: var(--surface-base);
+  padding: 0;
+}
+.mediaReviewViewer[data-color-mode="dark"] .mediaReviewHeading {
+  background: var(--surface-inset);
+  color: var(--text-standard);
+  border-bottom: 1px solid var(--border-standard);
+  gap: var(--space-3);
+  min-height: 48px;
+}
+.mediaReviewHeading > span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mediaReviewViewer[data-color-mode="dark"] .mediaReviewHeading button {
+  transition:
+    background-color 120ms ease-out,
+    scale 100ms ease-out;
+}
+.mediaReviewViewer[data-color-mode="dark"]
+  .mediaReviewHeading
+  button:enabled:active {
+  scale: 0.94;
+}
+.mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversation {
+  border-left: 1px solid var(--border-standard);
+}
+.mediaReviewViewer[data-comments-hidden] {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0px);
+}
+.mediaReviewThreadHeading strong {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.mediaReviewViewer[data-color-mode="dark"] .mediaReviewThreadHeading {
+  border-bottom: 1px solid var(--border-standard);
+  margin: 0 calc(-1 * var(--space-4)) var(--space-3);
+  padding: var(--space-4);
+}
+.mediaReviewViewer[data-color-mode="dark"] .mediaReviewThreadHeading > span {
+  border-radius: calc(var(--radius-row) * 0.8);
+  background: var(--border-standard);
+  padding: var(--space-half) var(--space-2);
+}
+.mediaReviewViewer[data-color-mode="dark"] .mediaReviewComment {
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+  border-radius: calc(var(--radius-row) * 0.8);
+  background: var(--surface-panel);
+}
+.mediaReviewComment[data-selected] {
+  outline: 1px solid var(--border-prominent);
+  outline-offset: -1px;
+}
+.mediaReviewViewer[data-color-mode="dark"] .mediaReviewThread .message {
+  padding: 0;
+  grid-template-columns: 24px minmax(0, 1fr);
+  column-gap: var(--space-2);
+}
+.mediaReviewViewer[data-color-mode="dark"] .mediaReviewThread .avatar {
+  width: 24px;
+  height: 24px;
+}
+
+.mediaReviewViewer[data-color-mode="dark"]
+  span.mediaTimeLink
+  > :is(button, span) {
+  color: var(--text-standard);
+  background: var(--affordance-subtle-hover);
+}
+.mediaReviewViewer[data-color-mode="dark"] .threadNote {
+  border: 1px dashed var(--surface-popover);
+  border-radius: calc(var(--radius-row) * 0.8);
+  padding: var(--space-6) var(--space-3);
+  text-align: center;
+}
+@media (max-width: 800px) {
+  .darkReviewBackdrop {
+    padding: var(--space-3);
+  }
+}
+
+.mediaPreview[data-video-preview]:has([aria-expanded="true"]) {
+  overflow: visible;
+  clip-path: none;
+  z-index: 5;
+}
+.mediaPreview[data-video-preview] .mediaVideo,
+.mediaPreview[data-video-preview] .mediaPoster {
+  border-radius: inherit;
+  clip-path: var(--media-corner-clip, none);
+}
+.mediaReviewViewer[data-color-mode="dark"] {
+  color: var(--text-standard);
+  color-scheme: dark;
+  --text: var(--text-standard);
+  --text-muted: var(--text-metadata);
+  --text-secondary: var(--text-metadata);
+  --surface: var(--surface-inset);
+  --surface-input: var(--surface-inset);
+  /* Legacy reaction roles must resolve here, not inherit the app root's mode. */
+  --surface-control: var(--affordance-subtle);
+  --surface-hover: var(--affordance-subtle-hover);
+  --border: var(--border-standard);
+  --border-input: var(--border-prominent);
+  --primary: var(--text-standard);
+  --on-primary: var(--surface-inset);
+}
+.mediaReviewViewer[data-color-mode="dark"]
+  .mediaReviewComment
+  .message
+  > :first-child,
+.mediaReviewViewer[data-color-mode="dark"]
+  .mediaReviewComment
+  [data-avatar-shape] {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  font-size: var(--text-caption);
+}
+@media (max-width: 900px) {
+  .mediaReviewViewer[data-color-mode="dark"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(160px, 1fr) minmax(0, min(44vh, 22rem));
+  }
+  .mediaReviewViewer[data-color-mode="dark"][data-comments-hidden] {
+    grid-template-rows: auto minmax(160px, 1fr) minmax(0, 0px);
+  }
+  .mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversation {
+    max-height: none;
+  }
+}
+
+/* Keep the time anchor in the first text line, allowing subsequent lines and
+   markdown blocks to retain their normal wrapping. */
+.mediaReviewComment .mediaTimeLink + .text:has(> p:first-child),
+.mediaReviewComment .mediaTimeLink + .text > p:first-child,
+.mediaReviewComment .mediaTimeLink + .text[data-single-emoji],
+.mediaReviewComment .mediaTimeLink + .plainText {
+  display: inline;
+}
+
+/* Keep the sidebar at its resting size as it fades over the resized stage. */
+.mediaReviewConversationContent {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversationContent {
+  width: 24rem;
+}
+.mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversation {
+  position: relative;
+  z-index: 1;
+  width: 24rem;
+  justify-self: end;
+}
+.mediaReviewViewer[data-review-resizing] .imageReviewStage {
+  overflow: visible;
+}
+.mediaReviewViewer[data-comments-motion] .mediaReviewConversation {
+  transition:
+    transform 200ms cubic-bezier(0.19, 1, 0.22, 1),
+    visibility 0s;
+}
+.mediaReviewViewer[data-comments-hidden] .mediaReviewConversation {
+  transform: translateX(100%);
+  visibility: hidden;
+  pointer-events: none;
+}
+.mediaReviewViewer[data-comments-motion][data-comments-hidden]
+  .mediaReviewConversation {
+  transition:
+    transform 200ms cubic-bezier(0.19, 1, 0.22, 1),
+    visibility 0s 200ms;
+}
+.mediaPreview[data-video-preview] .mediaExpand button {
+  transition:
+    opacity 160ms ease-out,
+    scale 100ms ease-out;
+}
+@media (max-width: 900px) {
+  .mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversation {
+    width: 100%;
+    height: min(44vh, 22rem);
+    align-self: end;
+  }
+  .mediaReviewViewer[data-comments-hidden] .mediaReviewConversation {
+    transform: translateY(100%);
+  }
+  .mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversationContent {
+    width: 100%;
+    height: min(44vh, 22rem);
+    flex: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mediaReviewViewer[data-comments-motion],
+  .mediaReviewViewer[data-comments-motion] .mediaReviewConversation,
+  .mediaReviewViewer[data-comments-motion][data-comments-hidden]
+    .mediaReviewConversation,
+  .mediaPreview[data-video-preview] .mediaExpand button {
+    transition: none;
+  }
+}
+
+/* Let the photo travel from its chat position before restoring pan clipping. */
+.mediaReviewViewer[data-review-opening],
+.mediaReviewViewer[data-review-opening] .imageReviewStage {
+  overflow: visible;
+}
+
+.mediaReviewScrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--bg-scrim);
+}
+.darkReviewBackdrop > .mediaReviewViewer {
+  position: relative;
+}
+.mediaReviewViewer[data-review-closing] {
+  pointer-events: none;
+  transition: none;
+}
+.mediaReviewViewer[data-review-closing="shared"],
+.mediaReviewViewer[data-review-closing="shared"] .imageReviewStage {
+  overflow: visible;
+}
+
+.darkReviewBackdrop:has([data-review-pending]) {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mediaPreview[data-video-preview] .mediaExpand button,
+  .mediaReviewViewer[data-color-mode="dark"] .mediaReviewHeading button {
+    transition: none;
+  }
+}
+
+.mediaPreview[data-image-preview] {
+  cursor: zoom-in;
+}
+
+.imageReviewStage > img[data-gallery-departing] {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.imageReviewStage[data-gallery-loading] > img[data-review-media] {
+  visibility: hidden;
+}
+
+/* Focus the gallery/dialog itself for navigation; interactive controls keep their rings. */
+.imageReviewStage:focus,
+.mediaReviewViewer:focus {
+  outline: none;
 }

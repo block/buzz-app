@@ -1,4 +1,5 @@
 import { expect, test, type Locator } from "@playwright/test";
+import { watchPageErrors } from "../../browser/page-errors.mjs";
 import { COMPONENTS } from "../../../src/shared/design-system/ui/registry";
 import { PHOSPHOR_ICONS } from "../../../src/shared/design-system/icons/inventory";
 
@@ -85,6 +86,44 @@ test("status badges keep avatar sizes and show a clear cutout in both modes", as
       await expect(dot).toHaveCSS("background-image", "none");
       await expect(dot).toHaveCSS("box-shadow", "none");
     }
+    // The same-status outline is what meets the surrounding surface. Check
+    // the actual CSS paint stack in the browser, including squircle masks.
+    for (const status of ["online", "away", "offline"]) {
+      const dots = page.locator(
+        `.buzz-avatar-status[data-status="${status}"] .buzz-avatar-status-dot`,
+      );
+      const centers = await dots.evaluateAll((elements) =>
+        elements.map((element) => {
+          const outer = getComputedStyle(element);
+          const inner = getComputedStyle(element, "::after");
+          return {
+            content: inner.content,
+            inset: inner.inset,
+            color: inner.backgroundColor,
+            mask: inner.maskImage,
+            outerMask: outer.maskImage,
+          };
+        }),
+      );
+      for (const center of centers) {
+        if (status === "offline") {
+          expect(center.content).toBe("none");
+        } else {
+          expect(center.content).toBe('""');
+          expect(center.inset).toBe("1px");
+          expect(center.mask).toBe(center.outerMask);
+          expect(center.color).toBe(
+            status === "online"
+              ? mode === "light"
+                ? "rgb(43, 154, 102)"
+                : "rgb(51, 176, 116)"
+              : mode === "light"
+                ? "rgb(255, 186, 24)"
+                : "rgb(255, 214, 10)",
+          );
+        }
+      }
+    }
     const box = await large.boundingBox();
     if (!box) throw new Error("Large status avatar is not visible");
     const clip = {
@@ -128,6 +167,10 @@ test("status badges keep avatar sizes and show a clear cutout in both modes", as
     expect(difference(paint.gap, paint.background), `${mode} gap`).toBeLessThan(
       12,
     );
+    expect(
+      difference(paint.dot, mode === "light" ? [43, 154, 102] : [51, 176, 116]),
+      `${mode} rendered step-10 center`,
+    ).toBeLessThan(3);
     expect(
       difference(paint.dot, paint.background),
       `${mode} dot`,
@@ -216,7 +259,7 @@ test("built viewer loads every specimen and foundation without app connections",
 }) => {
   const failures: string[] = [];
   const sockets: string[] = [];
-  page.on("pageerror", (e) => failures.push(e.message));
+  const pageErrors = watchPageErrors(page);
   page.on("response", (r) => {
     if (r.status() >= 400) failures.push(`${r.status()} ${r.url()}`);
   });
@@ -291,7 +334,7 @@ test("built viewer loads every specimen and foundation without app connections",
   await expect(
     nav.getByRole("link", { name: /Conversation|Agent work/ }),
   ).toHaveCount(0);
-  expect(failures).toEqual([]);
+  expect([...pageErrors.unexplained(), ...failures]).toEqual([]);
   expect(sockets).toEqual([]);
 });
 
@@ -527,7 +570,7 @@ test("narrow, intermediate and wide layouts preserve theme and keyboard interact
       : "Tab";
   await page.keyboard.press(tab);
   await expect(
-    page.getByRole("button", { name: "subtle sm", exact: true }),
+    page.getByRole("button", { name: "subtle xs", exact: true }),
   ).toBeFocused();
   await expect(page.locator("html")).toHaveAttribute(
     "data-keyboard-navigation",
@@ -539,7 +582,7 @@ test("narrow, intermediate and wide layouts preserve theme and keyboard interact
   );
   await page.keyboard.press(tab);
   await expect(
-    page.getByRole("button", { name: "subtle sm", exact: true }),
+    page.getByRole("button", { name: "subtle xs", exact: true }),
   ).toBeFocused();
   await expect(page.locator("html")).toHaveAttribute(
     "data-keyboard-navigation",
@@ -731,7 +774,7 @@ test("a stale or renamed link explains itself instead of rendering blank", async
   page,
 }) => {
   const failures: string[] = [];
-  page.on("pageerror", (e) => failures.push(e.message));
+  const pageErrors = watchPageErrors(page);
   for (const hash of [
     "#/design/components/renamed-away",
     "#/design/colours",
@@ -749,7 +792,7 @@ test("a stale or renamed link explains itself instead of rendering blank", async
       page.getByRole("heading", { name: "Buzz Design System", exact: true }),
     ).toBeVisible();
   }
-  expect(failures).toEqual([]);
+  expect([...pageErrors.unexplained(), ...failures]).toEqual([]);
 });
 
 test("switch labels activate the control and busy switches preserve focus", async ({
@@ -1026,6 +1069,8 @@ test("buttons and icon buttons share size geometry and preserve loading and disa
             )
             .toBe(true);
         } else {
+          // Half the 52px large height; shorter sizes clamp to their own half-height.
+          await expect(button).toHaveCSS("border-radius", "26px");
           await expect(button).toHaveCSS(
             "padding-left",
             size === "sm" ? "16px" : "24px",
@@ -1087,7 +1132,7 @@ test("buttons and icon buttons share size geometry and preserve loading and disa
   }
 });
 
-test("button loading keeps focus and wrapping fits narrow enlarged layouts", async ({
+test("button loading keeps focus and labels stay single-line in constrained layouts", async ({
   page,
   browserName,
 }) => {
@@ -1140,25 +1185,47 @@ test("button loading keeps focus and wrapping fits narrow enlarged layouts", asy
       return color;
     }),
   );
+  await page.evaluate(() => document.fonts.ready);
   for (const width of [390, 800, 1280]) {
     await page.setViewportSize({ width, height: 900 });
-    await page.evaluate(() => {
-      document.documentElement.style.fontSize = "200%";
-    });
-    const long = page.getByRole("button", {
-      name: "Allow notifications for this workspace",
-      exact: true,
-    });
-    await expect
-      .poll(() => long.evaluate((el) => el.scrollWidth <= el.clientWidth))
-      .toBe(true);
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      )
-      .toBe(true);
+    for (const fontSize of ["100%", "200%"]) {
+      await page.evaluate((size) => {
+        document.documentElement.style.fontSize = size;
+      }, fontSize);
+      for (const name of [
+        "Apply changes",
+        "Allow notifications for this workspace",
+      ]) {
+        const button = page.getByRole("button", { name, exact: true });
+        const label = button.locator(".buzz-button-label");
+        await expect(button).toHaveCSS("flex-shrink", "0");
+        await expect(label).toHaveCSS("white-space", "nowrap");
+        await expect
+          .poll(() =>
+            label.evaluate((el) => {
+              const text = [...el.childNodes].find(
+                (node) =>
+                  node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+              );
+              if (!text) return 0;
+              const range = document.createRange();
+              range.selectNodeContents(text);
+              return range.getClientRects().length;
+            }),
+          )
+          .toBe(1);
+        await expect
+          .poll(() => button.evaluate((el) => el.scrollWidth <= el.clientWidth))
+          .toBe(true);
+      }
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+          ),
+        )
+        .toBe(true);
+    }
     await page.evaluate(() => {
       document.documentElement.style.removeProperty("font-size");
     });
@@ -1455,7 +1522,7 @@ test("built Messages gallery renders isolated product states and follows viewer 
 }) => {
   const failures: string[] = [];
   const sockets: string[] = [];
-  page.on("pageerror", (error) => failures.push(error.message));
+  const pageErrors = watchPageErrors(page);
   page.on("response", (response) => {
     if (response.status() >= 400)
       failures.push(`${response.status()} ${response.url()}`);
@@ -1547,7 +1614,7 @@ test("built Messages gallery renders isolated product states and follows viewer 
   ).toBeVisible();
   await page.reload();
   await expect(gallery.locator(".message-gallery-example")).toHaveCount(33);
-  expect(failures).toEqual([]);
+  expect([...pageErrors.unexplained(), ...failures]).toEqual([]);
   expect(sockets).toEqual([]);
 });
 

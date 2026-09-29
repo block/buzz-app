@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
+import { watchPageErrors } from "./page-errors.mjs";
 
 const fixtureImage = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#666"/></svg>`;
 
@@ -150,29 +151,36 @@ test("inline video controls hide only while playing off-hover on fine pointers",
       !finePointer,
       "Browser project does not expose a hover-capable fine pointer.",
     );
+    // Expand fades the button itself so its backdrop can sample video throughout
+    // the transition; the positioning wrapper deliberately stays opaque.
+    const controls = (state) => [
+      page.getByTestId(`${state}-play`),
+      page.getByTestId(`${state}-time`),
+      page.getByTestId(`${state}-expand`).getByRole("button"),
+    ];
     const preview = page.getByTestId("playing-preview");
     await visibleBox(preview);
-    for (const control of ["playing-play", "playing-time", "playing-expand"]) {
-      await expect(page.getByTestId(control)).toHaveCSS("opacity", "0");
+    for (const control of controls("playing")) {
+      await expect(control).toHaveCSS("opacity", "0");
     }
     await preview.hover();
-    for (const control of ["playing-play", "playing-time", "playing-expand"]) {
-      await expect(page.getByTestId(control)).toHaveCSS("opacity", "1");
+    for (const control of controls("playing")) {
+      await expect(control).toHaveCSS("opacity", "1");
     }
     await page.mouse.move(1, 1);
-    for (const control of ["playing-play", "playing-time", "playing-expand"]) {
-      await expect(page.getByTestId(control)).toHaveCSS("opacity", "0");
+    for (const control of controls("playing")) {
+      await expect(control).toHaveCSS("opacity", "0");
     }
     await page.getByTestId("playing-play").getByRole("button").focus();
-    for (const control of ["playing-play", "playing-time", "playing-expand"]) {
-      await expect(page.getByTestId(control)).toHaveCSS("opacity", "1");
+    for (const control of controls("playing")) {
+      await expect(control).toHaveCSS("opacity", "1");
     }
     await page.getByRole("button", { name: "First root" }).focus();
-    for (const control of ["playing-play", "playing-time", "playing-expand"]) {
-      await expect(page.getByTestId(control)).toHaveCSS("opacity", "0");
+    for (const control of controls("playing")) {
+      await expect(control).toHaveCSS("opacity", "0");
     }
-    for (const control of ["idle-play", "idle-time", "idle-expand"]) {
-      await expect(page.getByTestId(control)).toHaveCSS("opacity", "1");
+    for (const control of controls("idle")) {
+      await expect(control).toHaveCSS("opacity", "1");
     }
   });
 });
@@ -255,8 +263,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
   page,
 }, testInfo) => {
   const server = await createMessagesServer();
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const errors = watchPageErrors(page);
   try {
     await server.listen();
     const address = server.httpServer.address();
@@ -571,7 +578,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       await expect(literal).toBeVisible();
       await expect(literal).toHaveCSS("white-space", "pre-wrap");
     }
-    expect(errors).toEqual([]);
+    expect(errors.unexplained()).toEqual([]);
   } finally {
     await server.close();
   }

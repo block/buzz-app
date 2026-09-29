@@ -257,6 +257,8 @@ it("confirmation, pending lockout and failed-write recovery stay in the actual d
     name: "Channel name confirmation",
   });
   expect(confirmationInput.getAttribute("autocapitalize")).toBe("none");
+  expect(confirmationInput.getAttribute("autocorrect")).toBe("off");
+  expect(confirmationInput.getAttribute("spellcheck")).toBe("false");
   await user.type(confirmationInput, "Fixture");
   await user.click(confirm);
   await waitFor(() => expect(lifecycle.run).toHaveBeenCalledOnce());

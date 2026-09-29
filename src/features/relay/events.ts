@@ -64,8 +64,10 @@ export function createEventVerifier() {
       return true;
     });
   /** Bulk reads: validate and copy wire fields here, check new signatures on a
-   * worker so they never compete with input and rendering. One bad signature
-   * rejects the whole batch, as the single-event path does. */
+   * worker so they never compete with input and rendering. Reads within one
+   * inline batch skip the round-trip, keeping small startup reads (rosters,
+   * presence) in their inline order. One bad signature rejects the whole batch,
+   * as the single-event path does. */
   async function many(
     values: readonly unknown[],
     signal?: AbortSignal,
@@ -83,16 +85,16 @@ export function createEventVerifier() {
     });
     clientMetrics.cpu("verify.read", 0, owned.length);
     clientMetrics.cpu("verify.reused", 0, owned.length - fresh.length);
-    const worker = fresh.length
-      ? await checkSignatures(fresh, signal)
-      : undefined;
+    const worker =
+      fresh.length > BATCH ? await checkSignatures(fresh, signal) : undefined;
     cancelled();
     if (worker) {
       clientMetrics.cpu("verify.worker", worker.ms, fresh.length);
       if (!worker.ok) throw invalidEvent();
       for (const event of fresh) remember(event);
     } else {
-      // No worker (tests, or it failed to load): check inline between yields.
+      // Small read, or no worker (tests, or it failed to load): check inline
+      // between yields.
       await inBatches(fresh.length, cancelled, (index) => {
         const event = fresh[index] as Event;
         if (!verifyEvent(event)) throw invalidEvent();

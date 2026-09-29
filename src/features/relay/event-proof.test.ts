@@ -248,16 +248,33 @@ describe("background signature checks", () => {
     expect(await verify.many(batch)).toHaveLength(70);
     expect(posted).toHaveLength(2); // proofs reused, nothing re-sent
     await expect(
+      verify.many([
+        ...messages(12, "bad"),
+        { ...wire(), sig: "0".repeat(128) },
+      ]),
+    ).rejects.toThrow(/malformed/);
+  });
+
+  it("checks a read within one inline batch without a worker round-trip", async () => {
+    const { verify, posted } = await stubWorker();
+    expect(await verify.many(messages(12))).toHaveLength(12);
+    expect(posted).toHaveLength(0);
+    expect(verifyEvent).toHaveBeenCalledTimes(12);
+    await expect(
       verify.many([wire(), { ...wire(), sig: "0".repeat(128) }]),
     ).rejects.toThrow(/malformed/);
   });
 
   it("falls back to inline checks when the worker fails", async () => {
-    const { verify } = await stubWorker({ fail: true });
-    expect(await verify.many([wire()])).toHaveLength(1);
-    expect(verifyEvent).toHaveBeenCalledTimes(1);
+    const { verify, posted } = await stubWorker({ fail: true });
+    expect(await verify.many(messages(13))).toHaveLength(13);
+    expect(posted).toHaveLength(1);
+    expect(verifyEvent).toHaveBeenCalledTimes(13);
     await expect(
-      verify.many([{ ...wire(), content: "x", id: event.id }]),
+      verify.many([
+        ...messages(12, "next"),
+        { ...wire(), content: "x", id: event.id },
+      ]),
     ).rejects.toThrow(/malformed/);
   });
 
@@ -287,20 +304,20 @@ describe("background signature checks", () => {
     await vi.waitFor(() => expect(posted).toHaveLength(1));
     abort.abort();
     await expect(cancelled).rejects.toThrow(/cancelled/);
-    const next = verify.many(messages(1, "new"));
+    const next = verify.many(messages(13, "new"));
     await vi.waitFor(() => expect(pending).toHaveLength(1));
     pending.shift()?.(); // the obsolete chunk already on the worker finishes
     await vi.waitFor(() => expect(pending).toHaveLength(1));
     pending.shift()?.();
-    expect(await next).toHaveLength(1);
-    expect(posted.map((events) => events.length)).toEqual([64, 1]);
+    expect(await next).toHaveLength(13);
+    expect(posted.map((events) => events.length)).toEqual([64, 13]);
   });
 
   it("does not dispatch a read that was cancelled before its checks", async () => {
     const { verify, posted } = await stubWorker({ held: true });
     const abort = new AbortController();
     abort.abort();
-    await expect(verify.many(messages(3), abort.signal)).rejects.toThrow(
+    await expect(verify.many(messages(13), abort.signal)).rejects.toThrow(
       /cancelled/,
     );
     expect(posted).toHaveLength(0);

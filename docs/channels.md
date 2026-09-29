@@ -370,7 +370,8 @@ The port retains the prepared-store implementation and its behavior tests:
 - 1,024 profile entries / 2 MiB signed-record budget, narrow row profile selectors,
   and request-warmed avatars (fetched and decoded, nothing retained; disabled
   under the Save-Data preference). Bulk reads check signatures on background
-  workers, falling back to inline checks that yield in batches.
+  workers; reads of up to 12 new events, or any read without workers, check
+  inline in batches that yield.
 - Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour
   expiry. Cached events are integrity-checked before display (see Local-first
   launch). The same database

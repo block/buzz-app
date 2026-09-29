@@ -40,7 +40,8 @@ test("Developer opens through App routing and restores from history", async ({
 });
 
 test.describe("client performance", () => {
-  test.use({ historyCounts: { alpha: 1, beta: 1 } });
+  // Beta's head read exceeds one inline batch, so its checks use the worker.
+  test.use({ historyCounts: { alpha: 1, beta: 20 } });
   test("records channel opens by source and exports them", async ({
     page,
     app,

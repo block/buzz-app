@@ -569,32 +569,16 @@ for (const width of [1492, 1280, 1024, 700, 390])
       await expect(actions).toHaveCount(1);
       await expect(actions).toHaveCSS("opacity", "1");
       if (width >= 640) {
-        // Check the visual relationship, not a copied legacy offset: a header
-        // bar ends at the body, while a continuation retains its extra lift.
+        // Both author headers and headerless continuations end the bar at the
+        // body edge, independent of row padding and toolbar height.
         const placement = await row.evaluate((node) => {
-          const message = node.querySelector("[data-layout]");
           const bar = node.querySelector('[aria-label="Message actions"]');
-          const bounds = bar.getBoundingClientRect();
-          if (message.dataset.layout !== "continuation") {
-            const body = node.querySelector(
-              '[class*="_text_"], [class*="_plainText_"]',
-            );
-            return {
-              actual: bounds.bottom,
-              expected: body.getBoundingClientRect().top,
-            };
-          }
-          const ruler = document.createElement("span");
-          ruler.style.cssText = "position:absolute;width:var(--space-3)";
-          message.append(ruler);
-          const extraLift = ruler.getBoundingClientRect().width;
-          ruler.remove();
+          const body = node.querySelector(
+            '[class*="_text_"], [class*="_plainText_"]',
+          );
           return {
-            actual:
-              bounds.top +
-              bounds.height / 2 -
-              message.getBoundingClientRect().top,
-            expected: -extraLift,
+            actual: bar.getBoundingClientRect().bottom,
+            expected: body.getBoundingClientRect().top,
           };
         });
         expect(placement.actual).toBeCloseTo(placement.expected, 1);

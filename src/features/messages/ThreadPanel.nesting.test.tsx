@@ -436,11 +436,13 @@ for (const focused of ["row", "button", "link"] as const) {
 
 it("does not steal focus moved after removal but before queued recovery", async () => {
   const h = setup("child");
-  screen.getByRole("button", { name: "Reply to child" }).focus();
+  const child = screen.getByRole("button", { name: "Reply to child" });
+  child.focus();
   const send = screen.getByRole("button", { name: "Send fixture reply" });
-  await act(async () => {
-    h.update([row("parent", "root")]);
-    send.focus();
-  });
+  h.update([row("parent", "root")]);
+  expect(child.isConnected).toBe(false);
+  expect(document.body).toHaveFocus();
+  send.focus();
+  await act(async () => {});
   expect(send).toHaveFocus();
 });

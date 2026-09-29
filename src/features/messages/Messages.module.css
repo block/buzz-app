@@ -1571,6 +1571,7 @@ html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
     inset-inline-end: 0;
     top: calc(100% + var(--space-1));
     translate: 0 -100%;
+    z-index: 2;
     opacity: 0;
     pointer-events: none;
     margin-inline-start: 0;
@@ -1579,13 +1580,10 @@ html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
   .messageHeader {
     position: relative;
   }
-  .message[data-layout="continuation"] .messageHeader {
-    position: static;
-  }
-  /* Headerless continuations need the legacy extra lift to clear body ink. */
+  /* A continuation has no visible author line; end the bar at its header
+     instead of deriving clearance from row padding or half the bar's height. */
   .message[data-layout="continuation"] .messageActions {
-    top: calc(-1 * var(--space-3));
-    translate: 0 -50%;
+    top: 0;
   }
   /* Keep pointer travel to the lifted bar inside the hovered row without
      changing spacing or intercepting the preceding row while at rest. */

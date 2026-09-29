@@ -833,7 +833,7 @@ it.each([9, 40002])(
   },
 );
 
-it("labels the first local pending agent slot as one reply without altering relay counts", () => {
+it("labels the first local agent slot as awaiting response, never a fabricated reply", () => {
   const recipient = "agent";
   const root = { ...row, replyCount: 0, mentions: [recipient] };
   const channels = { status: "ready", channels: [] };
@@ -871,11 +871,13 @@ it("labels the first local pending agent slot as one reply without altering rela
     view.unmount();
     return html;
   };
-  expect(renderCount(0)).toContain("1 reply</span>");
+  expect(renderCount(0)).toContain("1 agent awaiting response</span>");
   expect(renderCount(0)).toContain('aria-description="Agent response pending"');
   expect(renderCount(2)).toContain("2 replies</span>");
   expect(renderCount(2)).not.toContain("Agent response pending");
-  expect(renderCount(0, "failed")).not.toContain("1 reply</span>");
+  expect(renderCount(0, "failed")).not.toContain(
+    "1 agent awaiting response</span>",
+  );
   expect(root.replyCount).toBe(0);
 });
 it.each([

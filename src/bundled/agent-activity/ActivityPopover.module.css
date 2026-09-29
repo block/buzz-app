@@ -1,0 +1,76 @@
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0;
+  text-align: start;
+  margin-top: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--text-subtle);
+  cursor: pointer;
+}
+.actions {
+  display: flex;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+.popup {
+  width: min(360px, var(--available-width));
+  max-height: min(420px, var(--available-height));
+  overflow: hidden;
+  background: var(--surface-popover);
+  color: var(--text-standard);
+  border-radius: var(--radius-panel);
+  /* Grow from the actual text bounds without resizing the thread. */
+  clip-path: inset(calc(-1 * var(--space-2)) round var(--radius-panel));
+  transition:
+    clip-path 220ms cubic-bezier(0.77, 0, 0.175, 1),
+    background-color 220ms;
+}
+.popup[data-starting-style],
+.popup[data-ending-style] {
+  clip-path: inset(
+    0 max(0px, calc(100% - var(--anchor-width)))
+      max(0px, calc(100% - var(--anchor-height))) 0 round var(--radius-chip)
+  );
+  background: transparent;
+}
+.popup[data-side="top"][data-starting-style],
+.popup[data-side="top"][data-ending-style] {
+  clip-path: inset(
+    max(0px, calc(100% - var(--anchor-height)))
+      max(0px, calc(100% - var(--anchor-width))) 0 0 round var(--radius-chip)
+  );
+}
+.content {
+  padding: var(--space-4);
+  opacity: 1;
+  transition: opacity 120ms;
+}
+.popup[data-starting-style] .content,
+.popup[data-ending-style] .content {
+  opacity: 0;
+}
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.stream {
+  max-height: min(300px, calc(var(--available-height) - 100px));
+  overflow: auto;
+}
+.popup[data-keyboard],
+.popup[data-keyboard] .content {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .popup,
+  .content {
+    transition: none;
+  }
+}

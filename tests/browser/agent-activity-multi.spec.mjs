@@ -329,11 +329,10 @@ test("three recipients work independently through coordination, replies and a no
     entry(agents[0]).getByRole("button", { name: "Thinking…", exact: true }),
   ).toBeVisible();
   await waiting.click();
-  await entry(agents[2])
-    .getByRole("button", { name: /Turn error/ })
-    .click();
+  const errorPopup = page.getByRole("dialog", { name: "Scout", exact: true });
+  await errorPopup.getByRole("button", { name: /Turn error/ }).click();
   await expect(
-    entry(agents[2]).getByText("Agent C could not finish; no reply was sent.", {
+    errorPopup.getByText("Agent C could not finish; no reply was sent.", {
       exact: true,
     }),
   ).toBeVisible();
@@ -597,6 +596,14 @@ test("three recipients work independently through coordination, replies and a no
       'xpath=ancestor::*[@aria-label="Agent coordination and activity"]',
     ),
   ).toHaveCount(0);
+  // Its ancestor body can close without hiding or acknowledging the answer.
+  await thread
+    .getByRole("button", { name: "Hide coordination messages", exact: true })
+    .click();
+  await expect(thread.locator(`[data-message-id="${later.id}"]`)).toHaveCount(
+    0,
+  );
+  await expect(nestedRow).toBeVisible();
   await nestedRow.hover();
   await nestedRow.getByRole("button", { name: "Reply", exact: true }).click();
   await expect(

@@ -292,7 +292,7 @@ function ThreadMessages({
   // including profile hints, rather than a narrower second inventory view.
   const groupAgents = new Set(agentPubkeys);
   if (session.viewer) groupAgents.delete(session.viewer);
-  // A visible descendant breaks coordination collapse along its loaded ancestry.
+  // A visible descendant opens its branch path, never a coordination body.
   // Ordinary non-coordination branches retain main's explicit branch controls.
   const byId = new Map(snapshot.replies.map((row) => [row.id, row]));
   const visibleAncestors = new Set(
@@ -336,22 +336,34 @@ function ThreadMessages({
     let restore = false;
     return (branch: HTMLLIElement | null) => {
       if (!branch) return;
-      const row = branch.querySelector<HTMLElement>("[data-message-id]");
-      if (
-        restore &&
-        row &&
-        !navigation?.signal.aborted &&
-        !branch.closest("[inert]") &&
-        document.activeElement === document.body
-      ) {
-        row.tabIndex = -1;
-        row.focus({ preventScroll: true });
-      }
+      const restoreNow = restore;
+      const restoreTarget = () => {
+        const row = [
+          ...branch.querySelectorAll<HTMLElement>("[data-message-id]"),
+        ].find((item) => item.dataset.messageId === messageId);
+        if (
+          restoreNow &&
+          row?.isConnected &&
+          !navigation?.signal.aborted &&
+          (!navigation?.signal ||
+            collapsedReveal.current !== navigation?.signal) &&
+          !branch.closest("[inert]") &&
+          document.activeElement === document.body
+        ) {
+          row.tabIndex = -1;
+          row.focus({ preventScroll: true });
+        }
+      };
+      restoreTarget();
+      // Body-only coordination can mount during the child's layout effect.
+      if (restoreNow) queueMicrotask(restoreTarget);
       restore = false;
       return () => {
+        const focused = document.activeElement;
         restore =
-          row?.dataset.messageId === messageId &&
-          document.activeElement === row;
+          focused instanceof HTMLElement &&
+          branch.contains(focused) &&
+          focused.dataset.messageId === messageId;
         // Ancestor expansion happens synchronously in a layout effect. Do not
         // retain focus intent after this update (collapse, deletion, or unmount).
         queueMicrotask(() => {
@@ -678,7 +690,7 @@ function ThreadMessages({
     const unreadLabel = unreadCount
       ? `${unreadCount} new in available replies`
       : undefined;
-    const message = (branchControl?: ReactNode) => (
+    const messageRow = (branchControl?: ReactNode) => (
       <MessageRow
         branchControl={branchControl}
         extensions={extensions}
@@ -702,6 +714,45 @@ function ThreadMessages({
           : {})}
       />
     );
+    const collapsedCoordination =
+      visibleAncestors.has(row.id) &&
+      row.id !== replyParent &&
+      isAgentCoordination(row, groupAgents, session.viewer);
+    if (collapsedCoordination) previousReply = undefined;
+    const message = (branchControl?: ReactNode) =>
+      collapsedCoordination ? (
+        <ThreadAgentGroup
+          block={{
+            kind: "agents",
+            id: row.id,
+            rows: [row],
+            agents: [row.authorId],
+            tail: false,
+          }}
+          session={session}
+          profiles={profiles}
+          coordination={
+            <ol>
+              <li>{messageRow()}</li>
+            </ol>
+          }
+          reveal={
+            !rootTarget &&
+            row.id === messageId &&
+            collapsedReveal.current !== navigation?.signal
+              ? navigation?.signal
+              : undefined
+          }
+          onHideCoordination={() => {
+            if (row.id === messageId)
+              collapsedReveal.current = navigation?.signal;
+          }}
+        >
+          {null}
+        </ThreadAgentGroup>
+      ) : (
+        messageRow(branchControl)
+      );
     return (
       <li
         key={row.id}
@@ -724,7 +775,9 @@ function ThreadMessages({
             <ReplySummary
               count={descendants.length}
               participants={[
-                ...new Set(descendants.map((reply) => reply.authorId)),
+                ...new Set(
+                  [...descendants].reverse().map((reply) => reply.authorId),
+                ),
               ]}
               profiles={profiles}
               agentPubkeys={agentPubkeys}

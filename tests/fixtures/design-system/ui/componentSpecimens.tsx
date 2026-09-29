@@ -1,3 +1,4 @@
+import { Shimmer } from "../../../../src/shared/design-system/ui/Shimmer";
 import { Calendar } from "../../../../src/shared/design-system/ui/Calendar";
 import { FieldButton } from "../../../../src/shared/design-system/ui/FieldButton";
 import {
@@ -1019,6 +1020,20 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   "choice-row": ChoiceRowSpecimen,
   select: SelectExamples,
   combobox: ComboboxExamples,
+  shimmer: () => (
+    <SpecimenFrame>
+      <SpecimenGroup label="Live activity">
+        <p className="text-body text-subtle">
+          <Shimmer>Reading project files…</Shimmer>
+        </p>
+      </SpecimenGroup>
+      <SpecimenGroup label="Inactive">
+        <p className="text-body text-subtle">
+          <Shimmer active={false}>Details may be out of date</Shimmer>
+        </p>
+      </SpecimenGroup>
+    </SpecimenFrame>
+  ),
   switch: SwitchSpecimen,
   "preference-row": SwitchSpecimen,
   accordion: () => (

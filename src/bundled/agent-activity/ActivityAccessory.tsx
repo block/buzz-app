@@ -22,7 +22,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { usePresenceStatus } from "../../features/presence/react";
 import { ActivityStream } from "./ActivityStream";
 import { ResponseActivity } from "./ResponseActivity";
-import { ActivityDisclosure } from "./ActivityDisclosure";
+import { ActivityPopover } from "./ActivityPopover";
 import { ActivityFeedStatus } from "./ActivityFeedStatus";
 import styles from "./ActivityAccessory.module.css";
 
@@ -189,6 +189,7 @@ function ActivityEntry({
     moved: boolean;
   } | null>(null);
   const suppressClick = useRef(false);
+  const expandedPanel = useRef(false);
   const target = activityTarget(
     agent,
     channelId,
@@ -199,7 +200,10 @@ function ActivityEntry({
     region.current
       ?.querySelector<HTMLButtonElement>("button")
       ?.focus({ preventScroll: true });
-    if (canOpen(target) && open(target)) expand([]);
+    if (canOpen(target) && open(target)) {
+      expandedPanel.current = true;
+      expand([]);
+    }
     setMenu(false);
   }
   const delivery = request?.message.delivery;
@@ -363,10 +367,17 @@ function ActivityEntry({
               }
             }}
           >
-            <ActivityDisclosure
+            <ActivityPopover
+              name={name}
               label={label}
-              expanded={expanded.length > 0}
-              onExpand={(value) => expand(value ? ["activity"] : [])}
+              working={replacesTyping}
+              open={expanded.length > 0}
+              onOpenChange={(value) => {
+                if (value) expandedPanel.current = false;
+                expand(value ? ["activity"] : []);
+              }}
+              finalFocus={() => !expandedPanel.current}
+              onExpand={canOpen(target) ? detach : undefined}
             >
               <ActivityFeedStatus
                 status={feedStatus}
@@ -413,7 +424,7 @@ function ActivityEntry({
                   />
                 </div>
               )}
-            </ActivityDisclosure>
+            </ActivityPopover>
           </ContextMenu.Trigger>
           <ContextMenu.Portal>
             <ContextMenu.Positioner>

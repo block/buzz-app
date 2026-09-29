@@ -112,6 +112,19 @@ export type ComponentDefinition = {
 
 export const COMPONENTS: readonly ComponentDefinition[] = [
   {
+    slug: "shimmer",
+    name: "Shimmer",
+    purpose: "A quiet text sweep that signals ongoing work.",
+    behavior:
+      "Keeps text and semantics intact; inactive, reduced-motion and forced-color states render ordinary text. Callers own activity freshness.",
+    variants: ["active", "inactive"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Shimmer.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
     slug: "calendar",
     name: "Calendar",
     purpose: "Choose a date using a month grid.",

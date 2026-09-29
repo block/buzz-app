@@ -901,30 +901,38 @@ it("shows bounded participant avatars on the real reply control, through the med
     throw new Error("Invalid reply summary");
   const control = ReplySummary(summary.props);
   const avatars = elements(control).filter((e) => e.type === Avatar);
-  expect(avatars.map((avatar) => avatar.props)).toEqual([
-    {
-      src: "https://proxy/avatar",
-      alt: "",
-      fallback: "Alice",
-      size: "fill",
-      shape: "circle",
-    },
-    {
-      src: undefined,
-      alt: "",
-      fallback: "Brain",
-      size: "fill",
-      shape: "circle",
-    },
-    { src: undefined, alt: "", fallback: "p3", size: "fill", shape: "circle" },
-  ]);
+  expect(avatars.map((avatar) => avatar.props)).toEqual(
+    [
+      {
+        src: "https://proxy/avatar",
+        alt: "",
+        fallback: "Alice",
+        size: "fill",
+        shape: "circle",
+      },
+      {
+        src: undefined,
+        alt: "",
+        fallback: "Brain",
+        size: "fill",
+        shape: "circle",
+      },
+      {
+        src: undefined,
+        alt: "",
+        fallback: "p3",
+        size: "fill",
+        shape: "circle",
+      },
+    ].reverse(),
+  );
   expect(media).toHaveBeenCalledWith("https://safe/avatar", "small");
   expect(media).toHaveBeenCalledWith("http://unsafe", "small");
   expect(
     elements(control)
       .filter((e) => e.props.title)
       .map((e) => e.props.title),
-  ).toEqual(["Alice", "Brain", "p3"]);
+  ).toEqual(["p3", "Brain", "Alice"]);
   expect(
     elements(control).some(
       (e) =>

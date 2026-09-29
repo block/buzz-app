@@ -15,6 +15,10 @@ const channelActivity = (page) =>
     exact: true,
   });
 const channelScope = "Channel activity, including other threads";
+const activityPopup = (page) =>
+  page.getByRole("dialog").filter({
+    has: page.getByRole("button", { name: "Close activity", exact: true }),
+  });
 
 async function openSidePanel(page, entry, keyboard = false) {
   if (keyboard) {
@@ -834,6 +838,23 @@ test.describe("thread activity", () => {
       name: "Thread messages",
       exact: true,
     });
+    // Browser-only: hover must not steal draft focus or resize thread content.
+    const draft = form.getByRole("textbox");
+    await draft.fill("Hover preserves this draft");
+    await draft.focus();
+    await entry.scrollIntoViewIfNeeded();
+    const beforePopup = await entry.boundingBox();
+    await entry.hover();
+    await expect(activityPopup(page)).toBeVisible();
+    await expect(draft).toBeFocused();
+    await expect
+      .poll(async () => (await entry.boundingBox()).y)
+      .toBe(beforePopup.y);
+    await page.mouse.move(0, 0);
+    await expect(activityPopup(page)).toHaveCount(0);
+    await expect(draft).toBeFocused();
+    await expect(draft).toHaveText("Hover preserves this draft");
+    await draft.fill("");
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 844 });
       await expect
@@ -843,7 +864,7 @@ test.describe("thread activity", () => {
       await entry.click();
       await expect(entry).toHaveAttribute("aria-expanded", "true");
       await expect(
-        region.getByText(channelScope, { exact: true }),
+        activityPopup(page).getByText(channelScope, { exact: true }),
       ).toBeVisible();
       await expect(activityPanel(page)).toHaveCount(0);
       await page.screenshot({
@@ -851,7 +872,7 @@ test.describe("thread activity", () => {
       });
       await entry.click();
       await expect(
-        region.getByRole("region", { name: "Readable activity" }),
+        activityPopup(page).getByRole("region", { name: "Readable activity" }),
       ).toHaveCount(0);
     }
     await page.setViewportSize({ width: 1440, height: 950 });
@@ -1022,12 +1043,14 @@ test.describe("thread activity", () => {
     await expect(replyEntry).toHaveAttribute("aria-expanded", "true");
     const unavailable =
       "Activity unavailable for this response. Its send boundary is missing or ambiguous in the retained feed.";
-    await expect(replyRow.getByRole("status")).toHaveText(unavailable);
-    await expect(replyRow.getByText(channelScope, { exact: true })).toHaveCount(
-      0,
+    await expect(activityPopup(page).getByRole("status")).toHaveText(
+      unavailable,
     );
     await expect(
-      replyRow.getByRole("region", { name: "Readable activity" }),
+      activityPopup(page).getByText(channelScope, { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      activityPopup(page).getByRole("region", { name: "Readable activity" }),
     ).toHaveCount(0);
     await expect(activityPanel(page)).toHaveCount(0);
     await openSidePanel(page, replyEntry, true);
@@ -1223,10 +1246,10 @@ test.describe("local agent request", () => {
       });
       await expect(
         channelRequest.getByRole("button", {
-          name: "View thread: 1 reply",
+          name: "View thread: 1 agent awaiting response",
           exact: true,
         }),
-      ).toContainText("1 reply");
+      ).toContainText("1 agent awaiting response");
       await expect(
         page.getByText("View agent thread", { exact: true }),
       ).toHaveCount(0);
@@ -1239,14 +1262,14 @@ test.describe("local agent request", () => {
       ).toHaveLength(0);
       await sending.click();
       await expect(
-        region.getByText(
+        activityPopup(page).getByText(
           "No activity received yet. The request does not confirm the agent has started.",
           { exact: true },
         ),
       ).toBeVisible();
-      await expect(region.getByText(channelScope, { exact: true })).toHaveCount(
-        0,
-      );
+      await expect(
+        activityPopup(page).getByText(channelScope, { exact: true }),
+      ).toHaveCount(0);
       await sending.click();
     } finally {
       release();
@@ -1403,7 +1426,7 @@ test.describe("local agent request", () => {
     });
     await expect(working).toBeVisible();
     await working.click();
-    const pendingWork = region.getByRole("region", {
+    const pendingWork = activityPopup(page).getByRole("region", {
       name: "Readable activity",
       exact: true,
     });
@@ -1478,9 +1501,9 @@ test.describe("local agent request", () => {
       pendingWork.getByRole("heading", { name: "Turn", exact: true }),
     ).toHaveCount(0);
     await expect(pendingWork.locator("time")).toHaveCount(0);
-    await expect(region.getByText(channelScope, { exact: true })).toHaveCount(
-      0,
-    );
+    await expect(
+      activityPopup(page).getByText(channelScope, { exact: true }),
+    ).toHaveCount(0);
     await pendingGroup.click();
     await expect(pendingGroup).toHaveAttribute("aria-expanded", "false");
     startTool(2);
@@ -1542,7 +1565,7 @@ test.describe("local agent request", () => {
             };
           });
           return (
-            more.x === header.x &&
+            more.x === (await pendingWork.boundingBox()).x &&
             more.color === header.color &&
             more.font === header.font &&
             more.background === header.background &&
@@ -1551,7 +1574,7 @@ test.describe("local agent request", () => {
         },
         {
           message:
-            "show-all text aligns flush left and matches the Activity disclosure styling",
+            "show-all text aligns flush left in the popup and matches the Activity control typography",
         },
       )
       .toBe(true);
@@ -1725,7 +1748,7 @@ test.describe("local agent request", () => {
       .getByRole("button", { name: "View activity", exact: true })
       .click();
     await expect(
-      coordinationRow.getByText(
+      activityPopup(page).getByText(
         "Send message · Reported sent · Reported coordination",
         { exact: true },
       ),
@@ -1749,7 +1772,7 @@ test.describe("local agent request", () => {
       exact: true,
     });
     await replyEntry.click();
-    const firstWork = replyRow.getByRole("region", {
+    const firstWork = activityPopup(page).getByRole("region", {
       name: "Readable activity",
       exact: true,
     });
@@ -1770,10 +1793,15 @@ test.describe("local agent request", () => {
         },
       ),
     ).toHaveCount(0);
-    await expect(replyRow.getByText(channelScope, { exact: true })).toHaveCount(
-      0,
-    );
+    await expect(
+      activityPopup(page).getByText(channelScope, { exact: true }),
+    ).toHaveCount(0);
 
+    // The previous response now owns a floating popup, not inline details.
+    await activityPopup(page)
+      .getByRole("button", { name: "Close activity", exact: true })
+      .click();
+    await expect(activityPopup(page)).toHaveCount(0);
     const correction = finalizeEvent(
       {
         kind: 9,
@@ -1808,11 +1836,10 @@ test.describe("local agent request", () => {
       page.getByText(/Private to your account|Only visible to you/),
     ).toHaveCount(0);
     await expect(correctionEntry).not.toHaveAttribute("aria-description");
-    await expect(correctionEntry).toHaveAttribute("aria-expanded", "false");
+    await expect(correctionEntry).toHaveAttribute("aria-expanded", "true");
     await expect(
       page.getByRole("button", { name: "Private activity", exact: true }),
     ).toHaveCount(0);
-    await correctionEntry.click();
     const previousViewport = page.viewportSize();
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
@@ -1837,7 +1864,16 @@ test.describe("local agent request", () => {
       await expect(correctionEntry).not.toHaveAttribute("aria-description");
     }
     await page.setViewportSize(previousViewport);
-    const correctionWork = correctionRow.getByRole("region", {
+    // End hover before choosing a persistent click-open popup; resizing may move the anchor.
+    await page.mouse.move(0, 0);
+    await thread
+      .getByRole("textbox", { name: "Reply to thread", exact: true })
+      .focus();
+    await expect(activityPopup(page)).toHaveCount(0);
+    await correctionEntry.focus();
+    await correctionEntry.press("Enter");
+    await expect(correctionEntry).toHaveAttribute("aria-expanded", "true");
+    const correctionWork = activityPopup(page).getByRole("region", {
       name: "Readable activity",
       exact: true,
     });
@@ -1847,14 +1883,26 @@ test.describe("local agent request", () => {
     await expect(
       correctionWork.getByText("Send message · Reported sent", { exact: true }),
     ).toBeVisible();
-    await expect(firstWork).not.toContainText(commandPreview(commands[0]));
     await expect(correctionWork).not.toContainText(commandPreview(commands[0]));
     await expect(correctionWork).not.toContainText(firstThought);
     await expect(
       correctionWork.getByRole("button", { name: /Reading file/ }),
     ).toHaveCount(0);
+    // Reopen the first exact response after later telemetry; only one popup is inspected at a time.
+    await activityPopup(page)
+      .getByRole("button", { name: "Close activity", exact: true })
+      .click();
+    await expect(activityPopup(page)).toHaveCount(0);
+    await replyEntry.click();
     await expect(firstWork).toContainText(firstThought);
     await expect(firstWork).not.toContainText(correctionThought);
+    await expect(firstWork).not.toContainText(commandPreview(commands[0]));
+    await activityPopup(page)
+      .getByRole("button", { name: "Close activity", exact: true })
+      .click();
+    await expect(activityPopup(page)).toHaveCount(0);
+    await correctionEntry.click();
+    await expect(correctionWork).toContainText(correctionThought);
     await expect(
       correctionWork.getByRole("button", {
         name: "Permission requested",

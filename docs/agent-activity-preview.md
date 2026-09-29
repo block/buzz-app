@@ -19,8 +19,13 @@ for trying Activity, not replacing an everyday installation.
   Incoming messages stay unmounted until that control is opened. Exact-message
   navigation can reveal its target; collapsing the outer group resets transcript
   expansion. Human-facing answers remain outside both disclosures.
-- Inline response Activity, expandable tools/messages, and the profile Activity tab.
+- Hover/click response Activity popups, expandable tools/messages, and the profile Activity tab.
   Profile human request text is expanded by default; agent communications are not.
+- Channel thread controls show exact working agents only with fresh evidence;
+  pending requests say awaiting response, never a fabricated reply.
+- Tagged coordination ancestors keep their bodies collapsed even when a visible
+  human-facing answer is nested below them. Exact-message navigation can reveal
+  its own target, but opening the answer does not reveal its ancestors.
 - Side-panel opening by dragging or the Activity context menu, without losing the thread.
 - Working, unknown, error and ended-without-reply states. Coordination/ended telemetry
   does not mean a human-facing answer was delivered.

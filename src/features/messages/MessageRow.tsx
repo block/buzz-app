@@ -1,3 +1,4 @@
+import { useThreadWorkingAgents } from "./use-thread-working-agents";
 import { MessageTimestamp } from "./MessageTimestamp";
 import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { useChannelIdentityNames } from "../identity-names/react";
@@ -120,6 +121,11 @@ export const MessageRow = memo(function MessageRow({
   onOpenMediaReview,
   agentPubkeys,
 }: MessageRowProps) {
+  const working = useThreadWorkingAgents(
+    onOpenThread && layout === "timeline" ? session : undefined,
+    row.channelId,
+    row.threadRootId ?? row.id,
+  );
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const directory = useReferenceDirectory(session, participantProfiles);
   const threadUnread = useThreadUnread(
@@ -168,12 +174,24 @@ export const MessageRow = memo(function MessageRow({
   // A new request's first local response slot opens the thread before relay
   // reply-count evidence exists. Never write this presentation into relay state.
   const onePending = row.replyCount === 0 && pendingAgentCount === 1;
+  const workingAgent = working.agents.at(-1);
+  const workingName = workingAgent
+    ? resolveName(
+        workingAgent,
+        working.profiles.get(workingAgent)?.name ?? "Agent",
+      )
+    : undefined;
+  const workingLabel =
+    working.agents.length > 1
+      ? `${working.agents.length} agents working…`
+      : workingName
+        ? `${workingName} working…`
+        : undefined;
   const threadLabel =
-    row.replyCount > 0
+    workingLabel ??
+    (row.replyCount > 0
       ? `${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}`
-      : onePending
-        ? "1 reply"
-        : `${pendingAgentCount} pending responses`;
+      : `${pendingAgentCount} ${onePending ? "agent" : "agents"} awaiting response`);
   const canReact = !!(
     extensions &&
     session &&
@@ -570,41 +588,53 @@ export const MessageRow = memo(function MessageRow({
               </div>
             )
           )}
-          {(row.replyCount > 0 || pendingAgentCount > 0) && onOpenThread && (
-            <Button
-              variant="ghost"
-              size="sm"
-              data-thread-summary=""
-              data-first-participant-shape={
-                agentPubkeys?.has(row.participants[0] ?? "")
-                  ? "squircle"
-                  : "circle"
-              }
-              type="button"
-              aria-label={`View thread: ${threadLabel}${unreadLabel ? `. ${unreadLabel}` : ""}`}
-              aria-description={
-                onePending ? "Agent response pending" : undefined
-              }
-              onClick={(event) => {
-                event.currentTarget.focus();
-                onOpenThread(row.id, row.threadRootId ?? row.id);
-              }}
-            >
-              {row.replyCount === 0 ? (
-                <span>{threadLabel}</span>
-              ) : (
-                <ReplySummary
-                  count={row.replyCount}
-                  participants={row.participants}
-                  profiles={participantProfiles}
-                  agentPubkeys={agentPubkeys}
-                  resolveName={resolveName}
-                  media={media}
-                  unreadLabel={unreadLabel}
-                />
-              )}
-            </Button>
-          )}
+          {(row.replyCount > 0 ||
+            pendingAgentCount > 0 ||
+            working.agents.length > 0) &&
+            onOpenThread && (
+              <Button
+                variant="ghost"
+                size="sm"
+                data-thread-summary=""
+                data-first-participant-shape={
+                  agentPubkeys?.has(row.participants[0] ?? "")
+                    ? "squircle"
+                    : "circle"
+                }
+                type="button"
+                aria-label={`View thread: ${threadLabel}${unreadLabel ? `. ${unreadLabel}` : ""}`}
+                aria-description={
+                  onePending ? "Agent response pending" : undefined
+                }
+                onClick={(event) => {
+                  event.currentTarget.focus();
+                  onOpenThread(row.id, row.threadRootId ?? row.id);
+                }}
+              >
+                {row.replyCount === 0 && !working.agents.length ? (
+                  <span>{threadLabel}</span>
+                ) : (
+                  <ReplySummary
+                    count={row.replyCount}
+                    participants={row.participants}
+                    profiles={
+                      working.agents.length
+                        ? new Map([
+                            ...(participantProfiles ?? []),
+                            ...working.profiles,
+                          ])
+                        : participantProfiles
+                    }
+                    workingAgents={working.agents}
+                    workingLabel={workingLabel}
+                    agentPubkeys={agentPubkeys}
+                    resolveName={resolveName}
+                    media={media}
+                    unreadLabel={unreadLabel}
+                  />
+                )}
+              </Button>
+            )}
         </div>
       </div>
     </div>

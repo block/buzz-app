@@ -185,8 +185,11 @@ History owners retain bottom-follow and older-reading intent when the tail chang
 Thread reply ancestry remains host-owned. Within each sibling list, only explicit
 original `audience=agents` messages from a known agent or agent envelope can enter
 coordination groups; human-facing/legacy messages remain ordinary visible rows.
-A loaded human-facing descendant keeps its coordination ancestry outside the group
-and open. Pending decoration has one request/branch owner; it is not reply causality.
+A loaded human-facing descendant keeps its ancestry path open, but each tagged
+coordination ancestor keeps its own body collapsed. Descendants remain outside
+that body disclosure; opening an answer never reveals coordination implicitly.
+An explicitly selected reply target remains reachable. Pending decoration has one
+request/branch owner; it is not reply causality.
 Collapsing unmounts decoration and message DOM, never capture or the composer.
 Exact navigation reopens the matching group unless that visit was explicitly collapsed.
 
@@ -196,11 +199,13 @@ sends and flat Sessions retain existing behavior. The thread reader folds the
 outgoing root locally while signing/publishing and begins finite thread repair
 only after verified root observation. Local intent never becomes verified evidence.
 The pending agent entry distinguishes sending, unconfirmed/failed delivery, waiting
-and exact-thread typing, and leaves when a later same-agent thread reply is shown.
-The channel retains a thread-opening action even before reply-count evidence.
+and exact-thread typing, and leaves when a later same-agent human-facing thread reply is shown.
+The channel retains a thread-opening action even before reply-count evidence,
+labelled awaiting response rather than a fabricated reply. Fresh exact-thread
+Activity shows working agents in that control without altering reply counts.
 Plugin activation owns the telemetry lease; all decorations reuse that capability. Collapsed message entries
-do not build a transcript or fetch profiles. No global selected channel or
-Activity-plugin import is added to reusable message components. Channels reads the
+do not build a transcript or fetch profiles. No global selected channel is added. The thread-working projection reuses the
+existing pure request association selector; it adds no capture lease or history read. Channels reads the
 same activity snapshot for its sidebar marker and retains an open thread when the
 registered activity target opens in an additional column. Other panel behavior is
 unchanged. Pending activity/general inspection remains exact-agent/channel scoped.
@@ -210,8 +215,10 @@ response interval; the preceding send or retained turn start opens it. Missing o
 ambiguous evidence is unavailable, never a channel-wide fallback. Both inline and
 detached response views use this selector, without scope-changing selectors in the
 response panel. This is best-effort reported activity, not verified causal proof.
-Inline expansion, pointer drag-right and a Base UI context menu preserve selection; the menu supplies right-click, long-press and Shift+F10 access without an
-always-visible panel button. Narrow multi-pane layouts scroll horizontally rather
+Activity text opens a hover/click Base UI popup instead of expanding the thread.
+Hover dismissal preserves composer focus; keyboard dismissal returns to the trigger.
+The popup expands into the existing side panel. Pointer drag-right and the context
+menu retain their exact-target behavior; closing a popup unmounts its details. Narrow multi-pane layouts scroll horizontally rather
 than destroying the thread or its draft.
 
 This is a host-matched preview addition, not cross-version capability negotiation.

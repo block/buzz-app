@@ -1,6 +1,33 @@
 @import "./composer.css" layer(components);
 
 @layer components {
+  /* Keep ordinary text as the fallback, including reduced motion and forced
+     colors. The sweep strengthens the inherited text, never washes it out. */
+  @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+    @supports (background-clip: text) {
+      .buzz-shimmer[data-active] {
+        background-image: linear-gradient(
+          100deg,
+          currentColor 35%,
+          var(--text-standard) 50%,
+          currentColor 65%
+        );
+        background-size: 200% 100%;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        animation: buzz-text-shimmer 2s linear infinite;
+      }
+    }
+  }
+  @keyframes buzz-text-shimmer {
+    from {
+      background-position: 100% 0;
+    }
+    to {
+      background-position: -100% 0;
+    }
+  }
+
   .buzz-button {
     position: relative;
     display: inline-grid;

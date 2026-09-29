@@ -13,6 +13,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createAgentLibrary } from "../agents/library";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
+import type { PageNavigation } from "../navigation/service";
 import type { ThreadSnapshot } from "../relay/threads";
 import type { MessageComposerProps } from "./MessageComposer";
 import type { MessageRowProps } from "./MessageRow";
@@ -86,7 +87,11 @@ function row(id: string, replyParentId?: string): ChannelMessage {
     replyCount: 0,
   };
 }
-function setup(messageId = "root", extensions?: ConversationExtensions) {
+function setup(
+  messageId = "root",
+  extensions?: ConversationExtensions,
+  navigation?: PageNavigation,
+) {
   let snapshot: ThreadSnapshot = {
     root: row("root"),
     replies: [
@@ -137,6 +142,7 @@ function setup(messageId = "root", extensions?: ConversationExtensions) {
       channelName="C"
       channelId="c"
       messageId={messageId}
+      navigation={navigation}
       close={() => {}}
       onOpenLink={() => false}
     />,
@@ -391,11 +397,36 @@ it("keeps human-facing descendants visible through coordination ancestry and pre
     response,
     row("human", "root"),
   ]);
-  for (const text of ["coord", "nested-coord", "human-facing", "human"])
+  for (const text of ["human-facing", "human"])
     expect(screen.getByText(text)).toBeVisible();
-  expect(
-    screen.queryByRole("region", { name: "Agent coordination and activity" }),
-  ).toBeNull();
+  for (const text of ["coord", "nested-coord"])
+    expect(screen.queryByText(text)).toBeNull();
+  const groups = screen.getAllByRole("region", {
+    name: "Agent coordination and activity",
+  });
+  expect(groups).toHaveLength(2);
+  const firstGroup = groups[0];
+  if (!firstGroup) throw new Error("Missing ancestor coordination group");
+  fireEvent.click(
+    within(firstGroup).getByRole("button", {
+      name: "1 agent · 1 coordination message",
+    }),
+  );
+  fireEvent.click(
+    within(firstGroup).getByRole("button", {
+      name: "View 1 coordination message",
+    }),
+  );
+  expect(screen.getByText("coord")).toBeVisible();
+  expect(screen.queryByText("nested-coord")).toBeNull();
+  expect(screen.getByText("human-facing")).toBeVisible();
+  fireEvent.click(
+    within(firstGroup).getByRole("button", {
+      name: "1 agent · 1 coordination message",
+    }),
+  );
+  expect(screen.queryByText("coord")).toBeNull();
+  expect(screen.getByText("human-facing")).toBeVisible();
   fireEvent.click(
     screen.getByRole("button", { name: "Reply to human-facing" }),
   );
@@ -572,4 +603,73 @@ it("keeps one collapsed coordination group and preserves request intent through 
     screen.getAllByRole("region", { name: "Agent coordination and activity" }),
   ).toHaveLength(1);
   expect(screen.getByText("4 replies · 2 pending")).toBeVisible();
+});
+
+it("does not revive focus on a later manual coordination expansion", async () => {
+  const h = setup("coord");
+  const coord = {
+    ...row("coord", "missing"),
+    audience: "agents" as const,
+    agentEnvelope: true as const,
+  };
+  const answer = row("answer", "coord");
+  h.update([coord, answer]);
+  const header = screen.getByRole("button", {
+    name: "1 agent · 1 coordination message",
+  });
+  fireEvent.click(header);
+  fireEvent.click(
+    screen.getByRole("button", { name: "View 1 coordination message" }),
+  );
+  const target = screen.getByText("coord").closest("article");
+  if (!target) throw new Error("Missing revealed coordination target");
+  target.tabIndex = -1;
+  target.focus();
+  expect(target).toHaveFocus();
+  // Late ordinary ancestry moves this body; opening the new transcript is explicit.
+  h.update([coord, answer, row("missing", "root")]);
+  expect(screen.getByText("answer")).toBeVisible();
+  const nextHeader = screen.getByRole("button", {
+    name: "1 agent · 1 coordination message",
+  });
+  expect(nextHeader).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByText("coord")).toBeNull();
+  // A manual later expansion must not revive captured focus intent.
+  await act(async () => {});
+  fireEvent.click(nextHeader);
+  fireEvent.click(
+    screen.getByRole("button", { name: "View 1 coordination message" }),
+  );
+  expect(screen.getByText("coord").closest("article")).not.toHaveFocus();
+});
+
+it("restores the exact coordination target after late reparenting, not its visible answer", async () => {
+  const signal = new AbortController().signal;
+  const navigation = {
+    signal,
+    target: { kind: "conversation", messageId: "coord" },
+    complete: () => true,
+  } as unknown as PageNavigation;
+  const h = setup("coord", undefined, navigation);
+  const coord = {
+    ...row("coord", "missing"),
+    audience: "agents" as const,
+    agentEnvelope: true as const,
+  };
+  const answer = row("answer", "coord");
+  h.update([coord, answer]);
+  const target = screen.getByText("coord").closest("article");
+  if (!target) throw new Error("Missing exact coordination target");
+  target.tabIndex = -1;
+  target.focus();
+  h.update([coord, answer, row("missing", "root")]);
+  await waitFor(() =>
+    expect(screen.getByText("coord").closest("article")).toHaveFocus(),
+  );
+  expect(screen.getByText("answer")).toBeVisible();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Hide coordination messages" }),
+  );
+  expect(screen.queryByText("coord")).toBeNull();
+  expect(screen.getByText("answer")).toBeVisible();
 });

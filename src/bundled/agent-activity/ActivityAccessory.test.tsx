@@ -17,6 +17,8 @@ import {
 import { bindNames } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
 import { ActivityAccessory } from "./ActivityAccessory";
+import { stubPopoverBrowserApis } from "./popover-testing";
+stubPopoverBrowserApis();
 import {
   CoordinationAuthors,
   ThreadAgentGroup,
@@ -942,10 +944,13 @@ it("isolates three request recipients, namesakes, stale work and terminal no-rep
         name: "Observed activity ended · error reported",
       }),
     );
-    fireEvent.click(entry(second).getByRole("button", { name: /Turn error/ }));
-    expect(
-      entry(second).getByText("Sample failure without a reply"),
-    ).toBeTruthy();
+    const popup = within(
+      screen.getByRole("dialog", {
+        name: names.resolve(second, "Agent") ?? "Agent",
+      }),
+    );
+    fireEvent.click(popup.getByRole("button", { name: /Turn error/ }));
+    expect(popup.getByText("Sample failure without a reply")).toBeTruthy();
     expect(
       entry(first).getByRole("button", { name: "Status unknown" }),
     ).toBeTruthy();

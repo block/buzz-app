@@ -22,6 +22,7 @@ import {
 } from "../../features/relay/testing";
 import type { LiveCallbacks } from "../../features/relay/live";
 import { SearchResults } from "./SearchResults";
+import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 
 afterEach(() => {
   cleanup();
@@ -348,6 +349,54 @@ it("does not reveal a revoked public hit queued before React commits its result"
     expect(
       screen.queryByRole("option", { name: /crew queued result/ }),
     ).toBeNull();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("keeps page choices available without a second conversation-loading banner", async () => {
+  const relay = keypair();
+  const viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "crew", "Crew"),
+    roster(relay, "crew", [viewer.pubkey]),
+  ];
+  const owner = createRelaySession({
+    ...wire.transport,
+    query(filters, signal) {
+      return filters.some((filter) => filter.kinds?.includes(39002))
+        ? wire.transport.query(filters, signal)
+        : Promise.resolve(discovery);
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query=""
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[
+          {
+            key: "settings",
+            label: "Settings",
+            icon: ChatCircleIcon,
+            run() {},
+          },
+        ]}
+        openConversation={() => {}}
+      />,
+    );
+    const pending = wire.next();
+    expect(owner.session.channels.list().status).toBe("loading");
+    expect(screen.getByRole("option", { name: /Settings/ })).toBeVisible();
+    expect(screen.getByText("Loading recent conversations…")).toBeVisible();
+    expect(screen.queryByText("Loading joined conversations…")).toBeNull();
+    await act(async () => pending.respond(discovery));
+    expect(await screen.findByRole("option", { name: /Crew/ })).toBeVisible();
+    expect(screen.getByRole("option", { name: /Settings/ })).toBeVisible();
   } finally {
     cleanup();
     owner.dispose();

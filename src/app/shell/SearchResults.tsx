@@ -226,7 +226,6 @@ export function SearchResults({
         className="space-y-2 px-3 text-body-sm text-subtle"
         aria-live="polite"
       >
-        {list.status === "loading" && <p>Loading joined conversations…</p>}
         {list.status === "error" && (
           <div>
             <p>Couldn’t load all joined conversations.</p>

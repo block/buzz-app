@@ -445,11 +445,17 @@ test("session changes discard the previous sidebar targets and manual unread sti
     await expect(row(page, "alpha")).toBeVisible();
     await expect(
       page.getByText("Updating sidebar details…", { exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await scroll(page, 1800);
     await expect(cue(page, "above")).toBeVisible();
     // Completing delayed preferences must not replace the user's newer viewport.
+    const refreshed = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/relay/secondary/sidebar-preferences") &&
+        response.ok(),
+    );
     release();
+    await refreshed;
     await expect(
       page.getByText("Updating sidebar details…", { exact: true }),
     ).toBeHidden();

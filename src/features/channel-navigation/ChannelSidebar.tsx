@@ -1114,21 +1114,11 @@ function ReadySidebar({
                 <p className={styles.empty}>No channels yet.</p>
               )}
             </SidebarUnread>
-            {cached ? (
+            {cached && connectionError && (
               <p className={styles.preferenceNotice} role="status">
-                {connectionError
-                  ? "Offline · Showing saved conversations."
-                  : "Reconnecting…"}
-                {connectionError && (
-                  <Button onClick={relay.retry}>Retry connection</Button>
-                )}
+                Offline · Showing saved conversations.
+                <Button onClick={relay.retry}>Retry connection</Button>
               </p>
-            ) : (
-              startup.updating && (
-                <p className={styles.preferenceNotice} role="status">
-                  Updating sidebar details…
-                </p>
-              )
             )}
             {preferences.sortErrors?.map(({ group, mode, error }) => (
               <div key={group} className={styles.preferenceNotice} role="alert">

@@ -441,7 +441,9 @@ Settings says **Shell setup not verified**; Buzz does not check it before Start.
   host must validate launch configuration and unsupported imported semantics
   before execution.
 - Harness and Provider choices come from native `harnessOptions` through the
-  injected Core snapshot. Buzz Agent offers Databricks v2 and OpenAI; OpenAI
+  injected Core snapshot. Buzz Agent offers Databricks v2 and OpenAI; Windows
+  offers only OpenAI, which a new agent without a default uses, and explains an
+  inherited or saved Databricks provider as unsupported. OpenAI
   uses the masked key field below as `OPENAI_COMPAT_API_KEY`, per agent or from
   Agent defaults. Goose appears with an
   absolute executable path when the local CLI is installed, and offers common
@@ -531,7 +533,9 @@ Settings says **Shell setup not verified**; Buzz does not check it before Start.
   native catalog, worker catalog and inference share this exact engine layout.
   Unix directories are owner-only; helper token files are owner-only. They are
   **not Keychain-encrypted**; other code running as your OS user can access them.
-  Non-Unix helper persistence remains memory-only. No old Buzz cache/Keychain or
+  Non-Unix helper persistence remains memory-only, so Windows refuses Databricks
+  Connect, catalog, credential open and Start with an explicit unsupported error
+  (OpenAI is unaffected). No old Buzz cache/Keychain or
   ambient `DATABRICKS_HOST`/`DATABRICKS_TOKEN` is read.
 - Disconnect requires Stop for all owned workers using the displayed workspace,
   retires pending starts for it, and removes only its app cache (retaining the lock

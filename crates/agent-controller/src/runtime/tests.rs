@@ -783,6 +783,53 @@ fn windows_start_restart_shutdown_hold_custody_and_isolate_the_listener() {
     );
 }
 #[test]
+#[cfg(windows)]
+fn windows_refuses_databricks_before_workspace_validation_or_start() {
+    let refused = Some(crate::connection::DATABRICKS_WINDOWS);
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = agent(dir.path());
+    a.harness.provider = "databricks_v2".into();
+    let mut valid = a.clone();
+    valid.harness.databricks = Some(crate::connection::DatabricksSettings {
+        host: "https://agent.example".into(),
+        filter: "agent-*".into(),
+    });
+    // Empty, build-default and valid workspaces are all refused, never validated.
+    for (saved, defaults) in [
+        (&a, crate::BuildDefaults::default()),
+        (&a, deployment_defaults()),
+        (&valid, crate::BuildDefaults::default()),
+    ] {
+        assert_eq!(
+            databricks_with_defaults(saved, &defaults).err().as_deref(),
+            refused
+        );
+    }
+    let mut openai = a.clone();
+    openai.harness.provider = "openai".into();
+    assert!(databricks_with_defaults(&openai, &deployment_defaults())
+        .unwrap()
+        .is_none());
+    let tools = dir.path().join("tools");
+    fs::create_dir_all(&tools).unwrap();
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(&tools)),
+        dir.path().join("ownership"),
+    );
+    assert_eq!(
+        controller.credential_request(&a.id).err().as_deref(),
+        refused
+    );
+    let snapshot = controller.action(&a.id, Action::Start).unwrap();
+    assert_eq!(snapshot.agents[0].error.as_deref(), refused);
+    assert!(controller.running.is_empty());
+    assert!(!dir.path().join("starts").exists());
+}
+#[test]
 #[cfg(unix)]
 fn teardown_reaps_a_worker_in_a_separate_process_group() {
     // Python is an isolated fixture only, not a production runtime dependency.
@@ -1408,6 +1455,7 @@ fn build_floor_agrees_at_command_oauth_and_discovery_without_rewriting_saved_age
 }
 
 #[test]
+#[cfg(unix)] // Windows: see windows_refuses_databricks_before_workspace_validation_or_start
 fn databricks_workspace_errors_distinguish_missing_configuration_from_invalid_origins() {
     let dir = tempfile::tempdir().unwrap();
     let mut agent = agent(dir.path());
@@ -1448,6 +1496,7 @@ fn databricks_workspace_errors_distinguish_missing_configuration_from_invalid_or
 }
 
 #[test]
+#[cfg(unix)] // Windows: see windows_refuses_databricks_before_workspace_validation_or_start
 fn saved_selectors_and_environment_override_build_floor_including_empty() {
     let dir = tempfile::tempdir().unwrap();
     let mut agent = agent(dir.path());
@@ -1608,6 +1657,7 @@ fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets(
 }
 
 #[test]
+#[cfg(unix)] // Windows: see windows_refuses_databricks_before_workspace_validation_or_start
 fn discovery_accepts_only_v2_from_saved_environment_or_build_provider() {
     let dir = tempfile::tempdir().unwrap();
     for provider in ["databricks_v2", "databricks-v2", "databricks"] {

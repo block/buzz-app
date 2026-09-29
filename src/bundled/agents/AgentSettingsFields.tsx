@@ -129,6 +129,7 @@ export function AgentSettingsFields({
     ? effectiveGooseProvider(draft, environmentKeys)
     : null;
   const buzzAgent = harnessKind(draft.command) === "buzz-agent";
+  const windows = /Win/i.test(globalThis.navigator?.platform ?? "");
   // An environment selector can override the visible scalar default.
   const [modelKey, providerKey] = buzzAgent
     ? ["BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER"]
@@ -215,11 +216,17 @@ export function AgentSettingsFields({
             onOpenHarnesses={onOpenHarnesses}
             discardEdits={discardEdits}
           />
-          {buzzAgent && /Win/i.test(globalThis.navigator?.platform ?? "") && (
+          {buzzAgent && windows && (
             <p className="text-body-sm text-secondary">
               Shell setup not verified. On Windows, the shell tool needs Git
               Bash from Git for Windows, or a shell set with BUZZ_SHELL under
               Advanced → Environment. Buzz does not check this before starting.
+            </p>
+          )}
+          {buzzAgent && windows && databricks && (
+            <p role="status" className="text-body-sm text-secondary">
+              Databricks sign-in is not supported on Windows yet. Choose OpenAI
+              for this agent.
             </p>
           )}
           {goose && gooseProvider === null && (

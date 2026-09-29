@@ -195,6 +195,7 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             status: "ready",
             install_supported: None,
             default_args: &[],
+            // Windows refuses Databricks sign-in (DATABRICKS_WINDOWS): omit it.
             providers: &[
                 ProviderOption {
                     value: "databricks_v2",
@@ -204,7 +205,7 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
                     value: "openai",
                     label: "OpenAI",
                 },
-            ],
+            ][usize::from(cfg!(windows))..],
         },
         HarnessOption {
             command: goose.as_ref().map_or_else(

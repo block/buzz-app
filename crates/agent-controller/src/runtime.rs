@@ -250,6 +250,10 @@ fn databricks_with_defaults(
     ) {
         return Ok(None);
     }
+    // Before any OAuth-setting check: Windows never asks for a workspace.
+    if cfg!(windows) {
+        return Err(crate::connection::DATABRICKS_WINDOWS.into());
+    }
     if agent.environment.contains_key("DATABRICKS_TOKEN") {
         return Err("Remove DATABRICKS_TOKEN to use this app's persistent OAuth connection".into());
     }

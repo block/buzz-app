@@ -133,69 +133,58 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   await expect(channelsSidebar).toBeVisible();
 });
 
-const ownerCommunity = test.extend({ communityRole: "owner" });
-const memberCommunity = test.extend({ communityRole: "member" });
 test.describe("community administration permissions", () => {
-  ownerCommunity(
-    "shows Membership to a verified owner",
-    async ({ page, app }) => {
-      await page.goto(app.origin);
-      await button(page, "Your profile").click();
-      await page
-        .getByRole("menuitem", { name: "Settings", exact: true })
-        .click();
-      const sections = page.getByRole("navigation", {
-        name: "Settings sections",
-      });
-      await expect(sections).toContainText("Administration");
-      await sections
-        .getByRole("button", { name: "Membership", exact: true })
-        .click();
-      await expect(
-        page.getByRole("heading", { name: "Membership", exact: true }),
-      ).toBeVisible();
-      await page.getByRole("button", { name: "Invite members" }).click();
-      const dialog = page.getByRole("dialog", { name: "Add or invite people" });
-      await expect(
-        dialog.getByRole("heading", { name: "Add directly" }),
-      ).toBeVisible();
-      await expect(
-        dialog.getByRole("heading", { name: "Invite with a link" }),
-      ).toBeVisible();
-      await expect(
-        dialog.getByRole("textbox", { name: "Public identity" }),
-      ).toBeVisible();
-      await expect(
-        dialog.getByRole("combobox", { name: /Search people/ }),
-      ).toHaveCount(0);
-    },
-  );
+  test("shows Membership to a verified owner", async ({ page, app }) => {
+    await page.goto(app.origin);
+    await button(page, "Your profile").click();
+    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    const sections = page.getByRole("navigation", {
+      name: "Settings sections",
+    });
+    await expect(sections).toContainText("Administration");
+    await sections
+      .getByRole("button", { name: "Membership", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Membership", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Invite members" }).click();
+    const dialog = page.getByRole("dialog", { name: "Add or invite people" });
+    await expect(
+      dialog.getByRole("heading", { name: "Add directly" }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("heading", { name: "Invite with a link" }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("textbox", { name: "Public identity" }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("combobox", { name: /Search people/ }),
+    ).toHaveCount(0);
+  });
 
-  memberCommunity(
-    "hides Administration and Membership from an ordinary member",
-    async ({ page, app }) => {
-      await page.goto(app.origin);
-      await button(page, "Your profile").click();
-      await page
-        .getByRole("menuitem", { name: "Settings", exact: true })
-        .click();
-      const sections = page.getByRole("navigation", {
-        name: "Settings sections",
-      });
-      await expect(sections).not.toContainText("Administration");
-      await expect(
-        sections.getByRole("button", { name: "Membership", exact: true }),
-      ).toHaveCount(0);
-    },
-  );
+  test("hides Administration and Membership from an ordinary member", async ({
+    page,
+    app,
+  }) => {
+    app.setCommunityRole("member");
+    await page.goto(app.origin);
+    await button(page, "Your profile").click();
+    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    const sections = page.getByRole("navigation", {
+      name: "Settings sections",
+    });
+    await expect(sections).not.toContainText("Administration");
+    await expect(
+      sections.getByRole("button", { name: "Membership", exact: true }),
+    ).toHaveCount(0);
+  });
 });
 
 // Only this journey requires a confirmed Online badge/radio. Keep unrelated
 // Settings fixtures on their existing synthetic broker.
-const confirmedPresence = test.extend({
-  productionBroker: true,
-  communityRole: "owner",
-});
+const confirmedPresence = test.extend({ productionBroker: true });
 confirmedPresence(
   "avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   async ({ page, app, browserName }, testInfo) => {

@@ -358,6 +358,10 @@ Unarchive publishes the existing narrow `9002` command with `archived=false` and
 requires fresh relay metadata with a missing/false archive tag before updating
 shared discovery; a missing record is not success. Restoration returns the sidebar
 row and keeps the current conversation and Settings open, with fresh actions.
+When upgrading an already-running development server, restart the **Node process**
+before trying Unarchive: Vite's in-process restart can retain the broker's imported
+archive-only validator even while the browser has the new action. A page reload
+alone does not update that host module.
 Archive, Unarchive and Leave use the default button style in Settings. Archive,
 Unarchive, Leave and Hide confirmation primary actions use the prominent variant; Delete remains destructive and Cancel
 keeps the default secondary style.

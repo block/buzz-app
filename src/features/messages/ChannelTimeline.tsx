@@ -253,7 +253,7 @@ function Timeline({
     const bottom =
       element.scrollHeight - element.clientHeight - element.scrollTop < 80;
     setShowJumpToLatest(!bottom);
-    if (bottom) setNewMessageCount(0);
+    if (bottom && follow.current) setNewMessageCount(0);
   }, []);
   const jumpToLatest = useCallback(() => {
     if (!handle.current || !rows.length) return;
@@ -614,7 +614,7 @@ function Timeline({
           </Button>
         ) : null}
       </div>
-      {showJumpToLatest && (
+      {(showJumpToLatest || newMessageCount > 0) && (
         <JumpToLatestButton
           newMessageCount={newMessageCount}
           onClick={jumpToLatest}

@@ -226,6 +226,16 @@ inspection remains a separate diagnostic with its strict reported-send interval;
 it is no longer the default behind the generic View activity label. No time/prose
 inference or channel-wide fallback supplies missing work. Reported command/file
 input can label current work with a bounded literal preview; it is never executed.
+The readable projection is tool-first. Explicit tool invocations (including
+unknown tool names) and plans are operations. Tools remain flat keyed rows across
+completion; recognizing a send result adds communication details without replacing
+the tool. Reported requests/messages/progress use a separate Communication
+disclosure. Protocol, setup, lifecycle and unknown events use Diagnostics, with
+error/permission attention in its collapsed label. Raw evidence is retained;
+classification does not mutate the transcript, status, audience or send association.
+No recognized operation is labelled “No tool activity captured”, never “no work”.
+This is a limited mapping of observed structured events, not complete harness
+coverage; no command is inferred from prose. Profile human-request defaults remain.
 Activity text opens a hover/click Base UI popup instead of expanding the thread.
 Hover dismissal preserves composer focus; keyboard dismissal returns to the trigger.
 The popup expands into the existing side panel. Pointer drag-right and the context

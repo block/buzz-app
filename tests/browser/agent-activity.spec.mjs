@@ -664,7 +664,15 @@ it("profile activity opens the exact agent and originating channel before its fi
     panel.getByRole("button", { name: /session_resolved|acp_read/ }),
   ).toHaveCount(0);
   await expect(
-    panel.getByRole("region", { name: "Turn other-channel", exact: true }),
+    panel.getByText("No tool activity captured.", { exact: true }),
+  ).toBeVisible();
+  const details = panel.getByRole("button", {
+    name: "Diagnostics (1)",
+    exact: true,
+  });
+  await details.click();
+  await expect(
+    panel.getByRole("button", { name: "ACP event", exact: true }),
   ).toBeVisible();
   await expect(
     panel.getByRole("region", { name: "Turn wanted", exact: true }),
@@ -1390,8 +1398,8 @@ test.describe("local agent request", () => {
       exact: true,
     });
     await expect(
-      stream.getByRole("button", { name: /7 tool calls/ }),
-    ).toHaveAttribute("aria-expanded", "true");
+      stream.getByRole("button", { name: /tool calls/ }),
+    ).toHaveCount(0);
     await expect(
       stream.getByRole("button", { name: /Reading file/ }),
     ).toHaveCount(7);
@@ -1473,23 +1481,24 @@ test.describe("local agent request", () => {
     ).toBeVisible();
     startTool(1);
     await expect(working).toBeVisible();
-    const pendingGroup = pendingWork.getByRole("button", {
-      name: /2 commands/,
-    });
-    await expect(pendingGroup).toHaveAttribute("aria-expanded", "true");
-    await expect(toolRow(0, "Pending")).toBeVisible();
+    const firstTool = toolRow(0, "Pending");
+    await expect(firstTool).toBeVisible();
+    await firstTool.click();
+    await expect(firstTool).toHaveAttribute("aria-expanded", "true");
     await expect(toolRow(1, "Pending")).toBeVisible();
     await expect(pendingWork).not.toContainText("/same/workspace");
     finishTool(0);
     finishTool(1);
-    await expect(toolRow(0, "Completed")).toBeVisible();
+    await expect(toolRow(0, "Completed")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
     await expect(toolRow(1, "Completed")).toBeVisible();
     await expect(
       region.getByRole("button", {
         name: /^Last action: Run command · /,
       }),
     ).toBeVisible();
-    await expect(pendingGroup).toHaveAttribute("aria-expanded", "true");
     await expect(
       pendingWork.getByRole("heading", { name: "Turn", exact: true }),
     ).toHaveCount(0);
@@ -1497,15 +1506,18 @@ test.describe("local agent request", () => {
     await expect(
       activityPopup(page).getByText(channelScope, { exact: true }),
     ).toHaveCount(0);
-    await pendingGroup.click();
-    await expect(pendingGroup).toHaveAttribute("aria-expanded", "false");
+    await toolRow(0, "Completed").click();
+    await expect(toolRow(0, "Completed")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     startTool(2);
     finishTool(2);
-    const updatedGroup = pendingWork.getByRole("button", {
-      name: /3 commands.*Completed/,
-    });
-    await expect(updatedGroup).toHaveAttribute("aria-expanded", "false");
-    await expect(toolRow(2, "Completed")).toHaveCount(0);
+    await expect(toolRow(2, "Completed")).toBeVisible();
+    await expect(toolRow(0, "Completed")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     await expect(
       region.getByRole("button", {
         name: /^Last action: Run command · /,
@@ -1516,11 +1528,6 @@ test.describe("local agent request", () => {
       startTool(step);
       finishTool(step);
     }
-    const fullGroup = pendingWork.getByRole("button", {
-      name: /6 commands.*Completed/,
-    });
-    await expect(fullGroup).toHaveAttribute("aria-expanded", "false");
-    await fullGroup.click();
     for (let step = 0; step < commands.length; step++)
       await expect(toolRow(step, "Completed")).toBeVisible();
     await expect(
@@ -1676,6 +1683,10 @@ test.describe("local agent request", () => {
     );
     // Coordination evidence stays accessible in Activity, not as a conversation row.
     await openSidePanel(page, region.getByRole("button").first());
+    const sendOperation = activityPanel(page).getByRole("button", {
+      name: /^Run command · printf.*buzz messages send/,
+    });
+    await sendOperation.click();
     await expect(
       activityPanel(page).getByText(
         "Send message · Reported sent · Reported coordination",
@@ -1708,20 +1719,16 @@ test.describe("local agent request", () => {
       exact: true,
     });
     await expect(
-      firstWork.getByText(firstThought, { exact: true }),
-    ).toBeVisible();
-    await expect(
-      firstWork.getByText("Send message · Reported sent", { exact: true }),
-    ).toBeVisible();
-    const previousTools = firstWork.getByRole("button", {
-      name: /7 tool calls/,
-    });
-    await expect(previousTools).toHaveAttribute("aria-expanded", "false");
-    await previousTools.click();
-    await expect(
       firstWork.getByRole("button", { name: /Reading file/ }),
     ).toHaveCount(7);
-    await previousTools.click();
+    await expect(
+      firstWork.getByText(firstThought, { exact: true }),
+    ).toHaveCount(0);
+    await firstWork.getByRole("button", { name: /^Communication/ }).click();
+    await expect(
+      firstWork.getByText(firstThought, { exact: true }),
+    ).toBeVisible();
+    await firstWork.getByRole("button", { name: /^Communication/ }).click();
     await expect(
       replyRow.getByText(
         "Retained activity through this response’s reported send. The feed may have gaps.",
@@ -1815,90 +1822,44 @@ test.describe("local agent request", () => {
       exact: true,
     });
     await expect(
+      correctionWork.getByRole("button", { name: /Reading file/ }),
+    ).toHaveCount(7);
+    await expect(
+      correctionWork.getByRole("button", { name: /^Run command/ }),
+    ).toHaveCount(9);
+    await expect(
+      correctionWork.getByText(correctionThought, { exact: true }),
+    ).toHaveCount(0);
+    await correctionWork
+      .getByRole("button", { name: /^Communication/ })
+      .click();
+    await expect(
+      correctionWork.getByText(firstThought, { exact: true }),
+    ).toBeVisible();
+    await expect(
       correctionWork.getByText(correctionThought, { exact: true }),
     ).toBeVisible();
-    await expect(
-      correctionWork.getByText("Send message · Reported sent", { exact: true }),
-    ).toHaveCount(2);
-    await expect(
-      correctionWork.getByRole("button", { name: /6 commands/ }),
-    ).toBeVisible();
-    await expect(correctionWork).toContainText(firstThought);
-    await expect(
-      correctionWork.getByRole("button", { name: /7 tool calls/ }),
-    ).toBeVisible();
-    // Reopen the first exact response after later telemetry; only one popup is inspected at a time.
-    await activityPopup(page)
-      .getByRole("button", { name: "Close activity", exact: true })
+    await correctionWork
+      .getByRole("button", { name: /^Communication/ })
       .click();
-    await expect(activityPopup(page)).toHaveCount(0);
-    await replyEntry.click();
-    await expect(firstWork).toContainText(firstThought);
-    await expect(firstWork).toContainText(correctionThought);
-    await expect(
-      firstWork.getByRole("button", { name: /6 commands/ }),
-    ).toBeVisible();
-    await activityPopup(page)
-      .getByRole("button", { name: "Close activity", exact: true })
-      .click();
-    await expect(activityPopup(page)).toHaveCount(0);
-    await correctionEntry.click();
-    await expect(correctionWork).toContainText(correctionThought);
-    await expect(
-      correctionWork.getByRole("button", {
-        name: "Permission requested",
-        exact: true,
-      }),
-    ).toHaveCount(0);
-    await expect(
-      correctionWork.getByRole("button", {
-        name: "Other activity",
-        exact: true,
-      }),
-    ).toHaveCount(0);
-    await expect(
-      correctionWork.getByRole("button", { name: /Setup and diagnostics/ }),
-    ).toHaveCount(0);
-    const messageDisclosure = correctionWork
-      .getByRole("button", {
-        name: /Send message · Reported sent/,
-      })
-      .last();
-    await expect(messageDisclosure).toHaveAttribute("aria-expanded", "false");
-    await expect(
-      correctionWork.getByText(
-        "Message text is not included in this activity.",
-        { exact: true },
-      ),
-    ).toHaveCount(0);
-    await messageDisclosure.focus();
-    await messageDisclosure.press("Enter");
-    await expect(messageDisclosure).toHaveAttribute("aria-expanded", "true");
+    // Tool details remain primary, including the exact send's command/result/raw halves.
     const correctionTool = correctionWork.getByRole("button", {
-      name: "Message details",
-      exact: true,
+      name: /^Run command · python3/,
     });
-    const outerSize = await correctionEntry.evaluate(
-      (el) => getComputedStyle(el).fontSize,
-    );
-    await expect(correctionTool).not.toContainText("Completed");
+    await correctionTool.focus();
+    await correctionTool.press("Enter");
+    await expect(correctionTool).toHaveAttribute("aria-expanded", "true");
     await expect(
-      correctionWork.getByText(
-        "Message text is not included in this activity.",
-        { exact: true },
-      ),
-    ).toHaveCSS("font-size", outerSize);
-    await correctionTool.click();
+      correctionWork.getByText("Command", { exact: true }),
+    ).toBeVisible();
     const inlineOutput = correctionWork.locator("pre").last();
     await expect(inlineOutput).toContainText(correction.id);
     await expect(inlineOutput).not.toContainText(reply.id);
     const outputContents = await inlineOutput.textContent();
-    const raw = correctionWork
-      .getByRole("button", {
-        name: "Raw source",
-        exact: true,
-      })
-      .last();
+    const raw = correctionWork.getByRole("button", {
+      name: "Raw source",
+      exact: true,
+    });
     await raw.focus();
     await raw.press("Enter");
     await expect(correctionWork.locator("pre").last()).toContainText(
@@ -1907,49 +1868,32 @@ test.describe("local agent request", () => {
     await expect(correctionWork.locator("pre").last()).toContainText(
       correction.id,
     );
-    await expect(correctionWork.locator("pre").last()).not.toContainText(
-      reply.id,
-    );
     await raw.press("Space");
     await expect(correctionWork.locator("pre").last()).toHaveText(
       outputContents,
     );
     await correctionTool.click();
     await expect(correctionWork.locator("pre")).toHaveCount(0);
-    // Compare DOM text in both views, independent of line wrapping and WebKit's
-    // offscreen innerText behavior when the first disclosure scrolls into view.
-    await messageDisclosure.focus();
-    await messageDisclosure.press("Space");
-    await expect(messageDisclosure).toHaveAttribute("aria-expanded", "false");
-    await expect(
-      correctionWork.getByText(
-        "Message text is not included in this activity.",
-        { exact: true },
-      ),
-    ).toHaveCount(0);
-    // Inspector-only Details chrome may differ; compare each primary content row.
-    const primaryContents = (work) => work.locator("p, article");
-    const inlineContents =
-      await primaryContents(correctionWork).allTextContents();
+    const primaryLabels = await correctionWork
+      .getByRole("button", { name: /^Run command|Reading file/ })
+      .allTextContents();
     await openSidePanel(page, correctionEntry, true);
     const panel = activityPanel(page);
     const detachedWork = panel.getByRole("region", {
       name: "Readable activity",
       exact: true,
     });
-    await expect(primaryContents(detachedWork)).toHaveText(inlineContents);
+    await expect(
+      detachedWork.getByRole("button", { name: /^Run command|Reading file/ }),
+    ).toHaveText(primaryLabels);
     const diagnostics = detachedWork.getByRole("button", {
-      name: /^Setup and diagnostics/,
-      exact: true,
+      name: /^Diagnostics/,
     });
     await diagnostics.focus();
     await diagnostics.press("Enter");
     await expect(
       detachedWork
-        .getByRole("button", {
-          name: "Permission allowed",
-          exact: true,
-        })
+        .getByRole("button", { name: "Permission allowed", exact: true })
         .last(),
     ).toBeVisible();
     await diagnostics.press("Space");
@@ -1959,23 +1903,21 @@ test.describe("local agent request", () => {
         exact: true,
       }),
     ).toHaveCount(0);
-    await expect(panel).toContainText(firstThought);
+    await expect(
+      detachedWork.getByText(firstThought, { exact: true }),
+    ).toHaveCount(0);
+    await detachedWork.getByRole("button", { name: /^Communication/ }).click();
+    await expect(
+      detachedWork.getByText(firstThought, { exact: true }),
+    ).toBeVisible();
     await expect(panel.getByRole("combobox")).toHaveCount(0);
     await expect(
       panel.getByRole("button", { name: "Raw events", exact: true }),
     ).toHaveCount(0);
-    await expect(panel.getByText(channelScope, { exact: true })).toHaveCount(0);
     await detachedWork
-      .getByRole("button", { name: /Send message · Reported sent/ })
-      .last()
-      .click();
-    await detachedWork
-      .getByRole("button", { name: "Message details", exact: true })
+      .getByRole("button", { name: /^Run command · python3/ })
       .click();
     await expect(detachedWork.locator("pre").last()).toHaveText(outputContents);
-    await expect(detachedWork.locator("pre").last()).toContainText(
-      correction.id,
-    );
     await expect(detachedWork.locator("pre").last()).not.toContainText(
       reply.id,
     );

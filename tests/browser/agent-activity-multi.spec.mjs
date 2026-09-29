@@ -397,6 +397,9 @@ test("three recipients work independently through coordination, replies and a no
   ).toBeVisible();
   await waiting.click();
   const errorPopup = page.getByRole("dialog", { name: "Scout", exact: true });
+  await errorPopup
+    .getByRole("button", { name: /^Diagnostics.*Error reported/ })
+    .click();
   await errorPopup.getByRole("button", { name: /Turn error/ }).click();
   await expect(
     errorPopup.getByText("Agent C could not finish; no reply was sent.", {

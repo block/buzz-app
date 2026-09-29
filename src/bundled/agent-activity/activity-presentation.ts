@@ -127,54 +127,15 @@ export function activityPresentation(entry: TranscriptEntry) {
   return { title, target, shellOutput, command };
 }
 
-/** Contiguous primary tools only, within a single caller-owned turn/response.
- * Call after applying the compact work window, never across messages or agents. */
-export function groupActivity(
-  entries: readonly TranscriptEntry[],
-): TranscriptEntry[][] {
-  const groups: TranscriptEntry[][] = [];
-  for (const entry of entries) {
-    const previous = groups.at(-1);
-    if (
-      entry.kind === "tool" &&
-      !entry.communication &&
-      previous?.[0]?.kind === "tool" &&
-      !previous[0].communication
-    )
-      previous.push(entry);
-    else groups.push([entry]);
-  }
-  return groups;
-}
-export function toolGroupSummary(
-  entries: readonly TranscriptEntry[],
-  working: boolean,
-) {
-  const active = entries.filter((entry) =>
-    ["pending", "in_progress"].includes(entry.status),
-  ).length;
-  const failed = entries.filter((entry) => {
-    const output = activityPresentation(entry).shellOutput;
-    return entry.status === "failed" || !!output?.failed;
-  }).length;
-  const complete = entries.every((entry) =>
-    ["completed", "failed"].includes(entry.status),
-  );
-  const commands = entries.every(
-    (entry) => entry.toolName === "buzz-dev-mcp__shell",
-  );
-  const label = `${entries.length} ${commands ? "commands" : "tool calls"}`;
-  const status = [
-    failed ? `${failed} failed` : "",
-    active
-      ? `${active} ${working ? "active" : "last seen active"}`
-      : complete && !failed
-        ? "Completed"
-        : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  return { label, status, active: !!active };
+/** Explicit projection categories, independent of harness names and completion state. */
+export function activityCategory(
+  entry: TranscriptEntry,
+): "operation" | "communication" | "diagnostic" {
+  if (entry.diagnostic) return "diagnostic";
+  if (entry.kind === "tool" || entry.kind === "plan") return "operation";
+  if (["message", "prompt", "thought"].includes(entry.kind))
+    return "communication";
+  return "diagnostic";
 }
 
 /** Reported tool input only; bounded/inert text, never a command parser or execution. */

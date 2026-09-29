@@ -3,8 +3,6 @@ import {
   workingActivityLabel,
   activityAction,
   activityPresentation,
-  groupActivity,
-  toolGroupSummary,
 } from "./activity-presentation";
 import { activityTranscript, type TranscriptEntry } from "./transcript";
 import type { ActivityRecord } from "../../features/agents/activity-records";
@@ -103,41 +101,6 @@ it("preserves stderr, empty output and wrapper warnings without interpreting mar
       activityPresentation(entry("buzz-dev-mcp__shell", {}, output))
         .shellOutput,
     ).toBeUndefined();
-});
-it("groups only adjacent tools and exposes failures alongside live or stale work", () => {
-  const command = entry("buzz-dev-mcp__shell");
-  const running = { ...command, id: "running", status: "in_progress" };
-  const failed = { ...command, id: "failed", status: "failed" };
-  const thought = { ...command, id: "commentary", kind: "thought" as const };
-  expect(
-    groupActivity([command, running, thought, failed]).map((g) => g.length),
-  ).toEqual([2, 1, 1]);
-  expect(toolGroupSummary([running, failed], true)).toEqual({
-    label: "2 commands",
-    status: "1 failed · 1 active",
-    active: true,
-  });
-  expect(toolGroupSummary([running, failed], false).status).toBe(
-    "1 failed · 1 last seen active",
-  );
-  expect(toolGroupSummary([command, command], false)).toEqual({
-    label: "2 commands",
-    status: "Completed",
-    active: false,
-  });
-  const nonzero = entry(
-    "buzz-dev-mcp__shell",
-    {},
-    JSON.stringify({
-      stdout: "",
-      stderr: "bad",
-      exit_code: 1,
-      timed_out: false,
-      stdout_truncated: false,
-      stderr_truncated: false,
-    }),
-  );
-  expect(toolGroupSummary([nonzero, command], false).status).toBe("1 failed");
 });
 it("previews distinct command text rather than repeated working directories", () => {
   const first = activityPresentation(
@@ -462,5 +425,33 @@ it("uses a bounded literal command or file target in the working headline, not t
   expect(text).toContain("…");
   expect(label({ ...entry("unmapped_tool"), status: "in_progress" })).toBe(
     "Using unmapped_tool",
+  );
+});
+
+it("classifies tools by explicit event kind, never by familiar harness/tool names or completion", async () => {
+  const { activityCategory } = await import("./activity-presentation");
+  const tool = entry("harness_specific_tool");
+  for (const status of ["pending", "in_progress", "completed", "failed"]) {
+    expect(activityCategory({ ...tool, status })).toBe("operation");
+    expect(
+      activityCategory({
+        ...tool,
+        status,
+        communication: {
+          direction: "outgoing",
+          body: "hello",
+          author: "agent",
+        },
+      }),
+    ).toBe("operation");
+  }
+  expect(activityCategory({ ...tool, kind: "plan" })).toBe("operation");
+  for (const kind of ["prompt", "thought", "message"] as const)
+    expect(activityCategory({ ...tool, kind })).toBe("communication");
+  expect(
+    activityCategory({ ...tool, kind: "event", title: "unknown_tool" }),
+  ).toBe("diagnostic");
+  expect(activityCategory({ ...tool, kind: "prompt", diagnostic: true })).toBe(
+    "diagnostic",
   );
 });

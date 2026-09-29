@@ -57,9 +57,6 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.toolGroup {
-  min-width: 0;
-}
 .progress {
   padding-block: var(--space-2);
 }
@@ -162,9 +159,6 @@
   )[aria-expanded="true"]
   > svg {
   transform: rotate(0deg);
-}
-.toolGroup {
-  padding-inline-start: 0;
 }
 .progress {
   padding-block: var(--space-1h);

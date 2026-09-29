@@ -95,7 +95,7 @@ it("projects actual session activity into turn/tool details, keeps raw access an
     const readable = screen.getByRole("region", { name: "Readable activity" });
     fireEvent.click(
       within(readable).getByRole("button", {
-        name: "Setup and diagnostics (1)",
+        name: "Diagnostics (1)",
       }),
     );
     fireEvent.click(
@@ -267,6 +267,9 @@ it("pins a response target and cannot fall back to channel selectors after evide
     { reactStrictMode: true },
   );
   try {
+    fireEvent.click(
+      screen.getByRole("button", { name: /Run command · buzz messages send/ }),
+    );
     expect(screen.getByText("Send message · Reported sent")).toBeTruthy();
     expect(
       screen.queryByText("Message text is not included in this activity."),
@@ -1152,7 +1155,7 @@ it("retains working evidence when only diagnostic activity is readable", () => {
       "status",
     );
     expect(
-      within(stream).getByRole("button", { name: "Setup and diagnostics (1)" }),
+      within(stream).getByRole("button", { name: "Diagnostics (1)" }),
     ).toBeTruthy();
   } finally {
     view.unmount();

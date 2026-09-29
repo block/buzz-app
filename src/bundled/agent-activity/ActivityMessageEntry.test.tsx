@@ -101,6 +101,9 @@ it("renders a human request, peer exchange and response from only the selected s
     />,
     { reactStrictMode: true },
   );
+  expect(screen.queryByRole("article")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "send_message" }));
+  fireEvent.click(screen.getByRole("button", { name: "Communication (3)" }));
   // Communications are one-line disclosures; captured bodies stay inert and hidden.
   for (const [article, label, body] of [
     [

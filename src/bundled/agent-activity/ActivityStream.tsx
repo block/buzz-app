@@ -24,9 +24,8 @@ import {
 import styles from "./ActivityStream.module.css";
 import {
   activityAction,
+  activityCategory,
   activityPresentation,
-  groupActivity,
-  toolGroupSummary,
 } from "./activity-presentation";
 
 export function ActivityStream({
@@ -62,23 +61,36 @@ export function ActivityStream({
     .filter(
       (group) =>
         !group.entries.length ||
-        group.entries.some((entry) => !entry.diagnostic),
+        group.entries.some((entry) => activityCategory(entry) === "operation"),
     )
     .map((group) => {
-      const entries = group.entries.filter((entry) => !entry.diagnostic);
-      // The five-entry preview slides; a retained chain's identity does not.
-      // Keep separate chains (and turns) separate, without another state store.
-      const chainIds = new Map<string, string>();
-      for (const chain of groupActivity(entries)) {
-        const first = chain[0];
-        if (first?.kind === "tool")
-          for (const entry of chain) chainIds.set(entry.id, first.id);
-      }
-      return { ...group, entries, chainIds };
+      const entries = group.entries.filter(
+        (entry) => activityCategory(entry) === "operation",
+      );
+      return { ...group, entries };
     });
-  const diagnostics = groups.flatMap((group) =>
-    group.entries.filter((entry) => entry.diagnostic),
+  const communication = groups.flatMap((group) =>
+    group.entries
+      .filter((entry) => activityCategory(entry) === "communication")
+      .map((entry) => ({ entry, agent: group.agent })),
   );
+  const diagnostics = groups.flatMap((group) =>
+    group.entries.filter((entry) => activityCategory(entry) === "diagnostic"),
+  );
+  const diagnosticAttention = diagnostics.some(
+    (entry) =>
+      entry.title === "Turn error" ||
+      entry.title === "ACP error response" ||
+      ["Session setup response error", "Permission error"].includes(
+        entry.title,
+      ),
+  )
+    ? " · Error reported"
+    : diagnostics.some((entry) => entry.title === "Permission denied")
+      ? " · Permission denied"
+      : diagnostics.some((entry) => entry.title === "Permission requested")
+        ? " · Permission requested"
+        : "";
   const count = primary.reduce(
     (total, group) => total + group.entries.length,
     0,
@@ -165,76 +177,7 @@ export function ActivityStream({
                   : "No readable work steps retained in this view."}
               </p>
             )}
-            {groupActivity(group.entries).map((entries) => {
-              const first = entries[0];
-              if (!first) return null;
-              if (first.communication || first.kind === "message")
-                return (
-                  <ActivityMessageEntry
-                    key={first.id}
-                    entry={first}
-                    agent={group.agent}
-                    session={session}
-                    expandHumanRequests={expandHumanRequests}
-                    evidence={
-                      <Accordion
-                        variant="activity"
-                        items={[
-                          {
-                            value: "evidence",
-                            title: (
-                              <span className="text-caption text-subtle">
-                                Message details
-                              </span>
-                            ),
-                            content: (
-                              <div className={styles.messageEvidence}>
-                                <p className="text-caption text-subtle">
-                                  {first.communication?.direction === "incoming"
-                                    ? "Reported author"
-                                    : "Activity agent"}{" "}
-                                  <code className="break-all">
-                                    {first.communication?.author ?? group.agent}
-                                  </code>
-                                </p>
-                                {first.communication?.eventId && (
-                                  <p className="text-caption text-subtle">
-                                    Reported message{" "}
-                                    <code className="break-all">
-                                      {first.communication.eventId}
-                                    </code>
-                                  </p>
-                                )}
-                                <EntryDetail
-                                  entry={{ ...first, body: "" }}
-                                  source={source}
-                                />
-                              </div>
-                            ),
-                          },
-                        ]}
-                      />
-                    }
-                  />
-                );
-              if (first.kind === "thought" && first.body)
-                return (
-                  <ProgressEntry
-                    key={first.id}
-                    entry={first}
-                    source={source}
-                    showDiagnostics={showDiagnostics}
-                  />
-                );
-              if (entries.length > 1)
-                return (
-                  <ToolGroup
-                    key={group.chainIds.get(first.id) ?? first.id}
-                    entries={entries}
-                    working={state === "working"}
-                    source={source}
-                  />
-                );
+            {group.entries.map((first) => {
               return (
                 <Accordion
                   key={first.id}
@@ -255,7 +198,14 @@ export function ActivityStream({
                           working={state === "working"}
                         />
                       ),
-                      content: <EntryDetail entry={first} source={source} />,
+                      content: (
+                        <EntryDetail
+                          entry={first}
+                          source={source}
+                          session={session}
+                          agent={group.agent}
+                        />
+                      ),
                     },
                   ]}
                 />
@@ -264,10 +214,8 @@ export function ActivityStream({
           </section>
         );
       })}
-      {!primary.length && records.length > 0 && (
-        <p className="text-body-sm text-subtle">
-          No work steps have been received yet.
-        </p>
+      {count === 0 && (
+        <p className="text-body-sm text-subtle">No tool activity captured.</p>
       )}
       {compact && count > 5 && (
         <div className="buzz-accordion" data-variant="activity">
@@ -288,6 +236,45 @@ export function ActivityStream({
           </BaseButton>
         </div>
       )}
+      {communication.length > 0 && (
+        <Accordion
+          variant="activity"
+          defaultValue={expandHumanRequests ? ["communication"] : []}
+          items={[
+            {
+              value: "communication",
+              title: (
+                <span className="text-caption text-subtle">
+                  Communication ({communication.length})
+                </span>
+              ),
+              content: (
+                <div className={styles.messageEvidence}>
+                  {communication.map(({ entry, agent }) =>
+                    entry.kind === "thought" ? (
+                      <ProgressEntry
+                        key={entry.id}
+                        entry={entry}
+                        source={source}
+                        showDiagnostics={showDiagnostics}
+                      />
+                    ) : (
+                      <MessageEntry
+                        key={entry.id}
+                        entry={entry}
+                        agent={agent}
+                        session={session}
+                        source={source}
+                        expandHumanRequests={expandHumanRequests}
+                      />
+                    ),
+                  )}
+                </div>
+              ),
+            },
+          ]}
+        />
+      )}
       {showDiagnostics && diagnostics.length > 0 && (
         <Accordion
           variant="activity"
@@ -296,7 +283,7 @@ export function ActivityStream({
               value: "diagnostics",
               title: (
                 <span className="text-caption text-subtle">
-                  Setup and diagnostics ({diagnostics.length})
+                  Diagnostics ({diagnostics.length}){diagnosticAttention}
                 </span>
               ),
               content: (
@@ -316,56 +303,61 @@ export function ActivityStream({
     </section>
   );
 }
-function ToolGroup({
-  entries,
-  working,
+function MessageEntry({
+  entry,
+  agent,
+  session,
   source,
+  expandHumanRequests,
 }: {
-  entries: TranscriptEntry[];
-  working: boolean;
+  entry: TranscriptEntry;
+  agent: string;
+  session?: RelaySession | undefined;
   source: ReturnType<typeof activityTranscript>["source"];
+  expandHumanRequests: boolean;
 }) {
-  // Keep the chain and its detail disclosures mounted across status updates.
-  // Repartitioning completed/current tools would discard explicit expansion intent.
-  const summary = toolGroupSummary(entries, working);
-  const actions = new Set(entries.map(activityAction));
-  const first = entries[0];
-  const action = actions.size === 1 && first ? activityAction(first) : "tool";
-  const [choice, setChoice] = useState<boolean>();
-  const open = choice ?? (working || summary.active);
   return (
-    <Accordion
-      variant="activity"
-      value={open ? ["group"] : []}
-      onValueChange={(values) => setChoice(values.includes("group"))}
-      items={[
-        {
-          value: "group",
-          title: (
-            <span className={`${styles.label} text-body-sm`}>
-              <ActionIcon action={action} />
-              <span className="text-label-sm text-standard">
-                {entries.length === 1 ? "1 tool call" : summary.label}
-              </span>
-              <span className="text-caption text-subtle">
-                {summary.status ? ` · ${summary.status}` : ""}
-              </span>
-            </span>
-          ),
-          content: (
-            <div className={styles.toolGroup}>
-              <Accordion
-                variant="activity"
-                items={entries.map((entry) => ({
-                  value: entry.id,
-                  title: <EntryLabel entry={entry} working={working} />,
-                  content: <EntryDetail entry={entry} source={source} />,
-                }))}
-              />
-            </div>
-          ),
-        },
-      ]}
+    <ActivityMessageEntry
+      entry={entry}
+      agent={agent}
+      session={session}
+      expandHumanRequests={expandHumanRequests}
+      evidence={
+        <Accordion
+          variant="activity"
+          items={[
+            {
+              value: "evidence",
+              title: (
+                <span className="text-caption text-subtle">
+                  Message details
+                </span>
+              ),
+              content: (
+                <div className={styles.messageEvidence}>
+                  <p className="text-caption text-subtle">
+                    {entry.communication?.direction === "incoming"
+                      ? "Reported author"
+                      : "Activity agent"}{" "}
+                    <code className="break-all">
+                      {entry.communication?.author ?? agent}
+                    </code>
+                  </p>
+                  {entry.communication?.eventId && (
+                    <p className="text-caption text-subtle">
+                      Reported message{" "}
+                      <code className="break-all">
+                        {entry.communication.eventId}
+                      </code>
+                    </p>
+                  )}
+                  <EntryDetail entry={{ ...entry, body: "" }} source={source} />
+                </div>
+              ),
+            },
+          ]}
+        />
+      }
     />
   );
 }
@@ -417,9 +409,13 @@ function ProgressEntry({
 function EntryDetail({
   entry,
   source,
+  session,
+  agent,
 }: {
   entry: TranscriptEntry;
   source: ReturnType<typeof activityTranscript>["source"];
+  session?: RelaySession | undefined;
+  agent?: string | undefined;
 }) {
   const { shellOutput, command } = activityPresentation(entry);
   const [rawOpen, setRawOpen] = useState<string[]>([]);
@@ -485,6 +481,14 @@ function EntryDetail({
             </pre>
           </div>
         )
+      )}
+      {entry.communication && agent && (
+        <ActivityMessageEntry
+          entry={entry}
+          agent={agent}
+          session={session}
+          evidence={null}
+        />
       )}
       {hasReadable ? (
         <Accordion

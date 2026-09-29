@@ -357,21 +357,26 @@ it("renders explicitly linked tools while no reply exists, keeps fast commands o
     expect(view.container.querySelector("time")).toBeNull();
     send("acp_read", tool("cat > REPORT.md"));
     send("acp_read", tool("wc -w REPORT.md"));
-    const group = screen.getByRole("button", { name: /2 commands/ });
-    expect(group.getAttribute("aria-expanded")).toBe("true");
+    const toolRow = screen.getByRole("button", {
+      name: /^Run command · cat > REPORT.md$/,
+    });
+    fireEvent.click(toolRow);
+    expect(toolRow.getAttribute("aria-expanded")).toBe("true");
     expect(
       screen.getByRole("button", { name: /cat > REPORT.md/ }),
     ).toBeTruthy();
     expect(
       screen.getByRole("button", { name: /^Run command · wc -w REPORT.md$/ }),
     ).toBeTruthy();
-    fireEvent.click(group);
+    fireEvent.click(toolRow);
     send("turn_liveness", {});
-    expect(group.getAttribute("aria-expanded")).toBe("false");
+    expect(toolRow.getAttribute("aria-expanded")).toBe("false");
     act(() => vi.advanceTimersByTime(31_000));
     expect(screen.getByRole("button", { name: "Status unknown" })).toBeTruthy();
     act(() => service.clear());
-    expect(screen.queryByRole("button", { name: /2 commands/ })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /^Run command · cat/ }),
+    ).toBeNull();
   } finally {
     view.unmount();
     release();
@@ -947,6 +952,7 @@ it("isolates three request recipients, namesakes, stale work and terminal no-rep
         name: names.resolve(second, "Agent") ?? "Agent",
       }),
     );
+    fireEvent.click(popup.getByRole("button", { name: /^Diagnostics/ }));
     fireEvent.click(popup.getByRole("button", { name: /Turn error/ }));
     expect(popup.getByText("Sample failure without a reply")).toBeTruthy();
     expect(
@@ -1211,6 +1217,7 @@ it.each(["turn_completed", "turn_error", "agent_panic"])(
       fireEvent.click(screen.getByRole("button", { name: terminal }));
       expect(screen.getByText(/Feed: interrupted/)).toBeTruthy();
       if (kind !== "turn_completed") {
+        fireEvent.click(screen.getByRole("button", { name: /^Diagnostics/ }));
         fireEvent.click(
           screen.getAllByRole("button", {
             name: /Turn error/,

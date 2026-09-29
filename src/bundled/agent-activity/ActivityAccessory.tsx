@@ -418,7 +418,7 @@ function ActivityEntry({
                   transcript={transcript}
                   turns={turns}
                   showTurnHeading={false}
-                  showDiagnostics={false}
+                  showDiagnostics
                 />
               </div>
             </ActivityPopover>

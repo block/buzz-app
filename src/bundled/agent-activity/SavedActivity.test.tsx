@@ -65,6 +65,9 @@ it("loads only on disclosure, historical output has no working state, deletion e
   render(<SavedActivity session={h.session} agent={agent} channelId="c" />);
   expect(h.host.read).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Saved Activity" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Communication (1)" }),
+  );
   expect(await screen.findByText("Historical output")).toBeVisible();
   expect(screen.queryByText("Working")).toBeNull();
   fireEvent.click(
@@ -107,6 +110,9 @@ it("delete failure stays visible and retryable, and clear removes decrypted page
   h.host.delete.mockRejectedValueOnce(new Error("Archive deletion failed"));
   render(<SavedActivity session={h.session} agent={agent} channelId="c" />);
   fireEvent.click(screen.getByRole("button", { name: "Saved Activity" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Communication (1)" }),
+  );
   await screen.findByText("Historical output");
   fireEvent.click(
     screen.getByRole("button", { name: "Delete saved Activity" }),
@@ -133,6 +139,9 @@ it("keeps delete pending mounted, refuses concurrent delete, and reopens after e
   h.host.delete.mockReturnValueOnce(held);
   render(<SavedActivity session={h.session} agent={agent} channelId="c" />);
   fireEvent.click(screen.getByRole("button", { name: "Saved Activity" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Communication (1)" }),
+  );
   await screen.findByText("Historical output");
   fireEvent.click(
     screen.getByRole("button", { name: "Delete saved Activity" }),
@@ -151,6 +160,9 @@ it("keeps delete pending mounted, refuses concurrent delete, and reopens after e
   await act(async () => resolve());
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   fireEvent.click(screen.getByRole("button", { name: "Saved Activity" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Communication (1)" }),
+  );
   await screen.findByText("Historical output");
 });
 
@@ -226,6 +238,9 @@ it("rebuilds an exact saved response interval without activating live capture", 
   );
   fireEvent.click(
     screen.getByRole("button", { name: "Saved activity for this response" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Communication (1)" }),
   );
   expect(await screen.findByText("Only this response work")).toBeVisible();
   expect(screen.queryByText("Working")).toBeNull();

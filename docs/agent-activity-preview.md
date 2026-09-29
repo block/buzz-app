@@ -21,7 +21,7 @@ for trying Activity, not replacing an everyday installation.
 - Sending a channel message stays in the channel. Open its thread explicitly with
   the working-agent, awaiting-response or View thread control; sending never opens it.
 - Hover/click response Activity popups, expandable tools/messages, and the profile Activity tab.
-  Profile human request text is expanded by default; agent communications are not.
+  Profile Communication opens human request text by default; agent communications are not expanded.
 - Channel controls and live Activity share exact-thread work evidence. Loaded
   hidden handoff IDs can link later turns and additional agents; no channel-wide
   fallback or new history read is used. Participating agents keep a stable entry
@@ -34,6 +34,13 @@ for trying Activity, not replacing an everyday installation.
   popup stays open across completion and pending-request changes. Exact-response
   diagnostic targets retain their explicit send-boundary scope. Missing/trimmed
   telemetry is not a complete transcript.
+- Activity is tool-first: tool invocations and explicit plans are primary. Each
+  tool keeps one row through updates and completion, including send operations.
+  Command/input/output, reported message results and raw sources remain in its details.
+- Communication (requests, received messages, reported responses/progress) and
+  Diagnostics (setup, protocol, lifecycle and unknown events) are separate
+  disclosures. Diagnostics flags errors/permission attention without making noise
+  look like work. No recognized operations shows “No tool activity captured.”
 - Working labels name the reported command or file target when available. Command
   headlines are bounded literal previews; full input stays expandable in Activity.
 - Human-facing descendants remain visible through hidden coordination ancestry.

@@ -35,9 +35,10 @@ function paste(input: ComposerInputElement, text: string) {
   });
 }
 
-function mount(text = "") {
+function mount(initial: string | MentionDraft = "") {
   const ref = createRef<ComposerInputElement>();
-  let draft: MentionDraft = mentionDraft(text);
+  let draft: MentionDraft = mentionDraft(initial);
+  const text = draft.text;
   function Editor() {
     const [value, setValue] = useState(draft);
     return (
@@ -441,9 +442,12 @@ it.each(["blockquote", "code_block"] as const)(
   },
 );
 
-it("opens a code block from a typed fence on Shift+Enter, with one undo restoring the source", async () => {
+it("opens a code block as the third backtick is typed, with one undo restoring the source", async () => {
   const h = mount();
-  await h.user.keyboard("```{Shift>}{Enter}{/Shift}");
+  await h.user.keyboard("``");
+  expect(h.input.querySelector("pre")).toBeNull();
+  expect(h.input).toHaveValue("``");
+  await h.user.keyboard("`");
   expect(h.input.querySelector("pre > code")).not.toBeNull();
   expect(h.input).toHaveValue("");
   act(() => h.input.undo(false));
@@ -468,38 +472,84 @@ it("opens a code block from a typed fence on Shift+Enter, with one undo restorin
   expect(h.markdown()).toBe("```\ncode\nmore\n```\n\noutside");
 });
 
-it.each([
-  ["```ts", "ts", "```ts\nx\n```"],
-  ["~~~", null, "```\nx\n```"],
-  ["````c++", "c++", "```c++\nx\n```"],
-])(
-  "keeps the info string of %s as the block language through send and persistence",
-  async (fence, language, wire) => {
-    const h = mount();
-    await h.user.keyboard(`${fence}{Shift>}{Enter}{/Shift}x`);
-    const pre = h.input.querySelector("pre");
-    if (!pre) throw new Error("Fence did not open a code block");
-    if (language) expect(pre).toHaveAttribute("data-language", language);
-    else expect(pre).not.toHaveAttribute("data-language");
-    expect(h.input).toHaveValue("x");
-    expect(h.markdown()).toBe(wire);
-    const saved = JSON.parse(JSON.stringify(h.draft()));
-    act(() => h.input.reset(saved));
-    expect(h.markdown()).toBe(wire);
-  },
-);
+it("keeps the line literal after undoing the conversion, including a fourth backtick", async () => {
+  const h = mount();
+  await h.user.keyboard("```");
+  expect(h.input.querySelector("pre")).not.toBeNull();
+  act(() => h.input.undo(false));
+  await h.user.keyboard("`");
+  expect(h.input.querySelector("pre")).toBeNull();
+  expect(h.input).toHaveValue("````");
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}x");
+  expect(h.input.querySelector("pre")).toBeNull();
+  expect(h.input).toHaveValue("````\nx");
+  expect(h.markdown()).toBe("````\nx");
+});
+
+it("opens a code block from a typed ~~~ line and sends it fenced", async () => {
+  const h = mount();
+  await h.user.keyboard("~~~x");
+  const pre = h.input.querySelector("pre");
+  if (!pre) throw new Error("Fence did not open a code block");
+  expect(pre).not.toHaveAttribute("data-language");
+  expect(pre.querySelector("code")).toHaveTextContent("x");
+  expect(h.input).toHaveValue("x");
+  expect(h.markdown()).toBe("```\nx\n```");
+  const saved = JSON.parse(JSON.stringify(h.draft()));
+  act(() => h.input.reset(saved));
+  expect(h.markdown()).toBe("```\nx\n```");
+});
+
+it("keeps a restored block language through send and persistence", () => {
+  const h = mount({
+    text: "x",
+    recipients: [],
+    document: {
+      version: 1,
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "code_block",
+            attrs: { language: "ts" },
+            content: [{ type: "text", text: "x" }],
+          },
+        ],
+      },
+    },
+  });
+  expect(h.input.querySelector("pre")).toHaveAttribute("data-language", "ts");
+  expect(h.markdown()).toBe("```ts\nx\n```");
+  const saved = JSON.parse(JSON.stringify(h.draft()));
+  act(() => h.input.reset(saved));
+  expect(h.input.querySelector("pre")).toHaveAttribute("data-language", "ts");
+  expect(h.markdown()).toBe("```ts\nx\n```");
+});
 
 it("opens a fence typed after existing prose as a separate block", async () => {
   const h = mount("intro");
-  await h.user.keyboard("{Shift>}{Enter}{/Shift}```{Shift>}{Enter}{/Shift}x");
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}```x");
   expect(h.input.querySelector(":scope > p")).toHaveTextContent("intro");
   expect(h.input.querySelector(":scope > pre > code")).toHaveTextContent("x");
   expect(h.input).toHaveValue("intro\nx");
   expect(h.markdown()).toBe("intro\n\n```\nx\n```");
 });
 
-it.each(["a```", "``", "``` ", "```a b", "```:smile:"])(
-  "leaves %s followed by Shift+Enter as paragraph text",
+it("opens a block between prose lines when the fence is typed on an empty middle line", async () => {
+  const h = mount("intro\n\noutro");
+  act(() => h.input.setSelectionRange(6, 6));
+  await h.user.keyboard("```x");
+  const paragraphs = h.input.querySelectorAll(":scope > p");
+  expect(paragraphs).toHaveLength(2);
+  expect(paragraphs[0]).toHaveTextContent("intro");
+  expect(paragraphs[1]).toHaveTextContent("outro");
+  expect(h.input.querySelector(":scope > pre > code")).toHaveTextContent("x");
+  expect(h.input).toHaveValue("intro\nx\noutro");
+  expect(h.markdown()).toBe("intro\n\n```\nx\n```\n\noutro");
+});
+
+it.each(["a```", "``", "`` `", "``~", "~~`"])(
+  "leaves typed %s as paragraph text",
   async (line) => {
     const h = mount();
     await h.user.keyboard(`${line}{Shift>}{Enter}{/Shift}x`);
@@ -508,6 +558,18 @@ it.each(["a```", "``", "``` ", "```a b", "```:smile:"])(
     expect(h.markdown()).toBe(`${line}\nx`);
   },
 );
+
+it("does not convert a fence completed away from the end of its line", async () => {
+  const h = mount("``");
+  act(() => h.input.setSelectionRange(0, 0));
+  await h.user.keyboard("`");
+  expect(h.input.querySelector("pre")).toBeNull();
+  expect(h.input).toHaveValue("```");
+  act(() => h.input.setSelectionRange(1, 1));
+  await h.user.keyboard("`");
+  expect(h.input.querySelector("pre")).toBeNull();
+  expect(h.input).toHaveValue("````");
+});
 
 it("keeps a fence typed inside an existing code block literal", async () => {
   const h = mount();
@@ -522,56 +584,52 @@ it("does not convert a fence carrying inline code or pasted source", async () =>
   const h = mount();
   act(() => h.input.toggleFormat("code"));
   await h.user.keyboard("```");
-  act(() => h.input.toggleFormat("code"));
-  await h.user.keyboard("{Shift>}{Enter}{/Shift}x");
   expect(h.input.querySelector("pre")).toBeNull();
   expect(h.input.querySelector("code")).toHaveTextContent("```");
   act(() => {
     h.input.setSelectionRange(0, h.input.value.length);
     h.input.insertText("```\ncode\n```");
   });
-  await h.user.keyboard("{Shift>}{Enter}{/Shift}");
   expect(h.input.querySelector("pre")).toBeNull();
-  expect(h.input).toHaveValue("```\ncode\n```\n");
-  expect(h.markdown()).toBe("```\ncode\n```\n");
+  expect(h.input).toHaveValue("```\ncode\n```");
+  expect(h.markdown()).toBe("```\ncode\n```");
 });
 
-it("keeps a pasted fenced block literal on Shift+Enter and Enter, then opens a new block from a fence typed below it", async () => {
+it("keeps a typed backtick that closes a pasted fence literal, then opens a new block from a fence typed below it", async () => {
   const h = mount();
-  paste(h.input, "```\ncode\n```");
-  expect(h.input).toHaveValue("```\ncode\n```");
-  await h.user.keyboard("{Shift>}{Enter}{/Shift}");
+  paste(h.input, "```\ncode\n``");
+  expect(h.input).toHaveValue("```\ncode\n``");
+  await h.user.keyboard("`");
   expect(h.input.querySelector("pre")).toBeNull();
-  expect(h.input).toHaveValue("```\ncode\n```\n");
-  act(() => h.input.undo(false));
   expect(h.input).toHaveValue("```\ncode\n```");
-  // Without a host send policy, Enter breaks the line; it never opens a block.
-  await h.user.keyboard("{Enter}");
-  expect(h.input.querySelector("pre")).toBeNull();
-  expect(h.input).toHaveValue("```\ncode\n```\n");
-  expect(h.markdown()).toBe("```\ncode\n```\n");
+  expect(h.markdown()).toBe("```\ncode\n```");
   // The pasted block is closed, so a fence typed under it opens a new one.
-  await h.user.keyboard("```{Shift>}{Enter}{/Shift}more");
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}```more");
   expect(h.input.querySelectorAll("pre")).toHaveLength(1);
   expect(h.input.querySelector("pre > code")).toHaveTextContent("more");
   expect(h.input).toHaveValue("```\ncode\n```\nmore");
   expect(h.markdown()).toBe("```\ncode\n```\n\n```\nmore\n```");
 });
 
-it.each(["```js\ncode\n```", "~~~\ncode\n```", "````\n```"])(
-  "keeps the closing or inner fence line of restored source %j literal on Shift+Enter and Enter",
+it.each(["```js\ncode\n``", "~~~\ncode\n``", "````\n``"])(
+  "keeps a backtick completing the closing or inner fence line of restored source %j literal",
   async (source) => {
     const h = mount(source);
-    await h.user.keyboard("{Shift>}{Enter}{/Shift}");
+    await h.user.keyboard("`");
     expect(h.input.querySelector("pre")).toBeNull();
-    expect(h.input).toHaveValue(`${source}\n`);
-    act(() => h.input.undo(false));
-    await h.user.keyboard("{Enter}");
-    expect(h.input.querySelector("pre")).toBeNull();
-    expect(h.input).toHaveValue(`${source}\n`);
-    expect(h.markdown()).toBe(`${source}\n`);
+    expect(h.input).toHaveValue(`${source}\``);
+    expect(h.markdown()).toBe(`${source}\``);
   },
 );
+
+it("keeps a typed opening fence literal when a later line already closes it", async () => {
+  const h = mount("``\ncode\n```");
+  act(() => h.input.setSelectionRange(2, 2));
+  await h.user.keyboard("`");
+  expect(h.input.querySelector("pre")).toBeNull();
+  expect(h.input).toHaveValue("```\ncode\n```");
+  expect(h.markdown()).toBe("```\ncode\n```");
+});
 
 it("switches a nested bullet to its ordered ancestor's type without outdenting", async () => {
   const h = mount("one\ntwo\nthree");

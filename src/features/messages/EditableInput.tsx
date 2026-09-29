@@ -50,6 +50,7 @@ import {
   toggleComposerBlock,
   composerBlockLineBreak,
   composerCodeFence,
+  composerFenceDelimiters,
 } from "./composer-blocks";
 import { composerLinkLabel } from "./composer-link-label";
 import {
@@ -152,7 +153,6 @@ export function EditableInput({
   const composing = useRef(false);
   const plain = useRef<PlainLink[]>([]);
   const locked = useRef(false);
-  const codeFence = useRef<() => boolean>(() => false);
   const emitted = useRef(draft);
   const api = useRef<{
     sync(draft: MentionDraft, reset?: boolean): void;
@@ -605,25 +605,6 @@ export function EditableInput({
       })(editor.state, (tr) => editor.dispatch(closeHistory(tr)));
       editor.focus();
     };
-    // Enter and Shift+Enter share this rule; a typed fence line opens a block
-    // instead of sending or breaking the line, as the previous Buzz client did.
-    const openCodeFence = () => {
-      if (!editable() || composing.current || editor.composing) return false;
-      const tr = composerCodeFence(editor.state);
-      if (!tr) return false;
-      const previous = editor.state;
-      editor.dispatch(closeHistory(tr).scrollIntoView());
-      // Near maxLength the generated fence delimiters can exceed the limit, so
-      // the normalize filter drops the conversion; the line then stays literal
-      // and the keystroke keeps its ordinary meaning.
-      if (editor.state === previous) return false;
-      // The conversion is its own undo step: text typed next into the block
-      // must not merge into it.
-      separateHistory = true;
-      editor.focus();
-      return true;
-    };
-    codeFence.current = openCodeFence;
     const editLink = (): ComposerLinkEdit | null => {
       if (!editable() || composing.current || editor.composing) return null;
       const doc = editor.state.doc,
@@ -1004,25 +985,29 @@ export function EditableInput({
             tr.setStoredMarks(marks);
           const previous = editor.state;
           editor.dispatch(tr.scrollIntoView());
-          // A closing delimiter converts its span in a second transaction: one
-          // undo restores the typed source, closing character included, and the
-          // next keystroke never merges into the conversion. Near maxLength the
-          // typed character itself can be filtered out; then nothing converts.
+          // A typed delimiter converts in a second transaction: the third
+          // character of a lone ``` or ~~~ line opens a code block at once, and
+          // a closing delimiter converts its inline span. One undo restores the
+          // typed source, that character included, and the next keystroke never
+          // merges into the conversion. Near maxLength the typed character
+          // itself can be filtered out; then nothing converts.
           if (
             from === to &&
-            composerInlineDelimiters.has(text) &&
+            (composerFenceDelimiters.has(text) ||
+              composerInlineDelimiters.has(text)) &&
             !composing.current &&
             !editor.composing &&
             editor.state !== previous
           ) {
-            const conversion = editor.state.tr;
-            if (applyComposerInlineInput(conversion, text)) {
+            const fence = composerCodeFence(editor.state, text);
+            const conversion = fence ?? editor.state.tr;
+            if (fence || applyComposerInlineInput(conversion, text)) {
               const unconverted = editor.state;
               editor.dispatch(closeHistory(conversion).scrollIntoView());
-              // Escapes in the serialized form can carry the conversion past
-              // maxLength, and the normalize filter then drops it. Only a
-              // conversion that landed is its own undo step; otherwise the
-              // next keystroke must not start a new group.
+              // Generated delimiters or escapes in the serialized form can
+              // carry the conversion past maxLength, and the normalize filter
+              // then drops it. Only a conversion that landed is its own undo
+              // step; otherwise the next keystroke must not start a new group.
               if (editor.state !== unconverted) separateHistory = true;
             }
           }
@@ -1317,7 +1302,6 @@ export function EditableInput({
         value: () => {
           if (!editable() || composing.current || editor.composing)
             return false;
-          if (openCodeFence()) return true;
           const tr = composerBlockLineBreak(editor.state);
           if (!tr) return insert("\n");
           editor.dispatch(closeHistory(tr).scrollIntoView());
@@ -1410,7 +1394,6 @@ export function EditableInput({
       ref.current = null;
       view.current = null;
       api.current = null;
-      codeFence.current = () => false;
       editor.destroy();
     };
   }, [ref]);
@@ -1467,19 +1450,6 @@ export function EditableInput({
             event.nativeEvent.keyCode === 229
           )
             return;
-          // A lone fence line claims unmodified Enter before the host's send
-          // policy sees it. Any other line keeps that policy untouched.
-          if (
-            event.key === "Enter" &&
-            !event.shiftKey &&
-            !event.altKey &&
-            !event.ctrlKey &&
-            !event.metaKey &&
-            codeFence.current()
-          ) {
-            event.preventDefault();
-            return;
-          }
           events.onKeyDown?.(event as KeyboardEvent<ComposerInputElement>);
           if (!event.defaultPrevented && event.key === "Enter") {
             event.preventDefault();

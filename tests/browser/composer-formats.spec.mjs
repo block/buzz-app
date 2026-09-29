@@ -90,12 +90,20 @@ test("list toolbar, native item splitting and indentation survive reload and sen
   ).toBe("- one\n- two\n- three\n\noutside");
 });
 
-test("a typed fence opens a code block on Enter instead of sending, and the block sends fenced", async ({
+test("a typed fence opens a code block at once, and the block sends fenced", async ({
   page,
 }) => {
   const input = await composer(page);
-  await input.pressSequentially("```ts");
-  await input.press("Enter");
+  await input.pressSequentially("``");
+  await expect(input.locator("pre")).toHaveCount(0);
+  await input.pressSequentially("`");
+  await expect(input.locator("pre code")).toHaveCount(1);
+  const value = () => input.evaluate((el) => el.value);
+  expect(await value()).toBe("");
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(input.locator("pre")).toHaveCount(0);
+  await expect.poll(value).toBe("```");
+  await page.keyboard.press("ControlOrMeta+Shift+z");
   await expect(input.locator("pre code")).toHaveCount(1);
   expect(
     await page.evaluate(() => window.linkComposerFixture.sent.length),
@@ -107,7 +115,7 @@ test("a typed fence opens a code block on Enter instead of sending, and the bloc
   await input.press("Enter");
   expect(
     await page.evaluate(() => window.linkComposerFixture.sent.at(-1).text),
-  ).toBe("```ts\nconst answer = 42;\nanswer\n```");
+  ).toBe("```\nconst answer = 42;\nanswer\n```");
   await expect(input.locator("pre")).toHaveCount(0);
 });
 

@@ -135,6 +135,12 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
 
 test.describe("community administration permissions", () => {
   test("shows Membership to a verified owner", async ({ page, app }) => {
+    await page.route("**/api/relay/primary/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      if (filters.some((filter) => filter.kinds?.includes(13534)))
+        return route.fulfill({ json: [app.membershipSnapshot("owner")] });
+      return route.continue();
+    });
     await page.goto(app.origin);
     await button(page, "Your profile").click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
@@ -177,6 +183,12 @@ confirmedPresence(
       page.keyboard.press(
         `${browserName === "webkit" && process.platform === "darwin" ? "Alt+" : ""}${backwards ? "Shift+" : ""}Tab`,
       );
+    await page.route("**/api/relay/primary/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      if (filters.some((filter) => filter.kinds?.includes(13534)))
+        return route.fulfill({ json: [app.membershipSnapshot("member")] });
+      return route.continue();
+    });
     await page.goto(app.origin);
     const avatar = button(page, "Your profile");
     const account = page.getByRole("menu", {
@@ -296,10 +308,6 @@ confirmedPresence(
       name: "Hosted communities",
       exact: true,
     });
-    const membership = sections.getByRole("button", {
-      name: "Membership",
-      exact: true,
-    });
     const plugins = sections.getByRole("button", {
       name: "Plugins",
       exact: true,
@@ -350,8 +358,6 @@ confirmedPresence(
       await expect(personalGroups).toBeFocused();
       await tab();
       await expect(customEmoji).toBeFocused();
-      await tab();
-      await expect(membership).toBeFocused();
       await tab();
       await expect(hostedCommunities).toBeFocused();
       await tab();
@@ -414,8 +420,6 @@ confirmedPresence(
       await expect(personalGroups).toBeFocused();
       await tab();
       await expect(customEmoji).toBeFocused();
-      await tab();
-      await expect(membership).toBeFocused();
       await tab();
       await expect(hostedCommunities).toBeFocused();
       await tab();

@@ -6,6 +6,7 @@ import type { ChannelQueries } from "./contracts";
 import {
   keypair,
   message,
+  metadata,
   roster,
   flush,
   scriptedTransport,
@@ -519,6 +520,98 @@ it("removes a successfully refreshed channel creation from durable recovery", as
   }
 });
 
+it.each<["open" | "private", string[][]]>([
+  ["open", [["public"]]],
+  ["private", [["private"]]],
+])(
+  "admits a created %s channel through the store's exact read without rediscovering the roster",
+  async (visibility, tags) => {
+    const viewer = keypair(),
+      relay = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    let records: readonly OutgoingEvent[] = [];
+    const owner = createRelaySession(
+      {
+        ...wire.transport,
+        writer: {
+          kinds: [9, 9000, 9007],
+          sign: async (template) => signed(viewer, template),
+          publish: async () => {},
+        },
+      },
+      {
+        outboxStorage: {
+          load: () => structuredClone(records),
+          save: (next) => {
+            records = structuredClone(next);
+          },
+        },
+      },
+    );
+    try {
+      // A loaded sidebar whose complete viewer roster is still empty.
+      owner.session.channels.ensureList();
+      await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+      wire.next().respond([]);
+      await vi.waitFor(() =>
+        expect(owner.session.channels.list()).toMatchObject({
+          status: "ready",
+          channels: [],
+        }),
+      );
+      const notified = vi.fn();
+      const unsubscribe = owner.session.channels.subscribeList(notified);
+      const creating = owner.session.channelCreation.create({
+        name: "Release notes",
+        visibility,
+      });
+      await vi.waitFor(() =>
+        expect(records.some(({ event }) => event.kind === 9007)).toBe(true),
+      );
+      const id =
+        records
+          .find(({ event }) => event.kind === 9007)
+          ?.event.tags.find(([name]) => name === "h")?.[1] ?? "";
+      // After publish: the outbox's receipt readback and the one exact lookup.
+      await vi.waitFor(() => expect(wire.pending).toHaveLength(2));
+      const exact = wire.pending.find((request) =>
+        request.filters.some((filter) => filter["#d"]),
+      );
+      expect(exact?.filters).toEqual([
+        { kinds: [39000], authors: [relay.pubkey], "#d": [id], limit: 2 },
+        {
+          kinds: [39002],
+          authors: [relay.pubkey],
+          "#d": [id],
+          "#p": [viewer.pubkey],
+          limit: 2,
+        },
+      ]);
+      for (const request of wire.pending.splice(0))
+        request.respond(
+          request === exact
+            ? [
+                metadata(relay, id, "Release notes", undefined, tags),
+                roster(relay, id, [viewer.pubkey]),
+              ]
+            : [],
+        );
+      await expect(creating).resolves.toBe(id);
+      expect(owner.session.channels.list()).toMatchObject({
+        status: "ready",
+        channels: [{ id, name: "Release notes", members: [viewer.pubkey] }],
+      });
+      expect(notified).toHaveBeenCalledOnce();
+      await flush();
+      // No viewer-wide roster page followed the exact read.
+      expect(wire.pending).toHaveLength(0);
+      unsubscribe();
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
 it.each([true, false])(
   "confirms an exact own creation without admitting a channel missing its roster (receipt: %s)",
   async (found) => {
@@ -633,7 +726,9 @@ function setup(
     dismiss: vi.fn(async () => {}),
   };
   // The store's exact lookup applies through discovery and notifies the list;
-  // tests script that by changing the list from inside `resolve`.
+  // tests script that by changing the list from inside `resolve`. The real
+  // store path is exercised by "admits a created ... through the store's exact
+  // read without rediscovering the roster".
   const resolve = vi.fn<NonNullable<ChannelQueries["resolve"]>>(async () => {});
   const refreshList = vi.fn();
   const channels = {

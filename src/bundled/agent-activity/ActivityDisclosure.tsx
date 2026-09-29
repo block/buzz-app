@@ -1,7 +1,8 @@
 import { Accordion } from "@base-ui/react/accordion";
 import type { ReactNode } from "react";
 import styles from "./ActivityDisclosure.module.css";
-import { CaretRightIcon } from "../../shared/design-system/icons";
+import motionStyles from "./ActivityStream.module.css";
+import { CaretDownIcon } from "../../shared/design-system/icons";
 
 /** Local one-button activity disclosure using shared styles and Base UI behavior. */
 export function ActivityDisclosure({
@@ -20,7 +21,13 @@ export function ActivityDisclosure({
   return (
     <Accordion.Root
       data-buzz-ui=""
-      className="buzz-accordion"
+      className={`buzz-accordion ${motionStyles.motion}`}
+      onPointerDownCapture={(event) => {
+        event.currentTarget.dataset.motionInput = "pointer";
+      }}
+      onKeyDownCapture={(event) => {
+        event.currentTarget.dataset.motionInput = "keyboard";
+      }}
       data-variant="activity"
       keepMounted={keepMounted}
       value={expanded ? ["activity"] : []}
@@ -30,7 +37,7 @@ export function ActivityDisclosure({
         <Accordion.Header className="buzz-accordion-heading">
           <Accordion.Trigger className="buzz-accordion-trigger text-body-sm">
             <span className={styles.label}>{label}</span>
-            <CaretRightIcon size={14} aria-hidden="true" />
+            <CaretDownIcon size={14} aria-hidden="true" />
           </Accordion.Trigger>
         </Accordion.Header>
         <Accordion.Panel className="buzz-accordion-panel">

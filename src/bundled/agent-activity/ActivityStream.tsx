@@ -104,7 +104,13 @@ export function ActivityStream({
   return (
     <section
       id={streamId}
-      className={styles.stream}
+      className={`${styles.stream} ${styles.motion}`}
+      onPointerDownCapture={(event) => {
+        event.currentTarget.dataset.motionInput = "pointer";
+      }}
+      onKeyDownCapture={(event) => {
+        event.currentTarget.dataset.motionInput = "keyboard";
+      }}
       data-buzz-ui=""
       aria-label="Readable activity"
     >
@@ -182,7 +188,7 @@ export function ActivityStream({
                               </span>
                             ),
                             content: (
-                              <div className="flex flex-col gap-2">
+                              <div className={styles.messageEvidence}>
                                 <p className="text-caption text-subtle">
                                   {first.communication?.direction === "incoming"
                                     ? "Reported author"
@@ -213,7 +219,12 @@ export function ActivityStream({
                 );
               if (first.kind === "thought" && first.body)
                 return (
-                  <ProgressEntry key={first.id} entry={first} source={source} />
+                  <ProgressEntry
+                    key={first.id}
+                    entry={first}
+                    source={source}
+                    showDiagnostics={showDiagnostics}
+                  />
                 );
               if (entries.length > 1)
                 return (
@@ -313,6 +324,45 @@ function ToolGroup({
   working: boolean;
   source: ReturnType<typeof activityTranscript>["source"];
 }) {
+  const completed = entries.filter((entry) => entry.status === "completed");
+  const current = entries.filter((entry) => entry.status !== "completed");
+  if (
+    completed.length &&
+    current.some(
+      (entry) => entry.status === "in_progress" || entry.status === "pending",
+    )
+  )
+    return (
+      <>
+        <ToolGroup entries={completed} working={false} source={source} />
+        {current.map((entry) => (
+          <Accordion
+            key={entry.id}
+            variant="activity"
+            items={[
+              {
+                value: entry.id,
+                title: <EntryLabel entry={entry} working={working} />,
+                content: <EntryDetail entry={entry} source={source} />,
+              },
+            ]}
+          />
+        ))}
+      </>
+    );
+  return (
+    <ToolGroupDetails entries={entries} working={working} source={source} />
+  );
+}
+function ToolGroupDetails({
+  entries,
+  working,
+  source,
+}: {
+  entries: TranscriptEntry[];
+  working: boolean;
+  source: ReturnType<typeof activityTranscript>["source"];
+}) {
   const summary = toolGroupSummary(entries, working);
   const actions = new Set(entries.map(activityAction));
   const first = entries[0];
@@ -330,8 +380,10 @@ function ToolGroup({
           title: (
             <span className={`${styles.label} text-body-sm`}>
               <ActionIcon action={action} />
-              <span>{summary.label}</span>
-              <span className="text-body-sm text-subtle">
+              <span className="text-label-sm text-standard">
+                {entries.length === 1 ? "1 tool call" : summary.label}
+              </span>
+              <span className="text-caption text-subtle">
                 {summary.status ? ` · ${summary.status}` : ""}
               </span>
             </span>
@@ -356,16 +408,17 @@ function ToolGroup({
 function ProgressEntry({
   entry,
   source,
+  showDiagnostics,
 }: {
   entry: TranscriptEntry;
   source: ReturnType<typeof activityTranscript>["source"];
+  showDiagnostics: boolean;
 }) {
   const [full, setFull] = useState(false);
   const text = entry.body;
   return (
     <div className={styles.progress}>
       <div className={styles.progressBody}>
-        <ActionIcon action={activityAction(entry)} />
         <p className={`${styles.prose} text-body-sm`}>
           {!full && text.length > 500 ? `${text.slice(0, 500)}…` : text}
         </p>
@@ -380,18 +433,20 @@ function ProgressEntry({
           {full ? "Show less text" : "Show full text"}
         </Button>
       )}
-      <Accordion
-        variant="activity"
-        items={[
-          {
-            value: "source",
-            title: <span className="text-caption text-subtle">Raw source</span>,
-            content: (
-              <EntryDetail entry={{ ...entry, body: "" }} source={source} />
-            ),
-          },
-        ]}
-      />
+      {showDiagnostics && (
+        <Accordion
+          variant="activity"
+          items={[
+            {
+              value: "source",
+              title: <span className="text-caption text-subtle">Details</span>,
+              content: (
+                <EntryDetail entry={{ ...entry, body: "" }} source={source} />
+              ),
+            },
+          ]}
+        />
+      )}
     </div>
   );
 }
@@ -510,20 +565,36 @@ function EntryLabel({
               : "Last seen running"
           : "";
   return (
-    <span className={`${styles.label} ${styles.entryLabel} text-body-sm`}>
+    <span
+      className={`${styles.label} ${styles.entryLabel} text-body-sm`}
+      data-active={
+        working && entry.status === "in_progress" ? "true" : undefined
+      }
+    >
       <ActionIcon action={activityAction(entry)} />
       <span className={styles.title}>
-        {presentation.title}
-        {presentation.target ? ` · ${presentation.target}` : ""}
+        <span className="text-label-sm text-standard">
+          {presentation.title}
+        </span>
+        {presentation.target ? (
+          <>
+            {" "}
+            <span className="text-body-sm text-subtle">
+              {" "}
+              · {presentation.target}
+            </span>
+          </>
+        ) : null}
         {entry.body && !entry.diagnostic && entry.kind !== "event"
           ? ` · ${entry.body.replace(/\s+/g, " ").slice(0, 96)}${entry.body.length > 96 ? "…" : ""}`
           : ""}
-        {status && (
-          <span className={`${styles.entryStatus} text-caption text-subtle`}>
-            {" "}
-            {status}
-          </span>
-        )}
+        {status &&
+          !(status === "Running" && /^running\b/i.test(presentation.title)) && (
+            <span className={`${styles.entryStatus} text-caption text-subtle`}>
+              {" "}
+              {status}
+            </span>
+          )}
       </span>
     </span>
   );
@@ -541,5 +612,12 @@ const actionIcons = {
 };
 function ActionIcon({ action }: { action: ReturnType<typeof activityAction> }) {
   const Icon = actionIcons[action];
-  return <Icon size={16} weight="regular" data-activity-action={action} />;
+  return (
+    <Icon
+      size={16}
+      weight="regular"
+      data-activity-action={action}
+      aria-hidden="true"
+    />
+  );
 }

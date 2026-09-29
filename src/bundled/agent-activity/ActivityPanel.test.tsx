@@ -673,7 +673,8 @@ it("keeps profile identity primary, namesakes selectable and exact evidence disc
     await user.click(
       await screen.findByRole("option", { name: "Same name · beta" }),
     );
-    expect(screen.getByText("1 working turn.")).toBeTruthy();
+    expect(screen.queryByText("1 working turn.")).toBeNull();
+    expect(screen.getByText("Working", { exact: true })).toBeTruthy();
     const stream = screen.getByRole("region", { name: "Readable activity" });
     const exact = screen.getByRole("button", { name: "Exact identity" });
     expect(

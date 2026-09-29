@@ -1146,7 +1146,10 @@ it("restores an anchor inside a membership group after history joins across a pa
     membershipRow("anchor", 2),
     membershipRow("newer", 3),
   ]);
-  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(0, {
+    align: "start",
+    offset: -42,
+  });
   h.unmount();
 });
 it("live group growth follows the displayed group index rather than a hidden raw row", () => {
@@ -1483,3 +1486,29 @@ it("records a measured shrink before an append hides its queued native scroll cl
   h.unmount();
   expect(h.saved().bottom).toBe(true);
 });
+
+it.each([false, true])(
+  "a row refresh before the first measured height preserves cold restoration unless the reader intervenes=%s",
+  (gesture) => {
+    const mountedRow = { id: "last", y: 42 };
+    const mounted = [mountedRow];
+    const h = setup({
+      initial: { offset: 80851, bottom: false, anchor: { id: "last", y: 42 } },
+      mounted,
+    });
+    mountedRow.y = 142; // Native cold layout can report the right ID at the wrong Y.
+    h.dispatchScroll();
+    if (gesture) h.gesture();
+    h.handle.scrollToIndex.mockClear();
+    h.edit(); // Refresh cancels the original observer before any height delivery.
+    h.handle.scrollToIndex.mockClear();
+    h.measureRows();
+    if (gesture) expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+    else
+      expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, {
+        align: "start",
+        offset: -42,
+      });
+    h.unmount();
+  },
+);

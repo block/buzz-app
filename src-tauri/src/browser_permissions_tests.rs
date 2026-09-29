@@ -80,6 +80,7 @@ fn native_command_permissions_allow_only_main_webview() {
         "relay_agent_observer",
         "relay_agent_memories_read",
         "relay_agent_library",
+        "relay_upload",
         "get_os_idle_seconds",
         "plugin_import_folder",
         "plugin_import_git",

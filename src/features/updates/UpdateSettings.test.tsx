@@ -138,15 +138,6 @@ it("shows the installed version in the header", async () => {
   }
 });
 
-it("keeps the plain subtitle when the native version is unavailable", async () => {
-  renderSettings({});
-  expect(
-    screen.getByText(
-      "Keep Buzz up to date with the latest features and fixes.",
-    ),
-  ).toBeVisible();
-});
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;

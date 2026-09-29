@@ -111,7 +111,10 @@ export function ChannelLifecycleActions({
       )}
       {(state.pending || state.failed || permissions?.deleteUnavailable) && (
         <div>
-          <p role={state.failed ? "alert" : "status"}>
+          <p
+            role={state.failed ? "alert" : "status"}
+            className={state.pending ? "sr-only" : undefined}
+          >
             {state.pending
               ? "Checking channel actions…"
               : state.failed

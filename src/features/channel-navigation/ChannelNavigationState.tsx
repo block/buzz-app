@@ -26,6 +26,7 @@ type State = {
         channel: ChannelSummary;
         action: ChannelLifecycleAction;
         trigger?: HTMLElement;
+        focusFallback?: HTMLElement | undefined;
       }
     | undefined;
 };
@@ -119,6 +120,11 @@ export function ChannelNavigationProvider({
                   channel,
                   action,
                   ...(trigger ? { trigger } : {}),
+                  // Settings actions can remount after an archive-state change.
+                  focusFallback:
+                    trigger
+                      ?.closest("aside")
+                      ?.querySelector<HTMLElement>("button") ?? undefined,
                 },
               },
         );

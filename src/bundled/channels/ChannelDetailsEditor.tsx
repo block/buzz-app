@@ -209,7 +209,9 @@ export function ChannelDetailsEditor({
   const status = (
     <div id={statusId} className={styles.detailsEditor}>
       {attempt?.status === "saving" && (
-        <p role="status">Saving channel details…</p>
+        <p role="status" className="sr-only">
+          Saving channel details…
+        </p>
       )}
       {attempt?.status === "unconfirmed" && (
         <p role="status">
@@ -219,7 +221,9 @@ export function ChannelDetailsEditor({
         </p>
       )}
       {!attempt && view.loading && (
-        <p role="status">Checking channel permissions…</p>
+        <p role="status" className="sr-only">
+          Checking channel permissions…
+        </p>
       )}
       {!attempt && !view.loading && view.base && !canEdit && (
         <p>Only current channel owners and admins can edit these details.</p>
@@ -239,8 +243,12 @@ export function ChannelDetailsEditor({
   );
   return (
     <section className={styles.detailsEditor} aria-label="Edit channel details">
-      {(canEdit || attempt) && (
-        <Button ref={editButton} onClick={edit}>
+      {(canEdit || attempt || view.loading) && (
+        <Button
+          ref={editButton}
+          loading={view.loading && !attempt}
+          onClick={edit}
+        >
           {attempt ? "Review pending changes" : "Edit details"}
         </Button>
       )}

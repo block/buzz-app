@@ -44,10 +44,61 @@ for (const action of ["archive", "delete"]) {
           exact: true,
         }),
       ).toBeVisible();
-      await page
-        .getByRole("button", { name: "Channel settings", exact: true })
-        .click();
+      const conversationUrl = page.url();
       const panel = panelFor(page);
+      // Hold the real permission read to prove the button, not a visible
+      // paragraph, owns loading in the built app's Settings layout.
+      const permissionSeen = Promise.withResolvers();
+      const permissionRelease = Promise.withResolvers();
+      const holdPermissions = async (route) => {
+        const filters = route.request().postDataJSON();
+        if (
+          filters.some(
+            (filter) =>
+              filter.kinds?.includes(39000) &&
+              filter["#d"]?.includes(channelId) &&
+              filter.limit === 1,
+          )
+        ) {
+          permissionSeen.resolve();
+          await permissionRelease.promise;
+        }
+        return route.continue();
+      };
+      if (action === "archive")
+        await page.route("**/api/relay/**/query", holdPermissions);
+      try {
+        await page
+          .getByRole("button", { name: "Channel settings", exact: true })
+          .click();
+        if (action === "archive") {
+          await permissionSeen.promise;
+          const editor = panel.getByRole("region", {
+            name: "Edit channel details",
+            exact: true,
+          });
+          const edit = editor.getByRole("button", { name: "Edit details" });
+          await expect(edit).toHaveAttribute("aria-busy", "true");
+          await expect(edit).toBeDisabled();
+          await expect(edit.locator(".buzz-button-spinner")).toBeVisible();
+          await expect(edit.locator(".buzz-button-label")).toHaveCSS(
+            "opacity",
+            "0",
+          );
+          await expect(editor.getByRole("status")).toHaveClass("sr-only");
+          await expect(editor.getByRole("status")).toHaveCSS("height", "1px");
+          await panel.screenshot({
+            path: testInfo.outputPath("details-permission-loading.png"),
+          });
+        }
+      } finally {
+        permissionRelease.resolve();
+      }
+      await expect(
+        panel.getByRole("button", { name: "Edit details", exact: true }),
+      ).toBeEnabled();
+      if (action === "archive")
+        await page.unroute("**/api/relay/**/query", holdPermissions);
       const trigger = panel.getByRole("button", { name: label, exact: true });
       await expect(trigger).toBeVisible();
       const variant = action === "delete" ? "destructive" : "subtle";
@@ -109,6 +160,16 @@ for (const action of ["archive", "delete"]) {
         await confirm.click();
         await seen;
         await expect(confirm).toBeDisabled();
+        await expect(confirm).toHaveAttribute("aria-busy", "true");
+        await expect(confirm.locator(".buzz-button-spinner")).toBeVisible();
+        await expect(confirm.locator(".buzz-button-label")).toHaveCSS(
+          "opacity",
+          "0",
+        );
+        await expect(dialog.getByRole("status")).toHaveClass("sr-only");
+        await dialog.screenshot({
+          path: testInfo.outputPath(`${action}-pending.png`),
+        });
         await expect(
           dialog.getByRole("button", { name: "Cancel", exact: true }),
         ).toBeDisabled();
@@ -121,25 +182,68 @@ for (const action of ["archive", "delete"]) {
         release();
       }
       await expect(dialog).toHaveCount(0);
-      await expect(panel).toHaveCount(0);
       await expect(row).toHaveCount(0);
       const destination =
         action === "archive"
-          ? page.getByRole("textbox", { name: "Message #Alpha", exact: true })
+          ? page.getByRole("complementary", {
+              name: "Channel settings",
+              exact: true,
+            })
           : page.getByText("Select a channel to read it.", { exact: true });
       await expect(destination).toBeVisible();
-      if (action === "archive")
+      if (action === "archive") {
+        await expect(page).toHaveURL(conversationUrl);
         await expect(
-          sidebar.getByRole("button", { name: "Alpha", exact: true }),
+          panel.getByRole("button", { name: "Unarchive channel", exact: true }),
+        ).toBeVisible();
+        await expect(
+          panel.getByRole("button", { name: "Archive channel", exact: true }),
+        ).toHaveCount(0);
+        await expect(
+          panel.getByRole("button", { name: "Delete channel", exact: true }),
+        ).toHaveCount(0);
+        await expect(
+          panel.getByRole("button", {
+            name: "Close channel settings",
+            exact: true,
+          }),
         ).toBeFocused();
-      else {
+        await expect(
+          page.getByRole("textbox", {
+            name: "Message #Lifecycle channel",
+            exact: true,
+          }),
+        ).toBeDisabled();
+      } else {
+        await expect(panel).toHaveCount(0);
         await expect(sidebar.locator("button[data-channel-id]")).toHaveCount(0);
         await expect(
           page.getByRole("textbox", { name: /^Message #/ }),
         ).toHaveCount(0);
       }
       await page.reload();
-      await expect(destination).toBeVisible();
+      if (action === "archive") {
+        await expect(page).toHaveURL(conversationUrl);
+        await page
+          .getByRole("button", { name: "Channel settings", exact: true })
+          .click();
+        await expect(
+          panel.getByRole("button", { name: "Unarchive channel", exact: true }),
+        ).toBeVisible();
+        await expect(
+          page.getByRole("textbox", {
+            name: "Message #Lifecycle channel",
+            exact: true,
+          }),
+        ).toBeDisabled();
+        await panel
+          .getByRole("button", { name: "Close channel settings", exact: true })
+          .click();
+        // Leave intentionally, then prove the explicit search return path.
+        await sidebar
+          .getByRole("button", { name: "Alpha", exact: true })
+          .click();
+      } else await expect(destination).toBeVisible();
       await expect(row).toHaveCount(0);
       expect(
         app.report.lifecyclePublications.map((event) => event.kind),
@@ -213,15 +317,22 @@ for (const action of ["archive", "delete"]) {
         ).toBeVisible();
         await expect(restore).toHaveCount(0);
         await expect(row).toBeVisible();
-        await expect(row).toBeFocused();
+        await expect(
+          panel.getByRole("button", {
+            name: "Close channel settings",
+            exact: true,
+          }),
+        ).toBeFocused();
         const restoredComposer = page.getByRole("textbox", {
           name: "Message #Lifecycle channel",
           exact: true,
         });
         await expect(restoredComposer).toBeVisible();
+        await expect(restoredComposer).toBeEditable();
         await page.reload();
         await expect(row).toBeVisible();
         await expect(restoredComposer).toBeVisible();
+        await expect(restoredComposer).toBeEditable();
         expect(
           app.report.lifecyclePublications.map((event) => event.tags),
         ).toEqual([

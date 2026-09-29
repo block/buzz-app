@@ -488,9 +488,10 @@ it("finds joined archived channels by name without putting them in Recent activi
     mounted.rerender(<SearchResults {...props} query="Past" />);
     fireEvent.click(
       await screen.findByRole("option", {
-        name: /Past project Archived channel/,
+        name: /Past project/,
       }),
     );
+    expect(screen.getByText("Archived channel")).toBeTruthy();
     expect(open).toHaveBeenCalledExactlyOnceWith("archive");
   } finally {
     cleanup();
@@ -506,21 +507,22 @@ it.each([
   "does not surface archived nonmember or non-channel destinations: %j",
   (state) => {
     const owner = createRelaySession(null);
+    const snapshot = {
+      status: "ready" as const,
+      channels: [
+        {
+          id: "excluded",
+          name: "Past project",
+          archived: true as const,
+          ...state,
+        },
+      ],
+    };
     const session = {
       ...owner.session,
       channels: {
         ...owner.session.channels,
-        list: () => ({
-          status: "ready" as const,
-          channels: [
-            {
-              id: "excluded",
-              name: "Past project",
-              archived: true as const,
-              ...state,
-            },
-          ],
-        }),
+        list: () => snapshot,
         ensureList() {},
       },
     };

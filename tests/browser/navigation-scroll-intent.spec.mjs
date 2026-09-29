@@ -74,6 +74,10 @@ for (const cachedStartup of [false, true]) {
           .poll(() => sidebar.locator("[data-channel-id]").count())
           .toBeGreaterThan(100);
         await expect.poll(() => pendingRoutes.length).toBeGreaterThan(0);
+        const panel = page.getByRole("complementary", {
+          name: "Channel sidebar",
+        });
+        await expect(panel).toHaveAttribute("aria-busy", "true");
         await expect(
           page.getByText("Updating sidebar details…", { exact: true }),
         ).toHaveCount(0);
@@ -121,9 +125,9 @@ for (const cachedStartup of [false, true]) {
         );
         release();
         await refreshed;
-        await expect(
-          page.getByText("Updating sidebar details…", { exact: true }),
-        ).toBeHidden();
+        // DOM settlement follows preference application and its layout effects;
+        // the HTTP response alone is not a restoration barrier.
+        await expect(panel).not.toHaveAttribute("aria-busy", "true");
         await expect
           .poll(() => sidebar.evaluate((element) => element.scrollTop))
           .toBe(

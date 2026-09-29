@@ -935,7 +935,13 @@ function ReadySidebar({
         />
       )}
       <div className="shell-sidebar" style={{ width: sidebar.width }}>
-        <Panel as="aside" aria-label="Channel sidebar">
+        <Panel
+          as="aside"
+          aria-label="Channel sidebar"
+          aria-busy={
+            preferences.status === "loading" || startup.updating || undefined
+          }
+        >
           <div className={styles.sidebar}>
             {kitState.status === "error" && (
               <p role="alert">

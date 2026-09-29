@@ -42,7 +42,13 @@ export interface AgentView {
   revision: number;
   runningRevision: number | null;
   enabled: boolean;
-  status: "stopped" | "starting" | "running" | "stopping" | "failed";
+  status:
+    | "stopped"
+    | "waiting"
+    | "starting"
+    | "running"
+    | "stopping"
+    | "failed";
   error: string | null;
   diagnostics: string[];
   profilePending?: boolean;
@@ -155,6 +161,7 @@ export interface AgentControlHost {
   readLog?(target: AgentLogTarget): Promise<string>;
   models?: ModelHost;
   installGoose?(): Promise<GooseInstallReport>;
+  installPi?(): Promise<GooseInstallReport>;
   prepareCreate?(
     requestId: string,
     destination: string,
@@ -175,6 +182,12 @@ export interface AgentControlHost {
   ): Promise<ControlSnapshot>;
   delete?(id: string, expectedRevision: number): Promise<ControlSnapshot>;
   saveDefaults?(edit: AgentDefaultsEdit): Promise<ControlSnapshot>;
+  /** Attach replay input only; never starts or restarts a process. */
+  attachMention?(
+    id: string,
+    expectedRevision: number,
+    replayFloor: number,
+  ): Promise<void>;
   action(
     id: string,
     action: AgentAction,
@@ -196,6 +209,11 @@ export interface AgentControlState {
     report: GooseInstallReport | null;
     error: string | null;
   };
+  piInstall?: {
+    installing: boolean;
+    report: GooseInstallReport | null;
+    error: string | null;
+  };
   /** A credential wait may be interrupted only by explicit Stop. */
   pendingLaunch?: string | null;
   pendingCredentialWrite?: boolean;
@@ -208,6 +226,7 @@ export interface AgentControl {
   readLog?(target: AgentLogTarget): Promise<string>;
   models?: AgentModels;
   installGoose?(): Promise<GooseInstallReport>;
+  installPi?(): Promise<GooseInstallReport>;
   create?(
     requestId: string,
     destination: string,
@@ -245,6 +264,8 @@ export function agentLaunchBlock(
     return (
       state.data?.runtimeMessage || "The bundled agent runtime is unavailable."
     );
+  if (agent.status === "waiting")
+    return "Waiting to start; unlock Keychain if prompted.";
   if (agent.status === "starting" || agent.status === "stopping")
     return "Waiting for the process transition.";
   return null;
@@ -288,6 +309,7 @@ export function createAgentControl(
     data: null,
     busy: false,
     gooseInstall: { installing: false, report: null, error: null },
+    piInstall: { installing: false, report: null, error: null },
     error: host ? null : agentControlUnavailable,
   };
   const listeners = new Set<() => void>();
@@ -434,6 +456,7 @@ export function createAgentControl(
     );
   };
   const installGoose = host?.installGoose;
+  const installPi = host?.installPi;
   return {
     models,
     ...(host?.readLog
@@ -452,7 +475,7 @@ export function createAgentControl(
       ? {
           installGoose: async () => {
             if (disposed) throw new Error(agentControlUnavailable);
-            if (state.gooseInstall?.installing)
+            if (state.gooseInstall?.installing || state.piInstall?.installing)
               throw new Error("A Goose installation is already in progress.");
             if (state.status !== "ready" || state.busy)
               throw new Error("Refresh local agents before installing Goose.");
@@ -475,6 +498,38 @@ export function createAgentControl(
                 },
               });
               throw new Error("Could not install Goose.");
+            } finally {
+              installNeedsRefresh = true;
+              await refreshAfterInstall();
+            }
+          },
+        }
+      : {}),
+    ...(installPi
+      ? {
+          installPi: async () => {
+            if (disposed) throw new Error(agentControlUnavailable);
+            if (state.piInstall?.installing || state.gooseInstall?.installing)
+              throw new Error("A Harness installation is already in progress.");
+            if (state.status !== "ready" || state.busy)
+              throw new Error("Refresh local agents before installing Pi.");
+            update({
+              piInstall: { installing: true, report: null, error: null },
+            });
+            try {
+              const report = await installPi();
+              update({ piInstall: { installing: false, report, error: null } });
+              return report;
+            } catch {
+              update({
+                piInstall: {
+                  installing: false,
+                  report: null,
+                  error:
+                    "Couldn’t install Pi. Try again or check the desktop app.",
+                },
+              });
+              throw new Error("Could not install Pi.");
             } finally {
               installNeedsRefresh = true;
               await refreshAfterInstall();
@@ -624,8 +679,31 @@ export function createAgentControl(
         const failures: string[] = [];
         for (const agent of agents) {
           if (!valid()) return;
-          if (agent.status === "running" || state.pendingLaunch === agent.id)
+          if (agent.status === "running" && state.pendingLaunch !== agent.id)
             continue;
+          if (
+            agent.status === "waiting" ||
+            agent.status === "starting" ||
+            state.pendingLaunch === agent.id
+          ) {
+            try {
+              if (!host.attachMention)
+                throw new Error("Replay attachment unavailable");
+              // Replay metadata has its own native admission. It never mutates the
+              // projection or supersedes the in-flight Start/Stop write lane.
+              await host.attachMention(
+                agent.id,
+                agent.revision,
+                Math.min(replayFloor, earliestPending),
+              );
+            } catch {
+              if (!valid()) return;
+              failures.push(
+                `${agent.name}'s pending launch could not confirm replay of this mention. Open Agents to check its status.`,
+              );
+            }
+            continue;
+          }
           try {
             const result = await action(
               agent.id,

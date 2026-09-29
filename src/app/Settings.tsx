@@ -38,12 +38,16 @@ import type { AgentControl } from "../features/agents/control";
 import type { SettingsCards } from "../features/settings/service";
 import { OwnedContribution } from "../plugins/OwnedContribution";
 
-type Section = { id: string; label: string; icon: typeof UserIcon };
+export type SettingsSection = {
+  id: string;
+  label: string;
+  icon: typeof UserIcon;
+};
 
-const personalProfile: readonly Section[] = [
+const personalProfile: readonly SettingsSection[] = [
   { id: "profile", label: "Profile", icon: UserIcon },
 ];
-const appSections: readonly Section[] = [
+export const appSettingsSections: readonly SettingsSection[] = [
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
   { id: "notifications", label: "Notifications", icon: BellIcon },
   { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
@@ -68,6 +72,7 @@ export function Settings({
   agentControl,
   navigation,
   onSection,
+  navigationPane = false,
 }: {
   cards: SettingsCards;
   agentControl: AgentControl;
@@ -82,6 +87,7 @@ export function Settings({
     | import("../features/navigation/service").PageNavigation
     | undefined;
   onSection?: (section: string) => void;
+  navigationPane?: boolean;
 }) {
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
   const client = useSyncExternalStore(
@@ -105,7 +111,7 @@ export function Settings({
       ),
     [contributed],
   );
-  const communitySections: readonly Section[] = useMemo(
+  const communitySections: readonly SettingsSection[] = useMemo(
     () =>
       selectedCommunity
         ? [
@@ -130,7 +136,7 @@ export function Settings({
           icon: ChatCircleIcon,
         })),
       ),
-      ...appSections,
+      ...appSettingsSections,
       ...(developerMode
         ? [{ id: "developer", label: "Developer", icon: WrenchIcon }]
         : []),
@@ -164,8 +170,13 @@ export function Settings({
   const catalog = ready?.catalog;
   const externalPluginsPaused = ready?.externalPluginsPaused;
   return (
-    <div className={styles.root}>
-      <Panel aria-labelledby="settings-title">
+    <div
+      className={`${styles.root} ${navigationPane ? styles.navigationPane : ""}`}
+    >
+      <Panel
+        aria-label={navigationPane ? "Settings" : undefined}
+        aria-labelledby={navigationPane ? undefined : "settings-title"}
+      >
         <div className={styles.layout}>
           <aside className={styles.sidebar}>
             <div className={styles.sidebarHeader}>
@@ -214,7 +225,7 @@ export function Settings({
               <NavigationSection label="App">
                 {[
                   ...(!selectedCommunity ? personalProfile : []),
-                  ...appSections,
+                  ...appSettingsSections,
                 ].map(({ id, label, icon: Icon }) => (
                   <NavigationItem
                     label={label}
@@ -250,6 +261,7 @@ export function Settings({
             </nav>
           </aside>
           <div className={styles.detail}>
+            {navigationPane && <h1 className="sr-only">Settings</h1>}
             <div hidden={selected !== "notifications"}>
               <NotificationSettings
                 notifications={notifications}

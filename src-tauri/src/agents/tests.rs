@@ -136,6 +136,55 @@ fn harnesses_classify_cli_and_adapter_separately() {
 }
 
 #[test]
+fn managed_pi_detection_prefers_a_complete_user_install_and_requires_managed_node() {
+    let path = |name| Some(PathBuf::from(format!("/fixture/{name}")));
+    let empty = || PiTools {
+        cli: None,
+        adapter: None,
+        node: None,
+    };
+    let managed = || PiTools {
+        cli: path("managed-pi"),
+        adapter: path("managed-adapter"),
+        node: path("managed-node"),
+    };
+    let (command, status) = pi_choice(empty(), managed());
+    assert_eq!(command, path("managed-adapter"));
+    assert_eq!(status, "ready");
+    let (command, status) = pi_choice(
+        PiTools {
+            cli: path("user-pi"),
+            adapter: path("user-adapter"),
+            node: path("user-node"),
+        },
+        managed(),
+    );
+    assert_eq!(command, path("user-adapter"));
+    assert_eq!(status, "ready");
+    let (command, status) = pi_choice(
+        PiTools {
+            cli: path("user-pi"),
+            ..empty()
+        },
+        PiTools {
+            cli: None,
+            ..managed()
+        },
+    );
+    assert_eq!(command, path("managed-adapter"));
+    assert_eq!(status, "ready");
+    let (command, status) = pi_choice(
+        empty(),
+        PiTools {
+            node: None,
+            ..managed()
+        },
+    );
+    assert!(command.is_none());
+    assert_eq!(status, "cli-needed");
+}
+
+#[test]
 fn restart_on_save_selects_only_live_agents_with_changed_effective_settings() {
     let before = BTreeMap::from([
         ("changed".to_owned(), json!({"model":"a"})),
@@ -395,6 +444,8 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
         before["harnessOptions"][2]["status"] == "ready"
     );
     assert_eq!(before["harnessOptions"][2]["defaultArgs"], json!([]));
+    // Pi's signed-in providers come from its catalog, never a static list.
+    assert_eq!(before["harnessOptions"][2]["providers"], json!([]));
     assert_eq!(
         before["harnessOptions"][2]["status"],
         pi_status(
@@ -577,7 +628,7 @@ fn queued_restore_skips_agent_stopped_after_launch() {
     .unwrap();
     assert_eq!(stopped["agents"][0]["startOnAppLaunch"], true);
     let restored =
-        tauri::async_runtime::block_on(start(host.clone(), id, Action::Start, true, None, false));
+        tauri::async_runtime::block_on(start(host.clone(), id, Action::Start, true, None, None));
     assert_eq!(
         restored.err().as_deref(),
         Some("Agent disabled before restore")
@@ -637,11 +688,19 @@ mod overlap {
         fn add(&self, _: &str, _: &Secret) -> Result<(), String> {
             panic!("not a write")
         }
-        fn read(&self, id: &str, _: &str) -> Result<Option<Secret>, String> {
+        fn read(&self, id: &str, pubkey: &str) -> Result<Option<Secret>, String> {
             self.entered.send(id.to_owned()).unwrap();
             let gate = self.release.lock().unwrap().remove(id);
             gate.ok_or("Unplanned credential read")?.recv().unwrap();
-            Err(REFUSAL.into())
+            if pubkey == "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798" {
+                Secret::parse(
+                    "0000000000000000000000000000000000000000000000000000000000000001",
+                    pubkey,
+                )
+                .map(Some)
+            } else {
+                Err(REFUSAL.into())
+            }
         }
     }
     struct Gate {
@@ -744,6 +803,211 @@ mod overlap {
             .unwrap()
     }
 
+    // A is ahead of B in restore's sorted queue; only B has a usable test key.
+    fn seed_replay_pair(dir: &std::path::Path) -> (String, String) {
+        seed_pair(dir);
+        let path = dir.join("store/agents.json");
+        let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let mut ids = Vec::new();
+        for (i, pubkey) in [
+            "11".repeat(32),
+            "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798".into(),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let id = saved["agents"][i]["id"].as_str().unwrap().replacen(
+                &if i == 0 { "ab" } else { "cd" }.repeat(32),
+                pubkey,
+                1,
+            );
+            saved["agents"][i]["id"] = json!(id);
+            saved["agents"][i]["pubkey"] = json!(pubkey);
+            ids.push(id);
+        }
+        std::fs::write(path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        (ids.remove(0), ids.remove(0))
+    }
+
+    #[tokio::test]
+    async fn mentions_coalesce_through_queued_waiting_and_starting_into_launch_input() {
+        let (dir, host, _app, view) = fixture();
+        let (_, id) = seed_replay_pair(dir.path());
+        let gate = Gate::install(&host, dir.path(), &["cred-ab", "cred-cd"]);
+        let owner = host.clone();
+        let restore = tokio::spawn(async move { owner.restore().await });
+        assert_eq!(gate.entered().await, "cred-ab");
+        // A confirmed send already thirty seconds old, well beyond the runner's
+        // five-second default window. No wall-clock sleep controls this ordering.
+        let sent = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - 30;
+        for floor in [sent + 2, sent, sent + 1] {
+            invoke(
+                &view,
+                "agent_control_attach_mention",
+                json!({"id":id,"expectedRevision":1,"replayFloor":floor}),
+            )
+            .unwrap();
+        }
+        assert!(
+            gate.idle(),
+            "attaching a queued mention must not acquire credentials"
+        );
+        gate.release["cred-ab"].send(()).unwrap();
+        assert_eq!(gate.entered().await, "cred-cd");
+        assert_eq!(
+            host.with(|h| Ok(h.starts[&id].replay_floor)).unwrap(),
+            Some(sent)
+        );
+        invoke(
+            &view,
+            "agent_control_attach_mention",
+            json!({"id":id,"expectedRevision":1,"replayFloor":sent - 1}),
+        )
+        .unwrap();
+        // Starting is still before final launch admission and must accept input.
+        host.with(|h| {
+            h.starts.get_mut(&id).unwrap().status = ProcessStatus::Starting;
+            Ok(())
+        })
+        .unwrap();
+        invoke(
+            &view,
+            "agent_control_attach_mention",
+            json!({"id":id,"expectedRevision":1,"replayFloor":sent - 2}),
+        )
+        .unwrap();
+        // Consume the exact input at final admission without launching a native
+        // test harness as the app supervisor. Controller's subprocess regression
+        // separately checks action_with_key forwards this input into the runner.
+        let replay = host
+            .with(|h| {
+                let ticket = h.starts[&id].ticket;
+                h.take_start(&id, ticket)
+            })
+            .unwrap();
+        gate.release["cred-cd"].send(()).unwrap();
+        within(restore).await;
+        assert_eq!(replay.replay_floor, Some(sent - 2));
+        assert!(gate.idle());
+        assert!(host.with(|h| Ok(h.starts.is_empty())).unwrap());
+        assert!(invoke(
+            &view,
+            "agent_control_attach_mention",
+            json!({"id":id,"expectedRevision":1,"replayFloor":sent})
+        )
+        .is_err());
+        assert!(
+            !std::fs::read_to_string(dir.path().join("store/agents.json"))
+                .unwrap()
+                .contains(&(sent - 2).to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn queued_replay_cannot_survive_stop_or_revision_change() {
+        for stop in [true, false] {
+            let (dir, host, _app, view) = fixture();
+            let (_, id) = seed_replay_pair(dir.path());
+            let gate = Gate::install(&host, dir.path(), &["cred-ab"]);
+            let owner = host.clone();
+            let restore = tokio::spawn(async move { owner.restore().await });
+            assert_eq!(gate.entered().await, "cred-ab");
+            invoke(
+                &view,
+                "agent_control_attach_mention",
+                json!({"id":id,"expectedRevision":1,"replayFloor":100}),
+            )
+            .unwrap();
+            if stop {
+                invoke(
+                    &view,
+                    "agent_control_action",
+                    json!({"id":id,"action":"stop"}),
+                )
+                .unwrap();
+                assert!(invoke(
+                    &view,
+                    "agent_control_attach_mention",
+                    json!({"id":id,"expectedRevision":1,"replayFloor":90})
+                )
+                .is_err());
+            } else {
+                let path = dir.path().join("store/agents.json");
+                let mut saved: Value =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                saved["agents"][1]["revision"] = json!(2);
+                std::fs::write(path, serde_json::to_vec(&saved).unwrap()).unwrap();
+                assert!(invoke(
+                    &view,
+                    "agent_control_attach_mention",
+                    json!({"id":id,"expectedRevision":2,"replayFloor":90})
+                )
+                .is_err());
+            }
+            gate.release["cred-ab"].send(()).unwrap();
+            within(restore).await;
+            assert!(
+                gate.idle(),
+                "cancelled/changed queued replay must not acquire credentials"
+            );
+            let observed = invoke(&view, "agent_control_snapshot", json!({})).unwrap();
+            assert_eq!(
+                agent(&observed, &id)["status"],
+                if stop { "stopped" } else { "failed" }
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn restore_read_failure_clears_seeded_waiting_and_allows_explicit_retry() {
+        let (dir, host, _app, _view) = fixture();
+        let id = seed_pair(dir.path())[0].clone();
+        // Reopen so Host::open, not the test, seeds the queue.
+        *host.0.lock().unwrap() = Err("retired".into());
+        let fresh = AgentHost::open(Ok((
+            dir.path().join("store"),
+            dir.path().join("legacy"),
+            dir.path().join("workspace"),
+        )));
+        assert!(fresh
+            .with(|h| Ok(h.snapshot()?.data.agents[0].status == ProcessStatus::Waiting))
+            .unwrap());
+        let path = dir.path().join("store/agents.json");
+        let saved = std::fs::read(&path).unwrap();
+        std::fs::write(&path, "malformed").unwrap();
+        fresh.restore().await;
+        std::fs::write(path, saved).unwrap();
+        let snapshot = fresh.with(|h| h.snapshot()).unwrap();
+        assert!(snapshot
+            .data
+            .agents
+            .iter()
+            .all(|a| a.status == ProcessStatus::Failed
+                && a.error.as_deref() == Some("Saved agents are malformed; left unchanged")));
+        assert!(fresh.with(|h| Ok(h.queued.is_empty())).unwrap());
+        let gate = Gate::install(&fresh, dir.path(), &["cred-ab"]);
+        gate.release["cred-ab"].send(()).unwrap();
+        let retried = start(fresh.clone(), id.clone(), Action::Start, false, None, None)
+            .await
+            .unwrap();
+        assert_eq!(gate.entered().await, "cred-ab");
+        assert_eq!(
+            retried
+                .data
+                .agents
+                .iter()
+                .find(|a| a.id == id)
+                .unwrap()
+                .error
+                .as_deref(),
+            Some(REFUSAL)
+        );
+    }
+
     #[tokio::test]
     async fn queued_start_preparation_cannot_overtake_a_later_stop() {
         let (dir, host, _app, _view) = fixture();
@@ -757,7 +1021,7 @@ mod overlap {
             Action::Start,
             false,
             None,
-            false
+            None
         ));
         assert_pending(starting.as_mut()).await;
         let target = id.clone();
@@ -800,6 +1064,24 @@ mod overlap {
         let restore = tokio::spawn(async move { owner.restore().await });
         // Restore waits on the first agent's credential while the user acts.
         assert_eq!(gate.entered().await, credential(&first));
+        let waiting = invoke(&view, "agent_control_snapshot", json!({})).unwrap();
+        assert_eq!(agent(&waiting, &first)["status"], "waiting");
+        assert_eq!(agent(&waiting, &second)["status"], "waiting");
+        // Native admission, not only disabled buttons, rejects overlapping Start.
+        let duplicate = start(
+            host.clone(),
+            first.clone(),
+            Action::Start,
+            false,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(
+            duplicate.err().as_deref(),
+            Some("Agent start already in progress; use Stop to cancel")
+        );
+        assert!(gate.idle());
         let stopped = invoke(
             &view,
             "agent_control_action",
@@ -830,9 +1112,12 @@ mod overlap {
         let middle = invoke(&view, "agent_control_snapshot", json!({})).unwrap();
         assert!(agent(&middle, &first)["error"].is_null());
         assert_eq!(agent(&middle, &first)["enabled"], false);
+        assert_eq!(agent(&middle, &first)["status"], "stopped");
+        assert_eq!(agent(&middle, &second)["status"], "waiting");
         gate.release[&credential(&second)].send(()).unwrap();
         let started = within(explicit).await.unwrap();
         assert_eq!(agent(&started, &second)["error"], REFUSAL);
+        assert_eq!(agent(&started, &second)["status"], "failed");
         assert!(agent(&started, &first)["error"].is_null());
 
         // A fresh host has no action history: both launch preferences restore.
@@ -857,6 +1142,162 @@ mod overlap {
             assert_eq!(agent(&after, id)["startOnAppLaunch"], true);
         }
         fresh.shutdown().unwrap();
+    }
+
+    #[tokio::test]
+    async fn refused_acquisition_never_projects_starting_between_admissions() {
+        let (dir, host, _app, _view) = fixture();
+        let id = seed_pair(dir.path())[0].clone();
+        let credential = credential(&id);
+        let gate = Gate::install(&host, dir.path(), &[&credential]);
+        let mut pending = std::pin::pin!(start(
+            host.clone(),
+            id.clone(),
+            Action::Start,
+            false,
+            None,
+            None
+        ));
+        tokio::select! {
+            result = &mut pending => panic!("start finished before credential release: {}", result.is_ok()),
+            entered = gate.entered() => assert_eq!(entered, credential),
+        }
+        let waiting = host.with(|h| h.snapshot()).unwrap();
+        assert_eq!(
+            agent(&serde_json::to_value(waiting).unwrap(), &id)["status"],
+            "waiting"
+        );
+        gate.release[&credential].send(()).unwrap();
+        // Drive only one poll of Start between snapshots. FIFO admission makes
+        // each scheduled transition observable before Start can schedule another,
+        // including the former erroneous Starting admission after refusal.
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let completed = std::future::poll_fn(|cx| {
+                    use std::future::Future;
+                    std::task::Poll::Ready(match pending.as_mut().poll(cx) {
+                        std::task::Poll::Ready(result) => Some(result),
+                        std::task::Poll::Pending => None,
+                    })
+                })
+                .await;
+                let snapshot = run(host.clone(), |h| h.snapshot()).await.unwrap();
+                let snapshot = serde_json::to_value(snapshot).unwrap();
+                assert_ne!(agent(&snapshot, &id)["status"], "starting");
+                if let Some(result) = completed {
+                    result.unwrap();
+                    assert_eq!(agent(&snapshot, &id)["status"], "failed");
+                    assert_eq!(agent(&snapshot, &id)["error"], REFUSAL);
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("refused start did not settle");
+    }
+
+    #[tokio::test]
+    async fn native_start_projects_launch_integrity_failure_after_acquiring_key() {
+        let (dir, host, _app, view) = fixture();
+        seed_pair(dir.path());
+        let path = dir.path().join("store/agents.json");
+        let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let pubkey = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+        let id = saved["agents"][0]["id"]
+            .as_str()
+            .unwrap()
+            .replacen(&"ab".repeat(32), pubkey, 1);
+        saved["agents"][0]["pubkey"] = json!(pubkey);
+        saved["agents"][0]["id"] = json!(id);
+        std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let gate = Gate::install(&host, dir.path(), &["cred-ab"]);
+        // Bundle initialization succeeded, but launch must recheck these bytes.
+        std::fs::write(dir.path().join("tools/buzz-agent"), "tampered").unwrap();
+        let pending = tokio::task::spawn_blocking({
+            let (view, id) = (view.clone(), id.clone());
+            move || {
+                invoke(
+                    &view,
+                    "agent_control_action",
+                    json!({"id":id,"action":"start"}),
+                )
+            }
+        });
+        assert_eq!(gate.entered().await, "cred-ab");
+        gate.release["cred-ab"].send(()).unwrap();
+        let result = within(pending).await.unwrap();
+        let failed = agent(&result, &id);
+        assert_eq!(failed["status"], "failed");
+        assert!(failed["error"].as_str().unwrap().contains("integrity"));
+        assert!(failed["runningRevision"].is_null());
+        assert_eq!(failed["enabled"], true);
+        assert_eq!(failed["startOnAppLaunch"], true);
+        assert!(host.with(|h| Ok(h.starts.is_empty())).unwrap());
+        let observed = invoke(&view, "agent_control_snapshot", json!({})).unwrap();
+        assert_eq!(agent(&observed, &id), failed);
+    }
+
+    #[tokio::test]
+    async fn acquired_key_cannot_escape_stop_quit_or_saved_revision_fences() {
+        for boundary in ["stop", "quit", "save"] {
+            let (dir, host, _app, view) = fixture();
+            seed_pair(dir.path());
+            let path = dir.path().join("store/agents.json");
+            let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            let pubkey = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+            let id =
+                saved["agents"][0]["id"]
+                    .as_str()
+                    .unwrap()
+                    .replacen(&"ab".repeat(32), pubkey, 1);
+            saved["agents"][0]["pubkey"] = json!(pubkey);
+            saved["agents"][0]["id"] = json!(id);
+            std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+            let gate = Gate::install(&host, dir.path(), &["cred-ab"]);
+            let (owner, target) = (host.clone(), id.clone());
+            let pending = tokio::spawn(async move {
+                start(owner, target, Action::Start, false, None, None).await
+            });
+            assert_eq!(gate.entered().await, "cred-ab");
+            let waiting = invoke(&view, "agent_control_snapshot", json!({})).unwrap();
+            assert_eq!(agent(&waiting, &id)["status"], "waiting");
+            invoke(
+                &view,
+                "agent_control_attach_mention",
+                json!({"id":id,"expectedRevision":1,"replayFloor":100}),
+            )
+            .unwrap();
+            match boundary {
+                "stop" => {
+                    invoke(
+                        &view,
+                        "agent_control_action",
+                        json!({"id":id,"action":"stop"}),
+                    )
+                    .unwrap();
+                }
+                "quit" => {
+                    host.shutdown().unwrap();
+                }
+                _ => {
+                    saved["agents"][0]["revision"] = json!(2);
+                    std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+                }
+            }
+            gate.release["cred-ab"].send(()).unwrap();
+            let result = within(pending).await;
+            if boundary == "save" {
+                let result = serde_json::to_value(result.unwrap()).unwrap();
+                assert_eq!(agent(&result, &id)["status"], "failed");
+                assert!(agent(&result, &id)["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Saved settings changed"));
+                assert!(agent(&result, &id)["runningRevision"].is_null());
+            } else {
+                assert!(result.is_err());
+            }
+        }
     }
 
     // Eligibility can lapse while the OS credential prompt is open (e.g. the
@@ -935,7 +1376,7 @@ mod overlap {
     // A genuinely eligible agent: its Start failed on the missing Goose CLI.
     // Stop during the download must win over the install's late restart.
     #[test]
-    fn goose_install_restart_does_not_reenable_an_agent_stopped_during_download() {
+    fn install_restart_does_not_reenable_a_stopped_goose_or_pi_agent() {
         const KEY: &str = "0000000000000000000000000000000000000000000000000000000000000001";
         const PUB: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
         struct Stored;
@@ -953,67 +1394,93 @@ mod overlap {
                 Secret::parse(KEY, pubkey).map(Some)
             }
         }
-        let (dir, host, _app, view) = fixture();
-        let id = seed(dir.path());
-        let path = dir.path().join("store/agents.json");
-        let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        let id = id.replacen(&"ab".repeat(32), PUB, 1);
-        saved["agents"][0]["id"] = json!(id);
-        saved["agents"][0]["pubkey"] = json!(PUB);
-        saved["agents"][0]["credentialId"] = json!(id);
-        saved["agents"][0]["harness"]["command"] = json!(dir.path().join("missing/goose"));
-        saved["agents"][0]["harness"]["args"] = json!(["acp"]);
-        std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
-        let credentials: Arc<dyn Credentials> = Arc::new(Stored);
-        host.with(|h| {
-            h.controller = Controller::new(
-                Store::open(dir.path().join("replacement"))?,
-                credentials.clone(),
-                Err("placeholder".into()),
-                dir.path().join("ownership"),
+        for (harness, is_goose) in [("goose", true), ("buzz-pi-acp", false)] {
+            let (dir, host, _app, view) = fixture();
+            let id = seed(dir.path());
+            let path = dir.path().join("store/agents.json");
+            let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            let id = id.replacen(&"ab".repeat(32), PUB, 1);
+            saved["agents"][0]["id"] = json!(id);
+            saved["agents"][0]["pubkey"] = json!(PUB);
+            saved["agents"][0]["credentialId"] = json!(id);
+            saved["agents"][0]["harness"]["command"] =
+                json!(dir.path().join("missing").join(harness));
+            saved["agents"][0]["harness"]["args"] =
+                json!(if is_goose { vec!["acp"] } else { vec![] });
+            std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+            let credentials: Arc<dyn Credentials> = Arc::new(Stored);
+            host.with(|h| {
+                h.controller = Controller::new(
+                    Store::open(dir.path().join("replacement"))?,
+                    credentials.clone(),
+                    Err("placeholder".into()),
+                    dir.path().join("ownership"),
+                );
+                h.controller = Controller::new(
+                    Store::open(dir.path().join("store"))?,
+                    credentials.clone(),
+                    Ok(synthetic_bundle(&dir.path().join("tools"))),
+                    dir.path().join("ownership"),
+                );
+                h.credentials = credentials;
+                h.legacy_check = || Ok(());
+                Ok(())
+            })
+            .unwrap();
+            let started = tauri::async_runtime::block_on(start(
+                host.clone(),
+                id.clone(),
+                Action::Start,
+                false,
+                None,
+                None,
+            ))
+            .unwrap();
+            assert_eq!(
+                started.data.agents[0].error.as_deref(),
+                Some("Required runtime executable is missing")
             );
-            h.controller = Controller::new(
-                Store::open(dir.path().join("store"))?,
-                credentials.clone(),
-                Ok(synthetic_bundle(&dir.path().join("tools"))),
-                dir.path().join("ownership"),
-            );
-            h.credentials = credentials;
-            h.legacy_check = || Ok(());
-            Ok(())
-        })
-        .unwrap();
-        let started = tauri::async_runtime::block_on(start(
-            host.clone(),
-            id.clone(),
-            Action::Start,
-            false,
-            None,
-            false,
-        ))
-        .unwrap();
-        assert_eq!(
-            started.data.agents[0].error.as_deref(),
-            Some("Required runtime executable is missing")
-        );
-        assert_eq!(
-            tauri::async_runtime::block_on(host.waiting_for_goose()).unwrap(),
-            vec![id.clone()]
-        );
-        invoke(
-            &view,
-            "agent_control_action",
-            json!({"id":id,"action":"stop"}),
-        )
-        .unwrap();
-        assert!(tauri::async_runtime::block_on(host.waiting_for_goose())
-            .unwrap()
+            let waiting = if is_goose {
+                tauri::async_runtime::block_on(host.waiting_for_goose()).unwrap()
+            } else {
+                tauri::async_runtime::block_on(host.waiting_for_pi()).unwrap()
+            };
+            assert_eq!(waiting, vec![id.clone()]);
+            invoke(
+                &view,
+                "agent_control_action",
+                json!({"id":id,"action":"stop"}),
+            )
+            .unwrap();
+            assert!(if is_goose {
+                tauri::async_runtime::block_on(host.waiting_for_goose()).unwrap()
+            } else {
+                tauri::async_runtime::block_on(host.waiting_for_pi()).unwrap()
+            }
             .is_empty());
-        let result =
-            tauri::async_runtime::block_on(start(host, id, Action::Restart, false, None, true));
-        assert_eq!(result.err().as_deref(), Some(NOT_WAITING_FOR_GOOSE));
-        let saved: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        assert_eq!(saved["agents"][0]["enabled"], false);
+            let result = tauri::async_runtime::block_on(start(
+                host,
+                id,
+                Action::Restart,
+                false,
+                None,
+                Some(if is_goose {
+                    InstallRestart::Goose
+                } else {
+                    InstallRestart::Pi
+                }),
+            ));
+            assert_eq!(
+                result.err().as_deref(),
+                Some(if is_goose {
+                    NOT_WAITING_FOR_GOOSE
+                } else {
+                    NOT_WAITING_FOR_PI
+                })
+            );
+            let saved: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            assert_eq!(saved["agents"][0]["enabled"], false);
+        }
     }
 }
 
@@ -1221,7 +1688,7 @@ async fn native_start_restore_disconnect_stop_and_quit_fence_late_credentials() 
                 owner.restore().await;
                 Err("restore completed".into())
             } else {
-                start(owner, agent_id, Action::Start, false, None, false).await
+                start(owner, agent_id, Action::Start, false, None, None).await
             }
         });
         tokio::task::spawn_blocking({
@@ -1543,6 +2010,84 @@ fn log_ipc_requires_fresh_exact_owner_proof_and_consumes_challenge() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn pi_model_lookup_waits_out_brief_host_contention() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, host, _app, view) = fixture();
+    let tools = dir.path().join("tools");
+    std::fs::create_dir(&tools).unwrap();
+    for tool in ["pi", "node", "buzz-pi-acp"] {
+        let file = tools.join(tool);
+        std::fs::write(&file, "#!/bin/sh\nread request\nprintf '%s\\n' '{\"id\":\"catalog\",\"type\":\"response\",\"command\":\"get_available_models\",\"success\":true,\"data\":{\"models\":[{\"provider\":\"databricks\",\"id\":\"model-a\"}]}}'\n").unwrap();
+        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    // Another native operation (for example a snapshot refresh) briefly holds
+    // the host while the lookup reads its settings.
+    let (locked, wait) = std::sync::mpsc::channel();
+    let holder = {
+        let lock = host.0.clone();
+        std::thread::spawn(move || {
+            let _guard = lock.lock().unwrap();
+            locked.send(()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(400));
+        })
+    };
+    wait.recv().unwrap();
+    let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    let result = invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":ticket,"request":{
+            "host":"","filter":"","action":"connect","edit":{
+                "name":"Pi draft","systemPrompt":"","workspace":dir.path(),
+                "harness":{"command":tools.join("buzz-pi-acp"),"args":[],"provider":"","model":""},
+                "environment":{}
+            }
+        }}),
+    )
+    .unwrap();
+    holder.join().unwrap();
+    assert_eq!(
+        result["models"],
+        json!([{"id":"databricks/model-a","name":"databricks/model-a"}])
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn pi_connection_test_prompts_the_draft_selection() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, _host, _app, view) = fixture();
+    let tools = dir.path().join("tools");
+    std::fs::create_dir(&tools).unwrap();
+    for tool in ["pi", "node", "buzz-pi-acp"] {
+        let file = tools.join(tool);
+        std::fs::write(&file, "#!/bin/sh\nread request\ncase \"$*\" in *'--model model-a'*) stop=stop;; *) stop=error;; esac\nprintf '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"stopReason\":\"%s\",\"errorMessage\":\"401\"}}\\n' \"$stop\"\n").unwrap();
+        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let test = |model: &str| {
+        let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+        invoke(
+            &view,
+            "agent_models_run",
+            json!({"ticket":ticket,"request":{
+                "host":"","filter":"","action":"test","edit":{
+                    "name":"Pi draft","systemPrompt":"","workspace":dir.path(),
+                    "harness":{"command":tools.join("buzz-pi-acp"),"args":[],"provider":"databricks","model":model},
+                    "environment":{}
+                }
+            }}),
+        )
+    };
+    assert_eq!(test("model-a").unwrap()["models"], json!([]));
+    let error = test("model-b").unwrap_err();
+    assert!(
+        error.as_str().unwrap().contains("rejected the API key"),
+        "{error}"
+    );
+}
+
 async fn assert_pending<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
     std::future::poll_fn(|cx| {
         assert!(future.as_mut().poll(cx).is_pending());
@@ -1658,4 +2203,27 @@ async fn dropped_caller_does_not_release_a_running_native_operation() {
     assert_pending(next.as_mut()).await;
     release.send(()).unwrap();
     assert!(next.await.is_ok());
+}
+
+#[tokio::test]
+async fn restore_uses_serialized_launch_preference_not_enabled_alone() {
+    let (dir, host, _app, _view) = fixture();
+    let id = seed(dir.path());
+    let path = dir.path().join("store/agents.json");
+    let mut data: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    data["agents"][0]["startOnAppLaunch"] = json!(false);
+    std::fs::write(&path, serde_json::to_vec(&data).unwrap()).unwrap();
+    host.restore().await;
+    let data = host.with(|h| h.snapshot()).unwrap().data;
+    assert!(data.agents[0].enabled);
+    assert!(!data.agents[0].start_on_app_launch);
+    assert!(data.agents[0].status == ProcessStatus::Stopped);
+    assert!(data.agents[0].error.is_none());
+    host.with(|h| h.controller.set_start_on_app_launch(&id, true))
+        .unwrap();
+    host.restore().await;
+    let data = host.with(|h| h.snapshot()).unwrap().data;
+    assert!(data.agents[0].start_on_app_launch);
+    assert!(data.agents[0].status == ProcessStatus::Failed);
+    assert_eq!(data.agents[0].error.as_deref(), Some(RUNTIME_GATE));
 }

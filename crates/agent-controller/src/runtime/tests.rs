@@ -459,7 +459,8 @@ fn failed_temp_cleanup_reports_error_and_allows_explicit_retry() {
         let stopped = if matches!(action, Action::Restart) {
             controller
                 .action_with_key(&a.id, action, 1, &key, None)
-                .unwrap()
+                .unwrap();
+            controller.snapshot().unwrap()
         } else {
             controller.action(&a.id, action).unwrap()
         };
@@ -991,6 +992,58 @@ fn bundle_rejects_a_revision_different_from_the_runtime_spec() {
 
 #[test]
 #[cfg(unix)]
+fn snapshots_project_configured_paths_but_starts_reverify_each_executable() {
+    for name in ["buzz-acp", "buzz-dev-mcp", "buzz-agent"] {
+        for removed in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let tools = tempfile::tempdir().unwrap();
+            let a = agent(dir.path());
+            let mut store = Store::open(dir.path().join("config")).unwrap();
+            store.insert(vec![a.clone()]).unwrap();
+            let mut controller = Controller::new(
+                store,
+                Arc::new(Memory),
+                Ok(bundle(tools.path())),
+                dir.path().join("ownership"),
+            );
+            let path = tools.path().join(name);
+            if removed {
+                fs::remove_file(path).unwrap();
+            } else {
+                fs::write(path, "tampered").unwrap();
+            }
+            // Projection retains configured paths even when runtime files cannot
+            // be verified. No status poll may treat these as launch authority.
+            let before = controller.snapshot().unwrap();
+            assert!(before.runtime_available);
+            assert_eq!(
+                before.agents[0].acp_command.as_deref(),
+                tools.path().join("buzz-acp").to_str()
+            );
+            assert_eq!(
+                before.agents[0].mcp_command.as_deref(),
+                tools.path().join("buzz-dev-mcp").to_str()
+            );
+            let key = Secret::parse(KEY, PUB).unwrap();
+            controller
+                .action_with_key(&a.id, Action::Start, 1, &key, None)
+                .unwrap();
+            let after = controller.snapshot().unwrap();
+            assert!(matches!(after.agents[0].status, ProcessStatus::Failed));
+            assert!(after.agents[0]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains(if removed { "missing" } else { "integrity" }));
+            assert!(after.agents[0].running_revision.is_none());
+            assert!(controller.running.is_empty());
+            assert!(!dir.path().join("starts").exists());
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn manifest_integrity_and_exact_identity_exclusion_across_profiles() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
@@ -1115,9 +1168,10 @@ fn mention_start_forwards_replay_floor_without_persisting_or_restoring_it() {
         dir.path().join("ownership"),
     );
     let key = Secret::parse(KEY, PUB).unwrap();
-    let result = controller
+    controller
         .action_with_key(&a.id, Action::Start, 1, &key, Some(1234567890))
         .unwrap();
+    let result = controller.snapshot().unwrap();
     assert!(result.agents[0].enabled);
     assert!(matches!(result.agents[0].status, ProcessStatus::Running));
     let output = wait_for_contents(&dir.path().join("starts"), |text| {
@@ -1768,6 +1822,75 @@ fn import_and_repair_deliver_team_instructions_to_a_started_process() {
         ));
         assert!(controller.running.is_empty());
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn managed_prefix_detection_and_shim_launch_path_use_pinned_node() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let app_data = dir.path();
+    let prefix = app_data.join("node-tools/bin");
+    let platform = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => "darwin-arm64",
+        ("macos", "x86_64") => "darwin-x64",
+        ("linux", "x86_64") => "linux-x64",
+        ("linux", "aarch64") => "linux-arm64",
+        _ => return,
+    };
+    let node_bin = app_data
+        .join("runtimes/node/v24.18.0")
+        .join(platform)
+        .join("bin");
+    fs::create_dir_all(&prefix).unwrap();
+    fs::create_dir_all(&node_bin).unwrap();
+    for path in [
+        prefix.join("pi"),
+        prefix.join("buzz-pi-acp"),
+        node_bin.join("node"),
+    ] {
+        let script = if path.file_name().is_some_and(|name| name == "node") {
+            "#!/bin/sh\nprintf 'managed-node\\n'\n"
+        } else {
+            "#!/usr/bin/env node\n"
+        };
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    assert_eq!(
+        managed_tool(app_data, "buzz-pi-acp"),
+        Some(prefix.join("buzz-pi-acp"))
+    );
+    assert_eq!(managed_tool(app_data, "node"), Some(node_bin.join("node")));
+    assert!(managed_tool(app_data, "goose").is_none());
+    let mut harness = agent(dir.path()).harness;
+    harness.command = prefix.join("buzz-pi-acp").display().to_string();
+    harness.args.clear();
+    let context =
+        crate::pi::PiContext::new(&harness, dir.path().to_str().unwrap(), &BTreeMap::new())
+            .unwrap();
+    assert_eq!(context.command, prefix.join("pi"));
+    assert_eq!(
+        context.environment["PI_ACP_PI_COMMAND"],
+        prefix.join("pi").display().to_string()
+    );
+    assert_eq!(
+        std::env::split_paths(&context.path).next().unwrap(),
+        node_bin
+    );
+    assert_eq!(std::env::split_paths(&context.path).nth(1).unwrap(), prefix);
+    let output = std::process::Command::new(&context.command)
+        .env_clear()
+        .env("PATH", &context.path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"managed-node\n");
+    fs::remove_file(node_bin.join("node")).unwrap();
+    assert!(
+        crate::pi::PiContext::new(&harness, dir.path().to_str().unwrap(), &BTreeMap::new())
+            .is_err()
+    );
 }
 
 #[cfg(unix)]

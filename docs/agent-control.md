@@ -90,8 +90,14 @@ because execution failed. The old-Buzz ownership guard remains in force.
 
 Mention startup carries the earliest relevant pending send timestamp into the
 bundled runner's existing replay input (bounded by its 15-minute catch-up limit).
-Already-running agents are not restarted. Process state is not proof of a live
-reply; imported identities require old Buzz stopped before handover.
+Already-running agents are not restarted. Mentions during queued or pending startup
+attach their earliest timestamp to that same launch, without another credential
+read or listener. Stop and changed saved revisions retire that input. If launch
+has already finished or the host cannot attach it, the send shows a separate
+replay warning instead of silently treating Waiting as Running. Attachment is not
+proof of delivery; a later credential/launch failure remains visible in Agents.
+Process state is not proof of a live reply; imported identities require old Buzz
+stopped before handover.
 
 The focused Add/Edit dialog contains Name and Agent instructions, followed by
 **AI configuration** in dependency order: **Harness → Provider → Model**. Provider
@@ -171,8 +177,7 @@ flag exclusions and the supported deployment boundary.
 ## Harnesses and agent defaults
 
 Individual-agent configuration stays on the Agents page; Settings → Agents owns
-installation guidance and device-wide defaults. One-click Pi installation is
-still planned.
+installation guidance and device-wide defaults.
 
 ### Harnesses
 
@@ -184,8 +189,14 @@ The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
   did; Goose then uses built-in `goose acp`. One install runs at a time.
   Afterward Buzz re-detects, writes an install log, and restarts agents that
   were waiting for Goose.
-- **Pi** shows **Ready**, **CLI needed**, or **Adapter needed**. V1 shows a hint
-  and copyable commands (Node.js required); one-click Pi install comes later:
+- **Pi** shows **Ready**, **CLI needed**, or **Adapter needed**. On macOS/Linux,
+  **Install** downloads checksum-verified Node v24.18.0 into app-data, then uses
+  that Node/npm to install Pi and `buzz-pi-acp` into an app-owned npm prefix.
+  Installation has a private log, re-detects the executables, and restarts only
+  enabled Pi agents that previously failed because their executable was missing.
+  User-global Pi installations remain untouched. Windows and unsupported
+  architectures retain manual setup. The copyable commands remain the manual
+  fallback (Node.js required):
 
   ```sh
   npm install -g @earendil-works/pi-coding-agent
@@ -262,6 +273,63 @@ use temporary stores, public fixture keys and loopback HTTP. They do not establi
 live relay access, native image rendering or packaged human signing. Camera and
 recording are outside this avatar slice.
 
+## Agent Keychain unlock (macOS)
+
+Managed agent keys share one agent-only Keychain item: service
+`dev.local.buzz.foundation.agents`, account `agent-bundle-v1`. After a successful
+read, the native credential owner caches it for the session; starting another
+migrated agent does not read another Keychain item. Human identity and old Buzz's
+credential blob stay separate. Nothing collects the macOS password or changes
+Keychain access controls. Development signing and other credentials can still
+cause OS prompts; this is not a promise of exactly one total dialog.
+
+Existing app-owned `agent:<key-community>` entries are copied lazily on Start or
+other explicit credential use, with exact identity validation and secure readback.
+The first migration can require multiple approvals. Original entries remain for
+rollback; explicit Delete removes both copies before removing settings. New keys
+are written only to the bundle, so older versions cannot start newly created keys.
+Do not operate older and newer credential writers concurrently during rollback.
+Never delete old Buzz's source credentials for this migration.
+
+A short per-OS-user file lock serializes bundle access across cooperating
+worktrees/profiles. Writes re-read the current bundle under that lock and verify
+readback; a nonsecret invalidation token in the lock file invalidates other
+sessions' cached copies before writes. Lock files contain no keys. Busy storage
+fails visibly and requires explicit Retry; it never waits behind another app's
+consent prompt or automatically replays a write. This does not coordinate manual
+Keychain edits or older app versions; quit the app before changing storage outside
+this owner. A refused unlock is remembered until explicit Start/Retry, Import,
+Create, profile publication, or Delete; later auto-start rows do not reopen it.
+
+All launch-selected agents appear **Waiting to start · unlock Keychain if prompted**
+until their turn finishes acquiring credentials. A successful acquisition advances
+to **Starting process**, then process-alive evidence or a specific failure with
+**Retry start**. Stop remains available while waiting; pending OS dialogs may
+still need dismissal, but a late result cannot start a stopped agent. Quit and
+saved-revision fences remain in force. No frontend polling automatically retries
+Start. Windows/Linux retain their existing per-agent credential adapter.
+
+### Development startup diagnostics
+
+Debug builds print `[agent-startup]` and `[agent-keychain]` lines to the existing
+`just desktop` terminal. Selection records include the public key/community ID,
+effective `startOnAppLaunch` and enabled intent, then each auto-start attempt records its
+final process state. Credential records identify bundle/individual/legacy item
+class, operation, begin/end, sanitized failure category and elapsed time. They
+never print keys, raw item accounts, relay URLs, environment, agent names or OS
+error text. Release builds do not emit these diagnostics; no new log store or
+telemetry transport is added. A Keychain API call is not proof of an OS prompt.
+
+For an attended check, retain only these prefixed lines locally, note the dialog's
+item label (never the password), then quit and relaunch the **unchanged binary**.
+Do not manually start agents or send waking mentions during this check: credential
+lines have no agent ID, so overlapping credential operations cannot be attributed
+by order. Already-migrated agents should use the bundle, not individual reads. Native
+signing/OS consent remains a separate observation; do not equate a fixture pass
+or a Keychain call count with password-dialog acceptance. Auto-start off is a
+saved preference, not an execution failure: change **Start on launch** in the
+agent profile's Runtime tab deliberately rather than rewriting settings.
+
 ## Runtime boundary
 
 Native startup opens `app_data_dir/agent-controller`, never the old library as a
@@ -274,6 +342,15 @@ OS credential dialog does not hold the controller: Stop, Disconnect and Quit
 retire late starts; Save during a credential wait requires an explicit retry.
 Synthetic native tests inject rejecting or in-memory credentials and runtime
 resources. Production has no disposable storage override or preview launch mode.
+
+Launch-selected agents start relay listeners; their AI worker pools remain lazy
+until work arrives. Status reads project configured ACP/MCP paths without reading
+or hashing executables. These paths and `runtimeAvailable` describe the bundle
+accepted at initialization, not a fresh integrity check or relay readiness. Every
+actual launch still verifies its bundled worker, ACP and MCP executables before
+spawn, and exposes verification failure on the agent. Native Start projects one
+final snapshot after recording its outcome. This adds no incoming wake service
+for fully stopped listeners and no durable interrupted-turn recovery.
 
 On Unix, an execed supervisor in the same app binary owns each agent's shared
 identity lock, isolated listener session, and temporary runtime directory. App
@@ -461,10 +538,13 @@ bin/cargo build -p buzz-foundation
 ```
 
 [`runtime/agent-runtime.json`](../runtime/agent-runtime.json) pins the five tools
-to the same immutable source revision as the native library. The build script uses pinned Cargo,
-`cargo install --git --rev --locked`, scrubs injected Buzz/provider environment,
-and stages binaries plus revision/target/SHA256 manifest in
-`src-tauri/resources/agent-runtime`. Native build copies them to
+to the same immutable source revision as the native library. The build script fetches
+that revision and uses pinned Cargo for one `cargo build --release --locked` of all
+five tools outside the checkout, scrubs injected Buzz/provider environment and
+per-shell compiler overrides (`RUSTFLAGS`, `RUSTC_*`, `CARGO_PROFILE_*`, …), and stages binaries plus
+revision/target/SHA256 manifest in `src-tauri/resources/agent-runtime`. Worktrees
+of one clone reuse a verified bundle cached under the Git common directory, keyed
+by the pin, tool list, build arguments and `rustc -vV`. Native build copies them to
 `target/debug/agent-runtime`. Generated binaries/manifest are not committed.
 Startup verifies the exact tool set, target, revision and file hashes. Packaged
 macOS apps may accept signing-induced hash changes only when the runtime belongs
@@ -498,8 +578,8 @@ live handover remains a separate step below.
 
 1. While old Buzz still runs, review/import only. Choose the installed/development
    library and destination under **Import options**. Import may prompt for the
-   selected legacy secure-storage blob; it creates separate app credentials at service
-   `dev.local.buzz.foundation.agents`, account `agent:<key-community>`. The source
+   selected legacy secure-storage blob; it creates app credentials in the separate agent-only bundle described above.
+   The source
    is read-only and imported agents stay stopped. Refused custody is a blocker,
    never a reason to migrate keys implicitly.
 2. Review prompt, workspace, harness/provider/model and write-only overrides.
@@ -561,9 +641,10 @@ forced native quit, signed packaging or other-platform behavior.
 
 ## Pi harness
 
-Install Pi, Node.js, and the `buzz-pi-acp` adapter. In the planned Harnesses
-card, choose **Check again** to re-detect without reopening the app; until that
-ships, reopen the current desktop app. Pi appears alongside Buzz Agent and Goose.
+On macOS/Linux, Settings → Agents offers **Install** for a missing Pi CLI or
+adapter. It uses an app-owned Node and npm prefix; manual setup still works.
+Choose **Check again** to re-detect without reopening the app. Pi appears
+alongside Buzz Agent and Goose.
 Availability means the executables were found, not that authentication or
 inference has been verified. This
 integration uses the adapter's Pi argument forwarding after `--` (verified with

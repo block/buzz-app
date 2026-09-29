@@ -5,6 +5,7 @@ import {
   type ApiFailure,
   clearPendingDeletion,
   DELETION_PENDING_KEY,
+  isDefinitiveDeletionRejection,
   persistPendingDeletion,
   readPendingDeletion,
   type DeletionRequest,
@@ -74,10 +75,7 @@ it("treats a 409 UUID retarget conflict as definitive on replay", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () =>
-      Response.json(
-        { error: { code: "deletion_request_conflict" } },
-        { status: 409 },
-      ),
+      Response.json({ error: { code: "deletion_conflict" } }, { status: 409 }),
     ),
   );
   await expect(admitDeletion(request, "recovery")).rejects.toMatchObject({
@@ -208,6 +206,50 @@ it.each([
 );
 
 it.each([
+  ["must_archive", 409],
+  ["not_owner", 404],
+  ["protected_target", 409],
+  ["deletion_conflict", 409],
+])("settles recovery on relay verdict %s/%i", async (code, status) => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ error: { code } }, { status })),
+  );
+  const reason = await admitDeletion(request, "recovery").catch((e) => e);
+  expect(reason).toMatchObject({ code } satisfies Partial<ApiFailure>);
+  expect(isDefinitiveDeletionRejection(reason)).toBe(true);
+});
+
+it.each([
+  ["missing_mapping", 400],
+  ["invalid_request", 400],
+  ["confirmation_mismatch", 400],
+  ["unsupported_acknowledgement_version", 400],
+  ["must_archive", 400],
+  ["not_owner", 409],
+])("keeps a recovery %s/%i rejection ambiguous", async (code, status) => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ error: { code } }, { status })),
+  );
+  await expect(admitDeletion(request, "recovery")).rejects.toMatchObject({
+    code: "acceptance_unknown",
+  } satisfies Partial<ApiFailure>);
+});
+
+it("does not treat an unknown relay stage as progress", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json({ ...request, status: "accepted" }, { status: 202 }),
+    ),
+  );
+  await expect(admitDeletion(request, "recovery")).rejects.toMatchObject({
+    code: "acceptance_unknown",
+  } satisfies Partial<ApiFailure>);
+});
+
+it.each([
   [
     "broker string error",
     () => Response.json({ error: "upstream failed" }, { status: 502 }),
@@ -268,23 +310,6 @@ it.each([
   vi.stubGlobal("fetch", vi.fn(firstResponse));
   await expect(admitDeletion(request, "fresh")).rejects.toMatchObject({
     code: "acceptance_unknown",
-  } satisfies Partial<ApiFailure>);
-  expect(fetch).toHaveBeenCalledTimes(1);
-});
-
-it("keeps the same structured rejection uncertain during recovery", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () =>
-      Response.json(
-        { error: { code: "must_archive" }, correlation_id: "corr-recovery" },
-        { status: 409 },
-      ),
-    ),
-  );
-  await expect(admitDeletion(request, "recovery")).rejects.toMatchObject({
-    code: "acceptance_unknown",
-    correlationId: "corr-recovery",
   } satisfies Partial<ApiFailure>);
   expect(fetch).toHaveBeenCalledTimes(1);
 });
@@ -372,7 +397,7 @@ it("requires HTTP 202 for a tuple-bound accepted result", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () =>
-      Response.json({ ...request, status: "accepted" }, { status: 200 }),
+      Response.json({ ...request, status: "submitted" }, { status: 200 }),
     ),
   );
   await expect(admitDeletion(request, "recovery")).rejects.toMatchObject({

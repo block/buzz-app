@@ -339,8 +339,20 @@ const DEFINITIVE_DELETION_REJECTIONS = new Map([
   ["protected_target", 409],
   ["deletion_conflict", 409],
 ]);
+/**
+ * Rejections that do not prove the saved UUID lacks a relay reservation: KGoose
+ * preflights and the acknowledgement version, which the relay checks before its
+ * UUID lookup. The rest are relay verdicts reached only after a known UUID would
+ * have returned its stage (or, for protected_target, can never admit the host),
+ * so they settle recovery as well.
+ */
+const FRESH_ONLY_DELETION_REJECTIONS = new Set([
+  "missing_mapping",
+  "invalid_request",
+  "confirmation_mismatch",
+  "unsupported_acknowledgement_version",
+]);
 const DELETION_PROGRESS_STAGES = new Set([
-  "accepted",
   "submitted",
   "inventoried",
   "approved",
@@ -390,7 +402,7 @@ function deletionResult(
   );
 }
 
-/** One same-UUID POST per explicit attempt; only fresh known rejections are definitive. */
+/** One same-UUID POST per explicit attempt; relay verdicts that prove no reservation also settle recovery. */
 export async function admitDeletion(
   request: DeletionRequest,
   attempt: DeletionAttempt,
@@ -405,15 +417,9 @@ export async function admitDeletion(
     );
   }
   const code = response.value.error?.code ?? "";
-  if (response.status === 409 && code === "deletion_request_conflict")
-    throw new DefinitiveDeletionRejection(
-      "deletion_conflict",
-      messages.deletion_conflict as string,
-      response.value.correlation_id,
-    );
   if (
-    attempt === "fresh" &&
-    DEFINITIVE_DELETION_REJECTIONS.get(code) === response.status
+    DEFINITIVE_DELETION_REJECTIONS.get(code) === response.status &&
+    (attempt === "fresh" || !FRESH_ONLY_DELETION_REJECTIONS.has(code))
   )
     throw new DefinitiveDeletionRejection(
       code,

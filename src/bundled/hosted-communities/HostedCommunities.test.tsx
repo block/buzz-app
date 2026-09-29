@@ -848,7 +848,7 @@ const archived = {
 };
 const accepted = (request: Record<string, string | number>) => ({
   ...request,
-  status: "accepted",
+  status: "submitted",
   correlation_id: "corr-delete",
 });
 
@@ -1186,37 +1186,6 @@ it("keeps and retries the same UUID after a wrong-status pre-admission rejection
   ).toBeGreaterThan(2); // Startup and the fresh bound-owner check before replay.
 });
 
-it("keeps the original UUID when recovery receives must_archive", async () => {
-  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
-  routes["/api/builderlab/delete"] = () =>
-    new Response("{", {
-      status: 202,
-      headers: { "Content-Type": "application/json" },
-    });
-  renderCard();
-  await confirmDeletion();
-  await screen.findByText("Deletion status is unknown");
-  const original = localStorage.getItem(DELETION_PENDING_KEY);
-  const requestId = JSON.parse(original ?? "").request.request_id;
-
-  const mustArchive = () =>
-    Response.json(
-      { error: { code: "must_archive" }, correlation_id: "corr-recovery" },
-      { status: 409 },
-    );
-  routes["/api/builderlab/delete"] = mustArchive;
-  fireEvent.click(
-    screen.getByRole("button", { name: "Check deletion status" }),
-  );
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Deletion status is unknown",
-  );
-  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
-  const admissions = calls.filter(([url]) => url === "/api/builderlab/delete");
-  expect(admissions).toHaveLength(2);
-  expect(admissions[1]?.[1].request_id).toBe(requestId);
-});
-
 it("ends pending recovery on a definitive UUID retarget conflict", async () => {
   routes["/api/builderlab/list"] = () => ({ communities: [archived] });
   routes["/api/builderlab/delete"] = () =>
@@ -1229,10 +1198,7 @@ it("ends pending recovery on a definitive UUID retarget conflict", async () => {
   expect(await screen.findByText("Deletion status is unknown")).toBeVisible();
   const saved = JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? "");
   routes["/api/builderlab/delete"] = () =>
-    Response.json(
-      { error: { code: "deletion_request_conflict" } },
-      { status: 409 },
-    );
+    Response.json({ error: { code: "deletion_conflict" } }, { status: 409 });
   fireEvent.click(
     screen.getByRole("button", { name: "Check deletion status" }),
   );
@@ -1244,6 +1210,39 @@ it("ends pending recovery on a definitive UUID retarget conflict", async () => {
     ["/api/builderlab/delete", saved.request],
   ]);
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
+  expect(screen.queryByText("Deletion started")).not.toBeInTheDocument();
+});
+
+it("ends pending recovery when the owner unarchived before the replay", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/delete"] = () =>
+    new Response("{", {
+      status: 202,
+      headers: { "Content-Type": "application/json" },
+    });
+  renderCard();
+  await confirmDeletion();
+  expect(await screen.findByText("Deletion status is unknown")).toBeVisible();
+  const saved = JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? "");
+  routes["/api/builderlab/list"] = () => ({
+    communities: [{ ...archived, archived_at: null }],
+  });
+  routes["/api/builderlab/delete"] = () =>
+    Response.json({ error: { code: "must_archive" } }, { status: 409 });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Check deletion status" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Archive the community before deleting it.",
+  );
+  expect(calls.filter(([url]) => url === "/api/builderlab/delete")).toEqual([
+    ["/api/builderlab/delete", saved.request],
+    ["/api/builderlab/delete", saved.request],
+  ]);
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Check deletion status" }),
+  ).not.toBeInTheDocument();
   expect(screen.queryByText("Deletion started")).not.toBeInTheDocument();
 });
 

@@ -16,8 +16,10 @@ use windows_sys::Win32::System::Threading::{
 
 const ID: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798-79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
-/// cmd root -> PowerShell listener -> ping worker. The listener logs a line,
-/// records both IDs, and exits only once `exit` appears; the worker outlives it.
+/// cmd root -> PowerShell listener -> ping worker. The root first runs short
+/// cmd children whose handles it closes as they exit, so Stop must have opened
+/// them as they joined. The listener logs a line, records both IDs, and exits
+/// only once `exit` appears; the worker outlives it.
 fn listener(root: &Path) -> Command {
     fs::write(
         root.join("listener.ps1"),
@@ -31,7 +33,7 @@ while (-not (Test-Path -LiteralPath "$PSScriptRoot\exit")) { Start-Sleep -Millis
     .unwrap();
     fs::write(
         root.join("listener.cmd"),
-        "@\"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"%~dp0listener.ps1\"\r\n",
+        "@for /l %%i in (1,1,5) do @\"%SystemRoot%\\System32\\cmd.exe\" /d /c exit\r\n@\"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"%~dp0listener.ps1\"\r\n",
     )
     .unwrap();
     let mut command = Command::new(root.join("listener.cmd"));

@@ -5,6 +5,7 @@ use crate::Result;
 #[cfg(unix)]
 use std::process::Stdio;
 use std::process::{Child, Command};
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 pub(crate) struct Process {
@@ -12,9 +13,7 @@ pub(crate) struct Process {
     #[cfg(unix)]
     session: u32,
     #[cfg(windows)]
-    job: std::os::windows::io::OwnedHandle,
-    #[cfg(windows)]
-    terminated: bool,
+    job: job::Job,
     stopped: bool,
 }
 impl Process {
@@ -34,12 +33,11 @@ impl Process {
         }
         #[cfg(windows)]
         {
-            let job = job::create()?;
-            let child = job::spawn(&job, command)?;
+            let job = job::Job::create()?;
+            let child = job.spawn(command)?;
             Ok(Self {
                 child,
                 job,
-                terminated: false,
                 stopped: false,
             })
         }
@@ -60,6 +58,8 @@ impl Process {
         if self.stopped {
             return Ok(false);
         }
+        #[cfg(windows)]
+        self.job.sweep();
         match self
             .child
             .try_wait()
@@ -119,21 +119,8 @@ impl Process {
         }
         #[cfg(windows)]
         {
-            // A windowless listener has no cooperative stop signal. Terminating
-            // the job only requests exit, so wait on every member listed before
-            // it. A process that joined after listing, or one an earlier
-            // attempt terminated, is missing from the list and unconfirmable.
-            if self.terminated {
-                return Err("Agent descendants have not exited; shutdown is incomplete".into());
-            }
-            let members = job::members(&self.job);
-            self.terminated = true;
-            job::terminate(&self.job)?;
-            let (members, joined) = members?;
-            let deadline = Instant::now() + Duration::from_secs(5);
-            if !job::exited(&members, deadline) || job::joined(&self.job)? != joined {
-                return Err("Agent descendants have not exited; shutdown is incomplete".into());
-            }
+            // A windowless listener has no cooperative stop signal.
+            self.job.stop()?;
             self.child
                 .wait()
                 .map_err(|_| "Could not reap agent listener")?;
@@ -199,56 +186,220 @@ fn session_members(session: u32) -> Result<Vec<u32>> {
 #[cfg(windows)]
 mod job {
     use crate::Result;
+    use std::collections::HashSet;
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use std::os::windows::process::CommandExt;
     use std::process::{Child, Command};
-    use std::time::Instant;
+    use std::sync::{mpsc, Arc};
+    use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{
-        GetLastError, ERROR_INVALID_PARAMETER, ERROR_NO_MORE_FILES, INVALID_HANDLE_VALUE,
-        WAIT_OBJECT_0,
+        GetLastError, ERROR_NO_MORE_FILES, FILETIME, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
     };
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
     };
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob,
-        JobObjectBasicAccountingInformation, JobObjectBasicProcessIdList,
-        JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
-        TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JobObjectAssociateCompletionPortInformation, JobObjectBasicAccountingInformation,
+        JobObjectBasicProcessIdList, JobObjectExtendedLimitInformation, QueryInformationJobObject,
+        SetInformationJobObject, TerminateJobObject, JOBOBJECT_ASSOCIATE_COMPLETION_PORT,
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
+    use windows_sys::Win32::System::SystemServices::JOB_OBJECT_MSG_NEW_PROCESS;
     use windows_sys::Win32::System::Threading::{
-        OpenProcess, OpenThread, ResumeThread, WaitForSingleObject, CREATE_NO_WINDOW,
-        CREATE_SUSPENDED, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
-        THREAD_SUSPEND_RESUME,
+        GetProcessTimes, OpenProcess, OpenThread, ResumeThread, WaitForSingleObject,
+        CREATE_NO_WINDOW, CREATE_SUSPENDED, INFINITE, PROCESS_QUERY_LIMITED_INFORMATION,
+        PROCESS_SYNCHRONIZE, THREAD_SUSPEND_RESUME,
+    };
+    use windows_sys::Win32::System::IO::{
+        CreateIoCompletionPort, GetQueuedCompletionStatus, PostQueuedCompletionStatus,
     };
 
-    /// Unnamed and without breakaway: members cannot leave, and closing the
-    /// last handle (including on owner death) terminates every member.
-    pub(super) fn create() -> Result<OwnedHandle> {
-        let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    /// Completion key of job messages; the watcher stops on any other.
+    const JOB: usize = 1;
+    /// A member's process object, keyed by ID and creation time.
+    type Member = ((u32, u64), OwnedHandle);
+
+    /// Only a member's own signaled process object proves that it has exited.
+    /// A watcher opens each process as it joins; `seen` counts the processes
+    /// opened and `held` keeps those not yet signaled, across Stop attempts.
+    pub(super) struct Job {
+        handle: Arc<OwnedHandle>,
+        port: Arc<OwnedHandle>,
+        joined: mpsc::Receiver<Member>,
+        held: Vec<OwnedHandle>,
+        seen: HashSet<(u32, u64)>,
+    }
+
+    impl Job {
+        /// Unnamed and without breakaway: members cannot leave, and closing the
+        /// last handle (including on owner death) terminates every member.
+        pub(super) fn create() -> Result<Self> {
+            let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+            if handle.is_null() {
+                return Err("Could not create agent process container".into());
+            }
+            let handle = Arc::new(unsafe { OwnedHandle::from_raw_handle(handle) });
+            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if unsafe {
+                SetInformationJobObject(
+                    handle.as_raw_handle(),
+                    JobObjectExtendedLimitInformation,
+                    (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                    std::mem::size_of_val(&limits) as u32,
+                )
+            } == 0
+            {
+                return Err("Could not configure agent process container".into());
+            }
+            // Associated before the listener joins, so no member predates the port.
+            let port =
+                unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, std::ptr::null_mut(), 0, 1) };
+            if port.is_null() {
+                return Err("Could not configure agent process container".into());
+            }
+            let port = Arc::new(unsafe { OwnedHandle::from_raw_handle(port) });
+            let association = JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
+                CompletionKey: JOB as *mut _,
+                CompletionPort: port.as_raw_handle(),
+            };
+            if unsafe {
+                SetInformationJobObject(
+                    handle.as_raw_handle(),
+                    JobObjectAssociateCompletionPortInformation,
+                    (&association as *const JOBOBJECT_ASSOCIATE_COMPLETION_PORT).cast(),
+                    std::mem::size_of_val(&association) as u32,
+                )
+            } == 0
+            {
+                return Err("Could not configure agent process container".into());
+            }
+            let (found, joined) = mpsc::channel();
+            let (job, queue) = (handle.clone(), port.clone());
+            std::thread::Builder::new()
+                .spawn(move || watch(&job, &queue, &found))
+                .map_err(|_| "Could not configure agent process container")?;
+            Ok(Self {
+                handle,
+                port,
+                joined,
+                held: Vec::new(),
+                seen: HashSet::new(),
+            })
+        }
+
+        pub(super) fn spawn(&self, command: &mut Command) -> Result<Child> {
+            spawn(&self.handle, command)
+        }
+
+        /// Collect opened members and retire only signaled handles.
+        pub(super) fn sweep(&mut self) {
+            while let Ok(member) = self.joined.try_recv() {
+                self.add(member);
+            }
+            self.held.retain(
+                |held| unsafe { WaitForSingleObject(held.as_raw_handle(), 0) } != WAIT_OBJECT_0,
+            );
+        }
+
+        fn add(&mut self, (key, handle): Member) {
+            if self.seen.insert(key) {
+                self.held.push(handle);
+            }
+        }
+
+        /// Terminating only requests exit. Succeed once every process that ever
+        /// joined was opened and each opened process is signaled; a lost
+        /// message or a member gone before it was opened fails closed.
+        pub(super) fn stop(&mut self) -> Result<()> {
+            // Open live members directly in case their messages are still queued.
+            for id in listed(&self.handle) {
+                if let Some(member) = member(&self.handle, id) {
+                    self.add(member);
+                }
+            }
+            if unsafe { TerminateJobObject(self.handle.as_raw_handle(), 1) } == 0 {
+                return Err("Could not stop agent processes".into());
+            }
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                self.sweep();
+                if self.held.is_empty() && self.seen.len() == joined(&self.handle)? as usize {
+                    return Ok(());
+                }
+                if Instant::now() >= deadline {
+                    return Err("Agent descendants have not exited; shutdown is incomplete".into());
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        }
+    }
+
+    impl Drop for Job {
+        /// Wake the watcher so it releases its job handle.
+        fn drop(&mut self) {
+            unsafe {
+                PostQueuedCompletionStatus(self.port.as_raw_handle(), 0, 0, std::ptr::null())
+            };
+        }
+    }
+
+    /// Try to open each process as it joins. Delivery is not guaranteed and a
+    /// fast member can exit first; a missed process stays uncounted, never inferred.
+    fn watch(job: &OwnedHandle, port: &OwnedHandle, found: &mpsc::Sender<Member>) {
+        loop {
+            let (mut message, mut key, mut id) = (0, 0, std::ptr::null_mut());
+            if unsafe {
+                GetQueuedCompletionStatus(
+                    port.as_raw_handle(),
+                    &mut message,
+                    &mut key,
+                    &mut id,
+                    INFINITE,
+                )
+            } == 0
+                || key != JOB
+            {
+                return;
+            }
+            if message == JOB_OBJECT_MSG_NEW_PROCESS {
+                // For job messages the overlapped pointer carries the process ID.
+                if let Some(member) = member(job, id as usize as u32) {
+                    if found.send(member).is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /// A reused ID names a process outside the job. Creation time tells a
+    /// member reopened for a later message from one that is not yet counted.
+    fn member(job: &OwnedHandle, id: u32) -> Option<Member> {
+        let access = PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION;
+        let handle = unsafe { OpenProcess(access, 0, id) };
         if handle.is_null() {
-            return Err("Could not create agent process container".into());
+            return None;
         }
-        let job = unsafe { OwnedHandle::from_raw_handle(handle) };
-        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if unsafe {
-            SetInformationJobObject(
-                job.as_raw_handle(),
-                JobObjectExtendedLimitInformation,
-                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                std::mem::size_of_val(&limits) as u32,
-            )
-        } == 0
+        let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
+        let mut inside = 0;
+        let mut times = [FILETIME::default(); 4];
+        let [created, exited, kernel, user] = &mut times;
+        if unsafe { IsProcessInJob(handle.as_raw_handle(), job.as_raw_handle(), &mut inside) } == 0
+            || inside == 0
+            || unsafe { GetProcessTimes(handle.as_raw_handle(), created, exited, kernel, user) }
+                == 0
         {
-            return Err("Could not configure agent process container".into());
+            return None;
         }
-        Ok(job)
+        let created = (created.dwHighDateTime as u64) << 32 | created.dwLowDateTime as u64;
+        Some(((id, created), handle))
     }
 
     /// Fail closed: a child that is not contained never runs its first instruction.
-    pub(super) fn spawn(job: &OwnedHandle, command: &mut Command) -> Result<Child> {
+    fn spawn(job: &OwnedHandle, command: &mut Command) -> Result<Child> {
         command.creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW);
         let mut child = command.spawn().map_err(|_| {
             "Could not start bundled agent listener; check the runtime installation"
@@ -273,15 +424,8 @@ mod job {
         Ok(())
     }
 
-    pub(super) fn terminate(job: &OwnedHandle) -> Result<()> {
-        if unsafe { TerminateJobObject(job.as_raw_handle(), 1) } == 0 {
-            return Err("Could not stop agent processes".into());
-        }
-        Ok(())
-    }
-
     /// Every process ever associated with the job, including exited ones.
-    pub(super) fn joined(job: &OwnedHandle) -> Result<u32> {
+    fn joined(job: &OwnedHandle) -> Result<u32> {
         let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
         if unsafe {
             QueryInformationJobObject(
@@ -298,11 +442,8 @@ mod job {
         Ok(info.TotalProcesses)
     }
 
-    /// Handles to the active members, with the joined count read before
-    /// listing. Termination drops a member from the active list at once; only
-    /// its signaled process object confirms that it has exited.
-    pub(super) fn members(job: &OwnedHandle) -> Result<(Vec<OwnedHandle>, u32)> {
-        let joined = joined(job)?;
+    /// IDs of the active members. Any it misses is left to the joined count.
+    fn listed(job: &OwnedHandle) -> Vec<u32> {
         // JOBOBJECT_BASIC_PROCESS_ID_LIST with room for any listener tree.
         #[repr(C)]
         struct List {
@@ -324,44 +465,14 @@ mod job {
                 std::ptr::null_mut(),
             )
         };
-        if queried == 0 || list.listed < list.assigned {
-            return Err("Could not inspect agent descendants".into());
+        if queried == 0 {
+            return Vec::new();
         }
-        let access = PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION;
-        let mut members = Vec::new();
-        for &id in list.ids.iter().take(list.listed as usize) {
-            let handle = unsafe { OpenProcess(access, 0, id as u32) };
-            if handle.is_null() {
-                // An identifier resolves until its process object is deleted.
-                if unsafe { GetLastError() } == ERROR_INVALID_PARAMETER {
-                    continue;
-                }
-                return Err("Could not inspect agent descendants".into());
-            }
-            let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
-            // A reused identifier names a process outside this job.
-            let mut member = 0;
-            if unsafe { IsProcessInJob(handle.as_raw_handle(), job.as_raw_handle(), &mut member) }
-                == 0
-            {
-                return Err("Could not inspect agent descendants".into());
-            }
-            if member != 0 {
-                members.push(handle);
-            }
-        }
-        Ok((members, joined))
-    }
-
-    /// Wait for each member's process object within the Stop deadline.
-    pub(super) fn exited(members: &[OwnedHandle], deadline: Instant) -> bool {
-        members.iter().all(|member| {
-            let left = deadline
-                .saturating_duration_since(Instant::now())
-                .as_millis() as u32;
-            let waited = unsafe { WaitForSingleObject(member.as_raw_handle(), left) };
-            waited == WAIT_OBJECT_0
-        })
+        list.ids
+            .iter()
+            .take(list.listed as usize)
+            .map(|&id| id as u32)
+            .collect()
     }
 
     // Same exactly-one-thread check as the host command container.
@@ -416,9 +527,38 @@ mod job {
             "Could not contain agent listener"
         );
         assert!(!marker.exists(), "uncontained child ran");
-        let job = create().unwrap();
-        let mut child = spawn(&job, &mut command).unwrap();
+        let job = Job::create().unwrap();
+        let mut child = job.spawn(&mut command).unwrap();
         assert!(child.wait().unwrap().success());
         assert!(marker.exists(), "contained child was not resumed");
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn member_gone_before_it_was_opened_fails_stop() {
+        // cmd root -> short-lived cmd, handle closed at its exit -> long ping.
+        let mut command = Command::new(std::env::var_os("ComSpec").unwrap());
+        command.raw_arg("/d /c cmd /d /c exit & ping -n 600 127.0.0.1 >nul");
+        let mut job = Job::create().unwrap();
+        let mut child = job.spawn(&mut command).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while {
+            job.sweep();
+            job.seen.len() < 3
+        } {
+            assert!(
+                Instant::now() < deadline,
+                "watcher did not open every member"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // As if both notifications were lost; Stop reopens only the live ping.
+        job.seen.retain(|&(id, _)| id == child.id());
+        assert_eq!(
+            job.stop().unwrap_err(),
+            "Agent descendants have not exited; shutdown is incomplete"
+        );
+        assert!(child.try_wait().unwrap().is_some(), "root survived Stop");
+        assert_eq!((job.seen.len(), job.held.len()), (2, 0));
     }
 }

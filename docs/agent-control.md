@@ -363,11 +363,12 @@ contain a worker that deliberately escapes its session, and force-killing the
 supervisor itself releases ownership without confirmed teardown.
 
 On Windows the session is a kill-on-close job object. The listener starts
-suspended and runs only after joining it; a failed assignment aborts Start. Stop
-terminates the job immediately, without Unix's two-second cooperative cancel, and
-waits for each process still in the job to exit; one joining meanwhile fails Stop.
-A process already exiting on its own is no longer listed, so its final teardown
-can finish after ownership is released. The windowless supervisor can still
+suspended and runs only after joining it; a failed assignment aborts Start. A
+watcher opens each process as it joins. Stop terminates the job immediately,
+without Unix's two-second cooperative cancel, and succeeds only once every process
+the job ever admitted was opened and has exited. A lost job notification, or a
+process gone before the watcher opened it, fails Stop closed and keeps ownership.
+The windowless supervisor can still
 be ended by an enclosing kill-on-close launcher job. Profile, config and temporary
 directories inherit Windows ACLs; they are not verified to match Unix 0700/0600 modes.
 

@@ -197,9 +197,10 @@ it("provider changes retire a pending key request and late success cannot change
       await screen.findByRole("option", { name: "Databricks v2" }),
     );
     await waitFor(() => expect(f.cancel).toHaveBeenCalledWith(1));
+    expect(f.draft().environment.OPENAI_COMPAT_API_KEY).toBeNull();
     await act(async () => pending.resolve(catalog));
     expect(screen.queryByLabelText("Open AI API Key")).toBeNull();
-    expect(f.draft().environment.OPENAI_COMPAT_API_KEY).toBeUndefined();
+    expect(f.draft().environment.OPENAI_COMPAT_API_KEY).toBeNull();
     expect(f.draft().provider).toBe("databricks_v2");
   } finally {
     pending.resolve(catalog);

@@ -816,22 +816,6 @@ function ThreadMessages({
         onTouchMove={() => {
           keepReadingPosition();
           loadOlder();
-            element.scrollHeight - element.clientHeight - element.scrollTop <
-            80;
-          if (jumpingToLatest.current) return;
-          follow.current = bottom;
-          setShowJumpToLatest(!bottom);
-          if (bottom) setNewMessageCount(0);
-          loadOlder();
-        }}
-        onWheel={(event) => {
-          keepReadingPosition();
-          if (event.deltaY < 0) loadOlder();
-        }}
-        onTouchMove={() => {
-          keepReadingPosition();
-          loadOlder();
->>>>>>> ffa8cc43 (feat: open threads with verified newest-first windows)
         }}
         onPointerDown={keepReadingPosition}
         onKeyDown={(event) => {

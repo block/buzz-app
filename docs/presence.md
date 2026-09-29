@@ -1,7 +1,8 @@
 # Shared observed community presence
 
-Profiles show Active, Away, or Offline with text, while avatar badges use
-solid status fills. Pending, failed, stale, or unavailable evidence renders no
+Profiles show presence through the avatar badge, with solid status fills and
+an accessible status label, without a separate status row. Pending, failed,
+stale, or unavailable evidence renders no
 status; it is not relabeled Offline. Message and thread bylines display badges
 and demand presence when mounted, as do one-to-one DM avatars in the sidebar.
 This describes recent Buzz session status in this community, not proof that a

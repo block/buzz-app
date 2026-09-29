@@ -66,12 +66,10 @@ it("updates a mounted profile from the shared name view without replacing its id
       />,
     );
     expect(await screen.findByRole("heading", { name })).toBeTruthy();
+    expect(screen.queryByRole("img", { name: /^Presence:/ })).toBeNull();
     expect(
-      screen.getAllByRole("img", { name: "Presence: Active" }),
+      screen.getAllByRole("img", { name: `${name} avatar, online` }),
     ).toHaveLength(1);
-    expect(
-      screen.queryByRole("img", { name: `${name} avatar, online` }),
-    ).toBeNull();
     expect(document.querySelector(".buzz-avatar-status")).toHaveAttribute(
       "data-status",
       "online",
@@ -83,12 +81,10 @@ it("updates a mounted profile from the shared name view without replacing its id
     ).toBeTruthy();
     expect(screen.queryByRole("img", { name: "Presence: Active" })).toBeNull();
     await user.click(screen.getByRole("tab", { name: "Info" }));
+    expect(screen.queryByRole("img", { name: /^Presence:/ })).toBeNull();
     expect(
-      screen.getAllByRole("img", { name: "Presence: Active" }),
+      screen.getAllByRole("img", { name: `${name} avatar, online` }),
     ).toHaveLength(1);
-    expect(
-      screen.queryByRole("img", { name: `${name} avatar, online` }),
-    ).toBeNull();
     act(() => {
       name = "Edited name";
       notify();

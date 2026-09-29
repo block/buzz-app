@@ -20,10 +20,7 @@ import { ProfileRuntime, useRuntimeAgents } from "./ProfileRuntime";
 import type { Navigation } from "../../features/navigation/controller";
 import { ProfileChannels } from "./ProfileChannels";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
-import {
-  PresenceIndicator,
-  usePresenceStatus,
-} from "../../features/presence/react";
+import { usePresenceStatus } from "../../features/presence/react";
 import {
   type ReactNode,
   useEffect,
@@ -341,11 +338,7 @@ function ProfileDetails({
             <div className={picture ? styles.portrait : undefined}>
               <Avatar
                 src={picture}
-                alt={
-                  tab === "info" && presence !== "unknown"
-                    ? ""
-                    : `${name} avatar`
-                }
+                alt={`${name} avatar`}
                 fallback={name}
                 size={picture ? "fill" : "large"}
                 shape={agentPubkeys.has(pubkey) ? "squircle" : "circle"}
@@ -373,11 +366,6 @@ function ProfileDetails({
               <div className={styles.tabContent}>
                 {selected === "info" ? (
                   <>
-                    <PresenceIndicator
-                      presence={session.presence}
-                      pubkey={pubkey}
-                      profile
-                    />
                     <UserStatusDisplay session={session} userId={pubkey} />
                     {canMessage && (
                       <div>

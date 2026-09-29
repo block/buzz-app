@@ -416,7 +416,10 @@ Use the [README's public-pin/Keychain setup](../README.md#relay-channels) and ru
 `bin/just web` (or `bin/just desktop`). Open the printed Local URL, choose
 the agent's community and open a channel. Keep the existing Buzz runner
 active, with telemetry publication enabled on the agent, then give it work. This
-app does not start agents or turn publishing on. No records may mean publishing
+activity plugin does not itself start agents or turn publishing on. Managed Codex
+agents now enable owner-encrypted observer publication on their next launch;
+their editor uses that feed for last-reported session settings. Other harness
+launch policies are unchanged. No records may mean publishing
 is off, no new traffic, or an interrupted feed—not that an agent is idle.
 
 For a contextual view, click the identity's avatar/mention in the channel, then

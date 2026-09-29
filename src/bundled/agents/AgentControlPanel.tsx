@@ -1,4 +1,5 @@
 import { Dialog } from "@base-ui/react/dialog";
+import type { RelaySession } from "../../features/relay/session";
 import type { useIdentityNames } from "../../features/identity-names/react";
 import {
   useAgentControl,
@@ -29,6 +30,7 @@ import "./AgentControls.css";
 /** No relay dependency. Page lifetime owns observation only, never native execution. */
 export function AgentControlPanel({
   control,
+  session,
   importDestination = "",
   createOwner,
   resolveName,
@@ -41,6 +43,7 @@ export function AgentControlPanel({
   resolveName?: ReturnType<typeof useIdentityNames>;
   onOpenHarnesses?: (() => void) | undefined;
   control: AgentControl;
+  session?: RelaySession | undefined;
   importDestination?: string;
   createOwner?: string | undefined;
   editTarget?: string | null;
@@ -443,6 +446,7 @@ export function AgentControlPanel({
         <AgentEditor
           key={editing.id}
           agent={editing}
+          session={session}
           displayName={label(editing)}
           control={control}
           state={state}

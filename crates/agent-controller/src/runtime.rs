@@ -176,7 +176,10 @@ impl RuntimeBundle {
             .env("BUZZ_ACP_DEDUP", "queue")
             .env("BUZZ_ACP_MULTIPLE_EVENT_HANDLING", "steer")
             .env("BUZZ_ACP_MCP_COMMAND", self.executable("buzz-dev-mcp")?)
-            .env("BUZZ_ACP_RELAY_OBSERVER", "false");
+            .env(
+                "BUZZ_ACP_RELAY_OBSERVER",
+                if codex.is_some() { "true" } else { "false" },
+            );
         if defaults.owner_only {
             command
                 .env("BUZZ_ACP_ALLOWED_RESPOND_TO", "owner-only")

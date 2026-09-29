@@ -542,6 +542,11 @@ adapter's results with its session metadata.
 
 ### Step 6 — Persist settings and bind them to execution
 
+September 29: Phil approved the encrypted observer route for applied-setting
+reporting. The editor now projects last-reported real-session model/effort and
+correlated rejection evidence. See [implementation and limitations](applied-settings.md).
+Current-launch confirmation and attended live acceptance remain open.
+
 - [ ] Add backward-compatible optional Codex/effort settings and round-trip DTOs.
   Define legacy imported effort precedence, including explicit clearing back to
   runtime default; a hidden imported value must not resurrect a cleared override.

@@ -86,7 +86,8 @@ and opening direct messages use purpose-bound native commands. Creation kind 900
 advertised only when NIP-11 reports NIP-29 support. NIP-44 stays in the native
 identity owner; recipe plaintext is never returned by a generic decrypt command.
 
-Community admission, kind-0 profile reads/publication and the adapter's advertised
+Community admission, kind-0 profile reads/publication, the NIP-43 leave request
+(kind 28936, signed only in its empty protected shape) and the adapter's advertised
 message/event writes use this identity. [Join recovery](communities.md#packaged-admission-and-recovery)
 records public progress before remote changes. The existing durable outbox retains
 uncertain delivery across restart; retry uses the same signed event with fresh HTTP

@@ -159,12 +159,6 @@ pub enum EffortSelection {
 impl HarnessEdit {
     /// Validate structure only; authentication and available choices require live discovery.
     pub fn validate_configuration(&self) -> Result<()> {
-        if matches!(self.configuration, Some(AiConfiguration::Default))
-            && is_buzz_agent(&self.command)
-            && self.model.trim().is_empty()
-        {
-            return Err(missing_buzz_agent_model());
-        }
         match &self.configuration {
             Some(AiConfiguration::Default) if !self.model.is_empty() => {
                 return Err("Default configuration must not contain a model override".into());
@@ -183,6 +177,12 @@ impl HarnessEdit {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Validate requirements for creating or launching this harness configuration.
+    pub fn validate_launch_configuration(&self) -> Result<()> {
+        self.validate_configuration()?;
+        validate_buzz_agent_model(self)
     }
 }
 

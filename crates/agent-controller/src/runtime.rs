@@ -239,7 +239,7 @@ impl RuntimeBundle {
             command.env("BUZZ_ACP_EFFORT_LEVEL", effort);
         }
         if let Some(configuration) = &harness.configuration {
-            harness.validate_configuration()?;
+            harness.validate_launch_configuration()?;
             // Explicit managed configuration must not forward a previous
             // provider's key. Legacy/custom environments remain unchanged.
             if harness.command != "buzz-agent" || harness.provider != "openai" {
@@ -896,7 +896,7 @@ impl Controller {
         let agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);
         let bundle = self.bundle.as_ref().map_err(Clone::clone)?;
         let harness = crate::build_defaults().resolve(&agent.harness, &agent.environment);
-        crate::config::validate_buzz_agent_model(&harness)?;
+        harness.validate_launch_configuration()?;
         #[cfg(not(unix))]
         let ownership = crate::ownership::Ownership::acquire(&self.ownership_root, &agent.id)?;
         let stored;

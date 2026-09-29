@@ -2650,29 +2650,42 @@ fn use_here_exhausted_revision_preserves_the_saved_import() {
 
 #[test]
 #[cfg(unix)]
-fn managed_provider_switch_does_not_launch_with_openai_key_or_default_model() {
+fn start_rejects_model_less_harness_defaults_without_losing_saved_agents() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
-    let runtime = bundle(tools.path());
-    let key = Secret::parse(KEY, PUB).unwrap();
     let mut a = agent(dir.path());
     a.harness.provider = "databricks_v2".into();
     a.harness.model.clear();
     a.harness.configuration = Some(crate::AiConfiguration::Default);
+    a.enabled = true;
     a.environment
         .insert("OPENAI_COMPAT_API_KEY".into(), "old-key".into());
-    let public = crate::BuildDefaults {
-        model: "build-model".into(),
-        ..Default::default()
-    };
-    let error = runtime
-        .command_with_defaults(&a, &key, &public)
-        .unwrap_err();
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    let snapshot = controller.action(&a.id, Action::Start).unwrap();
+    let error = snapshot.agents[0].error.as_deref().unwrap();
     assert!(error.contains("Buzz Agent requires a model"), "{error}");
+    assert!(controller.running.is_empty());
+    assert_eq!(snapshot.agents.len(), 1);
     assert_eq!(a.environment["PROVIDER_TEST_SETTING"], "explicit-value");
     // Explicit legacy environments still belong to their owner.
     a.harness.configuration = None;
-    let command = runtime.command_with_defaults(&a, &key, &public).unwrap();
+    let command = controller
+        .bundle
+        .as_ref()
+        .unwrap()
+        .command_with_defaults(
+            &a,
+            &Secret::parse(KEY, PUB).unwrap(),
+            &crate::BuildDefaults::default(),
+        )
+        .unwrap();
     assert!(command
         .get_envs()
         .any(|(k, v)| k == "OPENAI_COMPAT_API_KEY" && v == Some(std::ffi::OsStr::new("old-key"))));

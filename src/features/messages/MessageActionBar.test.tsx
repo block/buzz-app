@@ -43,11 +43,23 @@ it("opens with keyboard, invokes a sibling action, and returns focus on Escape",
   );
   expect(action).toHaveBeenCalledOnce();
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
-  await user.click(trigger);
+  trigger.focus();
+  await user.keyboard("{Enter}");
   const menu = await screen.findByRole("menu");
   await waitFor(() => expect(menu.contains(document.activeElement)).toBe(true));
   await user.keyboard("{Escape}");
   await waitFor(() => expect(document.activeElement).toBe(trigger));
+});
+it("does not hand focus back to the trigger after a pointer-opened menu", async () => {
+  const user = userEvent.setup();
+  render(<MessageActionBar copyText={() => "Hello"} />);
+  const trigger = screen.getByRole("button", { name: "More message actions" });
+  await user.click(trigger);
+  const menu = await screen.findByRole("menu");
+  await waitFor(() => expect(menu.contains(document.activeElement)).toBe(true));
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  expect(document.activeElement).not.toBe(trigger);
 });
 it("copies the message, shows failure, and allows retry", async () => {
   const user = userEvent.setup();

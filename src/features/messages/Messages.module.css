@@ -1558,6 +1558,9 @@ html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
     margin-inline-start: 0;
   }
   .message:hover .messageActions,
+  /* Assistive tech moves focus without navigation keydowns; the engines still
+     mark that focus :focus-visible, while pointer focus stays non-visible. */
+  .message:has(:focus-visible) .messageActions,
   html[data-keyboard-navigation] .message:focus-within .messageActions,
   .messageActions[data-open],
   .messageActions:has([aria-haspopup][aria-expanded="true"]) {
@@ -1730,6 +1733,7 @@ html[data-keyboard-navigation] .replyBranchRail:focus-visible {
     opacity: 0;
   }
   .message:hover .continuationTime,
+  .message:has(:focus-visible) .continuationTime,
   html[data-keyboard-navigation] .message:focus-within .continuationTime {
     opacity: 1;
   }

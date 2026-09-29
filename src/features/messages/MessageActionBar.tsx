@@ -55,6 +55,7 @@ export function MessageActionBar({
   const busy = useRef(false);
   const afterClose = useRef<(() => void) | undefined>(undefined);
   const [handingOffFocus, setHandingOffFocus] = useState(false);
+  const [openedByPointer, setOpenedByPointer] = useState(false);
   const copy = async (text: () => string, label: string) => {
     if (busy.current) return;
     busy.current = true;
@@ -113,8 +114,16 @@ export function MessageActionBar({
         </span>
         <MenuRoot
           open={open}
-          onOpenChange={(next) => {
-            if (next) setHandingOffFocus(false);
+          onOpenChange={(next, details) => {
+            if (next) {
+              setHandingOffFocus(false);
+              // Base UI opens on mousedown, so a real pointer press carries a
+              // click count; keyboard and assistive presses arrive as a click
+              // with 0.
+              setOpenedByPointer(
+                details.event instanceof MouseEvent && details.event.detail > 0,
+              );
+            }
             setOpen(next);
           }}
           onOpenChangeComplete={(opened) => {
@@ -141,7 +150,9 @@ export function MessageActionBar({
             data-message-id={messageId}
             // A boolean preserves Base UI's safeguard when focus already moved.
             // A callback returning true would force focus back over a newer action.
-            finalFocus={!handingOffFocus}
+            // A pointer-opened menu hands nothing back: a trigger silently
+            // holding focus would pin the hover-revealed bar.
+            finalFocus={!handingOffFocus && !openedByPointer}
           >
             <AfterMenuClose.Provider
               value={(action) => {

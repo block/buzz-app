@@ -87,6 +87,31 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   // Keyboard focus still reveals it while the mouse is elsewhere.
   await page.keyboard.press("Tab");
   await expect(actions).toHaveCSS("opacity", "1");
+  // Assistive presses arrive without navigation keydowns; focus alone reveals
+  // the bar. Clicking plain text first clears the keyboard-modality flag.
+  const menu = page.getByRole("menu");
+  await row.getByText(event.content, { exact: true }).click();
+  await page.mouse.move(0, 0);
+  await trigger.focus();
+  // Script focus after a pointer click stays quiet.
+  await expect(actions).toHaveCSS("opacity", "0");
+  await trigger.press("Enter");
+  await expect(
+    page.getByRole("menuitem", { name: "Copy message", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+  await expect(actions).toHaveCSS("opacity", "1");
+  // A pointer-opened menu hands focus nowhere, so the bar follows hover again.
+  // Waiting for the menu's deferred initial focus keeps Escape off the trigger.
+  await row.hover();
+  await trigger.click();
+  await expect(menu).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(trigger).not.toBeFocused();
+  await page.mouse.move(0, 0);
+  await expect(actions).toHaveCSS("opacity", "0");
   await root.hover();
   await root
     .getByRole("button", { name: "React with 👍", exact: true })

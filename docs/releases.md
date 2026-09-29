@@ -14,11 +14,12 @@ gh workflow run release.yml --repo block/buzz-app --ref main
 These builds use `macos-latest` and the repository's pinned toolchain. The
 workflow publishes an Apple-signed/notarized DMG and a separately Tauri-signed
 updater `.app.tar.gz` and `.sig` for Apple Silicon. The updater archive is
-rebuilt from the verified app in the signed DMG, not the unsigned app emitted by
-the initial Tauri build. The release does **not** publish an updater manifest or
-upload to the legacy `block/buzz` updater. An installed app cannot update from
-these assets until an updater-enabled build and a separately hosted preview
-manifest are configured and validated.
+rebuilt from the verified app in the signed DMG; built-in Tauri artifact
+creation remains disabled because this DMG-only build does not emit an updater
+archive. The release does **not** publish an updater manifest or upload to the
+legacy `block/buzz` updater. An installed app cannot update from these assets
+until an updater-enabled build and a separately hosted preview manifest are
+configured and validated.
 
 ## Prerequisites
 

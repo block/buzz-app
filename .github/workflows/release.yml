@@ -62,15 +62,13 @@ jobs:
           const base = config.version.split('-')[0];
           if (!/^\d+\.\d+\.\d+$/.test(base)) throw new Error('Expected a numeric Tauri version');
           const version = `${base}-preview.${process.env.GITHUB_RUN_NUMBER}.${process.env.GITHUB_RUN_ATTEMPT}`;
-          writeFileSync(`${process.env.RUNNER_TEMP}/release.json`, JSON.stringify({ version, bundle: { createUpdaterArtifacts: true } }));
+          writeFileSync(`${process.env.RUNNER_TEMP}/release.json`, JSON.stringify({ version, bundle: { createUpdaterArtifacts: false } }));
           appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
           JS
 
       - name: Build unsigned app and DMG
         env:
           TAURI_BUNDLER_DMG_IGNORE_CI: "true"
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           rm -rf target/release/bundle
           pnpm tauri build --ci --no-sign --bundles dmg --config "$RUNNER_TEMP/release.json" -- --locked
@@ -132,11 +130,7 @@ jobs:
           mkdir release-assets
           cp "$SIGNED_DMG" "release-assets/Buzz_${VERSION}_aarch64.dmg"
 
-          # The archive produced by the initial build contains an unsigned app.
-          # Package the verified, Apple-signed and stapled app from the release DMG instead.
-          shopt -s nullglob
-          archives=(target/release/bundle/macos/*.app.tar.gz)
-          test "${#archives[@]}" -eq 1 || { echo '::error::Expected one Tauri macOS updater archive'; exit 1; }
+          # Package the verified, Apple-signed and stapled app from the release DMG.
           app_dir=$(mktemp -d "$RUNNER_TEMP/updater-app.XXXXXX")
           hdiutil attach "$SIGNED_DMG" -readonly -nobrowse -mountpoint "$app_dir" >/dev/null
           trap 'hdiutil detach "$app_dir" >/dev/null' EXIT

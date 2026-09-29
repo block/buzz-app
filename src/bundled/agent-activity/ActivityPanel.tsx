@@ -1,3 +1,5 @@
+import { useLoadedThread } from "../../features/messages/thread-views";
+import { threadActivity } from "./thread-activity";
 import { SavedActivity } from "./SavedActivity";
 import {
   chooseProfileActivityChannel,
@@ -63,6 +65,11 @@ export function ActivityDetails({
   selection?: ActivitySelection | undefined;
 }) {
   const embedded = selection?.view === "profile";
+  const loadedThread = useLoadedThread(
+    session,
+    selection?.channelId ?? "",
+    selection?.threadRootId ?? "",
+  );
   const activity = session.agentActivity;
   const snapshot = useSyncExternalStore(
     activity.subscribe,
@@ -271,6 +278,58 @@ export function ActivityDetails({
         )}
       </section>
     );
+  if (selection?.threadRootId && selection.channelId) {
+    const entry = threadActivity(
+      snapshot,
+      selection.channelId,
+      selection.threadRootId,
+      loadedThread?.replies,
+    ).find((entry) => entry.agent === selection.agent);
+    return (
+      <section
+        ref={region}
+        tabIndex={-1}
+        data-buzz-ui=""
+        aria-label="Agent activity"
+        className="flex min-w-0 flex-col gap-4 p-6 text-body-sm text-standard"
+      >
+        <p className="text-label-sm">
+          {resolveName(
+            selection.agent,
+            identities.get(selection.agent)?.name ?? "Agent",
+          )}{" "}
+          · Thread activity
+        </p>
+        {feedStatus}
+        {!loadedThread && (
+          <p className="text-body-sm text-subtle">
+            Only root-linked activity is available while this thread is closed.
+          </p>
+        )}
+        {!entry?.selected.records.length && (
+          <p>No retained activity linked to this thread yet.</p>
+        )}
+        <ActivityStream
+          session={session}
+          records={entry?.selected.records ?? []}
+          turns={entry?.turns ?? []}
+          showDiagnostics
+        />
+        <Accordion
+          variant="activity"
+          items={[
+            {
+              value: "identity",
+              title: "Exact identity",
+              content: (
+                <code className="break-all text-mono">{selection.agent}</code>
+              ),
+            },
+          ]}
+        />
+      </section>
+    );
+  }
   if (selection?.requestId && selection.channelId) {
     const linked = requestActivity(
       snapshot.records,

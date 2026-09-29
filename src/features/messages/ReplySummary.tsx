@@ -15,9 +15,11 @@ export function ReplySummary({
   unreadCount,
   workingAgents = [],
   workingLabel,
+  label,
 }: {
   workingAgents?: readonly string[];
   workingLabel?: string | undefined;
+  label?: string | undefined;
   count: number;
   /** Distinct responders, most recent first (matching relay summaries). */
   participants: readonly string[];
@@ -82,9 +84,7 @@ export function ReplySummary({
           {workingLabel}
         </Shimmer>
       ) : (
-        <span>
-          {count} {count === 1 ? "reply" : "replies"}
-        </span>
+        <span>{label ?? `${count} ${count === 1 ? "reply" : "replies"}`}</span>
       )}
       {unreadCount ? (
         <span>({unreadCount} new)</span>

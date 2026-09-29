@@ -242,7 +242,7 @@ test.describe("large thread opening", () => {
     const { root } = app.presenceThread;
     const trigger = page
       .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-      .getByRole("button", { name: /^View thread:/ });
+      .getByRole("button", { name: /^View thread/ });
     const history = page.getByRole("region", {
       name: "Thread messages",
       exact: true,

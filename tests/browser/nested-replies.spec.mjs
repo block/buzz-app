@@ -21,7 +21,7 @@ test("nested replies send, collapse, and reveal through links at readable panel 
     .find((event) => event.content === "Thread root 0");
   await page
     .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-    .getByRole("button", { name: /^View thread:/ })
+    .getByRole("button", { name: /^View thread/ })
     .click();
   const panel = page.getByRole("complementary", {
     name: "Thread",
@@ -429,7 +429,7 @@ test.describe("touch branch controls", () => {
       .find((event) => event.content === "Thread root 0");
     const thread = page
       .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-      .getByRole("button", { name: /^View thread:/ });
+      .getByRole("button", { name: /^View thread/ });
     // This case exercises touch controls inside the thread, not the virtualized feed's pointer lock.
     await thread.focus();
     await thread.press("Enter");
@@ -506,7 +506,7 @@ for (const width of [1492, 1280, 1024, 390])
     await open(page, app);
     await page
       .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-      .getByRole("button", { name: /^View thread:/ })
+      .getByRole("button", { name: /^View thread/ })
       .click();
     const panel = page.getByRole("complementary", {
       name: "Thread",

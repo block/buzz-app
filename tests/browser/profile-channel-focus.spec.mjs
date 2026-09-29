@@ -75,9 +75,7 @@ test("profile channel focus ring paints on one row and both list boundaries", as
     exact: true,
   });
   const channels = panel.getByRole("region", { name: "Channels" });
-  await page
-    .getByRole("button", { name: "View thread: 1 reply", exact: true })
-    .click();
+  await page.getByRole("button", { name: "View thread", exact: true }).click();
   await page.getByRole("button", { name: "View Pinky profile" }).click();
   await panel.getByRole("tab", { name: "Channels" }).click();
   const single = channels.locator("ul");

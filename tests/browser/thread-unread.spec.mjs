@@ -53,7 +53,7 @@ test("thread buttons show observed unread independently, clear only after readin
   const button = (root) =>
     page
       .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-      .getByRole("button", { name: /^View thread:/ });
+      .getByRole("button", { name: /^View thread/ });
   const first = button(roots[0]);
   const other = button(roots[1]);
   const broadcast = button(
@@ -64,10 +64,10 @@ test("thread buttons show observed unread independently, clear only after readin
   const dot = (control) =>
     control.locator('span[title^="Observed unread replies"]');
   await expect(first).toHaveAccessibleName(
-    /23 replies\. Observed unread replies/,
+    /View thread\. Observed unread replies/,
   );
   await expect(other).toHaveAccessibleName(
-    /23 replies\. Observed unread replies/,
+    /View thread\. Observed unread replies/,
   );
   await expect(dot(first)).toBeVisible();
   await expect(dot(other)).toBeVisible();
@@ -238,8 +238,8 @@ test("thread buttons show observed unread independently, clear only after readin
     panel.getByText("Broadcast descendant", { exact: true }),
   ).toBeInViewport();
   await history.focus();
-  await expect(first).toHaveAccessibleName("View thread: 23 replies");
-  await expect(broadcast).toHaveAccessibleName("View thread: 23 replies");
+  await expect(first).toHaveAccessibleName("View thread");
+  await expect(broadcast).toHaveAccessibleName("View thread");
   await expect(dot(first)).toHaveCount(0);
   await expect(dot(other)).toBeVisible();
   await expect(other).toHaveAccessibleName(/Observed unread replies/); // No channel-wide shortcut.
@@ -248,7 +248,7 @@ test("thread buttons show observed unread independently, clear only after readin
     .click();
   app.reply(roots[0].id, true);
   await page.waitForTimeout(1000);
-  await expect(first).toHaveAccessibleName("View thread: 23 replies");
+  await expect(first).toHaveAccessibleName("View thread");
   app.reply(roots[0].id);
   await expect(first).toHaveAccessibleName(/Observed unread replies/);
   await first.click();
@@ -256,12 +256,12 @@ test("thread buttons show observed unread independently, clear only after readin
     panel.getByText("New peer reply", { exact: true }),
   ).toBeVisible();
   await history.focus();
-  await expect(first).toHaveAccessibleName("View thread: 23 replies");
+  await expect(first).toHaveAccessibleName("View thread");
   await expect(other).toHaveAccessibleName(/Observed unread replies/);
   const beforeReload = app.report.queries.length;
   await page.reload();
   await openPage(page, "Messages");
-  await expect(first).toHaveAccessibleName("View thread: 23 replies");
+  await expect(first).toHaveAccessibleName("View thread");
   await expect(other).toHaveAccessibleName(/Observed unread replies/);
   // Restoring a joined conversation waits for initial membership discovery;
   // it must not publish an early one-channel roster through exact resolution.
@@ -309,7 +309,7 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
   try {
     const trigger = page
       .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-      .getByRole("button", { name: /^View thread:/ });
+      .getByRole("button", { name: /^View thread/ });
     await expect(trigger).toHaveCSS("pointer-events", "auto");
     await trigger.click();
     await expect.poll(() => requested).toBe(true);

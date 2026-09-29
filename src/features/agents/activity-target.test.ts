@@ -73,3 +73,21 @@ it("locks profile presentation without accepting reply/request or ambiguous mode
   ])
     expect(activitySelection(target)).toBeUndefined();
 });
+
+it("round-trips explicit thread scope without mixing request, response or profile scopes", () => {
+  const root = "d".repeat(64);
+  const target = activityTarget(agent, "alpha", undefined, undefined, root);
+  expect(activitySelection(target)).toEqual({
+    agent,
+    channelId: "alpha",
+    threadRootId: root,
+  });
+  for (const bad of [
+    `${target}&request=${root}`,
+    `${target}&message=${root}`,
+    `${target}&view=profile`,
+    `${target}&thread=${root}`,
+    activityTarget(agent, undefined, undefined, undefined, root),
+  ])
+    expect(activitySelection(bad)).toBeUndefined();
+});

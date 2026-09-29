@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
-import { requestActivity } from "../../bundled/agent-activity/request-activity";
+import { threadActivity } from "../../bundled/agent-activity/thread-activity";
+import { useLoadedThread } from "./thread-views";
 import { selectProfiles } from "../relay/profile-selection";
 import type { Profile } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
@@ -15,54 +16,16 @@ export function useThreadWorkingAgents(
   rootId: string,
 ) {
   const activity = session?.agentActivity;
+  const loaded = useLoadedThread(session, channelId, rootId);
   const read = useCallback(() => {
     const snapshot = activity?.snapshot();
-    if (snapshot?.status !== "listening") return "";
-    const candidates = new Set([
-      ...snapshot.typing
-        .filter(
-          (entry) =>
-            entry.channelId === channelId && entry.threadRootId === rootId,
-        )
-        .map((entry) => entry.agent),
-      ...snapshot.turns
-        .filter(
-          (turn) => turn.channelId === channelId && turn.state === "working",
-        )
-        .map((turn) => turn.agent),
-    ]);
-    return [...candidates]
-      .filter((agent) => {
-        const selected = requestActivity(
-          snapshot.records,
-          agent,
-          channelId,
-          rootId,
-        );
-        const linked = snapshot.turns.filter(
-          (turn) =>
-            turn.agent === agent &&
-            turn.channelId === channelId &&
-            selected.turnIds.has(turn.turnId),
-        );
-        if (linked.some((turn) => turn.state === "working")) return true;
-        const ended = Math.max(
-          -Infinity,
-          ...linked
-            .filter((turn) => turn.state === "ended")
-            .map((turn) => turn.timestamp),
-        );
-        return snapshot.typing.some(
-          (entry) =>
-            entry.agent === agent &&
-            entry.channelId === channelId &&
-            entry.threadRootId === rootId &&
-            entry.timestamp > ended,
-        );
-      })
-      .sort()
-      .join(":");
-  }, [activity, channelId, rootId]);
+    return snapshot
+      ? threadActivity(snapshot, channelId, rootId, loaded?.replies)
+          .filter((entry) => entry.working)
+          .map((entry) => entry.agent)
+          .join(":")
+      : "";
+  }, [activity, channelId, rootId, loaded]);
   // Primitive projection: unrelated turns and heartbeat refreshes do not rerender rows.
   const keys = useSyncExternalStore(
     activity?.subscribe ?? noSubscribe,

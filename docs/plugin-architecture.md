@@ -174,7 +174,7 @@ also receives `request?`, its latest viewer request with unresolved exact agent
 recipients. These are decorations, not fabricated messages, unread entries,
 delivery intent or persisted history.
 
-The host passes `{ session, scope, channelId, threadRootId?, message?, request?,
+The host passes `{ session, scope, channelId, threadRootId?, threadMessages?, message?, request?,
 canOpen, open }`: no editor commands, new socket, or implied access grant. Channels supplies
 target resolution and panel placement; other consumers can omit navigation and
 return unavailable. The shared renderer owns deterministic order, error isolation
@@ -199,13 +199,23 @@ The thread reader folds the
 outgoing root locally while signing/publishing and begins finite thread repair
 only after verified root observation. Local intent never becomes verified evidence.
 The pending agent entry distinguishes sending, unconfirmed/failed delivery, waiting
-and exact-thread typing, and leaves when a later same-agent human-facing thread reply is shown.
+and exact-thread typing. Pending intent stays separate from live activity; a
+human-facing reply settles intent, not an independently observed working turn.
 The channel retains a thread-opening action even before reply-count evidence,
 labelled awaiting response rather than a fabricated reply. Fresh exact-thread
-Activity shows working agents in that control without altering reply counts.
+Activity shows working agents in that control without altering reply counts. Once
+work stops it says View thread rather than exposing audience-unfiltered relay totals.
 Plugin activation owns the telemetry lease; all decorations reuse that capability. Collapsed message entries
 do not build a transcript or fetch profiles. No global selected channel is added. The thread-working projection reuses the
-existing pure request association selector; it adds no capture lease or history read. Channels reads the
+existing pure request association selector against all loaded exact thread IDs,
+including hidden coordination. A workspace-local bridge borrows active ThreadView
+handles, never copies a journal or creates reads. It unregisters on close/session
+retirement; without an open view only root/typing evidence is available. The live
+tail and channel control share this projection. Clean-ended rows disappear while
+error/unknown evidence stays visible, and a newer pending request is not hidden by
+old completion. The thread Activity popup and explicitly thread-scoped panel expose
+all retained matching records; missing starts/evicted records remain unavailable.
+No capture lease, timer, subscription route or persistence owner is added. Channels reads the
 same activity snapshot for its sidebar marker and retains an open thread when the
 registered activity target opens in an additional column. Other panel behavior is
 unchanged. Pending activity/general inspection remains exact-agent/channel scoped.

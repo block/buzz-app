@@ -740,7 +740,7 @@ test.describe("thread activity", () => {
       `[data-channel-timeline] [data-message-id="${root.id}"]`,
     );
     await row.hover();
-    await row.getByRole("button", { name: /^View thread:/ }).click();
+    await row.getByRole("button", { name: /^View thread/ }).click();
     const thread = page.getByRole("complementary", {
       name: "Thread",
       exact: true,
@@ -804,7 +804,7 @@ test.describe("thread activity", () => {
     // General profile navigation replaces the thread panel; restore the exact
     // root after the observer barrier, before exercising thread-only typing.
     await row.hover();
-    await row.getByRole("button", { name: /^View thread:/ }).click();
+    await row.getByRole("button", { name: /^View thread/ }).click();
     await expect(
       thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
     ).toBeVisible();
@@ -864,7 +864,10 @@ test.describe("thread activity", () => {
       await entry.click();
       await expect(entry).toHaveAttribute("aria-expanded", "true");
       await expect(
-        activityPopup(page).getByText(channelScope, { exact: true }),
+        activityPopup(page).getByText(
+          "No retained tool details are linked to this thread yet.",
+          { exact: true },
+        ),
       ).toBeVisible();
       await expect(activityPanel(page)).toHaveCount(0);
       await page.screenshot({
@@ -913,11 +916,9 @@ test.describe("thread activity", () => {
       .click();
     await expect(activityPanel(page).locator("code").first()).toHaveText(agent);
     await expect(
-      activityPanel(page).getByRole("combobox", {
-        name: "Channel",
-        exact: true,
-      }),
-    ).toHaveText("Alpha · alpha");
+      activityPanel(page).getByText(/Thread activity/),
+    ).toBeVisible();
+    await expect(activityPanel(page).getByRole("combobox")).toHaveCount(0);
     const board = page.locator('[class*="withActivity"]');
     for (const width of [1440, 768, 390]) {
       await page.setViewportSize({ width, height: 844 });
@@ -1362,7 +1363,7 @@ test.describe("local agent request", () => {
       region.getByRole("button", { name: "Working…", exact: true }),
     );
     await expect(
-      activityPanel(page).getByText(/Request activity/),
+      activityPanel(page).getByText(/Thread activity/),
     ).toBeVisible();
     await expect(activityPanel(page).getByRole("combobox")).toHaveCount(0);
     for (let step = 0; step < 7; step++)
@@ -1382,30 +1383,15 @@ test.describe("local agent request", () => {
       name: "Readable activity",
       exact: true,
     });
-    const compactGroup = stream.getByRole("button", { name: /5 tool calls/ });
-    await expect(compactGroup).toHaveAttribute("aria-expanded", "true");
-    await expect(
-      stream.getByRole("button", { name: /Reading file/ }),
-    ).toHaveCount(5);
-    const all = stream.getByRole("button", {
-      name: "Show all activity (7)",
-      exact: true,
-    });
-    await all.focus();
-    await all.press("Enter");
     await expect(
       stream.getByRole("button", { name: /7 tool calls/ }),
     ).toHaveAttribute("aria-expanded", "true");
     await expect(
       stream.getByRole("button", { name: /Reading file/ }),
     ).toHaveCount(7);
-    await stream
-      .getByRole("button", { name: "Show recent activity", exact: true })
-      .click();
-    await expect(compactGroup).toHaveAttribute("aria-expanded", "true");
     await expect(
-      stream.getByRole("button", { name: /Reading file/ }),
-    ).toHaveCount(5);
+      stream.getByRole("button", { name: /Show all activity/ }),
+    ).toHaveCount(0);
     await expect(
       activityPanel(page).getByText(/Only visible to you/),
     ).toHaveCount(0);
@@ -1518,68 +1504,21 @@ test.describe("local agent request", () => {
         exact: true,
       }),
     ).toBeVisible();
-    // Slide past the five-entry preview while preserving the explicit collapse.
+    // Live thread inspection keeps all retained tools, without a sliding five-entry cap.
     for (let step = 3; step < commands.length; step++) {
       startTool(step);
       finishTool(step);
     }
-    const clippedGroup = pendingWork.getByRole("button", {
-      name: /5 commands.*Completed/,
+    const fullGroup = pendingWork.getByRole("button", {
+      name: /6 commands.*Completed/,
     });
-    await expect(clippedGroup).toHaveAttribute("aria-expanded", "false");
-    await clippedGroup.click();
-    await expect(toolRow(0, "Completed")).toHaveCount(0);
-    for (let step = 1; step < commands.length; step++)
-      await expect(toolRow(step, "Completed")).toBeVisible();
-    // Seven prior work entries, terminal, thought, and these six commands.
-    const showAllActivity = pendingWork.getByRole("button", {
-      name: "Show all activity (15)",
-      exact: true,
-    });
-    const inlineHeader = region.getByRole("button", {
-      name: "Last action: Run command",
-      exact: true,
-    });
-    await expect
-      .poll(
-        async () => {
-          const header = await inlineHeader.evaluate((el) => {
-            const style = getComputedStyle(el);
-            return {
-              x: el.firstElementChild.getBoundingClientRect().x,
-              color: style.color,
-              font: style.font,
-              background: style.backgroundColor,
-              decoration: style.textDecorationLine,
-            };
-          });
-          const more = await showAllActivity.evaluate((el) => {
-            const style = getComputedStyle(el);
-            return {
-              x: el.firstElementChild.getBoundingClientRect().x,
-              color: style.color,
-              font: style.font,
-              background: style.backgroundColor,
-              decoration: style.textDecorationLine,
-            };
-          });
-          return (
-            more.x === (await pendingWork.boundingBox()).x &&
-            more.color === header.color &&
-            more.font === header.font &&
-            more.background === header.background &&
-            more.decoration === header.decoration
-          );
-        },
-        {
-          message:
-            "show-all text aligns flush left in the popup and matches the Activity control typography",
-        },
-      )
-      .toBe(true);
-    await showAllActivity.click();
+    await expect(fullGroup).toHaveAttribute("aria-expanded", "false");
+    await fullGroup.click();
     for (let step = 0; step < commands.length; step++)
       await expect(toolRow(step, "Completed")).toBeVisible();
+    await expect(
+      pendingWork.getByRole("button", { name: /Show all activity/ }),
+    ).toHaveCount(0);
     // The header is the only collapse affordance; no end-of-content caret.
     await expect(
       region.getByRole("button", { name: "Collapse activity", exact: true }),
@@ -1752,7 +1691,7 @@ test.describe("local agent request", () => {
     await expect(
       replyRow.getByRole("button", { name: "View activity", exact: true }),
     ).toBeVisible();
-    await expect(region).toHaveCount(0);
+    await expect(region).toBeVisible();
     const replyEntry = replyRow.getByRole("button", {
       name: "View activity",
       exact: true,

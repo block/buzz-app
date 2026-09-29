@@ -77,6 +77,8 @@ export type ComposerAccessoryProps = Readonly<{
   scope: string;
   channelId: string;
   threadRootId?: string | undefined;
+  /** Already-loaded exact thread rows, including hidden coordination; no new reads. */
+  threadMessages?: readonly ChannelMessage[] | undefined;
   /** Presentation only; the host re-resolves targets. No editor or access grant. */
   canOpen(target: string): boolean;
   /** False after contribution removal or the originating conversation scope retires. */

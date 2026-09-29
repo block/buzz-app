@@ -123,9 +123,7 @@ it("shows immediate thread intent without telemetry, keeps waiting after typing 
         },
       ]),
     );
-    expect(
-      screen.getByRole("button", { name: "Waiting for response…" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Working…" })).toBeTruthy();
     act(() => service.clear());
     expect(
       screen.getByRole("button", { name: "Waiting for response…" }),
@@ -349,7 +347,8 @@ it("renders explicitly linked tools while no reply exists, keeps fast commands o
     expect(
       screen.getAllByRole("button", { name: "Waiting for response…" }),
     ).toHaveLength(1);
-    expect(screen.queryByText(`Agent ${otherAgent.slice(0, 8)}`)).toBeNull();
+    expect(screen.getByText(`Agent ${otherAgent.slice(0, 8)}`)).toBeTruthy();
+    act(() => vi.advanceTimersByTime(9000)); // Expire exact-thread typing independently.
     send("turn_started", { triggeringEventIds: [requestId] });
     expect(screen.getByRole("button", { name: "Working…" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Turn" })).toBeNull();
@@ -634,8 +633,8 @@ it("updates a request headline and replaces typing only for healthy visible work
     view.rerender(tree());
     send("turn_completed", {});
     expect(
-      screen.getByRole("button", { name: "Observed activity ended" }),
-    ).toBeTruthy();
+      screen.queryByRole("button", { name: "Observed activity ended" }),
+    ).toBeNull();
     expect(
       screen.getByRole("status", { name: "Typing activity" }),
     ).toBeTruthy();
@@ -1166,8 +1165,16 @@ it.each(["turn_completed", "turn_error", "agent_panic"])(
       );
     const terminal =
       kind === "turn_completed"
-        ? "Observed activity ended"
+        ? "View activity"
         : "Observed activity ended · error reported";
+    const expectTerminal = () => {
+      if (
+        kind === "turn_completed" &&
+        activity.queries.snapshot().status === "listening"
+      )
+        expect(screen.queryByRole("button", { name: terminal })).toBeNull();
+      else expect(screen.getByRole("button", { name: terminal })).toBeTruthy();
+    };
     try {
       emit("turn_started");
       emit("acp_read", "one", {
@@ -1189,21 +1196,22 @@ it.each(["turn_completed", "turn_error", "agent_panic"])(
         screen.getByRole("button", { name: "Status unknown" }),
       ).toBeTruthy();
       emit(kind);
-      expect(screen.getByRole("button", { name: terminal })).toBeTruthy();
-      expect(
-        screen.getByRole("status", { name: "Agent activity status" })
-          .textContent,
-      ).toBe(`Helper: ${terminal}`);
+      expectTerminal();
+      if (kind !== "turn_completed")
+        expect(
+          screen.getByRole("status", { name: "Agent activity status" })
+            .textContent,
+        ).toBe(`Helper: ${terminal}`);
       // Coordination has no conversation representation and never settles a request.
       view.rerender(tree("seen"));
-      expect(screen.getByRole("button", { name: terminal })).toBeTruthy();
+      expectTerminal();
       // A malformed/future later error cannot rewrite the accepted completion.
       emit("turn_error", "one", {
         timestamp: new Date(Date.now() + 60_000).toISOString(),
       });
-      expect(screen.getByRole("button", { name: terminal })).toBeTruthy();
+      expectTerminal();
       act(() => activity.state({ status: "retrying", routes: [] }));
-      expect(screen.getByRole("button", { name: terminal })).toBeTruthy();
+      expectTerminal();
       fireEvent.click(screen.getByRole("button", { name: terminal }));
       expect(screen.getByText(/Feed: interrupted/)).toBeTruthy();
       if (kind !== "turn_completed") {
@@ -1225,7 +1233,7 @@ it.each(["turn_completed", "turn_error", "agent_panic"])(
         expect(screen.getByRole("button", { name: label })).toBeTruthy();
       }
       view.rerender(tree());
-      expect(screen.getByRole("button", { name: terminal })).toBeTruthy();
+      expectTerminal();
       act(() => activity.state(live));
       view.rerender(tree("seen"));
       emit("turn_started", "two");
@@ -1237,7 +1245,7 @@ it.each(["turn_completed", "turn_error", "agent_panic"])(
       view.rerender(tree());
       act(() => activity.state(live));
       emit("turn_completed", "two");
-      expect(screen.getByRole("button", { name: terminal })).toBeTruthy();
+      expectTerminal();
       // Retain the completed second turn while eviction loses the older start.
       // Historical terminal evidence no longer establishes a complete request view.
       const untilFirstEviction =
@@ -1253,7 +1261,7 @@ it.each(["turn_completed", "turn_error", "agent_panic"])(
       act(() => activity.state(live));
       emit("turn_started");
       emit(kind);
-      expect(screen.getByRole("button", { name: terminal })).toBeTruthy();
+      expectTerminal();
       act(() => release());
       expect(screen.queryByRole("button", { name: terminal })).toBeNull();
       act(() => {

@@ -211,7 +211,7 @@ test("profiles primary actions through production broker and built app", async (
     samples.push({
       action: `thread-${temperature}`,
       ms: await measure(
-        row.getByRole("button", { name: /^View thread:/ }),
+        row.getByRole("button", { name: /^View thread/ }),
         '[aria-label="Thread messages"]',
         "Unread reply 1",
       ),
@@ -280,7 +280,7 @@ test("profiles primary actions through production broker and built app", async (
       ),
     )
     .toBe(true);
-  await row.getByRole("button", { name: /^View thread:/ }).click();
+  await row.getByRole("button", { name: /^View thread/ }).click();
   await page
     .getByRole("textbox", { name: "Reply to thread", exact: true })
     .fill("Profile reply");

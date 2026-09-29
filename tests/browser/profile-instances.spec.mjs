@@ -10,7 +10,7 @@ for (const archived of [false, true]) {
       `/tests/fixtures/profiles.html?agent-instances${archived ? "&archived" : ""}`,
     );
     const thread = page.getByRole("button", {
-      name: "View thread: 1 reply",
+      name: "View thread",
       exact: true,
     });
     await thread.click();

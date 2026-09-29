@@ -146,7 +146,7 @@ test("message actions reveal, copy, restore focus and reply across responsive la
     .click();
   await expect(replyBox).toBeFocused();
   await page.getByRole("button", { name: "Close thread", exact: true }).click();
-  await broadcastRow.getByRole("button", { name: /^View thread:/ }).click();
+  await broadcastRow.getByRole("button", { name: /^View thread/ }).click();
   await expect(
     panel.locator(`[data-message-id="${broadcast.id}"]`),
   ).toBeFocused();

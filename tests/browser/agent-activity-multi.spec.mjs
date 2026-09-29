@@ -278,6 +278,71 @@ test("three recipients work independently through coordination, replies and a no
     thread.getByRole("button", { name: /Coordination/ }),
   ).toHaveCount(0);
   await expect(tail.locator("p.text-label-sm")).toHaveCount(3);
+  // A later turn can be triggered by hidden coordination, not the original human request.
+  emit(agents[1], "turn_completed");
+  await expect(entry(agents[1])).toHaveCount(0);
+  app.observer(
+    {
+      kind: "turn_started",
+      seq: 1,
+      channelId: "alpha",
+      turnId: "later-handoff",
+      sessionId: "S",
+      timestamp: new Date().toISOString(),
+      payload: { triggeringEventIds: [coordination.id] },
+    },
+    agents[1].secret,
+  );
+  app.observer(
+    {
+      kind: "acp_read",
+      seq: 2,
+      channelId: "alpha",
+      turnId: "later-handoff",
+      sessionId: "S",
+      timestamp: new Date().toISOString(),
+      payload: {
+        method: "session/update",
+        params: {
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "handoff-read",
+            title: "buzz-dev-mcp__read_file",
+            status: "in_progress",
+            rawInput: { path: "later-handoff.md" },
+          },
+        },
+      },
+    },
+    agents[1].secret,
+  );
+  await expect(
+    entry(agents[1]).getByRole("button", {
+      name: "Reading file…",
+      exact: true,
+    }),
+  ).toBeVisible();
+  const channelRequest = page
+    .getByRole("region", { name: "Channel message history", exact: true })
+    .locator(`[data-message-id="${request.id}"]`);
+  await expect(
+    channelRequest.getByRole("button", {
+      name: /View thread: 3 agents working/,
+    }),
+  ).toBeVisible();
+  await entry(agents[1])
+    .getByRole("button", { name: "Reading file…", exact: true })
+    .click();
+  const handoffPopup = page.getByRole("dialog", {
+    name: byKey.get(agents[1].pubkey),
+    exact: true,
+  });
+  await expect(
+    handoffPopup.getByRole("button", { name: /Read file.*later-handoff.md/ }),
+  ).toBeVisible();
+  await handoffPopup
+    .getByRole("button", { name: "Close activity", exact: true })
+    .click();
   const secondReply = reply(
     agents[1],
     "Agent B: review complete.",
@@ -288,6 +353,20 @@ test("three recipients work independently through coordination, replies and a no
   await expect(
     thread.locator(`[data-message-id="${secondReply.id}"]`),
   ).toBeVisible();
+  // A published answer is not terminal telemetry: live work remains until its turn ends.
+  await expect(tail.locator("p.text-label-sm")).toHaveCount(3);
+  app.observer(
+    {
+      kind: "turn_completed",
+      seq: 3,
+      channelId: "alpha",
+      turnId: "later-handoff",
+      sessionId: "S",
+      timestamp: new Date().toISOString(),
+      payload: {},
+    },
+    agents[1].secret,
+  );
   await expect(tail.locator("p.text-label-sm")).toHaveCount(2);
   await expect(entry(agents[1])).toHaveCount(0);
   emit(agents[2], "turn_error", {
@@ -315,6 +394,7 @@ test("three recipients work independently through coordination, replies and a no
   await expect(
     thread.locator(`[data-message-id="${firstReply.id}"]`),
   ).toBeVisible();
+  emit(agents[0], "turn_completed");
   await expect(tail.locator("p.text-label-sm")).toHaveCount(1);
   await expect(
     entry(agents[2]).getByRole("button", {

@@ -224,7 +224,7 @@ test.describe("human message bylines show known presence", () => {
       .find((row) => row.content === "Thread root 0");
     await timeline
       .locator(`[data-message-id="${root.id}"]`)
-      .getByRole("button", { name: /^View thread:/ })
+      .getByRole("button", { name: /^View thread/ })
       .click();
     const thread = page.getByRole("region", {
       name: "Thread messages",

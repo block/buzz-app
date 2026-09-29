@@ -4,6 +4,7 @@ export type ActivitySelection = Readonly<{
   channelId?: string;
   messageId?: string;
   requestId?: string;
+  threadRootId?: string;
   view?: "profile";
 }>;
 export function activityTarget(
@@ -11,11 +12,13 @@ export function activityTarget(
   channelId?: string,
   messageId?: string,
   requestId?: string,
+  threadRootId?: string,
 ): string {
   const query = new URLSearchParams({ agent });
   if (channelId) query.set("channel", channelId);
   if (messageId) query.set("message", messageId);
   if (requestId) query.set("request", requestId);
+  if (threadRootId) query.set("thread", threadRootId);
   return `buzz:agent-activity?${query}`;
 }
 /** Private host presentation target for the Profile tab, not an OS/deep link.
@@ -37,6 +40,7 @@ export function activitySelection(
     const channelId = params.get("channel");
     const messageId = params.get("message");
     const requestId = params.get("request");
+    const threadRootId = params.get("thread");
     const view = params.get("view");
     if (
       url.protocol !== "buzz:" ||
@@ -49,9 +53,18 @@ export function activitySelection(
       params.getAll("channel").length > 1 ||
       params.getAll("message").length > 1 ||
       params.getAll("request").length > 1 ||
+      params.getAll("thread").length > 1 ||
+      (threadRootId !== null &&
+        (!channelId ||
+          messageId !== null ||
+          requestId !== null ||
+          !/^[0-9a-f]{64}$/.test(threadRootId))) ||
       params.getAll("view").length > 1 ||
       (view !== null &&
-        (view !== "profile" || messageId !== null || requestId !== null)) ||
+        (view !== "profile" ||
+          messageId !== null ||
+          requestId !== null ||
+          threadRootId !== null)) ||
       (requestId !== null &&
         (!channelId ||
           messageId !== null ||
@@ -60,7 +73,14 @@ export function activitySelection(
         (!channelId || !/^[0-9a-f]{64}$/.test(messageId))) ||
       [...params.keys()].some(
         (key) =>
-          !["agent", "channel", "message", "request", "view"].includes(key),
+          ![
+            "agent",
+            "channel",
+            "message",
+            "request",
+            "thread",
+            "view",
+          ].includes(key),
       ) ||
       (channelId !== null && (!channelId || channelId.length > 256))
     )
@@ -70,6 +90,7 @@ export function activitySelection(
       ...(channelId !== null ? { channelId } : {}),
       ...(messageId !== null ? { messageId } : {}),
       ...(requestId !== null ? { requestId } : {}),
+      ...(threadRootId !== null ? { threadRootId } : {}),
       ...(view === "profile" ? { view } : {}),
     };
   } catch {

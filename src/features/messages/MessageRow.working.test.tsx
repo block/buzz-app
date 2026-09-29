@@ -130,7 +130,7 @@ it("keeps the three latest distinct responders with the newest rightmost as repl
   expect(names()).toEqual(["Bea", "Alex", "Buzzy"]);
 });
 
-it("names multiple working agents by count, bounds active avatars with an overflow count, and restores three avatars on completion", async () => {
+it("names multiple working agents by count, bounds active avatars with an overflow count, and restores a neutral action on completion", async () => {
   const f = await threadThinkingFixture();
   const agents = ["a", "b", "c", "d"].map((value) => value.repeat(64));
   const props = {
@@ -186,7 +186,7 @@ it("names multiple working agents by count, bounds active avatars with an overfl
       />,
     );
     const complete = screen.getByRole("button", {
-      name: "View thread: 8 replies",
+      name: "View thread",
     });
     expect(
       [...complete.querySelectorAll("[data-avatar-shape][title]")].map((node) =>
@@ -230,11 +230,161 @@ it("does not settle exact working evidence on a coordination message, and clears
     expect(working).toBeVisible();
     act(() => f.activity.state({ status: "retrying", routes: [] }));
     expect(screen.queryByRole("button", { name: /working/ })).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "View thread: 1 reply" }),
-    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "View thread" })).toBeVisible();
   } finally {
     cleanup();
+    await f.dispose();
+  }
+});
+
+it("shares later hidden-handoff work and tools between the channel and live thread preview", async () => {
+  const { createThreadViews, ThreadViews } = await import("./thread-views");
+  const { ActivityAccessory } = await import(
+    "../../bundled/agent-activity/ActivityAccessory"
+  );
+  const f = await threadThinkingFixture();
+  await f.session.profiles.ensure([f.agent]);
+  const views = createThreadViews();
+  const hidden = {
+    ...f.first,
+    id: "e".repeat(64),
+    content: "Synthetic hidden handoff",
+    authorId: f.agent,
+    threadRootId: f.first.id,
+    audience: "agents" as const,
+  };
+  const owned = f.session.thread("channel", f.first.id);
+  const snapshot = { ...owned.snapshot(), replies: [hidden] };
+  const release = views.register(f.session, "channel", {
+    ...owned,
+    snapshot: () => snapshot,
+  });
+  const request = { message: f.first, agents: [f.agent] };
+  try {
+    render(
+      <ThreadViews value={views}>
+        <MessageRow
+          session={f.session}
+          row={{ ...f.first, replyCount: 4 }}
+          profile={undefined}
+          media={f.session.media}
+          day={false}
+          retry={undefined}
+          onOpenLink={() => false}
+          onOpenThread={() => {}}
+        />
+        <ActivityAccessory
+          session={f.session}
+          scope="test"
+          channelId="channel"
+          threadRootId={f.first.id}
+          request={request}
+          canOpen={() => false}
+          open={() => false}
+        />
+      </ThreadViews>,
+    );
+    act(() => {
+      f.start(f.first.id);
+      f.finish(f.first.id);
+    });
+    expect(
+      screen.queryByRole("button", { name: "Observed activity ended" }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "View thread" })).toBeVisible();
+    act(() => {
+      f.observe("turn_started", "handoff", { triggeringEventIds: [hidden.id] });
+      f.observe("acp_read", "handoff", {
+        method: "session/update",
+        params: {
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "later",
+            title: "buzz-dev-mcp__read_file",
+            status: "in_progress",
+            rawInput: { path: "later-work.ts" },
+          },
+        },
+      });
+    });
+    expect(
+      screen.getByRole("button", { name: "View thread: Buzzy working…" }),
+    ).toBeVisible();
+    const live = screen.getByRole("button", {
+      name: "Reading file…",
+    });
+    fireEvent.click(live);
+    expect(
+      await screen.findByRole("button", { name: /Read file.*later-work.ts/ }),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(hidden.content, { selector: "[data-message-id] p" }),
+    ).toBeNull();
+    act(() => f.observe("turn_completed", "handoff"));
+    expect(screen.queryByRole("button", { name: "Reading file…" })).toBeNull();
+    expect(screen.getByRole("button", { name: "View thread" })).toBeVisible();
+  } finally {
+    cleanup();
+    release();
+    owned.dispose();
+    await f.dispose();
+  }
+});
+
+it("keeps a newer accepted request waiting instead of hiding it behind an older completed turn", async () => {
+  const { createThreadViews, ThreadViews } = await import("./thread-views");
+  const { ActivityAccessory } = await import(
+    "../../bundled/agent-activity/ActivityAccessory"
+  );
+  const f = await threadThinkingFixture();
+  const views = createThreadViews();
+  const next = {
+    ...f.first,
+    id: "f".repeat(64),
+    threadRootId: f.first.id,
+    content: "Follow-up",
+    delivery: "accepted" as const,
+  };
+  const owned = f.session.thread("channel", f.first.id);
+  const loaded = { ...owned.snapshot(), replies: [next] };
+  const release = views.register(f.session, "channel", {
+    ...owned,
+    snapshot: () => loaded,
+  });
+  try {
+    act(() => {
+      f.start(f.first.id);
+      f.finish(f.first.id);
+    });
+    const view = render(
+      <ThreadViews value={views}>
+        <ActivityAccessory
+          session={f.session}
+          scope="test"
+          channelId="channel"
+          threadRootId={f.first.id}
+          request={{ message: next, agents: [f.agent] }}
+          canOpen={() => false}
+          open={() => false}
+        />
+      </ThreadViews>,
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "Waiting for response…",
+      }),
+    ).toBeVisible();
+    act(() =>
+      f.observe("turn_started", "new-request", {
+        triggeringEventIds: [next.id],
+      }),
+    );
+    expect(screen.getByRole("button", { name: "Working…" })).toBeVisible();
+    view.unmount();
+  } finally {
+    cleanup();
+    release();
+    owned.dispose();
     await f.dispose();
   }
 });

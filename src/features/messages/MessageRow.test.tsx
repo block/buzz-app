@@ -220,7 +220,7 @@ function render(
   );
   return { html, snapshot };
 }
-it("renders the signed whole-thread total rather than only direct replies", () => {
+it("uses a neutral thread action instead of presenting an audience-unfiltered total", () => {
   const author = keypair(),
     relay = keypair();
   const root = message(author, "channel", "Root", 1);
@@ -244,10 +244,10 @@ it("renders the signed whole-thread total rather than only direct replies", () =
       onOpenThread={() => {}}
     />,
   );
-  expect(html).toContain('aria-label="View thread: 3 replies"');
-  expect(html).toContain("3 replies</span>");
+  expect(html).toContain('aria-label="View thread"');
+  expect(html).not.toContain("3 replies</span>");
 });
-it("selects this thread, adds an accessible unread cue and preserves the total reply count", () => {
+it("selects this thread and preserves the accessible unread cue without a reply total", () => {
   const { html, snapshot } = render({ observedCount: 2 });
   expect(snapshot).toHaveBeenCalledExactlyOnceWith({
     kind: "thread",
@@ -255,18 +255,18 @@ it("selects this thread, adds an accessible unread cue and preserves the total r
     rootId: "root",
   });
   expect(html).toContain(
-    'aria-label="View thread: 23 replies. Observed unread replies. Not an exact total."',
+    'aria-label="View thread. Observed unread replies. Not an exact total."',
   );
   expect(html).toContain(
     'aria-hidden="true" title="Observed unread replies. Not an exact total."',
   );
-  expect(html).toContain("23 replies</span>");
+  expect(html).not.toContain("23 replies</span>");
 });
 it.each([null, 0])(
   "omits the dot for %s observed replies, not a fabricated unread total",
   (observedCount) => {
     const { html } = render({ observedCount });
-    expect(html).toContain('aria-label="View thread: 23 replies"');
+    expect(html).toContain('aria-label="View thread"');
     expect(html).not.toContain("title=");
   },
 );
@@ -873,7 +873,7 @@ it("labels the first local agent slot as awaiting response, never a fabricated r
   };
   expect(renderCount(0)).toContain("1 agent awaiting response</span>");
   expect(renderCount(0)).toContain('aria-description="Agent response pending"');
-  expect(renderCount(2)).toContain("2 replies</span>");
+  expect(renderCount(2)).toContain("View thread</span>");
   expect(renderCount(2)).not.toContain("Agent response pending");
   expect(renderCount(0, "failed")).not.toContain(
     "1 agent awaiting response</span>",

@@ -59,7 +59,7 @@ test("Back restores each thread visit before the previous channel", async ({
   const threadButton = (root) =>
     page
       .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-      .getByRole("button", { name: /^View thread:/ });
+      .getByRole("button", { name: /^View thread/ });
   const panel = page.getByRole("complementary", {
     name: "Thread",
     exact: true,
@@ -138,7 +138,7 @@ for (const reading of [false, true]) {
     try {
       const trigger = page
         .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-        .getByRole("button", { name: /^View thread:/ });
+        .getByRole("button", { name: /^View thread/ });
       // Virtua can retain its pointer lock after geometry stops moving. Wait
       // for input readiness before Playwright tries alternate scroll alignments.
       await expect(trigger).toHaveCSS("pointer-events", "auto");

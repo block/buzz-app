@@ -19,11 +19,18 @@ for trying Activity, not replacing an everyday installation.
   dwell; exact conversation links to them report unavailable rather than revealing
   them. Relay history and unread evidence are not rewritten or acknowledged.
 - Sending a channel message stays in the channel. Open its thread explicitly with
-  the working-agent, awaiting-response or reply control; sending never opens it.
+  the working-agent, awaiting-response or View thread control; sending never opens it.
 - Hover/click response Activity popups, expandable tools/messages, and the profile Activity tab.
   Profile human request text is expanded by default; agent communications are not.
-- Channel thread controls show exact working agents only with fresh evidence;
-  pending requests say awaiting response, never a fabricated reply.
+- Channel controls and live Activity share exact-thread work evidence. Loaded
+  hidden handoff IDs can link later turns and additional agents; no channel-wide
+  fallback or new history read is used. Clean-ended live rows disappear without
+  claiming that an answer arrived. Errors and uncertain work remain inspectable.
+- The channel uses **View thread**, not the relay's audience-unfiltered reply total.
+  The open thread counts visible replies; unread evidence remains unchanged.
+- Live hover/panel details include all retained linked thread activity, not just
+  the original request or the five newest entries. Response Activity keeps its
+  exact send-boundary scope. Missing/trimmed telemetry is not a complete transcript.
 - Human-facing descendants remain visible through hidden coordination ancestry.
   Ordinary visible reply nesting and exact reply targeting are preserved.
 - Side-panel opening by dragging or the Activity context menu, without losing the thread.

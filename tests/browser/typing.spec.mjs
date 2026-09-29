@@ -41,7 +41,7 @@ test("Messages receives scoped typing through authenticated live traffic and exp
     .find((e) => e.content === "Thread root 0");
   await page
     .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-    .getByRole("button", { name: /^View thread:/ })
+    .getByRole("button", { name: /^View thread/ })
     .click();
   const thread = page.getByRole("complementary", {
     name: "Thread",
@@ -84,7 +84,7 @@ for (const scope of ["channel", "thread"]) {
       for (let i = 0; i < 25; i++) app.reply(root.id);
       await page
         .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-        .getByRole("button", { name: /^View thread:/ })
+        .getByRole("button", { name: /^View thread/ })
         .click();
       // One nested descendant is collapsed; the root plus 27 direct replies mount.
       await expect(

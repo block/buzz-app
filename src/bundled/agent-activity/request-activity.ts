@@ -10,7 +10,7 @@ export function requestActivity(
   records: readonly Omit<ActivityRecord, "envelopeId">[],
   agent: string,
   channelId: string,
-  requestId: string,
+  requestId: string | readonly string[],
 ) {
   const parsed = activityRecords(records, agent, channelId).flatMap(
     (record) => {
@@ -47,12 +47,21 @@ export function requestActivity(
   const terminal = new Map<string, "ended" | "error">();
   let uncertain = false;
   const result = () => ({ records: selected, turnIds, terminal, uncertain });
-  if (!/^[0-9a-f]{64}$/.test(requestId)) return result();
+  const triggersWanted = new Set(
+    (typeof requestId === "string" ? [requestId] : requestId).filter((id) =>
+      /^[0-9a-f]{64}$/.test(id),
+    ),
+  );
+  if (!triggersWanted.size) return result();
   for (const start of parsed.filter(
     ({ value }) => value.kind === "turn_started",
   )) {
     const triggers = start.value.payload?.triggeringEventIds;
-    if (!Array.isArray(triggers) || !triggers.includes(requestId)) continue;
+    if (
+      !Array.isArray(triggers) ||
+      !triggers.some((id) => triggersWanted.has(id))
+    )
+      continue;
     const turn = parsed.filter(
       ({ value }) => value.turnId === start.value.turnId,
     );

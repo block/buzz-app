@@ -31,6 +31,11 @@ import type { ChannelMessage } from "../relay/contracts";
 // Reading geometry/dwell has its own real-hook boundary suite. This fixture
 // deliberately supplies only the DOM shape needed for positioning.
 vi.mock("./use-reading", () => ({ useReading: vi.fn() }));
+// This shallow boundary does not mount React; the real thread-view bridge has mounted coverage.
+vi.mock("./thread-views", () => ({
+  useThreadViews: () => undefined,
+  useLoadedThread: () => undefined,
+}));
 const hooks = vi.hoisted(() => ({
   refs: [] as { current: unknown }[],
   ref: 0,
@@ -471,11 +476,9 @@ it("the actual message reply button opens its selected message and canonical thr
     retry: undefined,
     onOpenThread: open,
   });
-  (
-    button(tree, "View thread: 2 replies").props.onClick as (
-      event: unknown,
-    ) => void
-  )({ currentTarget: { focus } });
+  (button(tree, "View thread").props.onClick as (event: unknown) => void)({
+    currentTarget: { focus },
+  });
   expect(focus).toHaveBeenCalledTimes(1);
   expect(open).toHaveBeenCalledExactlyOnceWith(row.id, row.id);
 
@@ -488,11 +491,9 @@ it("the actual message reply button opens its selected message and canonical thr
     retry: undefined,
     onOpenThread: open,
   });
-  (
-    button(nested, "View thread: 2 replies").props.onClick as (
-      event: unknown,
-    ) => void
-  )({ currentTarget: { focus } });
+  (button(nested, "View thread").props.onClick as (event: unknown) => void)({
+    currentTarget: { focus },
+  });
   expect(open).toHaveBeenLastCalledWith("b".repeat(64), row.id);
 });
 
@@ -892,13 +893,15 @@ it("shows bounded participant avatars on the real reply control, through the med
     retry: undefined,
     onOpenThread: () => {},
   });
-  const trigger = button(tree, "View thread: 2 replies");
+  const trigger = button(tree, "View thread");
   const summary = elements(trigger).find(
     (element) => element.type === ReplySummary,
   );
   if (!summary) throw new Error("Missing reply summary");
   if (!isValidElement<Parameters<typeof ReplySummary>[0]>(summary))
     throw new Error("Invalid reply summary");
+  expect(summary.props.label).toBe("View thread");
+  // Ordinary branch summaries still use bounded participant artwork.
   const control = ReplySummary(summary.props);
   const avatars = elements(control).filter((e) => e.type === Avatar);
   expect(avatars.map((avatar) => avatar.props)).toEqual(

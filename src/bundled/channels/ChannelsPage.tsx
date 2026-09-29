@@ -1,3 +1,7 @@
+import {
+  createThreadViews,
+  ThreadViews,
+} from "../../features/messages/thread-views";
 import { TypingPresentation } from "../../features/conversation/typing-presentation";
 import type { AgentControl } from "../../features/agents/control";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
@@ -448,6 +452,7 @@ function ChannelWorkspace({
     current,
     canStartSession,
   ]);
+  const [threadViews] = useState(createThreadViews);
   const flatSession = current?.channelType === "session";
   const onComposerSend = useComposerSent(
     currentId,
@@ -1281,7 +1286,7 @@ function ChannelWorkspace({
     <TypingPresentation
       active={!composingMessage && !showingSettings && !showingMediaReview}
     >
-      {board}
+      <ThreadViews value={threadViews}>{board}</ThreadViews>
     </TypingPresentation>
   );
 }

@@ -728,7 +728,7 @@ todosOverlapTest(
         .find((event) => event.content === "Thread root 0");
       await page
         .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-        .getByRole("button", { name: /^View thread:/ })
+        .getByRole("button", { name: /^View thread/ })
         .click();
       await expect(thread).toBeVisible();
     };

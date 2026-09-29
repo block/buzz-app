@@ -81,7 +81,7 @@ test("avatar shapes paint at every size and preserve pointer/keyboard profile co
     }
     const system = page.getByRole("region", { name: "System avatars" });
     const insetAvatars = page.locator(
-      "button[aria-label^='View thread:'] [data-avatar-shape]:not([data-avatar-shape] [data-avatar-shape]), [data-membership-row] [data-avatar-shape]:not([data-avatar-shape] [data-avatar-shape])",
+      "button[aria-label^='View thread'] [data-avatar-shape]:not([data-avatar-shape] [data-avatar-shape]), [data-membership-row] [data-avatar-shape]:not([data-avatar-shape] [data-avatar-shape])",
     );
     await expect(insetAvatars).toHaveCount(4);
     async function expectInsetArtwork(pictures = true) {
@@ -152,7 +152,7 @@ test("avatar shapes paint at every size and preserve pointer/keyboard profile co
       }
     }
     const threadControl = page.getByRole("button", {
-      name: "View thread: 2 replies",
+      name: "View thread",
     });
     await threadControl.hover();
     const threadShape = await threadControl.evaluate((element) => ({

@@ -190,7 +190,7 @@ export const MessageRow = memo(function MessageRow({
   const threadLabel =
     workingLabel ??
     (row.replyCount > 0
-      ? `${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}`
+      ? "View thread"
       : `${pendingAgentCount} ${onePending ? "agent" : "agents"} awaiting response`);
   const canReact = !!(
     extensions &&
@@ -602,7 +602,7 @@ export const MessageRow = memo(function MessageRow({
                     : "circle"
                 }
                 type="button"
-                aria-label={`View thread: ${threadLabel}${unreadLabel ? `. ${unreadLabel}` : ""}`}
+                aria-label={`${workingLabel || !row.replyCount ? `View thread: ${threadLabel}` : "View thread"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
                 aria-description={
                   onePending ? "Agent response pending" : undefined
                 }
@@ -616,6 +616,7 @@ export const MessageRow = memo(function MessageRow({
                 ) : (
                   <ReplySummary
                     count={row.replyCount}
+                    label="View thread"
                     participants={row.participants}
                     profiles={
                       working.agents.length

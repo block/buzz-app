@@ -130,9 +130,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   );
   await expect(mention).toHaveCount(1);
   await expect(panel).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "View thread: 1 reply", exact: true })
-    .click();
+  await page.getByRole("button", { name: "View thread", exact: true }).click();
   const threadMention = page.getByRole("button", {
     name: "View Pinky profile",
     exact: true,
@@ -215,7 +213,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await expect(panel.getByRole("region", { name: "Instances" })).toHaveCount(0);
   await panel.getByRole("button", { name: "Close channel panel" }).click();
   await expect(
-    page.getByRole("button", { name: "View thread: 1 reply", exact: true }),
+    page.getByRole("button", { name: "View thread", exact: true }),
   ).toBeFocused();
   const missingKey = await page.evaluate(
     () => window.profilesFixture.keys.missing,

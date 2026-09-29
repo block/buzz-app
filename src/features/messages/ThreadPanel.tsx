@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { useThreadViews } from "./thread-views";
 import { ReplySummary } from "./ReplySummary";
 import { ReplyBranch } from "./ReplyBranch";
 import { replyTree } from "./reply-tree";
@@ -126,6 +127,7 @@ function OwnedThreadPanel({
   sessionConversation,
   replyRequest,
 }: ThreadPanelProps) {
+  const threadViews = useThreadViews();
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
@@ -140,7 +142,9 @@ function OwnedThreadPanel({
       const owned = exact
         ? session.thread(channelId, messageId, { exact: true })
         : session.thread(channelId, messageId);
+      const unregister = threadViews?.register(session, channelId, owned);
       const cancel = () => {
+        unregister?.();
         owned.dispose();
         setView(undefined);
       };
@@ -150,13 +154,14 @@ function OwnedThreadPanel({
       void owned.refresh();
       return () => {
         navigation?.signal.removeEventListener("abort", cancel);
+        unregister?.();
         owned.dispose();
       };
     } catch (error) {
       setError(String(error));
       navigation?.complete({ status: "failed", reason: "unavailable" });
     }
-  }, [session, channelId, messageId, attempt, navigation]);
+  }, [session, channelId, messageId, attempt, navigation, threadViews]);
   return error ? (
     <div className={styles.empty} role="alert">
       <p>{error}</p>
@@ -599,6 +604,7 @@ function ThreadMessages({
         scope={scope}
         channelId={channelId}
         threadRootId={snapshot.root.id}
+        threadMessages={rows}
         request={pending}
         canOpen={(target) => canOpenLink?.(target) ?? false}
         open={onOpenLink}

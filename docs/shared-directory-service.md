@@ -34,24 +34,40 @@ writes, multiple simultaneous providers and changes to Nostr naming are out of
 scope. This PR is documentation only; all API names and implementation work below
 are proposed.
 
+**Implementation scope:** build the Directory provider and its consumer integration;
+reuse Buzz's plugin infrastructure in place. **No built-in Buzz service is proposed
+for extraction.** In the diagram, **BUILD** means new code, **REUSE** means existing
+code that stays with its current owner, **EXTERNAL** means outside this project,
+and **LATER** means outside the first delivery.
+
 ```mermaid
 flowchart TB
-  source["Organization directory"]
+  source["EXTERNAL<br/>Organization directory"]
 
-  subgraph provider["Replaceable provider"]
-    providerData["Configuration and authentication<br/>Fetching and in-memory cache"]
-    service["directoryV1<br/>Lookup, search, status and refresh<br/>Change subscriptions"]
+  subgraph provider["BUILD — Directory plugin"]
+    providerData["BUILD<br/>Directory-specific configuration and auth<br/>Fetching, indexing and cache"]
+    service["BUILD<br/>directoryV1 contract and implementation<br/>Lookup, search and change subscriptions"]
     service -->|reads cache and refreshes| providerData
   end
   providerData -->|fetches from| source
 
   subgraph consumerPlugin["Consumer plugin"]
-    core["Existing features and saved selections<br/>Native names and inputs"]
-    enrichment["Optional child scope<br/>Resolved names and person search"]
+    core["REUSE<br/>Existing features and saved selections"]
+    enrichment["BUILD<br/>Consumer integration<br/>Resolved names and person search"]
     core -.->|optional enrichment| enrichment
   end
   enrichment -.->|optional dependency| service
-  consumers["Other plugins"] -->|required or optional dependency| service
+  consumers["LATER<br/>Other consumer integrations"] -->|required or optional dependency| service
+  runtime["REUSE — Buzz / Cordis<br/>Service registration and dependency lifetimes"]
+  service -.->|registers through| runtime
+  enrichment -.->|injected through| runtime
+
+  classDef build fill:#e7f5e9,stroke:#28733d,color:#183d23
+  classDef reuse fill:#e8f0fc,stroke:#315f99,color:#183451
+  classDef outside fill:#f2f2f2,stroke:#666,color:#333
+  class providerData,service,enrichment build
+  class core,runtime reuse
+  class source,consumers outside
 ```
 
 The service belongs to the active provider plugin. Replacing that plugin preserves
@@ -59,7 +75,24 @@ the API used by consumers. Disabling it stops the optional child scope; the
 consumer’s existing features and saved selections remain available. Required
 consumers follow the existing activation wait and timeout described below.
 
+| Area | Proposed work | Existing code reused or retained |
+| --- | --- | --- |
+| Directory provider and `directoryV1` | **Build** the shared contract, person search/account index, cache and provider lifecycle. | Register the service through existing Cordis APIs; no new host registry. |
+| Provider configuration and authentication | **Build** Directory-specific settings, source declarations and credential handling. | Reuse [settings-card registration](../src/features/settings/service.ts) and the existing desktop host commands/requests described below. No new credential store or HTTP subsystem. |
+| Consumer integration | **Build** lookup/search UI wiring and dependency-scoped cleanup for the first consumer. | Keep the consumer's features, saved selections and fallback inputs in that plugin. Other integrations follow only when needed. |
+| Buzz plugin infrastructure | **Reuse in place.** | [Plugin runtime](../src/plugins/runtime.ts), Cordis registration/injection/disposal, and plugin installation remain host-owned. |
+| Built-in Nostr identities | **Retain in Buzz; do not extract or wrap as `directoryV1`.** | [Profile directory](../src/features/relay/profile-directory.ts) and [identity naming](../src/features/identity-names/service.ts) keep their Nostr/community responsibilities. |
+| Organization directory | **External dependency.** | Connect to an existing data source; do not build a directory server. |
+
+Moving a consumer's existing directory-specific fetch/cache code into the provider,
+if present, is plugin-local migration. It is not an extraction of Buzz's built-in
+profile or identity services. The new abstraction describes organizational people
+and external accounts; those existing services retain their current contracts.
+
 ## Existing support [sketch]
+
+Checked against public `main` on 2026-09-29; the host API source links identify
+the checked revision.
 
 - [Plugin runtime](../src/plugins/runtime.ts) forwards `module.inject` to Cordis.
   The pinned fork treats every declared dependency as required; object values are
@@ -73,9 +106,13 @@ consumers follow the existing activation wait and timeout described below.
   scope. Cordis rejects a second live registration and removes it on disposal.
 - [Identity Naming](../src/bundled/identity-naming/index.ts) registers a Nostr
   naming policy with `identityNames`; it is separate from this person directory.
-- [PluginManifest](../src/plugins/api.ts) has `id`, `name` and `apiVersion: 1`.
-  It does not declare network origins or host commands. Provider authentication
-  and transport must be checked against the intended host before implementation.
+- The current [PluginManifest](https://github.com/block/buzz-app/blob/14a2e7ed585b130315629ded39d1b83b05eb2a53/src/plugins/api.ts)
+  supports `host.commands` and `host.networkOrigins`. The existing
+  [host service](https://github.com/block/buzz-app/blob/14a2e7ed585b130315629ded39d1b83b05eb2a53/src/features/host/service.ts)
+  provides `ctx.host.runCommand` and `ctx.host.request` to installed desktop
+  plugins. Reuse these operations with Directory's own declarations; the host
+  does not provide a shared credential store or another plugin's credentials.
+  Browser transport is not supplied by this capability and is not added here.
 
 Standalone assertions against pinned Cordis verified provider plugins appearing,
 disappearing, being replaced and being disposed at shutdown, with the consumer’s
@@ -186,13 +223,16 @@ existing activation-timeout/reload behavior; this proposal adds no retry policy.
 ## Fetching, credentials and cache [deep]
 
 Directory owns fetching and authenticates independently of its consumers. No token
-passes through `DirectoryV1`. Use the existing host authentication and transport
-capabilities where available; resolve the actual mechanism before enabling real
-organization data. Plugins are trusted same-process code; injection is not an
-access-control mechanism.
+passes through `DirectoryV1`. Reuse the desktop host's declared-origin requests
+and, when needed, declared commands; Directory owns interpreting and retaining
+credentials. Choose its source and declarations before enabling real organization
+data. Plugins are trusted same-process code; injection is not an access-control
+mechanism.
 
 Initial defaults: an in-memory snapshot, 24-hour freshness, explicit refresh after
-failure and a 20-second request deadline.
+failure and the existing host's
+[30-second request deadline](https://github.com/block/buzz-app/blob/14a2e7ed585b130315629ded39d1b83b05eb2a53/src-tauri/src/host_request.rs).
+Reuse that deadline instead of adding a second timeout policy.
 Concurrent refresh calls share one request. Expected fetch failures update status
 and settle `refresh()` without rejection; subscribers observe the new status.
 Successful empty data replaces the old snapshot; a failed refresh retains it only
@@ -200,10 +240,12 @@ within the same authorization context. Refresh cadence and indexing details stay
 inside Directory, shared by every consumer.
 
 Scope the cache to the Buzz profile, directory account and source configuration.
-Disposal, reload, credential replacement or a scope change clears cached entries,
-increments a request generation and aborts outstanding fetches. Discard late
-responses from an earlier generation, even if abort was ignored; an invalidated
-refresh settles without publishing. Never reuse one account’s cache for another.
+Disposal, reload, credential replacement or a scope change clears cached entries
+and increments a request generation. The current host request API exposes no
+caller cancellation; invalidate outstanding requests and discard their late
+responses. Native work may continue until completion or the host deadline; an
+invalidated refresh settles without publishing. No host cancellation API expansion
+is proposed. Never reuse one account’s cache for another.
 An independently authenticated consumer also clears transient names/search on its
 own disconnect or account change without clearing the provider cache used by others.
 
@@ -232,7 +274,7 @@ GitHub entry remains available without person search.
    chosen person from a display name. Count omissions in Directory diagnostics;
    no public omission-count field initially.
 2. **Disable or change credentials during refresh.** Clear the relevant cached
-   and displayed data, cancel the request and reject its late result. After a
+   and displayed data, invalidate the request and reject its late result. After a
    provider swap the consumer subscribes only to the replacement. GitHub queues,
    manual VIP entry and previously saved VIPs continue to work.
 
@@ -276,10 +318,10 @@ Dates are proposed decision deadlines, not delivery commitments.
    Default: Directory’s authoring files. Re-exporting from `@buzz/author` requires
    explicit approval for its FOUNDATION contract. **Owner:** Buzz plugin API
    maintainer. **Needed:** 2026-10-02, before implementation.
-2. Which host authentication/transport capability will the Directory plugin use?
-   Confirm compatibility with the intended host; do not assume a consumer’s token
-   becomes available to Directory. **Owner:** Directory maintainer and Buzz host
-   maintainer. **Needed:** 2026-10-02, before implementation.
+2. Which source, declared origins and credential mechanism will Directory use
+   through the existing desktop host capability? Confirm access with Directory's
+   own credentials; do not assume a consumer's token is available. **Owner:**
+   Directory maintainer. **Needed:** 2026-10-02, before implementation.
 3. What is measured search latency at the supported directory size? Keep the
    20-result cap and immediate local search unless measurements warrant change.
    **Owner:** Directory maintainer. **Needed:** 2026-10-09, before rollout.
@@ -298,5 +340,5 @@ Dates are proposed decision deadlines, not delivery commitments.
 | Optional consumer uses a child scope | Two-way | Local consumer wiring change; required dependency would remove fallback. |
 | One active provider, using Cordis duplicate rejection | Two-way | Multiple-provider selection needs a separate future design. |
 | Indexed lookup; 20 search results; no debounce initially | Two-way | Adjust provider internals/defaults after measuring; preserve the API contract. |
-| 24-hour freshness; explicit retry; 20-second deadline | Two-way | Provider policy changes, no consumer migration. |
+| 24-hour freshness; explicit retry; existing host deadline | Two-way | Cache policy changes stay in the provider; request limits remain host-owned. |
 | In-memory cache and shared type-only authoring files | Two-way | Persistence or packaging can change separately; each needs its own compatibility review. |

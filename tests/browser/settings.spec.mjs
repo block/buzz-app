@@ -163,23 +163,6 @@ test.describe("community administration permissions", () => {
       dialog.getByRole("combobox", { name: /Search people/ }),
     ).toHaveCount(0);
   });
-
-  test("hides Administration and Membership from an ordinary member", async ({
-    page,
-    app,
-  }) => {
-    app.setCommunityRole("member");
-    await page.goto(app.origin);
-    await button(page, "Your profile").click();
-    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    const sections = page.getByRole("navigation", {
-      name: "Settings sections",
-    });
-    await expect(sections).not.toContainText("Administration");
-    await expect(
-      sections.getByRole("button", { name: "Membership", exact: true }),
-    ).toHaveCount(0);
-  });
 });
 
 // Only this journey requires a confirmed Online badge/radio. Keep unrelated

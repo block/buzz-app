@@ -34,8 +34,20 @@ const communitySessions = await Promise.all(
     const owner = createRelaySession(transport, {
       outboxStorage: { load: () => [], save() {} },
     });
-    owner.session.channels.ensureList();
-    owner.session.channels.ensure("c");
+    const { channels } = owner.session;
+    channels.ensureList();
+    // The first complete roster closes provisional access, which cancels
+    // in-flight uploads. Let startup discovery land before the spec uploads.
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        if (!["ready", "error"].includes(channels.list().status)) return;
+        stop();
+        resolve();
+      };
+      const stop = channels.subscribeList(check);
+      check();
+    });
+    channels.ensure("c");
     const value = {
       status: "ready",
       generation: 1,

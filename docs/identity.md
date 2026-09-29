@@ -108,8 +108,8 @@ hashes, signs (`upload` + `x`) and sends the exact bytes JavaScript passes it;
 shared TypeScript (`hostUpload`) owns limits, error mapping and descriptor
 validation. JavaScript never signs kind 24242. HEIC and non-MP4 video conversion
 remain dev-broker-only (ffmpeg), so those files upload unconverted and the relay
-may reject them. Repository HTTP and other
-broker-only helpers are not claimed by this adapter. NIP-FI assertion
+may reject them. Owner/admin invite minting and member changes, repository HTTP
+and other broker-only helpers are not claimed by this adapter. NIP-FI assertion
 acquisition is not implemented, so deployments enforcing it are outside acceptance.
 Windows/Linux custody, credential migration and release-signing acceptance remain
 separate limitations.

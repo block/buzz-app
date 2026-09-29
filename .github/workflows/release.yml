@@ -141,7 +141,7 @@ jobs:
           staged_app=$(mktemp -d "$RUNNER_TEMP/updater-staging.XXXXXX")
           ditto "$app" "$staged_app/Buzz Foundation.app"
           codesign --verify --deep --strict "$staged_app/Buzz Foundation.app"
-          (cd "$staged_app" && tar -czf "$archive" 'Buzz Foundation.app')
+          (cd "$staged_app" && COPYFILE_DISABLE=1 tar -czf "$archive" 'Buzz Foundation.app')
           pnpm tauri signer sign "$archive"
           test -s "$archive" && test -s "$archive.sig" || { echo '::error::Updater signing failed'; exit 1; }
           (cd release-assets && shasum -a 256 ./*.dmg ./*.tar.gz > SHA256SUMS)

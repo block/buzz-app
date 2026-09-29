@@ -3,6 +3,7 @@ import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { watchPageErrors } from "./page-errors.mjs";
+import { wheel } from "./timeline.mjs";
 
 test("reconnect repair failure keeps retry reachable at the newest replies", async ({
   page,
@@ -42,7 +43,12 @@ test("reconnect repair failure keeps retry reachable at the newest replies", asy
     await expect(replies).toHaveCount(10);
     await retry.click();
     await expect(error).toHaveCount(0);
-    await expect(replies).toHaveCount(10);
+    // The click can scroll to the button and legitimately demand an older page;
+    // recovery must retain the newest reply regardless of that extra request.
+    await expect(
+      history.getByText("First root reply 302", { exact: true }),
+    ).toBeVisible();
+    await expect(retry).toHaveCount(0);
   } finally {
     await page
       .evaluate(() => window.messagesFixture.releaseReconnectRepair())
@@ -263,7 +269,7 @@ test("newest window positions immediately; scrollback preserves the visible repl
       el.dispatchEvent(new Event("scroll"));
     });
     await history.hover();
-    await page.mouse.wheel(0, -300);
+    await wheel(page, -300, history);
     await expect(history.getByText("Loading older replies…")).toBeVisible();
     await expect
       .poll(() =>
@@ -353,7 +359,7 @@ test("older-page retry reveals a late parent without hiding the reading anchor",
     await expect(replies).toHaveCount(10);
     await page.evaluate(() => window.messagesFixture.failOlderPages(1));
     await history.hover();
-    await page.mouse.wheel(0, -4000);
+    await wheel(page, -4000, history);
     const retry = history.getByRole("button", { name: "Retry thread" });
     await expect(history.getByRole("alert")).toContainText("Older page failed");
     await child.scrollIntoViewIfNeeded();
@@ -410,7 +416,7 @@ test("older page reveals a reparented visible reply without moving its viewport 
     await expect(history.locator("ol [data-message-id]")).toHaveCount(10);
     await page.evaluate(() => window.messagesFixture.holdOlderPage());
     await history.hover();
-    await page.mouse.wheel(0, -4000);
+    await wheel(page, -4000, history);
     await expect
       .poll(() =>
         page.evaluate(() => window.messagesFixture.report.filters.length),

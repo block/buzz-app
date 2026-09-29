@@ -1,9 +1,3 @@
-import {
-  deleteAuthorityCommunity,
-  deleteAuthorityTarget,
-  deleteAuthorityText,
-  parseDeleteAuthority,
-} from "../src/features/relay/channel-delete-authority.ts";
 import { getLogger } from "../src/features/developer/logging.ts";
 import { filterSummary, httpLabel } from "../src/features/developer/traffic.ts";
 
@@ -296,13 +290,6 @@ async function relayAuthority(fetch, relay) {
     relayAuthor: author,
     channelCreation:
       Array.isArray(nip11.supported_nips) && nip11.supported_nips.includes(29),
-    ...(deleteAuthorityCommunity(nip11.channel_delete_authority)
-      ? {
-          channelDeleteCommunity: deleteAuthorityCommunity(
-            nip11.channel_delete_authority,
-          ),
-        }
-      : {}),
     ...(readSnapshotCommunity(nip11.read_state_snapshot)
       ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
       : {}),
@@ -2269,27 +2256,6 @@ export function relayBrokerPlugin({
               });
             }
           }
-          const deleteTarget = deleteAuthorityTarget(filters, viewer);
-          if (
-            Array.isArray(filters) &&
-            filters.some(
-              (filter) =>
-                filter && Object.hasOwn(filter, "channel_delete_authority"),
-            ) &&
-            !deleteTarget
-          )
-            return json(res, 400, {
-              error: "Invalid Delete authority filter",
-              sent: false,
-            });
-          const deleteCommunity = deleteTarget
-            ? (await getAuthority(relay)).channelDeleteCommunity
-            : undefined;
-          if (deleteTarget && !deleteCommunity)
-            return json(res, 400, {
-              error: "Delete authority unsupported",
-              sent: false,
-            });
           const snapshot = isReadSnapshotFilter(filters, viewer);
           if (
             Array.isArray(filters) &&
@@ -2473,7 +2439,6 @@ export function relayBrokerPlugin({
             !workflowPath &&
             !readPublishing &&
             !snapshot &&
-            !deleteTarget &&
             !channelActivity &&
             !validFilters(filters)
           )
@@ -2635,17 +2600,15 @@ export function relayBrokerPlugin({
                     : "foreground",
                   refusal,
                 );
-            const text = deleteTarget
-              ? await deleteAuthorityText(response)
-              : memory
-                ? await memoryResponseText(response)
-                : presence
-                  ? await presenceText(response)
-                  : snapshot && response.ok
-                    ? await readSnapshotText(response)
-                    : workflowPath && response.ok
-                      ? await workflowReadText(response)
-                      : await response.text();
+            const text = memory
+              ? await memoryResponseText(response)
+              : presence
+                ? await presenceText(response)
+                : snapshot && response.ok
+                  ? await readSnapshotText(response)
+                  : workflowPath && response.ok
+                    ? await workflowReadText(response)
+                    : await response.text();
             // The relay's own service time separates server work from network time.
             const relayMs = Number(
               response.headers.get("x-envoy-upstream-service-time"),
@@ -2673,15 +2636,6 @@ export function relayBrokerPlugin({
               if (presence && failure.quota === "api")
                 lane.pause(failure.retryAfterMs);
               return json(res, response.status, failure);
-            }
-            if (deleteTarget) {
-              parseDeleteAuthority(
-                JSON.parse(text),
-                deleteCommunity,
-                viewer,
-                deleteTarget,
-              );
-              requestSignal.throwIfAborted();
             }
             if (directMessage) {
               try {

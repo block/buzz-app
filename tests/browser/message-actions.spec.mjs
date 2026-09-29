@@ -151,12 +151,17 @@ test("message actions reveal, copy, restore focus and reply across responsive la
     panel.locator(`[data-message-id="${broadcast.id}"]`),
   ).toBeFocused();
   await page.getByRole("button", { name: "Close thread", exact: true }).click();
-  for (const width of [900, 390]) {
+  for (const width of [900, 603, 390]) {
     await page.setViewportSize({ width, height: 850 });
     await row.scrollIntoViewIfNeeded();
-    if (width === 900) await row.hover();
-    else await page.mouse.move(0, 0);
+    await page.mouse.move(0, 0);
+    await page.mouse.click(0, 0);
+    await expect(actions).toHaveCSS("opacity", "0");
+    await row.hover();
     await expect(actions).toHaveCSS("opacity", "1");
+    await expect(
+      row.getByRole("button", { name: "Copy link", exact: true }),
+    ).toBeVisible();
     await trigger.click();
     const menu = page.getByRole("menu");
     await expect(menu).toBeVisible();
@@ -333,7 +338,8 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
     await expect(actions).toHaveCSS("opacity", "1");
     const prose = await row.locator("p").first().boundingBox();
     const toolbar = await actions.boundingBox();
-    expect(toolbar.y).toBeGreaterThanOrEqual(prose.y + prose.height);
+    expect(toolbar.y + toolbar.height).toBeLessThanOrEqual(prose.y);
+    await expect(actions).toHaveCSS("position", "absolute");
     expect((await following.boundingBox()).y).toBe(baseline.y);
     await expect
       .poll(() =>

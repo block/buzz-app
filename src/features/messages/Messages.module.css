@@ -97,6 +97,8 @@
   flex: 0 0 var(--size-control-sm);
 }
 .messageBody {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-width: 0;
 }
@@ -1520,6 +1522,9 @@ html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
 
 .messageActions {
   @apply popover-surface;
+  order: 1;
+  flex-shrink: 0;
+  align-self: flex-end;
   border-radius: var(--radius-pill);
   display: flex;
   align-items: center;
@@ -1548,22 +1553,24 @@ html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
     z-index: 1;
   }
 }
-@media (hover: hover) and (pointer: fine) and (min-width: 640px) {
-  /* Keep actions clear of prose without hover shifts. Every layout reserves
-     the same footer so regrouping on prepend preserves the reading anchor. */
+@media (hover: hover) and (pointer: fine) {
+  /* Float at the byline center without reserving message height. */
   .messageBody {
-    display: flex;
-    flex-direction: column;
+    position: relative;
   }
   .messageActions {
+    position: absolute;
+    inset-inline-end: 0;
+    bottom: 100%;
+    z-index: 2;
     opacity: 0;
     pointer-events: none;
-    order: 1;
-    flex-wrap: nowrap;
-    max-width: none;
-    flex-shrink: 0;
-    align-self: flex-end;
     margin-inline-start: 0;
+  }
+  .message:not([data-layout="continuation"]) .messageActions {
+    top: calc(var(--text-body-sm) * var(--text-body-sm--line-height) / 2);
+    bottom: auto;
+    transform: translateY(-50%);
   }
   .message:hover .messageActions,
   .message:focus-within .messageActions,
@@ -1802,12 +1809,6 @@ html[data-keyboard-navigation] .replyBranchRail:focus-visible {
 .replyBranch:has(> .replyBranchMessage .replyBranchRowControl:hover),
 .replyBranch:has(> .replyBranchMessage .replyBranchRowControl:focus-within) {
   --reply-guide: var(--border-prominent);
-}
-
-@container message-row (max-width: 260px) {
-  .copyLinkShortcut {
-    display: none;
-  }
 }
 
 .spoiler {

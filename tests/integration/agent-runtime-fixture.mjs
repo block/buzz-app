@@ -35,8 +35,18 @@ if (["RUSTFLAGS", "RUSTC_WRAPPER", "CARGO_PROFILE_RELEASE_OPT_LEVEL"].some((key)
 const during = path.join(fixture, "during-build");
 if (fs.existsSync(during)) require("node:child_process").execFileSync(process.execPath,
   ["scripts/build-agent-runtime.mjs"], { cwd: fs.readFileSync(during, "utf8"), stdio: "ignore" });
-const output = path.join(process.env.CARGO_TARGET_DIR, "release");
+// Like Cargo, --target (or a user-level build.target) nests the output by triple.
+const flag = process.argv.indexOf("--target");
+const configured = path.join(fixture, "config-build-target");
+const triple = flag >= 0 ? process.argv[flag + 1]
+  : fs.existsSync(configured) ? fs.readFileSync(configured, "utf8") : "";
+const output = path.join(process.env.CARGO_TARGET_DIR, triple, "release");
 fs.mkdirSync(output, { recursive: true });
+// Compilation progress that an interrupted build leaves for the next one.
+const progress = path.join(process.env.CARGO_TARGET_DIR, "progress");
+fs.appendFileSync(path.join(fixture, "resumed.jsonl"), JSON.stringify(fs.existsSync(progress)) + "\\n");
+fs.writeFileSync(progress, "");
+if (fs.existsSync(path.join(fixture, "interrupt-build"))) process.exit(130);
 const spec = JSON.parse(fs.readFileSync(path.join(fixture, "runtime/agent-runtime.json"), "utf8"));
 for (const name of spec.tools) fs.writeFileSync(path.join(output,
   process.platform === "win32" ? name + ".exe" : name), "fixture " + name + " " + fixture, { mode: 0o755 });

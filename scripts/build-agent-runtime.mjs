@@ -14,6 +14,7 @@ import {
   rename,
   rm,
 } from "node:fs/promises";
+import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,8 +22,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const spec = JSON.parse(
   await readFile(join(root, "runtime/agent-runtime.json"), "utf8"),
 );
-// Build inputs come only from the pin and toolchain, so cached bundles are
-// interchangeable: drop injected credentials and per-shell compiler overrides.
+// Drop injected credentials and per-shell compiler overrides so cache entries
+// for a key come from the same pin, toolchain and build arguments. User-level
+// Cargo config and native compiler inputs (CC, CFLAGS) still apply unkeyed.
 const env = Object.fromEntries(
   Object.entries(process.env).filter(
     ([key]) =>
@@ -67,9 +69,16 @@ const packages = [
   "buzz-cli",
   "git-credential-nostr",
 ];
-const buildArgs = ["build", "--release", "--locked", "--bins"].concat(
-  ...packages.map((name) => ["-p", name]),
-);
+// An explicit host target fixes the output directory even when a user-level
+// Cargo config sets build.target.
+const buildArgs = [
+  "build",
+  "--release",
+  "--locked",
+  "--bins",
+  "--target",
+  target,
+].concat(...packages.map((name) => ["-p", name]));
 // Worktrees of one clone share finished bundles built from identical inputs.
 function cachedBundle() {
   let common;
@@ -171,8 +180,15 @@ if (cached) {
 console.log(
   "Preparing the agent runtime; the first build can take several minutes.",
 );
-// Outside the worktree, so no checkout's Cargo config reaches the build.
+// The source is fetched outside the worktree, so this checkout's Cargo config
+// does not reach the build. The target persists in this checkout, so an
+// interrupted build resumes; Cargo's lock serializes concurrent builds.
 const stage = await mkdtemp(join(tmpdir(), "buzz-agent-runtime-"));
+for (const signal of ["SIGINT", "SIGTERM"])
+  process.once(signal, () => {
+    rmSync(stage, { recursive: true, force: true });
+    process.exit(1);
+  });
 try {
   const source = join(stage, "source");
   await mkdir(source);
@@ -189,9 +205,9 @@ try {
     false,
     source,
   );
-  env.CARGO_TARGET_DIR = join(stage, "target");
+  env.CARGO_TARGET_DIR = join(root, "target/agent-runtime-build");
   await run(join(root, "bin/cargo"), buildArgs, false, source);
-  await publish(join(stage, "target/release"), destination);
+  await publish(join(env.CARGO_TARGET_DIR, target, "release"), destination);
   console.log(
     `Verified inputs staged at ${destination} (${spec.revision}, ${target})`,
   );

@@ -112,6 +112,34 @@ test("runtime preparation builds missing resources, reuses verified files, and r
   }
 });
 
+test("runtime output ignores a user-level build target and survives an interrupted build", (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "buzz-agent-runtime-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  runtimeFixture(directory);
+  // Even a build.target equal to the host must not move the output.
+  writeFileSync(path.join(directory, "config-build-target"), "fixture-target");
+  writeFileSync(path.join(directory, "interrupt-build"), "");
+  const run = () =>
+    spawnSync(process.execPath, ["scripts/build-agent-runtime.mjs"], {
+      cwd: directory,
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+  assert.notEqual(run().status, 0);
+  rmSync(path.join(directory, "interrupt-build"));
+  const retry = run();
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.match(retry.stdout, /Verified inputs staged/);
+  assert.deepEqual(
+    readFileSync(path.join(directory, "resumed.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line)),
+    [false, true],
+    "the retry reuses the interrupted build's target",
+  );
+});
+
 test("worktrees of one clone reuse a verified runtime built from identical inputs", (t) => {
   const directory = mkdtempSync(path.join(tmpdir(), "buzz-agent-runtime-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));

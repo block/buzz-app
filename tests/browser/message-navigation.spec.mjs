@@ -517,6 +517,10 @@ test("post-success membership loss removes the thread and live updates do not sn
     name: "Close thread",
     exact: true,
   });
+  // "opened" can precede the rest of the thread; take the baseline once the
+  // target reveal over the full thread has settled.
+  await expect(region.locator("[data-message-id]")).toHaveCount(81);
+  await settle(page, region);
   await channelButton.focus();
   const before = await region.evaluate((element) => element.scrollTop);
   app.edit(

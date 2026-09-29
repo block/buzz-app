@@ -54,7 +54,10 @@ vi.mock("react", async (original) => ({
     return [
       hooks.states[index],
       (value: unknown) => {
-        hooks.states[index] = value;
+        hooks.states[index] =
+          typeof value === "function"
+            ? (value as (current: unknown) => unknown)(hooks.states[index])
+            : value;
       },
     ];
   },
@@ -513,6 +516,38 @@ it("an append does not steal a reading position when virtualizer still reports b
   expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(2, {
     align: "end",
   });
+  h.render();
+  expect(h.hasJumpToLatest()).toBe(false);
+  h.unmount();
+});
+it("keeps pending new-message navigation mounted through a transient bottom report", () => {
+  const h = setup();
+  h.scroll();
+  h.element.clientHeight = 667;
+  h.resize(false);
+  h.element.scrollTop = h.element.scrollHeight - h.element.clientHeight;
+  h.append();
+  h.render();
+
+  // A virtualizer resize can briefly report the DOM at the bottom while the
+  // reader is still above it. Pending arrivals must keep the control mounted
+  // so keyboard focus can activate the same control the reader located.
+  expect(h.hasJumpToLatest()).toBe(true);
+
+  h.jumpToLatest();
+  h.render();
+  expect(h.hasJumpToLatest()).toBe(false);
+  h.unmount();
+});
+it("clears pending new-message navigation after a real bottom gesture", () => {
+  const h = setup();
+  h.scroll();
+  h.append();
+  h.render();
+  expect(h.hasJumpToLatest()).toBe(true);
+
+  h.element.scrollTop = h.element.scrollHeight - h.element.clientHeight;
+  h.dispatchScroll();
   h.render();
   expect(h.hasJumpToLatest()).toBe(false);
   h.unmount();

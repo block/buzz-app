@@ -20,6 +20,7 @@ afterEach(() => {
 const settings: ChannelLifecycleSettings = {
   channelId: "id",
   channelType: "stream",
+  canUnarchive: false,
   canArchive: true,
   canDelete: true,
   canLeave: false,
@@ -91,6 +92,7 @@ it("waits silently for fresh permissions and preserves the last-owner boundary",
 it.each([
   { action: "leave", label: "Leave channel", channelType: "stream" },
   { action: "hide", label: "Hide conversation", channelType: "dm" },
+  { action: "unarchive", label: "Unarchive channel", channelType: "stream" },
 ] as const)(
   "offers $label without an ellipsis when permitted",
   async ({ action, label, channelType }) => {
@@ -99,6 +101,7 @@ it.each([
     lifecycle.load.mockResolvedValue({
       channelId: "id",
       channelType,
+      canUnarchive: action === "unarchive",
       canArchive: false,
       canDelete: false,
       canLeave: action === "leave",
@@ -280,7 +283,7 @@ it("confirmation, pending lockout and failed-write recovery stay in the actual d
   await waitFor(() => expect(completed).toHaveBeenCalledOnce());
 });
 
-it.each(["leave", "hide", "archive"] as const)(
+it.each(["leave", "hide", "archive", "unarchive"] as const)(
   "%s requires confirmation and ignores completion after unmount",
   async (action) => {
     HTMLDialogElement.prototype.showModal = vi.fn(function (
@@ -308,13 +311,14 @@ it.each(["leave", "hide", "archive"] as const)(
       leave: "Leave channel",
       hide: "Hide conversation",
       archive: "Archive channel",
+      unarchive: "Unarchive channel",
     }[action];
     const confirm = screen.getByRole("button", { name: label });
     expect(confirm.getAttribute("data-variant")).toBe("prominent");
     if (action === "archive") {
       expect(
         screen.getByText(
-          "Archive this channel for everyone and remove it from the sidebar. Messages are kept. A channel administrator can unarchive it later using another supported client; this app cannot restore it yet.",
+          "Archive this channel for everyone and remove it from the sidebar. Messages are kept. Find it in search and open Settings to unarchive it later.",
         ),
       ).toBeDefined();
     }

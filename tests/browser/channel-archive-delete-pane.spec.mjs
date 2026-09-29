@@ -144,6 +144,97 @@ for (const action of ["archive", "delete"]) {
       expect(
         app.report.lifecyclePublications.map((event) => event.kind),
       ).toEqual([action === "archive" ? 9002 : 9008]);
+      if (action === "archive") {
+        // Complete the round trip through real search/navigation, not a synthetic
+        // exact route: the archived row must remain reachable after reload.
+        await page
+          .getByRole("button", { name: "Search Buzz", exact: true })
+          .click();
+        const search = page.getByRole("dialog", {
+          name: "Search Buzz",
+          exact: true,
+        });
+        await expect(
+          search
+            .getByRole("group", { name: "Recent activity" })
+            .getByRole("option", { name: /Lifecycle channel/ }),
+        ).toHaveCount(0);
+        await search.getByRole("combobox").fill("Lifecycle channel");
+        await search
+          .getByRole("option", {
+            name: "Lifecycle channel Archived channel",
+            exact: true,
+          })
+          .click();
+        await page
+          .getByRole("button", { name: "Channel settings", exact: true })
+          .click();
+        const restore = panel.getByRole("button", {
+          name: "Unarchive channel",
+          exact: true,
+        });
+        await expect(restore).toBeVisible();
+        await expect(
+          panel.getByRole("button", { name: "Archive channel", exact: true }),
+        ).toHaveCount(0);
+        await expect(
+          panel.getByRole("button", { name: "Delete channel", exact: true }),
+        ).toHaveCount(0);
+        await panel.screenshot({
+          path: testInfo.outputPath("unarchive-settings.png"),
+        });
+        await restore.click();
+        const unarchive = page.getByRole("dialog", {
+          name: "Unarchive channel: Lifecycle channel",
+          exact: true,
+        });
+        await expect(
+          unarchive.getByRole("button", {
+            name: "Unarchive channel",
+            exact: true,
+          }),
+        ).toHaveAttribute("data-variant", "prominent");
+        await unarchive.screenshot({
+          path: testInfo.outputPath("unarchive-confirmation.png"),
+        });
+        await page.keyboard.press("Escape");
+        await expect(restore).toBeFocused();
+        await restore.click();
+        await unarchive
+          .getByRole("button", { name: "Unarchive channel", exact: true })
+          .click();
+        await expect(unarchive).toHaveCount(0);
+        await expect(panel).toBeVisible();
+        await expect(
+          panel.getByRole("button", { name: "Archive channel", exact: true }),
+        ).toBeVisible();
+        await expect(
+          panel.getByRole("button", { name: "Delete channel", exact: true }),
+        ).toBeVisible();
+        await expect(restore).toHaveCount(0);
+        await expect(row).toBeVisible();
+        await expect(row).toBeFocused();
+        const restoredComposer = page.getByRole("textbox", {
+          name: "Message #Lifecycle channel",
+          exact: true,
+        });
+        await expect(restoredComposer).toBeVisible();
+        await page.reload();
+        await expect(row).toBeVisible();
+        await expect(restoredComposer).toBeVisible();
+        expect(
+          app.report.lifecyclePublications.map((event) => event.tags),
+        ).toEqual([
+          [
+            ["h", channelId],
+            ["archived", "true"],
+          ],
+          [
+            ["h", channelId],
+            ["archived", "false"],
+          ],
+        ]);
+      }
       expect(app.report.unexpected).toEqual([]);
     });
   });

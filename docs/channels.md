@@ -298,7 +298,8 @@ change shared-menu styling.
 
 The row menu resolves fresh relay-authored metadata (`39000`), administrators
 (`39001`) and membership (`39002`) at exact channel coordinates before offering
-Archive/Delete/Leave or DM Hide. Archive requires a direct owner/admin role;
+Archive/Unarchive/Delete/Leave or DM Hide. Archive and Unarchive require a direct
+owner/admin role;
 Delete is offered to a direct owner or a member with verified ownership evidence
 for an owner-role agent; the last direct owner cannot Leave. The menu omits Leave
 when it is forbidden, without an ownership-transfer explanation. Action labels
@@ -309,8 +310,8 @@ owners' latest signed kind-0 profiles in bounded exact-author batches, then veri
 the unique NIP-OA tag, target binding, owner signature and conditions against the
 profile event. Display-only owner fields and agent hints never qualify. The
 existing shared verifier owns these checks; no new relay query or deployment is
-needed. Direct owners, DMs, archived channels and Archive/Leave execution do not
-require these optional profile reads. A failed five-second owner-profile lookup
+needed. Direct owners, DMs, archived channels and Archive/Unarchive/Leave
+execution do not require these optional profile reads. A failed five-second owner-profile lookup
 preserves independently established Archive/Leave, omits Delete and exposes
 "Delete check unavailable" with explicit retry in both surfaces. Settings keeps
 its retry button focusable and busy during a fresh read, without retaining stale
@@ -326,8 +327,8 @@ Profile replacement does not establish relay ownership transfer or revocation.
 The viewer signs the unchanged Delete command and the relay enforces its stored
 ownership and current channel state. A definitive rejection retains the channel
 and recoverable confirmation; uncertain delivery still blocks blind resubmission.
-Archive/Leave depend only on the viewer's own channel role. Existing membership
-requirements remain; nonmember access, owner-agent Archive authority and
+Archive/Unarchive/Leave depend only on the viewer's own channel role. Existing
+membership requirements remain; nonmember access, owner-agent Archive/Unarchive authority and
 community-admin overrides are not added.
 Membership accepts NIP-29 `p` tags with optional relay and role fields
 (`["p", pubkey, relay_hint?, role?]`), including the relay's four-field roster.
@@ -345,17 +346,23 @@ though Leave is forbidden, while an ordinary admin without owner-agent evidence 
 Forbidden entries are omitted; failed checks offer retry and unsupported
 connections explain unavailability. DMs, sessions and read-only nonmember/cached views have no channel
 lifecycle entries. Archived channels cannot be deleted:
-the relay rejects Delete while archived. An administrator must restore the channel
-through another supported client before deletion.
+the relay rejects Delete while archived. A direct owner/admin can restore it with
+**Unarchive channel**, which replaces Archive in the same Settings position, before
+deletion.
 These controls hand off to the same persistent sidebar confirmation/navigation
 owner, so confirmed removal can unmount Settings without cancelling completion.
 Cancellation returns focus to the originating Settings button (or the sidebar
 fallback if that entry has gone away). Archive retains messages and membership;
-restore requires another supported client until archived browsing/restore lands.
-Archive confirmation explains that a channel administrator can unarchive later
-using another supported client, and that this app cannot restore it yet. Archive and Leave
-use the default button style in Settings. Archive, Leave and Hide confirmation
-primary actions use the prominent variant; Delete remains destructive and Cancel
+joined archived channels remain available by name in search, labeled **Archived
+channel**, but stay out of the sidebar and Recent activity. Open the search result
+and Settings to restore it. This uses the existing membership discovery and exact
+navigation, not a new archived-channel directory or nonmember discovery.
+Unarchive publishes the existing narrow `9002` command with `archived=false` and
+requires fresh relay metadata with a missing/false archive tag before updating
+shared discovery; a missing record is not success. Restoration returns the sidebar
+row and keeps the current conversation and Settings open, with fresh actions.
+Archive, Unarchive and Leave use the default button style in Settings. Archive,
+Unarchive, Leave and Hide confirmation primary actions use the prominent variant; Delete remains destructive and Cancel
 keeps the default secondary style.
 Delete keeps the named-channel warning and destructive confirmation button without
 requiring the channel name to be typed. Metadata and member-role editing remain
@@ -455,8 +462,8 @@ and disposal (13 added lines). Policy and write logic remain in the feature owne
 
 The development broker exposes separate `channel-details-sign` and
 `channel-details-publish` routes, accepting only bounded name/about and optional
-private visibility. Existing archive-only lifecycle, invitation and message-outbox
-admission are unchanged. Publishing reuses the same community's authenticated live
+private visibility. Existing archive-state-only lifecycle, invitation and
+message-outbox admission are unchanged. Publishing reuses the same community's authenticated live
 socket; no HTTP fallback or new connection is added. Restart an already-running
 dev broker to load these routes. `just web` supports this complete browser flow;
 `just desktop` is not required. Hosts without the dedicated capability stay

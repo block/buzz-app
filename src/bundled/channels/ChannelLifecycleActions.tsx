@@ -93,15 +93,20 @@ export function ChannelLifecycleActions({
           Leave channel
         </Button>
       )}
-      {permissions?.canArchive && (
+      {(permissions?.canArchive || permissions?.canUnarchive) && (
         <Button
           ref={
             !permissions.canDelete && !permissions.canLeave ? result : undefined
           }
-          onClick={(event) => choose("archive", event.currentTarget)}
+          onClick={(event) =>
+            choose(
+              permissions.canUnarchive ? "unarchive" : "archive",
+              event.currentTarget,
+            )
+          }
         >
           <ArchiveIcon size={16} aria-hidden="true" />
-          Archive channel
+          {permissions.canUnarchive ? "Unarchive channel" : "Archive channel"}
         </Button>
       )}
       {(state.pending || state.failed || permissions?.deleteUnavailable) && (
@@ -136,6 +141,7 @@ export function ChannelLifecycleActions({
         permissions &&
         !permissions.canLeave &&
         !permissions.canArchive &&
+        !permissions.canUnarchive &&
         !permissions.canDelete &&
         !permissions.deleteUnavailable && (
           <p

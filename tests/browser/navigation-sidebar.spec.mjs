@@ -1,5 +1,5 @@
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { expectPhosphor } from "./phosphor.mjs";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
@@ -10,8 +10,8 @@ test.use({
 
 const sessionParent = "11111111-1111-4111-8111-111111111111";
 const sessionSidebar = test.extend({
-  sessionChannels: ["alpha"],
-  sessionParents: { alpha: sessionParent },
+  sessionChannels: [ids.alpha],
+  sessionParents: { [ids.alpha]: sessionParent },
 });
 
 test("channel sidebar resizes from the full gutter and persists", async ({
@@ -36,7 +36,7 @@ test("channel sidebar resizes from the full gutter and persists", async ({
   expect(listBox).not.toBeNull();
   const geometry = await sidebar.evaluate((panel) => {
     const content = panel.firstElementChild;
-    const row = panel.querySelector('[data-channel-id="alpha"]');
+    const row = panel.querySelector(`[data-channel-id="${ids.alpha}"]`);
     if (!(content instanceof HTMLElement) || !(row instanceof HTMLElement))
       throw new Error("Channel sidebar geometry is unavailable");
     const handle = document.querySelector(
@@ -195,8 +195,8 @@ sessionSidebar(
     await page.goto(app.origin);
     await openPage(page, "Messages");
     const parent = page.locator(`[data-channel-id="${sessionParent}"]`);
-    const child = page.locator('[data-channel-id="alpha"]');
-    const regular = page.locator('[data-channel-id="beta"]');
+    const child = page.locator(`[data-channel-id="${ids.alpha}"]`);
+    const regular = page.locator(`[data-channel-id="${ids.beta}"]`);
     const disclosure = page.getByRole("button", { name: /sessions in/ });
     const x = async (locator) => (await locator.boundingBox())?.x;
     const centerX = async (locator) => {
@@ -271,7 +271,7 @@ sessionSidebar(
   async ({ page, app }) => {
     await page.goto(app.origin);
     await openPage(page, "Messages");
-    const child = page.locator('[data-channel-id="alpha"]');
+    const child = page.locator(`[data-channel-id="${ids.alpha}"]`);
     await expect(child).toBeVisible();
     await child.hover();
     await expect(child).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
@@ -696,9 +696,8 @@ test("Messages reselects the latest sidebar channel and keyboard page search foc
   ).toHaveAttribute("aria-selected", "true");
   await search.press("Enter");
   await expect(composer).toBeVisible();
-  await expect(page.locator('button[data-channel-id="beta"]')).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
+  await expect(
+    page.locator(`button[data-channel-id="${ids.beta}"]`),
+  ).toHaveAttribute("aria-current", "page");
   await expect(page.locator("#main-content")).toBeFocused();
 });

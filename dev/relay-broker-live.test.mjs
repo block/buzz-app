@@ -1080,7 +1080,6 @@ test("socket publication retains broker signature, purpose, origin and relay-sco
         ),
         400,
       ],
-      ["/api/relay/read-state-publish", event, 400],
       ["/api/relay/secondary/publish", event, 503],
     ]) {
       const response = await post(path, body);
@@ -1100,7 +1099,7 @@ test("socket publication retains broker signature, purpose, origin and relay-sco
   }
 });
 
-test("workflow command receipts and purpose-bound encrypted read-state writes use the shared socket", async () => {
+test("workflow command receipts use the shared socket", async () => {
   const h = await harness();
   let traffic;
   try {
@@ -1125,23 +1124,6 @@ test("workflow command receipts and purpose-bound encrypted read-state writes us
     await until(() => h.publications.length === 1);
     await h.sockets[0].receive(["OK", command.id, true, "workflow-result"]);
     expect(await commandResult).toBe("workflow-result");
-    const blob = { v: 1, client_id: "fixture", contexts: { room: 12 } };
-    const state = await transport.readState.sign(
-      { slot: "b".repeat(32), createdAt: Math.floor(Date.now() / 1000), blob },
-      signal,
-    );
-    expect(state.content).not.toContain("room");
-    const stateResult = transport.readState.publish(state, signal);
-    await until(() => h.publications.length === 2);
-    expect(h.publications[1].event).toMatchObject({
-      id: state.id,
-      kind: 30078,
-    });
-    await h.sockets[0].receive(["OK", state.id, true, ""]);
-    await stateResult;
-    expect(await transport.readState.decode([state], signal)).toEqual([
-      { eventId: state.id, blob },
-    ]);
     expect(h.sockets).toHaveLength(1);
     expect(h.upstream.some((url) => url.endsWith("/events"))).toBe(false);
   } finally {

@@ -1,5 +1,5 @@
 import { openPage, pageChoices } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 
 test.use({ pluginFixtures: true });
 
@@ -39,7 +39,7 @@ test("launch opens Messages without exposing Home across responsive navigation, 
         // disconnected mount could complete this visit before default resolution.
         // The existing resolver keeps the conversation in that same visit.
         kind: "conversation",
-        channelId: "alpha",
+        channelId: ids.alpha,
         scope: {
           viewer: app.viewer,
           communityOrigin: "https://primary.example",

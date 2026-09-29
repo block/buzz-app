@@ -1,3 +1,4 @@
+import { hasUnread } from "../../features/relay/unread";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import type { UnreadCapability } from "../../features/relay/unread";
 import {
@@ -31,29 +32,24 @@ export function ChannelReadMenuItem({
   );
   const get = useCallback(() => unread.snapshot(target), [unread, target]);
   const snapshot = useSyncExternalStore(subscribe, get, get);
-  const hasUnread =
-    snapshot.manual !== "none" || (snapshot.observedCount ?? 0) > 0;
+  const isUnread = snapshot.manual !== "none" || hasUnread(snapshot.unread);
   return (
     <MenuItem
       closeOnClick={false}
       disabled={pending}
-      title={hasUnread ? undefined : "Mark unread on this device only"}
+      title={isUnread ? undefined : "Mark unread on this device only"}
       onClick={() =>
         void run(() =>
-          hasUnread
+          isUnread
             ? unread.markChannelRead(channelId)
             : unread.markUnreadLocal(target),
         )
       }
     >
       <MenuIcon>
-        {hasUnread ? (
-          <EnvelopeOpenIcon size={14} />
-        ) : (
-          <EnvelopeIcon size={14} />
-        )}
+        {isUnread ? <EnvelopeOpenIcon size={14} /> : <EnvelopeIcon size={14} />}
       </MenuIcon>
-      {hasUnread ? "Mark as Read" : "Mark as Unread"}
+      {isUnread ? "Mark as Read" : "Mark as Unread"}
     </MenuItem>
   );
 }

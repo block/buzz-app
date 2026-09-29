@@ -1,3 +1,4 @@
+import { hasUnread } from "../relay/unread";
 import { MessageTimestamp } from "./MessageTimestamp";
 import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { useChannelIdentityNames } from "../identity-names/react";
@@ -133,11 +134,9 @@ export const MessageRow = memo(function MessageRow({
   const unreadLabel =
     threadUnread?.manual === "local-only"
       ? "Thread marked unread on this device only"
-      : threadUnread?.manual === "remote"
-        ? "Thread marked unread"
-        : (threadUnread?.observedCount ?? 0) > 0
-          ? `Observed unread replies${threadUnread?.freshness === "stale" ? "; may be out of date" : ""}. Not an exact total.`
-          : undefined;
+      : threadUnread && hasUnread(threadUnread.unread)
+        ? `${threadUnread.unread.status === "at_least" ? "At least " : ""}${threadUnread.unread.status === "unknown" ? "" : threadUnread.unread.value} unread replies${threadUnread.freshness === "stale" ? "; may be out of date" : ""}`
+        : undefined;
   const name = resolveName(
     row.authorId,
     profile?.name ?? row.authorId.slice(0, 10),

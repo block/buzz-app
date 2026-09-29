@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({
@@ -15,7 +15,7 @@ test("Back restores each thread visit before the previous channel", async ({
 }) => {
   const beta = page
     .getByRole("navigation", { name: "Subscribed channels" })
-    .locator('button[data-channel-id="beta"]');
+    .locator(`button[data-channel-id="${ids.beta}"]`);
   // Intent preparation can supply the same badge as the held unread batch.
   // Gate both sources; focus explicitly instead of relying on roster warming.
   let releaseHead;
@@ -31,30 +31,30 @@ test("Back restores each thread visit before the previous channel", async ({
       route
         .request()
         .postDataJSON()
-        .some((filter) => filter.top_level && filter["#h"]?.includes("beta"))
+        .some((filter) => filter.top_level && filter["#h"]?.includes(ids.beta))
     ) {
       sawHead();
       await headHeld;
     }
     await route.continue().catch(() => {});
   });
-  app.relay.holdUnread();
+  app.relay.sidebarApi.hold();
   try {
     await open(page, app);
     await beta.focus(); // Prepare without selecting or adding a navigation visit.
     await headStarted;
-    await expect.poll(() => app.report.unreadHolds.length).toBe(1);
+    await expect.poll(() => app.report.sidebarHolds.length).toBe(1);
     await expect(beta).toHaveAccessibleName("Beta");
   } finally {
     releaseHead();
-    app.relay.releaseUnread();
+    app.relay.sidebarApi.release();
   }
   // Unread evidence changes the accessible name independently of navigation.
   await expect(beta.getByRole("img")).toHaveAccessibleName(
-    "20 observed unread messages. Not an exact total.",
+    "20 unread messages.",
   );
   const roots = app.histories
-    .get("primary/alpha")
+    .get(`primary/${ids.alpha}`)
     .filter((row) => row.content.startsWith("Thread root"));
   const threadButton = (root) =>
     page
@@ -104,7 +104,7 @@ for (const reading of [false, true]) {
     app,
   }) => {
     const root = app.histories
-      .get("primary/alpha")
+      .get(`primary/${ids.alpha}`)
       .find((row) => row.content === "Thread root 0");
     let last;
     for (let i = 0; i < 120; i++) last = app.reply(root.id, false, false);

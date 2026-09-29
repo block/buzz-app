@@ -60,11 +60,11 @@ export type {
   ThreadActivitySnapshot,
   ReadingHandle,
 } from "../features/relay/unread";
-export type { ReadTarget } from "../features/relay/read-state-model";
+export type { UnreadTarget as ReadTarget } from "../features/relay/sidebar-journal";
 export type {
   ReadMutationResult,
   ReadSyncSnapshot,
-} from "../features/relay/read-state";
+} from "../features/relay/unread";
 
 export type {
   Navigation,

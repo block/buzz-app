@@ -228,22 +228,32 @@ function ThreadMessages({
     }
     return branches;
   }, [tree, snapshot.replies]);
+  const unreadReplyIds = useMemo(
+    () => [
+      ...new Set(
+        [...branchReplies.values()].flatMap((replies) =>
+          replies.map((reply) => reply.id),
+        ),
+      ),
+    ],
+    [branchReplies],
+  );
   const subscribeUnread = useCallback(
     (listener: () => void) =>
-      session.unread.subscribe(
-        { kind: "thread", channelId, rootId: snapshot.root?.id ?? messageId },
-        listener,
-      ),
-    [session.unread, channelId, snapshot.root?.id, messageId],
+      session.unread.subscribeMessages(channelId, unreadReplyIds, listener),
+    [session.unread, channelId, unreadReplyIds],
   );
+  // Context evidence can change without changing the aggregate thread count.
+  // A primitive snapshot tracks exactly the flags consumed by branch labels.
   const unreadSnapshot = useCallback(
     () =>
-      session.unread.snapshot({
-        kind: "thread",
-        channelId,
-        rootId: snapshot.root?.id ?? messageId,
-      }),
-    [session.unread, channelId, snapshot.root?.id, messageId],
+      unreadReplyIds
+        .map((id) => {
+          const value = session.unread.attention(channelId, id);
+          return value.unread ? "1" : value.status === "unknown" ? "?" : "0";
+        })
+        .join(""),
+    [session.unread, channelId, unreadReplyIds],
   );
   useSyncExternalStore(subscribeUnread, unreadSnapshot, unreadSnapshot);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
@@ -497,12 +507,18 @@ function ThreadMessages({
       previousReply =
         children?.length && !expanded.has(row.id) ? undefined : row;
       const descendants = branchReplies.get(row.id) ?? [];
-      const unreadCount = descendants.filter(
-        (reply) => session.unread.attention(channelId, reply.id).unread,
-      ).length;
+      const evidence = descendants.map((reply) =>
+        session.unread.attention(channelId, reply.id),
+      );
+      const unreadCount = evidence.filter((value) => value.unread).length;
+      const incomplete = evidence.some(
+        (value) => !value.unread && value.status === "unknown",
+      );
       const unreadLabel = unreadCount
-        ? `${unreadCount} new in available replies`
-        : undefined;
+        ? `${incomplete ? "At least " : ""}${unreadCount} new in available replies`
+        : incomplete
+          ? "Unread status unknown"
+          : undefined;
       const message = (branchControl?: ReactNode) => (
         <MessageRow
           branchControl={branchControl}

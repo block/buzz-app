@@ -1,5 +1,5 @@
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids, sidebarJournals } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 // Browser-only boundary: real shared-menu focus/dismissal, production broker,
@@ -24,23 +24,19 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     name: "Subscribed channels",
     includeHidden: true,
   });
-  const beta = sidebar.locator('[data-channel-id="beta"]');
-  const alpha = sidebar.locator('[data-channel-id="alpha"]');
+  const beta = sidebar.locator(`[data-channel-id="${ids.beta}"]`);
+  const alpha = sidebar.locator(`[data-channel-id="${ids.alpha}"]`);
   const menu = page.getByRole("menu", { name: "Actions for Beta" });
-  const badge = (row) =>
-    row.getByRole("img", { name: /observed unread messages/ });
-  await expect(badge(beta)).toHaveAttribute(
-    "aria-label",
-    /^6 observed unread messages/,
-  );
+  const badge = (row) => row.getByRole("img", { name: / unread messages\./ });
+  await expect(badge(beta)).toHaveAttribute("aria-label", /^6 unread messages/);
   await expect(badge(alpha)).toHaveAttribute(
     "aria-label",
-    /^8 observed unread messages/,
+    /^8 unread messages/,
   );
   await beta.focus();
   await page.keyboard.press("Shift+F10");
   await expect(menu).toBeVisible();
-  // This fixture's legacy "beta" id cannot authorize lifecycle commands. Its
+  // This fixture's legacy ids.beta id cannot authorize lifecycle commands. Its
   // failed permission group must not remove or disable the existing actions.
   await expect(menu.getByRole("alert")).toHaveText(
     "Channel actions unavailable",
@@ -91,7 +87,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     await expect(alpha).toHaveAttribute("aria-current", "page");
     await expect(badge(beta)).toHaveAttribute(
       "aria-label",
-      /^6 observed unread messages/,
+      /^6 unread messages/,
     );
     // Reopening is usable while the relay is still held; no frozen Saving menu.
     await page.keyboard.press("Shift+F10");
@@ -124,15 +120,12 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await expect(failure).toHaveCount(0);
   await expect(menu).toHaveCount(0);
   await expect(beta).toBeFocused();
-  await expect(badge(beta)).toHaveAttribute(
-    "aria-label",
-    /^6 observed unread messages/,
-  );
+  await expect(badge(beta)).toHaveAttribute("aria-label", /^6 unread messages/);
   await expect
     .poll(() => app.report.sidebarPublications?.at(-1))
     .toMatchObject({
       coordinate: "channel-mutes",
-      blob: { channels: { beta: { muted: true } } },
+      blob: { channels: { [ids.beta]: { muted: true } } },
     });
   await page.keyboard.press("ContextMenu");
   await expect(
@@ -144,7 +137,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await expect(badge(beta)).toHaveCount(0);
   await expect(badge(alpha)).toHaveAttribute(
     "aria-label",
-    /^8 observed unread messages/,
+    /^8 unread messages/,
   );
   await expect(alpha).not.toHaveAttribute("aria-current", "page");
   await expect(
@@ -153,11 +146,8 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await expect
     .poll(
       () =>
-        app.report.readPublications.some(
-          ({ blob }) =>
-            blob.contexts.beta ===
-            app.histories.get("primary/beta").at(-1).created_at,
-        ),
+        app.relay.sidebarApi.frontier("primary", ids.beta).channel ===
+        app.histories.get(`primary/${ids.beta}`).at(-1).created_at,
       { timeout: 12000 },
     )
     .toBe(true);
@@ -173,7 +163,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await expect(beta.getByLabel(/^(Muting;|Muted;)/)).toHaveCount(0);
   await expect(badge(alpha)).toHaveAttribute(
     "aria-label",
-    /^8 observed unread messages/,
+    /^8 unread messages/,
   );
   await expect(badge(beta)).toHaveCount(0);
   await beta.click({ button: "right" });
@@ -194,45 +184,46 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   });
   await expect(localMark).toBeVisible();
   await expect(alpha).toHaveAttribute("aria-current", "page");
-  // Cold preferences can relocate the row while a read-state transaction waits
-  // on startup. Control both responses so focus restoration crosses that remount.
+  // Cold preferences relocate the row after startup. The device-local read
+  // save settles first; focus must survive the later remount.
   const preferences = holdResponse(page, "**/sidebar-preferences");
-  const reads = holdResponse(page, "**/read-state-decode");
-  await Promise.all([preferences.ready, reads.ready]);
+  await preferences.ready;
   try {
     await page.reload();
     await openPage(page, "Messages");
-    await Promise.all([preferences.started, reads.started]);
+    await preferences.started;
     await expect(localMark).toBeVisible();
     await expect(beta).toContainText("Beta");
+    // Mark as Read anchors on the relay row, not only the saved local mark.
+    await expect(badge(alpha)).toHaveAttribute(
+      "aria-label",
+      /^8 unread messages/,
+    );
     await beta.focus();
     await page.keyboard.press("Shift+F10");
     await expect(markUnread).toHaveCount(0);
     await menu
       .getByRole("menuitem", { name: "Mark as Read", exact: true })
       .click();
-    await expect(menu.getByRole("status")).toHaveText("Saving…");
+    await expect(menu).toHaveCount(0);
+    await expect(beta).toBeFocused();
     preferences.release();
     await expect(
       sidebar
         .locator("[data-sidebar-section]")
         .filter({ has: page.locator("summary", { hasText: "Work" }) })
-        .locator('[data-channel-id="beta"]'),
+        .locator(`[data-channel-id="${ids.beta}"]`),
     ).toBeVisible();
-    reads.release();
-    await expect(menu).toHaveCount(0);
     await expect(beta).toBeFocused();
   } finally {
     preferences.release();
-    reads.release();
     await page.unroute("**/sidebar-preferences");
-    await page.unroute("**/read-state-decode");
   }
   await expect(localMark).toHaveCount(0);
   await expect(badge(beta)).toHaveCount(0);
   await expect(badge(alpha)).toHaveAttribute(
     "aria-label",
-    /^8 observed unread messages/,
+    /^8 unread messages/,
   );
   await page.keyboard.press("Shift+F10");
   await expect(markUnread).toBeVisible();
@@ -255,7 +246,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     .poll(() => app.report.sidebarPublications.at(-1))
     .toMatchObject({
       coordinate: "channel-mutes",
-      blob: { channels: { beta: { muted: false } } },
+      blob: { channels: { [ids.beta]: { muted: false } } },
     });
   await readStateSettled(page);
   await page.reload();
@@ -312,36 +303,14 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   expect(app.report.unexpected).toEqual([]);
 });
 
-// A relay publication is not the end of read-state work: the app still reads
-// its own write back and decodes it. WebKit reports a decode cut off by reload
-// as a page error, so reload only after the saved journal records acceptance.
+// Reload only after the relay acknowledged every saved read; a write cut off by
+// reload is retried from the journal, which would race the next assertion.
 async function readStateSettled(page) {
   await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          new Promise((resolve, reject) => {
-            const request = indexedDB.open("buzz-read-state-v1", 1);
-            request.onerror = () => reject(request.error);
-            request.onsuccess = () => {
-              const db = request.result;
-              const tx = db.transaction("partitions", "readonly");
-              const read = tx.objectStore("partitions").getAll();
-              read.onsuccess = () => {
-                const journal = read.result[0];
-                resolve(
-                  !!journal &&
-                    !journal.pending &&
-                    journal.acceptedRevision >= journal.revision,
-                );
-              };
-              read.onerror = () => reject(read.error);
-              tx.oncomplete = () => db.close();
-            };
-          }),
-      ),
+    .poll(async () =>
+      (await sidebarJournals(page)).flatMap((journal) => journal.pending),
     )
-    .toBe(true);
+    .toEqual([]);
 }
 
 function holdResponse(page, pattern) {

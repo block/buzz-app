@@ -1,5 +1,5 @@
 import { finalizeEvent, getPublicKey } from "nostr-tools";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 1 } });
@@ -21,7 +21,7 @@ test("entity links open real project content, history and responsive controls", 
       tags: [
         ["d", "reader"],
         ["name", "Reader"],
-        ["buzz-related-channel", "alpha"],
+        ["buzz-related-channel", ids.alpha],
       ],
     },
     key,
@@ -126,7 +126,7 @@ test("entity links open real project content, history and responsive controls", 
   });
   await open(page, app);
   const href = `buzz://project?owner=${owner}&d=reader-project`;
-  app.append("primary", "alpha", `[Reader project](${href})`);
+  app.append("primary", ids.alpha, `[Reader project](${href})`);
   await page.locator(`[data-channel-timeline] a[href="${href}"]`).click();
   await expect(
     page.getByRole("heading", { name: "Reader project", exact: true }),

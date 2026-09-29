@@ -1,6 +1,6 @@
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { ReadJournal } from "../../features/relay/read-state-storage";
+import type { SidebarJournal } from "../../features/relay/sidebar-journal";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import {
@@ -53,7 +53,7 @@ let incoming: ((events: readonly RelayEvent[]) => void) | undefined;
 let generation = 0;
 let currentScope = "Fixture A";
 function session(scope: string) {
-  let journal: ReadJournal | undefined;
+  let journal: SidebarJournal = { pending: [], manual: [] };
   const events = channels.flatMap((channel, index) => [
     roster(authority, channel, [viewer.pubkey]),
     metadata(
@@ -163,7 +163,7 @@ function session(scope: string) {
     },
     {
       outboxStorage: { load: () => [], save() {} },
-      readStateStorage: {
+      sidebarStorage: {
         async update(change) {
           journal = change(journal);
           return journal;

@@ -1238,22 +1238,31 @@ function ReadySidebar({
                 Saved groups and stars aren’t supported by this host yet.
               </p>
             ) : null}
-            {list.activityStatus === "error" && !activityErrorDismissed && (
-              <ToastNotice
-                title="Couldn’t refresh recent activity"
-                description="Sections sorted by Recent may be out of date."
-                tone="warning"
-                onDismiss={() => setActivityErrorDismissed(true)}
-              >
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => queries.channels.refreshList?.()}
+            {list.activityStatus === "error" &&
+              !activityErrorDismissed &&
+              sections.some(
+                (section) =>
+                  displayedPreferences?.sort?.[
+                    section.key.startsWith("group:")
+                      ? `section:${section.key.slice(6)}`
+                      : section.key
+                  ] === "recent",
+              ) && (
+                <ToastNotice
+                  title="Couldn’t refresh recent activity"
+                  description="Sections sorted by Recent may be out of date."
+                  tone="warning"
+                  onDismiss={() => setActivityErrorDismissed(true)}
                 >
-                  Retry
-                </Button>
-              </ToastNotice>
-            )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void queries.unread.retrySync()}
+                  >
+                    Retry
+                  </Button>
+                </ToastNotice>
+              )}
           </div>
         </Panel>
         <CreateChannelDialog

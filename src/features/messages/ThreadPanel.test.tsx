@@ -192,6 +192,7 @@ function setup(
     messages: { retry: vi.fn() },
     // Geometry fixtures are read-only; reading behavior has its own boundary tests.
     unread: {
+      subscribeMessages: () => () => {},
       sync: () => ({ capability: "unsupported" }),
       snapshot: () => undefined,
       subscribe: () => () => {},

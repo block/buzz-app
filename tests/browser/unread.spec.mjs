@@ -1,5 +1,5 @@
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids, sidebarJournals } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 
 test.use({
@@ -15,22 +15,20 @@ const composer = (page) =>
   page.getByRole("textbox", { name: "Message #Alpha", exact: true });
 // Observe the real durable result, never seed state or call an engine test hook.
 async function journal(page) {
-  return page.evaluate(
-    () =>
-      new Promise((resolve, reject) => {
-        const request = indexedDB.open("buzz-read-state-v1", 1);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-          const db = request.result;
-          const tx = db.transaction("partitions", "readonly");
-          const read = tx.objectStore("partitions").getAll();
-          read.onsuccess = () => resolve(read.result[0]);
-          read.onerror = () => reject(read.error);
-          tx.oncomplete = () => db.close();
-        };
-      }),
-  );
+  const all = await sidebarJournals(page);
+  return {
+    pending: all.flatMap((journal) => journal.pending),
+    manual: all.flatMap((journal) => journal.manual),
+  };
 }
+const alphaManual = (j) =>
+  j.manual.some(
+    (target) => target.kind === "channel" && target.channelId === ids.alpha,
+  );
+const alphaWrites = (app) =>
+  app.report.readWrites.flatMap(({ intents, outcomes }) =>
+    intents.map((intent, i) => ({ intent, outcome: outcomes[i] })),
+  );
 async function visible(page) {
   return history(page).evaluate((element) => {
     const viewport = element.getBoundingClientRect();
@@ -110,69 +108,64 @@ test("Messages startup waits for channel discovery before loading templates", as
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
-test("built sidebar → visible dwell → durable journal → encrypted broker publication; reload preserves intent", async ({
+test("built sidebar → visible dwell → durable journal → relay write; reload keeps the relay frontier", async ({
   page,
   app,
 }) => {
   await page.clock.install();
   await open(page, app);
-  await expect
-    .poll(() =>
-      app.report.queries.some(({ filter }) => filter.read_state_snapshot === 1),
-    )
-    .toBe(true);
-  // Wait for the bounded roster-wide repair, not merely the first 20-row head.
+  const all = app.histories.get(`primary/${ids.alpha}`);
+  // The relay counts the whole channel; there is no client-side repair bound.
   await expect(alpha(page).getByRole("img")).toHaveAttribute(
     "aria-label",
-    /^500 observed unread messages/,
+    new RegExp(`^${all.length} unread messages`),
   );
   await composer(page).focus();
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await page.clock.runFor(900); // Composer focus is not reading, even past dwell.
-  expect((await journal(page)).state.frontiers).toEqual({});
-  expect(app.report.readPublications).toEqual([]);
-  const ids = await visible(page);
-  expect(ids.length).toBeGreaterThan(0);
-  const before = Number(
-    (await alpha(page).getByRole("img").getAttribute("aria-label")).split(
-      " ",
-    )[0],
-  );
+  expect(await journal(page)).toEqual({ pending: [], manual: [] });
+  expect(app.report.readWrites).toEqual([]);
+  const visibleIds = await visible(page);
+  expect(visibleIds.length).toBeGreaterThan(0);
   await history(page).focus();
   await page.clock.runFor(300);
-  expect((await journal(page)).state.frontiers).toEqual({});
+  expect(app.report.readWrites).toEqual([]);
   await page.clock.runFor(750);
+  // One mark_through per context, anchored on the newest dwelled message.
+  const newest = all
+    .filter((event) => visibleIds.includes(event.id))
+    .reduce((a, b) => (b.created_at > a.created_at ? b : a));
   await expect
-    .poll(async () => Object.keys((await journal(page)).state.frontiers).sort())
-    .toEqual(ids.map((id) => `msg:${id}`).sort());
-  await expect(alpha(page).getByRole("img")).toHaveAttribute(
-    "aria-label",
-    new RegExp(`^${before - ids.length} observed unread messages`),
-  );
+    .poll(() => alphaWrites(app))
+    .toEqual([
+      {
+        intent: {
+          type: "mark_through",
+          target: { channel_id: ids.alpha },
+          message_id: newest.id,
+        },
+        outcome: { status: "applied" },
+      },
+    ]);
   await page.clock.resume();
-  const stored = await journal(page);
-  expect(stored.state.frontiers.alpha).toBeUndefined();
-  // The normal debounce, signing, NIP-44, NIP-98 and publication/readback all run.
-  await expect
-    .poll(() => app.report.readPublications.length, { timeout: 12000 })
-    .toBe(1);
-  await expect
-    .poll(async () => (await journal(page)).acceptedRevision)
-    .toBe(stored.revision);
-  const { event, blob } = app.report.readPublications[0];
-  expect(blob.contexts).toEqual(stored.state.frontiers);
-  expect(event.content).not.toContain(ids[0]);
-  expect(blob.contexts.alpha).toBeUndefined();
+  await expect.poll(async () => (await journal(page)).pending).toEqual([]);
+  const remaining = all.filter(
+    (event) => event.created_at > newest.created_at,
+  ).length;
+  const settledBadge = async () =>
+    remaining
+      ? expect(alpha(page).getByRole("img")).toHaveAttribute(
+          "aria-label",
+          new RegExp(`^${remaining} unread messages`),
+        )
+      : expect(alpha(page).getByRole("img")).toHaveCount(0);
+  await settledBadge();
   await page.reload();
   await openPage(page, "Messages");
   await composer(page).waitFor();
   await settle(page);
-  expect((await journal(page)).slot).toBe(stored.slot);
-  expect((await journal(page)).state.frontiers).toEqual(stored.state.frontiers);
-  await expect(alpha(page).getByRole("img")).toHaveAttribute(
-    "aria-label",
-    new RegExp(`^${before - ids.length} observed unread messages`),
-  );
+  expect(await journal(page)).toEqual({ pending: [], manual: [] });
+  await settledBadge();
 });
 
 test("focus cancellation and local manual-unread survive dwell/reload until explicit mark-through", async ({
@@ -180,36 +173,18 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
   app,
 }) => {
   await page.clock.install();
-  let release;
-  const gate = new Promise((resolve) => {
-    release = resolve;
-  });
-  const markerRequested = page.waitForRequest(
-    (request) =>
-      request.url().endsWith("/query") &&
-      request.postDataJSON().some((filter) => filter.read_state_snapshot === 1),
-  );
-  await page.route("**/query", async (route) => {
-    if (
-      route
-        .request()
-        .postDataJSON()
-        .some((filter) => filter.read_state_snapshot === 1)
-    )
-      await gate;
-    await route.continue();
-  });
+  app.relay.sidebarApi.hold();
   try {
     await open(page, app);
-    await markerRequested;
-    // Mounted history is not proof that the serial durable owner is ready.
+    await expect.poll(() => app.report.sidebarHolds.length).toBeGreaterThan(0);
+    // Mounted history is not proof that the relay sidebar snapshot is ready.
     expect(
       await page.evaluate(
         () => window.fixtureRelay.snapshot().session.unread.sync().completeness,
       ),
     ).toBe("unknown");
   } finally {
-    release();
+    app.relay.sidebarApi.release();
   }
   await expect
     .poll(() =>
@@ -222,19 +197,19 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
   await composer(page).focus();
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await history(page).focus();
-  const ids = await visible(page);
-  expect(ids.length).toBeGreaterThan(0);
+  const visibleIds = await visible(page);
+  expect(visibleIds.length).toBeGreaterThan(0);
   await expect
     .poll(() =>
       page.evaluate(
-        (ids) =>
-          ids.every(
+        (visibleIds) =>
+          visibleIds.every(
             (id) =>
               window.fixtureRelay
                 .snapshot()
-                .session.unread.attention("alpha", id).viewing,
+                .session.unread.attention(ids.alpha, id).viewing,
           ),
-        ids,
+        visibleIds,
       ),
     )
     .toBe(true);
@@ -242,16 +217,14 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
   await composer(page).focus();
   await page.clock.runFor(900);
   await page.clock.resume();
+  expect(app.report.readWrites).toEqual([]); // Focus left before dwell.
   await options(page);
   await page
     .getByRole("button", { name: "Mark unread on this device", exact: true })
     .click();
-  // This durable action is ordered behind any erroneous dwell mutation in the
-  // same read-state queue; a separate IndexedDB read alone is not a barrier.
-  await expect
-    .poll(async () => (await journal(page)).localUnread.alpha)
-    .toBeGreaterThan(0);
-  expect((await journal(page)).state.frontiers).toEqual({});
+  await expect.poll(async () => alphaManual(await journal(page))).toBe(true);
+  expect((await journal(page)).pending).toEqual([]);
+  expect(app.report.readWrites).toEqual([]);
   await options(page);
   await expect(
     alpha(page).getByRole("img", {
@@ -263,7 +236,7 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await history(page).focus();
   await page.clock.runFor(1000);
-  expect((await journal(page)).localUnread.alpha).toBeGreaterThan(0);
+  expect(alphaManual(await journal(page))).toBe(true);
   await expect(
     alpha(page).getByRole("img", {
       name: "Marked unread on this device only",
@@ -288,16 +261,14 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
       exact: true,
     })
     .click();
+  await expect.poll(async () => alphaManual(await journal(page))).toBe(false);
   await expect
-    .poll(async () => (await journal(page)).localUnread.alpha)
-    .toBeUndefined();
-  await expect
-    .poll(async () => (await journal(page)).state.frontiers.alpha)
-    .toBe(app.histories.get("primary/alpha").at(-1).created_at);
+    .poll(() => app.relay.sidebarApi.frontier("primary", ids.alpha).channel)
+    .toBe(app.histories.get(`primary/${ids.alpha}`).at(-1).created_at);
   await expect(alpha(page).getByRole("img")).toHaveCount(0);
 });
 
-test("a surviving window publishes a closed window's durable read intent", async ({
+test("a surviving window delivers a closed window's saved read intent", async ({
   page,
   context,
   app,
@@ -310,6 +281,12 @@ test("a surviving window publishes a closed window's durable read intent", async
     if (message.type() === "error")
       app.report.consoleErrors.push(message.text());
   });
+  // The origin window saves its read but never gets its write out.
+  await page.route("**/sidebar-api", (route) =>
+    route.request().postDataJSON()?.type === "write"
+      ? new Promise(() => {})
+      : route.continue(),
+  );
   try {
     await open(survivor, app);
     await composer(survivor).focus();
@@ -321,23 +298,21 @@ test("a surviving window publishes a closed window's durable read intent", async
     await page.bringToFront();
     await history(page).focus();
     await expect
-      .poll(async () => (await journal(page)).revision)
+      .poll(async () => (await journal(page)).pending.length)
       .toBeGreaterThan(0);
-    const stored = await journal(page);
-    await expect(
-      survivor.getByText(/Read sync: frontier-sync · pending/),
-    ).toBeVisible();
-    expect(app.report.readPublications).toEqual([]);
-    await page.close(); // Cancel the origin publisher before its normal five-second debounce.
+    const [saved] = (await journal(page)).pending;
+    expect(app.report.readWrites).toEqual([]);
+    await page.close();
+    await survivor.bringToFront();
+    // Headless bringToFront does not deliver window focus; activation is what
+    // flushes the shared journal, so dispatch the event the OS would.
+    await survivor.evaluate(() => window.dispatchEvent(new Event("focus")));
     await expect
-      .poll(() => app.report.readPublications.length, { timeout: 12000 })
-      .toBe(1);
+      .poll(() => alphaWrites(app).map(({ intent }) => intent))
+      .toContainEqual(saved.intent);
     await expect
-      .poll(async () => (await journal(survivor)).acceptedRevision)
-      .toBe(stored.revision);
-    expect(app.report.readPublications[0].blob.contexts).toEqual(
-      stored.state.frontiers,
-    );
+      .poll(async () => (await journal(survivor)).pending)
+      .toEqual([]);
     await expect(
       survivor.getByText(/Read sync: frontier-sync · reconciled/),
     ).toBeVisible();
@@ -356,9 +331,9 @@ test.describe("explicit mark-through with membership activity", () => {
         : "chat followed by membership activity clears manual unread through the newest chat",
       async ({ page, app }) => {
         // Model only upstream signed history; the app must load and verify it.
-        const loaded = app.histories.get("primary/alpha").slice(-4);
+        const loaded = app.histories.get(`primary/${ids.alpha}`).slice(-4);
         app.histories.set(
-          "primary/alpha",
+          `primary/${ids.alpha}`,
           activityOnly
             ? loaded.filter((event) => event.kind === 40099)
             : loaded,
@@ -372,7 +347,7 @@ test.describe("explicit mark-through with membership activity", () => {
         if (!activityOnly) {
           await expect(alpha(page).getByRole("img")).toHaveAttribute(
             "aria-label",
-            /^2 observed unread messages/,
+            /^2 unread messages/,
           );
         }
         await options(page);
@@ -387,6 +362,8 @@ test.describe("explicit mark-through with membership activity", () => {
           "Marked unread on this device only",
         );
         const before = await journal(page);
+        expect(alphaManual(before)).toBe(true);
+        const writes = [...app.report.readWrites];
         await page
           .getByRole("button", {
             name: "Mark read through loaded messages",
@@ -397,15 +374,15 @@ test.describe("explicit mark-through with membership activity", () => {
           await expect(page.getByRole("alert")).toHaveText(
             "Load a verified message before marking through it.",
           );
-          const after = await journal(page);
-          expect(after.localUnread.alpha).toBe(before.localUnread.alpha);
-          expect(after.state.frontiers).toEqual(before.state.frontiers);
-          expect(after.revision).toBe(before.revision);
+          expect(await journal(page)).toEqual(before);
+          expect(app.report.readWrites).toEqual(writes);
         } else {
           await expect
-            .poll(async () => (await journal(page)).state.frontiers.alpha)
+            .poll(
+              () => app.relay.sidebarApi.frontier("primary", ids.alpha).channel,
+            )
             .toBe(lastChat.created_at);
-          expect((await journal(page)).localUnread.alpha).toBeUndefined();
+          expect(alphaManual(await journal(page))).toBe(false);
           await expect(alpha(page).getByRole("img")).toHaveCount(0);
           await expect(page.getByRole("alert")).toHaveCount(0);
         }

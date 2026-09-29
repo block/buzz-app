@@ -10,7 +10,7 @@ import type { ChannelMessage, Profile } from "./contracts";
 import type { ReadFilter, RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
 import type { SavedHead } from "./persistence";
-import type { ReadJournal } from "./read-state-storage";
+import type { SidebarJournal } from "./sidebar-journal";
 import { bounds, message, profile, roster } from "./testing";
 import { connectBrokerTransport } from "./transport";
 
@@ -230,7 +230,7 @@ export async function threadSample(
       `http://127.0.0.1:${address.port}`,
     );
     let traffic!: LiveCallbacks;
-    let journal: ReadJournal | undefined;
+    let journal: SidebarJournal = { pending: [], manual: [] };
     const heads = new Map<string, SavedHead>();
     const warmed = deferred();
     const owner = createRelaySession(
@@ -265,7 +265,7 @@ export async function threadSample(
           },
           close() {},
         },
-        readStateStorage: {
+        sidebarStorage: {
           async update(change) {
             journal = change(journal);
             return journal;

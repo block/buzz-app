@@ -37,21 +37,12 @@ import {
 } from "../agents/relay-library";
 import { createAgentLibrary } from "../agents/library";
 import { createIdentityArchives } from "./identity-archives";
-import {
-  createReadState,
-  browserReadPublisherLock,
-  type ReadPublisherLock,
-} from "./read-state";
-import {
-  browserReadStateStorage,
-  type ReadStateStorage,
-} from "./read-state-storage";
+import type { SidebarStorage } from "./sidebar-journal";
 import { createTyping } from "./typing";
 import { createUnread } from "./unread";
 import type { IncomingListener, IncomingMessage } from "./incoming";
 import { objectBody } from "./body";
 import type { ChannelList } from "./contracts";
-import { createChannelActivity } from "./channel-activity";
 import { readSidebarPreferences } from "./sidebar-preferences";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createUserStatuses } from "./user-status";
@@ -189,8 +180,7 @@ export function createRelaySession(
       | undefined;
     presenceActivity?: PresenceActivity;
     outboxStorage?: OutboxStorage;
-    readStateStorage?: ReadStateStorage;
-    readPublisherLock?: ReadPublisherLock;
+    sidebarStorage?: SidebarStorage;
     deliveryTimeoutMs?: number;
   } = {},
 ) {
@@ -321,11 +311,7 @@ export function createRelaySession(
       remote ? canReadRemote : canAccess,
       // Retained view targets survive shared-cache eviction. They are evidence,
       // not an access grant: eventVisibility still checks every referenced target.
-      (id) =>
-        evidence.get(id) ??
-        recent.peek(id)?.event ??
-        retainedEvent(id) ??
-        unread.event(id),
+      (id) => evidence.get(id) ?? recent.peek(id)?.event ?? retainedEvent(id),
     );
   }
   const local = () => {
@@ -376,8 +362,6 @@ export function createRelaySession(
       activity.clear();
       memories.clear();
       presence.clear();
-      channelActivity.clear();
-      activityRosterKey = undefined;
       archives.clear();
       workflows.clear();
       for (const purge of views.values()) purge();
@@ -510,7 +494,6 @@ export function createRelaySession(
       () => {
         for (const event of visible)
           recent.set(event.id, { event, revision: ++revision });
-        reads.accept(visible);
         unread.accept(visible);
         writes?.observe(visible);
         if (epoch !== accessEpoch) return;
@@ -610,13 +593,6 @@ export function createRelaySession(
     notify,
     { writer: transport?.identityArchive, viewer: transport?.viewer },
   );
-  const channelActivity = createChannelActivity(
-    transport?.channelActivity
-      ? (ids, signal) =>
-          transport.channelActivity?.(ids, signal) ?? Promise.resolve([])
-      : undefined,
-    notify,
-  );
   const channels = createChannelStore(
     transport
       ? {
@@ -670,17 +646,36 @@ export function createRelaySession(
     canAccess: (channelId) => channels.canParticipate(channelId),
     notify,
   });
+  const readScope = `${transport?.scope ?? transport?.relayAuthor ?? "offline"}:${transport?.viewer ?? ""}`;
+  const unread = createUnread({
+    api: options.cachedOnly ? undefined : transport?.sidebarApi,
+    storage: options.sidebarStorage,
+    scope: readScope,
+    channels: channels.queries,
+    reader: requests.reader,
+    viewer: transport?.viewer ?? "",
+    find: (id) => recent.peek(id)?.event ?? retainedEvent(id),
+    notify,
+  });
+  const activityStatus = (): NonNullable<ChannelList["activityStatus"]> => {
+    const status = unread.state.sync().status;
+    return status === "unsupported"
+      ? "unavailable"
+      : status === "stale"
+        ? "ready"
+        : status;
+  };
   let sourceChannelList = channels.queries.list();
   let activityChannelList: ChannelList = Object.freeze({
     ...sourceChannelList,
-    activityStatus: channelActivity.status(),
+    activityStatus: activityStatus(),
   });
-  let channelActivityRevision = channelActivity.revision();
+  let channelActivityRevision = unread.state.revision();
   const channelQueries = Object.freeze({
     ...channels.queries,
     list() {
       const snapshot = channels.queries.list();
-      const activityRevision = channelActivity.revision();
+      const activityRevision = unread.state.revision();
       if (
         snapshot === sourceChannelList &&
         activityRevision === channelActivityRevision
@@ -689,14 +684,15 @@ export function createRelaySession(
       sourceChannelList = snapshot;
       channelActivityRevision = activityRevision;
       const projected = snapshot.channels.map((channel) => {
-        const lastActivityAt = channelActivity.last(channel.id);
+        const lastActivityAt =
+          unread.state.row(channel.id)?.latest_message_at ?? undefined;
         return lastActivityAt === undefined
           ? channel
           : Object.freeze({ ...channel, lastActivityAt });
       });
       activityChannelList = Object.freeze({
         ...snapshot,
-        activityStatus: channelActivity.status(),
+        activityStatus: activityStatus(),
         channels: projected.every(
           (channel, index) => channel === snapshot.channels[index],
         )
@@ -707,35 +703,14 @@ export function createRelaySession(
     },
     subscribeList(listener: () => void) {
       const offChannels = channels.queries.subscribeList(listener);
-      const offActivity = channelActivity.subscribe(listener);
+      const offActivity = transport?.sidebarApi
+        ? unread.state.subscribe(listener)
+        : undefined;
       return () => {
         offChannels();
-        offActivity();
+        offActivity?.();
       };
     },
-  });
-  const readScope = `${transport?.scope ?? transport?.relayAuthor ?? "offline"}:${transport?.viewer ?? ""}`;
-  const reads = createReadState({
-    viewer: transport?.viewer ?? "",
-    reader: requests.reader,
-    host: transport?.readState,
-    storage:
-      options.readStateStorage ??
-      browserReadStateStorage(readScope, transport?.viewer ?? ""),
-    lock: options.readPublisherLock ?? browserReadPublisherLock(readScope),
-    notify,
-    broadcastName: transport?.readState
-      ? `buzz-read-state:${readScope}`
-      : undefined,
-  });
-  const unread = createUnread({
-    reads,
-    channels: channels.queries,
-    // Repair owns evidence only, not timeline/history ingestion. The shared
-    // scheduler and verified transport stay shared; unread fences access epochs.
-    reader: requests.reader,
-    viewer: transport?.viewer ?? "",
-    notify,
   });
   let traffic: LiveSubscription | undefined;
   const liveListeners = new Set<() => void>();
@@ -1955,7 +1930,6 @@ export function createRelaySession(
                   destinations.length === 1 &&
                   destinations[0]?.[1] === provenance.channelId &&
                   !recent.peek(event.id) &&
-                  !unread.event(event.id) &&
                   !rawLocal().some((item) => item.event.id === event.id)
                 );
               })
@@ -1999,18 +1973,12 @@ export function createRelaySession(
         activity.channelEvents(
           events.filter((event) => event.pubkey !== transport.viewer),
         );
-      if (
-        !closed &&
-        epoch === accessEpoch &&
-        generation === liveGeneration &&
-        liveSnapshot.status === "connected"
-      )
-        channelActivity.accept(visible);
+      const incomingChannelId = provenance?.channelId;
       if (
         closed ||
         epoch !== accessEpoch ||
         !candidates.size ||
-        !provenance?.channelId
+        !incomingChannelId
       )
         return;
       const delivered = new Set<string>();
@@ -2024,7 +1992,7 @@ export function createRelaySession(
             typeof body?.content === "string" ? body.content : event.content;
           return [
             Object.freeze({
-              channelId: provenance.channelId as string,
+              channelId: incomingChannelId,
               messageId: event.id,
               createdAt: event.created_at,
               authorId: event.pubkey,
@@ -2053,8 +2021,6 @@ export function createRelaySession(
         liveSnapshot.status === "connected"
       ) {
         liveGeneration++;
-        channelActivity.cancel();
-        activityRosterKey = undefined;
         catchups.clear();
         catchupQueue.clear();
         requests.invalidate();
@@ -2105,8 +2071,6 @@ export function createRelaySession(
             timers.delete(timer);
             if (!closed) {
               agentLibrary.reconnect();
-              activityRosterKey = undefined;
-              refreshChannelActivity();
               emoji.reconnect();
               statuses.reconnect();
               unread.reconnect();
@@ -2137,40 +2101,8 @@ export function createRelaySession(
       if (!closed) channels.denyChannel(channelId, new Error(reason));
     },
   });
-  let activityRosterKey: string | undefined;
-  const refreshChannelActivity = () => {
-    if (closed || !transport?.channelActivity) return;
-    if (
-      !Object.values(
-        sidebarPreferences.queries.snapshot().data?.sort ?? {},
-      ).includes("recent")
-    ) {
-      channelActivity.cancel();
-      activityRosterKey = undefined;
-      return;
-    }
-    const roster = channels.queries.list();
-    if (roster.status !== "ready") return;
-    const ids = roster.channels
-      .filter((channel) => !channel.cached)
-      .map((channel) => channel.id)
-      .sort();
-    const key = ids.join("\0");
-    if (key === activityRosterKey) return;
-    activityRosterKey = key;
-    void channelActivity.refresh(ids).catch(() => {
-      if (activityRosterKey === key) activityRosterKey = undefined;
-    });
-  };
-  const stopActivityRoster = channels.queries.subscribeList(
-    refreshChannelActivity,
-  );
-  const stopActivityPreferences = sidebarPreferences.queries.subscribe(
-    refreshChannelActivity,
-  );
   const stopInterests = channels.queries.subscribeList(updateInterests);
   updateInterests();
-  refreshChannelActivity();
 
   return {
     session,
@@ -2187,8 +2119,6 @@ export function createRelaySession(
         activity.clear();
         memories.clear();
         presence.clear();
-        channelActivity.clear();
-        activityRosterKey = undefined;
         typing.clear();
         sidebarPreferences.clear();
         channelKit.clear();
@@ -2220,9 +2150,6 @@ export function createRelaySession(
       activity.dispose();
       memories.dispose();
       presence.dispose();
-      channelActivity.dispose();
-      stopActivityRoster();
-      stopActivityPreferences();
       sidebarPreferences.dispose();
       lifecycle.dispose();
       stopInterests();

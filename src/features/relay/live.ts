@@ -368,17 +368,6 @@ export function subscribeRelayTraffic(
           since: route.since,
           ...(route.id === "observer" ? {} : { limit: LIVE_REPLAY_LIMIT }),
         },
-        ...(route.id === "membership"
-          ? [
-              {
-                kinds: [30078],
-                authors: [viewer],
-                "#t": ["read-state"],
-                since: route.since,
-                limit: LIVE_REPLAY_LIMIT,
-              },
-            ]
-          : []),
         ...(route.id === "profiles"
           ? [
               {

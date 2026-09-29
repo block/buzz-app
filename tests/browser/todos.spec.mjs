@@ -1,7 +1,7 @@
 import { openPage } from "./navigation.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 import { verifyEvent } from "nostr-tools";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 
 // Browser-only boundary: real plugin Settings/launcher/panel wiring, Canvas
 // outbox -> signed HTTP receipt -> readback, native focus and drawer geometry.
@@ -15,7 +15,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   let head = app.sign({
     kind: 40100,
     content: original,
-    tags: [["h", "alpha"]],
+    tags: [["h", ids.alpha]],
     created_at: 1700000000,
   });
   const writes = [];
@@ -43,7 +43,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     expect(verifyEvent(event)).toBe(true);
     expect(event.kind).toBe(40100);
     expect(event.pubkey).toBe(app.viewer);
-    expect(event.tags).toContainEqual(["h", "alpha"]);
+    expect(event.tags).toContainEqual(["h", ids.alpha]);
     head = event;
     writes.push(event);
     await route.fulfill({ json: { accepted: true, event_id: event.id } });

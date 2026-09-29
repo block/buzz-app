@@ -201,7 +201,7 @@ function render(
   threadRootId?: string,
 ) {
   const snapshot = vi.fn(() => ({
-    observedCount: null,
+    unread: { status: "unknown" },
     manual: "none",
     ...patch,
   }));
@@ -248,38 +248,42 @@ it("renders the signed whole-thread total rather than only direct replies", () =
   expect(html).toContain("3 replies</span>");
 });
 it("selects this thread, adds an accessible unread cue and preserves the total reply count", () => {
-  const { html, snapshot } = render({ observedCount: 2 });
+  const { html, snapshot } = render({ unread: { status: "exact", value: 2 } });
   expect(snapshot).toHaveBeenCalledExactlyOnceWith({
     kind: "thread",
     channelId: "channel",
     rootId: "root",
   });
   expect(html).toContain(
-    'aria-label="View thread: 23 replies. Observed unread replies. Not an exact total."',
+    'aria-label="View thread: 23 replies. 2 unread replies"',
   );
-  expect(html).toContain(
-    'aria-hidden="true" title="Observed unread replies. Not an exact total."',
-  );
+  expect(html).toContain('aria-hidden="true" title="2 unread replies"');
   expect(html).toContain("23 replies</span>");
 });
 it.each([null, 0])(
   "omits the dot for %s observed replies, not a fabricated unread total",
   (observedCount) => {
-    const { html } = render({ observedCount });
+    const { html } = render({
+      unread:
+        observedCount === null
+          ? { status: "unknown" }
+          : { status: "exact", value: observedCount },
+    });
     expect(html).toContain('aria-label="View thread: 23 replies"');
     expect(html).not.toContain("title=");
   },
 );
 it("describes local manual intent and stale evidence honestly", () => {
-  expect(render({ manual: "local-only", observedCount: 0 }).html).toContain(
-    "Thread marked unread on this device only",
+  expect(
+    render({ manual: "local-only", unread: { status: "exact", value: 0 } })
+      .html,
+  ).toContain("Thread marked unread on this device only");
+  expect(render({ unread: { status: "at_least", value: 2 } }).html).toContain(
+    "At least 2 unread replies",
   );
-  expect(render({ manual: "remote", observedCount: 0 }).html).toContain(
-    "Thread marked unread",
-  );
-  expect(render({ observedCount: 1, freshness: "stale" }).html).toContain(
-    "Observed unread replies; may be out of date",
-  );
+  expect(
+    render({ unread: { status: "exact", value: 1 }, freshness: "stale" }).html,
+  ).toContain("1 unread replies; may be out of date");
 });
 it("does not select unread for rows without a thread button", () => {
   expect(render({}, 0).snapshot).not.toHaveBeenCalled();
@@ -287,7 +291,12 @@ it("does not select unread for rows without a thread button", () => {
 });
 
 it("selects the opening root for a broadcast reply instead of its own row ID", () => {
-  const { snapshot } = render({ observedCount: 1 }, 23, true, "original-root");
+  const { snapshot } = render(
+    { unread: { status: "exact", value: 1 } },
+    23,
+    true,
+    "original-root",
+  );
   expect(snapshot).toHaveBeenCalledExactlyOnceWith({
     kind: "thread",
     channelId: "channel",

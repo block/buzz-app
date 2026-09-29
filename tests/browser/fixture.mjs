@@ -14,12 +14,57 @@ import { platform, arch } from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { relayBrokerPlugin } from "../../dev/relay-broker.mjs";
-import { policyRelay } from "./policy-relay.mjs";
+import { isWorkflowDefinitionBatch } from "../../src/features/workflows/queries.ts";
+import { buzzV1Discovery, policyRelay } from "./policy-relay.mjs";
 import { buildApp } from "./build.mjs";
 import { fixtureBody } from "./fixture-body.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
-export const channels = ["alpha", "beta"];
+// Wire channel ids are UUIDs, as on the relay; specs keep readable labels.
+export const uuid = (n) =>
+  `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
+const labels = [
+  ...[
+    "alpha",
+    "beta",
+    "open",
+    "cedar",
+    "maple",
+    "willow",
+    "dm-peer",
+    "dm-group",
+  ],
+  ...Array.from({ length: 128 }, (_, i) => `dm-${String(i).padStart(3, "0")}`),
+];
+export const ids = Object.freeze(
+  Object.fromEntries(labels.map((label, i) => [label, uuid(i + 1)])),
+);
+const labelById = new Map(labels.map((label) => [ids[label], label]));
+/** Readable label for content and names; unlabeled ids stand for themselves. */
+export const labelOf = (id) => labelById.get(id) ?? id;
+export const channels = [ids.alpha, ids.beta];
+/** Saved `/buzz/v1` journals ({pending, manual} per partition); none before first use. */
+export const sidebarJournals = (page) =>
+  page.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const request = indexedDB.open("buzz-sidebar-v1");
+        // Never create the app's database from a test probe.
+        request.onupgradeneeded = () => request.transaction.abort();
+        request.onerror = () =>
+          request.error?.name === "AbortError"
+            ? resolve([])
+            : reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          const tx = db.transaction("partitions", "readonly");
+          const read = tx.objectStore("partitions").getAll();
+          read.onsuccess = () => resolve(read.result);
+          read.onerror = () => reject(read.error);
+          tx.oncomplete = () => db.close();
+        };
+      }),
+  );
 export const historySize = 640;
 
 // The built app, React, services, verification, IndexedDB and Virtua stay real.
@@ -52,6 +97,7 @@ export const test = base.extend({
   dmLabels: [false, { option: true }],
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
+  // Keyed by label (or by id for unlabeled channels).
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
@@ -118,7 +164,7 @@ export const test = base.extend({
     ) =>
       sign(
         40099,
-        [["h", "alpha"]],
+        [["h", ids.alpha]],
         JSON.stringify({
           type,
           actor:
@@ -133,11 +179,7 @@ export const test = base.extend({
         ? [key(5), ...(dmLabels ? [key(6), key(7)] : [])]
         : [];
     const peerKey = peerKeys[0];
-    const communityIds = {
-      primary: "01234567-89ab-cdef-0123-456789abcdef",
-      secondary: "11234567-89ab-cdef-0123-456789abcdef",
-    };
-    const readEvents = new Map([
+    const sidebarEvents = new Map([
       ["primary", new Map()],
       ["secondary", new Map()],
     ]);
@@ -167,13 +209,13 @@ export const test = base.extend({
     const dmIds = largeSidebar
       ? Array.from(
           { length: 128 },
-          (_, i) => `dm-${i.toString().padStart(3, "0")}`,
+          (_, i) => ids[`dm-${i.toString().padStart(3, "0")}`],
         )
       : dmLabels
-        ? ["dm-peer", "dm-group"]
+        ? [ids["dm-peer"], ids["dm-group"]]
         : [];
     const personalChannel = "11111111-1111-4111-8111-111111111111";
-    const sortingIds = sortingSidebar ? ["cedar", "maple", "willow"] : [];
+    const sortingIds = sortingSidebar ? [ids.cedar, ids.maple, ids.willow] : [];
     const renamedChannels = new Map();
     const lifecycleRows = channelLifecycle
       ? [
@@ -205,7 +247,7 @@ export const test = base.extend({
     if (savedSidebar) {
       const key = nip44.v2.utils.getConversationKey(userKey, viewer);
       for (const community of ["primary", "secondary"]) {
-        const records = readEvents.get(community);
+        const records = sidebarEvents.get(community);
         for (const [coordinate, value] of [
           [
             "channel-sections",
@@ -230,14 +272,14 @@ export const test = base.extend({
                     ]
                   : []),
               ],
-              assignments: { beta: "work" },
+              assignments: { [ids.beta]: "work" },
             },
           ],
           [
             "channel-stars",
             {
               version: 1,
-              channels: { alpha: { starred: true, updatedAt: 1 } },
+              channels: { [ids.alpha]: { starred: true, updatedAt: 1 } },
             },
           ],
           ["channel-sort", { version: 1, groups: initialSidebarSort }],
@@ -275,7 +317,7 @@ export const test = base.extend({
             assignments: { [personalChannel]: "personal-work" },
           },
         };
-        readEvents.get(community).set(
+        sidebarEvents.get(community).set(
           coordinate,
           sign(
             30078,
@@ -293,6 +335,11 @@ export const test = base.extend({
       }
     }
     const hiddenChannels = new Set();
+    const nameOf = (id) =>
+      renamedChannels.get(id) ??
+      channelNames[id] ??
+      lifecycleRows.find((row) => row.id === id)?.name ??
+      (id === ids.alpha ? "Alpha" : id === ids.beta ? "Beta" : labelOf(id));
     const streams = new Map();
     const streamOwners = new Map();
     // Tall histories leave room above the older-page prefetch threshold, even
@@ -309,11 +356,11 @@ export const test = base.extend({
       for (const channel of channels)
         histories.set(
           `${community}/${channel}`,
-          Array.from({ length: historyCounts[channel] }, (_, i) =>
+          Array.from({ length: historyCounts[labelOf(channel)] }, (_, i) =>
             sign(
               9,
               [["h", channel]],
-              `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 4 : 1))}`,
+              `${community} ${labelOf(channel)} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 4 : 1))}`,
               readState ? peerKey : userKey,
               1700000100 + i,
             ),
@@ -329,7 +376,7 @@ export const test = base.extend({
           sign(
             9,
             [["h", id]],
-            `Activity in ${id}`,
+            `Activity in ${labelOf(id)}`,
             userKey,
             1700000200 + index,
           ),
@@ -339,7 +386,7 @@ export const test = base.extend({
     if (openSearch) {
       const root = sign(
         9,
-        [["h", "open"]],
+        [["h", ids.open]],
         "Public conversation root",
         userKey,
         1699999000,
@@ -347,24 +394,24 @@ export const test = base.extend({
       searchTarget = sign(
         9,
         [
-          ["h", "open"],
+          ["h", ids.open],
           ["e", root.id, "", "reply"],
         ],
         "crew-search exact public reply",
         userKey,
         1699999001,
       );
-      histories.set("primary/open", [root]);
+      histories.set(`primary/${ids.open}`, [root]);
       targetEvents.push(searchTarget);
     }
     let exact;
     if (exactMessages) {
-      const root = histories.get("primary/alpha")[2];
+      const root = histories.get(`primary/${ids.alpha}`)[2];
       const replies = Array.from({ length: 80 }, (_, i) =>
         sign(
           9,
           [
-            ["h", "alpha"],
+            ["h", ids.alpha],
             ["e", root.id, "", "reply"],
             ["p", getPublicKey(peerKey)],
           ],
@@ -378,7 +425,7 @@ export const test = base.extend({
         replies[replies.length - 1] = sign(
           9,
           [
-            ["h", "alpha"],
+            ["h", ids.alpha],
             ["e", root.id, "", "root"],
             ["e", replies.at(-2).id, "", "reply"],
             ["p", getPublicKey(peerKey)],
@@ -414,16 +461,16 @@ export const test = base.extend({
       exact = { root, target, replies, edit, reaction, deletion };
     }
     if (membershipActivity) {
-      const history = histories.get("primary/alpha");
+      const history = histories.get(`primary/${ids.alpha}`);
       history.push(
         membershipEvent("member_joined", 0, 1700000740),
         membershipEvent("member_joined", 1, 1700000741),
       );
     }
     if (sidebarUnread) {
-      for (const id of ["dm-030", "dm-090"])
+      for (const id of [ids["dm-030"], ids["dm-090"]])
         histories.set(`primary/${id}`, [
-          sign(9, [["h", id]], `Unread in ${id}`, peerKey, 1700000900),
+          sign(9, [["h", id]], `Unread in ${labelOf(id)}`, peerKey, 1700000900),
         ]);
     }
     // Opt-in upstream thread evidence: no client cache/read-state injection.
@@ -437,11 +484,11 @@ export const test = base.extend({
       ]);
     const threadSummaries = [];
     if (threadUnread) {
-      const history = histories.get("primary/alpha");
+      const history = histories.get(`primary/${ids.alpha}`);
       for (const [index, event] of history.slice(-2).entries()) {
         const root = sign(
           9,
-          [["h", "alpha"]],
+          [["h", ids.alpha]],
           `Thread root ${index}`,
           peerKey,
           event.created_at,
@@ -451,7 +498,7 @@ export const test = base.extend({
           sign(
             9,
             [
-              ["h", "alpha"],
+              ["h", ids.alpha],
               ["e", root.id.toUpperCase(), "", "reply"],
               ...(threadUnreadMentions && index === 1 ? [["p", viewer]] : []),
             ],
@@ -465,7 +512,7 @@ export const test = base.extend({
           sign(
             39005,
             [
-              ["h", "alpha"],
+              ["h", ids.alpha],
               ["e", root.id],
               ["d", root.id],
             ],
@@ -478,12 +525,12 @@ export const test = base.extend({
       }
     }
     if (threadUnread) {
-      const history = histories.get("primary/alpha");
+      const history = histories.get(`primary/${ids.alpha}`);
       const root = history.at(-2);
       const broadcast = sign(
         9,
         [
-          ["h", "alpha"],
+          ["h", ids.alpha],
           ["e", root.id.toUpperCase(), "", "reply"],
           ["broadcast", "1"],
         ],
@@ -498,7 +545,7 @@ export const test = base.extend({
         sign(
           9,
           [
-            ["h", "alpha"],
+            ["h", ids.alpha],
             ["e", root.id.toUpperCase(), "", "root"],
             ["e", broadcast.id.toUpperCase(), "", "reply"],
           ],
@@ -511,7 +558,7 @@ export const test = base.extend({
         sign(
           39005,
           [
-            ["h", "alpha"],
+            ["h", ids.alpha],
             ["e", broadcast.id],
             ["d", broadcast.id],
           ],
@@ -526,14 +573,14 @@ export const test = base.extend({
     let presenceThread;
     if (presenceThreadAuthors) {
       const threadRoot = histories
-        .get("primary/alpha")
+        .get(`primary/${ids.alpha}`)
         .find((event) => event.content === "Thread root 0");
       if (!threadRoot) throw new Error("Presence thread requires threadUnread");
       const replies = Array.from({ length: presenceThreadAuthors }, (_, i) =>
         sign(
           9,
           [
-            ["h", "alpha"],
+            ["h", ids.alpha],
             ["e", threadRoot.id, "", "reply"],
           ],
           `Distinct author reply ${i}`,
@@ -545,9 +592,9 @@ export const test = base.extend({
       // The ordinary unread fixture also broadcasts one reply into the timeline.
       // This stress case owns exactly the distinct replies above, not that extra row.
       histories.set(
-        "primary/alpha",
+        `primary/${ids.alpha}`,
         histories
-          .get("primary/alpha")
+          .get(`primary/${ids.alpha}`)
           .filter(
             (event) =>
               !event.tags.some(
@@ -560,13 +607,13 @@ export const test = base.extend({
     }
     if (actionProfile) {
       const root = histories
-        .get("primary/alpha")
+        .get(`primary/${ids.alpha}`)
         .find((row) => row.content === "Thread root 1");
       targetEvents.push(
         sign(
           7,
           [
-            ["h", "alpha"],
+            ["h", ids.alpha],
             ["e", root.id],
           ],
           "👍",
@@ -609,7 +656,6 @@ export const test = base.extend({
       },
       queries: [],
       publications: [],
-      readPublications: [],
       sessions: [],
       streamConnections: [],
       streamInterests: [],
@@ -641,7 +687,7 @@ export const test = base.extend({
         return [];
       }
       if (personalSidebar && filter.ids)
-        return [...readEvents.get(community).values()].filter((event) =>
+        return [...sidebarEvents.get(community).values()].filter((event) =>
           filter.ids.includes(event.id),
         );
       if (filter.kinds?.includes(20001))
@@ -691,9 +737,9 @@ export const test = base.extend({
                 "",
                 lifecycleRows.some((row) => row.id === id) ? "owner" : "member",
               ],
-              ...(dmLabels && id === "dm-peer"
+              ...(dmLabels && id === ids["dm-peer"]
                 ? [["p", participants[0], "", "member"]]
-                : dmLabels && id === "dm-group"
+                : dmLabels && id === ids["dm-group"]
                   ? participants.map((pubkey) => ["p", pubkey, "", "member"])
                   : participants
                       .slice(dmIds.indexOf(id) * 8, (dmIds.indexOf(id) + 1) * 8)
@@ -701,25 +747,19 @@ export const test = base.extend({
             ]),
           );
       if (filter.kinds?.includes(39000))
-        return [...rosterIds, ...(openSearch ? ["open"] : [])]
+        return [...rosterIds, ...(openSearch ? [ids.open] : [])]
           .filter((id) => !filter["#d"] || filter["#d"].includes(id))
           .map((id) =>
             sign(
               39000,
               [
                 ["d", id],
-                [
-                  "name",
-                  renamedChannels.get(id) ??
-                    channelNames[id] ??
-                    lifecycleRows.find((row) => row.id === id)?.name ??
-                    (id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id),
-                ],
+                ["name", nameOf(id)],
                 ...lifecycleRows
                   .filter((row) => row.id === id)
                   .map((row) => ["t", row.type]),
                 ...(archivedIds.has(id) ? [["archived", "true"]] : []),
-                ...(id === "open" ? [["public"], ["t", "stream"]] : []),
+                ...(id === ids.open ? [["public"], ["t", "stream"]] : []),
                 ...(dmIds.includes(id) ? [["t", "dm"], ["hidden"]] : []),
                 ...(sessionChannels.includes(id)
                   ? [
@@ -739,16 +779,7 @@ export const test = base.extend({
             ),
           );
       if (filter.kinds?.includes(30078)) {
-        const events = [...readEvents.get(community).values()];
-        if (readState && filter.read_state_snapshot === 1)
-          return {
-            read_state_snapshot: 1,
-            complete: true,
-            community_id: communityIds[community],
-            pubkey: viewer,
-            snapshot_id: "a".repeat(64),
-            events,
-          };
+        const events = [...sidebarEvents.get(community).values()];
         return events.filter(
           (event) =>
             event.tags.some(
@@ -874,7 +905,11 @@ export const test = base.extend({
         return [...histories.entries()]
           .filter(([key]) => key.startsWith(`${community}/`))
           .flatMap(([, events]) => events)
-          .concat(community === "primary" ? targetEvents : [])
+          .concat(
+            community === "primary"
+              ? [...targetEvents, ...[...threadReplies.values()].flat()]
+              : [],
+          )
           .filter(
             (event) =>
               filter.ids.includes(event.id) &&
@@ -961,7 +996,7 @@ export const test = base.extend({
         return filter["#h"]
           .flatMap((channel) => [
             ...(histories.get(`${community}/${channel}`) ?? []),
-            ...(threadUnread && community === "primary" && channel === "alpha"
+            ...(threadUnread && community === "primary" && channel === ids.alpha
               ? [...threadReplies.values()].flat()
               : []),
           ])
@@ -1109,7 +1144,7 @@ export const test = base.extend({
             nip44.v2.utils.getConversationKey(userKey, viewer),
           ),
         );
-        readEvents.get(community).set(sidebarCoordinate, event);
+        sidebarEvents.get(community).set(sidebarCoordinate, event);
         report.sidebarPublications ??= [];
         report.sidebarPublications.push({
           community,
@@ -1119,23 +1154,8 @@ export const test = base.extend({
         });
         return;
       }
-      expect(event.tags).toContainEqual(["t", "read-state"]);
-      const blob = JSON.parse(
-        nip44.v2.decrypt(
-          event.content,
-          nip44.v2.utils.getConversationKey(userKey, viewer),
-        ),
-      );
-      const coordinate = event.tags.find(([key]) => key === "d")?.[1];
-      expect(coordinate).toMatch(/^read-state:[0-9a-f]{32}$/);
-      const previous = readEvents.get(community).get(coordinate);
-      if (
-        !previous ||
-        event.created_at > previous.created_at ||
-        (event.created_at === previous.created_at && event.id < previous.id)
-      )
-        readEvents.get(community).set(coordinate, event);
-      report.readPublications.push({ community, event, blob });
+      // Read state lives behind /buzz/v1; no 30078 read-state publication remains.
+      throw new Error(`Unexpected 30078 coordinate ${sidebarCoordinate}`);
     };
     const relay = productionBroker
       ? policyRelay({
@@ -1144,9 +1164,29 @@ export const test = base.extend({
           answer,
           report,
           pending,
-          // The production broker advertises read-state writes for every session,
-          // not only tests opting into complete snapshot reads.
+          // Sidebar preferences (mutes, sections, stars, sort) still publish 30078.
           acceptPublication: acceptReadPublication,
+          // Membership, not the local roster, authorizes /buzz/v1 rows; the
+          // model reads the same signed histories and thread replies.
+          readModel: {
+            rows: () =>
+              rosterIds.map((id) => ({
+                channel_id: id,
+                name: nameOf(id),
+                channel_type: dmIds.includes(id)
+                  ? "dm"
+                  : (lifecycleRows.find((row) => row.id === id)?.type ??
+                    "stream"),
+                archived: archivedIds.has(id),
+                hidden: hiddenChannels.has(id) || hiddenDmIds.has(id),
+              })),
+            events: (community, channel) => [
+              ...(histories.get(`${community}/${channel}`) ?? []),
+              ...(community === "primary"
+                ? [...[...threadReplies.values()].flat(), ...targetEvents]
+                : []),
+            ],
+          },
           ...(actionProfile || channelLifecycle
             ? {
                 latencyMs: 40,
@@ -1178,22 +1218,8 @@ export const test = base.extend({
                 },
               }
             : {}),
-          ...(readState || savedSidebar
-            ? {
-                ...(readState
-                  ? {
-                      discovery: (community) => ({
-                        self: getPublicKey(relayKey),
-                        read_state_snapshot: {
-                          version: 1,
-                          community_id: communityIds[community],
-                          max_events: 4096,
-                          max_bytes: 8388608,
-                        },
-                      }),
-                    }
-                  : {}),
-              }
+          ...(readState
+            ? { discovery: () => ({ self: getPublicKey(relayKey) }) }
             : {}),
         })
       : undefined;
@@ -1328,7 +1354,9 @@ export const test = base.extend({
             `Unexpected fixture request: ${request.method} ${request.url}`,
           );
         expect(body.length).toBeGreaterThan(0);
-        expect(body.length).toBeLessThanOrEqual(3);
+        // Workflow definitions are the one sanctioned wide batch (see relay-broker).
+        if (!isWorkflowDefinitionBatch(body))
+          expect(body.length).toBeLessThanOrEqual(3);
         const filter = body[0];
         const result = [
           ...new Map(
@@ -1415,6 +1443,7 @@ export const test = base.extend({
                     : {
                         authority: async () => ({
                           relayAuthor: getPublicKey(relayKey),
+                          buzz_v1: buzzV1Discovery,
                         }),
                       }),
                   upstreamFetch: relay.fetch,
@@ -1440,6 +1469,10 @@ export const test = base.extend({
         report.unexpected.push(`Blocked WebSocket: ${socket.url()}`);
         socket.close();
       });
+      // Browser-evaluated spec closures name channels by the same `ids`.
+      await context.addInitScript((value) => {
+        globalThis.ids = value;
+      }, ids);
       page.on("pageerror", (error) => report.errors.push(error.message));
       page.on("console", (message) => {
         if (message.type() === "error") {
@@ -1540,7 +1573,7 @@ export const test = base.extend({
           forged = false,
           deliver = true,
         ) {
-          const history = histories.get("primary/alpha");
+          const history = histories.get(`primary/${ids.alpha}`);
           const event = membershipEvent(
             type,
             targetIndex,
@@ -1553,7 +1586,7 @@ export const test = base.extend({
           if (relay) relay.publish("primary", event);
           else
             for (const client of streams.get("primary") ?? [])
-              if (client.channels.includes("alpha"))
+              if (client.channels.includes(ids.alpha))
                 client.response.write(`data: ${JSON.stringify(event)}\n\n`);
           return event;
         },
@@ -1597,7 +1630,7 @@ export const test = base.extend({
         },
         // Signed upstream-only simulations: never a browser publication or live relay.
         activity({
-          channel = "alpha",
+          channel = ids.alpha,
           root,
           author = 0,
           kind = 20002,
@@ -1645,7 +1678,7 @@ export const test = base.extend({
           const event = sign(
             5,
             [
-              ["h", "alpha"],
+              ["h", ids.alpha],
               ["e", target.id],
             ],
             "",
@@ -1661,7 +1694,7 @@ export const test = base.extend({
           const event = sign(
             9,
             [
-              ["h", "alpha"],
+              ["h", ids.alpha],
               ["e", rootId, "", "reply"],
             ],
             own ? "My reply" : "New peer reply",

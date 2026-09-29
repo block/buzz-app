@@ -1,5 +1,5 @@
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({
@@ -25,13 +25,13 @@ test("Buzz channel and message links render, reveal verified targets, and preser
     ).length;
   // Owner inventory survives the startup roster; previews add no further read.
   await expect.poll(libraryReads).toBe(1);
-  const history = app.histories.get("primary/alpha");
+  const history = app.histories.get(`primary/${ids.alpha}`);
   const target = history.find((row) => row.content === "Broadcast reply");
-  const href = `buzz://message?channel=alpha&id=${target.id}`;
+  const href = `buzz://message?channel=${ids.alpha}&id=${target.id}`;
   const message = app.append(
     "primary",
-    "alpha",
-    `Open <${href}> or <buzz://channel/beta>.`,
+    ids.alpha,
+    `Open <${href}> or <buzz://channel/${ids.beta}>.`,
   );
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${message.id}"]`,
@@ -123,7 +123,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
   await expect.poll(async () => (await state(page)).status).toBe("opened");
-  expect((await state(page)).entry.target.channelId).toBe("beta");
+  expect((await state(page)).entry.target.channelId).toBe(ids.beta);
 });
 
 test("activating a panel from a linked thread retires the navigation-owned thread instead of splitting the rail", async ({
@@ -131,10 +131,10 @@ test("activating a panel from a linked thread retires the navigation-owned threa
   app,
 }) => {
   await open(page, app);
-  const history = app.histories.get("primary/alpha");
+  const history = app.histories.get(`primary/${ids.alpha}`);
   const target = history.find((row) => row.content === "Broadcast reply");
-  const href = `buzz://message?channel=alpha&id=${target.id}`;
-  const message = app.append("primary", "alpha", `Open <${href}>.`);
+  const href = `buzz://message?channel=${ids.alpha}&id=${target.id}`;
+  const message = app.append("primary", ids.alpha, `Open <${href}>.`);
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${message.id}"]`,
   );
@@ -173,8 +173,8 @@ test("a mixed-case Buzz scheme activates in-app instead of falling through to an
   // treating it as an external _blank link.
   const message = app.append(
     "primary",
-    "alpha",
-    "Jump to <BUZZ://channel/beta>.",
+    ids.alpha,
+    `Jump to <BUZZ://channel/${ids.beta}>.`,
   );
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${message.id}"]`,
@@ -186,7 +186,7 @@ test("a mixed-case Buzz scheme activates in-app instead of falling through to an
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
   await expect.poll(async () => (await state(page)).status).toBe("opened");
-  expect((await state(page)).entry.target.channelId).toBe("beta");
+  expect((await state(page)).entry.target.channelId).toBe(ids.beta);
 });
 
 test("unavailable messages fail honestly and legacy links still open when Links is disabled", async ({
@@ -195,13 +195,13 @@ test("unavailable messages fail honestly and legacy links still open when Links 
 }) => {
   await open(page, app);
   const target = app.histories
-    .get("primary/alpha")
+    .get(`primary/${ids.alpha}`)
     .find((row) => row.content === "Thread root 0");
-  const href = `buzz://message?channel=alpha&id=${target.id}&thread=${"f".repeat(64)}`;
+  const href = `buzz://message?channel=${ids.alpha}&id=${target.id}&thread=${"f".repeat(64)}`;
   const message = app.append(
     "primary",
-    "alpha",
-    `<${href}> <buzz://message?channel=alpha&id=${"0".repeat(64)}>`,
+    ids.alpha,
+    `<${href}> <buzz://message?channel=${ids.alpha}&id=${"0".repeat(64)}>`,
   );
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${message.id}"]`,

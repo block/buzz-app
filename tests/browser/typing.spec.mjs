@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open, end } from "./timeline.mjs";
 
 test.use({
@@ -14,7 +14,9 @@ test("Messages receives scoped typing through authenticated live traffic and exp
   await open(page, app);
   await expect
     .poll(() =>
-      app.report.liveRequests.some((r) => r.filter?.["#h"]?.includes("alpha")),
+      app.report.liveRequests.some((r) =>
+        r.filter?.["#h"]?.includes(ids.alpha),
+      ),
     )
     .toBe(true);
   const indicator = page.getByRole("status", { name: "Typing activity" });
@@ -37,7 +39,7 @@ test("Messages receives scoped typing through authenticated live traffic and exp
   ).toHaveCount(2);
   await end(page);
   const root = app.histories
-    .get("primary/alpha")
+    .get(`primary/${ids.alpha}`)
     .find((e) => e.content === "Thread root 0");
   await page
     .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
@@ -72,12 +74,12 @@ for (const scope of ["channel", "thread"]) {
     await expect
       .poll(() =>
         app.report.liveRequests.some((r) =>
-          r.filter?.["#h"]?.includes("alpha"),
+          r.filter?.["#h"]?.includes(ids.alpha),
         ),
       )
       .toBe(true);
     const root = app.histories
-      .get("primary/alpha")
+      .get(`primary/${ids.alpha}`)
       .find((e) => e.content === "Thread root 0");
     if (scope === "thread") {
       // Seed enough signed upstream replies to exercise a genuinely scrolling thread.

@@ -86,11 +86,13 @@ function fixture(
     typeof createSidebarPreferencesStore
   >["queries"],
   status: RelaySnapshot["status"] = "ready",
+  activityStatus?: ChannelList["activityStatus"],
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
   const list: ChannelList = {
     status: "ready",
+    ...(activityStatus ? { activityStatus } : {}),
     channels: ["alpha", "beta", "gamma"].map((id) => ({
       id,
       name: id,
@@ -368,3 +370,51 @@ it("opens creation from a legacy subgroup + with that destination selected and r
     preferences.dispose();
   }
 });
+
+it.each(["channels", "section:work"])(
+  "limits the Recent sync warning to active Recent sorting (%s)",
+  async (key) => {
+    const data: SidebarPreferences = {
+      sections: [{ id: "work", name: "Work", order: 0 }],
+      assignments: { beta: "work" },
+      starred: [],
+      muted: [],
+      sort: { [key]: "recent" },
+    };
+    const owner = createSidebarPreferencesStore(
+      async () => data,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      async (group, mode) => (mode === "recent" ? { [group]: "recent" } : {}),
+    );
+    await owner.queries.ensure();
+    const h = fixture(owner.queries, "ready", "error");
+    const retry = vi.fn(async () => {});
+    h.session.unread = { ...h.session.unread, retrySync: retry };
+    render(h.view("alpha"), { wrapper: ToastProvider });
+    expect(
+      await screen.findByText("Couldn’t refresh recent activity"),
+    ).toBeVisible();
+    await act(async () => {
+      await owner.queries.setSort(key, "alpha", ["work"]);
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Couldn’t refresh recent activity"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(h.list.activityStatus).toBe("error");
+    await act(async () => {
+      await owner.queries.setSort(key, "recent", ["work"]);
+    });
+    expect(
+      await screen.findByText("Couldn’t refresh recent activity"),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /^Retry$/ }));
+    expect(retry).toHaveBeenCalledTimes(1);
+    owner.dispose();
+  },
+);

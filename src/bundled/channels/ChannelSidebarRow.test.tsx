@@ -21,16 +21,15 @@ const parent = {
 function unreadSession(observedCount = 1) {
   const snapshot: UnreadSnapshot = {
     target: { kind: "channel", channelId: "child" },
-    observedCount,
-    attentionCount: 0,
-    coverage: "observed",
+    unread: { status: "exact", value: observedCount },
+    attention: { status: "exact", value: 0 },
     freshness: "observed",
     manual: "none",
   };
   const activity: ThreadActivitySnapshot = {
     channelId: "child",
     items: [],
-    coverage: "observed",
+    complete: true,
     freshness: "observed",
   };
   return {

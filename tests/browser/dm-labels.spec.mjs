@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({
@@ -51,7 +51,12 @@ test("keyboard removal of the final DM moves focus to a surviving section", asyn
 }) => {
   await open(page, app);
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
-  const dms = sidebar.locator('button[data-channel-id^="dm-"]');
+  const dms = sidebar.locator(
+    [ids["dm-peer"], ids["dm-group"]]
+      .map((id) => `button[data-channel-id="${id}"]`)
+      .join(", "),
+  );
+  await expect(dms).toHaveCount(2);
   for (let remaining = await dms.count(); remaining > 0; remaining -= 1) {
     const dm = dms.last();
     await dm.focus();
@@ -89,7 +94,7 @@ for (const cold of [false, true]) {
           filter.authors?.includes(app.participants[0]),
       );
     if (cold) {
-      app.hideChannel("beta");
+      app.hideChannel(ids.beta);
       app.relay.holdProfiles(app.participants);
     }
     try {
@@ -112,7 +117,7 @@ for (const cold of [false, true]) {
         cold ? app.participants[0][0].toUpperCase() : "A",
       );
       const before = labelReads().length;
-      app.omitChannel("beta");
+      app.omitChannel(ids.beta);
       // The deployed deletion trigger is not under test. Exercise the real
       // refresh -> roster omission -> session purge -> page/hook recovery path.
       await page

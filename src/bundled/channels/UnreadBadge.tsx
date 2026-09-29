@@ -1,3 +1,7 @@
+import {
+  hasUnread,
+  unreadLabel as countLabel,
+} from "../../features/relay/unread";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   useCallback,
@@ -47,16 +51,16 @@ export function UnreadBadge({
     getActivity,
     getActivity,
   );
-  const count = snapshot.observedCount;
+  const count = snapshot.unread;
   const manual = snapshot.manual !== "none";
-  const unread = manual || (count ?? 0) > 0;
+  const unread = manual || hasUnread(count);
   const threadCount = activity.items?.length ?? 0;
   if (!unread && !threadCount && label === undefined) return null;
-  const priority = dm || (snapshot.attentionCount ?? 0) > 0;
+  const priority = dm || hasUnread(snapshot.attention);
   const showUnreadDot = priority && threadCount === 0;
   const unreadLabel = manual
     ? `Marked unread${snapshot.manual === "local-only" ? " on this device only" : ""}`
-    : `${count} observed unread messages${snapshot.freshness === "stale" ? "; may be out of date" : ""}. Not an exact total.`;
+    : `${countLabel(count)}${snapshot.freshness === "stale" ? "; may be out of date" : ""}.`;
   const threadLabel = `${threadCount} unread ${threadCount === 1 ? "thread" : "threads"}${activity.freshness === "stale" ? "; may be out of date" : ""}`;
   return (
     <>
@@ -150,9 +154,9 @@ export function UnreadOptions({
       <details>
         <summary>Unread status</summary>
         <p>
-          Observed messages only—not exact totals. Manual unread is local to
-          this device. Older read hints can expire; this is not an everlasting
-          read receipt log.
+          Unread counts can be exact, a minimum, or unknown within the relay’s
+          retention window. Read progress is saved separately. Manual unread
+          stays on this device.
         </p>
         <p>
           Read sync: {sync.capability} · {sync.status}

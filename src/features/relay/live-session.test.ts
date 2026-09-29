@@ -1,3 +1,5 @@
+import { deferredSidebar } from "./sidebar-testing";
+import { sidebarFixture, sidebarRow } from "./sidebar-testing";
 import { ReadError } from "./errors";
 import { assert, expect, it, vi, afterEach } from "vitest";
 import { createRelaySession } from "./session";
@@ -6,7 +8,6 @@ import {
   bounds,
   flush,
   keypair,
-  message,
   metadata,
   roster,
   scriptedTransport,
@@ -231,12 +232,15 @@ it.each([1, 2, 130])(
   "catch-up preserves unread evidence for a %s-channel roster",
   async (count) => {
     const relay = keypair(),
-      viewer = keypair(),
-      peer = keypair();
+      viewer = keypair();
     const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const bff = sidebarFixture();
+    const held = deferredSidebar<Awaited<ReturnType<typeof bff.api.sidebar>>>();
+    bff.api.sidebar.mockImplementationOnce(() => held.promise);
     let live!: LiveCallbacks;
     const owner = createRelaySession({
       ...wire.transport,
+      sidebarApi: bff.api,
       subscribe(callbacks) {
         live = callbacks;
         return { update() {}, retry() {}, dispose() {} };
@@ -254,8 +258,7 @@ it.each([1, 2, 130])(
       const oldHead = wire.next();
       const repair = owner.session.unread.ensure();
       await flush();
-      const evidence = wire.next();
-      expect(evidence.filters[0]?.["#h"]).toEqual(ids.slice(0, 128));
+      expect(bff.api.sidebar).toHaveBeenCalledTimes(1);
       // Force the production race: both the old head and unread batch are still
       // in flight when the live route establishes. Only the old head is obsolete.
       live.state({ status: "connected", routes: [] });
@@ -264,21 +267,21 @@ it.each([1, 2, 130])(
       const head = wire.next();
       expect(head.filters[0]).toMatchObject({ "#h": [first], top_level: true });
       expect(oldHead.signal?.aborted).toBe(true);
-      expect(evidence.signal?.aborted).toBe(false);
+      expect(bff.api.sidebar.mock.calls[0]?.[1].aborted).toBe(false);
       head.respond([
         bounds(relay, first, "head", { has_more: false, next_cursor: null }),
       ]);
-      for (let offset = 0; offset < ids.length; offset += 128) {
-        const batch = offset === 0 ? evidence : wire.next();
-        const batchIds = ids.slice(offset, offset + 128);
-        expect(batch.filters[0]?.["#h"]).toEqual(batchIds);
-        batch.respond(
-          batchIds.map((id) =>
-            message(peer, id, "unread evidence", 1700000900),
-          ),
-        );
-        await flush();
-      }
+      held.resolve({
+        account: {
+          retention_seconds: 2592000,
+          cutoff_ms: 0,
+          imported_at_ms: null,
+        },
+        channels: ids.map((id) =>
+          sidebarRow(id, { unread: { status: "exact", value: 1 } }),
+        ),
+        next_cursor: null,
+      });
       await repair;
       expect(wire.pending).toHaveLength(0);
       for (const channelId of ids) {
@@ -287,7 +290,7 @@ it.each([1, 2, 130])(
           channelId,
         });
         expect(snapshot).toMatchObject({
-          observedCount: 1,
+          unread: { status: "exact", value: 1 },
           freshness: "observed",
         });
         expect(snapshot.error).toBeUndefined();

@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({
@@ -28,7 +28,11 @@ test("message actions reveal, copy, restore focus and reply across responsive la
     });
   });
   await open(page, app);
-  const event = app.append("primary", "alpha", "Message actions browser check");
+  const event = app.append(
+    "primary",
+    ids.alpha,
+    "Message actions browser check",
+  );
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${event.id}"]`,
   );
@@ -57,7 +61,7 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   await row.getByRole("button", { name: "Copy link", exact: true }).click();
   await expect(row.getByRole("status")).toHaveText("Link copied");
   const copiedLink = await page.evaluate(() => window.copiedMessages.at(-1));
-  expect(copiedLink).toBe(`buzz://message?channel=alpha&id=${event.id}`);
+  expect(copiedLink).toBe(`buzz://message?channel=${ids.alpha}&id=${event.id}`);
   await row.getByRole("button", { name: "Reply", exact: true }).click();
   const panel = page.getByRole("complementary", {
     name: "Thread",
@@ -126,7 +130,7 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   // A broadcast reply must open its owning thread for composition, not reveal
   // the selected reply and steal focus back from the editor.
   const broadcast = app.histories
-    .get("primary/alpha")
+    .get(`primary/${ids.alpha}`)
     .find((item) => item.content === "Broadcast reply");
   if (!broadcast) throw new Error("Expected broadcast reply fixture");
   const broadcastRow = page.locator(
@@ -179,7 +183,7 @@ test("copied Buzz links and the desktop alias reveal their destination from a co
     });
   });
   await open(page, app);
-  const event = app.append("primary", "alpha", "Shared destination");
+  const event = app.append("primary", ids.alpha, "Shared destination");
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${event.id}"]`,
   );
@@ -187,7 +191,7 @@ test("copied Buzz links and the desktop alias reveal their destination from a co
   await row.getByRole("button", { name: "Copy link", exact: true }).click();
   await expect(row.getByRole("status")).toHaveText("Link copied");
   const copiedLink = await page.evaluate(() => window.copiedMessageLink);
-  expect(copiedLink).toBe(`buzz://message?channel=alpha&id=${event.id}`);
+  expect(copiedLink).toBe(`buzz://message?channel=${ids.alpha}&id=${event.id}`);
   const sharedConversation = page
     .getByRole("navigation", { name: "Subscribed channels" })
     .getByRole("button", { name: "Alice Fixture", exact: true });
@@ -198,9 +202,9 @@ test("copied Buzz links and the desktop alias reveal their destination from a co
   app.append(
     "primary",
     sharedChannel,
-    `${copiedLink}\n\n[Desktop alias](buzz://channel/alpha/${event.id})`,
+    `${copiedLink}\n\n[Desktop alias](buzz://channel/${ids.alpha}/${event.id})`,
   );
-  for (const href of [copiedLink, `buzz://channel/alpha/${event.id}`]) {
+  for (const href of [copiedLink, `buzz://channel/${ids.alpha}/${event.id}`]) {
     await sharedConversation.click();
     await page.locator(`[data-channel-timeline] a[href="${href}"]`).click();
     await expect(row).toBeVisible();
@@ -271,7 +275,7 @@ test.describe("touch", () => {
   test.use({ hasTouch: true, viewport: { width: 390, height: 850 } });
   test("opens the message menu without hover", async ({ page, app }) => {
     await open(page, app);
-    const event = app.append("primary", "alpha", "Touch menu check");
+    const event = app.append("primary", ids.alpha, "Touch menu check");
     const row = page.locator(
       `[data-channel-timeline] [data-message-id="${event.id}"]`,
     );

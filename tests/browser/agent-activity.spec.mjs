@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
@@ -98,21 +98,21 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
       .poll(() => app.relay.hasRoute("primary", "observer"))
       .toBe(true);
     unsafe = app.observer(
-      activity("turn_liveness", "alpha", "one", {
+      activity("turn_liveness", ids.alpha, "one", {
         text: '<img src=x onerror="window.telemetryExecuted=true">',
       }),
       firstKey,
     );
-    app.observer(activity("turn_liveness", "alpha", "two"), secondKey);
+    app.observer(activity("turn_liveness", ids.alpha, "two"), secondKey);
     app.observer(
       {
         kind: "batch",
         timestamp: new Date().toISOString(),
-        channelId: "alpha",
+        channelId: ids.alpha,
         payload: {
           events: [
-            activity("acp_read", "alpha", "one", "wanted child"),
-            activity("acp_write", "beta", "other-channel", "other channel"),
+            activity("acp_read", ids.alpha, "one", "wanted child"),
+            activity("acp_write", ids.beta, "other-channel", "other channel"),
           ],
         },
       },
@@ -175,7 +175,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await expect(panel.locator("code").first()).toHaveText(first);
   await expect(
     panel.getByRole("combobox", { name: "Channel", exact: true }),
-  ).toHaveText(/Alpha.*alpha/);
+  ).toHaveText(new RegExp(`Alpha.*${ids.alpha}`));
   await expect(panel.getByText("1 observed working turn(s).")).toBeVisible();
   // Telemetry supplies keys before any profile or directory facts exist.
   const agentSelect = panel.getByRole("combobox", {
@@ -211,7 +211,9 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await expect(matchingChild).toBeVisible();
   await expect(panel.getByRole("button", { name: /acp_write/ })).toHaveCount(0);
   await matchingChild.click();
-  await expect(panel.locator("pre code")).toContainText('"channelId": "alpha"');
+  await expect(panel.locator("pre code")).toContainText(
+    `"channelId": "${ids.alpha}"`,
+  );
   await expect(panel.locator("pre code")).not.toContainText("other channel");
 
   await page.getByRole("button", { name: "Close channel panel" }).click();
@@ -241,7 +243,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     .toBe(false);
   expect(app.relay.sockets).toHaveLength(sockets);
   await page.getByRole("button", { name: "Go back", exact: true }).click();
-  await page.locator('[data-channel-id="alpha"]').click();
+  await page.locator(`[data-channel-id="${ids.alpha}"]`).click();
   await expect(region).toHaveCount(0);
 
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
@@ -249,9 +251,9 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
   await toggle.click();
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
-  app.observer(activity("turn_liveness", "alpha", "after-reset"), firstKey);
+  app.observer(activity("turn_liveness", ids.alpha, "after-reset"), firstKey);
   await page.getByRole("button", { name: "Go back", exact: true }).click();
-  await page.locator('[data-channel-id="alpha"]').click();
+  await page.locator(`[data-channel-id="${ids.alpha}"]`).click();
   await expect(agentEntry(page, first)).toBeVisible();
   await expect(agentEntry(page, second)).toHaveCount(0);
   await agentEntry(page, first).click();
@@ -263,11 +265,11 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   // Stale evidence is unknown, not completed; one terminal turn must not hide
   // another active turn for the same agent. Capture survives closing the panel.
   await page.getByRole("button", { name: "Close channel panel" }).click();
-  app.observer(activity("turn_completed", "alpha", "after-reset"), firstKey);
+  app.observer(activity("turn_completed", ids.alpha, "after-reset"), firstKey);
   await expect(agentEntry(page, first)).toHaveCount(0);
   app.observer(
     {
-      ...activity("turn_liveness", "alpha", "stale"),
+      ...activity("turn_liveness", ids.alpha, "stale"),
       timestamp: new Date(Date.now() - 31_000).toISOString(),
     },
     firstKey,
@@ -277,11 +279,11 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     "animation-name",
     "none",
   );
-  app.observer(activity("turn_liveness", "alpha", "fresh"), firstKey);
+  app.observer(activity("turn_liveness", ids.alpha, "fresh"), firstKey);
   await expect(agentEntry(page, first)).toContainText("working");
-  app.observer(activity("turn_completed", "alpha", "fresh"), firstKey);
+  app.observer(activity("turn_completed", ids.alpha, "fresh"), firstKey);
   await expect(agentEntry(page, first)).toContainText("status unknown");
-  app.observer(activity("turn_completed", "alpha", "stale"), firstKey);
+  app.observer(activity("turn_completed", ids.alpha, "stale"), firstKey);
   await expect(region).toHaveCount(0);
 });
 
@@ -301,11 +303,11 @@ for (const mode of ["light", "dark"]) {
     const agent = getPublicKey(agentKey);
     const secondKey = generateSecretKey();
     app.observer(
-      activity("turn_liveness", "alpha", "second-layout"),
+      activity("turn_liveness", ids.alpha, "second-layout"),
       secondKey,
     );
     app.observer(
-      activity("acp_read", "alpha", "layout", {
+      activity("acp_read", ids.alpha, "layout", {
         text: "A long literal raw record. ".repeat(40),
       }),
       agentKey,
@@ -396,8 +398,8 @@ it("profile activity opens the exact agent and originating channel before its fi
   app,
 }, testInfo) => {
   await open(page, app);
-  // The production broker advertises read-state writes even without the
-  // readState fixture option. Exercise that publication before profile activity.
+  // The relay advertises /buzz/v1 even without the readState fixture option.
+  // Exercise a read write before profile activity.
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();
@@ -408,7 +410,7 @@ it("profile activity opens the exact agent and originating channel before its fi
       exact: true,
     })
     .click();
-  await expect.poll(() => app.report.readPublications.length).toBe(1);
+  await expect.poll(() => app.report.readWrites.length).toBe(1);
   await expect(page.getByRole("alert")).toHaveCount(0);
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
@@ -419,12 +421,14 @@ it("profile activity opens the exact agent and originating channel before its fi
   const message = finalizeEvent(
     {
       kind: 9,
-      tags: [["h", "alpha"]],
+      tags: [["h", ids.alpha]],
       content: "Contextual agent entry",
       created_at: Math.floor(Date.now() / 1000),
     },
     agentKey,
   );
+  // Store before delivery, as a relay would: read writes anchor on stored history.
+  app.histories.get(`primary/${ids.alpha}`).push(message);
   app.relay.publish("primary", message);
   const avatar = page
     .locator(`[data-message-id="${message.id}"]`)
@@ -437,10 +441,14 @@ it("profile activity opens the exact agent and originating channel before its fi
     .focus();
   await expect
     .poll(() =>
-      app.report.readPublications.some(
-        ({ community, blob }) =>
+      app.report.readWrites.some(
+        ({ community, intents, outcomes }) =>
           community === "primary" &&
-          blob.contexts[`msg:${message.id}`] === message.created_at,
+          intents.some(
+            (intent, i) =>
+              intent.message_id === message.id &&
+              outcomes[i].status === "applied",
+          ),
       ),
     )
     .toBe(true);
@@ -463,7 +471,7 @@ it("profile activity opens the exact agent and originating channel before its fi
   await expect(panel.locator("code").first()).toHaveText(agent);
   await expect(
     panel.getByRole("combobox", { name: "Channel", exact: true }),
-  ).toHaveText(/Alpha.*alpha/);
+  ).toHaveText(new RegExp(`Alpha.*${ids.alpha}`));
   await expect(
     panel.getByText(
       /Waiting for live records for this identity in this channel/,
@@ -476,11 +484,11 @@ it("profile activity opens the exact agent and originating channel before its fi
     sessionId: null,
     timestamp: new Date().toISOString(),
   });
-  app.observer(item("acp_read", "alpha", "other-agent"), generateSecretKey());
-  app.observer(item("acp_write", "beta", "other-channel"), agentKey);
+  app.observer(item("acp_read", ids.alpha, "other-agent"), generateSecretKey());
+  app.observer(item("acp_write", ids.beta, "other-channel"), agentKey);
   app.observer(item("session_resolved", null, "unscoped"), agentKey);
   const expected = app.observer(
-    item("turn_liveness", "alpha", "wanted"),
+    item("turn_liveness", ids.alpha, "wanted"),
     agentKey,
   );
   const row = panel.getByRole("button", { name: /turn_liveness/ });
@@ -520,7 +528,7 @@ it("profile activity opens the exact agent and originating channel before its fi
     JSON.parse(expected.plaintext).timestamp,
   );
   const update = (value) => ({
-    ...item("acp_read", "alpha", "wanted"),
+    ...item("acp_read", ids.alpha, "wanted"),
     payload: { method: "session/update", params: { update: value } },
   });
   app.observer(
@@ -606,7 +614,7 @@ it("profile activity opens the exact agent and originating channel before its fi
   await profile
     .getByRole("button", { name: "View activity", exact: true })
     .click();
-  await page.locator('[data-channel-id="beta"]').click();
+  await page.locator(`[data-channel-id="${ids.beta}"]`).click();
   await expect(panel).toHaveCount(0);
   // Disable removes both registration and profile affordance, not the profile itself.
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
@@ -616,7 +624,7 @@ it("profile activity opens the exact agent and originating channel before its fi
     .getByRole("switch", { name: "Enable Agent Activity", exact: true })
     .click();
   await page.getByRole("button", { name: "Go back", exact: true }).click();
-  await page.locator('[data-channel-id="alpha"]').click();
+  await page.locator(`[data-channel-id="${ids.alpha}"]`).click();
   await avatar.click();
   await expect(profile).toBeVisible();
   await expect(
@@ -634,9 +642,7 @@ it("profile activity opens the exact agent and originating channel before its fi
   await history.focus();
   await expect(history).toBeFocused();
   // Complete ordinary read dwell and publication before fixture teardown.
-  await expect
-    .poll(() => app.report.readPublications.length)
-    .toBeGreaterThan(1);
+  await expect.poll(() => app.report.readWrites.length).toBeGreaterThan(1);
 });
 
 test.describe("thread activity", () => {
@@ -657,7 +663,7 @@ test.describe("thread activity", () => {
     const key = generateSecretKey(),
       agent = getPublicKey(key);
     const root = app.histories
-      .get("primary/alpha")
+      .get(`primary/${ids.alpha}`)
       .find((row) => row.content.startsWith("Thread root"));
     const row = page.locator(
       `[data-channel-timeline] [data-message-id="${root.id}"]`,
@@ -676,7 +682,7 @@ test.describe("thread activity", () => {
       exact: true,
     });
     const marker = page
-      .locator('[data-channel-id="alpha"]')
+      .locator(`[data-channel-id="${ids.alpha}"]`)
       .getByRole("img", { name: "Agent working", exact: true });
     const sendTyping = (threadId, signingKey = key, secondsAgo = 0) => {
       const event = finalizeEvent(
@@ -685,7 +691,7 @@ test.describe("thread activity", () => {
           created_at: Math.floor(Date.now() / 1000) - secondsAgo,
           content: "",
           tags: [
-            ["h", "alpha"],
+            ["h", ids.alpha],
             ...(threadId
               ? [
                   ["e", threadId, "", "root"],
@@ -700,9 +706,9 @@ test.describe("thread activity", () => {
       return event;
     };
     // Owner telemetry recognizes the agent without claiming a working channel turn.
-    app.observer(activity("turn_liveness", "alpha", "previous"), key);
+    app.observer(activity("turn_liveness", ids.alpha, "previous"), key);
     await expect(agentEntry(page, agent)).toBeVisible();
-    app.observer(activity("turn_completed", "alpha", "previous"), key);
+    app.observer(activity("turn_completed", ids.alpha, "previous"), key);
     await expect(agentEntry(page, agent)).toHaveCount(0);
     sendTyping(root.id, generateSecretKey());
     sendTyping("b".repeat(64));
@@ -775,7 +781,7 @@ test.describe("thread activity", () => {
         name: "Channel",
         exact: true,
       }),
-    ).toHaveText(/Alpha.*alpha/);
+    ).toHaveText(new RegExp(`Alpha.*${ids.alpha}`));
     await page
       .getByRole("button", { name: "Close channel panel", exact: true })
       .click();

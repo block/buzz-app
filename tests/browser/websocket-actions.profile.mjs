@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 
 // Full built app + real local broker, signing, session, IndexedDB and rendering.
 // Only upstream I/O is modeled: equal 40ms HTTP/EVENT service delay, no live data.
@@ -172,15 +172,15 @@ test("profiles primary actions through production broker and built app", async (
       '[aria-label="Channel message history"] [data-message-id]',
     ),
   });
-  for (const channel of ["alpha", "beta"])
+  for (const channel of [ids.alpha, ids.beta])
     await expect.poll(() => app.relay.hasRoute("primary", channel)).toBe(true);
   await expect(
     page.getByRole("button", { name: "Retry live updates", exact: true }),
   ).toHaveCount(0);
   await settle(page, app);
   // Warm barrier is positive signed catch-up, not a sleep/request-count snapshot.
-  const marker = app.append("primary", "beta", "Profile warm barrier");
-  const beta = page.locator('button[data-channel-id="beta"]');
+  const marker = app.append("primary", ids.beta, "Profile warm barrier");
+  const beta = page.locator(`button[data-channel-id="${ids.beta}"]`);
   samples.push({
     action: "first-beta",
     ms: await measure(
@@ -189,7 +189,7 @@ test("profiles primary actions through production broker and built app", async (
     ),
   });
   await settle(page, app);
-  for (const channel of ["alpha", "beta", "alpha"]) {
+  for (const channel of [ids.alpha, ids.beta, ids.alpha]) {
     const id = app.histories.get(`primary/${channel}`).at(-1).id;
     samples.push({
       action: "warm-channel",
@@ -202,7 +202,7 @@ test("profiles primary actions through production broker and built app", async (
   }
   await settle(page, app);
   const root = app.histories
-    .get("primary/alpha")
+    .get(`primary/${ids.alpha}`)
     .find((row) => row.content === "Thread root 1");
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${root.id}"]`,
@@ -306,9 +306,13 @@ test("profiles primary actions through production broker and built app", async (
   await page.getByRole("button", { name: "Close thread", exact: true }).click();
   const reconnectAt = performance.now();
   app.relay.disconnect("primary");
-  await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+  await expect.poll(() => app.relay.hasRoute("primary", ids.alpha)).toBe(true);
   // Fresh traffic proves recovery reached the browser, not merely a socket REQ.
-  const recovered = app.append("primary", "alpha", "Profile recovery barrier");
+  const recovered = app.append(
+    "primary",
+    ids.alpha,
+    "Profile recovery barrier",
+  );
   await expect(
     page.locator(`[data-channel-timeline] [data-message-id="${recovered.id}"]`),
   ).toBeVisible();
@@ -353,7 +357,7 @@ test("profiles primary actions through production broker and built app", async (
     .poll(async () => {
       app.report.readJournals = await page.evaluate(async () => {
         const db = await new Promise((resolve, reject) => {
-          const request = indexedDB.open("buzz-read-state-v1");
+          const request = indexedDB.open("buzz-sidebar-v1");
           request.onsuccess = () => resolve(request.result);
           request.onerror = () => reject(request.error);
         });
@@ -371,14 +375,13 @@ test("profiles primary actions through production broker and built app", async (
         }
       });
       return (
-        app.report.readPublications.length > 0 &&
-        app.report.readJournals.some(
-          (journal) => journal.state.frontiers.alpha > 0,
-        ) &&
-        app.report.readJournals.every(
-          (journal) =>
-            journal.acceptedRevision === journal.revision && !journal.pending,
-        )
+        app.report.readWrites.some(({ intents, outcomes }) =>
+          intents.some(
+            (intent, i) =>
+              intent.target?.channel_id === ids.alpha &&
+              outcomes[i].status === "applied",
+          ),
+        ) && app.report.readJournals.every((journal) => !journal.pending.length)
       );
     })
     .toBe(true);

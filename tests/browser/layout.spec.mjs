@@ -1,5 +1,5 @@
 import { openPage, pageChoices } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { wheel, anchor, settle, upper, expectAnchor } from "./timeline.mjs";
 
 const scroll = test.extend({ historyCounts: { alpha: 20, beta: 1 } });
@@ -60,7 +60,7 @@ async function link(page, app, target) {
   );
   // A return from a compose route can still be restoring the timeline.
   await settle(page);
-  app.append("primary", "alpha", `Please review ${target}`);
+  app.append("primary", ids.alpha, `Please review ${target}`);
   const trigger = page.getByRole("link", { name: target, exact: true });
   await expect(trigger).toBeVisible();
   await settle(page);
@@ -395,7 +395,7 @@ readingTest(
         .toBeLessThan(4);
     await settle(page);
     await expectBottom();
-    const received = app.append("primary", "alpha");
+    const received = app.append("primary", ids.alpha);
     await expect(
       page.locator(`[data-message-id="${received.id}"]`),
     ).toBeInViewport();
@@ -480,7 +480,7 @@ readingTest(
       .locator("[data-message-id]")
       .last()
       .getAttribute("data-message-id");
-    const message = app.append("primary", "alpha", `Keep focus on ${target}`);
+    const message = app.append("primary", ids.alpha, `Keep focus on ${target}`);
     const trigger = page.getByRole("link", { name: target, exact: true });
     await expect(trigger).toBeInViewport();
     await settle(page);
@@ -724,7 +724,7 @@ todosOverlapTest(
     };
     const openThread = async () => {
       const root = app.histories
-        .get("primary/alpha")
+        .get(`primary/${ids.alpha}`)
         .find((event) => event.content === "Thread root 0");
       await page
         .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
@@ -977,7 +977,7 @@ sidebarActions(
     });
     await companionLauncher(page, "Bestie").click();
     await expect(bestie).toBeVisible();
-    const alpha = page.locator('button[data-channel-id="alpha"]');
+    const alpha = page.locator(`button[data-channel-id="${ids.alpha}"]`);
     for (const [index, action] of [
       "activity",
       "message",

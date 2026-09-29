@@ -97,7 +97,7 @@ export function bindMessageNotifications(
           message.messageId,
         );
         const category = attention.category;
-        if (attention.status !== "eligible" || !category) continue;
+        if (attention.status === "ineligible" || !category) continue;
         void notifications.admit(
           category,
           labels[category],
@@ -165,6 +165,15 @@ export function bindMessageNotifications(
                   .channels.find((item) => item.id === message.channelId)
                   ?.members ?? [],
               ),
+            ),
+          () =>
+            owned.unread.subscribe(
+              {
+                kind: "message",
+                channelId: message.channelId,
+                messageId: message.messageId,
+              },
+              () => notifications.revalidate(),
             ),
         );
       }

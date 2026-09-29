@@ -1,5 +1,5 @@
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 
 const gifResult = (id, title, height) => ({
   id,
@@ -468,7 +468,9 @@ test.describe("GIF send roundtrip", () => {
         ({ event }) =>
           event.kind === 9 &&
           event.content === expectedContent &&
-          event.tags.some(([name, value]) => name === "h" && value === "alpha"),
+          event.tags.some(
+            ([name, value]) => name === "h" && value === ids.alpha,
+          ),
       )?.event;
     await expect.poll(() => expectedEvent()?.id).toBeTruthy();
     const sentEvent = expectedEvent();

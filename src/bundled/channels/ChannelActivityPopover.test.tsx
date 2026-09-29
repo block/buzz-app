@@ -22,19 +22,24 @@ test("activity keeps profile loading lazy, explains stale results and opens the 
     authorId: "alex",
     createdAt: 1,
     preview: "Please review the designs",
-    unreadCount: 2,
+    unread: { status: "at_least", value: 2 },
   };
   const snapshot: ThreadActivitySnapshot = {
     channelId: "studio",
     items: [item],
-    coverage: "observed",
+    complete: false,
     freshness: "stale",
   };
   const profiles = new Map([["alex", { name: "Alex" }]]);
   const ensure = vi.fn(async () => {});
   const open = vi.fn();
+  const hydrate = vi.fn(async () => {});
   const session = {
-    unread: { activity: () => snapshot, subscribeActivity: () => () => {} },
+    unread: {
+      activity: () => snapshot,
+      subscribeActivity: () => () => {},
+      loadActivity: hydrate,
+    },
     profiles: { snapshot: () => profiles, subscribe: () => () => {}, ensure },
   } as unknown as RelaySession;
   render(
@@ -47,6 +52,7 @@ test("activity keeps profile loading lazy, explains stale results and opens the 
     />,
   );
   expect(ensure).not.toHaveBeenCalled();
+  expect(hydrate).not.toHaveBeenCalled();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Activity" }));
   expect(
@@ -54,6 +60,11 @@ test("activity keeps profile loading lazy, explains stale results and opens the 
   ).toBeVisible();
   expect(ensure).toHaveBeenCalledExactlyOnceWith(["alex"], "background");
   expect(screen.getByText("May be out of date")).toBeVisible();
+  expect(
+    screen.getByText("More activity may be in this channel"),
+  ).toBeVisible();
+  expect(screen.getByText(/At least 2 unread/)).toBeVisible();
+  expect(hydrate).toHaveBeenCalledExactlyOnceWith("studio");
   await user.click(
     screen.getByRole("button", {
       name: "Open unread thread from Alex: Please review the designs",

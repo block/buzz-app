@@ -245,12 +245,26 @@ export async function admittedApiRequest(
   signal?: AbortSignal,
   priority: Ticket["priority"] = "foreground",
   reason?: (body: unknown) => string | undefined,
+  retryAfter = false,
 ): Promise<Response> {
   return lane.run(
     async () => {
       const response = await request();
       if (response.ok) return response;
-      const failure = await readApiFailure(response, reason);
+      const failure = { ...(await readApiFailure(response, reason)) };
+      if (retryAfter && [429, 503].includes(response.status)) {
+        const hint = response.headers.get("Retry-After");
+        const duration =
+          hint && /^\d+$/.test(hint)
+            ? Number(hint) * 1000
+            : hint
+              ? Date.parse(hint) - Date.now()
+              : 60000;
+        failure.retryAfterMs = Number.isFinite(duration)
+          ? Math.min(86401000, Math.max(1000, duration))
+          : 60000;
+        lane.pause(failure.retryAfterMs);
+      }
       if (failure.quota === "api" && failure.retryAfterMs !== undefined)
         lane.pause(failure.retryAfterMs);
       const headers = new Headers(response.headers);

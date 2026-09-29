@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({
@@ -17,7 +17,7 @@ test("nested replies send, collapse, and reveal through links at readable panel 
 }) => {
   await open(page, app);
   const root = app.histories
-    .get("primary/alpha")
+    .get(`primary/${ids.alpha}`)
     .find((event) => event.content === "Thread root 0");
   await page
     .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
@@ -322,8 +322,8 @@ test("nested replies send, collapse, and reveal through links at readable panel 
     .click();
   const linked = app.append(
     "primary",
-    "alpha",
-    `Open <buzz://message?channel=alpha&id=${grandchild.id}>`,
+    ids.alpha,
+    `Open <buzz://message?channel=${ids.alpha}&id=${grandchild.id}>`,
   );
   const linkRow = page.locator(
     `[data-channel-timeline] [data-message-id="${linked.id}"]`,
@@ -379,13 +379,13 @@ test("an exact linked reply stays readable when its parent is outside loaded his
   app,
 }) => {
   const root = app.histories
-    .get("primary/alpha")
+    .get(`primary/${ids.alpha}`)
     .find((event) => event.content === "Thread root 0");
   // Peer-authored rows never enter this viewer's persistent outbox. The bounded
   // history contains the child and root, but not the intermediate parent.
   const child = app.append(
     "primary",
-    "alpha",
+    ids.alpha,
     "Exact orphan reply",
     false,
     false,
@@ -394,8 +394,8 @@ test("an exact linked reply stays readable when its parent is outside loaded his
   );
   const link = app.append(
     "primary",
-    "alpha",
-    `Open <buzz://message?channel=alpha&id=${child.id}>`,
+    ids.alpha,
+    `Open <buzz://message?channel=${ids.alpha}&id=${child.id}>`,
     false,
   );
   await open(page, app);
@@ -425,7 +425,7 @@ test.describe("touch branch controls", () => {
   }) => {
     await open(page, app);
     const root = app.histories
-      .get("primary/alpha")
+      .get(`primary/${ids.alpha}`)
       .find((event) => event.content === "Thread root 0");
     const thread = page
       .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
@@ -487,21 +487,21 @@ for (const width of [1492, 1280, 1024, 390])
     app,
   }) => {
     const root = app.histories
-      .get("primary/alpha")
+      .get(`primary/${ids.alpha}`)
       .find((e) => e.content === "Thread root 0");
     let parent = root.id;
-    const ids = [];
+    const replyIds = [];
     for (let i = 0; i < 13; i++) {
       parent = app.append(
         "primary",
-        "alpha",
+        ids.alpha,
         `Crowded reply ${i}`,
         false,
         i < 9 ? i % 2 === 0 : true,
         root.id,
         parent,
       ).id;
-      ids.push(parent);
+      replyIds.push(parent);
     }
     await open(page, app);
     await page
@@ -515,7 +515,7 @@ for (const width of [1492, 1280, 1024, 390])
     const branchFor = (id) =>
       panel.locator(`[data-message-id="${id}"]`).locator("../..");
     const expandAll = async () => {
-      for (const id of ids.slice(0, -1)) {
+      for (const id of replyIds.slice(0, -1)) {
         const branch = branchFor(id);
         if ((await branch.getAttribute("data-open")) === "false")
           await branch
@@ -527,7 +527,7 @@ for (const width of [1492, 1280, 1024, 390])
     };
     await page.setViewportSize({ width, height: 950 });
     await expandAll();
-    for (const id of ids.slice(0, -1)) {
+    for (const id of replyIds.slice(0, -1)) {
       const branch = branchFor(id);
       const rail = branch.locator(
         ":scope > [id] > button[aria-label='Hide replies']",
@@ -604,7 +604,7 @@ for (const width of [1492, 1280, 1024, 390])
           ),
         )
         .toBe("gray");
-      const child = ids[ids.indexOf(id) + 1];
+      const child = replyIds[replyIds.indexOf(id) + 1];
       await control.click();
       await expect(panel.locator(`[data-message-id="${id}"]`)).toBeVisible();
       await expect(panel.locator(`[data-message-id="${child}"]`)).toHaveCount(
@@ -619,7 +619,7 @@ for (const width of [1492, 1280, 1024, 390])
     }
     await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
     await panel.getByRole("heading", { name: "Thread", exact: true }).hover();
-    for (const id of ids) {
+    for (const id of replyIds) {
       await expect(
         panel
           .locator(`[data-message-id="${id}"]`)

@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open, end, settle } from "./timeline.mjs";
 
 test.use({
@@ -11,7 +11,7 @@ const thread = (page) =>
 const target = (app, id = app.exact.target.id) => ({
   version: 1,
   kind: "conversation",
-  channelId: "alpha",
+  channelId: ids.alpha,
   messageId: id,
   scope: {
     viewer: app.viewer,
@@ -37,10 +37,10 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
     ({ community, filter }) =>
       community === "primary" &&
       filter.top_level &&
-      filter["#h"].includes("alpha"),
+      filter["#h"].includes(ids.alpha),
   );
   expect(
-    app.histories.get("primary/alpha").at(-head.filter.limit).created_at,
+    app.histories.get(`primary/${ids.alpha}`).at(-head.filter.limit).created_at,
     "the exact reply predates the initial channel window",
   ).toBeGreaterThan(app.exact.target.created_at);
   // This navigation fixture deliberately registers a catch-all panel first.
@@ -187,7 +187,7 @@ test("loaded virtual rows reveal per attempt without thread reads or live-update
     name: "Channel message history",
     exact: true,
   });
-  const id = app.histories.get("primary/alpha").at(-18).id;
+  const id = app.histories.get(`primary/${ids.alpha}`).at(-18).id;
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -211,7 +211,7 @@ test("loaded virtual rows reveal per attempt without thread reads or live-update
     0,
   );
   await expect(thread(page)).toHaveCount(0);
-  app.append("primary", "alpha", "Live after exact timeline reveal");
+  app.append("primary", ids.alpha, "Live after exact timeline reveal");
   await expect(history).toContainText("Live after exact timeline reveal");
   await expect(composer).toBeFocused();
 });
@@ -221,9 +221,9 @@ test("an accessible exact reply stays visible without its root or a thread compo
   app,
 }) => {
   app.histories.set(
-    "primary/alpha",
+    `primary/${ids.alpha}`,
     app.histories
-      .get("primary/alpha")
+      .get(`primary/${ids.alpha}`)
       .filter((event) => event.id !== app.exact.root.id),
   );
   await open(page, app);
@@ -478,7 +478,7 @@ for (const selected of ["reply", "root"]) {
             const connection = window.fixtureRelay.snapshot();
             return (
               connection.status === "ready" &&
-              connection.session.channels.get("alpha")?.cached === true
+              connection.session.channels.get(ids.alpha)?.cached === true
             );
           }),
         )
@@ -521,14 +521,14 @@ test("post-success membership loss removes the thread and live updates do not sn
   const before = await region.evaluate((element) => element.scrollTop);
   app.edit(
     "primary",
-    "alpha",
+    ids.alpha,
     { ...app.exact.target, created_at: app.exact.target.created_at + 10 },
     "Live edited exact reply",
   );
   await expect(region).toContainText("Live edited exact reply");
   await expect(channelButton).toBeFocused();
   expect(await region.evaluate((element) => element.scrollTop)).toBe(before);
-  app.omitChannel("alpha");
+  app.omitChannel(ids.alpha);
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();
@@ -652,7 +652,7 @@ test.describe("fractional row geometry", () => {
       exact: true,
     });
     const row = history.locator(
-      `[data-message-id="${app.histories.get("primary/alpha").at(-1).id}"]`,
+      `[data-message-id="${app.histories.get(`primary/${ids.alpha}`).at(-1).id}"]`,
     );
     // Text scaling and wrapping can produce fractional heights. Make the next
     // measurement fractional explicitly, independent of platform font metrics.
@@ -708,11 +708,11 @@ readTest(
       await held;
       await route.continue().catch(() => {});
     });
-    const before = app.report.readPublications.length;
+    const before = app.report.readWrites.length;
     try {
       expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
       await seen;
-      expect(app.report.readPublications.length).toBe(before);
+      expect(app.report.readWrites.length).toBe(before);
       await expect(
         thread(page).locator(`[data-message-id="${app.exact.target.id}"]`),
       ).toBeFocused();
@@ -724,7 +724,7 @@ readTest(
       thread(page).locator(`[data-message-id="${app.exact.target.id}"]`),
     ).toBeFocused();
     await expect
-      .poll(() => app.report.readPublications.length)
+      .poll(() => app.report.readWrites.length)
       .toBeGreaterThan(before);
   },
 );
@@ -743,7 +743,7 @@ readTest(
       .getByRole("button", { name: "Close thread", exact: true })
       .focus();
     await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
-    const before = app.report.readPublications.length;
+    const before = app.report.readWrites.length;
     const row = page.locator(
       `[aria-label="Thread messages"] [data-message-id="${app.exact.target.id}"]`,
     );
@@ -768,7 +768,7 @@ readTest(
         .evaluate((element) => element.contains(document.activeElement)),
     ).toBe(false);
     await page.clock.runFor(10000);
-    expect(app.report.readPublications.length).toBe(before);
+    expect(app.report.readWrites.length).toBe(before);
     await page
       .getByRole("button", { name: "Close channel settings", exact: true })
       .click();
@@ -776,7 +776,7 @@ readTest(
     await expect(row).toBeFocused();
     await page.clock.resume();
     await expect
-      .poll(() => app.report.readPublications.length)
+      .poll(() => app.report.readWrites.length)
       .toBeGreaterThan(before);
   },
 );
@@ -787,7 +787,7 @@ traversalTest(
   async ({ page, app }) => {
     const child = app.append(
       "primary",
-      "alpha",
+      ids.alpha,
       "||REVEALED SPOILER TEXT||",
       false,
       false,
@@ -840,7 +840,7 @@ for (const movedFocus of [false, true])
     async ({ page, app }) => {
       const parent = app.append(
         "primary",
-        "alpha",
+        ids.alpha,
         "||PERSISTENT SPOILER||",
         false,
         true,
@@ -864,7 +864,7 @@ for (const movedFocus of [false, true])
       await focusTarget.focus();
       const child = app.append(
         "primary",
-        "alpha",
+        ids.alpha,
         "First live child",
         true,
         true,
@@ -908,7 +908,9 @@ liveTest(
   "stream repair retains thread rows, reading position and composer focus after exact opening",
   async ({ page, app }) => {
     await open(page, app);
-    await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+    await expect
+      .poll(() => app.relay.hasRoute("primary", ids.alpha))
+      .toBe(true);
     expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
     const region = thread(page);
     await expect(region.locator("[data-message-id]")).toHaveCount(81);

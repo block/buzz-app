@@ -7,21 +7,24 @@ import type { HeadPersistence, SavedHead, SavedStartup } from "./persistence";
 import { bounds, keypair, message, metadata, roster, profile } from "./testing";
 import type { RelayEvent } from "./events";
 import type { SidebarPreferences } from "./sidebar-preferences";
-import { readJournal, type ReadJournal } from "./read-state-storage";
+import { sidebarFixture, sidebarRow } from "./sidebar-testing";
 
 const viewer = keypair(),
   relay = keypair();
 const discovery = [
-  roster(relay, "alpha", [viewer.pubkey]),
-  metadata(relay, "alpha", "Alpha"),
+  roster(relay, "01234567-89ab-cdef-0123-456789abcdef", [viewer.pubkey]),
+  metadata(relay, "01234567-89ab-cdef-0123-456789abcdef", "Alpha"),
 ];
 const head = (content: string) => [
-  message(viewer, "alpha", content, 20),
-  bounds(relay, "alpha", "head", { has_more: false, next_cursor: null }),
+  message(viewer, "01234567-89ab-cdef-0123-456789abcdef", content, 20),
+  bounds(relay, "01234567-89ab-cdef-0123-456789abcdef", "head", {
+    has_more: false,
+    next_cursor: null,
+  }),
 ];
 const preferences: SidebarPreferences = {
   sections: [{ id: "work", name: "Work", order: 0 }],
-  assignments: { alpha: "work" },
+  assignments: { "01234567-89ab-cdef-0123-456789abcdef": "work" },
   starred: [],
   muted: [],
   sort: {},
@@ -45,7 +48,7 @@ function disk() {
   };
   let heads: SavedHead[] = [
     {
-      channelId: "alpha",
+      channelId: "01234567-89ab-cdef-0123-456789abcdef",
       savedAt: Date.now(),
       events: head("saved"),
       profiles: [],
@@ -82,17 +85,35 @@ function setup(
   storage = disk(),
   cachedOnly = false,
   initialChannelId?: string,
-  readIntent = false,
+  _readIntent = false,
 ) {
-  let journal: ReadJournal | undefined;
+  const bff = sidebarFixture();
+  bff.rows.set(
+    "11234567-89ab-cdef-0123-456789abcdef",
+    sidebarRow("11234567-89ab-cdef-0123-456789abcdef", {
+      unread: { status: "exact", value: 1 },
+    }),
+  );
   const membership = deferred<RelayEvent[]>();
   const query = vi.fn(
     async (filters: readonly import("./events").ReadFilter[]) => {
       if (filters.some((f) => f.kinds?.includes(39002)))
         return membership.promise;
       if (filters.some((f) => f.kinds?.includes(39000)))
-        return [metadata(relay, "alpha", "Updated Alpha", 1_700_000_001)];
-      if (filters.some((f) => f["#h"]?.includes("alpha"))) return head("fresh");
+        return [
+          metadata(
+            relay,
+            "01234567-89ab-cdef-0123-456789abcdef",
+            "Updated Alpha",
+            1_700_000_001,
+          ),
+        ];
+      if (
+        filters.some((f) =>
+          f["#h"]?.includes("01234567-89ab-cdef-0123-456789abcdef"),
+        )
+      )
+        return head("fresh");
       return [];
     },
   );
@@ -102,31 +123,14 @@ function setup(
       relayAuthor: relay.pubkey,
       query,
       media: () => undefined,
-      ...(readIntent
-        ? {
-            readState: {
-              decode: async () => [],
-              sign: async () => {
-                throw new Error("Not publishing in this test");
-              },
-              publish: async () => {},
-            },
-          }
-        : {}),
+      sidebarApi: bff.api,
     },
     {
       persistence: storage,
       prepared: true,
       cachedOnly,
       initialChannelId,
-      readPublisherLock: async (_signal, work) => work(),
-      readStateStorage: {
-        async update(change) {
-          journal = readJournal(change(journal), viewer.pubkey);
-          return journal;
-        },
-        close() {},
-      },
+      sidebarStorage: bff.storage,
     },
   );
   owners.push(owner);
@@ -174,14 +178,26 @@ describe("device-local startup", () => {
     const storage = disk();
     const participant = keypair();
     const alpha = [
-      roster(relay, "alpha", [viewer.pubkey, participant.pubkey]),
-      metadata(relay, "alpha", "Alpha", 1_700_000_000, [["t", "dm"]]),
+      roster(relay, "01234567-89ab-cdef-0123-456789abcdef", [
+        viewer.pubkey,
+        participant.pubkey,
+      ]),
+      metadata(
+        relay,
+        "01234567-89ab-cdef-0123-456789abcdef",
+        "Alpha",
+        1_700_000_000,
+        [["t", "dm"]],
+      ),
     ];
     const beta = [
-      roster(relay, "beta", [viewer.pubkey]),
-      metadata(relay, "beta", "Beta"),
+      roster(relay, "11234567-89ab-cdef-0123-456789abcdef", [viewer.pubkey]),
+      metadata(relay, "11234567-89ab-cdef-0123-456789abcdef", "Beta"),
     ];
-    const layout = { ...preferences, starred: ["beta"] };
+    const layout = {
+      ...preferences,
+      starred: ["11234567-89ab-cdef-0123-456789abcdef"],
+    };
     await storage.writeStartup?.({
       discovery: {
         savedAt: Date.now(),
@@ -205,13 +221,13 @@ describe("device-local startup", () => {
       ),
     );
     query.mockResolvedValue([
-      roster(relay, "beta", [viewer.pubkey]),
-      metadata(relay, "beta", "Beta"),
+      roster(relay, "11234567-89ab-cdef-0123-456789abcdef", [viewer.pubkey]),
+      metadata(relay, "11234567-89ab-cdef-0123-456789abcdef", "Beta"),
     ]);
     channels.refreshList?.();
     await vi.waitFor(() =>
       expect(channels.list().channels.map((channel) => channel.id)).toEqual([
-        "beta",
+        "11234567-89ab-cdef-0123-456789abcdef",
       ]),
     );
     expect(storage.clear).not.toHaveBeenCalled();
@@ -224,12 +240,14 @@ describe("device-local startup", () => {
       false,
     );
     expect(next.channels.list().channels.map((channel) => channel.id)).toEqual([
-      "beta",
+      "11234567-89ab-cdef-0123-456789abcdef",
     ]);
     expect(next.owner.session.sidebarPreferences.snapshot().data).toEqual(
       layout,
     );
-    expect(next.channels.window("alpha").rows).toEqual([]);
+    expect(
+      next.channels.window("01234567-89ab-cdef-0123-456789abcdef").rows,
+    ).toEqual([]);
   });
 
   it("reveals the selected head before verifying unrelated history", async () => {
@@ -237,8 +255,8 @@ describe("device-local startup", () => {
     const saved = await storage.readStartup?.();
     if (!saved?.discovery) throw new Error("Missing saved discovery");
     saved.discovery.events.push(
-      roster(relay, "beta", [viewer.pubkey]),
-      metadata(relay, "beta", "Beta"),
+      roster(relay, "11234567-89ab-cdef-0123-456789abcdef", [viewer.pubkey]),
+      metadata(relay, "11234567-89ab-cdef-0123-456789abcdef", "Beta"),
     );
     await storage.writeStartup?.(saved);
     const alpha = (await storage.read())[0];
@@ -246,17 +264,23 @@ describe("device-local startup", () => {
     let examinedBeta = false;
     const beta = {
       ...alpha,
-      channelId: "beta",
+      channelId: "11234567-89ab-cdef-0123-456789abcdef",
       get events() {
         examinedBeta = true;
         return [];
       },
     };
     storage.read = async () => [beta, alpha];
-    const { owner, channels } = setup(storage, true, "alpha");
+    const { owner, channels } = setup(
+      storage,
+      true,
+      "01234567-89ab-cdef-0123-456789abcdef",
+    );
     await owner.restore();
-    channels.ensure("alpha");
-    expect(channels.window("alpha").rows[0]?.content).toBe("saved");
+    channels.ensure("01234567-89ab-cdef-0123-456789abcdef");
+    expect(
+      channels.window("01234567-89ab-cdef-0123-456789abcdef").rows[0]?.content,
+    ).toBe("saved");
     expect(examinedBeta).toBe(false);
     await vi.waitFor(() => expect(examinedBeta).toBe(true));
   });
@@ -265,22 +289,33 @@ describe("device-local startup", () => {
     const { owner, channels, membership, query } = setup();
     await owner.restore();
     channels.ensureList();
-    channels.ensure("alpha");
-    channels.prepare?.("alpha");
+    channels.ensure("01234567-89ab-cdef-0123-456789abcdef");
+    channels.prepare?.("01234567-89ab-cdef-0123-456789abcdef");
     await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1));
     expect(channels.list().channels[0]).toMatchObject({
       name: "Alpha",
       readOnly: true,
       cached: true,
     });
-    expect(channels.window("alpha").rows[0]?.content).toBe("saved");
+    expect(
+      channels.window("01234567-89ab-cdef-0123-456789abcdef").rows[0]?.content,
+    ).toBe("saved");
     await expect(
-      owner.session.read([{ kinds: [9], "#h": ["alpha"], limit: 1 }]),
+      owner.session.read([
+        {
+          kinds: [9],
+          "#h": ["01234567-89ab-cdef-0123-456789abcdef"],
+          limit: 1,
+        },
+      ]),
     ).rejects.toThrow("Reconnect");
     expect(query).toHaveBeenCalledTimes(1);
     membership.resolve(discovery);
     await vi.waitFor(() =>
-      expect(channels.window("alpha").rows[0]?.content).toBe("fresh"),
+      expect(
+        channels.window("01234567-89ab-cdef-0123-456789abcdef").rows[0]
+          ?.content,
+      ).toBe("fresh"),
     );
     expect(channels.list().channels[0]?.cached).toBeUndefined();
     expect(channels.list().channels[0]?.readOnly).toBeUndefined();
@@ -288,7 +323,9 @@ describe("device-local startup", () => {
       query.mock.calls
         .flatMap(([filters]) => filters)
         .filter((f) => f["#h"])
-        .every((f) => f["#h"]?.every((id) => id === "alpha")),
+        .every((f) =>
+          f["#h"]?.every((id) => id === "01234567-89ab-cdef-0123-456789abcdef"),
+        ),
     ).toBe(true);
   });
   it.each(["confirm", "omit", "deny"])(
@@ -296,10 +333,15 @@ describe("device-local startup", () => {
     async (outcome) => {
       const { owner, channels, query, membership } = setup();
       await owner.restore();
-      channels.ensure("alpha");
+      channels.ensure("01234567-89ab-cdef-0123-456789abcdef");
       channels.ensureList();
       await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1));
-      const fresh = message(keypair(), "alpha", "Never saved", 30);
+      const fresh = message(
+        keypair(),
+        "01234567-89ab-cdef-0123-456789abcdef",
+        "Never saved",
+        30,
+      );
       query.mockImplementation(async (filters) => {
         if (filters.some((f) => f.kinds?.includes(39002)))
           return membership.promise;
@@ -307,19 +349,28 @@ describe("device-local startup", () => {
           return [fresh];
         return [];
       });
-      const exact = owner.session.thread("alpha", fresh.id, { exact: true });
+      const exact = owner.session.thread(
+        "01234567-89ab-cdef-0123-456789abcdef",
+        fresh.id,
+        { exact: true },
+      );
       await exact.refresh();
       expect(exact.snapshot().target).toBeUndefined();
       expect(query).toHaveBeenCalledTimes(1);
       expect(await owner.session.read([{ ids: [fresh.id], limit: 1 }])).toEqual(
         [],
       );
-      expect(channels.window("alpha").rows[0]?.content).toBe("saved");
+      expect(
+        channels.window("01234567-89ab-cdef-0123-456789abcdef").rows[0]
+          ?.content,
+      ).toBe("saved");
       if (outcome === "deny")
         membership.reject(new ReadError("denied", "Removed"));
       else membership.resolve(outcome === "confirm" ? discovery : []);
       await vi.waitFor(() =>
-        expect(channels.get?.("alpha")?.cached).toBeUndefined(),
+        expect(
+          channels.get?.("01234567-89ab-cdef-0123-456789abcdef")?.cached,
+        ).toBeUndefined(),
       );
       await exact.refresh();
       if (outcome === "confirm") {
@@ -329,7 +380,9 @@ describe("device-local startup", () => {
         ).toBe(fresh.id);
       } else {
         expect(exact.snapshot().target).toBeUndefined();
-        expect(channels.window("alpha").rows).toEqual([]);
+        expect(
+          channels.window("01234567-89ab-cdef-0123-456789abcdef").rows,
+        ).toEqual([]);
       }
       exact.dispose();
     },
@@ -337,8 +390,8 @@ describe("device-local startup", () => {
   it("automatically observes unopened-channel unread after a held cached roster becomes fresh", async () => {
     const storage = disk();
     const beta = [
-      roster(relay, "beta", [viewer.pubkey]),
-      metadata(relay, "beta", "Beta"),
+      roster(relay, "11234567-89ab-cdef-0123-456789abcdef", [viewer.pubkey]),
+      metadata(relay, "11234567-89ab-cdef-0123-456789abcdef", "Beta"),
     ];
     await storage.writeStartup?.({
       discovery: {
@@ -352,7 +405,12 @@ describe("device-local startup", () => {
     channels.ensureList();
     await owner.session.unread.ensure();
     await owner.session.unread.ensure();
-    const evidence = message(keypair(), "beta", "While closed", 30);
+    const evidence = message(
+      keypair(),
+      "11234567-89ab-cdef-0123-456789abcdef",
+      "While closed",
+      30,
+    );
     query.mockImplementation(async (filters) => {
       if (filters.some((f) => f.kinds?.includes(39002)))
         return membership.promise;
@@ -367,11 +425,15 @@ describe("device-local startup", () => {
     membership.resolve([...discovery, ...beta]);
     await vi.waitFor(() =>
       expect(
-        owner.session.unread.snapshot({ kind: "channel", channelId: "beta" })
-          .observedCount,
-      ).toBe(1),
+        owner.session.unread.snapshot({
+          kind: "channel",
+          channelId: "11234567-89ab-cdef-0123-456789abcdef",
+        }).unread,
+      ).toEqual({ status: "exact", value: 1 }),
     );
-    expect(channels.window("beta").rows).toEqual([]);
+    expect(
+      channels.window("11234567-89ab-cdef-0123-456789abcdef").rows,
+    ).toEqual([]);
   });
   it.each(["confirm", "omit", "deny"])(
     "revalidates demanded cached membership omitted by capped discovery: %s",
@@ -384,13 +446,19 @@ describe("device-local startup", () => {
       query.mockImplementation(async (filters) => {
         if (
           filters.some(
-            (f) => f.kinds?.includes(39002) && f["#d"]?.includes("alpha"),
+            (f) =>
+              f.kinds?.includes(39002) &&
+              f["#d"]?.includes("01234567-89ab-cdef-0123-456789abcdef"),
           )
         )
           return exact.promise;
         if (filters.some((f) => f.kinds?.includes(39002)))
           return membership.promise;
-        if (filters.some((f) => f["#h"]?.includes("alpha")))
+        if (
+          filters.some((f) =>
+            f["#h"]?.includes("01234567-89ab-cdef-0123-456789abcdef"),
+          )
+        )
           return head("fresh");
         return [];
       });
@@ -402,42 +470,67 @@ describe("device-local startup", () => {
       await vi.waitFor(() =>
         expect(owner.session.live.snapshot().roster.state).toBe("verified"),
       );
-      expect(channels.get?.("alpha")?.cached).toBe(true);
+      expect(
+        channels.get?.("01234567-89ab-cdef-0123-456789abcdef")?.cached,
+      ).toBe(true);
       expect(
         (await storage.readStartup?.())?.discovery?.events.some((e) =>
-          (e as RelayEvent).tags.some(([k, v]) => k === "d" && v === "alpha"),
+          (e as RelayEvent).tags.some(
+            ([k, v]) =>
+              k === "d" && v === "01234567-89ab-cdef-0123-456789abcdef",
+          ),
         ),
       ).toBe(false);
-      channels.ensure("alpha");
-      channels.refresh?.("alpha");
-      channels.loadOlder("alpha");
+      channels.ensure("01234567-89ab-cdef-0123-456789abcdef");
+      channels.refresh?.("01234567-89ab-cdef-0123-456789abcdef");
+      channels.loadOlder("01234567-89ab-cdef-0123-456789abcdef");
       await vi.waitFor(() =>
         expect(
           query.mock.calls
             .flatMap(([filters]) => filters)
             .filter(
-              (f) => f.kinds?.includes(39002) && f["#d"]?.includes("alpha"),
+              (f) =>
+                f.kinds?.includes(39002) &&
+                f["#d"]?.includes("01234567-89ab-cdef-0123-456789abcdef"),
             ),
         ).toHaveLength(1),
       );
-      expect(channels.window("alpha").rows[0]?.content).toBe("saved");
+      expect(
+        channels.window("01234567-89ab-cdef-0123-456789abcdef").rows[0]
+          ?.content,
+      ).toBe("saved");
       if (outcome === "deny") exact.reject(new ReadError("denied", "Removed"));
       else
         exact.resolve(
           outcome === "confirm"
             ? discovery
-            : [metadata(relay, "alpha", "Alpha")],
+            : [
+                metadata(
+                  relay,
+                  "01234567-89ab-cdef-0123-456789abcdef",
+                  "Alpha",
+                ),
+              ],
         );
       await vi.waitFor(() =>
-        expect(channels.get?.("alpha")?.cached).toBeUndefined(),
+        expect(
+          channels.get?.("01234567-89ab-cdef-0123-456789abcdef")?.cached,
+        ).toBeUndefined(),
       );
       if (outcome === "confirm") {
         await vi.waitFor(() =>
-          expect(channels.window("alpha").rows[0]?.content).toBe("fresh"),
+          expect(
+            channels.window("01234567-89ab-cdef-0123-456789abcdef").rows[0]
+              ?.content,
+          ).toBe("fresh"),
         );
       } else {
-        expect(channels.get?.("alpha")).toBeUndefined();
-        expect(channels.window("alpha").rows).toEqual([]);
+        expect(
+          channels.get?.("01234567-89ab-cdef-0123-456789abcdef"),
+        ).toBeUndefined();
+        expect(
+          channels.window("01234567-89ab-cdef-0123-456789abcdef").rows,
+        ).toEqual([]);
         expect(await storage.read()).toEqual([]);
       }
     },
@@ -450,10 +543,14 @@ describe("device-local startup", () => {
       true,
     );
     await owner.restore();
-    channels.ensure("alpha");
-    const id = channels.window("alpha").rows[0]?.id;
+    channels.ensure("01234567-89ab-cdef-0123-456789abcdef");
+    const id = channels.window("01234567-89ab-cdef-0123-456789abcdef").rows[0]
+      ?.id;
     if (!id) throw new Error("Missing saved row");
-    const target = { kind: "channel", channelId: "alpha" } as const;
+    const target = {
+      kind: "channel",
+      channelId: "01234567-89ab-cdef-0123-456789abcdef",
+    } as const;
     await expect(
       owner.session.unread.markThrough(target, id),
     ).rejects.toThrow();
@@ -467,9 +564,13 @@ describe("device-local startup", () => {
     );
     membership.resolve(discovery);
     await vi.waitFor(() =>
-      expect(channels.get?.("alpha")?.cached).toBeUndefined(),
+      expect(
+        channels.get?.("01234567-89ab-cdef-0123-456789abcdef")?.cached,
+      ).toBeUndefined(),
     );
-    expect(owner.session.unread.snapshot(target).observedCount).not.toBeNull();
+    expect(owner.session.unread.snapshot(target).unread).toEqual({
+      status: "unknown",
+    });
     // A known saved message reaches durability, rather than failing evidence lookup.
     await expect(
       owner.session.unread.markThrough(target, id),
@@ -480,26 +581,30 @@ describe("device-local startup", () => {
     const { owner, channels, query } = setup(disk(), true);
     await owner.restore();
     channels.ensureList();
-    channels.ensure("alpha");
-    channels.prepare?.("alpha");
-    channels.refresh?.("alpha");
-    channels.loadOlder("alpha");
+    channels.ensure("01234567-89ab-cdef-0123-456789abcdef");
+    channels.prepare?.("01234567-89ab-cdef-0123-456789abcdef");
+    channels.refresh?.("01234567-89ab-cdef-0123-456789abcdef");
+    channels.loadOlder("01234567-89ab-cdef-0123-456789abcdef");
     await owner.session.unread.ensure();
     expect(query).not.toHaveBeenCalled();
-    expect(channels.window("alpha").rows[0]?.content).toBe("saved");
+    expect(
+      channels.window("01234567-89ab-cdef-0123-456789abcdef").rows[0]?.content,
+    ).toBe("saved");
   });
   it.each(["absent", "denied"])(
     "fresh %s membership removes saved rows, heads and next-launch discovery",
     async (outcome) => {
       const { owner, channels, membership, query, storage } = setup();
       await owner.restore();
-      channels.ensure("alpha");
+      channels.ensure("01234567-89ab-cdef-0123-456789abcdef");
       channels.ensureList();
       await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1));
       if (outcome === "absent") membership.resolve([]);
       else membership.reject(new ReadError("denied", "Removed"));
       await vi.waitFor(() => expect(channels.list().channels).toEqual([]));
-      expect(channels.window("alpha").rows).toEqual([]);
+      expect(
+        channels.window("01234567-89ab-cdef-0123-456789abcdef").rows,
+      ).toEqual([]);
       expect(await storage.read()).toEqual([]);
       const saved = await storage.readStartup?.();
       expect(saved?.discovery?.events ?? []).toEqual([]);
@@ -508,13 +613,15 @@ describe("device-local startup", () => {
   it("transient discovery failure retains the readable snapshot for deliberate retry", async () => {
     const { owner, channels, membership, query } = setup();
     await owner.restore();
-    channels.ensure("alpha");
+    channels.ensure("01234567-89ab-cdef-0123-456789abcdef");
     channels.ensureList();
     await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1));
     membership.reject(new ReadError("unavailable", "Offline"));
     await vi.waitFor(() => expect(channels.list().status).toBe("error"));
     expect(channels.list().channels[0]?.cached).toBe(true);
-    expect(channels.window("alpha").rows[0]?.content).toBe("saved");
+    expect(
+      channels.window("01234567-89ab-cdef-0123-456789abcdef").rows[0]?.content,
+    ).toBe("saved");
   });
   it.each(["tampered", "expired", "other-relay"])(
     "ignores %s discovery without blocking fresh reads",
@@ -546,7 +653,13 @@ describe("device-local startup", () => {
     storage.readStartup = () => delayed.promise;
     const { owner, channels } = setup(storage);
     const restoring = owner.restore();
-    await owner.session.read([{ kinds: [39000], "#d": ["alpha"], limit: 1 }]);
+    await owner.session.read([
+      {
+        kinds: [39000],
+        "#d": ["01234567-89ab-cdef-0123-456789abcdef"],
+        limit: 1,
+      },
+    ]);
     delayed.resolve(saved);
     await restoring;
     expect(channels.list().channels).toEqual([]);
@@ -561,32 +674,60 @@ describe("device-local startup", () => {
     await owner.clearCache();
     delayed.resolve(saved);
     await restoring;
-    channels.ensure("alpha");
+    channels.ensure("01234567-89ab-cdef-0123-456789abcdef");
     await owner.restore();
     expect(channels.list().channels).toEqual([]);
-    expect(channels.window("alpha").rows).toEqual([]);
+    expect(
+      channels.window("01234567-89ab-cdef-0123-456789abcdef").rows,
+    ).toEqual([]);
     expect(await storage.read()).toEqual([]);
   });
   it("clearing an already restored owner removes its cached discovery", async () => {
     const { owner, channels } = setup(disk(), true);
     await owner.restore();
-    channels.ensure("alpha");
+    channels.ensure("01234567-89ab-cdef-0123-456789abcdef");
     await owner.clearCache();
-    channels.ensure("alpha");
+    channels.ensure("01234567-89ab-cdef-0123-456789abcdef");
     expect(channels.list().channels).toEqual([]);
-    expect(channels.window("alpha").rows).toEqual([]);
+    expect(
+      channels.window("01234567-89ab-cdef-0123-456789abcdef").rows,
+    ).toEqual([]);
   });
   it("never renews unconfirmed saved membership or promotes it from an older response", () => {
     const state = new DiscoveryState(viewer.pubkey, relay.pubkey);
-    state.accept(roster(relay, "alpha", [viewer.pubkey], 20), true);
-    state.accept(roster(relay, "beta", [viewer.pubkey], 20));
-    state.accept(roster(relay, "alpha", [viewer.pubkey], 19));
-    expect(state.canParticipate("alpha")).toBe(false);
+    state.accept(
+      roster(
+        relay,
+        "01234567-89ab-cdef-0123-456789abcdef",
+        [viewer.pubkey],
+        20,
+      ),
+      true,
+    );
+    state.accept(
+      roster(
+        relay,
+        "11234567-89ab-cdef-0123-456789abcdef",
+        [viewer.pubkey],
+        20,
+      ),
+    );
+    state.accept(
+      roster(
+        relay,
+        "01234567-89ab-cdef-0123-456789abcdef",
+        [viewer.pubkey],
+        19,
+      ),
+    );
+    expect(state.canParticipate("01234567-89ab-cdef-0123-456789abcdef")).toBe(
+      false,
+    );
     expect(
       state
         .savedEvents()
         .map((event) => event.tags.find(([key]) => key === "d")?.[1]),
-    ).toEqual(["beta"]);
+    ).toEqual(["11234567-89ab-cdef-0123-456789abcdef"]);
   });
   it("restores preference display without a writable base; fresh response replaces it", async () => {
     const fresh = deferred<typeof preferences>();
@@ -611,9 +752,13 @@ describe("device-local startup", () => {
       expect(store.queries.writable).toBe(false);
       expect(store.queries.sortWritable).toBe(false);
       await expect(
-        store.queries.setSort("channels", "recent", ["alpha"]),
+        store.queries.setSort("channels", "recent", [
+          "01234567-89ab-cdef-0123-456789abcdef",
+        ]),
       ).rejects.toThrow();
-      await expect(store.queries.setMute("alpha", true)).rejects.toThrow();
+      await expect(
+        store.queries.setMute("01234567-89ab-cdef-0123-456789abcdef", true),
+      ).rejects.toThrow();
       expect(sort).not.toHaveBeenCalled();
       expect(mute).not.toHaveBeenCalled();
       const loading = store.queries.ensure();

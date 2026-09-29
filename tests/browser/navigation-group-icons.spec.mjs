@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 const channelName = "buzz-tiptap-view-dom-crash";
@@ -6,7 +6,7 @@ test.use({
   productionBroker: true,
   savedSidebar: true,
   sidebarIcons: true,
-  channelNames: { beta: channelName },
+  channelNames: { [ids.beta]: channelName },
 });
 
 // Real catalog → session media URL → sidebar/menu image; browser layout owns
@@ -89,7 +89,7 @@ test("group icons resolve custom media without overlapping labels, and the creat
     .screenshot({
       path: testInfo.outputPath("group-emoji-spacing.png"),
     });
-  const row = section.locator('[data-channel-id="beta"]');
+  const row = section.locator(`[data-channel-id="${ids.beta}"]`);
   await row.focus();
   await page.keyboard.press("Shift+F10");
   const move = page.getByRole("menuitem", {

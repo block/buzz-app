@@ -11,7 +11,11 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createAgentLibrary } from "../agents/library";
-import type { ChannelMessage } from "../relay/contracts";
+import type { ChannelMessage, ChannelQueries } from "../relay/contracts";
+import { createUnread } from "../relay/unread";
+import { sidebarFixture } from "../relay/sidebar-testing";
+import type { RelayEvent } from "../relay/events";
+import { verifiedSymbol } from "nostr-tools";
 import type { RelaySession } from "../relay/session";
 import type { ThreadSnapshot } from "../relay/threads";
 import type { MessageComposerProps } from "./MessageComposer";
@@ -70,7 +74,7 @@ function row(id: string, replyParentId?: string): ChannelMessage {
     replyCount: 0,
   };
 }
-function setup(messageId = "root") {
+function setup(messageId = "root", unread?: RelaySession["unread"]) {
   let snapshot: ThreadSnapshot = {
     root: row("root"),
     replies: [
@@ -100,13 +104,13 @@ function setup(messageId = "root") {
     agentChoices: createAgentLibrary(undefined).queries,
     messages: { retry: () => {} },
     media: () => undefined,
-    unread: {
-      subscribe: () => () => {},
+    unread: unread ?? {
+      subscribeMessages: () => () => {},
       snapshot: () => undefined,
       attention: () => ({ unread: false }),
     },
   } as unknown as RelaySession;
-  render(
+  const mounted = render(
     <ThreadPanel
       session={session}
       scope="test"
@@ -118,6 +122,7 @@ function setup(messageId = "root") {
     />,
   );
   return {
+    unmount: mounted.unmount,
     setRoot(root: ChannelMessage | undefined) {
       act(() => {
         snapshot = { ...snapshot, root };
@@ -324,3 +329,120 @@ for (const startsWithChild of [false, true])
         screen.getByRole("button", { name: "View 1 reply" }),
       ).toBeVisible();
   });
+
+it("owns descendant evidence and rerenders on message changes without an aggregate count change", () => {
+  const leases = new Map<string, () => void>();
+  const unreadIds = new Set<string>();
+  const aggregate = Object.freeze({});
+  const unread = {
+    snapshot: () => aggregate,
+    subscribeMessages(
+      _channelId: string,
+      ids: readonly string[],
+      listener: () => void,
+    ) {
+      for (const id of ids) leases.set(id, listener);
+      return () => {
+        for (const id of ids) leases.delete(id);
+      };
+    },
+    attention(_channelId: string, id: string) {
+      return { unread: leases.has(id) && unreadIds.has(id) };
+    },
+  } as unknown as RelaySession["unread"];
+  const h = setup("root", unread);
+  expect([...leases.keys()].sort()).toEqual(["child", "grandchild"]);
+  expect(screen.getByRole("button", { name: "View 2 replies" })).toBeVisible();
+  act(() => {
+    unreadIds.add("grandchild");
+    for (const listener of leases.values()) listener();
+  });
+  expect(
+    screen.getByRole("button", {
+      name: "View 2 replies. 1 new in available replies",
+    }),
+  ).toBeVisible();
+  act(() => {
+    unreadIds.clear();
+    for (const listener of leases.values()) listener();
+  });
+  expect(screen.getByRole("button", { name: "View 2 replies" })).toBeVisible();
+  h.update([row("parent", "root"), row("replacement", "parent")]);
+  expect([...leases.keys()]).toEqual(["replacement"]);
+  h.unmount();
+  expect(leases.size).toBe(0);
+});
+
+it("bounds one grouped lease for more than 1000 nested replies and labels overflow unknown", async () => {
+  const bff = sidebarFixture();
+  const events = new Map<string, RelayEvent>();
+  const messages = [
+    row("root"),
+    row("parent", "root"),
+    ...Array.from({ length: 1101 }, (_, i) => row(`nested-${i}`, "parent")),
+  ];
+  for (const message of messages) {
+    events.set(message.id, {
+      id: message.id,
+      pubkey: message.authorId,
+      kind: 9,
+      created_at: 1,
+      tags: [
+        ["h", "c"],
+        ...(message.replyParentId ? [["e", "root", "", "root"]] : []),
+      ],
+      content: message.content,
+      sig: "",
+      [verifiedSymbol]: true,
+    });
+    bff.messages.set(message.id, {
+      message_id: message.id,
+      status: "unread",
+      attention: false,
+    });
+  }
+  const unread = createUnread({
+    api: bff.api,
+    storage: bff.storage,
+    scope: "large-thread",
+    viewer: "viewer",
+    channels: {
+      list: () => ({
+        status: "ready",
+        channels: [{ id: "c", members: ["viewer"] }],
+      }),
+      subscribeList: () => () => {},
+    } as unknown as ChannelQueries,
+    reader: { read: async () => [] },
+    find: (id) => events.get(id),
+  });
+  const retain = vi.spyOn(unread.state, "retain");
+  const h = setup("root", unread.capability);
+  try {
+    retain.mockClear();
+    h.update(messages.slice(1));
+    expect(retain).toHaveBeenCalledTimes(1);
+    expect(retain.mock.calls[0]?.[0].message_ids).toHaveLength(1101);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: "View 1101 replies. At least 500 new in available replies",
+        }),
+      ).toBeVisible(),
+    );
+    expect(bff.api.contexts).toHaveBeenCalledTimes(5);
+    expect(
+      unread.capability.snapshot({
+        kind: "message",
+        channelId: "c",
+        messageId: "nested-1100",
+      }).unread,
+    ).toEqual({ status: "unknown" });
+    h.unmount();
+    expect(
+      unread.state.context({ channel_id: "c", root_id: "root" }),
+    ).toBeUndefined();
+  } finally {
+    unread.dispose();
+  }
+});

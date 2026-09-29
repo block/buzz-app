@@ -70,7 +70,13 @@ function ActivityRow({
             </span>
             <span className={styles.activityItemMeta}>
               Thread
-              {item.unreadCount > 1 ? ` · ${item.unreadCount} unread` : ""}
+              {item.unread.status === "unknown"
+                ? " · Unread count unknown"
+                : item.unread.status === "at_least"
+                  ? ` · At least ${item.unread.value} unread`
+                  : item.unread.value > 1
+                    ? ` · ${item.unread.value} unread`
+                    : ""}
             </span>
             <span className={styles.activityItemPreview}>{item.preview}</span>
           </span>
@@ -113,6 +119,7 @@ export function ChannelActivityPopover({
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
+        if (next) void session.unread.loadActivity(channelId).catch(() => {});
         if (next)
           void session.profiles
             .ensure(
@@ -137,6 +144,11 @@ export function ChannelActivityPopover({
         aria-label={`Activity in ${channelName}`}
       >
         {stale && <p className={styles.activityStale}>May be out of date</p>}
+        {!snapshot.complete && (
+          <p className={styles.activityStale}>
+            More activity may be in this channel
+          </p>
+        )}
         {open && (
           <div className={styles.activityList}>
             {items.map((item) => (

@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { settle } from "./timeline.mjs";
 
 // The production app's exact-reader -> DOM focus/visibility -> navigation
@@ -6,13 +6,13 @@ import { settle } from "./timeline.mjs";
 test.use({
   pluginFixtures: true,
   exactMessages: true,
-  sessionChannels: ["alpha"],
+  sessionChannels: [ids.alpha],
   historyCounts: { alpha: 90, beta: 5 },
 });
 const target = (app, messageId, threadRootId) => ({
   version: 1,
   kind: "conversation",
-  channelId: "alpha",
+  channelId: ids.alpha,
   scope: { viewer: app.viewer, communityOrigin: "https://primary.example" },
   ...(messageId ? { messageId } : {}),
   ...(threadRootId ? { threadRootId } : {}),
@@ -110,7 +110,7 @@ membershipTest(
     await settle(page);
     const reply = app.append(
       "primary",
-      "alpha",
+      ids.alpha,
       "Loaded session reply",
       true,
       true,

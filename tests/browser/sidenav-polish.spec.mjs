@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 // Real layout, pointer hover and portaled-menu geometry cannot be proven in jsdom.
@@ -252,7 +252,7 @@ test("channel name fades follow renames without resizing the sidebar", async ({
 }) => {
   await open(page, app);
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
-  const alpha = sidebar.locator('button[data-channel-id="alpha"]');
+  const alpha = sidebar.locator(`button[data-channel-id="${ids.alpha}"]`);
   const label = alpha.getByText("Alpha", { exact: true });
   const labelNode = await label.elementHandle();
   const originalWidth = await label.evaluate((element) => element.clientWidth);
@@ -273,7 +273,7 @@ test("channel name fades follow renames without resizing the sidebar", async ({
     ],
     ["Alpha", false],
   ]) {
-    app.renameChannel("alpha", name);
+    app.renameChannel(ids.alpha, name);
     await settings
       .getByRole("button", { name: "Refresh channels", exact: true })
       .click();

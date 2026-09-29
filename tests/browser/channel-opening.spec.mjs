@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({
@@ -37,8 +37,8 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
         filter.authors?.some((id) => app.participants.includes(id)),
     );
   app.relay.holdProfiles(app.participants);
-  app.relay.holdEose("alpha");
-  app.relay.holdEose("beta");
+  app.relay.holdEose(ids.alpha);
+  app.relay.holdEose(ids.beta);
   // Establish a cold target deterministically: let the actual label read own
   // the background slot before preferences release the roster warmer. Hold the
   // host decoder, not a reader slot; demand and all production owners stay real.
@@ -67,7 +67,7 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
   };
   try {
     await open(page, app);
-    await establish("alpha");
+    await establish(ids.alpha);
     await expect.poll(() => labelReads().length).toBe(1);
     expect(labelReads()[0].filter.authors).toHaveLength(500);
     expect(app.report.profileHolds.some((held) => held.pending)).toBe(true);
@@ -80,7 +80,7 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
     await decoded;
     // The actual label hook has >1,000 missing participants. Keep its profile
     // response held through cold opening; do not bypass that production caller.
-    expect(heads(app, "beta")).toHaveLength(0);
+    expect(heads(app, ids.beta)).toHaveLength(0);
     await page
       .getByRole("button", { name: "Beta", exact: true })
       .evaluate((button) => {
@@ -100,10 +100,10 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
       ),
       note: "Includes Playwright visibility assertion roundtrip; warm times use browser paint clock",
     });
-    expect(heads(app, "beta").length).toBeGreaterThan(0);
+    expect(heads(app, ids.beta).length).toBeGreaterThan(0);
     expect(app.report.profileHolds.some((held) => held.pending)).toBe(true);
     expect(app.report.profileHolds.some((held) => held.aborted)).toBe(false);
-    await establish("beta");
+    await establish(ids.beta);
     const before = submittedHeads.length;
     const warmTimings = [];
     const targetMs = 100;
@@ -176,7 +176,7 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
           {
             name,
             ids: app.histories
-              .get(`primary/${name.toLowerCase()}`)
+              .get(`primary/${ids[name.toLowerCase()]}`)
               .map((event) => event.id),
           },
         );
@@ -220,8 +220,8 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
         .toBeLessThan(ceilingMs);
   } finally {
     preferences.resolve();
-    app.relay.releaseEose("alpha");
-    app.relay.releaseEose("beta");
+    app.relay.releaseEose(ids.alpha);
+    app.relay.releaseEose(ids.beta);
     app.relay.releaseProfiles();
     await page.unrouteAll({ behavior: "wait" });
   }

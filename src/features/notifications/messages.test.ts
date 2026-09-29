@@ -21,10 +21,11 @@ import {
   flush,
 } from "../relay/testing";
 import {
-  newReadJournal,
-  readJournal,
-  type ReadJournal,
-} from "../relay/read-state-storage";
+  sidebarFixture,
+  sidebarRow,
+  sidebarAccount,
+} from "../relay/sidebar-testing";
+import type { RelayEvent } from "../relay/events";
 import { NotificationsService } from "./service";
 import { createNotificationPreferences } from "./preferences";
 import { provideNavigation } from "../navigation/service";
@@ -39,7 +40,6 @@ async function setup(
   readBarrier: Promise<void> = Promise.resolve(),
   readFrontier?: number,
   remote?: {
-    observation: "bounded" | "snapshot";
     barrier: Promise<void>;
     decodeBarrier?: Promise<void>;
     frontier: number;
@@ -53,66 +53,56 @@ async function setup(
     relay = keypair();
   const origin = "https://relay.example.com";
   let callbacks!: LiveCallbacks;
-  let readState: ReadJournal | undefined =
-    readFrontier === undefined
-      ? undefined
-      : {
-          ...newReadJournal(),
-          state: { frontiers: { room: readFrontier }, overrides: {} },
-        };
-  const markerQuery = vi.fn(async () => {
+  const bff = sidebarFixture();
+  const observed = new Map<string, RelayEvent>();
+  let frontier = readFrontier ?? remote?.frontier;
+  const sidebarQuery = vi.fn(async () => {
     await remote?.barrier;
-    return [
-      signed(viewer, {
-        kind: 30078,
-        tags: [
-          ["d", `read-state:${"a".repeat(32)}`],
-          ["t", "read-state"],
-        ],
-        content: "encrypted remote marker",
-      }),
-    ];
+    return {
+      account: sidebarAccount,
+      channels: [...bff.rows.values()],
+      next_cursor: null,
+    };
   });
-  const decode = vi.fn(
-    async (
-      events: readonly ReturnType<typeof message>[],
-      signal: AbortSignal,
-    ) => {
-      await remote?.decodeBarrier;
-      signal.throwIfAborted();
-      return events.map((event) => ({
-        eventId: event.id,
-        blob: {
-          v: 1,
-          client_id: "other-device",
-          contexts: { room: remote?.frontier },
-        },
-      }));
-    },
-  );
-  const query = vi.fn(async (filters: readonly ReadFilter[]) =>
-    remote && filters[0]?.kinds?.includes(30078)
-      ? markerQuery()
-      : ([] as ReturnType<typeof message>[]),
+  bff.api.sidebar.mockImplementation(sidebarQuery);
+  const contextQuery = bff.api.contexts;
+  contextQuery.mockImplementation(async (queries) => {
+    await remote?.barrier;
+    await remote?.decodeBarrier;
+    return {
+      account: sidebarAccount,
+      contexts: queries.map((q) => ({
+        status: "available",
+        through_timestamp: frontier ?? null,
+        messages: q.message_ids.map((message_id) => {
+          const event = observed.get(message_id);
+          if (!event) return { message_id, status: "unavailable" };
+          if (
+            event.pubkey === viewer.pubkey ||
+            (frontier !== undefined && event.created_at <= frontier)
+          )
+            return { message_id, status: "read" };
+          return { message_id, status: "unread", attention: true };
+        }),
+      })),
+    };
+  });
+  bff.api.write.mockImplementation(async (intents) => {
+    for (const intent of intents) {
+      const event = observed.get(intent.message_id);
+      if (event) frontier = Math.max(frontier ?? -1, event.created_at);
+    }
+    return intents.map(() => ({ status: "applied" }));
+  });
+  const query = vi.fn(
+    async (_filters: readonly ReadFilter[]) => [] as RelayEvent[],
   );
   const owner = createRelaySession(
     {
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
       query,
-      ...(remote
-        ? {
-            readState: {
-              decode,
-              ...(remote.observation === "snapshot"
-                ? { communityId: "test-community" }
-                : {}),
-            },
-            ...(remote.observation === "snapshot"
-              ? { readStateSnapshot: markerQuery }
-              : {}),
-          }
-        : {}),
+      sidebarApi: bff.api,
       ...(sidebar
         ? {
             decodeSidebarPreferences: sidebar.decode,
@@ -122,6 +112,7 @@ async function setup(
       media: () => undefined,
       subscribe(value) {
         callbacks = value;
+        callbacks.state({ status: "connected", routes: [] });
         return { update() {}, retry() {}, dispose() {} };
       },
     },
@@ -134,11 +125,10 @@ async function setup(
             subscribe: () => () => {},
           }),
       },
-      readStateStorage: {
+      sidebarStorage: {
         async update(change) {
           await readBarrier;
-          readState = readJournal(change(readState), viewer.pubkey);
-          return readState;
+          return bff.storage.update(change);
         },
         close() {},
       },
@@ -204,11 +194,16 @@ async function setup(
     preferences,
     (target) => notificationAuthorized(communities, target),
   );
-  const discover = () =>
+  const discover = () => {
+    bff.rows.set(
+      "01234567-89ab-cdef-0123-456789abcdef",
+      sidebarRow("01234567-89ab-cdef-0123-456789abcdef"),
+    );
     callbacks.receive([
-      roster(relay, "room", [viewer.pubkey]),
-      metadata(relay, "room", "Room"),
+      roster(relay, "01234567-89ab-cdef-0123-456789abcdef", [viewer.pubkey]),
+      metadata(relay, "01234567-89ab-cdef-0123-456789abcdef", "Room"),
     ]);
+  };
   // Channels starts the same shared observation once the roster is ready.
   if (remote?.channelsMounted) {
     discover();
@@ -225,24 +220,56 @@ async function setup(
   const emit = (
     events: ReturnType<typeof message>[],
     phase?: "replay" | "live",
-    channelId = "room",
-  ) => callbacks.receive(events, phase ? { phase, channelId } : undefined);
+    channelId = "01234567-89ab-cdef-0123-456789abcdef",
+  ) => {
+    for (const event of events) {
+      if (event.kind === 5 || event.kind === 9005) {
+        for (const [name, id] of event.tags)
+          if (name === "e" && id) observed.delete(id);
+      } else observed.set(event.id, event);
+    }
+    callbacks.receive(events, phase ? { phase, channelId } : undefined);
+  };
   if (!remote?.channelsMounted && !remote?.deferRoster) discover();
   const make = (text: string, age = 0, author = peer) =>
-    message(author, "room", text, Math.floor(Date.now() / 1000) - age, [
-      ["p", viewer.pubkey],
-    ]);
+    message(
+      author,
+      "01234567-89ab-cdef-0123-456789abcdef",
+      text,
+      Math.floor(Date.now() / 1000) - age,
+      [["p", viewer.pubkey]],
+    );
   return {
     owner,
     notifications,
     navigation,
     emit,
     make,
+    async retain(row: RelayEvent) {
+      const stop = owner.session.unread.subscribe(
+        {
+          kind: "message",
+          channelId: "01234567-89ab-cdef-0123-456789abcdef",
+          messageId: row.id,
+        },
+        () => {},
+      );
+      cleanups.push(stop);
+      await vi.waitFor(() =>
+        expect(
+          owner.session.unread.attention(
+            "01234567-89ab-cdef-0123-456789abcdef",
+            row.id,
+          ).status,
+        ).not.toBe("unknown"),
+      );
+    },
     show,
     permission,
     query,
-    markerQuery,
-    decode,
+    sidebarQuery,
+    bff,
+    contextQuery,
     stop,
     discover,
     peer,
@@ -280,13 +307,17 @@ it.each([9, 40002])(
     const fresh = h.make("fresh");
     h.emit([fresh, fresh], "live");
     await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(1));
+    await h.retain(fresh);
     h.click();
     expect(h.navigation.navigation.snapshot().entry.target).toMatchObject({
       messageId: fresh.id,
     });
-    expect(h.owner.session.unread.attention("room", fresh.id).unread).toBe(
-      true,
-    );
+    expect(
+      h.owner.session.unread.attention(
+        "01234567-89ab-cdef-0123-456789abcdef",
+        fresh.id,
+      ).unread,
+    ).toBe(true);
   },
 );
 it.each(
@@ -311,7 +342,7 @@ it.each(
           created_at: createdAt,
           content: "boundary",
           tags: [
-            ["h", "room"],
+            ["h", "01234567-89ab-cdef-0123-456789abcdef"],
             ["p", h.viewer.pubkey],
           ],
         }),
@@ -334,7 +365,7 @@ it("live membership activity and observer telemetry never become message notific
           target: h.peer.pubkey,
         }),
         tags: [
-          ["h", "room"],
+          ["h", "01234567-89ab-cdef-0123-456789abcdef"],
           ["p", h.viewer.pubkey],
         ],
       }),
@@ -342,7 +373,7 @@ it("live membership activity and observer telemetry never become message notific
         kind: 24200,
         content: "opaque",
         tags: [
-          ["h", "room"],
+          ["h", "01234567-89ab-cdef-0123-456789abcdef"],
           ["p", h.viewer.pubkey],
         ],
       }),
@@ -358,9 +389,11 @@ it("live membership activity and observer telemetry never become message notific
 it("viewing suppression uses the shared lease, and suppressed candidates never become delayed alerts", async () => {
   const h = await setup();
   const row = h.make("visible");
-  const lease = h.owner.session.unread.reading("room");
+  const lease = h.owner.session.unread.reading(
+    "01234567-89ab-cdef-0123-456789abcdef",
+  );
   const view = h.owner.session.observe([
-    { kinds: [9], "#h": ["room"], limit: 50 },
+    { kinds: [9], "#h": ["01234567-89ab-cdef-0123-456789abcdef"], limit: 50 },
   ]);
   view.subscribe(() => lease.view([row.id], () => true));
   h.emit([row], "live");
@@ -372,7 +405,9 @@ it("viewing suppression uses the shared lease, and suppressed candidates never b
   expect(h.show).not.toHaveBeenCalled();
   h.notifications.updatePreferences({ notifyWhileViewing: true });
   const next = h.make("visible allowed");
-  const visible = h.owner.session.unread.reading("room");
+  const visible = h.owner.session.unread.reading(
+    "01234567-89ab-cdef-0123-456789abcdef",
+  );
   view.subscribe(() => visible.view([next.id], () => true));
   h.emit([next], "live");
   await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(1));
@@ -430,8 +465,14 @@ it("review: fresh incoming alert waits for initial unread readiness rather than 
     expect(h.show).not.toHaveBeenCalled();
     release();
     await flush();
-    expect(h.owner.session.unread.sync().status).toBe("local");
-    expect(h.owner.session.unread.attention("room", row.id)).toMatchObject({
+    expect(h.owner.session.unread.sync().status).toBe("reconciled");
+    await h.retain(row);
+    expect(
+      h.owner.session.unread.attention(
+        "01234567-89ab-cdef-0123-456789abcdef",
+        row.id,
+      ),
+    ).toMatchObject({
       status: "eligible",
       unread: true,
     });
@@ -467,12 +508,21 @@ it.each([
       if (condition === "expired")
         vi.spyOn(Date, "now").mockReturnValue(now + 121000);
       if (condition === "revoked")
-        h.emit([roster(h.relay, "room", [], Math.floor(now / 1000))]);
+        h.emit([
+          roster(
+            h.relay,
+            "01234567-89ab-cdef-0123-456789abcdef",
+            [],
+            Math.floor(now / 1000),
+          ),
+        ]);
       if (condition === "muted")
         h.notifications.updatePreferences({ enabled: false });
       if (condition === "switched") h.deselect();
       if (condition === "viewed") {
-        const lease = h.owner.session.unread.reading("room");
+        const lease = h.owner.session.unread.reading(
+          "01234567-89ab-cdef-0123-456789abcdef",
+        );
         lease.view([row.id], () => true);
         cleanups.push(lease.dispose);
       }
@@ -501,11 +551,26 @@ it("review: channel revoke/regrant plus history restoration must not revive a pe
   h.emit([row], "live");
   await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
   const now = Math.floor(Date.now() / 1000);
-  h.emit([roster(h.relay, "room", [], now + 1)]);
-  h.emit([roster(h.relay, "room", [h.viewer.pubkey], now + 2)]);
+  h.emit([
+    roster(h.relay, "01234567-89ab-cdef-0123-456789abcdef", [], now + 1),
+  ]);
+  h.emit([
+    roster(
+      h.relay,
+      "01234567-89ab-cdef-0123-456789abcdef",
+      [h.viewer.pubkey],
+      now + 2,
+    ),
+  ]);
   h.query.mockResolvedValueOnce([row]);
   await h.owner.session.read([{ ids: [row.id], limit: 1 }]);
-  expect(h.owner.session.unread.attention("room", row.id)).toMatchObject({
+  await h.retain(row);
+  expect(
+    h.owner.session.unread.attention(
+      "01234567-89ab-cdef-0123-456789abcdef",
+      row.id,
+    ),
+  ).toMatchObject({
     status: "eligible",
     unread: true,
   });
@@ -550,7 +615,12 @@ it.each([
     const h = await setup();
     h.emit([profile(h.peer, { name: "Pinky" })]);
     const now = Math.floor(Date.now() / 1000);
-    const root = message(h.viewer, "room", "Own thread", now - 1);
+    const root = message(
+      h.viewer,
+      "01234567-89ab-cdef-0123-456789abcdef",
+      "Own thread",
+      now - 1,
+    );
     if (category === "direct") {
       h.emit([
         signed(h.relay, {
@@ -560,7 +630,7 @@ it.each([
             channel_type: "dm",
           }),
           tags: [
-            ["d", "room"],
+            ["d", "01234567-89ab-cdef-0123-456789abcdef"],
             ["name", "internal-dm-id"],
             ["t", "dm"],
           ],
@@ -576,7 +646,7 @@ it.each([
           : "A **new** reply",
       created_at: now,
       tags: [
-        ["h", "room"],
+        ["h", "01234567-89ab-cdef-0123-456789abcdef"],
         ...(category === "thread" ? [["e", root.id, "", "reply"]] : []),
       ],
     });
@@ -600,99 +670,88 @@ function deferred() {
   return { promise, release };
 }
 
-it.each([
-  ["bounded", false],
-  ["bounded", true],
-  ["snapshot", false],
-  ["snapshot", true],
-] as const)(
-  "waits for %s remote marker merge (Channels consumer=%s), then revalidates retained live candidates",
-  async (observation, channelsMounted) => {
+it.each([false, true])(
+  "waits for server contexts (Channels consumer=%s), then revalidates retained live candidates",
+  async (channelsMounted) => {
     vi.spyOn(Date, "now").mockReturnValue(Date.now());
-    const marker = deferred(),
-      merge = deferred();
+    const sidebar = deferred(),
+      context = deferred();
     const h = await setup(Promise.resolve(), undefined, {
-      observation,
       channelsMounted,
-      barrier: marker.promise,
-      decodeBarrier: merge.promise,
+      barrier: sidebar.promise,
+      decodeBarrier: context.promise,
       frontier: Math.floor(Date.now() / 1000) - 1,
     });
     try {
-      // Without Channels this must be initiated by the actual app-global binding.
-      await vi.waitFor(() => expect(h.markerQuery).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(h.sidebarQuery).toHaveBeenCalledOnce());
       expect(h.owner.session.unread.sync()).toMatchObject({
-        status: "local",
+        status: "loading",
         completeness: "unknown",
       });
       const read = h.make("already read on another device", 1),
         unread = h.make("genuinely unread");
       h.emit([read, unread], "live");
       await flush();
-      expect(h.owner.session.unread.attention("room", read.id).unread).toBe(
-        true,
-      );
+      expect(
+        h.owner.session.unread.attention(
+          "01234567-89ab-cdef-0123-456789abcdef",
+          read.id,
+        ).status,
+      ).toBe("unknown");
       expect(h.show).not.toHaveBeenCalled();
-      marker.release();
-      await vi.waitFor(() => expect(h.decode).toHaveBeenCalledOnce());
-      await flush();
-      expect(h.show).not.toHaveBeenCalled(); // Response alone is not a merged frontier.
-      merge.release();
+      sidebar.release();
+      await vi.waitFor(() => expect(h.contextQuery).toHaveBeenCalled());
+      expect(h.show).not.toHaveBeenCalled();
+      context.release();
       await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
       expect(h.owner.session.unread.sync()).toMatchObject({
         status: "reconciled",
-        completeness: observation,
+        completeness: "snapshot",
       });
-      expect(h.owner.session.unread.attention("room", read.id).unread).toBe(
-        false,
-      );
       expect(h.show.mock.calls[0]?.[0]).toMatchObject({
         body: "genuinely unread",
       });
-      expect(h.markerQuery).toHaveBeenCalledOnce(); // Shared with Channels, not a second observation.
+      expect(h.sidebarQuery).toHaveBeenCalledOnce();
+      h.contextQuery.mockClear();
+      await h.owner.session.unread.refresh();
+      expect(h.contextQuery).not.toHaveBeenCalled(); // terminal candidates release demand
     } finally {
-      marker.release();
-      merge.release();
+      sidebar.release();
+      context.release();
     }
   },
 );
-
 it.each(["failed", "cancelled", "switched", "disposed"] as const)(
-  "remote marker observation keeps candidates quiet when %s",
+  "server context observation keeps candidates quiet when %s",
   async (condition) => {
-    const marker = deferred();
+    const sidebar = deferred();
     const h = await setup(Promise.resolve(), undefined, {
-      observation: "bounded",
-      barrier: marker.promise,
+      barrier: sidebar.promise,
       frontier: 0,
     });
     try {
-      await vi.waitFor(() => expect(h.markerQuery).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(h.sidebarQuery).toHaveBeenCalledOnce());
+      if (condition === "failed" || condition === "cancelled")
+        h.contextQuery.mockRejectedValue(
+          condition === "failed"
+            ? new Error("context unavailable")
+            : new DOMException("cancelled", "AbortError"),
+        );
       h.emit([h.make("pending remote state")], "live");
       await flush();
       expect(h.show).not.toHaveBeenCalled();
-      if (condition === "failed" || condition === "cancelled")
-        h.decode.mockRejectedValueOnce(
-          condition === "failed"
-            ? new Error("decode unavailable")
-            : new DOMException("cancelled", "AbortError"),
-        );
       if (condition === "switched") h.deselect();
       if (condition === "disposed") h.stop();
-      marker.release();
-      await vi.waitFor(() =>
-        expect(h.owner.session.unread.sync().status).toBe(
-          condition === "failed" || condition === "cancelled"
-            ? "error"
-            : "reconciled",
-        ),
-      );
+      sidebar.release();
+      await h.owner.session.unread.ensure();
+      if (condition === "failed")
+        expect(h.owner.session.unread.sync().status).toBe("error");
       await h.notifications.requestPermission();
       await flush();
       expect(h.show).not.toHaveBeenCalled();
-      expect(h.markerQuery).toHaveBeenCalledOnce();
+      expect(h.sidebarQuery).toHaveBeenCalledOnce();
     } finally {
-      marker.release();
+      sidebar.release();
     }
   },
 );
@@ -728,28 +787,24 @@ it.each([
   },
 );
 
-it("notification startup waits for the roster without consuming the shared evidence repair early", async () => {
+it("notification startup waits for the roster without consuming the shared sidebar traversal early", async () => {
   const h = await setup(Promise.resolve(), undefined, {
-    observation: "bounded",
     barrier: Promise.resolve(),
     frontier: 0,
     deferRoster: true,
   });
-  expect(h.markerQuery).not.toHaveBeenCalled();
+  expect(h.sidebarQuery).not.toHaveBeenCalled();
   expect(h.query.mock.calls.map(([filters]) => filters)).toEqual([
     [{ authors: [h.viewer.pubkey], kinds: [30175, 30177], limit: 200 }],
   ]);
   h.discover();
   await h.owner.session.unread.ensure();
-  expect(h.markerQuery).toHaveBeenCalledOnce();
-  const evidence = () =>
-    h.query.mock.calls.filter(([filters]) => filters[0]?.kinds?.includes(9));
-  expect(evidence()).toHaveLength(1);
-  expect(evidence()[0]?.[0][0]).toMatchObject({ "#h": ["room"] });
-  h.discover();
+  expect(h.sidebarQuery).toHaveBeenCalledOnce();
+  expect(
+    h.query.mock.calls.filter(([filters]) => filters[0]?.kinds?.includes(9)),
+  ).toEqual([]);
   await h.owner.session.unread.ensure();
-  expect(h.markerQuery).toHaveBeenCalledOnce();
-  expect(evidence()).toHaveLength(1);
+  expect(h.sidebarQuery).toHaveBeenCalledOnce();
 });
 
 it("scopes notification author collisions to the message channel", async () => {
@@ -766,7 +821,7 @@ it("scopes notification author collisions to the message channel", async () => {
   h.emit([
     roster(
       h.relay,
-      "room",
+      "01234567-89ab-cdef-0123-456789abcdef",
       [h.viewer.pubkey, h.peer.pubkey, stranger.pubkey],
       Math.floor(Date.now() / 1000) + 1,
     ),
@@ -781,7 +836,7 @@ it.each(["direct", "thread"] as const)(
   async (category) => {
     vi.spyOn(Date, "now").mockReturnValue(1_780_000_000_000);
     const write = vi.fn<SidebarMuteMutator>(async ({ muted }) =>
-      muted ? ["room"] : [],
+      muted ? ["01234567-89ab-cdef-0123-456789abcdef"] : [],
     );
     const h = await setup(Promise.resolve(), undefined, undefined, {
       decode: async () => ({
@@ -793,7 +848,12 @@ it.each(["direct", "thread"] as const)(
       write,
     });
     await h.owner.session.sidebarPreferences.ensure();
-    const root = message(h.viewer, "room", "root", 1_779_999_999);
+    const root = message(
+      h.viewer,
+      "01234567-89ab-cdef-0123-456789abcdef",
+      "root",
+      1_779_999_999,
+    );
     if (category === "direct")
       h.emit([
         signed(h.relay, {
@@ -801,7 +861,7 @@ it.each(["direct", "thread"] as const)(
           created_at: 1_780_000_000,
           content: JSON.stringify({ name: "Room", channel_type: "dm" }),
           tags: [
-            ["d", "room"],
+            ["d", "01234567-89ab-cdef-0123-456789abcdef"],
             ["name", "Room"],
             ["t", "dm"],
           ],
@@ -811,22 +871,32 @@ it.each(["direct", "thread"] as const)(
     const make = (text: string) =>
       message(
         h.peer,
-        "room",
+        "01234567-89ab-cdef-0123-456789abcdef",
         text,
         1_780_000_000,
         category === "thread" ? [["e", root.id, "", "reply"]] : [],
       );
-    await h.owner.session.sidebarPreferences.setMute("room", true);
+    await h.owner.session.sidebarPreferences.setMute(
+      "01234567-89ab-cdef-0123-456789abcdef",
+      true,
+    );
     const quiet = make("quiet");
     h.emit([quiet], "live");
     // Mention is an observable presentation barrier behind the muted candidate.
     h.emit([h.make("mention")], "live");
     await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
     expect(h.show.mock.calls[0]?.[0].body).toBe("mention");
-    expect(h.owner.session.unread.attention("room", quiet.id).unread).toBe(
-      true,
+    await h.retain(quiet);
+    expect(
+      h.owner.session.unread.attention(
+        "01234567-89ab-cdef-0123-456789abcdef",
+        quiet.id,
+      ).unread,
+    ).toBe(true);
+    await h.owner.session.sidebarPreferences.setMute(
+      "01234567-89ab-cdef-0123-456789abcdef",
+      false,
     );
-    await h.owner.session.sidebarPreferences.setMute("room", false);
     h.emit([make("audible")], "live");
     await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(2));
     expect(h.show.mock.calls[1]?.[0].body).toBe("audible");
@@ -842,7 +912,8 @@ it("a confirmed mute cancels an alert waiting on permission, even after unmute",
       starred: [],
       muted: [],
     }),
-    write: async ({ muted }) => (muted ? ["room"] : []),
+    write: async ({ muted }) =>
+      muted ? ["01234567-89ab-cdef-0123-456789abcdef"] : [],
   });
   await h.owner.session.sidebarPreferences.ensure();
   let release!: (permission: "granted") => void;
@@ -852,16 +923,31 @@ it("a confirmed mute cancels an alert waiting on permission, even after unmute",
         release = resolve;
       }),
   );
-  const root = message(h.viewer, "room", "root", 1_779_999_999);
-  const reply = message(h.peer, "room", "cancelled reply", 1_780_000_000, [
-    ["e", root.id, "", "reply"],
-  ]);
+  const root = message(
+    h.viewer,
+    "01234567-89ab-cdef-0123-456789abcdef",
+    "root",
+    1_779_999_999,
+  );
+  const reply = message(
+    h.peer,
+    "01234567-89ab-cdef-0123-456789abcdef",
+    "cancelled reply",
+    1_780_000_000,
+    [["e", root.id, "", "reply"]],
+  );
   h.emit([root], "replay");
   h.emit([reply], "live");
   await vi.waitFor(() => expect(release).toBeTypeOf("function"));
   try {
-    await h.owner.session.sidebarPreferences.setMute("room", true);
-    await h.owner.session.sidebarPreferences.setMute("room", false);
+    await h.owner.session.sidebarPreferences.setMute(
+      "01234567-89ab-cdef-0123-456789abcdef",
+      true,
+    );
+    await h.owner.session.sidebarPreferences.setMute(
+      "01234567-89ab-cdef-0123-456789abcdef",
+      false,
+    );
   } finally {
     release("granted");
   }
@@ -869,7 +955,13 @@ it("a confirmed mute cancels an alert waiting on permission, even after unmute",
   h.emit([h.make("fresh mention")], "live");
   await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
   expect(h.show.mock.calls[0]?.[0].body).toBe("fresh mention");
-  expect(h.owner.session.unread.attention("room", reply.id).unread).toBe(true);
+  await h.retain(reply);
+  expect(
+    h.owner.session.unread.attention(
+      "01234567-89ab-cdef-0123-456789abcdef",
+      reply.id,
+    ).unread,
+  ).toBe(true);
 });
 
 it.each([true, false])(
@@ -883,16 +975,25 @@ it.each([true, false])(
         sections: [],
         assignments: {},
         starred: [],
-        muted: muted ? ["room"] : [],
+        muted: muted ? ["01234567-89ab-cdef-0123-456789abcdef"] : [],
       });
     const h = await setup(Promise.resolve(), undefined, undefined, { decode });
     await h.owner.session.sidebarPreferences.ensure();
     expect(h.owner.session.sidebarPreferences.snapshot().status).toBe("error");
-    const root = message(h.viewer, "room", "root", 1_779_999_999);
+    const root = message(
+      h.viewer,
+      "01234567-89ab-cdef-0123-456789abcdef",
+      "root",
+      1_779_999_999,
+    );
     h.emit([root], "replay");
-    const reply = message(h.peer, "room", "waiting", 1_780_000_000, [
-      ["e", root.id, "", "reply"],
-    ]);
+    const reply = message(
+      h.peer,
+      "01234567-89ab-cdef-0123-456789abcdef",
+      "waiting",
+      1_780_000_000,
+      [["e", root.id, "", "reply"]],
+    );
     h.emit([reply], "live");
     // A mention bypasses only mute readiness, not existing read/permission policy.
     h.emit([h.make("mention")], "live");
@@ -908,3 +1009,34 @@ it.each([true, false])(
     expect(decode).toHaveBeenCalledTimes(2);
   },
 );
+
+it("alerts a fresh mention while a large thread owns bounded bulk context demand", async () => {
+  const h = await setup();
+  const threadChannel = "11234567-89ab-cdef-0123-456789abcdef";
+  h.emit([
+    roster(h.relay, threadChannel, [h.viewer.pubkey]),
+    metadata(h.relay, threadChannel, "Large thread"),
+  ]);
+  const root = message(h.peer, threadChannel, "root", 1);
+  const replies = Array.from({ length: 1101 }, (_, i) =>
+    message(h.peer, threadChannel, `reply ${i}`, i + 2, [
+      ["e", root.id, "", "root"],
+    ]),
+  );
+  h.emit([root, ...replies]);
+  const release = h.owner.session.unread.subscribeMessages(
+    threadChannel,
+    replies.map((r) => r.id),
+    () => {},
+  );
+  cleanups.push(release);
+  await vi.waitFor(() =>
+    expect(
+      h.owner.session.unread.attention(threadChannel, replies[0]?.id ?? "")
+        .status,
+    ).toBe("eligible"),
+  );
+  const mention = h.make("Mention beside a large thread");
+  h.emit([mention], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(1));
+});

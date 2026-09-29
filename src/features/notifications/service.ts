@@ -44,6 +44,8 @@ type Candidate = {
   valid(): boolean;
   eligible(): NotificationEligibility;
   text(): NotificationText;
+  release?: (() => void) | undefined;
+  expiry?: ReturnType<typeof setTimeout>;
 };
 const categories = Object.freeze([
   { key: "mention", label: "Mentions" },
@@ -125,7 +127,7 @@ export class NotificationsService extends Service implements Notifications {
         this.closed = true;
         this.generation++;
         this.permissionGeneration++;
-        for (const item of this.pending) item.cancelled = true;
+        for (const item of this.pending) this.retire(item);
         this.pending.clear();
         this.seen.clear();
         stopPreferences();
@@ -161,7 +163,7 @@ export class NotificationsService extends Service implements Notifications {
     if (viewer !== undefined && !/^[a-f0-9]{64}$/.test(viewer))
       throw new Error("Invalid notification viewer");
     this.generation++;
-    for (const item of this.pending) item.cancelled = true;
+    for (const item of this.pending) this.retire(item);
     this.pending.clear();
     this.seen.clear();
     this.publish({ viewer, error: null });
@@ -224,11 +226,17 @@ export class NotificationsService extends Service implements Notifications {
       this.state.preferences.categories[item.category] !== false
     );
   }
+  private retire(item: Candidate) {
+    item.cancelled = true;
+    this.pending.delete(item);
+    clearTimeout(item.expiry);
+    item.release?.();
+    item.release = undefined;
+  }
   revalidate() {
     for (const item of this.pending) {
       if (!this.allowed(item) || item.eligible() === false) {
-        item.cancelled = true;
-        this.pending.delete(item);
+        this.retire(item);
       }
     }
     this.schedule();
@@ -284,6 +292,7 @@ export class NotificationsService extends Service implements Notifications {
       title: "Buzz",
       body: `New ${label.toLowerCase()}`,
     }),
+    observe?: () => () => void,
   ) {
     const viewer = this.state.viewer;
     if (this.closed || !viewer || !valid()) return false;
@@ -333,6 +342,14 @@ export class NotificationsService extends Service implements Notifications {
       if (first) this.seen.delete(first);
     }
     this.pending.add(item);
+    item.expiry = setTimeout(() => this.retire(item), FRESH_MS);
+    try {
+      item.release = observe?.();
+    } catch (error) {
+      this.retire(item);
+      this.reportError(error);
+      return false;
+    }
     this.schedule();
     return true;
   }
@@ -349,7 +366,7 @@ export class NotificationsService extends Service implements Notifications {
   }
   private async deliver(item: Candidate) {
     if (!this.allowed(item) || item.eligible() === false) {
-      this.pending.delete(item);
+      this.retire(item);
       return;
     }
     if (item.eligible() === "wait") return;
@@ -363,19 +380,19 @@ export class NotificationsService extends Service implements Notifications {
           ? probed
           : this.state.permission;
       if (!this.allowed(item)) {
-        this.pending.delete(item);
+        this.retire(item);
         return;
       }
       if (permission !== "granted" && permission !== "unknown") {
-        if (permission !== "default") this.pending.delete(item);
+        if (permission !== "default") this.retire(item);
         return;
       }
       if (item.eligible() !== true) {
-        if (item.eligible() === false) this.pending.delete(item);
+        if (item.eligible() === false) this.retire(item);
         return;
       }
       // One attempt. A rejected/unknown OS submission is reported, never retried.
-      this.pending.delete(item);
+      this.retire(item);
       await this.platform.show(
         {
           id: crypto.randomUUID(),
@@ -395,7 +412,7 @@ export class NotificationsService extends Service implements Notifications {
         },
       );
     } catch (error) {
-      this.pending.delete(item);
+      this.retire(item);
       this.reportError(error);
     } finally {
       item.submitting = false;

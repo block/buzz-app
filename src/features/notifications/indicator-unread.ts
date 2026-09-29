@@ -1,3 +1,4 @@
+import { hasUnread } from "../relay/unread";
 import type { Communities } from "../communities/service";
 import type { RelaySession } from "../relay/session";
 
@@ -50,9 +51,7 @@ export function bindUnreadIndicator(
             kind: "channel",
             channelId,
           });
-          return (
-            snapshot.manual !== "none" || (snapshot.observedCount ?? 0) > 0
-          );
+          return snapshot.manual !== "none" || hasUnread(snapshot.unread);
         }),
       );
     };

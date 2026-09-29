@@ -369,9 +369,9 @@ confirmedPresence(
       await tab();
       await expect(customEmoji).toBeFocused();
       await tab();
-      await expect(hostedCommunities).toBeFocused();
-      await tab();
       await expect(membership).toBeFocused();
+      await tab();
+      await expect(hostedCommunities).toBeFocused();
       await tab();
       await expect(
         sections.getByRole("button", { name: "Appearance", exact: true }),
@@ -433,9 +433,9 @@ confirmedPresence(
       await tab();
       await expect(customEmoji).toBeFocused();
       await tab();
-      await expect(hostedCommunities).toBeFocused();
-      await tab();
       await expect(membership).toBeFocused();
+      await tab();
+      await expect(hostedCommunities).toBeFocused();
       await tab();
       await expect(
         sections.getByRole("button", { name: "Appearance", exact: true }),

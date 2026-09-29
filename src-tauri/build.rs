@@ -75,6 +75,7 @@ fn main() {
             "terminal_resize",
             "terminal_close",
             "terminal_close_owner",
+            "update_restart",
             "browser_attach",
             "browser_set_bounds",
             "browser_detach",

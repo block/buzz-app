@@ -1,5 +1,4 @@
-import { isTauri } from "@tauri-apps/api/core";
-import { relaunch } from "@tauri-apps/plugin-process";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { check } from "@tauri-apps/plugin-updater";
 
 export type UpdateStatus =
@@ -16,7 +15,7 @@ export type UpdateStatus =
 /** The subset of the Tauri updater handle this owner uses. */
 export type UpdateHandle = {
   version: string;
-  download(): Promise<void>;
+  download(onEvent: undefined, options: { timeout: number }): Promise<void>;
   install(): Promise<void>;
   close(): Promise<void>;
 };
@@ -28,6 +27,10 @@ export type UpdatePlatform = {
 };
 
 export const BACKGROUND_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+// Native request deadlines, so a stalled server cannot pin a check or download.
+// The updater does not carry the check timeout over to the download.
+export const UPDATE_CHECK_TIMEOUT_MS = 30 * 1000;
+export const UPDATE_DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000;
 const BACKGROUND_BLOCKED_STATES = new Set<UpdateStatus["state"]>([
   "checking",
   "available",
@@ -38,8 +41,13 @@ const BACKGROUND_BLOCKED_STATES = new Set<UpdateStatus["state"]>([
 
 const tauriPlatform: UpdatePlatform = {
   desktop: isTauri(),
-  check: () => check({ headers: { "Cache-Control": "no-cache" } }),
-  relaunch,
+  check: () =>
+    check({
+      headers: { "Cache-Control": "no-cache" },
+      timeout: UPDATE_CHECK_TIMEOUT_MS,
+    }),
+  // Restarts only after agent shutdown is confirmed, like Quit.
+  relaunch: () => invoke("update_restart"),
 };
 
 const toErrorMessage = (err: unknown) =>
@@ -84,7 +92,9 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
     downloadInFlight = true;
     try {
       setStatus({ state: "downloading" });
-      await current.download();
+      await current.download(undefined, {
+        timeout: UPDATE_DOWNLOAD_TIMEOUT_MS,
+      });
       setStatus({ state: "ready" });
     } catch (err) {
       setStatus({ state: "error", message: toErrorMessage(err) });

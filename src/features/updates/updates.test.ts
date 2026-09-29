@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   BACKGROUND_UPDATE_CHECK_INTERVAL_MS,
   createUpdates,
+  UPDATE_DOWNLOAD_TIMEOUT_MS,
   type UpdateHandle,
   type UpdatePlatform,
   type Updates,
@@ -80,6 +81,10 @@ it("downloads a background update, offers restart, then installs and relaunches"
   const { update, download, install } = handle();
   (await check(0)).resolve(update);
   await vi.waitFor(() => expect(state()).toBe("downloading"));
+  // The native download carries its own deadline; the check's does not apply.
+  expect(update.download).toHaveBeenCalledWith(undefined, {
+    timeout: UPDATE_DOWNLOAD_TIMEOUT_MS,
+  });
   download.resolve();
   await vi.waitFor(() => expect(state()).toBe("ready"));
 
@@ -90,6 +95,24 @@ it("downloads a background update, offers restart, then installs and relaunches"
   install.resolve();
   await installing;
   expect(platform.relaunch).toHaveBeenCalledOnce();
+});
+
+it("reports a refused restart and stays running", async () => {
+  platform.relaunch.mockRejectedValueOnce(
+    "Agent shutdown incomplete; restart Buzz to finish the update: busy",
+  );
+  const updates = start();
+  const { update, download, install } = handle();
+  (await check(0)).resolve(update);
+  download.resolve();
+  await vi.waitFor(() => expect(state()).toBe("ready"));
+  install.resolve();
+  await updates.installAndRelaunch();
+  expect(updates.snapshot()).toEqual({
+    state: "error",
+    message:
+      "Agent shutdown incomplete; restart Buzz to finish the update: busy",
+  });
 });
 
 it("keeps quiet background results out of status but reports manual ones", async () => {

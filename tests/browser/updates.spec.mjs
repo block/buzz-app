@@ -5,7 +5,7 @@ test.use({ historyCounts: { alpha: 0, beta: 0 } });
 
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 
-// Native IPC is the boundary fixture; the updater/process plugin clients, the
+// Native IPC is the boundary fixture; the updater plugin client, the
 // updates owner, Settings and the toast are production code. Plugin commands
 // are denied unless the main-window capability grants them, as Tauri's ACL does.
 async function nativeUpdater(page, { checkResults, installErrors = [] }) {
@@ -53,13 +53,14 @@ async function nativeUpdater(page, { checkResults, installErrors = [] }) {
               },
             };
           if (command === "plugin_module") return "export function apply() {}";
-          const plugin = /^plugin:(updater|process|resources)\|(\w+)$/.exec(
-            command,
-          );
-          if (!plugin) throw new Error(`Unexpected command ${command}`);
+          const plugin = /^plugin:(updater|resources)\|(\w+)$/.exec(command);
+          if (!plugin && command !== "update_restart")
+            throw new Error(`Unexpected command ${command}`);
           window.updaterCalls.push({ command, args });
-          const [, name, action] = plugin;
-          const permission = `${name === "resources" ? "core:" : ""}${name}:allow-${action.replaceAll("_", "-")}`;
+          const [, name, action] = plugin ?? [];
+          const permission = plugin
+            ? `${name === "resources" ? "core:" : ""}${name}:allow-${action.replaceAll("_", "-")}`
+            : "allow-update-restart";
           if (!granted.includes(permission))
             throw new Error(
               `${command} not allowed. Permissions: ${permission}`,
@@ -138,7 +139,7 @@ test("update checks recover from failure, download, and restart from the toast",
       "plugin:updater|check",
       "plugin:updater|download",
       "plugin:updater|install",
-      "plugin:process|restart",
+      "update_restart",
     ]);
   const install = await page.evaluate(() =>
     window.updaterCalls.find((c) => c.command === "plugin:updater|install"),
@@ -171,8 +172,14 @@ test("retry after a failed install releases native update resources before check
   expect(calls.slice(3).map(({ command, args }) => [command, args])).toEqual([
     ["plugin:resources|close", { rid: 102 }],
     ["plugin:resources|close", { rid: 101 }],
-    ["plugin:updater|check", { headers: [["cache-control", "no-cache"]] }],
-    ["plugin:updater|download", expect.objectContaining({ rid: 103 })],
+    [
+      "plugin:updater|check",
+      { headers: [["cache-control", "no-cache"]], timeout: 30_000 },
+    ],
+    [
+      "plugin:updater|download",
+      expect.objectContaining({ rid: 103, timeout: 1_800_000 }),
+    ],
   ]);
 });
 
@@ -203,6 +210,6 @@ test("the ready toast yields to Settings → Updates, which offers the same acti
       "plugin:updater|check",
       "plugin:updater|download",
       "plugin:updater|install",
-      "plugin:process|restart",
+      "update_restart",
     ]);
 });

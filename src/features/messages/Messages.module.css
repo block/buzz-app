@@ -65,7 +65,7 @@
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
-  margin: var(--space-2) 0 var(--space-8);
+  margin: var(--space-3) 0;
 }
 .day::before,
 .day::after {
@@ -79,13 +79,18 @@
   container: message-row / inline-size;
   display: flex;
   gap: var(--space-3);
-  padding: var(--space-2) 0 var(--space-section-gap);
+  padding: var(--space-2) 0;
 }
 .message[data-layout="thread"],
 .message[data-layout="continuation"] {
   gap: var(--space-2);
-  padding-block: var(--space-1);
-  min-block-size: var(--size-control);
+}
+.message[data-layout="continuation"] {
+  padding-block: var(--space-half);
+}
+/* Timeline continuations keep the full-size avatar column's text alignment. */
+.feed .message[data-layout="continuation"] {
+  gap: var(--space-3);
 }
 .messageGutter {
   flex: 0 0 var(--size-control-sm);
@@ -94,14 +99,42 @@
   flex: 1;
   min-width: 0;
 }
+/* Content hugs short messages while rich content can use the available width. */
+.messageBubble {
+  position: relative;
+  --message-inset: var(--space-2);
+  --message-inner-radius: max(
+    0px,
+    calc(var(--radius-panel) - var(--message-inset))
+  );
+  box-sizing: border-box;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  margin-top: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-panel);
+  background: var(--surface-message);
+  color: var(--text-standard);
+  overflow-wrap: anywhere;
+}
+.messageBubble > .text {
+  margin-top: 0;
+}
+.message[data-layout="continuation"] .messageBubble {
+  margin-top: 0;
+}
 .byline {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-2);
-  font-size: var(--text-label-sm);
-  line-height: var(--text-label-sm--line-height);
-  letter-spacing: var(--text-label-sm--letter-spacing);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
+.author strong {
+  font-weight: var(--type-weight-medium);
 }
 .byline time {
   color: var(--text-subtle);
@@ -154,8 +187,11 @@
 }
 .reactionFallback > span:not([role]) {
   background: var(--affordance-subtle);
-  border-radius: var(--radius-chip);
-  padding: var(--space-half) var(--space-1h);
+  border-radius: var(--radius-pill);
+  padding: var(--space-half) calc(var(--space-1h) + var(--space-1));
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
   max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -176,9 +212,12 @@
   border: 1px solid var(--border);
   background: var(--surface-control);
   border-radius: var(--radius-pill);
-  padding: 0 var(--space-2);
+  padding: 0 var(--space-3);
   color: var(--text);
   font: inherit;
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
   cursor: pointer;
 }
 .reactionChip:hover {
@@ -363,7 +402,7 @@
   width: 360px;
   max-width: 100%;
   aspect-ratio: 360 / 320;
-  margin-top: var(--space-2);
+  margin-block: var(--space-1);
   overflow: hidden;
   border-radius: var(--radius-row);
   background: var(--affordance-subtle-hover);
@@ -463,19 +502,27 @@
   padding-top: var(--space-1);
 }
 .delivery {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
   color: var(--text-warning);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
   margin-top: var(--space-1h);
 }
+.deliveryRetry {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: var(--space-half);
+  cursor: pointer;
+}
+.deliveryRetry:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: var(--space-half);
+}
 .day span {
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-pill);
   padding: var(--space-1h) var(--space-3);
 }
 .threadUnread {
@@ -486,6 +533,10 @@
   background: var(--text-standard);
 }
 .messageBody [data-thread-summary] {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: var(--type-weight-regular);
   margin-top: var(--space-1);
   padding: var(--space-1);
   padding-right: var(--space-1h);
@@ -561,6 +612,7 @@
   width: 100%;
 }
 .threadAvatars {
+  isolation: isolate;
   --thread-avatar-stroke: 1.5px;
   display: inline-flex;
   align-items: center;
@@ -633,22 +685,15 @@
   margin-top: var(--space-2);
 }
 .fileAttachment {
+  composes: item from "./ComposerAttachments.module.css";
   display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  max-width: min(24rem, 100%);
+  box-sizing: border-box;
   margin-top: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  background: var(--surface-control);
-  color: var(--text);
+  background: var(--surface-panel);
+  color: var(--text-standard);
   text-decoration: none;
-  font-size: var(--text-body-sm);
-  line-height: var(--text-body-sm--line-height);
-  letter-spacing: var(--text-body-sm--letter-spacing);
 }
-a.fileAttachment:hover {
+.fileAttachment:is(a, button):hover {
   background: var(--surface-hover);
 }
 html[data-keyboard-navigation] .fileAttachment:focus-visible {
@@ -656,25 +701,24 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   outline-offset: 2px;
 }
 .fileAttachmentBody {
-  min-width: 0;
-  max-width: 100%;
-  display: grid;
-  gap: var(--space-half);
+  composes: details from "./ComposerAttachments.module.css";
 }
-.fileAttachmentName,
+.fileAttachmentName {
+  composes: name from "./ComposerAttachments.module.css";
+}
 .fileAttachmentMeta {
+  composes: hint from "./ComposerAttachments.module.css";
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.fileAttachmentName {
-  font-weight: var(--type-weight-medium);
-}
-.fileAttachmentMeta {
-  color: var(--text-muted);
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
+.fileAttachmentIcon {
+  composes: fileIcon from "./ComposerAttachments.module.css";
+  border-radius: calc(
+    var(--message-inner-radius, var(--radius-control)) -
+    var(--space-half) -
+    1px
+  );
 }
 .audioAttachment {
   position: relative;
@@ -778,6 +822,7 @@ html[data-keyboard-navigation] .audioSeek:focus-visible {
   width: min(32rem, 100%, calc(min(28rem, 56vh) * var(--media-ratio, 16 / 9)));
   max-width: 100%;
   aspect-ratio: var(--media-ratio, 16 / 9);
+  margin-block: var(--space-1);
   overflow: hidden;
   padding: 0;
   border: 0;
@@ -836,8 +881,12 @@ button.mediaPreview {
   font-variant-numeric: tabular-nums;
 }
 .mediaTimeLink {
-  margin-right: var(--space-1h);
+  margin-top: 0;
+  margin-bottom: var(--space-1);
+  text-align: start;
+  font: inherit;
   font-variant-numeric: tabular-nums;
+  cursor: pointer;
 }
 @media (hover: hover) and (pointer: fine) {
   .mediaPreview[data-playing]:not(:hover):not(:focus-within) .mediaPlay,
@@ -1151,6 +1200,10 @@ button.mediaPreview {
 .plainText {
   white-space: pre-wrap;
 }
+.text :where(p, li),
+.plainText {
+  text-wrap-style: pretty;
+}
 .text p {
   line-height: inherit;
 }
@@ -1432,23 +1485,6 @@ button.mediaPreview {
     opacity: 0;
     pointer-events: none;
   }
-  /* Reserve the controls' natural height in threads even while hidden, so
-     showing actions neither covers text nor moves neighboring click targets. */
-  .message:is([data-layout="thread"], [data-layout="continuation"])
-  .messageBody {
-    display: flex;
-    flex-direction: column;
-  }
-  .message:is([data-layout="thread"], [data-layout="continuation"])
-    .messageActions {
-    position: static;
-    order: 1;
-    flex-wrap: nowrap;
-    max-width: none;
-    flex-shrink: 0;
-    align-self: flex-end;
-    margin-inline-start: 0;
-  }
   .message:hover .messageActions,
   .message:focus-within .messageActions,
   .messageActions[data-open],
@@ -1596,7 +1632,7 @@ html[data-keyboard-navigation] .replyBranchRail:focus-visible {
 /* Continuations retain a readable clock without repeating the author header. */
 .messageGutter {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   align-items: flex-start;
 }
 .continuationTime {
@@ -1605,7 +1641,7 @@ html[data-keyboard-navigation] .replyBranchRail:focus-visible {
   background: var(--surface-panel);
   color: var(--text-subtle);
   font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
+  line-height: calc(var(--text-body-sm) * var(--text-body-sm--line-height));
   letter-spacing: var(--text-caption--letter-spacing);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -1800,4 +1836,136 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   --composer-gap: var(--space-2);
   padding-top: var(--space-1h);
   gap: var(--composer-gap);
+}
+
+.message[data-stack-previous] .messageBubble {
+  margin-top: 0;
+}
+.message[data-appearance="bubbles"][data-layout="timeline"] .messageGutter {
+  flex-basis: var(--size-control);
+}
+
+.messageAvatar {
+  position: absolute;
+  bottom: 0;
+  right: calc(100% + var(--space-3));
+  display: flex;
+}
+.message:not([data-layout="timeline"]) .messageAvatar {
+  right: calc(100% + var(--space-2));
+}
+.messageBubble
+  :is(
+    .attachmentImage,
+    .mediaPreview,
+    .fileAttachment,
+    .audioAttachment,
+    .attachmentUnavailable,
+    pre
+  ) {
+  border-radius: var(--message-inner-radius);
+}
+.messageBubble
+  > :is(
+    .attachmentImage,
+    .fileAttachment,
+    .audioAttachment,
+    .attachmentUnavailable
+  ):first-child,
+.messageBubble
+  > .messageAvatar
+  + :is(
+    .attachmentImage,
+    .fileAttachment,
+    .audioAttachment,
+    .attachmentUnavailable
+  ) {
+  margin-top: 0;
+}
+
+.messageBubble[data-own] {
+  color: var(--text-inverse);
+  background: var(--surface-message-own);
+}
+.messageBubble[data-attachments] {
+  padding: var(--message-inset);
+}
+.messageBubble[data-attachments] > :is(.text, .plainText) {
+  padding-inline: var(--space-1);
+}
+.messageBubble[data-media-only] {
+  --message-inner-radius: var(--radius-panel);
+  padding: 0;
+  background: transparent;
+}
+.messageBubble[data-media-only] > .attachmentImage:first-of-type,
+.messageBubble[data-media-only] > .messageAvatar + .attachmentImage {
+  margin-top: 0;
+}
+/* Video previews size themselves from their container, unlike intrinsic images. */
+.messageBubble:has(> .mediaPreview) {
+  width: min(32rem, 100%);
+}
+.messageBubble > .text + .mediaPreview {
+  margin-top: var(--space-1);
+}
+
+.messageBubble[data-own] > :is(.text, .plainText) {
+  --text-link: var(--text-inverse);
+  --affordance-link-hover: var(--surface-message-own);
+}
+.messageBubble[data-own] .text blockquote {
+  color: inherit;
+  border-color: currentColor;
+}
+.messageBubble[data-own] .text :is(code, pre) {
+  color: var(--text-standard);
+}
+.messageBubble[data-own] .text :is(a, [data-mention-kind]) {
+  color: var(--text-inverse);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.messageBubble[data-long-text] {
+  border-radius: calc((var(--radius-panel) + var(--radius-control)) / 2);
+}
+
+.threadAvatar:nth-child(1) {
+  z-index: 3;
+}
+.threadAvatar:nth-child(2) {
+  z-index: 2;
+}
+.threadAvatar:nth-child(3) {
+  z-index: 1;
+}
+
+.message[data-appearance="bubbles"][data-layout="timeline"] {
+  padding-block: var(--space-2);
+}
+.message[data-appearance="bubbles"][data-stack-next] {
+  padding-bottom: 0;
+}
+.message[data-appearance="bubbles"][data-stack-previous] {
+  padding-top: var(--space-half);
+}
+.message[data-appearance="bubbles"] .byline {
+  padding-inline-start: var(--space-3);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.message[data-appearance="bubbles"] .delivery {
+  padding-inline-start: var(--space-3);
+}
+
+.feed .message[data-layout="continuation"] .messageGutter {
+  flex-basis: var(--size-control);
+}
+.text pre {
+  text-wrap-style: auto;
+}
+.messageBubble[data-media-only] > :is(.attachmentImage, .mediaPreview) {
+  margin-block: 0;
 }

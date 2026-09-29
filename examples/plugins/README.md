@@ -3,6 +3,7 @@
 All example plugins live here with `manifest.json` and prebuilt `plugin.js` files:
 
 - `counter` and `notes`: offline playgrounds.
+- [`message-bubbles`](message-bubbles/README.md): optional message appearance; requires a host with `conversation.registerAppearance`.
 - `shortcut-counter`: offline keyboard-shortcut consumer; Command+Shift+K /
   Control+Shift+K increments through the injected host service. Requires `shortcuts`.
 - `broken-page`: intentionally fails when its page renders to exercise error handling.

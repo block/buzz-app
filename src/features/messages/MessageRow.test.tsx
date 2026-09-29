@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { expect, it, vi } from "vitest";
 import {
   cleanup,
+  act,
   fireEvent,
   render as renderDom,
   screen,
@@ -142,8 +143,14 @@ it.each(["bare", "angle", "markdown", "escaped"] as const)(
           day={false}
           retry={undefined}
           extensions={{
-            tools: { snapshot: () => [], subscribe: () => () => {} },
-            inline: { snapshot: () => [], subscribe: () => () => {} },
+            tools: {
+              snapshot: () => noContributions,
+              subscribe: () => () => {},
+            },
+            inline: {
+              snapshot: () => noContributions,
+              subscribe: () => () => {},
+            },
             links: {
               snapshot: () => (enabled ? [entry] : []),
               subscribe: () => () => {},
@@ -832,3 +839,156 @@ it.each([9, 40002])(
     }
   },
 );
+
+const bubbleAppearances = [
+  {
+    id: "bubbles",
+    title: "Message bubbles",
+    preset: "bubbles" as const,
+    key: "test/bubbles",
+    pluginId: "test",
+    revision: "one",
+  },
+];
+const noContributions: readonly [] = [];
+const bubbleExtensions = {
+  tools: { snapshot: () => noContributions, subscribe: () => () => {} },
+  inline: { snapshot: () => noContributions, subscribe: () => () => {} },
+  appearances: { snapshot: () => bubbleAppearances, subscribe: () => () => {} },
+};
+
+it("keeps the profile avatar on the final bubble of a stack", () => {
+  const show = (stackPrevious: boolean, stackNext: boolean) =>
+    renderToStaticMarkup(
+      <MessageRow
+        extensions={bubbleExtensions}
+        row={{ ...row, authorId: "a".repeat(64) }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        canOpenLink={() => true}
+        day={false}
+        retry={undefined}
+        stackPrevious={stackPrevious}
+        stackNext={stackNext}
+      />,
+    );
+  expect(show(false, true)).not.toContain(
+    'aria-label="View aaaaaaaaaa profile"',
+  );
+  expect(show(true, true)).not.toContain(
+    'aria-label="View aaaaaaaaaa profile"',
+  );
+  expect(show(true, false)).toContain('aria-label="View aaaaaaaaaa profile"');
+  expect(show(false, false)).toContain('aria-label="View aaaaaaaaaa profile"');
+});
+
+it("distinguishes own messages and only flattens uncaptioned visual media", () => {
+  const show = (patch: Partial<ChannelMessage>, viewer?: string) =>
+    renderToStaticMarkup(
+      <MessageRow
+        extensions={bubbleExtensions}
+        row={{ ...row, ...patch }}
+        viewer={viewer}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+  expect(show({}, row.authorId)).toContain('data-own="true"');
+  expect(show({}, "other")).not.toContain('data-own="true"');
+  expect(show({})).not.toContain('data-own="true"');
+  for (const kind of ["image", "video"] as const) {
+    const attachments = [{ kind, url: "https://example.com/media" }];
+    expect(show({ content: "", attachments })).toContain(
+      'data-media-only="true"',
+    );
+    expect(show({ content: "A caption", attachments })).not.toContain(
+      'data-media-only="true"',
+    );
+  }
+  expect(
+    show({
+      content: "",
+      attachments: [{ kind: "file", url: "https://example.com/file" }],
+    }),
+  ).not.toContain('data-media-only="true"');
+});
+
+it("restores the default row when the appearance is disabled without losing content", () => {
+  let entries: typeof bubbleAppearances = [];
+  const listeners = new Set<() => void>();
+  const extensions = {
+    ...bubbleExtensions,
+    appearances: {
+      snapshot: () => entries,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    },
+  };
+  const view = renderDom(
+    <MessageRow
+      row={row}
+      viewer={row.authorId}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      day={false}
+      extensions={extensions}
+      retry={undefined}
+      stackPrevious
+      stackNext
+    />,
+  );
+  try {
+    expect(view.container.querySelector("[data-appearance]")).toBeNull();
+    const content = view.container.textContent;
+    act(() => {
+      entries = bubbleAppearances;
+      listeners.forEach((listener) => listener());
+    });
+    expect(
+      view.container.querySelector('[data-appearance="bubbles"]'),
+    ).not.toBeNull();
+    expect(view.container.querySelector("[data-own]")).not.toBeNull();
+    expect(
+      view.container.querySelector("[data-stack-previous]"),
+    ).not.toBeNull();
+    act(() => {
+      entries = [];
+      listeners.forEach((listener) => listener());
+    });
+    expect(view.container.querySelector("[data-appearance]")).toBeNull();
+    expect(view.container.querySelector("[data-own]")).toBeNull();
+    expect(view.container.querySelector("[data-stack-previous]")).toBeNull();
+    expect(view.container.textContent).toBe(content);
+  } finally {
+    cleanup();
+  }
+});
+
+it("uses timeline continuations only in the default appearance", () => {
+  const show = (bubbles: boolean) =>
+    renderToStaticMarkup(
+      <MessageRow
+        row={row}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        groupPrevious
+        stackPrevious
+        {...(bubbles ? { extensions: bubbleExtensions } : {})}
+      />,
+    );
+  expect(show(false)).toContain('data-layout="continuation"');
+  expect(show(true)).toContain('data-layout="timeline"');
+  expect(show(true)).toContain('data-stack-previous="true"');
+});

@@ -14,10 +14,13 @@ import type {
   InlineRenderer,
   LinkRenderer,
   MessageRenderer,
+  MessageAppearance,
   ContributionReader,
 } from "./contracts";
 
 export type Conversation = {
+  appearances: ContributionReader<MessageAppearance>;
+  registerAppearance(appearance: MessageAppearance): void;
   messages: ContributionReader<MessageRenderer>;
   registerMessage(renderer: MessageRenderer): void;
   accessories: ContributionReader<ComposerAccessory>;
@@ -61,6 +64,8 @@ function validate(
     );
 }
 export class ConversationService extends Service implements Conversation {
+  readonly appearances;
+  private readonly appearanceEntries;
   readonly messages;
   private readonly messageEntries;
   readonly tools;
@@ -75,6 +80,12 @@ export class ConversationService extends Service implements Conversation {
   private readonly linkEntries;
   constructor(ctx: Context) {
     super(ctx, "conversation");
+    const appearances = createContributions<MessageAppearance>(ctx);
+    this.appearanceEntries = appearances;
+    this.appearances = {
+      snapshot: appearances.snapshot,
+      subscribe: appearances.subscribe,
+    };
     const messages = createContributions<MessageRenderer>(ctx);
     this.messageEntries = messages;
     this.messages = {
@@ -102,6 +113,19 @@ export class ConversationService extends Service implements Conversation {
     const links = createContributions<LinkRenderer>(ctx);
     this.linkEntries = links;
     this.links = { snapshot: links.snapshot, subscribe: links.subscribe };
+  }
+  registerAppearance(value: MessageAppearance) {
+    if (
+      !value ||
+      !/^[a-z0-9][a-z0-9._-]*$/.test(value.id) ||
+      typeof value.title !== "string" ||
+      !value.title.trim() ||
+      value.preset !== "bubbles"
+    )
+      throw new Error(
+        "A message appearance needs an id, title and supported preset",
+      );
+    this.appearanceEntries.register(this.ctx, value);
   }
   registerMessage(value: MessageRenderer) {
     validate(value);

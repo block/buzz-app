@@ -64,16 +64,111 @@ const single = (
 ): Example => ({ id, title, description, rows: [message(id, content, patch)] });
 export const groups: Group[] = [
   {
+    id: "mixed",
+    title: "Mixed conversation",
+    description:
+      "You are Sam Rivera. Your darker bubbles and everyone else’s softer bubbles stay left aligned.",
+    examples: [
+      {
+        id: "mixed-conversation",
+        title: "You and Alex",
+        description:
+          "Compare both senders, consecutive messages, rich text, reactions, and media in one conversation. Try Narrow preview or the dark theme.",
+        rows: [
+          message("mixed-1", "Hey Sam, the new designs are ready."),
+          message("mixed-2", "I tightened up the spacing. What do you think?", {
+            createdAt: 1_790_078_430,
+          }),
+          message("mixed-3", "These look good!", {
+            authorId: teammate,
+            createdAt: 1_790_078_460,
+          }),
+          message(
+            "mixed-4",
+            "I’d keep **this direction**. The [reference](https://example.com) has the same quieter feel.",
+            { authorId: teammate, createdAt: 1_790_078_490 },
+          ),
+          message("mixed-5", "Here’s the updated image.", {
+            createdAt: 1_790_078_520,
+            attachments: [
+              {
+                kind: "image",
+                url: "https://fixture.test/landscape",
+                dimensions: { width: 640, height: 360 },
+              },
+            ],
+          }),
+          message("mixed-6", "And my notes, for comparison.", {
+            authorId: teammate,
+            createdAt: 1_790_078_550,
+            attachments: [
+              {
+                kind: "file",
+                url: "https://fixture.test/notes",
+                name: "design-review.txt",
+                size: 13312,
+              },
+            ],
+          }),
+          message("mixed-7", "Perfect, I’ll make those changes.", {
+            createdAt: 1_790_078_580,
+            reactions: [
+              {
+                content: "👍",
+                events: [{ id: "mixed-reaction", authorId: teammate }],
+              },
+            ],
+          }),
+          message("mixed-8", "", {
+            authorId: teammate,
+            createdAt: 1_790_078_610,
+            attachments: [
+              {
+                kind: "image",
+                url: "https://fixture.test/poster",
+                dimensions: { width: 640, height: 360 },
+              },
+            ],
+          }),
+          message("mixed-9", "One more option from me ☝️", {
+            authorId: teammate,
+            createdAt: 1_790_078_640,
+          }),
+        ],
+      },
+    ],
+  },
+  {
     id: "content",
     title: "Content and identity",
     description:
       "Human and agent messages use the same row layout, with different identity shapes.",
     examples: [
       single(
-        "text",
-        "Plain text",
-        "A human author, timestamp, and short message.",
+        "own-plain",
+        "Your message · plain text",
+        "Your messages use the darker fill, regardless of formatting.",
         "The latest designs are ready. Let me know what you think.",
+        { authorId: teammate },
+      ),
+      single(
+        "own-rich",
+        "Your message · Markdown",
+        "The same own-message fill as plain text above.",
+        "Here is **my update** with [a link](https://example.com), `inline code`, and a quote:\n\n> Ready for review.",
+        { authorId: teammate },
+      ),
+      single(
+        "text",
+        "Received message · plain text",
+        "Received messages use the softer fill, regardless of formatting.",
+        "The latest designs are ready. Let me know what you think.",
+      ),
+      single(
+        "received-rich",
+        "Received message · Markdown",
+        "The same received-message fill as plain text above.",
+        "Here is **my update** with [a link](https://example.com), `inline code`, and a quote:\n\n> Ready for review.",
       ),
       single(
         "agent",
@@ -165,6 +260,9 @@ export const groups: Group[] = [
         day: true,
         rows: [
           message("day-a", "Good morning!"),
+          message("day-middle", "A quick update from me.", {
+            createdAt: 1_790_078_430,
+          }),
           message("day-b", "I’ve posted the update above.", {
             createdAt: 1_790_078_460,
           }),
@@ -216,6 +314,36 @@ export const groups: Group[] = [
     description:
       "This first gallery pass covers images, video, and files. Audio and voice-note specimens are a follow-up.",
     examples: [
+      single(
+        "image-only",
+        "Image only",
+        "Standalone media sits directly on the page.",
+        "",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/landscape",
+              kind: "image",
+              dimensions: { width: 640, height: 360 },
+            },
+          ],
+        },
+      ),
+      single(
+        "video-only",
+        "Video only",
+        "Standalone video shares the bubble radius without a surrounding fill.",
+        "",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/video",
+              kind: "video",
+              dimensions: { width: 640, height: 360 },
+            },
+          ],
+        },
+      ),
       single(
         "image",
         "Image attachment",

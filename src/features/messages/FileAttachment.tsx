@@ -40,7 +40,9 @@ export function FileAttachment({
 
   const content = (
     <>
-      <FileTextIcon size={24} aria-hidden="true" />
+      <span className={styles.fileAttachmentIcon}>
+        <FileTextIcon size={24} aria-hidden="true" />
+      </span>
       <span className={styles.fileAttachmentBody}>
         <span className={styles.fileAttachmentName}>{displayName}</span>
         <span className={styles.fileAttachmentMeta}>
@@ -90,7 +92,9 @@ export function FileAttachment({
 function UnavailableFileAttachment({ displayName }: { displayName: string }) {
   return (
     <span className={styles.fileAttachment} role="status" title={displayName}>
-      <FileTextIcon size={24} aria-hidden="true" />
+      <span className={styles.fileAttachmentIcon}>
+        <FileTextIcon size={24} aria-hidden="true" />
+      </span>
       <span className={styles.fileAttachmentBody}>
         <span className={styles.fileAttachmentName}>{displayName}</span>
         <span className={styles.fileAttachmentMeta}>File unavailable</span>

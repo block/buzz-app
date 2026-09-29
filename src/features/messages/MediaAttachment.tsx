@@ -230,8 +230,8 @@ export function MediaAttachment({
         {videoElement}
         <span className={styles.mediaPlay}>
           <IconButton
-            size="compact"
-            variant="solid"
+            size="lg"
+            variant="subtle"
             shape="round"
             type="button"
             aria-label={playing ? "Pause video" : "Play video"}
@@ -246,8 +246,8 @@ export function MediaAttachment({
         <span className={styles.mediaTime}>{formatMediaTime(currentTime)}</span>
         <span className={styles.mediaExpand}>
           <IconButton
-            size="compact"
-            variant="solid"
+            size="default"
+            variant="subtle"
             shape="round"
             type="button"
             aria-label="Open video fullscreen"
@@ -320,8 +320,8 @@ function MediaViewer({
         <div className={styles.mediaViewerDragRegion} data-tauri-drag-region />
         <span className={styles.mediaViewerClose}>
           <IconButton
-            size="compact"
-            variant="solid"
+            size="default"
+            variant="subtle"
             shape="round"
             ref={closeButton}
             type="button"

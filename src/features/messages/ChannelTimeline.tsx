@@ -7,6 +7,8 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
+import { continuesMessageGroup } from "./message-grouping";
+import { messagesStack } from "./message-stack";
 import { MessageRow } from "./MessageRow";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
@@ -544,10 +546,14 @@ function Timeline({
               />
             ) : (
               <MessageRow
+                groupPrevious={continuesMessageGroup(rows[index - 1], row)}
                 session={queries}
                 scope={scope}
                 key={row.id}
                 row={row}
+                viewer={viewer}
+                stackPrevious={!day && messagesStack(rows[index - 1], row)}
+                stackNext={messagesStack(row, rows[index + 1])}
                 unread={queries.unread}
                 extensions={extensions}
                 profile={profiles.get(row.authorId)}

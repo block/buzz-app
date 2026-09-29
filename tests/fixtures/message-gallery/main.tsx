@@ -3,6 +3,8 @@ import "@fontsource-variable/inter/wght.css";
 import "@fontsource/jetbrains-mono/400.css";
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { continuesMessageGroup } from "../../../src/features/messages/message-grouping";
+import { messagesStack } from "../../../src/features/messages/message-stack";
 import { MessageRow } from "../../../src/features/messages/MessageRow";
 import { MembershipRow } from "../../../src/features/messages/MembershipRow";
 import { Button } from "../../../src/shared/design-system/ui/Button";
@@ -55,13 +57,34 @@ const inline: readonly Contribution<InlineRenderer>[] = [
 ];
 const emptyTools: ReturnType<ConversationExtensions["tools"]["snapshot"]> = [];
 const subscribe = () => () => {};
+const appearances = [
+  {
+    id: "bubbles",
+    key: "gallery/bubbles",
+    pluginId: "gallery",
+    revision: "1",
+    title: "Message bubbles",
+    preset: "bubbles" as const,
+  },
+];
 const extensions: ConversationExtensions = {
+  appearances: { snapshot: () => appearances, subscribe },
   inline: { snapshot: () => inline, subscribe },
   tools: { snapshot: () => emptyTools, subscribe },
 };
 const agentPubkeys = new Set([agent]);
 
-function Specimen({ example }: { example: Example }) {
+const defaultExtensions: ConversationExtensions = {
+  inline: extensions.inline,
+  tools: extensions.tools,
+};
+function Specimen({
+  example,
+  bubbles,
+}: {
+  example: Example;
+  bubbles: boolean;
+}) {
   const [rows, setRows] = useState(example.rows);
   const [thread, setThread] = useState(false);
   const [action, setAction] = useState("");
@@ -92,10 +115,14 @@ function Specimen({ example }: { example: Example }) {
             <MessageRow
               key={row.id}
               row={row}
+              viewer={teammate}
+              groupPrevious={continuesMessageGroup(rows[index - 1], row)}
+              stackPrevious={messagesStack(rows[index - 1], row)}
+              stackNext={messagesStack(row, rows[index + 1])}
               profile={profiles.get(row.authorId)}
               participantProfiles={profiles}
               agentPubkeys={agentPubkeys}
-              extensions={extensions}
+              extensions={bubbles ? extensions : defaultExtensions}
               media={media}
               day={!!example.day && index === 0}
               onOpenLink={() => {
@@ -115,6 +142,7 @@ function Specimen({ example }: { example: Example }) {
               onOpenThread={() => setThread((value) => !value)}
               {...(example.timecode
                 ? {
+                    mediaTimeFileName: "design-walkthrough.mp4",
                     onMediaTime: (seconds: number) =>
                       setAction(`Sample playback moved to ${seconds} seconds.`),
                   }
@@ -134,14 +162,33 @@ function Specimen({ example }: { example: Example }) {
               message("reply-one", "A short explanation would help here.", {
                 authorId: teammate,
               }),
-              message("reply-two", "I’ll draft an option.", {
-                authorId: agent,
-                agentEnvelope: true,
+              message("reply-two", "One more thought within five minutes.", {
+                authorId: teammate,
+                createdAt: message("clock", "").createdAt + 60,
+                reactions: [{ content: "👍", events: [] }],
               }),
-            ].map((row) => (
+              message("reply-three", "This still belongs to my group.", {
+                authorId: teammate,
+                createdAt: message("clock", "").createdAt + 120,
+              }),
+              message(
+                "reply-four",
+                "A new group after more than five minutes.",
+                {
+                  authorId: teammate,
+                  createdAt: message("clock", "").createdAt + 421,
+                },
+              ),
+            ].map((row, index, replies) => (
               <MessageRow
                 key={row.id}
                 row={row}
+                layout="thread"
+                groupPrevious={continuesMessageGroup(replies[index - 1], row)}
+                stackPrevious={messagesStack(replies[index - 1], row)}
+                stackNext={messagesStack(row, replies[index + 1])}
+                viewer={teammate}
+                extensions={bubbles ? extensions : defaultExtensions}
                 profile={profiles.get(row.authorId)}
                 day={false}
                 retry={undefined}
@@ -170,6 +217,8 @@ function Specimen({ example }: { example: Example }) {
 
 function Gallery() {
   useKeyboardFocusVisibility();
+  const [colorMode, setColorMode] = useState(theme);
+  const [bubbles, setBubbles] = useState(true);
   const [group, setGroup] = useState("all");
   const [narrow, setNarrow] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -196,6 +245,29 @@ function Gallery() {
           <Button
             size="sm"
             variant="subtle"
+            aria-pressed={bubbles}
+            onClick={() => setBubbles((value) => !value)}
+          >
+            Message bubbles
+          </Button>
+          <Button
+            size="sm"
+            variant="subtle"
+            aria-pressed={colorMode === "dark"}
+            onClick={() => {
+              const next = colorMode === "dark" ? "light" : "dark";
+              document.documentElement.dataset.colorMode = next;
+              const url = new URL(location.href);
+              url.searchParams.set("theme", next);
+              history.replaceState(null, "", url);
+              setColorMode(next);
+            }}
+          >
+            Dark mode
+          </Button>
+          <Button
+            size="sm"
+            variant="subtle"
             aria-pressed={narrow}
             onClick={() => setNarrow((value) => !value)}
           >
@@ -211,8 +283,8 @@ function Gallery() {
         </div>
         <p className="text-body-sm text-tertiary">
           Examples show current behavior, including existing inconsistencies.
-          Retry, thread, and link actions use local sample state. Changing theme
-          resets examples.
+          Retry, thread, and link actions use local sample state. Toggle Dark
+          mode to compare themes without resetting examples.
         </p>
       </div>
       <div
@@ -235,7 +307,11 @@ function Gallery() {
                 <p className="text-body-sm text-tertiary">{item.description}</p>
               </header>
               {item.examples.map((example) => (
-                <Specimen key={example.id} example={example} />
+                <Specimen
+                  key={example.id}
+                  example={example}
+                  bubbles={bubbles}
+                />
               ))}
             </section>
           ))}

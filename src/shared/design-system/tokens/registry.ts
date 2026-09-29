@@ -309,6 +309,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "bg-surface-message",
+        variable: "--surface-message",
+        pointsAt: "neutral-navigation-quiet light / neutral-4 dark",
+        use: "Received message bubbles; pair with standard text and links.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message-own",
+        variable: "--surface-message-own",
+        pointsAt: "neutral-11 light / neutral-12 dark",
+        use: "Own message bubbles; pair with inverse text and links.",
+        status: "core",
+      },
+      {
         token: "bg-surface-inset",
         variable: "--surface-inset",
         pointsAt: "neutral-2 light / neutral-2 dark",

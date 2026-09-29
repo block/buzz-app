@@ -493,6 +493,8 @@
   --surface-popover: var(--neutral-1);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
+  --surface-message: var(--neutral-navigation-quiet);
+  --surface-message-own: var(--neutral-navigation-unread);
   --text-navigation: var(--neutral-navigation-text);
   --text-navigation-unread: var(--neutral-navigation-unread);
   --text-standard: var(--neutral-12);
@@ -540,6 +542,8 @@
 
 :root[data-color-mode="dark"],
 .dark {
+  --surface-message: var(--neutral-4);
+  --surface-message-own: var(--neutral-12);
   --surface-base: var(--neutral-1);
   --surface-panel: var(--neutral-3);
   --surface-popover: var(--neutral-5);

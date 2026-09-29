@@ -310,3 +310,44 @@ it("owns accessories through disable, replacement and failed activation", async 
   );
   expect(broken.service.accessories.snapshot()).toHaveLength(0);
 });
+
+it("owns the installable bubble preset through enable, disable and replacement", async () => {
+  // Load the prebuilt external artifact, as the runtime does (no TS declaration).
+  const path = "../../../examples/plugins/message-bubbles/plugin.js";
+  const module: PluginModule = await import(path);
+  const h = harness(module);
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.appearances.snapshot()).toHaveLength(1),
+  );
+  expect(h.service.appearances.snapshot()[0]).toMatchObject({
+    preset: "bubbles",
+    pluginId: h.plugin.manifest.id,
+    revision: "one",
+  });
+  // PluginManager filters disabled installations out of the desired runtime set.
+  h.runtime.reconcile([]);
+  await vi.waitFor(() =>
+    expect(h.service.appearances.snapshot()).toHaveLength(0),
+  );
+  h.runtime.reconcile([{ ...h.plugin, revision: "two" }]);
+  await vi.waitFor(() =>
+    expect(h.service.appearances.snapshot()[0]?.revision).toBe("two"),
+  );
+  expect(h.service.appearances.snapshot()).toHaveLength(1);
+  h.runtime.reconcile([]);
+  await vi.waitFor(() =>
+    expect(h.service.appearances.snapshot()).toHaveLength(0),
+  );
+});
+
+it("rejects unsupported appearance presets", () => {
+  const h = harness({ apply() {} });
+  expect(() =>
+    h.service.registerAppearance({
+      id: "bad",
+      title: "Bad",
+      preset: "unsupported" as "bubbles",
+    }),
+  ).toThrow("supported preset");
+});

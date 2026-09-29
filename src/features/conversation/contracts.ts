@@ -88,7 +88,14 @@ export type MessageRenderer = Readonly<{
   matches(message: ChannelMessage): boolean;
   component: ComponentType<{ message: ChannelMessage }>;
 }>;
+/** Host-rendered presentation only; no message data or behavior ownership. */
+export type MessageAppearance = Readonly<{
+  id: string;
+  title: string;
+  preset: "bubbles";
+}>;
 export type ConversationExtensions = Readonly<{
+  appearances?: ContributionReader<MessageAppearance>;
   messages?: ContributionReader<MessageRenderer>;
   accessories?: ContributionReader<ComposerAccessory>;
   tools: ContributionReader<ComposerTool>;

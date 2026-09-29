@@ -509,6 +509,27 @@ mounted page; see [sidebar ownership](channels.md#ownership).
 
 ## Conversation contributions
 
+### Message appearance experiments
+
+`ctx.conversation.registerAppearance({ id, title, preset: "bubbles" })`
+selects the host-rendered message bubble preset. Plugins inject `conversation`;
+the host exposes active registrations through `conversation.appearances`.
+There is deliberately no arbitrary CSS, renderer callback, data access or
+replacement timeline in this contract. The host retains grouping, identity,
+attachments, delivery and actions.
+
+With no active appearance contribution, rows use the default layout. Any active
+`bubbles` contribution enables that preset; multiple registrations are equivalent,
+so removing one does not disable another active registration. Unknown presets are
+rejected. Disable, uninstall, failed activation and revision replacement follow
+the existing contribution lifecycle and update mounted rows.
+
+This is a host-matched preview addition, not cross-version feature negotiation.
+The [Message bubbles example](../examples/plugins/message-bubbles/README.md)
+checks for the method and reports a useful error on older hosts. Installations
+start disabled; the plugin does not change stored messages or account preferences.
+
+
 `registerMessage({ id, title, matches, component })` contributes an optional whole
 message body. Components receive `{ message: ChannelMessage }`; the first active
 match wins, throwing matchers are skipped, and render failure/removal restores the

@@ -23,6 +23,8 @@ import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
+import { continuesMessageGroup } from "./message-grouping";
+import { messagesStack } from "./message-stack";
 import { MessageRow } from "./MessageRow";
 import { MessageComposer } from "./MessageComposer";
 import styles from "./Messages.module.css";
@@ -487,13 +489,10 @@ function ThreadMessages({
   };
   let previousReply: ChannelMessage | undefined = snapshot.root;
   function renderReplies(parent: string | undefined, depth = 0): ReactNode {
-    return (tree.children.get(parent) ?? []).map((row) => {
+    const siblings = tree.children.get(parent) ?? [];
+    return siblings.map((row, index) => {
       const children = tree.children.get(row.id);
-      const continuation =
-        previousReply?.authorId === row.authorId &&
-        row.createdAt >= previousReply.createdAt &&
-        row.createdAt - previousReply.createdAt <= 10 * 60 &&
-        !row.membership;
+      const continuation = continuesMessageGroup(previousReply, row);
       previousReply =
         children?.length && !expanded.has(row.id) ? undefined : row;
       const descendants = branchReplies.get(row.id) ?? [];
@@ -511,6 +510,13 @@ function ThreadMessages({
           scope={scope}
           onReply={snapshot.root ? targetReply : undefined}
           row={row}
+          stackPrevious={
+            messagesStack(siblings[index - 1], row) &&
+            !tree.children.get(siblings[index - 1]?.id ?? "")?.length
+          }
+          stackNext={
+            messagesStack(row, siblings[index + 1]) && !children?.length
+          }
           profile={profiles.get(row.authorId)}
           participantProfiles={profiles}
           agentPubkeys={agentPubkeys}
@@ -520,7 +526,12 @@ function ThreadMessages({
           day={false}
           layout={continuation ? "continuation" : "thread"}
           retry={session.messages.retry}
-          {...(videoAttachment ? { onMediaTime: handleMediaTime } : {})}
+          {...(videoAttachment
+            ? {
+                onMediaTime: handleMediaTime,
+                mediaTimeFileName: videoAttachment.name,
+              }
+            : {})}
           {...(onOpenMediaReview && rootId
             ? { onOpenMediaReview: openRootMedia }
             : {})}

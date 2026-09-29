@@ -119,3 +119,24 @@ it.each([0, 1])(
     ).toBeGreaterThanOrEqual(3);
   },
 );
+
+it.each(["light", "dark"] as const)(
+  "message text and links contrast with both bubble fills in %s",
+  (mode) => {
+    const palette = resolvedPalette(mode);
+    for (const surface of ["--surface-message", "--surface-message-own"]) {
+      for (const text of surface === "--surface-message-own"
+        ? ["--text-inverse"]
+        : ["--text-standard", "--text-subtle", "--text-link"]) {
+        expect(
+          contrast(palette[text], palette[surface]),
+          `${text} on ${surface}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+    const own = luminance(palette["--surface-message-own"]);
+    const received = luminance(palette["--surface-message"]);
+    if (mode === "light") expect(own).toBeLessThan(received);
+    else expect(own).toBeGreaterThan(received);
+  },
+);

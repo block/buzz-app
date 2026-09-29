@@ -8,6 +8,7 @@ import { usePresenceStatus } from "../presence/react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   memo,
+  Fragment,
   useId,
   useRef,
   useState,
@@ -38,7 +39,7 @@ import { usesLargeEmojiPresentation } from "./emoji-size";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
 import { MessageActionBar } from "./MessageActionBar";
-import { FlagIcon } from "../../shared/design-system/icons";
+import { FlagIcon, TimerIcon } from "../../shared/design-system/icons";
 import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
@@ -50,6 +51,10 @@ const EMPTY_CHANNEL_LIST = Object.freeze({
   channels: Object.freeze([]),
 });
 const emptyChannelList = () => EMPTY_CHANNEL_LIST;
+
+const emptyAppearances: readonly [] = [];
+const noAppearances = () => emptyAppearances;
+const subscribeNoAppearance = () => () => {};
 
 export type MessageRowProps = {
   row: ChannelMessage;
@@ -74,12 +79,17 @@ export type MessageRowProps = {
   quickControls?: ReactNode;
   branchControl?: ReactNode;
   overflowItems?: ReactNode;
+  viewer?: string | undefined;
+  groupPrevious?: boolean;
+  stackPrevious?: boolean;
+  stackNext?: boolean;
   layout?: "timeline" | "thread" | "continuation";
   mediaMode?: "inline" | "thread";
   mediaSeekTo?: number;
   mediaSeekRequest?: number;
   onMediaPlayback?: (playback: MediaPlayback) => void;
   onMediaTime?: (seconds: number) => void;
+  mediaTimeFileName?: string | undefined;
   onOpenMediaReview?: (
     messageId: string,
     attachment: ChannelMessage["attachments"][number],
@@ -106,15 +116,35 @@ export const MessageRow = memo(function MessageRow({
   branchControl,
   overflowItems,
   participantProfiles,
-  layout = "timeline",
+  viewer = session?.viewer,
+  stackPrevious: previous = false,
+  stackNext: next = false,
+  layout: requestedLayout = "timeline",
+  groupPrevious = false,
   mediaMode = "inline",
   mediaSeekTo,
   mediaSeekRequest,
   onMediaPlayback,
   onMediaTime,
+  mediaTimeFileName,
   onOpenMediaReview,
   agentPubkeys,
 }: MessageRowProps) {
+  const appearances = useSyncExternalStore(
+    extensions?.appearances?.subscribe ?? subscribeNoAppearance,
+    extensions?.appearances?.snapshot ?? noAppearances,
+    extensions?.appearances?.snapshot ?? noAppearances,
+  );
+  const bubbles = appearances.some((entry) => entry.preset === "bubbles");
+  const layout =
+    bubbles && requestedLayout === "continuation"
+      ? "thread"
+      : !bubbles && groupPrevious
+        ? "continuation"
+        : requestedLayout;
+  const stackPrevious = bubbles && previous;
+  const stackNext = bubbles && next;
+  const Content = bubbles ? "div" : Fragment;
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const directory = useReferenceDirectory(session, participantProfiles);
   const threadUnread = useThreadUnread(
@@ -156,6 +186,16 @@ export const MessageRow = memo(function MessageRow({
   const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
   const replaceTime = !!timeReply && !!onMediaTime;
   const displayRow = replaceTime ? { ...row, content: timeReply.content } : row;
+  const mediaOnly =
+    !row.content.trim() &&
+    !row.diff &&
+    !row.agentEnvelope &&
+    row.attachments.length > 0 &&
+    row.attachments.every(
+      (attachment) =>
+        (attachment.kind === "image" || attachment.kind === "video") &&
+        !!safeMessageUrl(attachment.url),
+    );
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
     extensions &&
@@ -229,6 +269,50 @@ export const MessageRow = memo(function MessageRow({
       largeEmoji={emojiOnly}
     />
   );
+  const avatar = clickable ? (
+    <IconButton
+      size={layout === "timeline" ? "default" : "sm"}
+      shape="round"
+      aria-label={`View ${name} profile`}
+      aria-describedby={presence === "unknown" ? undefined : presenceId}
+      onClick={(event) => {
+        event.currentTarget.focus();
+        onOpenLink(target);
+      }}
+      icon={
+        <>
+          <Avatar
+            src={picture}
+            alt=""
+            fallback={name}
+            size="fill"
+            shape={avatarShape}
+            statusBadge={presence === "unknown" ? undefined : presence}
+          />
+          {presence !== "unknown" && (
+            <span className="sr-only" id={presenceId}>
+              Presence: {presence}
+            </span>
+          )}
+        </>
+      }
+    />
+  ) : (
+    <Avatar
+      src={picture}
+      alt={
+        presence === "unknown"
+          ? ""
+          : avatarShape === "squircle"
+            ? "Agent"
+            : `${name} avatar`
+      }
+      fallback={name}
+      size={layout === "timeline" ? "large" : "default"}
+      shape={avatarShape}
+      statusBadge={presence === "unknown" ? undefined : presence}
+    />
+  );
   return (
     <div data-message-id={row.id}>
       {day && (
@@ -242,55 +326,23 @@ export const MessageRow = memo(function MessageRow({
           </span>
         </div>
       )}
-      <div className={styles.message} data-layout={layout}>
-        {layout === "continuation" ? (
+      <div
+        className={styles.message}
+        data-layout={layout}
+        data-appearance={bubbles ? "bubbles" : undefined}
+        data-stack-previous={stackPrevious || undefined}
+        data-stack-next={stackNext || undefined}
+      >
+        {bubbles || layout === "continuation" ? (
           <span className={styles.messageGutter}>
-            <MessageTimestamp createdAt={row.createdAt} compact />
+            {(!bubbles || (stackNext && stackPrevious)) && (
+              <MessageTimestamp createdAt={row.createdAt} compact />
+            )}
           </span>
-        ) : clickable ? (
-          <IconButton
-            size={layout === "timeline" ? "default" : "sm"}
-            shape="round"
-            aria-label={`View ${name} profile`}
-            aria-describedby={presence === "unknown" ? undefined : presenceId}
-            onClick={(event) => {
-              event.currentTarget.focus();
-              onOpenLink(target);
-            }}
-            icon={
-              <>
-                <Avatar
-                  src={picture}
-                  alt=""
-                  fallback={name}
-                  size="fill"
-                  shape={avatarShape}
-                  statusBadge={presence === "unknown" ? undefined : presence}
-                />
-                {presence !== "unknown" && (
-                  <span className="sr-only" id={presenceId}>
-                    Presence: {presence}
-                  </span>
-                )}
-              </>
-            }
-          />
         ) : (
-          <Avatar
-            src={picture}
-            alt={
-              presence === "unknown"
-                ? ""
-                : avatarShape === "squircle"
-                  ? "Agent"
-                  : `${name} avatar`
-            }
-            fallback={name}
-            size={layout === "timeline" ? "large" : "default"}
-            shape={avatarShape}
-            statusBadge={presence === "unknown" ? undefined : presence}
-          />
+          avatar
         )}
+
         <div className={styles.messageBody}>
           {!row.membership && (
             <MessageActionBar
@@ -369,7 +421,11 @@ export const MessageRow = memo(function MessageRow({
             />
           )}
           <div
-            className={layout === "continuation" ? "sr-only" : styles.byline}
+            className={
+              stackPrevious || layout === "continuation"
+                ? "sr-only"
+                : styles.byline
+            }
           >
             <span className={styles.author}>
               <strong>{name}</strong>
@@ -386,65 +442,115 @@ export const MessageRow = memo(function MessageRow({
               <MessageTimestamp createdAt={row.createdAt} />
             )}
           </div>
-          {timeReply && onMediaTime && (
-            <span className={styles.mediaTimeLink}>
-              <Button
-                size="sm"
+          <Content
+            {...(bubbles
+              ? {
+                  className: styles.messageBubble,
+                  "data-own":
+                    (!!viewer && row.authorId === viewer) || undefined,
+                  "data-media-only": mediaOnly || undefined,
+                  "data-long-text":
+                    (row.attachments.length === 0 &&
+                      (row.content.length > 160 ||
+                        row.content.includes("\n"))) ||
+                    undefined,
+                  "data-attachments": row.attachments.length > 0 || undefined,
+                }
+              : {})}
+          >
+            {bubbles && !stackNext && (
+              <div className={styles.messageAvatar}>{avatar}</div>
+            )}
+            {timeReply && onMediaTime && (
+              <button
+                className={`${styles.fileAttachment} ${styles.mediaTimeLink}`}
                 type="button"
+                aria-label={`Jump to ${timeReply.label}`}
                 onClick={() => onMediaTime(timeReply.anchor.seconds)}
               >
-                {timeReply.label}
-              </Button>
-            </span>
-          )}
-          {extensions?.messages ? (
-            <MessageBody registry={extensions.messages} message={row}>
-              {body}
-            </MessageBody>
-          ) : (
-            body
-          )}
-          <DeliveryNotice row={row} retry={retry} />
-          {row.attachments.map((attachment) => {
-            const url = safeMessageUrl(attachment.url);
-            if (!url) return null;
-            const source = media(url);
-            if (attachment.kind === "file")
-              return (
-                <FileAttachment
-                  key={url}
-                  attachment={{ ...attachment, url }}
-                  source={source}
-                  onOpenLink={onOpenLink}
-                />
-              );
-            if (attachment.kind === "audio") {
-              if (source && isProxySource(source))
+                <span className={styles.fileAttachmentIcon}>
+                  <TimerIcon size={24} aria-hidden="true" />
+                </span>
+                <span className={styles.fileAttachmentBody}>
+                  <span className={styles.fileAttachmentName}>
+                    {timeReply.label}
+                  </span>
+                  <span className={styles.fileAttachmentMeta}>
+                    {mediaTimeFileName?.trim() || "Video"}
+                  </span>
+                </span>
+              </button>
+            )}
+            {bubbles && mediaOnly ? null : extensions?.messages ? (
+              <MessageBody registry={extensions.messages} message={row}>
+                {body}
+              </MessageBody>
+            ) : (
+              body
+            )}
+            {row.attachments.map((attachment) => {
+              const url = safeMessageUrl(attachment.url);
+              if (!url) return null;
+              const source = media(url);
+              if (attachment.kind === "file")
                 return (
-                  <AudioAttachment
+                  <FileAttachment
                     key={url}
                     attachment={{ ...attachment, url }}
                     source={source}
+                    onOpenLink={onOpenLink}
+                  />
+                );
+              if (attachment.kind === "audio") {
+                if (source && isProxySource(source))
+                  return (
+                    <AudioAttachment
+                      key={url}
+                      attachment={{ ...attachment, url }}
+                      source={source}
+                    />
+                  );
+                return (
+                  <FileAttachment
+                    key={url}
+                    attachment={{ ...attachment, url }}
+                    source={source}
+                    onOpenLink={onOpenLink}
+                  />
+                );
+              }
+              if (attachment.kind === "image")
+                return (
+                  <AttachmentImage
+                    key={url}
+                    attachment={{ ...attachment, url }}
+                    url={url}
+                    source={source}
+                    cached={cached}
+                    onOpenLink={onOpenLink}
+                    {...(onOpenMediaReview
+                      ? {
+                          onOpenReview: (item, seconds) =>
+                            onOpenMediaReview(row.id, item, seconds),
+                        }
+                      : {})}
                   />
                 );
               return (
-                <FileAttachment
+                <MediaAttachment
                   key={url}
                   attachment={{ ...attachment, url }}
-                  source={source}
-                  onOpenLink={onOpenLink}
-                />
-              );
-            }
-            if (attachment.kind === "image")
-              return (
-                <AttachmentImage
-                  key={url}
-                  attachment={{ ...attachment, url }}
-                  url={url}
-                  source={source}
-                  cached={cached}
-                  onOpenLink={onOpenLink}
+                  media={media}
+                  mode={mediaMode}
+                  {...(attachment.kind === "video" && mediaSeekTo !== undefined
+                    ? {
+                        seekTo: mediaSeekTo,
+                        ...(mediaSeekRequest !== undefined
+                          ? { seekRequest: mediaSeekRequest }
+                          : {}),
+                      }
+                    : {})}
+                  {...(onMediaPlayback ? { onPlayback: onMediaPlayback } : {})}
                   {...(onOpenMediaReview
                     ? {
                         onOpenReview: (item, seconds) =>
@@ -453,30 +559,9 @@ export const MessageRow = memo(function MessageRow({
                     : {})}
                 />
               );
-            return (
-              <MediaAttachment
-                key={url}
-                attachment={{ ...attachment, url }}
-                media={media}
-                mode={mediaMode}
-                {...(attachment.kind === "video" && mediaSeekTo !== undefined
-                  ? {
-                      seekTo: mediaSeekTo,
-                      ...(mediaSeekRequest !== undefined
-                        ? { seekRequest: mediaSeekRequest }
-                        : {}),
-                    }
-                  : {})}
-                {...(onMediaPlayback ? { onPlayback: onMediaPlayback } : {})}
-                {...(onOpenMediaReview
-                  ? {
-                      onOpenReview: (item, seconds) =>
-                        onOpenMediaReview(row.id, item, seconds),
-                    }
-                  : {})}
-              />
-            );
-          })}
+            })}
+          </Content>
+          <DeliveryNotice row={row} retry={retry} />
           {session && scope && extensions ? (
             <MessageReactions
               onFocusedRemoval={() => menuTrigger.current?.focus()}

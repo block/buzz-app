@@ -537,8 +537,9 @@ for (const width of [1492, 1280, 1024, 390])
         .first()
         .getByRole("button", { name: "Collapse this branch" });
       const control = (await rail.isVisible()) ? rail : rowControl;
+      const row = panel.locator(`[data-message-id="${id}"]`);
       await control.scrollIntoViewIfNeeded();
-      if (control === rowControl) await control.focus();
+      if (control === rowControl) await row.hover();
       await expect
         .poll(() =>
           control.evaluate((node) => {
@@ -557,7 +558,6 @@ for (const width of [1492, 1280, 1024, 390])
           }),
         )
         .toBe(true);
-      const row = panel.locator(`[data-message-id="${id}"]`);
       await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
       await panel.getByRole("heading", { name: "Thread", exact: true }).hover();
       await row.scrollIntoViewIfNeeded();

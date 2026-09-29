@@ -58,6 +58,7 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   expect(await page.evaluate(() => window.copiedMessages)).toEqual([
     event.content,
   ]);
+  await row.hover();
   await row.getByRole("button", { name: "Copy link", exact: true }).click();
   await expect(
     page
@@ -73,6 +74,14 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   });
   const root = panel.locator(`[data-message-id="${event.id}"]`);
   await expect(root).toBeVisible();
+  // A pointer click leaves focus on the control; the bar still follows hover.
+  await row.hover();
+  await row.getByRole("button", { name: "Copy link", exact: true }).click();
+  await root.hover();
+  await expect(actions).toHaveCSS("opacity", "0");
+  // Keyboard focus still reveals it while the mouse is elsewhere.
+  await page.keyboard.press("Tab");
+  await expect(actions).toHaveCSS("opacity", "1");
   await root.hover();
   await root
     .getByRole("button", { name: "React with 👍", exact: true })

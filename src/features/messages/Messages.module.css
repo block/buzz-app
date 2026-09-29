@@ -1558,7 +1558,7 @@ html[data-keyboard-navigation] .imageReviewToolbar :focus-visible {
     margin-inline-start: 0;
   }
   .message:hover .messageActions,
-  .message:focus-within .messageActions,
+  html[data-keyboard-navigation] .message:focus-within .messageActions,
   .messageActions[data-open],
   .messageActions:has([aria-haspopup][aria-expanded="true"]) {
     opacity: 1;
@@ -1730,7 +1730,7 @@ html[data-keyboard-navigation] .replyBranchRail:focus-visible {
     opacity: 0;
   }
   .message:hover .continuationTime,
-  .message:focus-within .continuationTime {
+  html[data-keyboard-navigation] .message:focus-within .continuationTime {
     opacity: 1;
   }
 }

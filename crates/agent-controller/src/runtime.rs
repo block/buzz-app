@@ -210,6 +210,11 @@ impl RuntimeBundle {
         }
         if let Some(configuration) = &harness.configuration {
             harness.validate_configuration()?;
+            // Explicit managed configuration must not forward a previous
+            // provider's key. Legacy/custom environments remain unchanged.
+            if harness.command != "buzz-agent" || harness.provider != "openai" {
+                command.env_remove("OPENAI_COMPAT_API_KEY");
+            }
             for key in ["BUZZ_ACP_MODEL", "BUZZ_ACP_EFFORT_LEVEL"] {
                 command.env_remove(key);
             }

@@ -32,6 +32,12 @@ models. Conflicting saved/draft provider, model, effort, endpoint, or proxy
 overrides are rejected natively before key use. Creation repeats native catalog
 validation before generating an agent identity. Discovery is not paid inference.
 
+Creation resolves device-wide defaults through the same native path as discovery.
+The pending creation binds the submitted draft and its effective settings; changed
+drafts or defaults require a new preflight before credential persistence. Unchanged
+retries reuse the prepared identity. Only submitted values are persisted, so
+inherited settings remain inherited.
+
 Launch reads the provider key from saved environment settings and passes it
 through the child environment, never arguments. Managed setup sends the explicit
 model and omits effort overrides. Legacy/manual configurations retain their
@@ -46,6 +52,12 @@ frontend. Checked keys remain in the unsaved environment draft until Save/Cancel
 Provider changes retire outstanding requests, and late success cannot select a
 key in a different draft. Selecting an imported agent's existing model
 explicitly establishes the new runtime-default policy.
+
+Leaving managed Open AI clears the model/configuration and stages deletion of its
+agent-specific key. Saving applies that deletion; cancelling preserves the saved
+agent. An OpenAI key inherited from OpenAI Agent defaults is scoped to the effective
+OpenAI provider, including legacy environment provider overrides. Explicit legacy
+and custom per-agent environments retain their existing behavior.
 
 Focused coverage includes production IPC against synthetic HTTP, environment
 persistence, model-list rejection/empty/malformed/oversized responses,

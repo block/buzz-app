@@ -49,6 +49,9 @@ impl BuildDefaults {
         if let Some(model) = env.get("BUZZ_AGENT_MODEL") {
             harness.model.clone_from(model);
         }
+        if matches!(harness.configuration, Some(crate::AiConfiguration::Default)) {
+            harness.model.clear();
+        }
         harness
     }
 

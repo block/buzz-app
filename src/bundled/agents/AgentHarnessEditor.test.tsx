@@ -5,7 +5,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 import { AgentHarnessEditor } from "./AgentHarnessEditor";
-import { agentDraft } from "./agent-edit";
+import { agentDraft, agentEdit, type AgentDraft } from "./agent-edit";
 import { controlFixture } from "../../features/agents/control-testing";
 
 afterEach(cleanup);
@@ -272,3 +272,91 @@ it("disables Pi's provider list while signed-in providers load and keeps the cur
   );
   expect(screen.queryByLabelText("Custom provider")).toBeNull();
 });
+
+it.each(
+  ["entered", "saved", "inherited"].flatMap((source) => [
+    {
+      source,
+      label: "Provider",
+      destination: "Databricks v2",
+      configuration: { mode: "default" },
+    },
+    {
+      source,
+      label: "Harness",
+      destination: "Codex",
+      configuration: { mode: "default" },
+    },
+    {
+      source,
+      label: "Harness",
+      destination: "Goose",
+      configuration: undefined,
+    },
+  ]),
+)(
+  "retires $source OpenAI settings when selecting $destination",
+  async ({ source, label, destination, configuration }) => {
+    const f = controlFixture();
+    const options = [
+      {
+        command: "buzz-agent",
+        label: "Buzz Agent",
+        providers: [
+          { value: "openai", label: "Open AI" },
+          { value: "databricks_v2", label: "Databricks v2" },
+        ],
+      },
+      {
+        id: "codex",
+        command: "/tools/codex-acp",
+        label: "Codex",
+        providers: [],
+        defaultArgs: [],
+      },
+      {
+        command: "/tools/goose",
+        label: "Goose",
+        providers: [],
+        defaultArgs: ["acp"],
+      },
+    ];
+    const initial: AgentDraft = {
+      ...agentDraft(f.agent),
+      command: "buzz-agent",
+      provider: source === "inherited" ? "" : "openai",
+      model: "openai-model",
+      configuration: { mode: "advanced", effort: { kind: "default" } },
+      environment: {
+        KEEP_ME: "value",
+        ...(source === "entered"
+          ? { OPENAI_COMPAT_API_KEY: "synthetic-key" }
+          : {}),
+      },
+    };
+    let draft = initial;
+    function Editor() {
+      const [value, setValue] = useState(initial);
+      draft = value;
+      return (
+        <AgentHarnessEditor
+          draft={value}
+          options={options}
+          defaultProvider="openai"
+          onChange={(patch) => setValue((old) => ({ ...old, ...patch }))}
+        />
+      );
+    }
+    const user = userEvent.setup();
+    const view = render(<Editor />);
+    await user.click(screen.getByLabelText(label));
+    await user.click(await screen.findByRole("option", { name: destination }));
+    expect(draft.model).toBe("");
+    expect(draft.configuration).toEqual(configuration);
+    expect(agentEdit(draft).environment).toEqual({
+      KEEP_ME: "value",
+      OPENAI_COMPAT_API_KEY: null,
+    });
+    view.unmount();
+  },
+);

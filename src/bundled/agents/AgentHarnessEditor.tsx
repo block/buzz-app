@@ -41,6 +41,18 @@ export function AgentHarnessEditor({
   const external = harness?.label === "Goose" || harness?.label === "Pi";
   const codex = harness?.id === "codex" || executable === "codex-acp";
   const piLoading = harness?.label === "Pi" && piProviders === null;
+  const managedOpenAI =
+    draft.command === "buzz-agent" &&
+    (draft.provider || defaultProvider) === "openai" &&
+    draft.configuration?.mode === "advanced" &&
+    draft.configuration.effort.kind === "default";
+  const leaveOpenAI: Partial<AgentDraft> = managedOpenAI
+    ? {
+        model: "",
+        configuration: { mode: "default" },
+        environment: { ...draft.environment, OPENAI_COMPAT_API_KEY: null },
+      }
+    : {};
   const missingGoose = options.some(
     (option) => isGoose(option.command) && option.available === false,
   );
@@ -70,13 +82,14 @@ export function AgentHarnessEditor({
           const enteringCodex = option?.id === "codex";
           onChange({
             command,
+            ...(command !== draft.command ? leaveOpenAI : {}),
             ...(pickedOption && enteringCodex
               ? {
                   args: JSON.stringify(option.defaultArgs ?? []),
                   provider: "",
                   model: "",
                   configuration:
-                    draft.configuration?.mode === "advanced"
+                    !managedOpenAI && draft.configuration?.mode === "advanced"
                       ? {
                           mode: "advanced" as const,
                           effort: { kind: "unsupported" as const },
@@ -151,6 +164,9 @@ export function AgentHarnessEditor({
           onChange={(provider) =>
             onChange({
               provider,
+              ...((provider || defaultProvider) !== "openai"
+                ? leaveOpenAI
+                : {}),
               ...(external ? { model: "" } : {}),
               ...(draft.command === "buzz-agent" && provider === "openai"
                 ? {

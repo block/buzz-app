@@ -20,7 +20,7 @@ fn edit(harness: &str, model: &str, effort: &str) -> AgentDefaultsEdit {
         provider: "p".into(),
         model: model.into(),
         effort: effort.into(),
-        session_policy: SessionPolicy::Channel,
+        session_policy: Some(SessionPolicy::Channel),
         environment: BTreeMap::new(),
     }
 }
@@ -141,6 +141,28 @@ fn conversation_context_inherits_defaults_unless_agent_or_imported_definition_se
     );
     let legacy: AgentDefaults = serde_json::from_str(r#"{"harness":"buzz-agent"}"#).unwrap();
     assert_eq!(legacy.session_policy, SessionPolicy::Channel);
+}
+
+#[test]
+fn omitted_policy_in_defaults_edit_preserves_the_saved_default() {
+    let mut saved = defaults("buzz-agent");
+    saved.session_policy = SessionPolicy::Thread;
+    let mut payload = serde_json::json!({
+        "harness": "buzz-agent",
+        "provider": "changed-provider",
+        "model": "global-model",
+        "effort": "high",
+        "environment": {}
+    });
+    let omitted: AgentDefaultsEdit = serde_json::from_value(payload.clone()).unwrap();
+    saved.apply(omitted).unwrap();
+    assert_eq!(saved.provider, "changed-provider");
+    assert_eq!(saved.session_policy, SessionPolicy::Thread);
+
+    payload["sessionPolicy"] = Value::String("channel".into());
+    let explicit: AgentDefaultsEdit = serde_json::from_value(payload).unwrap();
+    saved.apply(explicit).unwrap();
+    assert_eq!(saved.session_policy, SessionPolicy::Channel);
 }
 
 #[test]

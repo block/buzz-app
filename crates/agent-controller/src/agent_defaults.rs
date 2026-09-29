@@ -62,8 +62,9 @@ pub struct AgentDefaultsEdit {
     pub provider: String,
     pub model: String,
     pub effort: String,
+    /// Missing preserves the saved default; only an explicit choice replaces it.
     #[serde(default)]
-    pub session_policy: SessionPolicy,
+    pub session_policy: Option<SessionPolicy>,
     /// Absence preserves; null deletes; a value replaces. Never a read API.
     pub environment: BTreeMap<String, Option<String>>,
 }
@@ -94,7 +95,7 @@ impl AgentDefaults {
             provider: edit.provider,
             model: edit.model,
             effort: edit.effort,
-            session_policy: edit.session_policy,
+            session_policy: edit.session_policy.unwrap_or(self.session_policy),
             environment,
         };
         next.validate()?;

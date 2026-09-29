@@ -1921,7 +1921,7 @@ fn inherited_default_changes_reach_restart_diff_and_the_next_start() {
         provider: String::new(),
         model: model.into(),
         effort: String::new(),
-        session_policy: crate::config::SessionPolicy::Channel,
+        session_policy: Some(crate::config::SessionPolicy::Channel),
         environment: BTreeMap::new(),
     };
     controller.save_defaults(edit("first-default")).unwrap();
@@ -1984,7 +1984,7 @@ fn saved_databricks_workspace_launches_without_inheriting_global_host_or_restart
         provider: "databricks_v2".into(),
         model: String::new(),
         effort: String::new(),
-        session_policy: crate::config::SessionPolicy::Channel,
+        session_policy: Some(crate::config::SessionPolicy::Channel),
         environment: BTreeMap::from([
             ("DATABRICKS_HOST".into(), Some(host.into())),
             ("DATABRICKS_MODEL_FILTER".into(), Some(filter.into())),

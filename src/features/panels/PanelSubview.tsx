@@ -1,3 +1,4 @@
+import { PanelLocalTab, usePanelTabHost } from "./PanelWorkspace";
 import {
   createContext,
   useCallback,
@@ -64,7 +65,23 @@ export function PanelSubviewHost({
   );
 }
 
-export function PanelSubview({
+export function PanelSubview(props: {
+  title: string;
+  backLabel: string;
+  onBack(): void;
+  children: ReactNode;
+}) {
+  const tabbed = !!usePanelTabHost();
+  return tabbed ? (
+    <PanelLocalTab title={props.title} close={props.onBack}>
+      {props.children}
+    </PanelLocalTab>
+  ) : (
+    <InlinePanelSubview {...props} />
+  );
+}
+
+function InlinePanelSubview({
   title,
   backLabel,
   onBack,

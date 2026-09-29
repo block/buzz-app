@@ -20,7 +20,7 @@
   position: relative;
   overflow: hidden;
 }
-.board:has(> [data-panel-dock]) {
+.board:has(> [data-panel-dock]:not([hidden])) {
   grid-template-columns: minmax(320px, 1.1fr) minmax(
       316px,
       var(--secondary-panel-width, 1fr)
@@ -385,51 +385,12 @@
   ~ :not([inert], [hidden], [data-panel-resize]) {
   border-block-start: 1px solid var(--border-standard);
 }
-/* Settings replaces the primary surface without collapsing its retained layout. */
-.panelStack > :is(:has(> .settingsPanel), .retainedPanel[inert]) {
-  grid-area: 1 / 1;
-}
 .retainedPanel {
   display: grid;
   min-height: 0;
   min-width: 0;
 }
-.retainedPanel[inert] {
-  visibility: hidden;
-  /* Revealed spoilers override visibility; opacity suppresses the whole subtree. */
-  opacity: 0;
-}
-/* A thread and its detail share one slot, preserving the thread's live state. */
-.retainedPanel:is([data-thread-layer], [data-panel-layer]) {
-  grid-area: 1 / 1;
-  transform: none;
-  transition:
-    transform var(--duration-panel-enter) var(--easing-enter),
-    opacity var(--duration-panel-enter) var(--easing-enter);
-}
-.retainedPanel[data-covered] {
-  transform: translateX(calc(-1 * var(--space-3)));
-}
-@starting-style {
-  .retainedPanel[data-thread-detail] {
-    transform: translateX(var(--space-3));
-    opacity: 0;
-  }
-}
-html[data-keyboard-input] .retainedPanel {
-  transition: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  .retainedPanel:is([data-thread-layer], [data-panel-layer]) {
-    transform: none;
-    transition-property: opacity;
-  }
-  @starting-style {
-    .retainedPanel[data-thread-detail] {
-      transform: none;
-    }
-  }
-}
+
 .companion {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
@@ -472,7 +433,7 @@ html[data-keyboard-input] .retainedPanel {
 }
 @media (max-width: 1000px) {
   .board,
-  .board:has(> [data-panel-dock]) {
+  .board:has(> [data-panel-dock]:not([hidden])) {
     grid-template-columns: minmax(0, 1fr);
   }
   .panelStack > [data-panel-resize] {
@@ -491,7 +452,7 @@ html[data-keyboard-input] .retainedPanel {
 }
 /* A widened persistent sidebar can leave less room than viewport width implies. */
 @container (max-width: 651px) {
-  .board:has(> [data-panel-dock]) {
+  .board:has(> [data-panel-dock]:not([hidden])) {
     grid-template-columns: minmax(0, 1fr);
   }
   .panelStack > [data-panel-resize] {
@@ -510,7 +471,7 @@ html[data-keyboard-input] .retainedPanel {
 }
 @media (max-width: 650px) {
   .board,
-  .board:has(> [data-panel-dock]) {
+  .board:has(> [data-panel-dock]:not([hidden])) {
     grid-template-columns: minmax(0, 1fr);
   }
   .sidebarResizeHandle[aria-orientation="vertical"] {

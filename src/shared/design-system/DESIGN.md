@@ -298,8 +298,13 @@ show these contracts and their compositions.
 
 PanelHeader owns one consistent header frame: leading `navigation`, title/icon,
 and trailing `actions`. Use a toolbar IconButton with ArrowLeft for a local back
-action and X for closing the panel. The default 56px height aligns conversation,
-thread, and profile headers; compact is for intentionally denser surfaces.
+action and X for closing the panel. The default 2.5rem (40px at the default root size) minimum height aligns conversation,
+thread, profile, tabbed workspace, and Todos headers. The compact variant shares
+this height. Headers use 0.25rem inline padding (matching the centered 2rem controls’ block inset), 1rem identity icons, and
+0.25rem gaps between action buttons without reducing their hit areas. Navigation
+tabs use 1rem icons or fill avatars and 0.5rem leading padding.
+Header spacing, icons, and controls scale with rem; separators remain
+1px hairlines. Titles and actions may wrap when their content needs more room.
 Navigation state, focus restoration, and content transitions belong to the host.
 
 Composer pickers reuse PopoverPopup and anchor above the whole composer with a
@@ -370,7 +375,16 @@ shell header or composer. F6 enters notifications, Tab reaches actions. Modals
 remain above the stack. Content updates do not restart expiry; timeout changes do.
 
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
-Route navigation uses NavigationItem with aria-current instead. NavigationItem
+Route navigation uses NavigationItem with aria-current instead. Tabs can also
+compose NavigationItem through the `navigation` variant: these retain tab
+semantics, use 12rem widths with ellipsis and a subtle selected fill, accept avatars/icons, and place a sibling close
+button over reserved trailing space. Navigation tab strips scroll horizontally with a thin native scrollbar. The main
+channel header uses the same control with a single non-closable tab with `showSelection={false}` (no selection or hover fill); channel
+actions remain in the header action slot. The settings launcher uses
+`data-highlight-expanded="false"` to preserve disclosure semantics without a
+sticky pressed treatment; the selected tab owns the open-state indicator.
+
+NavigationItem
 offers an `option` variant for picker rows with even 8px padding and immediate
 hover feedback. It forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
@@ -411,6 +425,7 @@ should remain legible without a state background to explain it.
 
 - **Design default, hover, pressed, focus, selected, disabled and loading states where they apply.** Pressed changes fill without moving the control. Loading keeps the label footprint and prevents repeated activation; CSS alone cannot enforce it.
 - **Hover means one step more contrast, in whichever direction that surface needs.** A light row darkens, a dark chip lightens. Direction lives in the value.
+- **Neutral buttons, icon controls and navigation rows share the tab’s quiet hover fill** through `affordance-subtle-hover` (neutral 2 light / neutral 5 dark). Primary, destructive and tinted actions retain their semantic hover colors; media and glass retain their material treatments.
 - **Selected is a persistent statement, not a stronger hover.** It should be legible without a cursor present.
 - **A selected item in a toggle group is not interactive.** Clicking it does nothing, so it gets no hover.
 - **Disabled communicates unavailability, not quietness.** It is not a fourth level of the emphasis ramp.

@@ -70,7 +70,8 @@ const ACCEPTED_AWAY_PAIRS = new Set([
   "light --status-away #ffba18 on --surface-popover #ffffff",
   "light --status-away #ffba18 on --affordance-selected #e8e8e8",
   "light --status-away #ffba18 on --affordance-panel-hover #f5f5f6",
-  "light --status-away #ffba18 on --affordance-subtle-hover #efeff0",
+  // Same approved quiet surface as panel-hover, now shared by neutral controls.
+  "light --status-away #ffba18 on --affordance-subtle-hover #f5f5f6",
   "light --status-away #ffba18 on --affordance-floating-hover #e8e8e8",
   "light --status-away #ffba18 on --neutral-4 #dadada",
 ]);

@@ -317,8 +317,8 @@ test("nested replies send, collapse, and reveal through links at readable panel 
   await reopenBranch.press("Enter");
   await expect(nestedRow).toBeVisible();
   await expect(grandchildRow).toHaveCount(0);
-  await panel
-    .getByRole("button", { name: "Close thread", exact: true })
+  await page
+    .getByRole("button", { name: "Close Thread tab", exact: true })
     .click();
   const linked = app.append(
     "primary",
@@ -559,7 +559,7 @@ for (const width of [1492, 1280, 1024, 390])
         .toBe(true);
       const row = panel.locator(`[data-message-id="${id}"]`);
       await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
-      await panel.getByRole("heading", { name: "Thread", exact: true }).hover();
+      await page.getByRole("tab", { name: "Thread", exact: true }).hover();
       await row.scrollIntoViewIfNeeded();
       const restingHeight = (await row.boundingBox()).height;
       await row.hover();
@@ -618,7 +618,7 @@ for (const width of [1492, 1280, 1024, 390])
       await expandAll();
     }
     await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
-    await panel.getByRole("heading", { name: "Thread", exact: true }).hover();
+    await page.getByRole("tab", { name: "Thread", exact: true }).hover();
     for (const id of ids) {
       await expect(
         panel

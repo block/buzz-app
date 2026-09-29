@@ -1,8 +1,9 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { usePanelTabHost } from "../../features/panels/PanelWorkspace";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { channelIcon } from "../../features/channels/channel-icon";
-import { XIcon } from "../../shared/design-system/icons/index";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { GearIcon } from "../../shared/design-system/icons/index";
+import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import styles from "./Channels.module.css";
@@ -18,10 +19,15 @@ export function ChannelSettingsPanel({
   children: ReactNode;
   setupTools?: ReactNode;
 }) {
-  const closeButton = useRef<HTMLButtonElement>(null);
+  const tabbed = !!usePanelTabHost();
+  const header = useRef<HTMLDivElement>(null);
+  const panelId = useId();
   useEffect(() => {
-    closeButton.current?.focus({ preventScroll: true });
-  }, []);
+    if (tabbed) return;
+    header.current
+      ?.querySelector<HTMLElement>('[role="tab"]')
+      ?.focus({ preventScroll: true });
+  }, [tabbed]);
   const ChannelIcon = channelIcon(channel);
   return (
     <Panel
@@ -34,20 +40,35 @@ export function ChannelSettingsPanel({
         }
       }}
     >
-      <div className={styles.settingsPanel}>
-        <PanelHeader
-          title="Channel Settings"
-          actions={
-            <IconButton
-              ref={closeButton}
-              size="toolbar"
-              aria-label="Close channel settings"
-              onClick={close}
-              icon={<XIcon size={18} aria-hidden="true" />}
-            />
-          }
-        />
-        <div className={styles.settingsContent}>
+      <div ref={header} className={styles.settingsPanel}>
+        {!tabbed && (
+          <PanelHeader
+            title={
+              <Tabs
+                variant="navigation"
+                label="Panel tabs"
+                value="settings"
+                onValueChange={() => {}}
+                items={[
+                  {
+                    value: "settings",
+                    label: "Channel settings",
+                    icon: <GearIcon size="1rem" />,
+                    panelId,
+                    onClose: close,
+                  },
+                ]}
+              />
+            }
+          />
+        )}
+        <div
+          id={tabbed ? undefined : panelId}
+          {...(!tabbed
+            ? { role: "tabpanel", "aria-labelledby": `${panelId}-tab` }
+            : {})}
+          className={styles.settingsContent}
+        >
           {channel && (
             <>
               <div className={styles.settingsIdentity}>

@@ -216,6 +216,7 @@ function messagesHarness(
   const close = vi.fn(),
     bubble = vi.fn();
   const props = {
+    active: true,
     session,
     scope: "scope",
     channelName: "General",
@@ -649,6 +650,30 @@ it("ordinary routed loading failure completes as unavailable, never as an opened
     reason: "unavailable",
   });
 });
+it.each(["ready", "unavailable", "error"] as const)(
+  "a restored background thread waits for its verified target (%s)",
+  (targetStatus) => {
+    const navigation = ordinaryNavigation();
+    navigation.target.threadRootId = "different-root";
+    const h = messagesHarness(navigation);
+    h.props.active = false;
+    h.snapshot.targetStatus = "loading";
+    h.render();
+    expect(navigation.complete).not.toHaveBeenCalled();
+    h.snapshot.targetStatus = targetStatus;
+    h.snapshot.target = targetStatus === "ready" ? row : undefined;
+    h.render();
+    expect(navigation.complete).toHaveBeenCalledExactlyOnceWith(
+      targetStatus === "ready"
+        ? { status: "opened" }
+        : {
+            status: "failed",
+            reason:
+              targetStatus === "unavailable" ? "not-found" : "unavailable",
+          },
+    );
+  },
+);
 it("a presented ordinary thread survives the real navigation deadline while history is pending", async () => {
   vi.useFakeTimers();
   const controller = createNavigationController(createMemoryHistory());

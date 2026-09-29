@@ -193,7 +193,7 @@ for (const reading of [false, true]) {
           region.locator(`[data-message-id="${last.id}"]`),
         ).toBeInViewport();
         await expect(
-          page.getByRole("button", { name: "Close thread", exact: true }),
+          page.getByRole("tab", { name: "Thread", exact: true }),
         ).toBeFocused();
       }
       const live = app.reply(root.id);

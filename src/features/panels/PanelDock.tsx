@@ -9,11 +9,14 @@ export function PanelDock({
   className,
   children,
   resizeHandle,
+  keepMounted = false,
 }: {
   open: boolean;
   className: string | undefined;
   children: ReactNode;
   resizeHandle?: ReactNode;
+  /** A collapsible workspace keeps its tab contents and local view state. */
+  keepMounted?: boolean;
 }) {
   const element = useRef<HTMLDivElement>(null);
   const [retained, setRetained] = useState(open ? children : null);
@@ -37,18 +40,20 @@ export function PanelDock({
     };
   }, [open, retained]);
 
-  if (!open && !retained) return null;
+  if (!open && !retained && !keepMounted) return null;
   return (
     <div
       ref={element}
+      style={!open && !retained ? { display: "none" } : undefined}
       className={`${styles.motion} ${className ?? ""}`}
       data-panel-dock=""
+      hidden={!open && !retained}
       data-closing={!open || undefined}
       inert={!open}
       aria-hidden={!open || undefined}
     >
       {open && resizeHandle}
-      {open ? children : retained}
+      {open || keepMounted ? children : retained}
     </div>
   );
 }

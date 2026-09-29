@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { usePanelTabHost } from "../panels/PanelWorkspace";
 import { MessageEditScope } from "./MessageEditScope";
 import { ReplySummary } from "./ReplySummary";
 import { ReplyBranch } from "./ReplyBranch";
@@ -45,6 +46,7 @@ export type ThreadPanelProps = {
   sessionConversation?: boolean | undefined;
   messageId: string;
   replyRequest?: number | undefined;
+  active?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   close(): void;
   onOpenLink(url: string): boolean;
@@ -59,6 +61,7 @@ export type ThreadPanelProps = {
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
+  const tabbed = !!usePanelTabHost();
   return (
     <aside
       className={styles.thread}
@@ -67,13 +70,13 @@ export function ThreadPanel(props: ThreadPanelProps) {
       onDrop={rejectUnhandledFileDrop}
       aria-label="Thread"
       onKeyDown={(event) => {
-        if (event.key === "Escape") {
+        if (event.key === "Escape" && !tabbed) {
           event.stopPropagation();
           props.close();
         }
       }}
     >
-      <ThreadHeader close={props.close} />
+      {!tabbed && <ThreadHeader close={props.close} />}
       <OwnedThreadPanel
         key={messageViewKey(
           props.session,
@@ -119,6 +122,7 @@ function OwnedThreadPanel({
   canOpenLink,
   sessionConversation,
   replyRequest,
+  active = true,
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
@@ -170,6 +174,7 @@ function OwnedThreadPanel({
       navigation={navigation}
       messageId={messageId}
       replyRequest={replyRequest}
+      active={active}
       onOpenLink={onOpenLink}
       onOpenMediaReview={onOpenMediaReview}
       canOpenLink={canOpenLink}
@@ -194,6 +199,7 @@ function ThreadMessages({
   canOpenLink,
   sessionConversation,
   replyRequest,
+  active,
 }: {
   sessionConversation?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -204,6 +210,7 @@ function ThreadMessages({
   messageId: string;
   view: ThreadView;
   replyRequest?: number | undefined;
+  active?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   onOpenLink(url: string): boolean;
   onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"];
@@ -384,7 +391,7 @@ function ThreadMessages({
     scroller,
     settled: positioned,
     messageId,
-    signal: rootTarget ? undefined : navigation?.signal,
+    signal: rootTarget || !active ? undefined : navigation?.signal,
     ready:
       snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
     complete: completeTarget,
@@ -505,6 +512,17 @@ function ThreadMessages({
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element || navigation?.signal.aborted) return;
+    // Restored background tabs verify their target without competing for focus.
+    if (
+      navigation &&
+      !active &&
+      snapshot.targetStatus === "ready" &&
+      snapshot.target?.id === messageId &&
+      revealed.current !== navigation.signal
+    ) {
+      revealed.current = navigation.signal;
+      navigation.complete({ status: "opened" });
+    }
     // A mounted ordinary thread acknowledges the visit before slow history can
     // exhaust navigation's deadline. Positioning still waits for bounded loading.
     if (
@@ -546,7 +564,10 @@ function ThreadMessages({
       if (bottom) setNewMessageCount(0);
     }
   }, [
+    active,
     snapshot.status,
+    snapshot.targetStatus,
+    snapshot.target,
     snapshot.canLoadMore,
     snapshot.root,
     messageId,

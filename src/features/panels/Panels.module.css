@@ -31,7 +31,7 @@
   position: relative;
   overflow: hidden;
 }
-.frame:has(> [data-panel-dock]) {
+.frame:has(> [data-panel-dock]:not([hidden])) {
   grid-template-columns: minmax(0, 1fr) minmax(
       300px,
       var(--secondary-panel-width, 420px)
@@ -50,7 +50,7 @@
   min-height: 0;
 }
 @media (max-width: 1000px) {
-  .frame:has(> [data-panel-dock]) {
+  .frame:has(> [data-panel-dock]:not([hidden])) {
     grid-template-columns: minmax(0, 1fr);
   }
   .dock > [data-panel-resize] {
@@ -184,5 +184,64 @@ html[data-keyboard-input] :is(.subviewBase, .subview) {
     .subview {
       transform: none;
     }
+  }
+}
+
+.workspace {
+  background: var(--surface-panel);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+.workspace > header {
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+.workspace > header [class="panel-header-title"] {
+  overflow: hidden;
+}
+.workspaceBody {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.workspacePane {
+  display: grid;
+  grid-area: 1 / 1;
+  min-height: 0;
+  min-width: 0;
+}
+.workspacePane[data-covered] {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+.tabDetail {
+  --space-panel-inset: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+
+.addTab {
+  display: flex;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--easing-state);
+}
+.workspace > header:is(:hover, :focus-within) .addTab {
+  opacity: 1;
+}
+@media (hover: none) {
+  .addTab {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .addTab {
+    transition: none;
   }
 }

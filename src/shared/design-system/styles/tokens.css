@@ -294,7 +294,6 @@
      is a deliberately cool near-neutral, not a warm tint; use it directly
      rather than preserve an exploratory #f9f9f9 stop or recreate it with
      alpha. */
-  --neutral-quiet-hover: #efeff0; /* hover between quiet fill and selection */
   --neutral-2: #f5f5f6; /* quiet compact controls, callouts, and grouping */
   --neutral-3: #e8e8e8; /* available for a future, genuinely recessed region; bg-panel in dark */
   --neutral-4: #dadada; /* border-primary in light mode            */
@@ -530,7 +529,7 @@
   --affordance-prominent-hover: var(--neutral-11);
   --affordance-prominent-pressed: var(--neutral-action-pressed);
   --affordance-subtle: var(--neutral-2);
-  --affordance-subtle-hover: var(--neutral-quiet-hover);
+  --affordance-subtle-hover: var(--affordance-subtle);
   --affordance-subtle-pressed: var(--neutral-4);
   --affordance-navigation-quiet: var(--neutral-navigation-quiet);
   --affordance-panel-hover: var(--neutral-2);
@@ -585,7 +584,7 @@
   --affordance-prominent-hover: var(--neutral-11);
   --affordance-prominent-pressed: var(--neutral-action-pressed);
   --affordance-subtle: var(--neutral-5);
-  --affordance-subtle-hover: var(--neutral-6);
+  --affordance-subtle-hover: var(--affordance-subtle);
   --affordance-subtle-pressed: var(--neutral-7);
   --affordance-panel-hover: var(--neutral-4);
   --affordance-floating-hover: var(--neutral-7);
@@ -679,7 +678,7 @@
   --layer-popover: 1100;
   --layer-tooltip: 1200;
   --size-topbar: 3.5rem;
-  --size-panel-header: 3.5rem;
+  --size-panel-header: 2.5rem;
   --size-control-sm: 2rem;
   --size-control: 2.5rem;
   --size-control-lg: 3.25rem;

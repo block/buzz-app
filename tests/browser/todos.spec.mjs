@@ -61,7 +61,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     await expect(
       page
         .getByRole("article", { name: "Conversation" })
-        .getByRole("heading", { name: "Alpha", exact: true }),
+        .getByRole("tab", { name: "Alpha", exact: true }),
     ).toBeVisible();
   };
   await page.goto(app.origin);
@@ -215,8 +215,50 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await page.screenshot({
     path: test.info().outputPath("todos-dark-narrow.png"),
   });
-  await drawer.getByRole("button", { name: "Hide todos" }).click();
-  await expect(launcher).toBeFocused();
+  // The new-tab picker hosts the same registered tool after its drawer closes.
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await page
+    .getByRole("button", { name: "Toggle tab pane", exact: true })
+    .click();
+  await expect(drawer).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Toggle tab pane", exact: true })
+    .click();
+  const workspace = page.locator("[data-panel-workspace]");
+  const picker = workspace.getByRole("region", { name: "Choose a tab" });
+  await picker
+    .getByRole("button", { name: "Channel tools", exact: true })
+    .click();
+  await expect(
+    picker.getByRole("button", { name: "Terminal", exact: true }),
+  ).toHaveCount(0);
+  await picker.getByRole("button", { name: "Todos", exact: true }).click();
+  await expect(drawer).toHaveCount(0);
+  const tool = workspace.getByRole("tabpanel", { name: "Todos", exact: true });
+  await expect(
+    tool.getByRole("checkbox", { name: "Ship it", exact: true }),
+  ).toBeChecked();
+  await tool.getByRole("textbox", { name: "New todo" }).fill("Tab draft");
+  await launcher.click();
+  await expect(workspace).toBeHidden();
+  await launcher.click();
+  await expect(tool.getByRole("textbox", { name: "New todo" })).toHaveValue(
+    "Tab draft",
+  );
+  await expect(drawer).toHaveCount(0);
+  await sidebar.getByRole("button", { name: "Beta", exact: true }).click();
+  await expect(workspace).toHaveCount(0);
+  await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+  await expect(tool).toBeVisible();
+  await expect(tool.getByRole("textbox", { name: "New todo" })).toHaveValue(
+    "Tab draft",
+  );
+  await plugins();
+  await messages();
+  await expect(tool).toBeVisible();
+  await expect(tool.getByRole("textbox", { name: "New todo" })).toHaveValue(
+    "Tab draft",
+  );
   await plugins();
   await enabled.click();
   await expect(enabled).not.toBeChecked();

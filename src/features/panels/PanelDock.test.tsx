@@ -96,3 +96,38 @@ test("layouts without a running transition remove closed content immediately", (
   );
   expect(screen.queryByText("Panel content")).not.toBeInTheDocument();
 });
+
+test("a retained tab pane leaves layout after its exit and reopens the same content", async () => {
+  const exit = pendingExit();
+  const content = <input aria-label="Draft" defaultValue="Keep me" />;
+  const view = render(
+    <PanelDock open keepMounted className="">
+      {content}
+    </PanelDock>,
+  );
+  const input = screen.getByRole("textbox");
+  const dock = input.parentElement;
+  try {
+    view.rerender(
+      <PanelDock open={false} keepMounted className="">
+        {content}
+      </PanelDock>,
+    );
+    expect(dock).toHaveAttribute("inert");
+    expect(dock).not.toHaveAttribute("hidden");
+    await act(async () => exit.finish());
+    expect(dock).toHaveAttribute("hidden");
+    expect(input).toBeInTheDocument();
+    view.rerender(
+      <PanelDock open keepMounted className="">
+        {content}
+      </PanelDock>,
+    );
+    expect(dock).not.toHaveAttribute("hidden");
+    expect(screen.getByRole("textbox")).toBe(input);
+    expect(input).toHaveValue("Keep me");
+  } finally {
+    exit.finish();
+    exit.restore();
+  }
+});

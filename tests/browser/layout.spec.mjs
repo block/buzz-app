@@ -249,7 +249,7 @@ test("joined surface, sidebar pages, real link panel and compact community navig
   await page.screenshot({ path: testInfo.outputPath("joined-no-panel.png") });
   await link(page, app, "https://github.com/block/buzz/pull/1");
   const main = await box(conversation);
-  const dock = await box(panel(page));
+  const dock = await box(page.locator("[data-panel-workspace]"));
   near(dock.y, main.y);
   near(dock.height, main.height);
   near(dock.x - main.x - main.width, 1);
@@ -271,7 +271,7 @@ test("joined surface, sidebar pages, real link panel and compact community navig
     )
     .toBeGreaterThan(100);
   near(await timeline.evaluate((el) => el.scrollTop), offset);
-  await button(page, "Close channel panel").click();
+  await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
   await expect(panel(page)).toHaveCount(0);
   // Inert content leaves the accessibility tree before its visual exit finishes.
   await expect(page.locator("[data-panel-dock]")).toHaveCount(0);
@@ -321,14 +321,19 @@ test("joined surface, sidebar pages, real link panel and compact community navig
     await expect(composer).toHaveJSProperty("value", "Layout draft");
     await expect(page.locator("[data-message-id]").last()).toBeInViewport();
   }
+  await expect(panel(page)).toBeVisible();
+  await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
+  await expect(panel(page)).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("bento-narrow.png") });
   await link(page, app, "https://github.com/block/buzz/pull/3");
-  await expect(button(page, "Close channel panel")).toBeInViewport();
-  const narrow = await box(panel(page));
+  await expect(
+    page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }),
+  ).toBeInViewport();
+  const narrow = await box(page.locator("[data-panel-workspace]"));
   const narrowConversation = await box(conversation);
   near(narrow.x, narrowConversation.x);
   near(narrow.width, narrowConversation.width);
-  await button(page, "Close channel panel").click();
+  await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
   await expect(composer).toBeInViewport();
   await openPage(page, "Projects");
   // Search selection owns the page change; no sidebar destination remains current.
@@ -392,12 +397,12 @@ test("narrow link panels begin after the rendered sidebar", async ({
   const conversation = await box(
     page.getByRole("article", { name: "Conversation", exact: true }),
   );
-  const dock = await box(panel(page));
+  const dock = await box(page.locator("[data-panel-workspace]"));
   near(conversation.x - sidebar.x - sidebar.width, 1);
   near(dock.x, conversation.x);
   expect(dock.x).toBeGreaterThanOrEqual(sidebar.x + sidebar.width);
   // Separate stacking contexts: assert actual hit testing, not unrelated z-index numbers.
-  const close = button(page, "Close channel panel");
+  const close = page.getByRole("button", { name: /^Close (?!Thread).* tab$/ });
   expect(
     await close.evaluate((element) => {
       const r = element.getBoundingClientRect();
@@ -433,7 +438,9 @@ readingTest(
     await expect(
       page.locator(`[data-message-id="${received.id}"]`),
     ).toBeInViewport();
-    await button(page, "Close channel panel").click();
+    await page
+      .getByRole("button", { name: /^Close (?!Thread).* tab$/ })
+      .click();
     await settle(page);
     await expectBottom();
     // Late layout-only reflow must not need another message or viewport resize.
@@ -477,11 +484,15 @@ readingTest(
           window.panelFocusScrollDelta = history.scrollTop - before;
         };
       });
-    await button(page, "Close channel panel").focus();
+    await page
+      .getByRole("button", { name: /^Close (?!Thread).* tab$/ })
+      .focus();
     await expect(
       page.getByRole("link", { name: target, exact: true }),
     ).not.toBeInViewport();
-    await button(page, "Close channel panel").click();
+    await page
+      .getByRole("button", { name: /^Close (?!Thread).* tab$/ })
+      .click();
     const trigger = page.getByRole("link", { name: target, exact: true });
     await settle(page);
     await expect(trigger).toBeFocused();
@@ -602,7 +613,7 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   });
   near((await box(bestie)).height, (await box(conversation)).height);
   await link(page, app, "https://github.com/block/buzz/pull/5");
-  const top = await box(panel(page)),
+  const top = await box(page.locator("[data-panel-workspace]")),
     bottom = await box(bestie),
     main = await box(conversation);
   near(top.height, bottom.height);
@@ -621,7 +632,10 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await expect(launch).toHaveCount(0);
   await expect(bestie).toHaveCount(0);
   await expect(panel(page)).toHaveCount(1);
-  near((await box(panel(page))).height, (await box(conversation)).height);
+  near(
+    (await box(page.locator("[data-panel-workspace]"))).height,
+    (await box(conversation)).height,
+  );
   await page.evaluate(() => {
     const key = "buzzodz.plugins.v1";
     const settings = JSON.parse(localStorage.getItem(key));
@@ -633,9 +647,12 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await launch.click();
   await expect(composer).toHaveJSProperty("value", "Companion draft");
   await button(page, "Close Bestie panel").click();
-  near((await box(panel(page))).height, (await box(conversation)).height);
+  near(
+    (await box(page.locator("[data-panel-workspace]"))).height,
+    (await box(conversation)).height,
+  );
   await launch.click();
-  await button(page, "Close channel panel").click();
+  await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
   near((await box(bestie)).height, (await box(conversation)).height);
   await button(page, "Beta").click();
   await expect(bestie).toHaveCount(1);
@@ -750,7 +767,7 @@ todosOverlapTest(
     const stacked = async (primary) => {
       await expect(primary).toBeVisible();
       await expect(todos).toBeVisible();
-      near((await box(todos.locator("header.panel-header"))).height, 56);
+      near((await box(todos.locator("header.panel-header"))).height, 40);
       const top = await box(primary);
       const bottom = await box(todos);
       near(top.x, bottom.x);
@@ -776,7 +793,9 @@ todosOverlapTest(
       await expect(thread).toHaveCSS("border-radius", "0px");
       await expect(thread).toHaveCSS("border-width", "0px");
       await expect(thread).toHaveCSS("box-shadow", "none");
-      const threadHeader = await box(thread.locator("header.panel-header"));
+      const threadHeader = await box(
+        page.locator("[data-panel-dock] header.panel-header").first(),
+      );
       const channelHeader = await box(
         page
           .getByRole("article", { name: "Conversation", exact: true })
@@ -789,16 +808,18 @@ todosOverlapTest(
     await toggle.click();
     await openThread();
     await stacked(thread);
-    await button(page, "Close thread").click();
+    await button(page, "Close Thread tab").click();
     await button(page, "Hide todos").click();
     await openThread();
     await toggle.click();
     await stacked(thread);
-    await button(page, "Close thread").click();
+    await button(page, "Close Thread tab").click();
 
     await link(page, app, "https://github.com/block/buzz/pull/6");
     await stacked(linked);
-    await button(page, "Close channel panel").click();
+    await page
+      .getByRole("button", { name: /^Close (?!Thread).* tab$/ })
+      .click();
     await button(page, "Hide todos").click();
     await link(page, app, "https://github.com/block/buzz/pull/7");
     await toggle.click();
@@ -806,7 +827,7 @@ todosOverlapTest(
     await button(page, "Channel settings").click();
     await expect(settings).toBeVisible();
     await expect(todos).toHaveCount(0); // Settings intentionally retires the drawer.
-    await button(page, "Close channel settings").click();
+    await button(page, "Close Channel settings tab").click();
     await expect(linked).toBeVisible();
     await companionLauncher(page, "Bestie").click();
     await expect(bestie).toBeVisible();
@@ -843,13 +864,15 @@ readingTest(
       [390, 844],
     ]) {
       await page.setViewportSize({ width, height });
-      const top = await box(panel(page));
+      const top = await box(page.locator("[data-panel-workspace]"));
       const bottom = await box(
         page.getByRole("complementary", { name: "Bestie", exact: true }),
       );
       near(top.height, bottom.height);
       near(bottom.y - top.y - top.height, 1);
-      await expect(button(page, "Close channel panel")).toBeInViewport();
+      await expect(
+        page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }),
+      ).toBeInViewport();
       await expect(button(page, "Close Bestie panel")).toBeInViewport();
       await page
         .getByRole("button", { name: "Channel settings", exact: true })
@@ -859,15 +882,17 @@ readingTest(
         exact: true,
       });
       await expect(settings).toBeVisible();
-      const covered = await box(settings);
+      const covered = await box(page.locator("[data-panel-workspace]"));
       const retainedCompanion = await box(
         page.getByRole("complementary", { name: "Bestie", exact: true }),
       );
       near(covered.height, top.height);
       near(retainedCompanion.height, bottom.height);
       near(retainedCompanion.y, bottom.y);
-      await button(page, "Close channel settings").click();
-      await expect(button(page, "Close channel panel")).toBeInViewport();
+      await button(page, "Close Channel settings tab").click();
+      await expect(
+        page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }),
+      ).toBeInViewport();
     }
   },
 );
@@ -1019,7 +1044,7 @@ const sidebarActions = test.extend({
   historyCounts: { alpha: 20, beta: 1 },
 });
 sidebarActions(
-  "sidebar activity and compose routes retire local link panels, not companion intent",
+  "sidebar activity retains channel tabs while compose routes retire them and preserve companion intent",
   async ({ page, app }) => {
     await open(page, app);
     const bestie = page.getByRole("complementary", {
@@ -1082,7 +1107,11 @@ sidebarActions(
       await expect(
         page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
       ).toBeVisible();
-      await expect(panel(page)).toHaveCount(0);
+      await expect(panel(page)).toHaveCount(action === "activity" ? 1 : 0);
+      if (action === "activity")
+        await page
+          .getByRole("button", { name: /^Close (?!Thread).* tab$/ })
+          .click();
       await expect(bestie).toBeVisible();
     }
   },

@@ -155,17 +155,35 @@ Ordinary thread opens show a loading status until bounded history and initial
 bottom positioning finish; the first painted replies are already in place.
 Exact-message links reveal their requested row independently. A reader’s scroll
 gesture takes over immediately, and loading failures keep recovery visible.
-Opening a linked detail from inside a thread covers that thread in the same panel
-slot. Profile activity, managed-instance, and owner-profile links explicitly drill
-in through `PanelContext.push`; `open` retains its replacement semantics. Channels
-retains the visited cards and returns one level per Back/Escape, restoring focus,
-scroll position, and local form state. Revisiting an ancestor returns to its
-existing card rather than adding a loop. Close clears the full trail; a channel,
-session, or contribution change retires the trail and its callbacks. The first detail’s header places Back to thread before the title; it restores the
-mounted thread's scroll position, draft, and originating control focus. Escape
-also goes back, while Close dismisses both views. Opening a detail from the main
-timeline still replaces the thread. Drill-in and back use a 12px, 180ms ease-out
-slide/fade; keyboard actions are immediate and reduced motion uses opacity only.
+Opening a linked detail from inside a thread adds a closable tab to the same
+secondary pane. Profile activity, managed-instance, and owner-profile links use
+`PanelContext.push` to select an existing target or add a tab; `open` retains its
+replacement semantics. A shared 2.5rem header uses 12rem tabs composed from the sidebar's NavigationItem,
+with profile avatars or detail icons and a trailing close button.
+Switching retains mounted content, scroll position, and drafts. Each tab has a
+close control; Delete on a tab and Escape in its content close that tab. Closing
+the selected tab selects a neighbor, and closing the last tab dismisses the pane.
+Feature-local details such as harness logs remain tied to their owning profile;
+closing that profile or losing authorization also removes its log tab.
+The main-header split control toggles the tab pane without closing its tabs or
+resetting their contents. Opening an empty pane creates one new tab.
+The plus control appears on header hover or keyboard focus (always on touch) and
+opens a picker with Channels, Direct messages, and Channel tools categories,
+each with searchable choices. Enabled Todos and native-desktop Terminal reuse
+their registered components and channel context. Opening a tool in a tab replaces
+its drawer; its launcher then toggles that tab's pane without a second mount.
+Terminal sessions remain plugin-owned when their tabs close, and Escape in the
+terminal input remains a shell key.
+Conversation tabs reuse the timeline, composer, draft and message-management owners;
+selecting an already-open conversation selects its existing tab. Each main channel
+keeps its own tab descriptors, selected tab, and pane visibility in memory for the
+community session, including while visiting other pages such as Settings.
+Changing the main channel unmounts its contents; returning restores those tabs and
+saved conversation drafts. Feature-local details such as logs close on that switch.
+Changing session or losing a contribution retires the affected tabs and callbacks.
+Tab sets are not persisted across application restarts. Opening a
+detail from the main timeline still replaces the thread. Content switches
+immediately; the shared navigation selection background identifies the active tab.
 Joined header separators meet the vertical dividers. The sidebar resize grip stays
 visible throughout a drag while its tooltip stays hidden. Desktop main/secondary
 dividers share that grip and support dragging, arrow keys (Shift for larger
@@ -203,7 +221,7 @@ pass: counts remain observed rather than exact, manual unread is local-only, and
 reading intent belongs to reusable conversation UI rather than shell navigation.
 
 Harness logs remain owned and authorized by the profile. `PanelSubview` presents
-the log with the same 56px header, Back/Escape and whole-panel Close controls,
-while retaining the profile beneath it. Returning or losing authorization unmounts
-the log and stops its polling; the underlying profile keeps its tab and draft.
-Todos uses the standard 56px header to align with other side panels.
+the log as a sibling tab in the channel pane, with standalone Back navigation
+elsewhere. Closing the log or losing authorization unmounts it and stops its
+polling; switching tabs retains it and the profile state.
+Todos uses the standard 2.5rem header to align with other side panels.

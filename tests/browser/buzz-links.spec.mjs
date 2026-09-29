@@ -78,7 +78,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   await expect.poll(async () => (await state(page)).status).toBe("opened");
   expect((await state(page)).entry.target.messageId).toBe(target.id);
   await expect(panel.getByText("Thread root 0", { exact: true })).toBeVisible();
-  await button(page, "Close thread").click();
+  await button(page, "Close Thread tab").click();
   await expect(panel).toHaveCount(0);
   await button(page, "Go back").click();
   await expect(
@@ -116,7 +116,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   await expect(
     panel.locator(`[data-message-id="${target.id}"]`),
   ).toBeInViewport();
-  await button(page, "Close thread").click();
+  await button(page, "Close Thread tab").click();
   await expect(link).toBeFocused();
   await row.getByRole("link", { name: "#Beta", exact: true }).click();
   await expect(
@@ -164,7 +164,7 @@ test("activating a panel from a linked thread retires the navigation-owned threa
 });
 
 // Retained DOM, scroll geometry, focus, and CSS motion need a real browser.
-test("thread profile back preserves reading position and draft in the same panel slot", async ({
+test("thread and detail tabs preserve drafts, scroll, focus and local-detail lifetime", async ({
   page,
   app,
 }) => {
@@ -202,89 +202,113 @@ test("thread profile back preserves reading position and draft in the same panel
   await trigger.scrollIntoViewIfNeeded();
   const originalHistory = await history.elementHandle();
   const top = await history.evaluate((el) => el.scrollTop);
-  const originalTrigger = await trigger.elementHandle();
   await trigger.click();
-  const detail = page.locator("[data-thread-detail]");
-  const back = button(page, "Back to thread");
-  await expect(back).toBeVisible();
-  await expect(back).toBeFocused();
-  await expect(thread).toHaveCount(0); // retained but inert, outside the accessibility tree
-  expect(await originalHistory.evaluate((el) => el.isConnected)).toBe(true);
-  const header = detail.locator("header.panel-header");
-  expect((await header.boundingBox()).height).toBe(56);
   const dock = page.locator("[data-panel-dock]");
-  expect((await detail.boundingBox()).height).toBeCloseTo(
-    (await dock.boundingBox()).height,
-    0,
-  );
-  await expect(detail).toHaveCSS("transition-duration", "0.18s, 0.18s");
-  // Nested targets preserve their predecessor, not just the original thread.
+  const tablist = page.getByRole("tablist", { name: "Panel tabs" });
+  const threadTab = tablist.getByRole("tab", { name: "Thread", exact: true });
+  const details = tablist.getByRole("tab", {
+    name: "Wrong panel",
+    exact: true,
+  });
+  await expect(threadTab).toHaveClass(/navigation-item/);
+  expect(
+    await threadTab.evaluate(
+      (el) =>
+        el.parentElement.getBoundingClientRect().width /
+        Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+    ),
+  ).toBeCloseTo(12);
+  await expect(threadTab.locator("svg")).toHaveCount(1);
+  await expect(details).toHaveCount(1);
+  await expect(details).toBeFocused();
+  await expect(thread).toHaveCount(0);
+  expect(await originalHistory.evaluate((el) => el.isConnected)).toBe(true);
+  const header = dock.locator("header.panel-header");
+  expect((await header.boundingBox()).height).toBe(40);
   const profileDraft = page.getByRole("textbox", { name: "Panel draft" });
   await profileDraft.fill("Keep profile state");
   const profileInput = await profileDraft.elementHandle();
   await button(page, "Open child detail").click();
-  await expect(button(page, "Back to wrong panel")).toBeVisible();
-  await expect(profileDraft).toHaveValue("");
+  await expect(details).toHaveCount(2);
   await profileDraft.fill("Keep instance state");
   const instanceInput = await profileDraft.elementHandle();
+  await details.nth(0).click();
+  await expect(profileDraft).toHaveValue("Keep profile state");
   await button(page, "Open child detail").click();
-  await button(page, "Back to wrong panel").click();
+  await expect(details).toHaveCount(2); // Reopening selects the retained target.
   await expect(profileDraft).toHaveValue("Keep instance state");
-  expect(await instanceInput.evaluate((el) => el.isConnected)).toBe(true);
 
-  // Local authorized details use the same header and leave the base DOM intact.
   await button(page, "Open local log").click();
   const log = page.getByRole("region", { name: "Fixture log", exact: true });
+  const logTab = tablist.getByRole("tab", { name: "Fixture log", exact: true });
   await expect(log).toBeVisible();
-  await expect(button(page, "Back to detail")).toBeFocused();
-  expect((await log.locator("header.panel-header").boundingBox()).height).toBe(
-    56,
-  );
-  expect((await log.boundingBox()).height).toBeCloseTo(
-    (await dock.boundingBox()).height,
-    0,
-  );
-  await expect(
-    page.locator("[data-panel-dock] header.panel-header:visible"),
-  ).toHaveCount(1);
-  await button(page, "Back to detail").press("Escape");
-  await expect(button(page, "Open local log")).toBeFocused();
+  await expect(logTab).toBeFocused();
+  await expect(dock.locator("header.panel-header:visible")).toHaveCount(1);
+  await details.nth(1).click();
   await expect(profileDraft).toHaveValue("Keep instance state");
-  await button(page, "Back to wrong panel").click();
-  expect(await profileInput.evaluate((el) => el.isConnected)).toBe(true);
-  await expect(profileDraft).toHaveValue("Keep profile state");
-  await expect(button(page, "Open child detail")).toBeFocused();
-  await back.click();
+  await logTab.click();
+  await logTab.press("Escape");
+  await expect(log).toHaveCount(0);
+  await expect(details.nth(1)).toBeFocused();
+  expect(await instanceInput.evaluate((el) => el.isConnected)).toBe(true);
+  await threadTab.click();
   await expect(thread).toBeVisible();
-  await expect
-    .poll(() => originalTrigger.evaluate((el) => document.activeElement === el))
-    .toBe(true);
   expect(await originalHistory.evaluate((el) => el.scrollTop)).toBe(top);
   await expect(editor).toHaveText("Keep this thread draft");
   expect((await state(page)).entry.target.messageId).toBe(target.id);
-
-  // Keyboard drill-in and Escape return are immediate and use the same focus path.
   await trigger.press("Enter");
-  await expect(back).toBeFocused();
-  await expect(detail).toHaveCSS("transition-duration", "0s");
-  await back.press("Escape");
-  await expect(trigger).toBeFocused();
-  await expect(editor).toHaveText("Keep this thread draft");
+  await expect(details).toHaveCount(2);
+  await expect(profileDraft).toHaveValue("Keep profile state");
+  expect(await profileInput.evaluate((el) => el.isConnected)).toBe(true);
+  await page.screenshot({
+    path: test.info().outputPath("retained-panel-tabs.png"),
+  });
 
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await trigger.click();
-  await expect(detail).toHaveCSS("transition-property", "opacity");
-  await expect(detail).toHaveCSS("transform", "none");
   for (const width of [800, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
-    await expect(back).toBeVisible();
-    const backBounds = await back.boundingBox();
-    const closeBounds = await button(page, "Close channel panel").boundingBox();
-    expect(backBounds.x + backBounds.width).toBeLessThan(closeBounds.x);
-    expect((await header.boundingBox()).height).toBe(56);
+    await threadTab.click();
+    await expect(threadTab).toBeInViewport();
+    await details.nth(1).click();
+    await expect(details.nth(1)).toBeInViewport();
+    expect((await header.boundingBox()).height).toBe(40);
   }
-  await button(page, "Close channel panel").click();
+  // A newly opened tab and its close control must reveal themselves in an overflowing strip.
+  await button(page, "Open child detail").click();
+  await expect(details).toHaveCount(3);
+  await expect(details.nth(2)).toBeInViewport();
+  await expect(button(page, "Close Wrong panel tab").nth(2)).toBeInViewport();
+  // Native horizontal scrolling reaches both ends without changing selection.
+  await tablist.hover();
+  await page.mouse.wheel(-1000, 0);
+  await expect(threadTab).toBeInViewport();
+  await page.mouse.wheel(1000, 0);
+  await expect(details.nth(2)).toBeInViewport();
+  await details.nth(2).press("Delete");
+  await button(page, "Close Wrong panel tab").nth(0).click();
+  await expect(profileDraft).toHaveValue("Keep instance state");
+  // Returning to the same routed thread must restore its profile/detail tabs.
+  await openPage(page, "Settings");
+  await expect(dock).toHaveCount(0);
+  await button(page, "Go back").click();
+  await expect(details).toHaveCount(1);
+  await expect.poll(async () => (await state(page)).status).toBe("opened");
+  await expect(details).toHaveAttribute("aria-selected", "true");
+  await expect(threadTab).toHaveCount(1);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  // Sidebar navigation must preserve the complete set, including the routed thread.
+  await page.locator('button[data-channel-id="beta"]').click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+  ).toBeVisible();
+  await page.locator('button[data-channel-id="alpha"]').click();
+  await expect(details).toHaveCount(1);
+  await expect(threadTab).toHaveCount(1);
+  await expect(details).toHaveAttribute("aria-selected", "true");
+  await details.press("Delete");
+  await expect(threadTab).toBeFocused();
+  await expect(editor).toHaveText("Keep this thread draft");
+  await button(page, "Close Thread tab").click();
   await expect(dock).toHaveCount(0);
 });
 

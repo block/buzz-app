@@ -1,3 +1,7 @@
+import {
+  usePanelTabHost,
+  usePanelTabTitle,
+} from "../../features/panels/PanelWorkspace";
 import { useAgentControlRefresh } from "../../features/agents/control-react";
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
 import {
@@ -34,6 +38,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { CopyIcon } from "../../shared/design-system/icons/index";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AgentAvatar } from "../../features/agents/AgentAvatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -160,15 +165,17 @@ function ProfileDetails({
   const [tab, setTab] = useState<"info" | "runtime" | "channels" | "memories">(
     "info",
   );
+  const tabHost = usePanelTabHost();
+  const tabbed = !!tabHost;
   const region = useRef<HTMLElement>(null);
   const messageAttempt = useRef<AbortController>(undefined);
   const [openingMessage, setOpeningMessage] = useState(false);
   const [messageError, setMessageError] = useState("");
   useEffect(() => {
-    region.current?.focus();
+    if (!tabbed) region.current?.focus();
     // Target, viewer and community changes remount this view (see key above).
     return () => messageAttempt.current?.abort();
-  }, []);
+  }, [tabbed]);
   // Each target/session owns this completion; shared data work remains session-owned.
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is explicit recovery.
   useEffect(() => {
@@ -253,6 +260,19 @@ function ProfileDetails({
   const picture = profile?.picture
     ? (session.media(profile.picture) ?? null)
     : null;
+  const tabAvatar = useMemo(
+    () => (
+      <Avatar
+        src={picture}
+        alt=""
+        fallback={name}
+        size="fill"
+        shape={knownAgent ? "squircle" : "circle"}
+      />
+    ),
+    [picture, name, knownAgent],
+  );
+  usePanelTabTitle(instanceId ? `${name} · Instance` : name, tabAvatar);
   // As in New message, a known agent needs this community's ready native control.
   const messageable = () =>
     !agentPubkeys.has(pubkey) ||
@@ -340,8 +360,8 @@ function ProfileDetails({
       )}
       <div
         className={styles.profileContents}
-        inert={!!logTarget && logAuthorized}
-        aria-hidden={(!!logTarget && logAuthorized) || undefined}
+        inert={!tabbed && !!logTarget && logAuthorized}
+        aria-hidden={(!tabbed && !!logTarget && logAuthorized) || undefined}
       >
         <div className={styles.identity}>
           <div className={styles.portrait}>
@@ -530,7 +550,10 @@ function ProfileDetails({
                         ? session.authorizeAgentLog
                         : undefined
                     }
-                    onOpenLog={setLogTarget}
+                    onOpenLog={(target) => {
+                      if (!tabHost?.activate(tabHost.owner, "Harness log"))
+                        setLogTarget(target);
+                    }}
                   />
                 ) : (
                   <div className={styles.runtimeTab}>{instances}</div>

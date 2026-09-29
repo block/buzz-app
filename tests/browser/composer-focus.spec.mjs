@@ -36,6 +36,6 @@ test("selecting a channel or DM focuses its composer and retains drafts", async 
   });
   await settings.click();
   await expect(
-    page.getByRole("button", { name: "Close channel settings" }),
+    page.getByRole("tab", { name: "Channel settings", exact: true }),
   ).toBeFocused();
 });

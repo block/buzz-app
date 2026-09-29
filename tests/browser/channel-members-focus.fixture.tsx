@@ -18,6 +18,16 @@ import "../../src/shared/styles/globals.css";
 const viewer = keypair();
 const relay = keypair();
 const person = keypair();
+const candidates = new URLSearchParams(location.search).has("multiple")
+  ? [1, 2, 3].map((index) => ({
+      key: keypair(),
+      name: `Morgan Field Tester ${index}`,
+    }))
+  : [{ key: person, name: "Morgan" }];
+const candidateProfiles = candidates.map(({ key, name }) =>
+  profile(key, { name }),
+);
+const additions: string[] = [];
 const channelId = "11111111-1111-4111-8111-111111111111";
 const members = [viewer.pubkey];
 let clock = 1700000000;
@@ -37,8 +47,7 @@ const { session } = createRelaySession(
     media: () => undefined,
     readAgentLibrary: async () => ({ definitions: [], identities: [] }),
     query: async (filters) => {
-      if (filters.some((filter) => filter.search))
-        return [profile(person, { name: "Morgan" })];
+      if (filters.some((filter) => filter.search)) return candidateProfiles;
       return [
         roster(relay, channelId, members, clock),
         signed(relay, {
@@ -52,7 +61,7 @@ const { session } = createRelaySession(
           ],
         }),
         profile(viewer, { name: "Carl" }),
-        profile(person, { name: "Morgan" }),
+        ...candidateProfiles,
       ].filter((event) =>
         filters.some((filter) => matchesEvent(event, filter)),
       );
@@ -60,10 +69,13 @@ const { session } = createRelaySession(
     writer: {
       kinds: [9000],
       sign: async (template) => signed(viewer, template),
-      publish: async () => {
+      publish: async (event) => {
+        const key = event.tags.find(([tag]) => tag === "p")?.[1];
+        if (!key) throw new Error("Missing added identity");
+        additions.push(key);
         publishStarted();
         await held;
-        members.push(person.pubkey);
+        members.push(key);
         clock++;
       },
     },
@@ -94,5 +106,5 @@ function Fixture() {
 createRoot(root).render(<Fixture />);
 // The test controls when confirmation arrives; no relay or member is contacted.
 Object.assign(window, {
-  focusFixture: { published, confirm: () => releasePublish() },
+  focusFixture: { published, additions, confirm: () => releasePublish() },
 });

@@ -50,7 +50,7 @@ export function PreviewCard({
   const triggerRef = useRef<HTMLAnchorElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
   const focusedTrigger = useRef<HTMLElement | null>(null);
-  const returnFocusOnClose = useRef(false);
+  const closingPopup = useRef<HTMLDivElement | null>(null);
   const restoreFocus = () => {
     const trigger = triggerRef.current;
     if (!trigger) return;
@@ -73,17 +73,26 @@ export function PreviewCard({
       open={open}
       onOpenChange={(next, details) => {
         onOpenChange?.(next, details);
-        returnFocusOnClose.current =
+        if (details.isCanceled) return;
+        closingPopup.current =
           !next &&
-          !details.isCanceled &&
           details.reason === "escape-key" &&
-          !!popupRef.current?.contains(document.activeElement);
+          popupRef.current?.contains(document.activeElement)
+            ? popupRef.current
+            : null;
       }}
       onOpenChangeComplete={(next) => {
-        if (!next && returnFocusOnClose.current) {
-          returnFocusOnClose.current = false;
+        if (next) return;
+        // Retain the closing element through unmount, as finalFocus.ts does.
+        // Escape grants return-focus ownership only until the user moves it.
+        const popup = closingPopup.current;
+        closingPopup.current = null;
+        const active = popup?.ownerDocument.activeElement ?? null;
+        if (
+          popup &&
+          (active === popup.ownerDocument.body || popup.contains(active))
+        )
           restoreFocus();
-        }
       }}
     >
       <BasePreviewCard.Trigger
@@ -99,7 +108,7 @@ export function PreviewCard({
             (link || actionRef) &&
             event.key === "Tab" &&
             !event.shiftKey &&
-            popupRef.current
+            popupRef.current?.hasAttribute("data-open")
           ) {
             event.preventDefault();
             (actionRef?.current ?? popupRef.current).focus();

@@ -80,7 +80,7 @@ export function IdentityRow({
         id={previewId}
         open={open}
         onOpenChange={setOpen}
-        side="right"
+        side="top"
         anchor={anchor}
         actionRef={copyButton}
         aria-label={`${name} identity`}

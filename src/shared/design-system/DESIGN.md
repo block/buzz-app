@@ -378,9 +378,13 @@ PreviewCard may expose one supplemental action through `actionRef`, such as copy
 an identity's full npub. Action previews open without a delay so immediate Tab
 navigation reaches the action. They remain non-modal and never take focus on hover. Tab
 from the trigger reaches the action; Shift+Tab returns to the trigger; forward Tab
-continues after the trigger. Escape dismisses the preview before restoring focus.
+continues after the trigger. Escape dismisses the preview before restoring focus,
+but never pulls focus back if the user moved it during exit. Closing previews
+are no longer Tab destinations.
 The positioned portal owns its layer above dialogs. An optional content anchor
-keeps previews near compact identity content inside wider actionable rows.
+keeps previews near compact identity content inside wider actionable rows. Identity
+previews prefer above that content (with Base UI collision handling), leaving
+the hovered row’s trailing action unobstructed.
 
 ## Menu row corners
 

@@ -500,8 +500,8 @@ it("finds joined archived channels by name without putting them in Recent activi
 
 it.each([
   { channelType: "stream", readOnly: true },
-  { channelType: "session", readOnly: false },
-  { channelType: "dm", readOnly: false },
+  { channelType: "session" },
+  { channelType: "dm" },
 ] as const)(
   "does not surface archived nonmember or non-channel destinations: %j",
   (state) => {
@@ -513,7 +513,12 @@ it.each([
         list: () => ({
           status: "ready" as const,
           channels: [
-            { id: "excluded", name: "Past project", archived: true, ...state },
+            {
+              id: "excluded",
+              name: "Past project",
+              archived: true as const,
+              ...state,
+            },
           ],
         }),
         ensureList() {},

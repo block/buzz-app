@@ -26,6 +26,13 @@ test("Windows uses provisioned executables without corrupting Path or retaining 
     Nostr_KEY: "secret",
     Databricks_TOKEN: "secret",
     Cargo_Target_Dir: "old",
+    Cargo_Build_Target: "other-target",
+    Cargo_Encoded_Rustflags: "-Copt-level=0",
+    Cargo_Profile_Release_Opt_Level: "0",
+    Rustc: "other-rustc",
+    Rustc_Wrapper: "sccache",
+    Rustflags: "-C target-cpu=native",
+    Rustdocflags: "--cfg other",
   };
   const { env, cargo, rustc } = runtimeBuildPlatform(
     "C:\\repo",

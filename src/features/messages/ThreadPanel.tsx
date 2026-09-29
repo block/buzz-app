@@ -741,6 +741,23 @@ function ThreadMessages({
     });
   }
   const selectedParent = snapshot.replies.find((row) => row.id === replyParent);
+  const captureOlderAnchor = (element: HTMLElement) => {
+    follow.current = false;
+    const row = [
+      ...element.querySelectorAll<HTMLElement>("ol [data-message-id]"),
+    ].find(
+      (row) =>
+        row.getBoundingClientRect().bottom >
+        element.getBoundingClientRect().top,
+    );
+    olderAnchor.current = row?.dataset.messageId
+      ? {
+          id: row.dataset.messageId,
+          top: row.getBoundingClientRect().top,
+          ancestors: tree.ancestors(row.dataset.messageId),
+        }
+      : undefined;
+  };
   const loadOlder = () => {
     const element = scroller.current;
     if (
@@ -754,28 +771,19 @@ function ThreadMessages({
     )
       return;
     olderDemand.current = false;
-    follow.current = false;
-    const row = [
-      ...element.querySelectorAll<HTMLElement>("ol [data-message-id]"),
-    ].find(
-      (row) =>
-        row.getBoundingClientRect().bottom >
-        element.getBoundingClientRect().top,
-    );
-    if (row?.dataset.messageId)
-      olderAnchor.current = {
-        id: row.dataset.messageId,
-        top: row.getBoundingClientRect().top,
-        ancestors: tree.ancestors(row.dataset.messageId),
-      };
+    captureOlderAnchor(element);
     void view.loadMore();
   };
   const showOlderPageStatus =
     snapshot.direction === "older" &&
     snapshot.readKind === "older" &&
     !!snapshot.root;
-  const retryThread = () =>
-    void (showOlderPageStatus ? view.loadMore() : view.refresh());
+  const retryThread = () => {
+    if (showOlderPageStatus) {
+      if (scroller.current) captureOlderAnchor(scroller.current);
+      void view.loadMore();
+    } else void view.refresh();
+  };
   return (
     <MessageEditScope>
       <section

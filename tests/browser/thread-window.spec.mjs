@@ -306,6 +306,64 @@ test("newest window positions immediately; scrollback preserves the visible repl
   }
 });
 
+test("older-page retry reveals a late parent without hiding the reading anchor", async ({
+  page,
+}) => {
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1&nestedWindow=1`,
+    );
+    const history = page.getByRole("region", { name: "Thread messages" });
+    const replies = history.locator("ol [data-message-id]");
+    const child = history.getByText("Nested window child", { exact: true });
+    await expect(replies).toHaveCount(10);
+    await page.evaluate(() => window.messagesFixture.failOlderPages(1));
+    await history.hover();
+    await page.mouse.wheel(0, -4000);
+    const retry = history.getByRole("button", { name: "Retry thread" });
+    await expect(history.getByRole("alert")).toContainText("Older page failed");
+    await child.scrollIntoViewIfNeeded();
+    await expect(child).toBeInViewport();
+    await page.evaluate(() => window.messagesFixture.holdOlderPage());
+    await retry.click();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.messagesFixture.report.filters.length),
+      )
+      .toBe(3);
+    await child.scrollIntoViewIfNeeded();
+    await expect(child).toBeInViewport();
+    const before = await child.evaluate((el) => el.getBoundingClientRect().top);
+    await page.evaluate(() => window.messagesFixture.releaseOlderPage());
+    const parent = history.getByText("First root reply 292", { exact: true });
+    await expect(parent).toBeVisible();
+    await expect(child).toBeInViewport();
+    await expect(replies).toHaveCount(60);
+    await expect
+      .poll(() => child.evaluate((el) => el.getBoundingClientRect().top))
+      .toBeCloseTo(before, -1);
+    expect(
+      await parent.evaluate((el) =>
+        el.closest("li")?.textContent.includes("Nested window child"),
+      ),
+    ).toBe(true);
+  } finally {
+    await page
+      .evaluate(() => window.messagesFixture.releaseOlderPage())
+      .catch(() => {});
+    await server.close();
+  }
+});
+
 test("older page reveals a reparented visible reply without moving its viewport anchor", async ({
   page,
 }) => {

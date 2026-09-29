@@ -402,7 +402,7 @@ impl IdentityHost {
                 || serde_json::to_vec(&events)
                     .map_err(|_| "Invalid sidebar records")?
                     .len()
-                    > 256 * 1024
+                    > 768 * 1024
             {
                 return Err("Invalid sidebar records".into());
             }

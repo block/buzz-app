@@ -837,3 +837,123 @@ async fn sidebar_decoder_accepts_broker_extended_length_sections_alongside_other
     assert_eq!(decoded["channel-mutes"]["version"], 1);
     assert_eq!(decoded["channel-sort"]["version"], 1);
 }
+
+#[tokio::test]
+async fn sidebar_decoder_accepts_four_maximum_plaintext_records_and_bounds_total_upload() {
+    let host = IdentityHost::fixture();
+    let mut events = Vec::new();
+    for coordinate in [
+        "channel-sort",
+        "channel-sections",
+        "channel-stars",
+        "channel-mutes",
+    ] {
+        // Preserved top-level data can fill the plaintext budget without
+        // bypassing each coordinate's validated schema or the signer boundary.
+        let mut value = match coordinate {
+            "channel-sort" => serde_json::json!({"version":1,"groups":{},"future":""}),
+            "channel-sections" => {
+                serde_json::json!({"version":1,"sections":[],"assignments":{},"future":""})
+            }
+            _ => serde_json::json!({"version":1,"channels":{},"future":""}),
+        };
+        let overhead = serde_json::to_vec(&value).unwrap().len();
+        value["future"] = serde_json::json!("x".repeat(128 * 1024 - overhead));
+        assert_eq!(serde_json::to_vec(&value).unwrap().len(), 128 * 1024);
+        events.push(
+            host.sign_sidebar(coordinate.into(), value, 1)
+                .await
+                .unwrap(),
+        );
+    }
+    let request_len = serde_json::to_vec(&events).unwrap().len();
+    assert!(request_len > 512 * 1024 && request_len < 768 * 1024);
+    assert_eq!(
+        host.decode_sidebar(events)
+            .await
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .len(),
+        4
+    );
+}
+
+#[tokio::test]
+async fn sidebar_decoder_loads_four_populated_bounded_coordinates() {
+    let host = IdentityHost::fixture();
+    let section = "00000000-1234-1234-1234-123456789abc";
+    let assignments: serde_json::Map<String, serde_json::Value> = (0..1000)
+        .map(|i| {
+            (
+                format!("{i:08x}-1234-1234-1234-123456789abc"),
+                serde_json::json!(section),
+            )
+        })
+        .collect();
+    let sections: serde_json::Value =
+        serde_json::json!({"version":1,"sections":[],"assignments":assignments});
+    let named_sections: Vec<_> = (0..100)
+        .map(|i| serde_json::json!({"id":format!("{i:08x}-1234-1234-1234-123456789abc"),"name":"N".repeat(198),"order":i}))
+        .collect();
+    let mut sections = sections;
+    sections["sections"] = serde_json::json!(named_sections);
+    let mut events = vec![host
+        .sign_sidebar("channel-sections".into(), sections.clone(), 1)
+        .await
+        .unwrap()];
+    for (coordinate, field) in [("channel-stars", "starred"), ("channel-mutes", "muted")] {
+        let channels: serde_json::Map<String, serde_json::Value> = (0..500)
+            .map(|i| {
+                (
+                    format!("{i:08x}-5678-1234-1234-123456789abc"),
+                    serde_json::json!({field: true, "updatedAt": 1_700_000_000_000_u64}),
+                )
+            })
+            .collect();
+        let event = host
+            .sign_sidebar(
+                coordinate.into(),
+                serde_json::json!({"version":1,"channels":channels}),
+                1,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            host.decode_sidebar(vec![event.clone()]).await.unwrap()[coordinate]["channels"]
+                .as_object()
+                .unwrap()
+                .len(),
+            500
+        );
+        events.push(event);
+    }
+    let sort = serde_json::json!({"version":1,"groups":{"channels":"recent"}});
+    events.push(
+        host.sign_sidebar("channel-sort".into(), sort.clone(), 1)
+            .await
+            .unwrap(),
+    );
+    let request_bytes = serde_json::to_vec(&events).unwrap().len();
+    assert!(
+        request_bytes > 256 * 1024,
+        "fixture must cross old aggregate budget: {request_bytes}"
+    );
+    let decoded = host.decode_sidebar(events).await.unwrap();
+    assert_eq!(decoded["channel-sections"], sections);
+    assert_eq!(
+        decoded["channel-stars"]["channels"]
+            .as_object()
+            .unwrap()
+            .len(),
+        500
+    );
+    assert_eq!(
+        decoded["channel-mutes"]["channels"]
+            .as_object()
+            .unwrap()
+            .len(),
+        500
+    );
+    assert_eq!(decoded["channel-sort"], sort);
+}

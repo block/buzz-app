@@ -1,6 +1,10 @@
 //! One create-only human identity. Never consult legacy, agent, file or environment keys.
 use bech32::{primitives::decode::CheckedHrpstring, Bech32, Hrp};
-use nostr::{nips::nip44, Event, Keys, SecretKey as NostrSecretKey};
+use nostr::{
+    event::Event,
+    key::{Keys, SecretKey as NostrSecretKey},
+    nips::nip44,
+};
 use secp256k1::{Keypair, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -453,8 +457,8 @@ impl IdentityHost {
         }
         validate_sidebar_payload(&coordinate, &payload)?;
         let plaintext = serde_json::to_string(&payload).map_err(|_| "Invalid sidebar payload")?;
-        // NIP-44 v2 cannot encrypt plaintext larger than 65,535 bytes.
-        if plaintext.len() > 65_535 {
+        // Match the broker's bounded extended-length NIP-44 records.
+        if plaintext.len() > 128 * 1024 {
             return Err("Sidebar plaintext budget exceeded".into());
         }
         with_identity(self.clone(), move |identity| {
@@ -477,7 +481,7 @@ impl IdentityHost {
                         vec!["t".into(), coordinate],
                     ],
                 },
-                128 * 1024,
+                192 * 1024,
             )
         })
         .await

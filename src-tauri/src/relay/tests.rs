@@ -764,3 +764,76 @@ async fn sidebar_signer_supports_large_records_without_expanding_general_signing
         .await
         .is_err());
 }
+
+#[tokio::test]
+async fn sidebar_signer_and_decoder_match_broker_plaintext_boundaries() {
+    let host = IdentityHost::fixture();
+    // Unknown string sort modes are preserved by both clients; use one to place
+    // actual JSON exactly on each wire-format and application budget boundary.
+    let prefix = r#"{"groups":{"future":""#;
+    let suffix = r#""},"version":1}"#;
+    for size in [65_408, 65_409, 65_535, 65_536, 128 * 1024] {
+        let filler = "x".repeat(size - prefix.len() - suffix.len());
+        let payload = serde_json::json!({"version":1,"groups":{"future":filler}});
+        assert_eq!(serde_json::to_string(&payload).unwrap().len(), size);
+        let event = host
+            .sign_sidebar("channel-sort".into(), payload.clone(), 1)
+            .await
+            .unwrap();
+        verify(&event);
+        assert_eq!(
+            host.decode_sidebar(vec![event]).await.unwrap()["channel-sort"],
+            payload
+        );
+    }
+    let oversized = serde_json::json!({
+        "version":1,"groups":{"future":"x".repeat(128 * 1024 - prefix.len() - suffix.len() + 1)}
+    });
+    assert_eq!(
+        serde_json::to_string(&oversized).unwrap().len(),
+        128 * 1024 + 1
+    );
+    assert_eq!(
+        host.sign_sidebar("channel-sort".into(), oversized, 1)
+            .await
+            .unwrap_err(),
+        "Sidebar plaintext budget exceeded"
+    );
+}
+
+#[tokio::test]
+async fn sidebar_decoder_accepts_broker_extended_length_sections_alongside_other_preferences() {
+    let host = IdentityHost::fixture();
+    let section = "12345678-1234-1234-1234-123456789abc";
+    let assignments: serde_json::Map<String, serde_json::Value> = (0..1000)
+        .map(|i| {
+            (
+                format!("{i:08x}-1234-1234-1234-123456789abc"),
+                serde_json::json!(section),
+            )
+        })
+        .collect();
+    let sections = serde_json::json!({"version":1,"sections":[{"id":section,"name":"Work","order":0}],"assignments":assignments});
+    assert!(serde_json::to_vec(&sections).unwrap().len() > 65_535);
+    let mut events = vec![host
+        .sign_sidebar("channel-sections".into(), sections.clone(), 1)
+        .await
+        .unwrap()];
+    for coordinate in ["channel-stars", "channel-mutes", "channel-sort"] {
+        let payload = if coordinate == "channel-sort" {
+            serde_json::json!({"version":1,"groups":{}})
+        } else {
+            serde_json::json!({"version":1,"channels":{}})
+        };
+        events.push(
+            host.sign_sidebar(coordinate.into(), payload, 1)
+                .await
+                .unwrap(),
+        );
+    }
+    let decoded = host.decode_sidebar(events).await.unwrap();
+    assert_eq!(decoded["channel-sections"], sections);
+    assert_eq!(decoded["channel-stars"]["version"], 1);
+    assert_eq!(decoded["channel-mutes"]["version"], 1);
+    assert_eq!(decoded["channel-sort"]["version"], 1);
+}

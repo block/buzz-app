@@ -1,6 +1,12 @@
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
-import { memo, useLayoutEffect, useRef, type ReactNode } from "react";
-import { AgentAvatar } from "../../features/agents/AgentAvatar";
+import {
+  memo,
+  useLayoutEffect,
+  useRef,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
@@ -15,9 +21,13 @@ import { ChannelSidebarRow } from "./ChannelSidebarRow";
 import { DmTypingBadge } from "./DmTypingBadge";
 import { usePresenceStatus } from "../../features/presence/react";
 import { UnreadBadge } from "./UnreadBadge";
+import { workingAgents } from "./working-agents";
+import { publicKeyLabels } from "../../shared/identity/public-key";
 import styles from "./Channels.module.css";
 
 const noSessions: readonly ChannelSummary[] = [];
+const noSubscribe = () => () => {};
+const noProfiles = new Map<string, Profile>();
 
 // Own the connected row inside the memo boundary. Selecting another channel
 // must not rebuild every unchanged row's controls and subscriptions.
@@ -35,6 +45,8 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   onSelect,
   onNewSession,
   onOpenThread,
+  onOpenWorkingAgent,
+  onOpenAgentActivity,
   onHideDm,
   menuEnabled,
   sectionKey,
@@ -59,6 +71,12 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   onSelect: (id: string) => void;
   onNewSession: (id: string) => void;
   onOpenThread: (channelId: string, rootId: string) => void;
+  onOpenWorkingAgent?: (
+    channelId: string,
+    agent: string,
+    messageId: string | undefined,
+  ) => void;
+  onOpenAgentActivity?: (channelId: string, agent: string) => void;
   onHideDm?: (id: string) => void;
   menuEnabled?: boolean;
   sectionKey?: string | undefined;
@@ -80,6 +98,23 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
       ? channel.participants[0]
       : undefined;
   const presence = usePresenceStatus(peer ? session.presence : undefined, peer);
+  // Idle rows retain no activity/profile subscription. Primitive snapshots keep
+  // an active row stable when unrelated agent frames arrive.
+  const agentKeys = useSyncExternalStore(
+    working ? session.agentActivity.subscribe : noSubscribe,
+    () =>
+      working
+        ? workingAgents(session.agentActivity.snapshot(), channel.id).join(",")
+        : "",
+  );
+  const agents = agentKeys ? agentKeys.split(",") : [];
+  const agentProfiles = useSyncExternalStore(
+    agents.length ? session.profiles.subscribe : noSubscribe,
+    agents.length ? session.profiles.snapshot : () => noProfiles,
+  );
+  const keyLabels = publicKeyLabels(agents);
+  const agentName = (agent: string) =>
+    agentProfiles.get(agent)?.name ?? keyLabels.get(agent) ?? "Agent";
   // Keep the closing row's items through the popup's exit transition.
   const lastMenuContent = useRef<ReactNode>(undefined);
   useLayoutEffect(() => {
@@ -96,10 +131,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
           <DmTypingBadge session={session} channelId={channel.id}>
             {channel.participants?.length === 1 ? (
               <span className={styles.dmAvatar} data-dm-identity="">
-                <AgentAvatar
-                  session={session}
-                  agentPubkey={peer}
-                  channelId={channel.id}
+                <Avatar
                   src={
                     profile?.picture
                       ? session.media(profile.picture, "small")
@@ -150,15 +182,18 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
               dm={channel.channelType === "dm"}
             />
           </span>
-          {working && (
+          {agents.length > 0 && (
             <span
-              className={styles.working}
+              className={styles.thinkingBadge}
               data-channel-working=""
               data-indicator-layer="working"
               role="img"
-              aria-label="Agent working"
-              title="Agent working in this channel"
-            />
+              aria-label={`${agents.map(agentName).join(", ")} working in ${channel.name}`}
+            >
+              <i aria-hidden="true" />
+              <i aria-hidden="true" />
+              <i aria-hidden="true" />
+            </span>
           )}
         </span>
       }
@@ -168,6 +203,10 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
             session={session}
             channelId={channel.id}
             channelName={channel.name}
+            agents={agents}
+            agentProfiles={agentProfiles}
+            {...(onOpenWorkingAgent ? { onOpenWorkingAgent } : {})}
+            {...(onOpenAgentActivity ? { onOpenAgentActivity } : {})}
             onOpenThread={(item) => onOpenThread(item.channelId, item.rootId)}
             trigger={trigger}
           />

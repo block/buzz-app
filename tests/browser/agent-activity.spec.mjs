@@ -32,6 +32,29 @@ const activity = (kind, channelId, turnId, payload) => ({
   ...(payload === undefined ? {} : { payload }),
 });
 
+test("sidebar activity opens the working agent panel", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
+  const key = generateSecretKey();
+  const agent = getPublicKey(key);
+  app.observer(activity("turn_liveness", "alpha", "sidebar"), key);
+  const row = page.locator('[data-channel-id="alpha"]');
+  await expect(
+    row.getByRole("img", { name: /working in Alpha$/ }),
+  ).toBeVisible();
+  await row.hover();
+  const popup = page.getByRole("dialog", { name: "Activity in Alpha" });
+  await expect(popup).toBeVisible();
+  await popup.getByRole("button", { name: /Open conversation for/ }).hover();
+  const action = popup.getByRole("button", { name: /View .+ activity/ });
+  await expect(action).toBeVisible();
+  await action.click();
+  await expect(activityPanel(page).locator("code").first()).toHaveText(agent);
+});
+
 test("mention picker demands the relay's protected archive snapshot", async ({
   page,
   app,
@@ -748,7 +771,7 @@ test.describe("thread activity", () => {
     });
     const marker = page
       .locator('[data-channel-id="alpha"]')
-      .getByRole("img", { name: "Agent working", exact: true });
+      .getByRole("img", { name: /working in Alpha$/ });
     const sendTyping = (threadId, signingKey = key, secondsAgo = 0) => {
       const event = finalizeEvent(
         {
@@ -854,7 +877,7 @@ test.describe("thread activity", () => {
     await expect(marker).toBeVisible();
     const workingBox = await marker.boundingBox();
     expect(workingBox).toEqual(
-      expect.objectContaining({ width: 6, height: 6 }),
+      expect.objectContaining({ width: 26, height: 15 }),
     );
     await expect(channelActivity(page)).toBeVisible();
     const channelBox = await channelActivity(page)

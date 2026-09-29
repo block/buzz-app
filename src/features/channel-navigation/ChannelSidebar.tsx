@@ -524,6 +524,65 @@ function ReadySidebar({
     },
     [viewer, relay, queries, handoff, sidebar.list, navigator, scope],
   );
+  const openWorkingAgent = useCallback(
+    (channelId: string, _agent: string, messageId: string | undefined) => {
+      if (!viewer || relay.snapshot().session !== queries) return;
+      const root =
+        messageId &&
+        channels.find((channel) => channel.id === channelId)?.channelType !==
+          "session" &&
+        queries.channels
+          .window(channelId)
+          .rows.some((row) => row.id === messageId && !row.threadRootId);
+      if (root) {
+        openActivityThread(channelId, messageId);
+        return;
+      }
+      void navigator.open({
+        version: 1,
+        kind: "conversation",
+        channelId,
+        ...(messageId ? { messageId } : {}),
+        scope: {
+          viewer,
+          communityOrigin: scope.slice(0, -(viewer.length + 1)),
+        },
+      });
+    },
+    [viewer, relay, queries, channels, openActivityThread, navigator, scope],
+  );
+  const openAgentActivity = useCallback(
+    (channelId: string, agent: string) => {
+      if (!viewer || relay.snapshot().session !== queries) return;
+      const intent = {
+        channelId,
+        agent,
+        trigger:
+          sidebar.list.current?.querySelector<HTMLElement>(
+            `[data-channel-id="${CSS.escape(channelId)}"]`,
+          ) ?? null,
+      };
+      if (handoff) handoff.activityAgent.current = intent;
+      void navigator
+        .open({
+          version: 1,
+          kind: "conversation",
+          channelId,
+          scope: {
+            viewer,
+            communityOrigin: scope.slice(0, -(viewer.length + 1)),
+          },
+        })
+        .then((result) => {
+          if (
+            result.status !== "opened" &&
+            handoff?.activityAgent.current === intent
+          )
+            handoff.activityAgent.current = undefined;
+        });
+    },
+    [viewer, relay, queries, handoff, sidebar.list, navigator, scope],
+  );
   const createChannel = async (input: CreateChannelInput) => {
     const id = await queries.channelCreation.create(input);
     if (!mounted.current || relay.snapshot().session !== queries) return;
@@ -1074,6 +1133,8 @@ function ReadySidebar({
                         onSelect={select}
                         onNewSession={startSession}
                         onOpenThread={openActivityThread}
+                        onOpenWorkingAgent={openWorkingAgent}
+                        onOpenAgentActivity={openAgentActivity}
                         menuEnabled={menuEnabled}
                         sectionKey={section.key}
                         onOpenMenu={openRowMenu}

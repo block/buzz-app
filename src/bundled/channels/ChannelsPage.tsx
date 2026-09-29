@@ -1,4 +1,5 @@
 import type { AgentControl } from "../../features/agents/control";
+import { activityTarget } from "../../features/agents/activity-target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { clientMetrics } from "../../features/developer/client-metrics";
 import { ChannelMembersButton } from "./ChannelMembersDialog";
@@ -272,6 +273,7 @@ function ChannelWorkspace({
     [navigate],
   );
   const threadTrigger = useRef<HTMLElement | null>(null);
+  const panelTrigger = useRef<HTMLElement | null>(null);
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
   const { channels } = useChannelLabels(
     list.channels,
@@ -566,6 +568,7 @@ function ChannelWorkspace({
     setOpened(next);
   }, []);
   useLayoutEffect(() => {
+    if (navigation?.signal.aborted) return;
     if (draftParent || composingMessage || placeholder || requestedMessage) {
       setThread(undefined);
       open(undefined);
@@ -579,15 +582,32 @@ function ChannelWorkspace({
       threadTrigger.current = activity.trigger;
       handoff.activityThread.current = undefined;
     }
+    const activityAgent = handoff?.activityAgent.current;
+    if (activityAgent && activityAgent.channelId === current?.id) {
+      const target = activityTarget(
+        activityAgent.agent,
+        activityAgent.channelId,
+      );
+      const panel = panels.resolve(target);
+      if (panel) {
+        panelTrigger.current = activityAgent.trigger;
+        open({ channelId: activityAgent.channelId, panel, target });
+      }
+      handoff.activityAgent.current = undefined;
+    }
   }, [
     draftParent,
     composingMessage,
     placeholder,
     requestedMessage,
+    navigation,
     requestedChannel,
     requestedThread,
     open,
     handoff?.activityThread,
+    handoff?.activityAgent,
+    current?.id,
+    panels,
   ]);
   const panel =
     opened &&
@@ -729,7 +749,6 @@ function ChannelWorkspace({
     setThread(undefined);
     if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
   };
-  const panelTrigger = useRef<HTMLElement | null>(null);
   const close = useCallback(() => {
     open(undefined);
     if (panelTrigger.current?.isConnected)

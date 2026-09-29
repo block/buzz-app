@@ -6,18 +6,16 @@ import { open } from "./timeline.mjs";
 // move lands while the old menu is still closing.
 async function holdMenuExit(page) {
   await page.evaluate(() => {
-    document.addEventListener(
-      "transitionrun",
-      (event) => {
-        if (
-          event.target instanceof HTMLElement &&
-          event.target.matches(".buzz-menu-popup[data-ending-style]")
-        )
-          for (const animation of event.target.getAnimations())
-            animation.pause();
-      },
-      true,
-    );
+    // transitionrun arrives on a rendering update, after a short exit may
+    // already finish. Materialize and pause it at the closing-state mutation.
+    new MutationObserver((records) => {
+      for (const { target } of records)
+        if (target.matches(".buzz-menu-popup[data-ending-style]"))
+          for (const animation of target.getAnimations()) animation.pause();
+    }).observe(document, {
+      subtree: true,
+      attributeFilter: ["data-ending-style"],
+    });
   });
   return {
     // Closing has started and cannot finish until release().

@@ -17,9 +17,14 @@ export function profileAgentHint(target: string): boolean {
   return /^buzz:agent-profile:[a-f0-9]{64}$/.test(target);
 }
 
+export function profilePanelKey(target: string): string | undefined {
+  return profileAgentHint(target)
+    ? target.slice("buzz:agent-profile:".length)
+    : profileKey(target);
+}
+
+/** Public message/composer input must never supply an app-local avatar hint. */
 export function profileKey(target: string): string | undefined {
-  if (profileAgentHint(target))
-    return target.slice("buzz:agent-profile:".length);
   if (!/^nostr:npub1[023456789acdefghjklmnpqrstuvwxyz]+$/.test(target))
     return undefined;
   try {

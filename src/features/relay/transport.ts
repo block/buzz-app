@@ -3,6 +3,7 @@ import {
   type MemoryReader,
   type MemoryListing,
 } from "../agents/memory";
+import { publicationRefusal } from "../developer/traffic";
 import { brokerUpload, type AttachmentUpload } from "./attachments";
 import type { ChannelKitHost } from "../channel-templates/host";
 import type { KitRecord } from "../channel-templates/model";
@@ -37,6 +38,7 @@ import {
   presenceText,
 } from "./http-admission";
 import { yieldToHost } from "./yield";
+import { clientMetrics } from "../developer/client-metrics";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import {
   subscribeRelayTraffic,
@@ -81,6 +83,8 @@ export interface ReadTransport {
   readonly workflows?: WorkflowHost;
   /** Narrow lifecycle signer/publisher; never supplied to the message outbox. */
   readonly channelLifecycle?: RelayWriter;
+  /** Name/about/private-only metadata writer, separate from lifecycle and outbox. */
+  readonly channelDetails?: RelayWriter;
   /** Narrow NIP-IA 9035/9036 signer/publisher; never supplied to the message outbox. */
   readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
@@ -99,7 +103,12 @@ export interface ReadTransport {
     requestId: string,
     priority: "foreground" | "background",
   ): Promise<RelayEvent[]>;
-  /** Broker-only, complete bounded presence read. null is a local admission skip. */
+  /** Demand-scoped verified ephemeral events on the session-owned socket. */
+  observePresence?(
+    authors: readonly string[],
+    receive: (event: RelayEvent) => void,
+  ): () => void;
+  /** Complete bounded presence read. null is a local admission skip. */
   presenceSnapshot?(
     authors: readonly string[],
     signal: AbortSignal,
@@ -159,6 +168,8 @@ export function mediaUrl(
 export interface Signer {
   getPublicKey(): Promise<string>;
   signEvent(event: EventTemplate): Promise<VerifiedEvent>;
+  /** Native hosts authenticate and send exact bytes without exposing credentials to JS. */
+  request?(url: string, body: string, signal?: AbortSignal): Promise<Response>;
 }
 
 /** The host's explicit HTTP base wins; otherwise translate the ws(s) relay URL's scheme. */
@@ -192,10 +203,78 @@ async function parseEvents(
   // head/profile responses cannot monopolize input and foreground rendering.
   for (let index = 0; index < raw.length; index += 12) {
     if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
-    events.push(...raw.slice(index, index + 12).map(verify));
+    const started = performance.now();
+    const batch = raw.slice(index, index + 12).map(verify);
+    clientMetrics.cpu("verify.read", performance.now() - started, batch.length);
+    events.push(...batch);
     if (index + 12 < raw.length) await yieldToHost();
   }
   return events;
+}
+
+/** Development metrics: one record per finite read, never per event.
+ * `sized` passes the decoded response body through and records its length. */
+async function measureQuery<T>(
+  session: string,
+  priority: "foreground" | "background",
+  read: (sized: (text: string) => string) => Promise<T>,
+): Promise<T> {
+  const started = performance.now();
+  let bytes = 0;
+  let ok = false;
+  try {
+    const result = await read((text) => {
+      bytes = text.length;
+      return text;
+    });
+    ok = true;
+    return result;
+  } finally {
+    clientMetrics.query(session, {
+      ms: performance.now() - started,
+      bytes,
+      priority,
+      ok,
+    });
+  }
+}
+/** Report live route state to development metrics before the session sees it. */
+function measuredLive(
+  session: string,
+  callbacks: LiveCallbacks,
+): LiveCallbacks {
+  return {
+    ...callbacks,
+    state(snapshot) {
+      clientMetrics.live(session, snapshot);
+      callbacks.state(snapshot);
+    },
+  };
+}
+
+/** Binds the presence owner to the existing session stream, including startup ordering. */
+function presenceObservation() {
+  let traffic: LiveSubscription | undefined;
+  let authors: readonly string[] = [];
+  let listener: ((event: RelayEvent) => void) | undefined;
+  return {
+    receive: (event: RelayEvent) => listener?.(event),
+    attach(value: LiveSubscription) {
+      traffic = value;
+      traffic.watchPresence?.(authors);
+    },
+    observe(keys: readonly string[], receive: (event: RelayEvent) => void) {
+      authors = keys;
+      listener = receive;
+      traffic?.watchPresence?.(authors);
+      return () => {
+        if (listener !== receive) return;
+        listener = undefined;
+        authors = [];
+        traffic?.watchPresence?.(authors);
+      };
+    },
+  };
 }
 
 async function parsePresence(
@@ -289,6 +368,7 @@ export async function connectBrokerTransport(
     attachmentUploads?: boolean;
     directMessages?: boolean;
     channelLifecycle?: boolean;
+    channelDetails?: boolean;
     identityArchives?: boolean;
     relayUrl?: string;
     relayHttpUrl?: string;
@@ -321,6 +401,7 @@ export async function connectBrokerTransport(
       "Relay broker session is malformed",
     );
   let traffic: LiveSubscription | undefined;
+  const presence = presenceObservation();
   const relayHttpUrl = relayHttpBase(session.relayHttpUrl, session.relayUrl);
   const publicationHeaders = () => ({
     "Content-Type": "application/json",
@@ -358,6 +439,7 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.presence && session.live
       ? {
+          observePresence: presence.observe,
           async presenceSnapshot(
             authors: readonly string[],
             signal: AbortSignal,
@@ -401,7 +483,14 @@ export async function connectBrokerTransport(
     ...(session.live
       ? {
           subscribe: (callbacks: LiveCallbacks) => {
-            traffic = subscribeBrokerTraffic(endpoint, callbacks);
+            traffic = subscribeBrokerTraffic(
+              endpoint,
+              measuredLive(endpoint, {
+                ...callbacks,
+                presence: presence.receive,
+              }),
+            );
+            presence.attach(traffic);
             return traffic;
           },
         }
@@ -648,29 +737,31 @@ export async function connectBrokerTransport(
             requestId: string,
             priority: "foreground" | "background",
           ) {
-            const response = await fetch(`${endpoint}/query`, {
-              method: "POST",
-              credentials: "same-origin",
-              headers: {
-                "Content-Type": "application/json",
-                "X-Buzz-Read-Priority": priority,
-              },
-              body: JSON.stringify(
-                readSnapshotFilter(session.viewer as string),
-              ),
-              signal,
-            });
-            if (!response.ok)
-              throw new Error(
-                `Read-state snapshot failed (${response.status})`,
+            return measureQuery(endpoint, priority, async (sized) => {
+              const response = await fetch(`${endpoint}/query`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Buzz-Read-Priority": priority,
+                },
+                body: JSON.stringify(
+                  readSnapshotFilter(session.viewer as string),
+                ),
+                signal,
+              });
+              if (!response.ok)
+                throw new Error(
+                  `Read-state snapshot failed (${response.status})`,
+                );
+              recordServerTiming(response, profiling, requestId);
+              return parseReadSnapshot(
+                JSON.parse(sized(await readSnapshotText(response))),
+                session.viewer as string,
+                session.readStateCommunity as string,
+                signal,
               );
-            recordServerTiming(response, profiling, requestId);
-            return parseReadSnapshot(
-              JSON.parse(await readSnapshotText(response)),
-              session.viewer as string,
-              session.readStateCommunity as string,
-              signal,
-            );
+            });
           },
         }
       : {}),
@@ -723,6 +814,9 @@ export async function connectBrokerTransport(
             ).muted;
           },
         }
+      : {}),
+    ...(session.channelDetails === true
+      ? { channelDetails: routeWriter("channel-details") }
       : {}),
     ...(session.channelLifecycle === true
       ? { channelLifecycle: routeWriter("channel-lifecycle") }
@@ -812,24 +906,30 @@ export async function connectBrokerTransport(
     ...(session.channelActivity
       ? {
           async channelActivity(channelIds, signal) {
-            const result = await fetch(`${endpoint}/channel-activity`, {
-              method: "POST",
-              credentials: "same-origin",
-              headers: {
-                "Content-Type": "application/json",
-                "X-Buzz-Read-Priority": "background",
-              },
-              body: JSON.stringify(
-                channelIds.map((channelId) => ({
-                  kinds: [9, 40002, 40008, 45001, 45003],
-                  "#h": [channelId],
-                  limit: 1,
-                })),
-              ),
-              signal,
+            return measureQuery(endpoint, "background", async (sized) => {
+              const result = await fetch(`${endpoint}/channel-activity`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Buzz-Read-Priority": "background",
+                },
+                body: JSON.stringify(
+                  channelIds.map((channelId) => ({
+                    kinds: [9, 40002, 40008, 45001, 45003],
+                    "#h": [channelId],
+                    limit: 1,
+                  })),
+                ),
+                signal,
+              });
+              if (!result.ok) throw httpReadError(result.status);
+              return parseEvents(
+                JSON.parse(sized(await result.text())),
+                verify,
+                signal,
+              );
             });
-            if (!result.ok) throw httpReadError(result.status);
-            return parseEvents(await result.json(), verify, signal);
           },
         }
       : {}),
@@ -840,33 +940,34 @@ export async function connectBrokerTransport(
         session.relayUrl,
         size,
       ),
-    async query(filters, signal, requestId = "read", priority = "foreground") {
-      const result = await fetch(`${endpoint}/query`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Buzz-Read-Priority": priority,
-        },
-        body: JSON.stringify(filters),
-        signal: signal ?? null,
-      });
-      if (!result.ok) {
-        const failure = await readApiFailure(result);
-        throw new ReadError(
-          result.status === 401 || result.status === 403
-            ? "denied"
-            : "unavailable",
-          failure.error,
-          result.status,
-          failure.retryAfterMs,
+    query: (filters, signal, requestId = "read", priority = "foreground") =>
+      measureQuery(endpoint, priority, async (sized) => {
+        const result = await fetch(`${endpoint}/query`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Buzz-Read-Priority": priority,
+          },
+          body: JSON.stringify(filters),
+          signal: signal ?? null,
+        });
+        if (!result.ok) {
+          const failure = await readApiFailure(result);
+          throw new ReadError(
+            result.status === 401 || result.status === 403
+              ? "denied"
+              : "unavailable",
+            failure.error,
+            result.status,
+            failure.retryAfterMs,
+          );
+        }
+        recordServerTiming(result, profiling, requestId);
+        return profiling.measureAsync("read.verify", requestId, async () =>
+          parseEvents(JSON.parse(sized(await result.text())), verify, signal),
         );
-      }
-      recordServerTiming(result, profiling, requestId);
-      return profiling.measureAsync("read.verify", requestId, async () =>
-        parseEvents(await result.json(), verify, signal),
-      );
-    },
+      }),
   };
 }
 
@@ -886,8 +987,50 @@ export async function connectSignedTransport(
   const principal = () => signedAdmissions(httpOrigin, viewer);
   const profiling = createRelayProfiler();
   const verify = createEventVerifier();
+  const presence = presenceObservation();
   return {
     profiling,
+    observePresence: presence.observe,
+    async presenceSnapshot(authors, signal) {
+      const filters = [{ kinds: [20001], authors, limit: authors.length }];
+      if (!presenceFilter(filters)) throw new Error("Invalid presence demand");
+      const lane = principal().api;
+      const release = lane.tryPresence();
+      if (!release) return null;
+      const bounded = AbortSignal.any([signal, AbortSignal.timeout(10000)]);
+      try {
+        const response = await signedPost(
+          signer,
+          `${httpOrigin}/query`,
+          filters,
+          bounded,
+          profiling,
+          "presence",
+          lane,
+          "background",
+          true,
+        );
+        if (!response.ok) {
+          const failure = await readApiFailure(response);
+          if (failure.quota === "api" && failure.retryAfterMs !== undefined)
+            lane.pause(failure.retryAfterMs);
+          throw new ReadError(
+            "unavailable",
+            failure.error,
+            response.status,
+            failure.retryAfterMs,
+          );
+        }
+        return await parsePresence(
+          JSON.parse(await presenceText(response)),
+          authors,
+          relayAuthor,
+          bounded,
+        );
+      } finally {
+        release();
+      }
+    },
     subscribe: (callbacks) => {
       const owner = principal();
       owner.streams++;
@@ -897,7 +1040,10 @@ export async function connectSignedTransport(
           httpOrigin.replace(/^http/, "ws"),
           (event) => signer.signEvent(event),
           viewer,
-          callbacks,
+          measuredLive(httpOrigin, {
+            ...callbacks,
+            presence: presence.receive,
+          }),
           undefined,
           owner.live,
         );
@@ -905,6 +1051,7 @@ export async function connectSignedTransport(
         owner.streams--;
         throw error;
       }
+      presence.attach(traffic);
       let closed = false;
       return {
         ...traffic,
@@ -924,7 +1071,7 @@ export async function connectSignedTransport(
     writer: {
       sign: (event) => signer.signEvent(event),
       async publish(event, signal) {
-        await acceptPublish(
+        return acceptPublish(
           await signedPost(
             signer,
             `${httpOrigin}/events`,
@@ -942,33 +1089,34 @@ export async function connectSignedTransport(
         );
       },
     },
-    async query(filters, signal, requestId = "read", priority = "foreground") {
-      const result = await signedPost(
-        signer,
-        `${httpOrigin}/query`,
-        filters,
-        signal,
-        profiling,
-        requestId,
-        principal().api,
-        priority,
-      );
-      if (!result.ok) {
-        const failure = await readApiFailure(result);
-        throw new ReadError(
-          result.status === 401 || result.status === 403
-            ? "denied"
-            : "unavailable",
-          failure.error,
-          result.status,
-          failure.retryAfterMs,
+    query: (filters, signal, requestId = "read", priority = "foreground") =>
+      measureQuery(httpOrigin, priority, async (sized) => {
+        const result = await signedPost(
+          signer,
+          `${httpOrigin}/query`,
+          filters,
+          signal,
+          profiling,
+          requestId,
+          principal().api,
+          priority,
         );
-      }
-      recordServerTiming(result, profiling, requestId);
-      return profiling.measureAsync("read.verify", requestId, async () =>
-        parseEvents(await result.json(), verify, signal),
-      );
-    },
+        if (!result.ok) {
+          const failure = await readApiFailure(result);
+          throw new ReadError(
+            result.status === 401 || result.status === 403
+              ? "denied"
+              : "unavailable",
+            failure.error,
+            result.status,
+            failure.retryAfterMs,
+          );
+        }
+        recordServerTiming(result, profiling, requestId);
+        return profiling.measureAsync("read.verify", requestId, async () =>
+          parseEvents(JSON.parse(sized(await result.text())), verify, signal),
+        );
+      }),
   };
 }
 
@@ -981,10 +1129,23 @@ async function signedPost(
   id: string,
   admission: Parameters<typeof admittedApiRequest>[0],
   priority: "foreground" | "background" = "foreground",
+  optionalPresence = false,
 ) {
+  const dispatch = (request: () => Promise<Response>) =>
+    optionalPresence
+      ? admission.prepare(request)
+      : admittedApiRequest(admission, request, signal, priority);
   signal?.throwIfAborted();
   return admission.prepare(async () => {
     const body = JSON.stringify(value);
+    const request = signer.request?.bind(signer);
+    if (request)
+      return dispatch(() => {
+        signal?.throwIfAborted();
+        return profiling.measureAsync("http.fetch", id, () =>
+          request(url, body, signal),
+        );
+      });
     const payload = hex(
       await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)),
     );
@@ -1007,30 +1168,25 @@ async function signedPost(
     // server pause learned during asynchronous signing.
     const queued = profiling.start("http.admission", id);
     try {
-      return await admittedApiRequest(
-        admission,
-        () => {
-          queued();
-          signal?.throwIfAborted();
-          if (Math.abs(Math.floor(Date.now() / 1000) - auth.created_at) > 45)
-            throw new ApiNotSent(
-              "Request authentication expired before dispatch; retry available",
-            );
-          return profiling.measureAsync("http.fetch", id, () =>
-            fetch(url, {
-              method: "POST",
-              headers: {
-                Authorization: `Nostr ${btoa(JSON.stringify(auth))}`,
-                "Content-Type": "application/json",
-              },
-              body,
-              signal: signal ?? null,
-            }),
+      return await dispatch(() => {
+        queued();
+        signal?.throwIfAborted();
+        if (Math.abs(Math.floor(Date.now() / 1000) - auth.created_at) > 45)
+          throw new ApiNotSent(
+            "Request authentication expired before dispatch; retry available",
           );
-        },
-        signal,
-        priority,
-      );
+        return profiling.measureAsync("http.fetch", id, () =>
+          fetch(url, {
+            method: "POST",
+            headers: {
+              Authorization: `Nostr ${btoa(JSON.stringify(auth))}`,
+              "Content-Type": "application/json",
+            },
+            body,
+            signal: signal ?? null,
+          }),
+        );
+      });
     } finally {
       queued();
     }
@@ -1043,9 +1199,18 @@ async function acceptPublish(response: Response, id: string) {
       throw new PublishRejected(
         `Relay rejected the message (${response.status})`,
       );
-    // A broker that never reached the relay reports `sent: false`; that message
-    // was not delivered and is safe to mark failed and retry.
-    const body = await readApiFailure(response);
+    // Only proven non-delivery is safe to mark failed. Socket quota reasons are
+    // display-only: keep them distinct from HTTP API quota/cooldown ownership.
+    const body = await readApiFailure(response, (value) => {
+      if (!value || typeof value !== "object") return;
+      const failure = value as { sent?: unknown; error?: unknown };
+      if (
+        failure.sent === false &&
+        typeof failure.error === "string" &&
+        failure.error.startsWith("rate-limited:")
+      )
+        return publicationRefusal(failure.error);
+    });
     if (body.sent === false || body.quota === "api")
       throw new PublishRejected(body.error);
     throw new Error(

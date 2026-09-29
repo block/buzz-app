@@ -1,4 +1,5 @@
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
+import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember, startAddedAgent } from "../channel-members/members";
 import type { AgentControl } from "../agents/control";
@@ -18,6 +19,7 @@ import type { PresenceActivity } from "../presence/activity";
 import { bindNames, type IdentityNames } from "../identity-names/service";
 import { sessionMetadata } from "../sessions/metadata";
 import { createChannelLifecycle } from "./channel-lifecycle";
+import { createChannelDetails } from "./channel-details";
 import { createWorkflows } from "../workflows/capability";
 import { isWorkflowOperation } from "../workflows/protocol";
 import {
@@ -59,6 +61,7 @@ import {
   readActiveSidebarGroups,
 } from "./sidebar-personal-groups";
 import { createEmojiDirectory } from "./emoji-directory";
+import { EMOJI_SET_KIND } from "./emoji";
 import { createProfileDirectory } from "./profile-directory";
 import { createChannelStore, type ChannelStoreOptions } from "./store";
 import { MessageClock } from "./message-order";
@@ -110,10 +113,11 @@ const channelId =
 
 function restoredChannelCreation(
   events: LocalEvents | undefined,
+  owned?: (id: string) => boolean,
 ): PendingChannelCreation | undefined {
   for (const item of [...(events?.snapshot() ?? [])].reverse()) {
     const restored = parseChannelCreation(item);
-    if (restored) return restored;
+    if (restored && !owned?.(restored.id)) return restored;
   }
 }
 
@@ -342,6 +346,7 @@ export function createRelaySession(
       accessEpoch++;
       cancelUploads();
       lifecycle.cancel();
+      details.cancel();
       typing.clear();
       // Saved owner inventory does not depend on channel access. Preserve only
       // that narrow read; broad, mixed, ID and channel reads must still retire.
@@ -560,7 +565,32 @@ export function createRelaySession(
     notify,
   );
   const profiles = createProfileDirectory(verified, localViews, notify);
-  const emoji = createEmojiDirectory(verified, notify);
+  const emoji = createEmojiDirectory(
+    verified,
+    notify,
+    transport?.viewer,
+    transport &&
+      writer &&
+      uploadAttachment &&
+      (!writer.kinds || writer.kinds.includes(EMOJI_SET_KIND))
+      ? {
+          writer,
+          async upload(file, signal) {
+            const combined = AbortSignal.any([
+              signal,
+              lifetime.signal,
+              uploadLifetime.signal,
+            ]);
+            combined.throwIfAborted();
+            if (closed) throw new UploadError("denied");
+            const result = await uploadAttachment(file, combined);
+            combined.throwIfAborted();
+            if (closed) throw new UploadError("denied");
+            return result;
+          },
+        }
+      : undefined,
+  );
   const statuses = createUserStatuses(
     verified,
     transport?.viewer,
@@ -647,6 +677,14 @@ export function createRelaySession(
     bound.throwIfAborted();
     // NIP-34/NIP-MP metadata is global; channel tags are associations, not ACLs.
     return events;
+  });
+  const details = createChannelDetails({
+    reader: transport && !options.cachedOnly ? requests.reader : undefined,
+    writer: transport?.channelDetails,
+    viewer: transport?.viewer ?? "",
+    relayAuthor: transport?.relayAuthor ?? "",
+    canAccess: (id) => !closed && channels.canParticipate(id),
+    acceptDiscovery: (events) => channels.acceptDiscovery(events),
   });
   const lifecycle = createChannelLifecycle({
     reader: transport && !options.cachedOnly ? requests.reader : undefined,
@@ -1093,6 +1131,13 @@ export function createRelaySession(
     groupHead = head;
     void sidebarPreferences.queries.refresh();
   });
+  type SetupNotice = Readonly<{ id: string; name: string; error: string }>;
+  let setupNotices: readonly SetupNotice[] = [];
+  const setupListeners = new Set<() => void>();
+  const notifySetup = () =>
+    setupListeners.forEach((listener) => {
+      listener();
+    });
   const channelSetup =
     transport && writes && transport.channelKit
       ? createChannelSetup({
@@ -1100,16 +1145,35 @@ export function createRelaySession(
           outbox: writes.outbox,
           local: writes.local,
           signal: lifetime.signal,
-          create: (id, input) =>
+          changed: notifySetup,
+          create: (id, input, active) =>
             workSessions.createChannel(
               id,
               input.name,
               input.visibility,
               input.description,
               input.ttlSeconds,
+              active,
             ),
-          delivered: workSessions.delivered,
-          confirm: channelKit.confirm,
+          delivered: (id, active) =>
+            workSessions.delivered(
+              id,
+              active,
+              false,
+              !!active && !workSessions.failed(id),
+            ),
+          confirm: async (id) => {
+            await workSessions.delivered(id, undefined, false, false);
+            if (
+              !(
+                await verified.read([{ ids: [id], limit: 1 }], {
+                  signal: lifetime.signal,
+                  fresh: true,
+                })
+              ).some((event) => event.id === id)
+            )
+              throw new Error("Setup is awaiting exact relay confirmation");
+          },
           refresh: (id, member) => workSessions.refresh(id, { member }, false),
           canvasHead: async (id) => (await channelKit.canvas.read(id))?.id,
           async preflight(input) {
@@ -1134,93 +1198,101 @@ export function createRelaySession(
             if (!setup) return;
             parseLineup({ ...setup, teamIds: [] });
             if (
-              ![setup.groupId, setup.templateId].every(
-                (id) =>
-                  typeof id === "string" &&
-                  (id === "" || /^[a-zA-Z0-9_-]{1,128}$/.test(id)),
-              )
+              setup.groupSource !== undefined &&
+              setup.groupSource !== "legacy"
+            )
+              throw new Error("Invalid group source");
+            if (
+              typeof setup.groupId !== "string" ||
+              setup.groupId.length >
+                (setup.groupSource === "legacy" ? 256 : 128) ||
+              (setup.groupId !== "" &&
+                (setup.groupSource === "legacy"
+                  ? !setup.groupId.trim()
+                  : !/^[a-zA-Z0-9_-]{1,128}$/.test(setup.groupId))) ||
+              typeof setup.templateId !== "string" ||
+              (setup.templateId !== "" &&
+                !/^[a-zA-Z0-9_-]{1,128}$/.test(setup.templateId))
             )
               throw new Error("Invalid template or group selection");
             if (setup.canvas && !channelKit.canvas.available)
               throw new Error("Canvas writing is unavailable");
             if (setup.agents.length && !writes.outbox.supports(9000))
               throw new Error("Agent membership is unavailable");
+            // These independent checks share the critical path, not a dependency.
+            // Native teams never consume the legacy inventory as a fallback.
+            await Promise.all([
+              ...(setup.agents.length
+                ? [
+                    agentChoices.refresh("templates"),
+                    archives.queries.refresh(),
+                  ]
+                : []),
+              ...(setup.groupId ? [sidebarPreferences.queries.refresh()] : []),
+            ]);
+            lifetime.signal.throwIfAborted();
             if (setup.agents.length) {
-              await agentChoices.refresh();
-              await archives.queries.refresh();
-              lifetime.signal.throwIfAborted();
               if (archives.queries.snapshot().status !== "ready")
                 throw new Error(
                   "Agent archive state is unavailable; refresh before creating this lineup",
                 );
-              // Re-read native state after awaits; process running is not eligibility.
-              const available = new Set(
-                templateAgentChoices(
-                  agentChoices.snapshot(),
-                  channels.queries.list(),
-                ).map((a) => a.pubkey),
-              );
-              if (
-                setup.agents.some(
-                  (key) =>
-                    !available.has(key) ||
-                    archives.queries.state(key) !== "not-archived",
-                )
-              )
+              const choices = agentChoices.snapshot();
+              if (choices.templates.status !== "ready")
                 throw new Error(
-                  "A selected agent is unavailable in this community. Refresh agents or remove it before creating the channel.",
+                  choices.templates.error ??
+                    "Agent inventory is unavailable; refresh before creating this lineup",
+                );
+              // Re-read the shared selection after awaits; process status is not eligibility.
+              const available = new Set(
+                templateAgentChoices(choices, channels.queries.list()).map(
+                  (a) => a.pubkey,
+                ),
+              );
+              const unavailable = setup.agents.filter(
+                (key) =>
+                  !available.has(key) ||
+                  archives.queries.state(key) !== "not-archived",
+              );
+              if (unavailable.length)
+                throw new Error(
+                  `Selected agents are unavailable in this community: ${unavailable.map(npubEncode).join(", ")}. Refresh agents or remove them before creating the channel.`,
                 );
             }
             if (setup.groupId) {
-              await channelKit.capability.refresh();
-              if (channelKit.capability.snapshot().status !== "ready")
-                throw new Error(
-                  "Personal groups could not be refreshed; no channel was created",
-                );
-              const entry = personalGroups(
-                channelKit.capability.snapshot().entries,
-              );
+              const state = sidebarPreferences.queries.snapshot();
               if (
-                entry?.record.value.type !== "groups" ||
-                !entry.record.value.groups.some((g) => g.id === setup.groupId)
+                !sidebarPreferences.queries.writable ||
+                (setup.groupSource === "legacy") !==
+                  (state.data?.groupSource !== "personal") ||
+                !state.data?.sections.some((g) => g.id === setup.groupId)
               )
-                throw new Error("The destination group is unavailable");
+                throw new Error(
+                  "The destination group is unavailable; refresh your sidebar before creating the channel",
+                );
             }
           },
-          async place(id, groupId) {
-            await channelKit.capability.refresh();
-            const state = channelKit.capability.snapshot();
-            if (state.status !== "ready")
-              throw new Error("Personal group placement could not be loaded");
-            const entry = personalGroups(state.entries);
+          async place(id, groupId, source) {
+            await sidebarPreferences.queries.refresh();
+            const state = sidebarPreferences.queries.snapshot();
             if (
-              entry?.record.value.type !== "groups" ||
-              !entry.record.value.groups.some((g) => g.id === groupId)
+              !sidebarPreferences.queries.writable ||
+              (source === "legacy") !==
+                (state.data?.groupSource !== "personal") ||
+              !state.data?.sections.some((g) => g.id === groupId)
             )
               throw new Error(
-                "The destination group was removed; keep the partial channel and choose its group separately",
+                "The destination group changed or is unavailable; keep the partial channel and choose its group separately",
               );
-            if (entry.record.value.assignments[id] === groupId) return;
-            await channelKit.capability.save(
-              {
-                ...entry.record.value,
-                assignments: {
-                  ...entry.record.value.assignments,
-                  [id]: groupId,
-                },
-              },
-              entry.eventId,
-            );
+            if (state.data.assignments[id] === groupId) return;
+            await sidebarPreferences.queries.assign(id, groupId);
           },
         })
       : undefined;
   let pendingChannelCreation: PendingChannelCreation | undefined =
-    restoredChannelCreation(writes?.local);
+    restoredChannelCreation(writes?.local, channelSetup?.owns);
   let restoredOperation = pendingChannelCreation?.operation;
   const pendingCreation = () => {
-    const candidate = restoredChannelCreation(writes?.local);
-    const restored =
-      candidate?.id === channelSetup?.completedId() ? undefined : candidate;
+    const restored = restoredChannelCreation(writes?.local, channelSetup?.owns);
     if (restored?.operation !== restoredOperation) {
       restoredOperation = restored?.operation;
       pendingChannelCreation = restored;
@@ -1231,28 +1303,37 @@ export function createRelaySession(
     available: workSessions.available,
     subscribe: (listener: () => void) => {
       const local = writes?.local.subscribe(listener);
-      const setup = channelSetup?.subscribe(listener);
+      setupListeners.add(listener);
       return () => {
         local?.();
-        setup?.();
+        setupListeners.delete(listener);
       };
     },
     snapshot: () => channelSetup?.snapshot() ?? pendingCreation()?.input,
-    partialChannel: () => channelSetup?.channelId(),
-    keepPartial: () => channelSetup?.keepPartial(),
+    notices: () => setupNotices,
+    dismissNotice(id: string) {
+      setupNotices = setupNotices.filter((item) => item.id !== id);
+      notifySetup();
+    },
     async create(input: ChannelCreationInput) {
       if (!transport) throw new Error("The community connection changed.");
-      if (input.setup || channelSetup?.snapshot()) {
-        if (!channelSetup)
-          throw new Error("Template setup is unavailable on this host");
-        await writes?.ready;
-        const previous = pendingCreation();
-        if (previous && !channelSetup.snapshot())
-          throw new Error(
-            "Resume the previous channel creation before applying a template",
-          );
-        return channelSetup.run(input, transport.viewer);
+      await writes?.ready;
+      if (channelSetup && !pendingCreation()) {
+        const run = channelSetup.run(input, transport.viewer);
+        let opened: string | undefined;
+        void run.completion.catch((error) => {
+          if (!opened || lifetime.signal.aborted) return;
+          setupNotices = [
+            ...setupNotices,
+            { id: opened, name: input.name, error: String(error) },
+          ];
+          notifySetup();
+        });
+        opened = await run.admission;
+        return opened;
       }
+      if (input.setup)
+        throw new Error("Template setup is unavailable on this host");
       const normalized: ChannelCreationInput = {
         name: input.name.trim(),
         visibility: input.visibility,
@@ -1289,7 +1370,12 @@ export function createRelaySession(
       const pending = pendingChannelCreation;
       if (!pending) throw new Error("Channel creation could not be prepared.");
       try {
-        await workSessions.delivered(pending.operation);
+        await workSessions.delivered(
+          pending.operation,
+          () => !lifetime.signal.aborted,
+          false,
+          !workSessions.failed(pending.operation),
+        );
         await workSessions.refresh(
           pending.id,
           { member: transport.viewer },
@@ -1297,6 +1383,18 @@ export function createRelaySession(
         );
         await writes?.outbox.dismiss(pending.operation);
         pendingChannelCreation = undefined;
+        if (channelSetup?.recovered(pending.id)) {
+          setupNotices = [
+            ...setupNotices,
+            {
+              id: pending.id,
+              name: pending.input.name,
+              error:
+                "Channel confirmed. Saved setup was not continued; check its group, Canvas and members before finishing them manually.",
+            },
+          ];
+          notifySetup();
+        }
         return pending.id;
       } catch (error) {
         if (workSessions.failed(pending.operation)) {
@@ -1335,6 +1433,7 @@ export function createRelaySession(
     memberAdditions,
     presence,
     viewer: transport?.viewer,
+    relayAuthor: transport?.relayAuthor,
     authorizeAgentLog: transport?.authorizeAgentLog,
     scope: readScope,
     /** Verified new live-route messages, after reconciliation. Never history or local intent. */
@@ -1574,6 +1673,7 @@ export function createRelaySession(
         }
       : undefined,
     channelLifecycle: lifecycle.capability,
+    channelDetails: details.capability,
     agentActivity: activity.queries,
     agentMemories: memories.capability,
     archives: archives.queries,
@@ -1742,12 +1842,13 @@ export function createRelaySession(
   }
   const updateInterests = () => {
     if (closed) return;
+    const joined = channels.queries
+      .list()
+      .channels.filter((channel) => !channel.cached)
+      .map((channel) => channel.id);
     const ids = [
       ...new Set([
-        ...channels.queries
-          .list()
-          .channels.filter((channel) => !channel.cached)
-          .map((channel) => channel.id),
+        ...joined,
         ...channels
           .demandedChannels()
           .filter(
@@ -1760,7 +1861,7 @@ export function createRelaySession(
     for (const id of catchups.keys()) if (!wanted.has(id)) catchups.delete(id);
     try {
       traffic?.prioritize?.(channels.demandedChannels());
-      traffic?.update(ids);
+      traffic?.update(ids, joined);
     } catch (error) {
       liveSnapshot = { ...liveSnapshot, status: "error", error: String(error) };
     }
@@ -2055,21 +2156,29 @@ export function createRelaySession(
         }
         return;
       }
-      if (!channels.canAccess(channelId)) return;
-      for (const thread of threads)
-        if (thread.channelId === channelId) void thread.view.refresh();
-      const job = {
-        generation: liveGeneration,
-        state: "pending" as "pending" | "verified" | "deferred" | "error",
-        error: undefined as string | undefined,
-      };
-      channels.staleHead(channelId);
-      catchups.set(channelId, job);
-      if (channels.retainedChannels().includes(channelId))
-        catchupQueue.add(channelId);
-      else job.state = "deferred";
+      for (const id of typeof channelId === "string"
+        ? [channelId]
+        : channelId) {
+        if (!channels.canAccess(id)) continue;
+        for (const thread of threads)
+          if (thread.channelId === id) void thread.view.refresh();
+        const job = {
+          generation: liveGeneration,
+          state: "pending" as "pending" | "verified" | "deferred" | "error",
+          error: undefined as string | undefined,
+        };
+        channels.staleHead(id);
+        catchups.set(id, job);
+        if (channels.retainedChannels().includes(id)) catchupQueue.add(id);
+        else job.state = "deferred";
+      }
       publishLive();
       queueMicrotask(() => void catchUpNext());
+    },
+    recover() {
+      if (closed) return;
+      refreshRoster();
+      unread.reconnect();
     },
     denied(channelId, reason) {
       if (!closed) channels.denyChannel(channelId, new Error(reason));
@@ -2131,6 +2240,7 @@ export function createRelaySession(
         sidebarPreferences.clear();
         channelKit.clear();
         lifecycle.clear();
+        details.clear();
         // New windows must not yield to or receive errors from retired owners.
         catchups.clear();
         catchupQueue.clear();
@@ -2163,6 +2273,7 @@ export function createRelaySession(
       stopActivityPreferences();
       sidebarPreferences.dispose();
       lifecycle.dispose();
+      details.dispose();
       stopInterests();
       stopWarmPreferences();
       traffic?.dispose();

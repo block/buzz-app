@@ -2,6 +2,9 @@ import { bindNames } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
+stubAvatarBrowserApis();
+import { npubEncode } from "nostr-tools/nip19";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   act,
@@ -144,7 +147,7 @@ function setup(
     },
   };
 }
-it("shows one managed card per exact destination and keeps unimported templates out of My agents", async () => {
+it("shows native controls per exact destination and separate read-only discovered identities", async () => {
   const { f } = setup();
   const cards = await screen.findAllByRole("article", {
     name: "Agent Fixture agent",
@@ -156,15 +159,20 @@ it("shows one managed card per exact destination and keeps unimported templates 
   );
   if (!card) throw Error("Second destination missing");
   expect(
-    within(screen.getByRole("region", { name: "My agents" })).queryByText(
-      "Not imported",
-    ),
-  ).toBeNull();
+    within(
+      screen.getByRole("region", { name: "Library identities" }),
+    ).getByRole("article", { name: "Agent Not imported" }),
+  ).toBeTruthy();
   fireEvent.click(
     within(card).getByRole("button", { name: "Actions for Fixture agent" }),
   );
   fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
   const dialog = screen.getByRole("dialog", { name: "Edit agent" });
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Technical details" }),
+  );
+  expect(within(dialog).getByText(npubEncode(f.agent.pubkey))).toBeVisible();
+  expect(dialog.textContent).not.toContain(f.agent.pubkey);
   fireEvent.change(within(dialog).getByLabelText("Name"), {
     target: { value: "Exact destination" },
   });
@@ -179,8 +187,8 @@ it("shows one managed card per exact destination and keeps unimported templates 
   );
   fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(
-    screen.queryByRole("article", { name: "Agent Not imported" }),
-  ).toBeNull();
+    screen.getByRole("article", { name: "Agent Not imported" }),
+  ).toBeTruthy();
   expect(screen.queryByText("Old Buzz library", { exact: true })).toBeNull();
   expect(screen.getByText("Add agent", { exact: true })).toBeVisible();
   expect(f.calls.some((call) => call.action === "import")).toBe(false);
@@ -284,7 +292,7 @@ for (const mode of ["absolute", "saved-override", "draft-override"]) {
   });
 }
 
-it("keeps lifecycle controls visible and reports failure without disabling recovery Stop", async () => {
+it("checks Start failure and keeps lifecycle controls available", async () => {
   const { f, control } = setup();
   const [card] = await screen.findAllByRole("article", {
     name: "Agent Fixture agent",
@@ -303,10 +311,11 @@ it("keeps lifecycle controls visible and reports failure without disabling recov
     throw "synthetic start failure";
   };
   fireEvent.click(within(card).getByRole("button", { name: "Start" }));
-  await screen.findByRole("button", { name: "Retry status" });
-  expect(within(card).getByRole("button", { name: "Start" })).toBeDisabled();
-  expect(within(card).getByRole("button", { name: "Stop" })).toBeEnabled();
-  await act(async () => control.refresh());
+  const notice = await within(card).findByText(
+    "The agent didn't start. synthetic start failure. Try again.",
+  );
+  expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
+  expect(within(card).getByRole("button", { name: "Stop" })).toBeDisabled();
   expect(within(card).getByRole("button", { name: "Start" })).toBeEnabled();
   f.data.runtimeAvailable = false;
   await act(async () => control.refresh());
@@ -314,6 +323,41 @@ it("keeps lifecycle controls visible and reports failure without disabling recov
   expect(
     within(card).getByText(/bundled agent runtime is unavailable/),
   ).toBeVisible();
+  expect(notice).toBeVisible();
+  // A later status change, such as a mention start, supersedes the notice.
+  f.agent.status = "running";
+  await act(async () => control.refresh());
+  expect(within(card).queryByText(/The agent didn't start/)).toBeNull();
+});
+it("retires a card Start failure after the editor starts and stops the agent", async () => {
+  const { f } = setup();
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+  fireEvent.click(within(card).getByRole("button", { name: "Stop" }));
+  await within(card).findByRole("button", { name: "Start" });
+  const action = f.host.action;
+  f.host.action = async () => {
+    throw "synthetic start failure";
+  };
+  fireEvent.click(within(card).getByRole("button", { name: "Start" }));
+  await within(card).findByText(/The agent didn't start/);
+  f.host.action = action;
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  const dialog = screen.getByRole("dialog", { name: "Edit agent" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Runtime" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Start" }));
+  await within(card).findByText("Process running · relay readiness unverified");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Stop" }));
+  await within(card).findByText("Process stopped");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Close editor" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(within(card).getByText("Process stopped")).toBeVisible();
+  expect(within(card).queryByText(/The agent didn't start/)).toBeNull();
 });
 it("Add opens a focused creation dialog and retains a dirty draft on Escape", async () => {
   const { f } = setup();
@@ -470,11 +514,45 @@ it("confirms local deletion, keeps the card on failure, and removes it only afte
   await waitFor(() => expect(card).not.toBeInTheDocument());
 });
 
+it("keeps Duplicate and Delete on local cards in the unified inventory", async () => {
+  setup("connected", (f) => {
+    f.data.parked = [];
+    f.host.delete = vi.fn(async () => structuredClone(f.data));
+  });
+  const card = await screen.findByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  // Unified inventory cards carry identity sources; legacy cards do not.
+  expect(within(card).getByText("Identity & sources")).toBeInTheDocument();
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  // Both saved setups of this key keep exact controls, including the one outside this community.
+  const duplicates = await screen.findAllByRole("menuitem", {
+    name: /^Duplicate /,
+  });
+  expect(duplicates).toHaveLength(2);
+  fireEvent.click(duplicates[0] as HTMLElement);
+  const duplicate = screen.getByRole("dialog", {
+    name: "Duplicate Fixture agent",
+  });
+  fireEvent.click(within(duplicate).getByRole("button", { name: "Cancel" }));
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  const deletes = await screen.findAllByRole("menuitem", { name: /^Delete / });
+  expect(deletes).toHaveLength(2);
+  fireEvent.click(deletes[0] as HTMLElement);
+  expect(
+    screen.getByRole("dialog", { name: "Delete Fixture agent?" }),
+  ).toBeVisible();
+});
+
 it("focuses the imported managed identity without starting it", async () => {
   const { f } = setup();
   await screen.findAllByRole("article", { name: "Agent Fixture agent" });
   fireEvent.click(
-    screen.getByRole("button", { name: "Not imported from old Buzz" }),
+    screen.getByRole("button", { name: "Import from another installation" }),
   );
   fireEvent.change(screen.getByLabelText("Destination community"), {
     target: { value: "wss://third.example" },
@@ -484,7 +562,7 @@ it("focuses the imported managed identity without starting it", async () => {
     await screen.findByRole("button", { name: "Import Fixture agent" }),
   );
   const notice = await screen.findByText(
-    "Imported, not started. Mention this agent in a channel to start it.",
+    "Imported, not started. Start it when you are ready.",
   );
   const imported = notice.closest("article");
   if (!imported) throw Error("Imported card missing");
@@ -573,11 +651,18 @@ it("selects installed Goose with ACP arguments and saves its provider and model"
     target: { value: "anthropic/claude-sonnet-4" },
   });
   fireEvent.blur(model);
+  await userEvent.click(
+    within(dialog).getByRole("combobox", { name: "Conversation context" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("option", { name: "Each thread" }),
+  );
   fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
-  await within(dialog).findByText("Saved. Running work was not restarted.");
+  await within(dialog).findByText("Saved.");
   expect(f.calls.find((call) => call.action === "save")?.payload).toMatchObject(
     {
       edit: {
+        sessionPolicy: "thread",
         harness: {
           command: "/Users/test/.local/bin/goose",
           args: ["acp"],
@@ -701,9 +786,10 @@ it("keeps Goose model browsing available after a draft provider override", async
   expect(within(dialog).getByRole("combobox", { name: "Model" })).toBeVisible();
 });
 
-it("creates a stopped Goose agent with the selected provider", async () => {
+it("creates and starts a Goose agent with the selected provider", async () => {
   vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
   const commit = vi.fn();
+  const start = vi.fn();
   setup("connected", (fixture) => {
     fixture.data.createAvailable = true;
     fixture.data.defaultWorkspace = "/fixture/workspace";
@@ -728,6 +814,13 @@ it("creates a stopped Goose agent with the selected provider", async () => {
         status: "stopped",
         runningRevision: null,
       });
+      return structuredClone(fixture.data);
+    });
+    fixture.host.action = start.mockImplementation(async (id, action) => {
+      const agent = fixture.data.agents.find((item) => item.id === id);
+      if (!agent || action !== "start") throw Error("Unexpected agent action");
+      agent.enabled = true;
+      agent.status = "running";
       return structuredClone(fixture.data);
     });
     fixture.host.publishProfile = async () => structuredClone(fixture.data);
@@ -760,9 +853,148 @@ it("creates a stopped Goose agent with the selected provider", async () => {
     provider: "openrouter",
     model: "anthropic/claude-sonnet-4",
   });
+  expect(start).toHaveBeenCalledExactlyOnceWith("created-goose", "start");
   expect(
-    screen.getByRole("article", { name: "Agent Goose helper" }),
-  ).toHaveTextContent("Process stopped");
+    await screen.findByRole("article", { name: "Agent Goose helper" }),
+  ).toHaveTextContent("Process running");
+});
+
+it("keeps the saved agent when Start reports a process failure", async () => {
+  vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
+  let releaseStart!: () => void;
+  const startGate = new Promise<void>((resolve) => {
+    releaseStart = resolve;
+  });
+  const commit = vi.fn();
+  const start = vi.fn();
+  const profile = vi.fn();
+  setup("connected", (fixture) => {
+    fixture.data.createAvailable = true;
+    fixture.data.defaultWorkspace = "/fixture/workspace";
+    fixture.host.prepareCreate = async () => ({
+      id: "created",
+      pubkey: "cd".repeat(32),
+    });
+    fixture.host.commitCreate = commit.mockImplementation(async (_id, edit) => {
+      fixture.data.agents.push({
+        ...structuredClone(fixture.agent),
+        id: "created",
+        name: edit.name,
+        enabled: false,
+        status: "stopped",
+        profilePending: true,
+      });
+      return structuredClone(fixture.data);
+    });
+    fixture.host.action = start.mockImplementation(async (id, action) => {
+      const agent = fixture.data.agents.find((item) => item.id === id);
+      if (!agent || action !== "start") throw Error("Unexpected agent action");
+      if (start.mock.calls.length === 1) {
+        await startGate;
+        agent.status = "failed";
+        agent.error = "Goose could not open.";
+      } else {
+        agent.status = "running";
+        agent.error = null;
+      }
+      agent.enabled = true;
+      return structuredClone(fixture.data);
+    });
+    fixture.host.publishProfile = profile.mockImplementation(async () => {
+      const agent = fixture.data.agents.find((item) => item.id === "created");
+      if (!agent) throw Error("Created agent missing");
+      agent.profilePending = false;
+      return structuredClone(fixture.data);
+    });
+  });
+  const user = userEvent.setup();
+  try {
+    await user.click(await screen.findByRole("button", { name: "Add agent" }));
+    const dialog = screen.getByRole("dialog", { name: "Create agent" });
+    await user.type(within(dialog).getByLabelText("Name"), "Goose helper");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Create agent" }),
+    );
+    await waitFor(() => expect(start).toHaveBeenCalledOnce());
+    expect(
+      within(dialog).getByText(/Goose helper was created. Starting it/),
+    ).toBeVisible();
+    expect(profile).not.toHaveBeenCalled();
+    await act(async () => releaseStart());
+    await within(dialog).findByText(
+      /Goose helper was created, but couldn't start/,
+    );
+    expect(commit).toHaveBeenCalledOnce();
+    expect(profile).toHaveBeenCalledOnce();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Start agent" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(commit).toHaveBeenCalledOnce();
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(profile).toHaveBeenCalledOnce();
+  } finally {
+    await act(async () => releaseStart());
+  }
+});
+
+it("checks an unconfirmed Start without repeating it", async () => {
+  vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
+  const commit = vi.fn();
+  const start = vi.fn();
+  const profile = vi.fn();
+  setup("connected", (fixture) => {
+    fixture.data.createAvailable = true;
+    fixture.data.defaultWorkspace = "/fixture/workspace";
+    fixture.host.prepareCreate = async () => ({
+      id: "created",
+      pubkey: "cd".repeat(32),
+    });
+    fixture.host.commitCreate = commit.mockImplementation(async (_id, edit) => {
+      fixture.data.agents.push({
+        ...structuredClone(fixture.agent),
+        id: "created",
+        name: edit.name,
+        enabled: false,
+        status: "stopped",
+        profilePending: true,
+      });
+      return structuredClone(fixture.data);
+    });
+    fixture.host.action = start.mockImplementation(async (id) => {
+      const agent = fixture.data.agents.find((item) => item.id === id);
+      if (!agent) throw Error("Created agent missing");
+      agent.enabled = true;
+      agent.status = "running";
+      throw "Start confirmation was lost.";
+    });
+    fixture.host.publishProfile = profile.mockImplementation(async () => {
+      const agent = fixture.data.agents.find((item) => item.id === "created");
+      if (!agent) throw Error("Created agent missing");
+      agent.profilePending = false;
+      return structuredClone(fixture.data);
+    });
+  });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Add agent" }));
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  await user.type(within(dialog).getByLabelText("Name"), "Goose helper");
+  await user.click(
+    within(dialog).getByRole("button", { name: "Create agent" }),
+  );
+  expect(
+    await within(dialog).findByRole("button", { name: "Finish profile" }),
+  ).toBeEnabled();
+  expect(commit).toHaveBeenCalledOnce();
+  expect(start).toHaveBeenCalledOnce();
+  expect(profile).not.toHaveBeenCalled();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Finish profile" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(commit).toHaveBeenCalledOnce();
+  expect(start).toHaveBeenCalledOnce();
+  expect(profile).toHaveBeenCalledOnce();
 });
 
 it("shows an unavailable Goose harness without allowing selection", async () => {
@@ -860,7 +1092,7 @@ it("shows Harness, Provider and Model in order while preserving settings on Save
     target: { value: "Focused everyday edit" },
   });
   fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
-  await within(dialog).findByText("Saved. Running work was not restarted.");
+  await within(dialog).findByText("Saved.");
   expect(f.agent.harness).toEqual(original);
   const advanced = within(dialog).getByRole("button", {
     name: "Environment",
@@ -884,6 +1116,38 @@ it("shows Harness, Provider and Model in order while preserving settings on Save
   ).toBeVisible();
 });
 
+it("does not offer an identity for import when its key is already set up in another community", async () => {
+  setup("ready", (fixture) => {
+    fixture.data.agents.push({
+      ...structuredClone(fixture.agent),
+      id: "held-elsewhere",
+      pubkey: "CD".repeat(32),
+      relayUrl: "wss://elsewhere.example",
+      enabled: false,
+      status: "stopped",
+      runningRevision: null,
+    });
+  });
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Import from another installation",
+    }),
+  );
+  fireEvent.change(screen.getByLabelText("Destination community"), {
+    target: { value: "wss://third.example" },
+  });
+  for (let load = 0; load < 2; load++) {
+    fireEvent.click(screen.getByRole("button", { name: "Load agents" }));
+    expect(
+      await screen.findByText(
+        "No agents left to import or repair from this library for this community.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Import Fixture agent" }),
+    ).toBeNull();
+  }
+});
 it("credential import keeps real Stop controls reachable without trapping the editor", async () => {
   let releaseImport!: () => void;
   const gate = new Promise<void>((resolve) => {
@@ -911,7 +1175,7 @@ it("credential import keeps real Stop controls reachable without trapping the ed
     const [first, other] = cards;
     if (!first || !other) throw Error("Missing managed cards");
     fireEvent.click(
-      screen.getByRole("button", { name: "Not imported from old Buzz" }),
+      screen.getByRole("button", { name: "Import from another installation" }),
     );
     fireEvent.change(screen.getByLabelText("Destination community"), {
       target: { value: "wss://third.example" },
@@ -956,7 +1220,7 @@ it("credential import keeps real Stop controls reachable without trapping the ed
     ).toBeEnabled();
     fireEvent.click(within(dialog).getByRole("button", { name: "Stop" }));
     // Stop leaves the independent launch preference on.
-    await within(dialog).findByText("Stopped · starts with buzz-app");
+    await within(dialog).findByText("Start on launch enabled");
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Close editor" }),
     );
@@ -975,9 +1239,7 @@ it("credential import keeps real Stop controls reachable without trapping the ed
     });
     await waitFor(() => expect(control.snapshot().busy).toBe(false));
     expect(
-      screen.queryByText(
-        "Imported, not started. Mention this agent in a channel to start it.",
-      ),
+      screen.queryByText("Imported, not started. Start it when you are ready."),
     ).toBeNull();
     await act(async () => control.refresh());
     const imported = control
@@ -1026,6 +1288,14 @@ for (const stage of ["create", "profile"] as const) {
             return structuredClone(fixture.data);
           },
         );
+        fixture.host.action = async (id, action) => {
+          const agent = fixture.data.agents.find((item) => item.id === id);
+          if (!agent) throw Error("Agent missing");
+          fixture.calls.push({ action, payload: { id } });
+          agent.enabled = action !== "stop";
+          agent.status = action === "stop" ? "stopped" : "running";
+          return structuredClone(fixture.data);
+        };
         fixture.host.publishProfile = profile.mockImplementation(async () => {
           await gate;
           const created = fixture.data.agents.find(
@@ -1086,14 +1356,19 @@ for (const stage of ["create", "profile"] as const) {
           control
             .snapshot()
             .data?.agents.find((agent) => agent.id === "created"),
-        ).toMatchObject({ enabled: false, profilePending: stage === "create" });
+        ).toMatchObject({
+          enabled: stage === "profile" || !recoverStop,
+          profilePending: stage === "create" && recoverStop,
+        });
         if (recoverStop)
           expect(control.snapshot().data?.agents[0]).toMatchObject({
             enabled: false,
             status: "stopped",
           });
         expect(create).toHaveBeenCalledOnce();
-        expect(profile).toHaveBeenCalledTimes(stage === "create" ? 0 : 1);
+        expect(profile).toHaveBeenCalledTimes(
+          stage === "profile" || !recoverStop ? 1 : 0,
+        );
       } finally {
         await act(async () => {
           release();
@@ -1165,6 +1440,13 @@ it("retries the same saved profile even if the runtime becomes unavailable", asy
         return structuredClone(fixture.data);
       },
     );
+    fixture.host.action = async (id, action) => {
+      const agent = fixture.data.agents.find((item) => item.id === id);
+      if (!agent || action !== "start") throw Error("Unexpected agent action");
+      agent.enabled = true;
+      agent.status = "running";
+      return structuredClone(fixture.data);
+    };
     fixture.host.publishProfile = profile
       .mockRejectedValueOnce("Synthetic profile failure")
       .mockImplementation(async () => {
@@ -1183,11 +1465,11 @@ it("retries the same saved profile even if the runtime becomes unavailable", asy
   await user.click(
     within(dialog).getByRole("button", { name: "Create agent" }),
   );
-  await within(dialog).findByText(/Calvin is saved and stopped/);
+  await within(dialog).findByText(/Calvin was saved and started/);
   expect(profile).toHaveBeenCalledExactlyOnceWith("created");
   f.data.runtimeAvailable = false;
   await act(async () => control.refresh());
-  const retry = within(dialog).getByRole("button", { name: "Retry profile" });
+  const retry = within(dialog).getByRole("button", { name: "Finish profile" });
   expect(control.snapshot().error).toBeNull();
   expect(within(dialog).getByRole("alert")).toHaveTextContent(
     "Synthetic profile failure",
@@ -1200,32 +1482,29 @@ it("retries the same saved profile even if the runtime becomes unavailable", asy
   expect(profile.mock.calls).toEqual([["created"], ["created"]]);
 });
 
-for (const error of [
-  "Agent runtime is initializing; retry shortly",
-  "Another native agent operation is in progress",
-]) {
-  it(`shows agents without manual Retry after a transient native read: ${error}`, async () => {
-    vi.useFakeTimers();
-    let snapshot!: ReturnType<typeof vi.spyOn>;
-    setup("ready", (f) => {
-      snapshot = vi.spyOn(f.host, "snapshot").mockRejectedValueOnce(error);
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-    expect(screen.getByText("Reading local agent status…")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
-    expect(snapshot).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(250);
-    });
-    expect(
-      screen.getAllByRole("article", { name: "Agent Fixture agent" }),
-    ).toHaveLength(2);
-    expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
-    expect(snapshot).toHaveBeenCalledTimes(2);
+it("shows agents without manual Retry after native startup", async () => {
+  vi.useFakeTimers();
+  let snapshot!: ReturnType<typeof vi.spyOn>;
+  setup("ready", (f) => {
+    snapshot = vi
+      .spyOn(f.host, "snapshot")
+      .mockRejectedValueOnce("Agent runtime is initializing; retry shortly");
   });
-}
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(screen.getByText("Reading local agent status…")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
+  expect(snapshot).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(250);
+  });
+  expect(
+    screen.getAllByRole("article", { name: "Agent Fixture agent" }),
+  ).toHaveLength(2);
+  expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
+  expect(snapshot).toHaveBeenCalledTimes(2);
+});
 it("keeps persistent read failures visible and recovers on the next periodic read", async () => {
   vi.useFakeTimers();
   const { f } = setup("ready", (f) => {
@@ -1270,75 +1549,76 @@ it("keeps persistent read failures visible and recovers on the next periodic rea
 it.each(["running", "failed"] as const)(
   "recovers Start status to %s without replay or cross-agent errors",
   async (status) => {
-    vi.useFakeTimers();
     const { f, control } = setup("ready", (f) => {
       f.agent.enabled = false;
       f.agent.status = "stopped";
     });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-    const [card] = screen.getAllByRole("article", {
+    const [card] = await screen.findAllByRole("article", {
       name: "Agent Fixture agent",
     });
     if (!card) throw Error("Missing managed card");
+    let releaseRead!: () => void;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const snapshot = vi
+      .spyOn(f.host, "snapshot")
+      .mockImplementationOnce(async () => {
+        await readGate;
+        return structuredClone(f.data);
+      });
     const action = vi
       .spyOn(f.host, "action")
       .mockRejectedValueOnce("Synthetic start failure.");
-    fireEvent.click(within(card).getByRole("button", { name: "Start" }));
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-    const error = screen.getByRole("alert");
-    const retry = screen.getByRole("button", { name: "Retry status" });
-    expect(error).toHaveTextContent("Synthetic start failure.");
-    for (const notice of [error, retry]) {
+    try {
+      fireEvent.click(within(card).getByRole("button", { name: "Start" }));
       expect(
-        notice.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
-    }
-    expect(within(card).getByRole("button", { name: "Start" })).toBeDisabled();
-    f.agent.enabled = true;
-    f.agent.status = status;
-    f.agent.error = status === "failed" ? "Synthetic start failure." : null;
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(5000);
-    });
-    expect(control.snapshot().status).toBe("ready");
-    expect(control.snapshot().error).toBeNull();
-    if (status === "failed") {
-      expect(within(card).getByRole("alert")).toHaveTextContent(
-        "Synthetic start failure.",
-      );
-      expect(screen.getAllByRole("alert")).toHaveLength(1);
-    } else {
-      expect(
-        within(card).getByText("Process running · relay readiness unverified"),
+        await within(card).findByText("Checking agent status…"),
       ).toBeVisible();
-      expect(screen.queryByRole("alert")).toBeNull();
+      expect(snapshot).toHaveBeenCalledOnce();
+      expect(
+        within(card).getByRole("button", { name: "Start" }),
+      ).toBeDisabled();
+      f.agent.enabled = true;
+      f.agent.status = status;
+      f.agent.error = status === "failed" ? "Synthetic start failure." : null;
+      await act(async () => releaseRead());
+      await waitFor(() => expect(control.snapshot().status).toBe("ready"));
+      expect(control.snapshot().error).toBeNull();
+      if (status === "failed") {
+        expect(within(card).getByRole("alert")).toHaveTextContent(
+          "Synthetic start failure.",
+        );
+        expect(screen.getAllByRole("alert")).toHaveLength(1);
+      } else {
+        expect(
+          within(card).getByText(
+            "Process running · relay readiness unverified",
+          ),
+        ).toBeVisible();
+        expect(screen.queryByRole("alert")).toBeNull();
+      }
+      expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
+      expect(action).toHaveBeenCalledExactlyOnceWith(f.agent.id, "start");
+      const other = screen.getAllByRole("article", {
+        name: "Agent Fixture agent",
+      })[1];
+      if (!other) throw Error("Missing other agent");
+      expect(within(other).queryByRole("alert")).toBeNull();
+      fireEvent.click(
+        within(other).getByRole("button", {
+          name: "Actions for Fixture agent",
+        }),
+      );
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+      expect(
+        within(screen.getByRole("dialog", { name: "Edit agent" })).queryByRole(
+          "alert",
+        ),
+      ).toBeNull();
+    } finally {
+      await act(async () => releaseRead());
     }
-    expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
-    expect(action).toHaveBeenCalledExactlyOnceWith(f.agent.id, "start");
-    const other = screen.getAllByRole("article", {
-      name: "Agent Fixture agent",
-    })[1];
-    if (!other) throw Error("Missing other agent");
-    expect(within(other).queryByRole("alert")).toBeNull();
-    fireEvent.click(
-      within(other).getByRole("button", { name: "Actions for Fixture agent" }),
-    );
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-    fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-    expect(
-      within(screen.getByRole("dialog", { name: "Edit agent" })).queryByRole(
-        "alert",
-      ),
-    ).toBeNull();
   },
 );
 
@@ -1439,7 +1719,7 @@ for (const mode of ["edit", "create"] as const) {
         exact: true,
         selector: "input",
       }),
-    ).toHaveAttribute("placeholder", "Build default: first-model");
+    ).toHaveAttribute("placeholder", "Use agent defaults (first-model)");
     expect(
       within(dialog).getByText(
         "Editing either field saves both displayed values.",
@@ -1469,7 +1749,7 @@ for (const mode of ["edit", "create"] as const) {
         exact: true,
         selector: "input",
       }),
-    ).toHaveAttribute("placeholder", "Build default: next-model");
+    ).toHaveAttribute("placeholder", "Use agent defaults (next-model)");
     fireEvent.click(
       within(dialog).getByRole("button", {
         name: mode === "create" ? "Create agent" : "Save changes",
@@ -1477,8 +1757,7 @@ for (const mode of ["edit", "create"] as const) {
     );
     if (mode === "create")
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    else
-      await within(dialog).findByText("Saved. Running work was not restarted.");
+    else await within(dialog).findByText("Saved.");
     const edit =
       mode === "create"
         ? create.mock.calls[0]?.[1]
@@ -1497,6 +1776,76 @@ for (const mode of ["edit", "create"] as const) {
     expect(edit.harness.databricks).toBeUndefined();
   });
 }
+it("create copies only the default harness and shows inherited defaults", async () => {
+  const user = userEvent.setup();
+  const create = vi.fn();
+  vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
+  setup("connected", (fixture) => {
+    fixture.data.harnessOptions?.push({
+      command: "/opt/tools/goose",
+      label: "Goose",
+      available: true,
+      status: "ready",
+      defaultArgs: ["acp"],
+      providers: [{ value: "anthropic", label: "Anthropic" }],
+    });
+    fixture.data.defaultSettings = {
+      harness: "goose",
+      provider: "anthropic",
+      model: "default-model",
+      effort: "high",
+      sessionPolicy: "thread",
+      environmentKeys: ["SHARED_TOKEN"],
+    };
+    fixture.data.createAvailable = true;
+    fixture.data.defaultWorkspace = "/fixture/workspace";
+    fixture.host.prepareCreate = async () => ({
+      id: "created",
+      pubkey: "cd".repeat(32),
+    });
+    fixture.host.commitCreate = create.mockImplementation(async () => {
+      fixture.data.agents.push({
+        ...structuredClone(fixture.agent),
+        id: "created",
+      });
+      return structuredClone(fixture.data);
+    });
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+  const dialog = screen.getByRole("dialog");
+  fireEvent.change(within(dialog).getByLabelText("Name"), {
+    target: { value: "Defaults agent" },
+  });
+  expect(
+    within(dialog).getByLabelText("Model", { exact: true, selector: "input" }),
+  ).toHaveAttribute("placeholder", "Use agent defaults (default-model)");
+  expect(
+    within(dialog).getByText("Use agent defaults (anthropic)"),
+  ).toBeInTheDocument();
+  expect(
+    within(dialog).getByRole("combobox", { name: "Conversation context" }),
+  ).toHaveTextContent("Use agent defaults (Each thread)");
+  await user.click(
+    within(dialog).getByRole("combobox", { name: "Conversation context" }),
+  );
+  await user.click(
+    await screen.findByRole("option", { name: "Entire channel" }),
+  );
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create agent" }));
+  await waitFor(() => expect(create).toHaveBeenCalled());
+  // Only the harness is copied; provider, model, effort and env stay blank
+  // so they are looked up at each start.
+  expect(create.mock.calls[0]?.[1]).toMatchObject({
+    harness: {
+      command: "/opt/tools/goose",
+      args: ["acp"],
+      provider: "",
+      model: "",
+    },
+    environment: {},
+    sessionPolicy: "channel",
+  });
+});
 it("qualifies management identities while keeping configured names and edit targets exact", async () => {
   const { f } = setup("ready", (fixture) => {
     fixture.data.agents.push({
@@ -1823,7 +2172,9 @@ it("offers explicit repair for an existing team import without replacing or star
   });
   await screen.findAllByRole("article", { name: "Agent Fixture agent" });
   fireEvent.click(
-    screen.getByRole("button", { name: "Import or repair from old Buzz" }),
+    screen.getByRole("button", {
+      name: "Import or repair from another installation",
+    }),
   );
   fireEvent.change(screen.getByLabelText("Destination community"), {
     target: { value: f.agent.relayUrl },
@@ -1889,7 +2240,9 @@ it("refreshes the consumed preview after a repair so the next agent can be repai
   });
   await screen.findAllByRole("article", { name: "Agent Fixture agent" });
   fireEvent.click(
-    screen.getByRole("button", { name: "Import or repair from old Buzz" }),
+    screen.getByRole("button", {
+      name: "Import or repair from another installation",
+    }),
   );
   fireEvent.change(screen.getByLabelText("Destination community"), {
     target: { value: f.agent.relayUrl },
@@ -1934,7 +2287,7 @@ it.each([
   {
     name: "unknown control failure",
     rejection: { detail: "raw private diagnostic" },
-    expected: "Import did not complete. Reload the list before trying again.",
+    expected: "Import didn’t finish. Reload the source before trying again.",
     fromControl: true,
   },
 ])(
@@ -1957,7 +2310,9 @@ it.each([
       vi.spyOn(control, "commitImport").mockImplementation(commit);
     await screen.findAllByRole("article", { name: "Agent Fixture agent" });
     fireEvent.click(
-      screen.getByRole("button", { name: "Import or repair from old Buzz" }),
+      screen.getByRole("button", {
+        name: "Import or repair from another installation",
+      }),
     );
     fireEvent.change(screen.getByLabelText("Destination community"), {
       target: { value: f.agent.relayUrl },
@@ -1989,3 +2344,379 @@ it.each([
     expect(commit).toHaveBeenCalledTimes(1);
   },
 );
+
+it("shows native waiting, recovery Stop and one explicit Retry without polling a Start", async () => {
+  const { f, control } = setup("ready", (f) => {
+    f.agent.status = "waiting";
+    f.agent.enabled = false;
+    f.agent.startOnAppLaunch = true;
+  });
+  const cards = await screen.findAllByRole("article", {
+    name: `Agent ${f.agent.name}`,
+  });
+  const card = cards.find((entry) =>
+    entry.textContent?.includes(f.agent.relayUrl),
+  );
+  if (!card) throw Error("Exact destination card missing");
+  expect(
+    within(card).getByText("Waiting to start · unlock Keychain if prompted"),
+  ).toBeVisible();
+  expect(within(card).queryByRole("button", { name: "Start" })).toBeNull();
+  expect(within(card).getByRole("button", { name: "Stop" })).toBeEnabled();
+  expect(within(card).getByText("Starts with this app.")).toBeVisible();
+  f.agent.status = "failed";
+  f.agent.error =
+    "Secure storage access was denied; allow access explicitly and retry";
+  await act(() => control.refresh());
+  await act(() => control.refresh());
+  expect(within(card).getByRole("alert")).toHaveTextContent(
+    "Secure storage access was denied",
+  );
+  expect(f.calls.filter((call) => call.action === "start")).toHaveLength(0);
+  await userEvent.click(
+    within(card).getByRole("button", { name: "Retry start" }),
+  );
+  await waitFor(() =>
+    expect(f.calls.filter((call) => call.action === "start")).toHaveLength(1),
+  );
+});
+
+it("Use here retries owner confirmation and keeps setup stopped until a separate Start", async () => {
+  const request = vi
+    .spyOn(communityApi, "communityRequest")
+    .mockRejectedValueOnce(new Error("Confirmation unavailable"))
+    .mockResolvedValueOnce({
+      pubkey: "ab".repeat(32),
+      relayUrl: "wss://relay.example.test",
+      owner: "de".repeat(32),
+      signature: "fixture",
+    });
+  const { f } = setup("connected", (fixture) => {
+    Object.assign(fixture.agent, {
+      configured: false,
+      enabled: false,
+      status: "stopped",
+      runningRevision: null,
+    });
+  });
+  const cards = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  const card = cards.find((entry) =>
+    entry.textContent?.includes("wss://relay.example.test"),
+  );
+  if (!card) throw Error("Imported card missing");
+  expect(within(card).getByRole("button", { name: "Start" })).toBeDisabled();
+  fireEvent.click(within(card).getByRole("button", { name: "Use here" }));
+  const dialog = screen.getByRole("dialog", { name: "Set up agent here" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Use here" }));
+  await within(dialog).findByText("Confirmation unavailable");
+  expect(f.calls.some((call) => call.action === "configure")).toBe(false);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Use here" }));
+  await waitFor(() =>
+    expect(within(card).getByRole("button", { name: "Start" })).toBeEnabled(),
+  );
+  expect(request).toHaveBeenLastCalledWith(
+    "https://relay.example.test",
+    "resolve-agent-community",
+    { pubkey: f.agent.pubkey, owner: "de".repeat(32), confirmed: true },
+  );
+  expect(f.agent.enabled).toBe(false);
+  expect(
+    f.calls.some((call) => call.action === "start" || call.action === "import"),
+  ).toBe(false);
+  fireEvent.click(within(card).getByRole("button", { name: "Start" }));
+  await waitFor(() =>
+    expect(f.calls.some((call) => call.action === "start")).toBe(true),
+  );
+});
+
+it("browses both local libraries without a community and requires a destination preview to import", async () => {
+  const { f, read } = setup("disconnected");
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Import from another installation",
+    }),
+  );
+  const section = screen.getByRole("region", { name: "Import from old Buzz" });
+  expect(
+    await within(section).findByRole("button", {
+      name: "Import Fixture agent",
+    }),
+  ).toBeDisabled();
+  expect(f.calls).toContainEqual({
+    action: "preview",
+    payload: { source: "installed", destination: "" },
+  });
+  expect(read).toHaveBeenCalledTimes(1);
+  await userEvent.click(screen.getByLabelText("Source library"));
+  await userEvent.click(
+    await screen.findByRole("option", { name: "Development Buzz" }),
+  );
+  await waitFor(() =>
+    expect(f.calls).toContainEqual({
+      action: "preview",
+      payload: { source: "development", destination: "" },
+    }),
+  );
+  expect(
+    await within(section).findByRole("button", {
+      name: "Import Fixture agent",
+    }),
+  ).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Destination community"), {
+    target: { value: "wss://chosen.example" },
+  });
+  expect(
+    within(section).queryByRole("button", { name: "Import Fixture agent" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Load agents" }));
+  await waitFor(() =>
+    expect(
+      within(section).getByRole("button", { name: "Import Fixture agent" }),
+    ).toBeEnabled(),
+  );
+  expect(
+    f.calls.filter((call) =>
+      ["import", "start", "restart"].includes(call.action),
+    ),
+  ).toEqual([]);
+  expect(read).toHaveBeenCalledTimes(1);
+});
+
+it("clones reviewed text through fresh identity creation without importing source credentials", async () => {
+  const prepare = vi.fn(async () => ({
+    id: "fresh-clone",
+    pubkey: "ba".repeat(32),
+  }));
+  const cloneSettings = vi.fn(async () => ({
+    name: "Source helper",
+    systemPrompt: "Reviewed instructions",
+  }));
+  const authorization = vi
+    .spyOn(communityApi, "communityRequest")
+    .mockResolvedValue({ auth: ["auth"] });
+  const start = vi.fn();
+  const { f } = setup("connected", (fixture) => {
+    fixture.data.createAvailable = true;
+    fixture.data.defaultWorkspace = "/new/workspace";
+    fixture.host.cloneSettings = cloneSettings;
+    fixture.host.prepareCreate = prepare;
+    fixture.host.commitCreate = vi.fn(async (_request, edit) => {
+      fixture.calls.push({ action: "create", payload: edit });
+      fixture.data.agents.push({
+        ...structuredClone(fixture.agent),
+        ...edit,
+        id: "fresh-clone",
+        pubkey: "ba".repeat(32),
+        harness: { ...edit.harness, environmentKeys: [] },
+        status: "stopped",
+        enabled: false,
+      });
+      return structuredClone(fixture.data);
+    });
+    fixture.host.publishProfile = vi.fn(async () =>
+      structuredClone(fixture.data),
+    );
+    fixture.host.action = start.mockImplementation(async (id, action) => {
+      const agent = fixture.data.agents.find((item) => item.id === id);
+      if (!agent || action !== "start") throw Error("Unexpected agent action");
+      agent.enabled = true;
+      agent.status = "running";
+      return structuredClone(fixture.data);
+    });
+  });
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Import from another installation",
+    }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Clone Fixture agent" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Clone agent" });
+  expect(within(dialog).getByLabelText("Name")).toHaveValue("Source helper");
+  expect(within(dialog).getByLabelText("Agent instructions")).toHaveValue(
+    "Reviewed instructions",
+  );
+  expect(prepare).not.toHaveBeenCalled();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Clone agent" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect(prepare).toHaveBeenCalledWith(
+    expect.any(String),
+    "https://relay.example.test",
+    "de".repeat(32),
+  );
+  expect(authorization).toHaveBeenCalledWith(
+    "https://relay.example.test",
+    "authorize-agent",
+    { pubkey: "ba".repeat(32), owner: "de".repeat(32) },
+  );
+  expect(
+    f.calls.find((call) => call.action === "create")?.payload,
+  ).toMatchObject({
+    name: "Source helper",
+    systemPrompt: "Reviewed instructions",
+    workspace: "/new/workspace",
+    environment: {},
+  });
+  expect(f.calls.filter((call) => call.action === "import")).toEqual([]);
+  // Create now starts the new agent; the clone starts only its fresh identity.
+  expect(start).toHaveBeenCalledExactlyOnceWith("fresh-clone", "start");
+  expect(
+    f.data.agents.find((agent) => agent.id === "fresh-clone"),
+  ).toMatchObject({
+    pubkey: "ba".repeat(32),
+    enabled: true,
+    status: "running",
+  });
+});
+
+it("uses snapshot capabilities rather than JS wrappers and retains older-host import", async () => {
+  const { f } = setup("connected", (fixture) => {
+    delete fixture.data.localInventoryActions;
+    const commit = fixture.host.commitImport;
+    fixture.host.commitImport = async (...args) => {
+      const result = await commit(...args);
+      for (const agent of result.agents) delete agent.configured;
+      return result;
+    };
+  });
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Import from another installation",
+    }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Import Fixture agent" }),
+  );
+  const notice = await screen.findByText(
+    "Imported, not started. Start it when you are ready.",
+  );
+  const card = notice.closest("article");
+  if (!card) throw Error("Imported card missing");
+  expect(within(card).getByRole("button", { name: "Start" })).toBeEnabled();
+  expect(within(card).queryByRole("button", { name: "Use here" })).toBeNull();
+  expect(f.calls.filter((call) => call.action === "import")).toHaveLength(1);
+});
+
+it("unified card Import selects exact identity and development source, then moves to local community stopped", async () => {
+  vi.spyOn(communityApi, "communityRequest").mockImplementation(
+    async (_destination, route) =>
+      route === "agent-inventory"
+        ? { identities: [] }
+        : {
+            pubkey: "cd".repeat(32),
+            relayUrl: "wss://relay.example.test",
+            owner: "de".repeat(32),
+            signature: "fixture",
+          },
+  );
+  const { f } = setup("connected", (fixture) => {
+    fixture.data.parked = [
+      {
+        pubkey: "cd".repeat(32),
+        name: "Not imported",
+        sources: ["development"],
+      },
+    ];
+  });
+  const card = await screen.findByRole("article", {
+    name: "Agent Not imported",
+  });
+  fireEvent.click(within(card).getByRole("button", { name: "Import" }));
+  const form = await screen.findByRole("dialog", {
+    name: "Import Not imported?",
+  });
+  const submit = await within(form).findByRole("button", {
+    name: "Import agent",
+  });
+  await waitFor(() => expect(submit).toBeEnabled());
+  expect(within(form).getByText("Development Buzz")).toBeVisible();
+  expect(within(form).getByText("https://relay.example.test")).toBeVisible();
+  expect(within(form).queryByLabelText("Source library")).toBeNull();
+  expect(
+    within(form).queryByRole("button", { name: /Clone|Load agents/ }),
+  ).toBeNull();
+  expect(within(form).queryByText("Identity")).toBeNull();
+  expect(f.calls.some((call) => call.action === "import")).toBe(false);
+  fireEvent.click(submit);
+  await waitFor(() =>
+    expect(f.calls.filter((call) => call.action === "import")).toHaveLength(1),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Import Not imported?" }),
+    ).toBeNull(),
+  );
+  const localSection = screen.getByRole("region", {
+    name: "Local agents in this community",
+  });
+  expect(
+    within(localSection).getByRole("article", {
+      name: `Agent Fixture agent · ${npubEncode("cd".repeat(32)).slice(-4)}`,
+    }),
+  ).toBeVisible();
+  expect(
+    screen.getAllByRole("article", {
+      name: `Agent Fixture agent · ${npubEncode("cd".repeat(32)).slice(-4)}`,
+    }),
+  ).toHaveLength(1);
+  expect(f.calls.some((call) => call.action === "configure")).toBe(false);
+  expect(
+    f.data.agents.find((agent) => agent.id === "second-fixture")?.enabled,
+  ).toBe(false);
+  const configuredCard = await screen.findByRole("article", {
+    name: `Agent Fixture agent · ${npubEncode("cd".repeat(32)).slice(-4)}`,
+  });
+  expect(
+    within(configuredCard).getByRole("button", { name: "Start" }),
+  ).toBeEnabled();
+  expect(f.calls.some((call) => call.action === "start")).toBe(false);
+});
+
+it("card Import without a selected community asks for a destination before importing", async () => {
+  vi.spyOn(communityApi, "communityRequest").mockResolvedValue({
+    identities: [],
+  });
+  const { f } = setup("disconnected", (fixture) => {
+    fixture.data.parked = [
+      {
+        pubkey: "cd".repeat(32),
+        name: "Not imported",
+        sources: ["development"],
+      },
+    ];
+  });
+  const card = await screen.findByRole("article", {
+    name: "Agent Not imported",
+  });
+  fireEvent.click(within(card).getByRole("button", { name: "Import" }));
+  const form = await screen.findByRole("dialog", {
+    name: "Import Not imported?",
+  });
+  const submit = within(form).getByRole("button", { name: "Import agent" });
+  await waitFor(() =>
+    expect(f.calls.some((call) => call.action === "preview")).toBe(true),
+  );
+  expect(submit).toBeDisabled();
+  fireEvent.change(within(form).getByLabelText("Destination community"), {
+    target: { value: "https://typed.example" },
+  });
+  fireEvent.click(
+    within(form).getByRole("button", { name: "Use destination" }),
+  );
+  await waitFor(() => expect(submit).toBeEnabled());
+  expect(
+    f.calls.filter((call) => call.action === "preview").at(-1)?.payload,
+  ).toEqual({ source: "development", destination: "https://typed.example" });
+  fireEvent.click(submit);
+  await waitFor(() =>
+    expect(f.calls.filter((call) => call.action === "import")).toHaveLength(1),
+  );
+  expect(
+    f.calls.find((call) => call.action === "import")?.payload,
+  ).toMatchObject({ token: "fixture-preview" });
+});

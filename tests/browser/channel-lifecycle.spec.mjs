@@ -226,7 +226,7 @@ test("DM hide is per-viewer visibility, survives reload and never sends Leave or
 
 // Delete takes the access-purge route (archive does not), across the real broker,
 // session, native dialog and navigation. Role permutations remain below the browser.
-test("typed delete confirmation purges the selected channel and survives reload", async ({
+test("delete confirmation without typing purges the selected channel and survives reload", async ({
   page,
   app,
 }) => {
@@ -254,14 +254,13 @@ test("typed delete confirmation purges the selected channel and survives reload"
     name: "Delete channel",
     exact: true,
   });
-  await expect(confirm).toBeDisabled();
-  await dialog
-    .getByRole("textbox", { name: "Channel name confirmation" })
-    .fill("wrong name");
-  await expect(confirm).toBeDisabled();
-  await dialog
-    .getByRole("textbox", { name: "Channel name confirmation" })
-    .fill("Lifecycle channel");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("textbox")).toHaveCount(0);
+  await expect(confirm).toBeEnabled();
+  await expect(
+    dialog.getByRole("button", { name: "Cancel", exact: true }),
+  ).toBeFocused();
+  expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
   await confirm.click();
   await expect(dialog).toHaveCount(0);
   await expect(row).toHaveCount(0);
@@ -350,17 +349,12 @@ for (const action of ["archive", "hide"]) {
 
 // Native Escape dispatch precedes cancel and bubbles through the navigation
 // disclosure. A DOM emulator cannot prove visibility or modal inertness here.
-test("pending modal Escape on narrow Settings preserves visible recovery after uncertainty", async ({
+test("pending modal Escape in narrow navigation preserves visible recovery after uncertainty", async ({
   page,
   app,
 }) => {
-  await page.setViewportSize({ width: 600, height: 800 });
   await openLifecycle(page, app);
-  await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "Settings", exact: true }),
-  ).toBeVisible();
+  await page.setViewportSize({ width: 600, height: 800 });
   await page
     .getByRole("button", { name: "Show navigation", exact: true })
     .click();
@@ -437,7 +431,7 @@ test("pending modal Escape on narrow Settings preserves visible recovery after u
     page.getByRole("button", { name: "Show navigation", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Settings", exact: true }),
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
   expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
   expect(app.report.unexpected).toEqual([]);

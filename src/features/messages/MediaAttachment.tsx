@@ -1,3 +1,6 @@
+import { prepareReviewEntrance } from "./use-review-entrance";
+import { useMediaCorners } from "./use-media-corners";
+import { VideoPlayer, VideoControls } from "./VideoPlayer";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   useEffect,
@@ -7,15 +10,9 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import {
-  ArrowsOutIcon,
-  PauseIcon,
-  PlayIcon,
-  XIcon,
-} from "../../shared/design-system/icons/index";
+import { ArrowsOutIcon, XIcon } from "../../shared/design-system/icons/index";
 import { createPortal } from "react-dom";
 import type { Attachment } from "../relay/contracts";
-import { formatMediaTime } from "./media-timecode";
 import styles from "./Messages.module.css";
 import { useModalBoundary } from "./useModalBoundary";
 
@@ -28,6 +25,8 @@ type MediaAttachmentProps = {
   attachment: Attachment;
   media(url: string): string | undefined;
   mode?: "inline" | "thread";
+  imageDescription?: string;
+  preload?: "auto" | "metadata" | "none";
   seekTo?: number;
   seekRequest?: number;
   onPlayback?(playback: MediaPlayback): void;
@@ -57,16 +56,20 @@ export function MediaAttachment({
   attachment,
   media,
   mode = "inline",
+  imageDescription = "Attachment preview",
+  preload = "auto",
   seekTo,
   seekRequest,
   onPlayback,
   onOpenReview,
 }: MediaAttachmentProps) {
+  const corners = useMediaCorners();
   const source = media(attachment.url);
   const preview = attachment.previewUrl
     ? media(attachment.previewUrl)
     : undefined;
   const video = useRef<HTMLVideoElement>(null);
+  const expandedVideo = useRef<HTMLVideoElement>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState(seekTo ?? 0);
   const [playing, setPlaying] = useState(false);
@@ -109,17 +112,22 @@ export function MediaAttachment({
     return (
       <>
         <button
+          ref={corners}
           className={`${styles.mediaPreview} ${mode === "thread" ? styles.mediaPreviewThread : ""}`}
           style={previewStyle}
           type="button"
           aria-label="Open image fullscreen"
-          onClick={() =>
-            onOpenReview ? onOpenReview(attachment, 0) : setViewerOpen(true)
-          }
+          data-image-preview=""
+          data-media-preview=""
+          onClick={(event) => {
+            prepareReviewEntrance(event);
+            if (onOpenReview) onOpenReview(attachment, 0);
+            else setViewerOpen(true);
+          }}
         >
           <img
             src={source}
-            alt="Attachment preview"
+            alt={imageDescription}
             loading="lazy"
             onLoad={(event) =>
               setMeasuredDimensions({
@@ -139,7 +147,7 @@ export function MediaAttachment({
               <img
                 className={styles.mediaViewerImage}
                 src={source}
-                alt="Attachment preview"
+                alt={imageDescription}
               />
             </MediaViewer>,
             document.body,
@@ -161,7 +169,7 @@ export function MediaAttachment({
       className={styles.mediaVideo}
       src={source}
       poster={visiblePreview}
-      preload="auto"
+      preload={preload}
       playsInline
       style={previewStyle}
       onLoadedData={(event) => {
@@ -215,7 +223,12 @@ export function MediaAttachment({
   return (
     <>
       <div
-        className={`${styles.mediaPreview} ${mode === "thread" ? styles.mediaPreviewThread : ""}`}
+        ref={corners}
+        className={`${styles.mediaPreview} dark ${mode === "thread" ? styles.mediaPreviewThread : ""}`}
+        data-color-mode="dark"
+        data-video-preview=""
+        data-media-preview=""
+        data-started={started || undefined}
         data-playing={playing ? "true" : undefined}
         style={previewStyle}
       >
@@ -228,30 +241,16 @@ export function MediaAttachment({
           />
         )}
         {videoElement}
-        <span className={styles.mediaPlay}>
-          <IconButton
-            size="compact"
-            variant="solid"
-            shape="round"
-            type="button"
-            aria-label={playing ? "Pause video" : "Play video"}
-            onClick={() => {
-              if (!video.current) return;
-              if (video.current.paused) void video.current.play();
-              else video.current.pause();
-            }}
-            icon={playing ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
-          />
-        </span>
-        <span className={styles.mediaTime}>{formatMediaTime(currentTime)}</span>
+        <VideoControls videoRef={video} inline />
         <span className={styles.mediaExpand}>
           <IconButton
             size="compact"
-            variant="solid"
+            variant="media"
             shape="round"
             type="button"
             aria-label="Open video fullscreen"
-            onClick={() => {
+            onClick={(event) => {
+              prepareReviewEntrance(event);
               video.current?.pause();
               if (onOpenReview) onOpenReview(attachment, currentTime);
               else setViewerOpen(true);
@@ -266,19 +265,15 @@ export function MediaAttachment({
             title="Video attachment"
             close={() => setViewerOpen(false)}
           >
-            {/* biome-ignore lint/a11y/useMediaCaption: signed attachment metadata has no caption track URL. */}
-            <video
-              className={styles.mediaViewerVideo}
-              src={source}
-              controls
-              autoPlay
-              playsInline
-              onLoadedMetadata={(event) => {
-                event.currentTarget.currentTime = currentTime;
-              }}
-              onTimeUpdate={(event) => {
-                const seconds = event.currentTarget.currentTime;
+            <VideoPlayer
+              source={source}
+              poster={visiblePreview}
+              videoRef={expandedVideo}
+              initialTime={currentTime}
+              onError={() => setFailed(true)}
+              onTime={(seconds) => {
                 setCurrentTime(seconds);
+                if (video.current) video.current.currentTime = seconds;
                 onPlayback?.({ attachmentUrl: attachment.url, seconds });
               }}
             />

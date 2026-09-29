@@ -1,4 +1,5 @@
 import { test, expect } from "./source-fixture.mjs";
+import { watchPageErrors } from "./page-errors.mjs";
 
 const open = async (page) => {
   await page.goto("/tests/fixtures/mentions.html?test-controls");
@@ -180,8 +181,7 @@ for (const mode of ["light", "dark"]) {
 test("typeahead replaces only the query and publishes selected namesake identity, including replies", async ({
   page,
 }) => {
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(String(e)));
+  const errors = watchPageErrors(page);
   const input = await open(page);
   const keys = await page.evaluate(() => ({
     first: window.mentionFixture.first,
@@ -229,7 +229,7 @@ test("typeahead replaces only the query and publishes selected namesake identity
   const sent = await page.evaluate(() => window.mentionFixture.publications[1]);
   expect(sent.tags).toContainEqual(["e", "a".repeat(64), "", "reply"]);
   expect(sent.tags.filter(([tag]) => tag === "p")).toEqual([["p", keys.first]]);
-  expect(errors).toEqual([]);
+  expect(errors.unexplained()).toEqual([]);
 });
 test("emoji keyboard, Escape, selected text, blur, IME and plugin disable preserve ordinary editing", async ({
   page,
@@ -453,7 +453,16 @@ test("selection follows IDs through reordering and rejected replacement never fa
     );
   const a = { id: "a", label: "Alpha", edit: { text: "A" } },
     b = { id: "b", label: "Beta", edit: { text: "B" } };
+  expect(await publish([b])).toBe(true);
+  await expect(page.getByRole("option", { name: "Beta" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   expect(await publish([a, b])).toBe(true);
+  await expect(page.getByRole("option", { name: "Alpha" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await input.press("ArrowDown");
   await expect(page.getByRole("option", { name: "Beta" })).toHaveAttribute(
     "aria-selected",
@@ -500,6 +509,44 @@ test("selection follows IDs through reordering and rejected replacement never fa
     await page.evaluate(() => window.completionFixture.publications.length),
   ).toBe(0);
 });
+test("emoji completion starts at the first ranked result when Unicode joins community matches", async ({
+  page,
+}, testInfo) => {
+  await page.route("**/emoji-media/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="42" height="42"><circle cx="21" cy="21" r="20" fill="purple"/></svg>',
+    }),
+  );
+  await page.goto("/tests/fixtures/emoji.html");
+  await page.mouse.move(0, 0);
+  const input = page.getByRole("textbox", { name: "Message #general" });
+  // Load the community catalog before starting a new query, as in a live composer.
+  await input.fill(":enjoy");
+  await expect(
+    page.getByRole("option", { name: ":enjoy:", exact: true }),
+  ).toBeVisible();
+  for (const query of ["joy", "grin"]) {
+    await input.fill(`:${query}`);
+    const list = page.getByRole("listbox", { name: "Emoji suggestions" });
+    const first = list.getByRole("option").first();
+    await expect(first).toHaveAccessibleName(`:${query}:`);
+    await expect(first).toHaveAttribute("aria-selected", "true");
+    await expect(list).toHaveJSProperty("scrollTop", 0);
+    if (query === "joy")
+      await page
+        .getByRole("region", { name: "Emoji suggestions", exact: true })
+        .screenshot({
+          path: testInfo.outputPath("emoji-first-result.png"),
+        });
+    await input.press("Enter");
+    await expect(input).toHaveJSProperty(
+      "value",
+      query === "joy" ? "😂" : "😁",
+    );
+  }
+});
+
 test("current custom catalog drives typeahead and signed tags across community replacement", async ({
   page,
 }, testInfo) => {

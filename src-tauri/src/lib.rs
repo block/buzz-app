@@ -13,17 +13,25 @@ mod host_command;
 mod host_request;
 mod identity;
 mod notifications;
+mod os_idle;
+use os_idle::get_os_idle_seconds;
+mod relay;
 use identity::{identity_create, identity_export, identity_import, identity_restore, IdentityHost};
+use relay::{relay_http, relay_sign};
 mod terminal;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
 mod goose_models;
 mod harness_setup;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod managed_pi;
 mod pi_models;
 use agents::{
-    agent_control_action, agent_control_create_commit, agent_control_create_prepare,
-    agent_control_creation_profile, agent_control_delete, agent_control_import_commit,
-    agent_control_import_preview, agent_control_log_challenge, agent_control_read_log,
-    agent_control_save, agent_control_snapshot, agent_control_start_on_app_launch, AgentHost,
+    agent_control_action, agent_control_attach_mention, agent_control_clone_settings,
+    agent_control_create_commit, agent_control_create_prepare, agent_control_creation_profile,
+    agent_control_delete, agent_control_import_commit, agent_control_import_preview,
+    agent_control_log_challenge, agent_control_read_log, agent_control_save,
+    agent_control_save_defaults, agent_control_snapshot, agent_control_start_on_app_launch,
+    agent_control_use_here, AgentHost,
 };
 use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},
@@ -31,7 +39,7 @@ use buzzodz_plugins::{
 };
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
-use harness_setup::{goose_install, HarnessSetup};
+use harness_setup::{goose_install, pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
 use host_request::plugin_host_request;
 use notifications::{notification_show, Notifications};
@@ -341,12 +349,32 @@ async fn plugin_recover(
 ) -> Result<InstallationResult, String> {
     with_manager(manager, |m| m.recover().map(|catalog| ready(&m, catalog))).await
 }
+/// Tauri's restart ignores `prevent_exit`, so confirm the same agent teardown
+/// that gates Quit before requesting it; a failure keeps the app running.
+#[tauri::command]
+async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        handle.state::<ModelHost>().shutdown();
+        handle.state::<AgentHost>().shutdown()
+    })
+    .await
+    .map_err(|_| "Agent shutdown could not be confirmed".to_owned())?
+    .map_err(|error| {
+        format!("Agent shutdown incomplete; restart Buzz to finish the update: {error}")
+    })?;
+    app.request_restart();
+    Ok(())
+}
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         identity_restore,
         identity_import,
         identity_create,
         identity_export,
+        relay_sign,
+        relay_http,
+        get_os_idle_seconds,
         plugin_import_folder,
         plugin_import_git,
         plugin_import_install,
@@ -365,10 +393,15 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_log_challenge,
         agent_control_read_log,
         goose_install,
+        pi_install,
+        agent_control_use_here,
         agent_control_save,
+        agent_control_save_defaults,
         agent_control_delete,
         agent_control_action,
+        agent_control_attach_mention,
         agent_control_start_on_app_launch,
+        agent_control_clone_settings,
         agent_control_import_preview,
         agent_control_import_commit,
         agent_models_begin,
@@ -386,19 +419,26 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         terminal_write,
         terminal_resize,
         terminal_close,
-        terminal_close_owner
+        terminal_close_owner,
+        update_restart
     ]
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    let builder = if !tauri::is_dev() {
         // Single instance comes first, as its documentation requires. Its deep-link
         // feature forwards deep-link argv on Windows/Linux. macOS OS URLs reach
         // the registered bundle directly; cross-copy URL handoff is unsupported.
-        // This callback only foregrounds the running window.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        // This callback only foregrounds the running window. Development launches
+        // skip this so parallel worktrees can run side by side.
+        builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             deep_links::focus_main(app);
         }))
+    } else {
+        builder
+    };
+    let builder = builder
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -439,6 +479,13 @@ pub fn run() {
         });
     #[cfg(target_os = "macos")]
     let builder = builder.manage(TitleBarFillFrames::default());
+    // Register the updater only in configured release builds; omit it locally.
+    #[cfg(buzz_updater_enabled)]
+    let builder = if tauri::is_dev() {
+        builder
+    } else {
+        builder.plugin(tauri_plugin_updater::Builder::new().build())
+    };
     builder
         .manage(IdentityHost::default())
         .manage(Imports::default())
@@ -467,10 +514,27 @@ pub fn run() {
             }
         })
         .on_page_load(browser::page_load)
-        .on_window_event(browser::window_event)
+        .on_window_event(|window, event| {
+            #[cfg(target_os = "macos")]
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    // Keep the webview and running agents alive until explicit Quit.
+                    api.prevent_close();
+                    if let Err(error) = window.hide() {
+                        eprintln!("Could not close Buzz window: {error}");
+                    }
+                    return;
+                }
+            }
+            browser::window_event(window, event);
+        })
         .build(app_context())
         .expect("failed to build Buzz Foundation")
         .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. }) {
+                deep_links::focus_main(app);
+            }
             if let tauri::RunEvent::ExitRequested { api, .. } = &event {
                 app.state::<ModelHost>().shutdown();
                 if app.state::<AgentHost>().shutdown().is_err() {

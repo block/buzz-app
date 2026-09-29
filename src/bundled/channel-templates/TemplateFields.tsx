@@ -1,3 +1,8 @@
+import type { RelaySession } from "../../features/relay/session";
+import { AgentOwnerPreview } from "../../features/profiles/AgentOwnerPreview";
+import { npubEncode } from "nostr-tools/nip19";
+import { publicKeyLabels } from "../../shared/identity/public-key";
+import { IdentityRow } from "../../shared/identity/IdentityRow";
 import { useState } from "react";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -12,54 +17,75 @@ import {
 import styles from "../channels/ChannelTemplates.module.css";
 
 export function AgentSelection({
+  session,
   selected,
   agents,
   onChange,
 }: {
+  session?: RelaySession | undefined;
   selected: readonly string[];
   agents: readonly AgentChoice[];
   onChange(keys: string[]): void;
 }) {
   const [search, setSearch] = useState("");
-  const choices = [
+  const choices: readonly AgentChoice[] = [
     ...agents,
     ...selected
       .filter((key) => !agents.some((a) => a.pubkey === key))
       .map((pubkey) => ({ pubkey, name: "Unavailable agent" })),
   ];
+  const labels = publicKeyLabels(choices.map((agent) => agent.pubkey));
   return (
     <div className={styles.stack}>
       <Field label="Find individual agents">
         <Input
+          autoCorrect="off"
+          autoCapitalize="none"
+          spellCheck={false}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Name or public key"
+          placeholder="Name or npub"
         />
       </Field>
       <div className={styles.choices}>
         {choices
           .filter((a) =>
-            `${a.name} ${a.pubkey}`
+            `${a.name} ${npubEncode(a.pubkey)} ${a.pubkey}`
               .toLowerCase()
               .includes(search.toLowerCase()),
           )
           .map((agent) => (
-            <Checkbox
+            <IdentityRow
               key={agent.pubkey}
-              label={`${agent.name} · ${agent.pubkey.slice(0, 10)}`}
-              checked={selected.includes(agent.pubkey)}
-              onCheckedChange={(checked) =>
-                onChange(
-                  checked
-                    ? [...selected, agent.pubkey]
-                    : selected.filter((key) => key !== agent.pubkey),
-                )
+              pubkey={agent.pubkey}
+              name={agent.name}
+              picture={agent.avatar}
+              isAgent
+              previewDetail={
+                session ? (
+                  <AgentOwnerPreview session={session} pubkey={agent.pubkey} />
+                ) : undefined
               }
+              keyLabel={labels.get(agent.pubkey)}
+              render={(content, previewProps) => (
+                <Checkbox
+                  {...previewProps}
+                  label={content}
+                  checked={selected.includes(agent.pubkey)}
+                  onCheckedChange={(checked) =>
+                    onChange(
+                      checked
+                        ? [...selected, agent.pubkey]
+                        : selected.filter((key) => key !== agent.pubkey),
+                    )
+                  }
+                />
+              )}
             />
           ))}
         {!choices.length && (
           <p className="text-secondary">
-            No existing agents are available in this community.
+            No agents from the Agents page are available in this community.
           </p>
         )}
       </div>
@@ -68,12 +94,14 @@ export function AgentSelection({
 }
 
 export function TemplateFields({
+  session,
   value,
   onChange,
   entries,
   agents,
   acceptedAgents,
 }: {
+  session?: RelaySession | undefined;
   value: Lineup;
   onChange(value: Lineup): void;
   acceptedAgents?: readonly string[] | undefined;
@@ -84,6 +112,10 @@ export function TemplateFields({
     !e.record.deleted && e.record.value.type === "team" ? [e.record.value] : [],
   );
   const missing = value.teamIds.filter((id) => !teams.some((t) => t.id === id));
+  const labels = publicKeyLabels([
+    ...agents.map((agent) => agent.pubkey),
+    ...(acceptedAgents ?? []),
+  ]);
   let preview = "",
     error = "";
   try {
@@ -91,11 +123,13 @@ export function TemplateFields({
       (acceptedAgents
         ? acceptedAgents.map((pubkey) => ({
             pubkey,
-            name: agents.find((a) => a.pubkey === pubkey)?.name ?? pubkey,
+            name:
+              agents.find((a) => a.pubkey === pubkey)?.name ??
+              "Unavailable agent",
           }))
         : resolveLineup(value, entries, agents)
       )
-        .map((a) => `${a.name} · ${a.pubkey.slice(0, 10)}`)
+        .map((a) => `${a.name} · ${labels.get(a.pubkey)}`)
         .join(", ") || "Only you";
   } catch (reason) {
     error = reason instanceof Error ? reason.message : String(reason);
@@ -133,6 +167,7 @@ export function TemplateFields({
         )}
       </fieldset>
       <AgentSelection
+        session={session}
         selected={value.agents}
         agents={agents}
         onChange={(agents) => onChange({ ...value, agents })}

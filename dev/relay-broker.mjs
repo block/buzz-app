@@ -14,6 +14,7 @@ import { assertSidebarSortIntent, mutateSidebarSort } from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import { parseGitRead } from "../src/features/projects/git.ts";
 import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
+import { validateDetailsTemplate } from "../src/features/relay/channel-details-protocol.ts";
 import { validateArchiveRequestTemplate } from "../src/features/relay/identity-archive-protocol.ts";
 import {
   prepareChannelKit,
@@ -72,14 +73,19 @@ import {
 } from "./sidebar-preferences.mjs";
 import { createHostAdmission } from "../src/features/relay/host-admission.ts";
 import { relayKlipySearchPath } from "../src/features/relay/gifs.ts";
-import { validReactionContent } from "../src/features/relay/emoji.ts";
+import {
+  validEmojiSetTemplate,
+  validReactionContent,
+} from "../src/features/relay/emoji.ts";
 // Dev-only relay broker. Holds the local Buzz identity in this Node process and signs NIP-98 reads
 // for the browser, so no key ever reaches page JavaScript. The dev server loads it whenever
 // BUZZ_DEV_VIEWER is configured; production builds and tests never load it.
 // Scoped writes support basic messages, profile setup and invite admission; signing remains here.
 import {
   liveChannels,
+  liveJoined,
   subscribeRelayTraffic,
+  livePresenceAuthors,
 } from "../src/features/relay/live.ts";
 import {
   communityDestination,
@@ -397,10 +403,20 @@ export function validMessageTemplate(event) {
     ).length === 1 &&
     (() => {
       const references = event.tags.filter((tag) => tag[0] === "e");
-      if (event.kind === 7 || event.kind === 40003)
+      if (event.kind === 40003)
         return (
           event.content === event.content.trim() &&
-          (event.kind === 40003 || validReactionContent(event.content)) &&
+          references.length === 1 &&
+          references[0].length === 2 &&
+          /^[0-9a-f]{64}$/.test(references[0][1]) &&
+          event.tags.every(([name]) =>
+            ["h", "e", "emoji", "client-id", "imeta"].includes(name),
+          )
+        );
+      if (event.kind === 7)
+        return (
+          event.content === event.content.trim() &&
+          validReactionContent(event.content) &&
           references.length === 1 &&
           references[0].length === 2 &&
           /^[0-9a-f]{64}$/.test(references[0][1])
@@ -1396,6 +1412,7 @@ export function relayBrokerPlugin({
               directMessages: true,
               writeKinds: [
                 30315,
+                30030,
                 7,
                 9,
                 40003,
@@ -1409,6 +1426,7 @@ export function relayBrokerPlugin({
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
               channelLifecycle: true,
+              channelDetails: true,
               identityArchives: true,
               workflowReads: true,
               projectGit: true,
@@ -1436,10 +1454,13 @@ export function relayBrokerPlugin({
               "/api/relay/stream-interests",
               "/api/relay/stream-observer",
               "/api/relay/stream-presence",
+              "/api/relay/stream-presence-authors",
             ].includes(route) &&
             req.method === "POST"
           ) {
             const publishingPresence = route === "/api/relay/stream-presence";
+            const watchingPresence =
+              route === "/api/relay/stream-presence-authors";
             const prioritizing = route === "/api/relay/stream-priority";
             const observing = route === "/api/relay/stream-observer";
             const updating = route === "/api/relay/stream-interests";
@@ -1448,15 +1469,23 @@ export function relayBrokerPlugin({
               raw += part;
               if (
                 Buffer.byteLength(raw) >
-                (updating ? 300000 : prioritizing ? 9000 : 256)
+                (updating
+                  ? 450000
+                  : watchingPresence
+                    ? 20000
+                    : prioritizing
+                      ? 9000
+                      : 256)
               )
                 return json(res, 413, { error: "Live control too large" });
             }
             let streamId,
+              presenceAuthors,
               priority,
               observer,
               status,
               interests,
+              joined,
               removed,
               interestRevision;
             try {
@@ -1472,8 +1501,11 @@ export function relayBrokerPlugin({
                   throw new Error("Invalid presence");
               }
               if (observing) observer = observerGeneration(body.observer);
+              if (watchingPresence)
+                presenceAuthors = livePresenceAuthors(body.authors);
               if (updating) {
                 interests = liveChannels(body.channels);
+                joined = liveJoined(interests, body.joined ?? []);
                 removed = liveChannels(body.removed ?? []);
                 interestRevision = body.interestRevision;
                 if (
@@ -1497,7 +1529,10 @@ export function relayBrokerPlugin({
             )
               return json(res, 400, { error: "Invalid live control" });
             const stream = streams.get(streamId);
-            if (publishingPresence && (!stream || stream.relay !== relay))
+            if (
+              (publishingPresence || watchingPresence) &&
+              (!stream || stream.relay !== relay)
+            )
               return json(res, 200, { accepted: null });
             if (!stream || stream.relay !== relay)
               return json(res, 404, {
@@ -1512,7 +1547,14 @@ export function relayBrokerPlugin({
                   status,
                   cancel.signal,
                 );
-                if (!res.destroyed) return json(res, 200, { accepted });
+                if (!res.destroyed)
+                  return json(
+                    res,
+                    200,
+                    accepted && typeof accepted === "object"
+                      ? { accepted: null, retryAfterMs: accepted.retryAfterMs }
+                      : { accepted },
+                  );
               } finally {
                 res.off("close", abort);
               }
@@ -1526,13 +1568,17 @@ export function relayBrokerPlugin({
               if (removed.length) {
                 stream.traffic.update(
                   stream.channels.filter((id) => !removed.includes(id)),
+                  stream.joined.filter((id) => !removed.includes(id)),
                 );
               }
               stream.interestRevision = interestRevision;
               stream.channels = interests;
-              stream.traffic.update(interests);
+              stream.joined = joined;
+              stream.traffic.update(interests, joined);
             } else if (prioritizing) stream.traffic.prioritize(priority);
             else if (observing) stream.traffic.observe(observer);
+            else if (watchingPresence)
+              stream.traffic.watchPresence(presenceAuthors);
             else stream.traffic.retry();
             return json(res, 200, { accepted: true });
           }
@@ -1540,13 +1586,19 @@ export function relayBrokerPlugin({
             let raw = "";
             for await (const part of req) {
               raw += part;
-              if (Buffer.byteLength(raw) > 150000)
+              if (Buffer.byteLength(raw) > 300000)
                 return json(res, 413, { error: "Live interests too large" });
             }
-            let channels, priority, observer, interestRevision;
+            let channels,
+              joined,
+              priority,
+              observer,
+              interestRevision,
+              presenceAuthors;
             try {
               const body = JSON.parse(raw);
               channels = liveChannels(body.channels);
+              joined = liveJoined(channels, body.joined ?? []);
               interestRevision = body.interestRevision ?? 0;
               if (
                 !Number.isSafeInteger(interestRevision) ||
@@ -1554,6 +1606,7 @@ export function relayBrokerPlugin({
               )
                 throw new Error("Invalid interest revision");
               observer = observerGeneration(body.observer ?? null);
+              presenceAuthors = livePresenceAuthors(body.presenceAuthors ?? []);
               liveChannels(body.priority ?? []);
               if (body.priority?.length > 64)
                 throw new Error("Priority capacity reached");
@@ -1630,6 +1683,7 @@ export function relayBrokerPlugin({
             const stream = {
               relay,
               channels,
+              joined,
               interestRevision,
               traffic: undefined,
               close: undefined,
@@ -1647,6 +1701,7 @@ export function relayBrokerPlugin({
                       interestRevision: stream.interestRevision,
                     });
                 },
+                presence: (event) => write("presence", event),
                 telemetry: (event, generation) => {
                   if (res.destroyed) return;
                   try {
@@ -1665,9 +1720,12 @@ export function relayBrokerPlugin({
                   }),
                 established: (channelId) =>
                   write("established", {
-                    channelId,
+                    ...(Array.isArray(channelId)
+                      ? { channels: channelId }
+                      : { channelId }),
                     interestRevision: stream.interestRevision,
                   }),
+                recover: () => write("recover", {}),
                 denied: (channelId, reason) =>
                   write("denied", {
                     channelId,
@@ -1680,8 +1738,9 @@ export function relayBrokerPlugin({
             );
             principal.streams++;
             traffic.observe(observer);
+            traffic.watchPresence(presenceAuthors);
             traffic.prioritize(priority);
-            traffic.update(channels);
+            traffic.update(channels, joined);
             const keepAlive = setInterval(
               () => res.write(": keepalive\n\n"),
               15000,
@@ -1873,6 +1932,8 @@ export function relayBrokerPlugin({
               "/api/relay/presence-snapshot",
               "/api/relay/channel-activity",
               "/api/relay/sign",
+              "/api/relay/channel-details-sign",
+              "/api/relay/channel-details-publish",
               "/api/relay/channel-lifecycle-sign",
               "/api/relay/channel-lifecycle-publish",
               "/api/relay/identity-archive-sign",
@@ -1885,6 +1946,7 @@ export function relayBrokerPlugin({
               "/api/relay/direct-message",
               "/api/relay/authorize-agent",
               "/api/relay/agent-log-proof",
+              "/api/relay/resolve-agent-community",
               "/api/relay/claim",
               "/api/relay/accept-policy",
               "/api/relay/invite",
@@ -2016,6 +2078,32 @@ export function relayBrokerPlugin({
               schnorr.sign(createHash("sha256").update(message).digest(), key),
             ).toString("hex");
             return json(res, 200, { signature });
+          }
+          if (route === "/api/relay/resolve-agent-community") {
+            if (
+              !scoped ||
+              filters?.owner !== viewer ||
+              !/^[0-9a-f]{64}$/.test(filters?.pubkey ?? "") ||
+              filters.pubkey === viewer ||
+              filters?.confirmed !== true ||
+              Object.keys(filters).length !== 3
+            )
+              return json(res, 400, {
+                error: "Explicit owner community resolution required",
+              });
+            // The signed account confirms setup intent. Native verifies it against
+            // retained source-owner authorization; inventory is not permission.
+            cancel.signal.throwIfAborted();
+            const relayUrl = relay.replace(/^https:/, "wss:");
+            const digest = createHash("sha256")
+              .update(`nostr:agent-community:${filters.pubkey}:${relayUrl}`)
+              .digest();
+            return json(res, 200, {
+              pubkey: filters.pubkey,
+              relayUrl,
+              owner: viewer,
+              signature: Buffer.from(schnorr.sign(digest, key)).toString("hex"),
+            });
           }
           if (route === "/api/relay/authorize-agent") {
             if (
@@ -2187,6 +2275,9 @@ export function relayBrokerPlugin({
               sent: false,
             });
           const timings = [];
+          const details =
+            route === "/api/relay/channel-details-sign" ||
+            route === "/api/relay/channel-details-publish";
           const lifecycle =
             route === "/api/relay/channel-lifecycle-sign" ||
             route === "/api/relay/channel-lifecycle-publish";
@@ -2195,10 +2286,12 @@ export function relayBrokerPlugin({
             route === "/api/relay/identity-archive-publish";
           const signing =
             route === "/api/relay/sign" ||
+            route === "/api/relay/channel-details-sign" ||
             route === "/api/relay/channel-lifecycle-sign" ||
             route === "/api/relay/identity-archive-sign";
           const publishing =
             route === "/api/relay/publish" ||
+            route === "/api/relay/channel-details-publish" ||
             route === "/api/relay/channel-lifecycle-publish" ||
             route === "/api/relay/identity-archive-publish";
           if (signing || publishing) {
@@ -2210,6 +2303,15 @@ export function relayBrokerPlugin({
               } catch {
                 return json(res, 400, {
                   error: "Invalid identity archive request",
+                  sent: false,
+                });
+              }
+            } else if (details) {
+              try {
+                validateDetailsTemplate(filters);
+              } catch {
+                return json(res, 400, {
+                  error: "Invalid channel details command",
                   sent: false,
                 });
               }
@@ -2226,6 +2328,12 @@ export function relayBrokerPlugin({
               if (!validStatusTemplate(filters))
                 return json(res, 400, {
                   error: "Status rejected",
+                  sent: false,
+                });
+            } else if (filters?.kind === 30030) {
+              if (!validEmojiSetTemplate(filters))
+                return json(res, 400, {
+                  error: "Emoji set rejected",
                   sent: false,
                 });
             } else if (filters?.kind === 9001) {
@@ -2337,11 +2445,18 @@ export function relayBrokerPlugin({
             return json(res, 400, { error: "Read filter rejected" });
           if (publishing || readPublishing) {
             const stream = streams.get(req.headers["x-buzz-live-id"]);
-            if (!stream || stream.relay !== relay)
+            // This route has already validated the signed event. Do not log its
+            // content, tags, signature, or the browser's private stream handle.
+            const publication = `publication id=${filters.id} kind=${filters.kind}`;
+            if (!stream || stream.relay !== relay) {
+              log.warn(
+                `${publication} stage=${stream ? "owner-mismatch" : "owner-missing"} sent=false`,
+              );
               return json(res, 503, {
                 error: "Publication socket unavailable",
                 sent: false,
               });
+            }
             try {
               const message = await stream.traffic.publish(
                 filters,
@@ -2353,8 +2468,19 @@ export function relayBrokerPlugin({
                 message,
               });
             } catch (error) {
+              // SocketRequestError messages are local constants; arbitrary errors
+              // and remote refusal text must never escape into terminal output.
+              const failure =
+                error instanceof SocketRequestError ? error : undefined;
+              log.warn(
+                `${publication} stage=socket sent=${failure ? failure.sent : "unknown"} reason=${failure?.message ?? "unclassified failure"}${failure?.refusal ? ` refusal=${failure.refusal}` : ""}`,
+              );
               return json(res, 503, {
-                error: "Socket publication could not be confirmed",
+                error:
+                  failure?.sent === false &&
+                  failure.refusal?.startsWith("rate-limited:")
+                    ? failure.refusal
+                    : "Socket publication could not be confirmed",
                 ...(error instanceof SocketRequestError && !error.sent
                   ? { sent: false }
                   : {}),

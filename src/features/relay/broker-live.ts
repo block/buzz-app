@@ -2,6 +2,8 @@ import { observerFrame, observerGeneration } from "../agents/observer";
 import { eventDto } from "./events";
 import {
   liveChannels,
+  livePresenceAuthors,
+  liveJoined,
   liveProvenance,
   type LiveCallbacks,
   type LiveSnapshot,
@@ -19,6 +21,7 @@ export function subscribeBrokerTraffic(
     generation = 0,
     attempts = 0;
   let channels: string[] = [];
+  let joined: string[] = [];
   let sentChannels: string[] = [];
   // Only IDs in the last dispatched snapshot can have a host wire (at most 1024).
   const removed = new Set<string>();
@@ -39,6 +42,8 @@ export function subscribeBrokerTraffic(
   let interestsPending = false;
   let observer: number | null = null;
   let observerPending = false;
+  let presenceAuthors: string[] = [];
+  let presencePending = false;
   let controller: AbortController | undefined;
   let streamId: string | undefined;
   let controlPending = false;
@@ -60,6 +65,7 @@ export function subscribeBrokerTraffic(
     priorityPending = false;
     interestsPending = false;
     observerPending = false;
+    presencePending = false;
     receiving = true;
     controller?.abort();
     clearTimeout(retryTimer);
@@ -82,6 +88,7 @@ export function subscribeBrokerTraffic(
     removed.clear();
     const startingPriority = JSON.stringify(priority);
     const startingObserver = observer;
+    const startingPresence = JSON.stringify(presenceAuthors);
     void (async () => {
       try {
         const response = await fetch(`${endpoint}/stream`, {
@@ -90,8 +97,10 @@ export function subscribeBrokerTraffic(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             channels,
+            joined,
             priority,
             observer,
+            presenceAuthors,
             interestRevision,
           }),
           signal: owned.signal,
@@ -118,6 +127,8 @@ export function subscribeBrokerTraffic(
         if (startingInterests !== interestRevision) sendInterests();
         if (startingPriority !== JSON.stringify(priority)) sendPriority();
         if (startingObserver !== observer) sendObserver();
+        if (startingPresence !== JSON.stringify(presenceAuthors))
+          sendPresence();
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -156,14 +167,20 @@ export function subscribeBrokerTraffic(
                 )
                   throw new Error("Invalid live traffic envelope");
                 const provenance = liveProvenance(data.provenance);
-                if (
-                  !provenance.channelId ||
-                  currentChannel(
-                    provenance.channelId,
-                    (data as { interestRevision?: unknown }).interestRevision,
-                  )
-                )
+                const revision = (data as { interestRevision?: unknown })
+                  .interestRevision;
+                const scopes =
+                  provenance.sourceChannels ??
+                  (provenance.channelId ? [provenance.channelId] : []);
+                if (scopes.every((id) => currentChannel(id, revision)))
                   callbacks.receive([eventDto(data.event)], provenance);
+              } else if (kind === "presence") {
+                const event = eventDto(data);
+                if (
+                  event.kind === 20001 &&
+                  presenceAuthors.includes(event.pubkey)
+                )
+                  callbacks.presence?.(event);
               } else if (kind === "observer") {
                 const record = data as {
                   frame?: unknown;
@@ -184,15 +201,21 @@ export function subscribeBrokerTraffic(
                   ),
                 });
               } else if (kind === "established") {
-                const id = channelField(data);
-                if (
-                  !id ||
-                  currentChannel(
-                    id,
-                    (data as { interestRevision?: unknown }).interestRevision,
-                  )
-                )
-                  callbacks.established(id);
+                const ids = (data as { channels?: unknown }).channels;
+                const revision = (data as { interestRevision?: unknown })
+                  .interestRevision;
+                if (ids !== undefined) {
+                  const current = liveChannels(ids).filter((id) =>
+                    currentChannel(id, revision),
+                  );
+                  if (current.length) callbacks.established(current);
+                } else {
+                  const id = channelField(data);
+                  if (!id || currentChannel(id, revision))
+                    callbacks.established(id);
+                }
+              } else if (kind === "recover") {
+                callbacks.recover?.();
               } else if (kind === "denied") {
                 const id = channelField(data);
                 if (
@@ -248,6 +271,7 @@ export function subscribeBrokerTraffic(
     const body = JSON.stringify({
       streamId,
       channels,
+      joined,
       removed: [...removed],
       interestRevision,
     });
@@ -338,8 +362,44 @@ export function subscribeBrokerTraffic(
         if (sent !== observer) sendObserver();
       });
   }
+  function sendPresence() {
+    if (closed || !streamId || presencePending) return;
+    const current = generation;
+    const sent = JSON.stringify(presenceAuthors);
+    presencePending = true;
+    void fetch(`${endpoint}/stream-presence-authors`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ streamId, authors: presenceAuthors }),
+      signal: AbortSignal.any([
+        controller?.signal ?? new AbortController().signal,
+        AbortSignal.timeout(5000),
+      ]),
+    })
+      .then((response) => {
+        if (!response.ok)
+          throw new Error("Presence subscription control failed");
+      })
+      .catch(() => {
+        // Optional live hints may be lost; bounded snapshots still recover status.
+      })
+      .finally(() => {
+        if (current !== generation) return;
+        presencePending = false;
+        if (sent !== JSON.stringify(presenceAuthors)) sendPresence();
+      });
+  }
   start();
   return {
+    watchPresence(authors) {
+      const next = livePresenceAuthors(authors);
+      if (closed || JSON.stringify(next) === JSON.stringify(presenceAuthors))
+        return;
+      presenceAuthors = next;
+      // Coalesce lifecycle retirement with disposal/replacement before dispatch.
+      queueMicrotask(sendPresence);
+    },
     async publishPresence(status, signal) {
       if (closed || !streamId || !controller || latest.status !== "connected")
         return null;
@@ -356,8 +416,15 @@ export function subscribeBrokerTraffic(
         ]),
       });
       if (closed || current !== generation || !response.ok) return false;
-      const { accepted } = await response.json();
-      return accepted === null ? null : accepted === true;
+      const { accepted, retryAfterMs } = await response.json();
+      if (accepted === null) {
+        return Number.isSafeInteger(retryAfterMs) &&
+          retryAfterMs >= 0 &&
+          retryAfterMs <= 86_401_000
+          ? { retryAfterMs }
+          : null;
+      }
+      return accepted === true;
     },
     identity: () => (closed ? undefined : streamId),
     observe(value) {
@@ -373,18 +440,28 @@ export function subscribeBrokerTraffic(
       priority = next;
       sendPriority();
     },
-    update(input) {
+    update(input, batchable = []) {
       const next = liveChannels(input);
-      if (closed || JSON.stringify(next) === JSON.stringify(channels)) return;
+      const nextJoined = liveJoined(next, batchable);
+      if (
+        closed ||
+        (JSON.stringify(next) === JSON.stringify(channels) &&
+          JSON.stringify(nextJoined) === JSON.stringify(joined))
+      )
+        return;
       interestRevision++;
       for (const id of channels)
-        if (!next.includes(id)) {
+        if (
+          !next.includes(id) ||
+          joined.includes(id) !== nextJoined.includes(id)
+        ) {
           addedAt.delete(id);
           if (sentChannels.includes(id)) removed.add(id);
         }
       for (const id of next)
         if (!addedAt.has(id)) addedAt.set(id, interestRevision);
       channels = next;
+      joined = nextJoined;
       sendInterests();
     },
     retry() {

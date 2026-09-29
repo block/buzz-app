@@ -1,4 +1,13 @@
 fn main() {
+    // Release builds enable the updater only when both values are supplied; its
+    // `plugins.updater` config comes from the same values via `tauri build --config`.
+    println!("cargo:rerun-if-env-changed=BUZZ_UPDATER_PUBLIC_KEY");
+    println!("cargo:rerun-if-env-changed=BUZZ_UPDATER_ENDPOINT");
+    println!("cargo:rustc-check-cfg=cfg(buzz_updater_enabled)");
+    let configured = |name| std::env::var(name).is_ok_and(|value| !value.trim().is_empty());
+    if configured("BUZZ_UPDATER_PUBLIC_KEY") && configured("BUZZ_UPDATER_ENDPOINT") {
+        println!("cargo:rustc-cfg=buzz_updater_enabled");
+    }
     let mut attributes = tauri_build::Attributes::new();
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
@@ -20,6 +29,9 @@ fn main() {
             "identity_import",
             "identity_create",
             "identity_export",
+            "relay_sign",
+            "relay_http",
+            "get_os_idle_seconds",
             "plugin_import_folder",
             "plugin_import_git",
             "plugin_import_install",
@@ -38,12 +50,17 @@ fn main() {
             "agent_control_log_challenge",
             "agent_control_read_log",
             "goose_install",
+            "pi_install",
             "agent_control_save",
+            "agent_control_save_defaults",
             "agent_control_start_on_app_launch",
             "agent_control_delete",
             "agent_control_action",
+            "agent_control_attach_mention",
             "agent_control_import_preview",
             "agent_control_import_commit",
+            "agent_control_clone_settings",
+            "agent_control_use_here",
             "agent_models_begin",
             "agent_models_cancel",
             "agent_models_run",
@@ -58,6 +75,7 @@ fn main() {
             "terminal_resize",
             "terminal_close",
             "terminal_close_owner",
+            "update_restart",
             "browser_attach",
             "browser_set_bounds",
             "browser_detach",

@@ -77,8 +77,12 @@ envelope/fixture validation does not certify the later compatibility adapter.
 
 `session.agentChoices` is the canonical read-only selection projection. Templates,
 mention pickers, the session agent chooser and their admission checks use it—not
-`agentLibrary` directly. It combines ready legacy identities and ready native
-identities in this exact community, deduplicated by public key. Native process
+`agentLibrary` directly. Its general projection combines ready legacy identities and ready native
+identities in this exact community, deduplicated by public key. Templates use its
+separate `templates` projection: native identities when native controls exist,
+including authoritative empty/loading/error states without legacy fallback;
+legacy identities only on hosts without native controls. Template refresh never
+waits for an unused legacy inventory. Native process
 status is not selection eligibility; stopped/native-only agents remain selectable.
 `agentLibrary` remains the old-library compatibility/import source. Agents management
 and the shared display-name resolver keep their own distinct presentation contracts.
@@ -102,8 +106,10 @@ Ordinary nonmember mentions also offer people from the selected community direct
 and eligible managed agents. Send asks before adding them; selection grants no
 access. Session invitations retain their existing rules, including legacy choices.
 Templates additionally require verified non-archived state, and legacy-only choices
-need visible community membership. Save-as-template discloses an incomplete inferred
-lineup when either inventory or roster evidence is partial; it never claims a full
+need visible community membership. Saved keys are never rebound to a namesake.
+Template pickers and agent identity details display npubs, not raw hex keys.
+Save-as-template discloses an incomplete inferred
+lineup when its required inventory or roster evidence is partial; it never claims a full
 channel-membership copy. Shared choice visibility is not permission to grant access.
 
 Regression sources: `features/agents/choices.test.ts` and
@@ -361,11 +367,12 @@ channel-wide. No harness change, new subscription, directory or timer is added.
 The development broker loads subscription filters at startup: restart the
 existing dev server once to receive typing; frontend HMR alone is insufficient.
 
-A profile **View activity** action remains available before the first frame or
-after a working chip disappears. It preselects the exact identity and originating
-channel, not a thread. This action is not an agent/ownership badge and may show a
-waiting state for identities with no published owner-visible telemetry. Shared
-agents and new activity-view permissions are out of scope.
+A known agent's profile **View activity** action remains available before the
+first frame or after a working chip disappears; people's profiles offer none. It
+preselects the exact identity and originating channel, not a thread. The
+known-agent check is display-only evidence, not an ownership badge, and the action
+may show a waiting state for identities with no published owner-visible telemetry.
+Shared agents and new activity-view permissions are out of scope.
 
 The **Channel** selector filters raw entries and working-turn counts, or shows all
 channels including unscoped records. For a selected channel, batches are projected

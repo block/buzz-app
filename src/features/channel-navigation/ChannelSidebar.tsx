@@ -37,6 +37,7 @@ import {
 import type { ChannelSummary } from "../relay/contracts";
 import { useChannelRowMenu } from "../../bundled/channels/useChannelRowMenu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { clientMetrics } from "../developer/client-metrics";
 import {
   BellIcon,
   BellSlashIcon,
@@ -296,11 +297,8 @@ function ReadySidebar({
   useEffect(() => {
     if (list.status === "ready") void lifecycle.refreshVisibility();
   }, [lifecycle, list.asOf, list.status]);
-  const [lifecycleDialog, setLifecycleDialog] = useState<{
-    channel: ChannelSummary;
-    action: ChannelLifecycleAction;
-  }>();
   const lifecycleFocus = useRef<string | undefined>(undefined);
+  const lifecycleTrigger = useRef<HTMLElement | undefined>(undefined);
   const sidebar = useSidebarView(
     scope,
     startup.ready &&
@@ -322,6 +320,7 @@ function ReadySidebar({
     [workingIds],
   );
   const handoff = useChannelNavigation();
+  const lifecycleDialog = handoff?.lifecycleDialog;
   const draftParents = handoff?.draftParents ?? [];
   const draftParent =
     target.kind === "page" &&
@@ -382,11 +381,15 @@ function ReadySidebar({
   const [creatingFor, setCreatingFor] = useState<ChannelSummary>();
 
   const [initialGroup, setInitialGroup] = useState("");
-  const [kitError, setKitError] = useState("");
   const pendingChannelCreation = useSyncExternalStore(
     queries.channelCreation.subscribe,
     queries.channelCreation.snapshot,
     queries.channelCreation.snapshot,
+  );
+  const setupNotices = useSyncExternalStore(
+    queries.channelCreation.subscribe,
+    queries.channelCreation.notices,
+    queries.channelCreation.notices,
   );
   useEffect(() => {
     if (list.status === "ready") {
@@ -407,13 +410,19 @@ function ReadySidebar({
   ) => {
     // Let the existing context menu restore focus before opening confirmation.
     requestAnimationFrame(() => {
-      if (mounted.current) setLifecycleDialog({ channel, action });
+      if (mounted.current) handoff?.openLifecycle(channel, action);
     });
   };
   useLayoutEffect(() => {
     if (!lifecycleFocus.current || lifecycleDialog) return;
     const id = lifecycleFocus.current;
     lifecycleFocus.current = undefined;
+    const trigger = lifecycleTrigger.current;
+    lifecycleTrigger.current = undefined;
+    if (trigger?.isConnected) {
+      trigger.focus({ preventScroll: true });
+      return;
+    }
     const rows = [
       ...(sidebar.list.current?.querySelectorAll<HTMLButtonElement>(
         "[data-channel-id]",
@@ -433,6 +442,7 @@ function ReadySidebar({
   const select = useCallback(
     (id: string) => {
       if (!viewer || relay.snapshot().session !== queries) return;
+      clientMetrics.channelIntent(id, window.event);
       writeView(scope, "selected-channel", id);
       void navigator.open({
         version: 1,
@@ -518,7 +528,10 @@ function ReadySidebar({
     const id = await queries.channelCreation.create(input);
     if (!mounted.current || relay.snapshot().session !== queries) return;
     select(id);
-    sidebar.toggle("channels", true);
+    sidebar.toggle(
+      input.setup?.groupId ? `group:${input.setup.groupId}` : "channels",
+      true,
+    );
   };
   // The independent personal catalog remains readable when legacy preferences
   // fail. This fallback is presentation-only: the store still gates moves until
@@ -867,13 +880,19 @@ function ReadySidebar({
           lifecycle={lifecycle}
           close={() => {
             lifecycleFocus.current = lifecycleDialog.channel.id;
-            setLifecycleDialog(undefined);
+            lifecycleTrigger.current = lifecycleDialog.trigger;
+            handoff?.closeLifecycle();
           }}
           completed={() => {
             const id = lifecycleDialog.channel.id;
             lifecycleFocus.current = id;
-            setLifecycleDialog(undefined);
-            if (current?.id === id) {
+            handoff?.closeLifecycle();
+            // Confirmed access loss can already have removed current from the roster.
+            if (
+              (target.kind === "conversation"
+                ? target.channelId
+                : draftParent) === id
+            ) {
               const next = sections
                 .flatMap((section) => section.rows)
                 .find((channel) => channel.id !== id);
@@ -916,7 +935,13 @@ function ReadySidebar({
         />
       )}
       <div className="shell-sidebar" style={{ width: sidebar.width }}>
-        <Panel as="aside" aria-label="Channel sidebar">
+        <Panel
+          as="aside"
+          aria-label="Channel sidebar"
+          aria-busy={
+            preferences.status === "loading" || startup.updating || undefined
+          }
+        >
           <div className={styles.sidebar}>
             {kitState.status === "error" && (
               <p role="alert">
@@ -926,47 +951,23 @@ function ReadySidebar({
                 </Button>
               </p>
             )}
-            {kitError && <p role="alert">{kitError}</p>}
-            {pendingChannelCreation && (
-              <div>
-                <Button size="sm" onClick={() => setCreateChannelOpen(true)}>
-                  Resume unfinished channel setup
+            {setupNotices.map((notice) => (
+              <ToastNotice
+                key={notice.id}
+                title={`Channel setup couldn’t finish: ${notice.name}`}
+                description={notice.error}
+                tone="warning"
+              >
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    queries.channelCreation.dismissNotice(notice.id)
+                  }
+                >
+                  Dismiss
                 </Button>
-                {queries.channelCreation.partialChannel() && (
-                  <>
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        const id = queries.channelCreation.partialChannel();
-                        if (id) select(id);
-                      }}
-                    >
-                      Open partial channel
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={async () => {
-                        if (
-                          window.confirm(
-                            "Keep this channel without finishing setup? Existing members and Canvas stay; pending outbox writes are not cancelled.",
-                          )
-                        ) {
-                          try {
-                            const id =
-                              await queries.channelCreation.keepPartial();
-                            if (id) select(id);
-                          } catch (error) {
-                            setKitError(String(error));
-                          }
-                        }
-                      }}
-                    >
-                      Keep partial channel
-                    </Button>
-                  </>
-                )}
-              </div>
-            )}
+              </ToastNotice>
+            ))}
             {!cached && dmVisibility.status === "error" && (
               <div role="alert">
                 Hidden conversations could not be refreshed.{" "}
@@ -999,7 +1000,7 @@ function ReadySidebar({
                           open: (trigger) => {
                             createChannelTrigger.current = trigger;
                             setInitialGroup(
-                              groups && section.key.startsWith("group:")
+                              section.key.startsWith("group:")
                                 ? section.key.slice(6)
                                 : "",
                             );
@@ -1119,21 +1120,11 @@ function ReadySidebar({
                 <p className={styles.empty}>No channels yet.</p>
               )}
             </SidebarUnread>
-            {cached ? (
+            {cached && connectionError && (
               <p className={styles.preferenceNotice} role="status">
-                {connectionError
-                  ? "Offline · Showing saved conversations."
-                  : "Reconnecting…"}
-                {connectionError && (
-                  <Button onClick={relay.retry}>Retry connection</Button>
-                )}
+                Offline · Showing saved conversations.
+                <Button onClick={relay.retry}>Retry connection</Button>
               </p>
-            ) : (
-              startup.updating && (
-                <p className={styles.preferenceNotice} role="status">
-                  Updating sidebar details…
-                </p>
-              )
             )}
             {preferences.sortErrors?.map(({ group, mode, error }) => (
               <div key={group} className={styles.preferenceNotice} role="alert">
@@ -1282,8 +1273,12 @@ function ReadySidebar({
           session={queries}
           providers={providers}
           groups={groups}
+          destinations={displayedPreferences?.sections ?? []}
+          {...(preferences.data?.groupSource !== "personal"
+            ? { groupSource: "legacy" as const }
+            : {})}
           initialGroup={initialGroup}
-          groupsReady={kitState.status === "ready"}
+          groupsReady={preferences.writable}
         />
       </div>
       <ChannelSidebarResizeHandle

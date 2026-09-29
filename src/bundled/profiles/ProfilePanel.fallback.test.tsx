@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
+stubAvatarBrowserApis();
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
@@ -108,7 +110,9 @@ it("identifies unnamed profiles by public key and scopes shared agent hints to t
       screen.getByRole("heading", { name: "Unknown agent" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("img", { name: "Unknown agent avatar" }),
+      screen
+        .getByRole("img", { name: "Unknown agent avatar" })
+        .querySelector("[data-avatar-shape]"),
     ).toHaveAttribute("data-avatar-shape", "squircle");
 
     const stranger = keypair().pubkey;
@@ -197,10 +201,11 @@ it("keeps an agent-avatar hint without granting ownership or native controls", a
       "No profile metadata is available in this community.",
     );
     expect(screen.getByRole("heading", { name })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: `${name} avatar` })).toHaveAttribute(
-      "data-avatar-shape",
-      "squircle",
-    );
+    expect(
+      screen
+        .getByRole("img", { name: `${name} avatar` })
+        .querySelector("[data-avatar-shape]"),
+    ).toHaveAttribute("data-avatar-shape", "squircle");
     expect(
       await screen.findByText("Not managed on this device."),
     ).toBeInTheDocument();
@@ -257,7 +262,10 @@ it("loads public agent names, avatars and bios without a local agent", async () 
     await screen.findByRole("heading", { name: "Remote agent" });
     expect(screen.getByText("Remote agent bio")).toBeInTheDocument();
     const avatar = screen.getByRole("img", { name: "Remote agent avatar" });
-    expect(avatar).toHaveAttribute("data-avatar-shape", "squircle");
+    expect(avatar.querySelector("[data-avatar-shape]")).toHaveAttribute(
+      "data-avatar-shape",
+      "squircle",
+    );
     expect(avatar.querySelector("img")).toHaveAttribute(
       "src",
       "https://relay.example.test/remote.png",

@@ -1469,6 +1469,34 @@ test("edit capability signs and publishes canonical replacements, rejecting malf
     });
     expect((await h.post("publish", event)).status).toBe(200);
     expect(h.publications).toEqual([JSON.parse(JSON.stringify(event))]);
+    // Preserve older clients' metadata as well as current upload descriptors.
+    for (const imeta of [
+      [
+        "imeta",
+        "url https://example.com/image.png",
+        "m image/png",
+        "dim 320x200",
+      ],
+      [
+        "imeta",
+        `url ${fixtureRelayUrl}/media/${"a".repeat(64)}.pdf`,
+        "m application/pdf",
+        "size 3",
+        `x ${"a".repeat(64)}`,
+        "filename report.pdf",
+      ],
+    ]) {
+      const caption = { ...template, tags: [...template.tags, imeta] };
+      const signed = await h.post("sign", caption);
+      expect(signed.status).toBe(200);
+      const replacement = await signed.json();
+      expect(verifyEvent(replacement)).toBe(true);
+      expect(replacement.tags).toEqual(caption.tags);
+      expect((await h.post("publish", replacement)).status).toBe(200);
+      expect(h.publications.at(-1)).toEqual(
+        JSON.parse(JSON.stringify(replacement)),
+      );
+    }
     for (const route of ["sign", "publish"]) {
       for (const tags of [
         [["h", "c"]],
@@ -1481,6 +1509,8 @@ test("edit capability signs and publishes canonical replacements, rejecting malf
           ["e", h.event.id, "", "reply"],
         ],
         [...event.tags, ["e", "a".repeat(64)]],
+        [...event.tags, ["p", "a".repeat(64)]],
+        [...event.tags, ["imeta", 42]],
       ])
         expect((await h.post(route, { ...event, tags })).status).toBe(400);
       expect((await h.post(route, { ...event, content: " " })).status).toBe(
@@ -1490,7 +1520,7 @@ test("edit capability signs and publishes canonical replacements, rejecting malf
         (await h.post(route, { ...event, content: "x".repeat(32001) })).status,
       ).toBe(400);
     }
-    expect(h.publications).toHaveLength(1);
+    expect(h.publications).toHaveLength(3);
   } finally {
     await h.close();
   }
@@ -1728,6 +1758,52 @@ test("status signing and publication preserve scoped replacements and explicit c
   }
 });
 
+test("custom emoji sets sign and publish only as one canonical own coordinate", async () => {
+  const h = await harness((call) =>
+    Response.json({ accepted: true, event_id: call.body.id }),
+  );
+  try {
+    await h.start();
+    expect((await (await h.get("session")).json()).writeKinds).toContain(30030);
+    const template = {
+      kind: 30030,
+      created_at: 1700000000,
+      content: "",
+      tags: [
+        ["d", "buzz:custom-emoji"],
+        ["emoji", "party", "https://relay.test/media/party.png"],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event).toMatchObject(template);
+    expect((await h.post("publish", event)).status).toBe(200);
+    expect(h.publications.at(-1)).toEqual(JSON.parse(JSON.stringify(event)));
+    for (const tags of [
+      [["d", "other"]],
+      [
+        ["d", "buzz:custom-emoji"],
+        ["emoji", "Party", "https://relay.test/p.png"],
+      ],
+      [
+        ["d", "buzz:custom-emoji"],
+        ["emoji", "party", "https://relay.test/a.png"],
+        ["emoji", "party", "https://relay.test/b.png"],
+      ],
+      [
+        ["d", "buzz:custom-emoji"],
+        ["h", "channel"],
+      ],
+    ])
+      expect((await h.post("sign", { ...template, tags })).status).toBe(400);
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
 test("memory reads use captured relay and owner, not submitted identity/filter authority, through HTTP host and transport", async () => {
   const owner = new Uint8Array(32);
   owner[31] = 7;
@@ -1800,6 +1876,42 @@ test("memory reads use captured relay and owner, not submitted identity/filter a
       transport.readAgentMemories(author, new AbortController().signal),
     ).rejects.toMatchObject({ name: "MemoryDenied" });
     expect(h.calls).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+});
+
+test("broker advertises, signs and publishes bounded edits through the real HTTP contract", async () => {
+  const h = await harness(() => new Response("[]"));
+  try {
+    await h.start();
+    const session = await (await h.get("session")).json();
+    expect(session.writeKinds).toContain(40003);
+    const template = {
+      kind: 40003,
+      content: "corrected text",
+      created_at: 1700000000,
+      tags: [
+        ["h", "c"],
+        ["e", h.event.id],
+        ["client-id", "edit-test"],
+      ],
+    };
+    const signed = await h.post("sign", template);
+    expect(signed.status).toBe(200);
+    const event = await signed.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event.pubkey).toBe(h.event.pubkey);
+    const published = await h.post("publish", event);
+    expect(published.status).toBe(200);
+    expect(h.publications.some((item) => item.id === event.id)).toBe(true);
+    for (const route of ["sign", "publish"]) {
+      const rejected = await h.post(route, {
+        ...event,
+        tags: [...event.tags, ["p", "b".repeat(64)]],
+      });
+      expect(rejected.status).toBe(400);
+    }
   } finally {
     await h.close();
   }
@@ -2569,6 +2681,110 @@ test("server-wide stats work without a default community and do not start upstre
     });
     expect(h.calls).toEqual([]);
   } finally {
+    await h.close();
+  }
+});
+
+test("community setup signs explicit owner intent without inventory or enrollment", async () => {
+  const key = new Uint8Array(32);
+  key[31] = 7;
+  const viewer = getPublicKey(key);
+  const pubkey = "ab".repeat(32);
+  const h = await harness(() => {
+    throw new Error("No relay read permitted");
+  });
+  const route = `${encodeURIComponent(fixtureRelayUrl)}/resolve-agent-community`;
+  const input = { pubkey, owner: viewer, confirmed: true };
+  try {
+    for (const invalid of [
+      { ...input, confirmed: false },
+      { ...input, owner: pubkey },
+      { ...input, pubkey: viewer },
+      { ...input, pubkey: "invalid" },
+      { ...input, extra: true },
+    ])
+      expect((await h.post(route, invalid)).status).toBe(400);
+    const response = await h.post(route, input);
+    expect(response.status).toBe(200);
+    const resolution = await response.json();
+    expect(resolution).toMatchObject({
+      pubkey,
+      owner: viewer,
+      relayUrl: fixtureRelayUrl.replace(/^https:/, "wss:"),
+    });
+    const { schnorr } = await import("@noble/curves/secp256k1.js");
+    expect(
+      schnorr.verify(
+        Buffer.from(resolution.signature, "hex"),
+        createHash("sha256")
+          .update(`nostr:agent-community:${pubkey}:${resolution.relayUrl}`)
+          .digest(),
+        Buffer.from(viewer, "hex"),
+      ),
+    ).toBe(true);
+    expect(h.calls).toHaveLength(0);
+    expect(h.publications).toHaveLength(0);
+  } finally {
+    await h.close();
+  }
+});
+
+test("details routes are narrow, require the live owner, and do not widen lifecycle/outbox", async () => {
+  const h = await harness(success);
+  let live;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const template = {
+      kind: 9002,
+      created_at: 1700000000,
+      content: "",
+      tags: [
+        ["h", "11111111-1111-4111-8111-111111111111"],
+        ["name", "renamed"],
+        ["about", ""],
+        ["visibility", "private"],
+      ],
+    };
+    expect(transport.writer.kinds).not.toContain(9002);
+    expect((await h.post("sign", template)).status).toBe(400);
+    expect((await h.post("channel-lifecycle-sign", template)).status).toBe(400);
+    for (const invalid of [
+      { ...template, kind: 9001 },
+      { ...template, content: "extra" },
+      { ...template, tags: [...template.tags, ["archived", "true"]] },
+      {
+        ...template,
+        tags: [...template.tags.slice(0, 3), ["visibility", "open"]],
+      },
+      { ...template, tags: [template.tags[0], ["topic", "x"]] },
+      {
+        ...template,
+        tags: [template.tags[0], ["name", "n"], ["about", "x".repeat(1001)]],
+      },
+    ]) {
+      for (const route of ["channel-details-sign", "channel-details-publish"])
+        expect((await h.post(route, invalid)).status).toBe(400);
+    }
+    const signal = new AbortController().signal;
+    const event = await transport.channelDetails.sign(template, signal);
+    expect(verifyEvent(event)).toBe(true);
+    expect(event).toMatchObject(template);
+    expect((await h.post("publish", event)).status).toBe(400);
+    await expect(
+      transport.channelDetails.publish(event, signal),
+    ).rejects.toBeInstanceOf(PublishRejected);
+    expect(h.publications).toHaveLength(0);
+    live = await openBrokerSocket(transport);
+    await transport.channelDetails.publish(event, signal);
+    expect(h.publications).toHaveLength(1);
+    const foreign = finalizeEvent(
+      structuredClone(template),
+      new Uint8Array(32).fill(5),
+    );
+    expect((await h.post("channel-details-publish", foreign)).status).toBe(400);
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    live?.dispose();
     await h.close();
   }
 });

@@ -1,3 +1,4 @@
+import { channelVisibility } from "./channel-details-protocol";
 import { sessionMetadata } from "../sessions/metadata";
 import { objectBody } from "./body";
 import { newer, hasTag, tag, type RelayEvent } from "./events";
@@ -10,6 +11,8 @@ export class DiscoveryState {
   private complete = false;
   private cached = new Set<string>();
   accessRevision = 0;
+  /** A scan that drops evidence cannot certify completeness. */
+  overflowRevision = 0;
   private rosters = new Map<string, RelayEvent>();
   private metadata = new Map<string, RelayEvent>();
   constructor(
@@ -27,7 +30,10 @@ export class DiscoveryState {
     const id = tag(event, "d");
     if (!id) return false;
     const map = event.kind === 39002 ? this.rosters : this.metadata;
-    if (!map.has(id) && map.size >= this.capacity) return false;
+    if (!map.has(id) && map.size >= this.capacity) {
+      this.overflowRevision++;
+      return false;
+    }
     const previous = map.get(id);
     const next = newer(previous, event);
     // Only this version or a newer one confirms saved membership. An older
@@ -204,6 +210,14 @@ export class DiscoveryState {
         : {}),
       ...(this.cached.has(id) ? { cached: true as const } : {}),
       name: this.name(id),
+      ...(event
+        ? {
+            visibility: channelVisibility(event),
+            ...(channelType !== "session"
+              ? { description: tag(event, "about") ?? "" }
+              : {}),
+          }
+        : {}),
       members: Object.freeze(
         [
           ...new Set(

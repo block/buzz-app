@@ -5,10 +5,12 @@ import { ChannelNavigationProvider } from "../features/channel-navigation/Channe
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Button } from "../shared/design-system/ui/Button";
 import { AgentWakeNotice } from "../features/agents/AgentWakeNotice";
+import { UpdateNotice } from "../features/updates/UpdateNotice";
 import { useEffect, useSyncExternalStore } from "react";
 import { registerAppShortcuts } from "./shortcuts";
 import type { AppServices } from "./services";
 import { Settings } from "./Settings";
+import { SettingsSidebar } from "./SettingsSidebar";
 import { RecoveryScreen } from "./RecoveryScreen";
 import { PageView } from "../features/pages/PageView";
 import { useAppNavigation } from "./navigation";
@@ -87,20 +89,49 @@ function ConnectedApp({ services }: { services: AppServices }) {
     <ToastProvider>
       <ChannelNavigationProvider relay={services.relay}>
         <AppShell
-          sidebar={() => (
-            <ChannelSidebar
-              relay={services.relay}
-              navigator={services.navigation}
-              providers={services.channelTemplates}
-              target={route.target}
-              sessionsEnabled={route.pages.some(
-                (page) => page.pluginId === "buzz.sessions",
-              )}
-              agentsEnabled={route.pages.some(
-                (page) => page.key === "buzz.agents/agents",
-              )}
-            />
-          )}
+          sidebar={() =>
+            settings ? (
+              <SettingsSidebar
+                cards={services.settingsCards}
+                communities={services.communities}
+                {...(route.target.kind === "settings" && route.target.section
+                  ? { selected: route.target.section }
+                  : {})}
+                onBack={route.leaveSettings}
+                onSection={(section) => {
+                  const client = services.communities.snapshot();
+                  void services.navigation.open({
+                    version: 1,
+                    kind: "settings",
+                    section,
+                    ...(client.viewer && client.selected
+                      ? {
+                          scope: {
+                            viewer: client.viewer,
+                            communityOrigin: communityDestination(
+                              client.selected,
+                            ).url,
+                          },
+                        }
+                      : { scope: null }),
+                  });
+                }}
+              />
+            ) : (
+              <ChannelSidebar
+                relay={services.relay}
+                navigator={services.navigation}
+                providers={services.channelTemplates}
+                target={route.target}
+                sessionsEnabled={route.pages.some(
+                  (page) => page.pluginId === "buzz.sessions",
+                )}
+                agentsEnabled={route.pages.some(
+                  (page) => page.key === "buzz.agents/agents",
+                )}
+              />
+            )
+          }
           navigationControls={
             <NavigationControls navigation={services.navigation} />
           }
@@ -124,11 +155,13 @@ function ConnectedApp({ services }: { services: AppServices }) {
           companion={pageOwnsCompanion ? undefined : companion}
           pages={startup === "ready" ? route.pages : []}
           selected={route.selected}
+          navigationAttempt={route.state.attempt.id}
           onSelect={select}
           tone={presentation.tone}
           workspace={startup === "ready" && route.page?.layout === "workspace"}
         >
           <AgentWakeNotice control={services.agentControl} />
+          <UpdateNotice updates={services.updates} />
           {startup === "recovery" && !settings ? (
             <RecoveryScreen plugins={plugins} />
           ) : (!route.state.ingress && route.failure) ||
@@ -151,6 +184,8 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 Open Settings
               </Button>
             </div>
+          ) : route.waiting ? (
+            <p role="status">Opening destination…</p>
           ) : settings ? (
             <Settings
               plugins={plugins}
@@ -162,7 +197,9 @@ function ConnectedApp({ services }: { services: AppServices }) {
               shortcutBindings={services.shortcutBindings}
               notifications={services.notifications}
               agentControl={services.agentControl}
+              updates={services.updates}
               navigation={route.request}
+              navigationPane
               onSection={(section) => {
                 const client = services.communities.snapshot();
                 void services.navigation.open({
@@ -181,7 +218,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 });
               }}
             />
-          ) : route.waiting || startup === "loading" ? (
+          ) : startup === "loading" ? (
             <p role="status">Opening destination…</p>
           ) : route.page ? (
             <PageView

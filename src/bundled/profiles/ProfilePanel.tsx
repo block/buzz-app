@@ -1,3 +1,4 @@
+import { useAgentOwnerEvidence } from "../../features/profiles/useAgentOwnerEvidence";
 import { useAgentControlRefresh } from "../../features/agents/control-react";
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
 import {
@@ -27,13 +28,14 @@ import {
 import {
   type ReactNode,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
 import { CopyIcon } from "../../shared/design-system/icons/index";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { AgentAvatar } from "../../features/agents/AgentAvatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
@@ -41,7 +43,7 @@ import { ProfileActivity } from "./ProfileActivity";
 import type { PanelProps } from "../../features/panels/service";
 import {
   profileAgentHint,
-  profileKey,
+  profilePanelKey,
   profileTarget,
 } from "../../features/profiles/target";
 import { formatPublicKey } from "../../shared/identity/public-key";
@@ -49,10 +51,7 @@ import { selectProfiles } from "../../features/relay/profile-selection";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import {
-  ProfileAgentIdentity,
-  useAgentOwnerEvidence,
-} from "./ProfileAgentIdentity";
+import { ProfileAgentIdentity } from "./ProfileAgentIdentity";
 import styles from "./Profiles.module.css";
 
 const emptyState: AgentControlState = {
@@ -82,7 +81,7 @@ export function ProfilePanel({
   refreshControl?: boolean;
 }) {
   const connection = useRelayConnection(relay);
-  const pubkey = profileKey(target);
+  const pubkey = profilePanelKey(target);
   if (!pubkey) return <p>Unsupported profile.</p>;
   if (connection.status !== "ready")
     return <p>Connect to a community to view this profile.</p>;
@@ -198,6 +197,9 @@ function ProfileDetails({
   const knownAgent = agentPubkeys.has(pubkey);
   // Navigation carries appearance, not the evidence used by private controls.
   const displayAgent = knownAgent || agentHint;
+  const thinkingId = useId();
+  const describeThinking =
+    knownAgent && tab === "info" && presence !== "unknown";
   const ownership = useAgentOwnerEvidence(
     session,
     knownAgent ? pubkey : undefined,
@@ -333,6 +335,7 @@ function ProfileDetails({
       ref={region}
       data-buzz-ui=""
       aria-label="Profile details"
+      aria-describedby={describeThinking ? thinkingId : undefined}
       tabIndex={-1}
       className={styles.root}
     >
@@ -349,11 +352,15 @@ function ProfileDetails({
         />
       ) : (
         <>
-          <div
-            className={`${styles.identity} ${picture ? styles.withPortrait : ""}`}
-          >
-            <div className={picture ? styles.portrait : undefined}>
-              <Avatar
+          <div className={styles.identity}>
+            <div className={styles.portrait}>
+              <AgentAvatar
+                session={session}
+                agentPubkey={pubkey}
+                channelId={context?.channelId}
+                thinkingDescriptionId={
+                  describeThinking ? thinkingId : undefined
+                }
                 src={picture}
                 alt={
                   tab === "info" && presence !== "unknown"
@@ -361,7 +368,7 @@ function ProfileDetails({
                     : `${name} avatar`
                 }
                 fallback={name}
-                size={picture ? "fill" : "large"}
+                size="fill"
                 shape={displayAgent ? "squircle" : "circle"}
                 statusBadge={presence === "unknown" ? undefined : presence}
               />
@@ -428,11 +435,13 @@ function ProfileDetails({
                         onDeleted={close}
                       />
                     )}
-                    <ProfileActivity
-                      session={session}
-                      pubkey={pubkey}
-                      context={context}
-                    />
+                    {knownAgent && (
+                      <ProfileActivity
+                        session={session}
+                        pubkey={pubkey}
+                        context={context}
+                      />
+                    )}
                     {control &&
                       (!knownAgent || ownership.settled) &&
                       !runtimePending &&

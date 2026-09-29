@@ -47,32 +47,37 @@ function fixture(t) {
   git("init", "-q");
   git("config", "user.name", "Hook Test");
   git("config", "user.email", "hook-test@example.invalid");
+  // Git 2.50+ commits detach `maintenance run --auto`, whose worktree-prune
+  // task deletes a `.git/worktrees/<id>` entry that has no gitdir or lock yet.
+  // The sibling `worktree add` below would race that background process.
+  git("config", "maintenance.auto", "false");
   write("untouched.ts", "export const unrelated = 1;\n");
   write("partial.ts", "export const first = 1;\nexport const second = 2;\n");
   git("add", ".");
   git("commit", "-qm", "fixture base");
-  for (const file of [
+  // The Biome config loads lint plugins by path; the fixture needs them too.
+  const biomePlugins = JSON.parse(
+    readFileSync(path.join(root, "biome.json"), "utf8"),
+  ).overrides.flatMap((override) => override.plugins ?? []);
+  const configFiles = [
     "biome.json",
     "package.json",
     "lefthook.yml",
     "scripts",
     ".githooks",
-  ])
+    ...biomePlugins.map((plugin) => path.normalize(plugin)),
+  ];
+  for (const file of configFiles) {
+    mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
     cpSync(path.join(root, file), path.join(dir, file), { recursive: true });
+  }
   symlinkSync(path.join(root, "bin"), path.join(dir, "bin"), "dir");
   symlinkSync(
     path.join(root, "node_modules"),
     path.join(dir, "node_modules"),
     "dir",
   );
-  git(
-    "add",
-    "biome.json",
-    "package.json",
-    "lefthook.yml",
-    "scripts",
-    ".githooks",
-  );
+  git("add", ...configFiles);
   git("commit", "-qm", "hook configuration");
   const sibling = path.join(dir, "sibling");
   git("worktree", "add", "--detach", sibling);

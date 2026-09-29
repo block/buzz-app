@@ -13,6 +13,8 @@ pub(crate) struct Process {
     session: u32,
     #[cfg(windows)]
     job: std::os::windows::io::OwnedHandle,
+    #[cfg(windows)]
+    terminated: bool,
     stopped: bool,
 }
 impl Process {
@@ -37,6 +39,7 @@ impl Process {
             Ok(Self {
                 child,
                 job,
+                terminated: false,
                 stopped: false,
             })
         }
@@ -116,15 +119,20 @@ impl Process {
         }
         #[cfg(windows)]
         {
-            // A windowless listener has no cooperative stop signal. Terminate
-            // the whole job, then confirm that every member has exited.
+            // A windowless listener has no cooperative stop signal. Terminating
+            // the job only requests exit, so wait on every member listed before
+            // it. A process that joined after listing, or one an earlier
+            // attempt terminated, is missing from the list and unconfirmable.
+            if self.terminated {
+                return Err("Agent descendants have not exited; shutdown is incomplete".into());
+            }
+            let members = job::members(&self.job);
+            self.terminated = true;
             job::terminate(&self.job)?;
+            let (members, joined) = members?;
             let deadline = Instant::now() + Duration::from_secs(5);
-            while job::active(&self.job)? != 0 {
-                if Instant::now() >= deadline {
-                    return Err("Agent descendants have not exited; shutdown is incomplete".into());
-                }
-                std::thread::sleep(Duration::from_millis(25));
+            if !job::exited(&members, deadline) || job::joined(&self.job)? != joined {
+                return Err("Agent descendants have not exited; shutdown is incomplete".into());
             }
             self.child
                 .wait()
@@ -194,18 +202,25 @@ mod job {
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use std::os::windows::process::CommandExt;
     use std::process::{Child, Command};
-    use windows_sys::Win32::Foundation::{GetLastError, ERROR_NO_MORE_FILES, INVALID_HANDLE_VALUE};
+    use std::time::Instant;
+    use windows_sys::Win32::Foundation::{
+        GetLastError, ERROR_INVALID_PARAMETER, ERROR_NO_MORE_FILES, INVALID_HANDLE_VALUE,
+        WAIT_OBJECT_0,
+    };
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
     };
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
+        AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob,
+        JobObjectBasicAccountingInformation, JobObjectBasicProcessIdList,
         JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
         TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
     use windows_sys::Win32::System::Threading::{
-        OpenThread, ResumeThread, CREATE_NO_WINDOW, CREATE_SUSPENDED, THREAD_SUSPEND_RESUME,
+        OpenProcess, OpenThread, ResumeThread, WaitForSingleObject, CREATE_NO_WINDOW,
+        CREATE_SUSPENDED, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+        THREAD_SUSPEND_RESUME,
     };
 
     /// Unnamed and without breakaway: members cannot leave, and closing the
@@ -265,7 +280,8 @@ mod job {
         Ok(())
     }
 
-    pub(super) fn active(job: &OwnedHandle) -> Result<u32> {
+    /// Every process ever associated with the job, including exited ones.
+    pub(super) fn joined(job: &OwnedHandle) -> Result<u32> {
         let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
         if unsafe {
             QueryInformationJobObject(
@@ -279,7 +295,73 @@ mod job {
         {
             return Err("Could not inspect agent descendants".into());
         }
-        Ok(info.ActiveProcesses)
+        Ok(info.TotalProcesses)
+    }
+
+    /// Handles to the active members, with the joined count read before
+    /// listing. Termination drops a member from the active list at once; only
+    /// its signaled process object confirms that it has exited.
+    pub(super) fn members(job: &OwnedHandle) -> Result<(Vec<OwnedHandle>, u32)> {
+        let joined = joined(job)?;
+        // JOBOBJECT_BASIC_PROCESS_ID_LIST with room for any listener tree.
+        #[repr(C)]
+        struct List {
+            assigned: u32,
+            listed: u32,
+            ids: [usize; 1024],
+        }
+        let mut list = List {
+            assigned: 0,
+            listed: 0,
+            ids: [0; 1024],
+        };
+        let queried = unsafe {
+            QueryInformationJobObject(
+                job.as_raw_handle(),
+                JobObjectBasicProcessIdList,
+                (&mut list as *mut List).cast(),
+                std::mem::size_of_val(&list) as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        if queried == 0 || list.listed < list.assigned {
+            return Err("Could not inspect agent descendants".into());
+        }
+        let access = PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION;
+        let mut members = Vec::new();
+        for &id in list.ids.iter().take(list.listed as usize) {
+            let handle = unsafe { OpenProcess(access, 0, id as u32) };
+            if handle.is_null() {
+                // An identifier resolves until its process object is deleted.
+                if unsafe { GetLastError() } == ERROR_INVALID_PARAMETER {
+                    continue;
+                }
+                return Err("Could not inspect agent descendants".into());
+            }
+            let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
+            // A reused identifier names a process outside this job.
+            let mut member = 0;
+            if unsafe { IsProcessInJob(handle.as_raw_handle(), job.as_raw_handle(), &mut member) }
+                == 0
+            {
+                return Err("Could not inspect agent descendants".into());
+            }
+            if member != 0 {
+                members.push(handle);
+            }
+        }
+        Ok((members, joined))
+    }
+
+    /// Wait for each member's process object within the Stop deadline.
+    pub(super) fn exited(members: &[OwnedHandle], deadline: Instant) -> bool {
+        members.iter().all(|member| {
+            let left = deadline
+                .saturating_duration_since(Instant::now())
+                .as_millis() as u32;
+            let waited = unsafe { WaitForSingleObject(member.as_raw_handle(), left) };
+            waited == WAIT_OBJECT_0
+        })
     }
 
     // Same exactly-one-thread check as the host command container.

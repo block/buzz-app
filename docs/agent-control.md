@@ -364,9 +364,11 @@ supervisor itself releases ownership without confirmed teardown.
 On Windows the session is a kill-on-close job object. The listener starts
 suspended and runs only after joining it; a failed assignment aborts Start. Stop
 terminates the job immediately, without Unix's two-second cooperative cancel, and
-waits until it is empty. The windowless supervisor can still be ended by an
-enclosing kill-on-close launcher job. Profile, config and temporary directories
-inherit Windows ACLs; they are not verified to match Unix 0700/0600 modes.
+waits for each process still in the job to exit; one joining meanwhile fails Stop.
+A process already exiting on its own is no longer listed, so its final teardown
+can finish after ownership is released. The windowless supervisor can still
+be ended by an enclosing kill-on-close launcher job. Profile, config and temporary
+directories inherit Windows ACLs; they are not verified to match Unix 0700/0600 modes.
 
 Non-Pi harnesses get the bundled tools first on PATH, then Windows' native PATH;
 on Linux `~/.local/bin` and `/usr/local/bin` precede the system directories, which

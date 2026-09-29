@@ -75,7 +75,6 @@ fn fixture_server(response: String) -> (Url, std::thread::JoinHandle<(String, St
                             .strip_prefix("content-length: ")
                             .map(str::to_owned)
                     })
-
                     .map(|value| value.parse().unwrap())
                     .unwrap_or(0);
                 if body.len() == length {
@@ -367,7 +366,6 @@ async fn signing_is_verifiable_and_does_not_export_a_key() {
         .is_err());
 }
 
-
 #[test]
 fn workflow_history_is_fixed_and_cannot_retarget_native_http() {
     let id = "11111111-1111-4111-8111-111111111111";
@@ -504,7 +502,6 @@ fn shared_kind_five_signer_accepts_message_and_reaction_deletion_only_in_broker_
     event.tags.push(vec!["a".into(), "30620:other:id".into()]);
     assert!(validate_event("https://relay.test", &event).is_err());
 }
-
 
 #[test]
 fn native_write_commands_reach_handlers_through_production_ipc() {
@@ -1128,6 +1125,7 @@ fn media_ranges_are_single_and_bounded() {
         media_range("bytes=100-999999999").as_deref(),
         Some("bytes=100-4194403")
     );
+    assert!(media_range(&format!("bytes={}-", u64::MAX)).is_none());
     for value in [
         "bytes=-500",
         "bytes=5-1",
@@ -1271,4 +1269,22 @@ async fn upload_signs_the_exact_bytes_it_sends() {
     assert!(upload(&IdentityHost::fixture(), url, None, Vec::new())
         .await
         .is_err());
+}
+
+#[test]
+fn uploads_cancel_before_or_during_and_reject_duplicates() {
+    let uploads = Uploads::default();
+    let mut running = uploads.start("a").unwrap().unwrap();
+    assert!(uploads.start("a").is_err());
+    uploads.cancel("a");
+    assert!(running.try_recv().is_ok());
+    uploads.finish("a");
+    // A cancel that overtakes its upload stops it from starting, once.
+    uploads.cancel("b");
+    assert!(uploads.start("b").unwrap().is_none());
+    assert!(uploads.start("b").unwrap().is_some());
+    for id in ["", "a/b", &"x".repeat(65)] {
+        assert!(upload_id(Some(id)).is_err(), "{id}");
+    }
+    assert!(upload_id(None).is_err());
 }

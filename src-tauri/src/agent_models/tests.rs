@@ -76,7 +76,7 @@ impl Connection for Arc<Fake> {
                 ("endpoint-two", "Endpoint Two"),
             ]
             .into_iter()
-            .filter(|(id, _)| filter.as_ref().is_none_or(|f| f.matches(id)))
+            .filter(|(id, _)| filter.as_ref().map_or(true, |f| f.matches(id)))
             .map(|(id, name)| buzz_agent::catalog::ModelEntry {
                 id: id.into(),
                 name: name.into(),

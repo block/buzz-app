@@ -159,6 +159,12 @@ pub enum EffortSelection {
 impl HarnessEdit {
     /// Validate structure only; authentication and available choices require live discovery.
     pub fn validate_configuration(&self) -> Result<()> {
+        if matches!(self.configuration, Some(AiConfiguration::Default))
+            && is_buzz_agent(&self.command)
+            && self.model.trim().is_empty()
+        {
+            return Err(missing_buzz_agent_model());
+        }
         match &self.configuration {
             Some(AiConfiguration::Default) if !self.model.is_empty() => {
                 return Err("Default configuration must not contain a model override".into());
@@ -178,6 +184,25 @@ impl HarnessEdit {
         }
         Ok(())
     }
+}
+
+pub(crate) fn validate_buzz_agent_model(harness: &HarnessEdit) -> Result<()> {
+    if is_buzz_agent(&harness.command) && harness.model.trim().is_empty() {
+        return Err(missing_buzz_agent_model());
+    }
+    Ok(())
+}
+
+fn is_buzz_agent(command: &str) -> bool {
+    Path::new(command)
+        .file_name()
+        .and_then(|name| name.to_str())
+        == Some("buzz-agent")
+}
+
+fn missing_buzz_agent_model() -> String {
+    "Buzz Agent requires a model; choose Advanced and select one before creating or starting it"
+        .into()
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

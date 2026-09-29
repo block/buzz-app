@@ -1271,9 +1271,9 @@ pub(crate) async fn agent_control_create_prepare(
         };
         let result = serde_json::json!({"id": agent.id, "pubkey": agent.key.pubkey()});
         // Unchanged retries retain both the identity and the in-flight commit fence.
-        if existing
-            .is_none_or(|pending| pending.edit != edit || pending.effective_edit != effective_edit)
-        {
+        if existing.map_or(true, |pending| {
+            pending.edit != edit || pending.effective_edit != effective_edit
+        }) {
             host.creating = Some(Arc::new(PreparedCreation {
                 request_id,
                 agent,

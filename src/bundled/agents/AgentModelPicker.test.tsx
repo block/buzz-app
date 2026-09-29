@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { StrictMode, useState } from "react";
+import { StrictMode, useState, type FormEvent } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -118,6 +118,65 @@ it("missing host metadata preserves custom entry without issuing incompatible IP
   }
 });
 
+it("does not warn when Advanced owns a hidden model override", async () => {
+  const f = controlFixture();
+  f.agent.harness.command = "buzz-agent";
+  f.agent.harness.provider = "databricks_v2";
+  f.agent.harness.environmentKeys = ["BUZZ_AGENT_MODEL"];
+  const run = vi.fn(async () => ({
+    integration: {
+      kind: "databricks" as const,
+      host: "https://workspace.example.com",
+    },
+    models: [
+      {
+        id: "selected-model",
+        name: "Selected model",
+        effort: { status: "unsupported" as const },
+      },
+    ],
+    discovery: {
+      source: "databricksCatalog" as const,
+      authentication: "authenticated" as const,
+      catalog: "remote" as const,
+    },
+    modelOverridden: false,
+    disconnected: false,
+  }));
+  f.host.models = { begin: async () => 1, run, cancel: vi.fn(async () => {}) };
+  const control = createAgentControl(f.host);
+  const draft = {
+    ...agentDraft(f.agent),
+    model: "selected-model",
+    configuration: {
+      mode: "advanced" as const,
+      effort: { kind: "unsupported" as const },
+    },
+  };
+  const onValidated = vi.fn();
+  const user = userEvent.setup();
+  const view = render(
+    <AgentModelPicker
+      draft={draft}
+      control={control}
+      defaults={{ host: "https://workspace.example.com", filter: "" }}
+      capabilities={{ modelDiscovery: "databricks" }}
+      onChange={vi.fn()}
+      onValidated={onValidated}
+    />,
+  );
+  try {
+    await user.click(screen.getByRole("button", { name: "Refresh models" }));
+    await waitFor(() => expect(onValidated).toHaveBeenLastCalledWith(draft));
+    expect(
+      screen.queryByText(/saved BUZZ_AGENT_MODEL override/),
+    ).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
 it("context change cancels a pending catalog and rejects its late result", async () => {
   const f = controlFixture();
   let release!: (
@@ -168,6 +227,63 @@ it("context change cancels a pending catalog and rejects its late result", async
     ).not.toBeInTheDocument();
     expect(props.onChange).not.toHaveBeenCalled();
     expect(run).toHaveBeenCalledOnce();
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("checks a replacement OpenAI key on Enter without submitting the editor form", async () => {
+  const f = controlFixture();
+  const run = vi.fn(async () => ({
+    integration: { kind: "openai" as const },
+    models: [{ id: "gpt-5", name: "gpt-5" }],
+    modelOverridden: false,
+    disconnected: false,
+  }));
+  f.host.models = { begin: async () => 1, run, cancel: async () => {} };
+  const control = createAgentControl(f.host);
+  const submitted = vi.fn((event: FormEvent) => event.preventDefault());
+  const onChange = vi.fn();
+  const user = userEvent.setup();
+  const view = render(
+    <form onSubmit={submitted}>
+      <AgentModelPicker
+        capabilities={{ modelDiscovery: "databricks", openai: true }}
+        draft={{
+          ...agentDraft(f.agent),
+          command: "buzz-agent",
+          provider: "openai",
+          environment: { OPENAI_COMPAT_API_KEY: "saved-key" },
+        }}
+        control={control}
+        defaults={undefined}
+        onChange={onChange}
+      />
+      <button type="submit">Save changes</button>
+    </form>,
+  );
+  try {
+    const input = screen.getByLabelText("Open AI API Key");
+    await user.type(input, "replacement-key");
+    await user.keyboard("{Enter}");
+
+    expect(input).toHaveValue("");
+    expect(submitted).not.toHaveBeenCalled();
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        action: "connect",
+        integration: {
+          kind: "openai",
+          settings: { apiKey: "replacement-key" },
+        },
+      }),
+    );
+    expect(onChange).toHaveBeenCalledWith({
+      environment: { OPENAI_COMPAT_API_KEY: "replacement-key" },
+    });
   } finally {
     view.unmount();
     control.dispose();

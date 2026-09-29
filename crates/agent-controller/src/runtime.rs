@@ -895,6 +895,10 @@ impl Controller {
         // Blank fields inherit agent defaults at each start; never saved back.
         let agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);
         let bundle = self.bundle.as_ref().map_err(Clone::clone)?;
+        let harness = crate::build_defaults().resolve(&agent.harness, &agent.environment);
+        crate::config::validate_buzz_agent_model(&harness)?;
+        #[cfg(not(unix))]
+        let ownership = crate::ownership::Ownership::acquire(&self.ownership_root, &agent.id)?;
         let stored;
         let key = match supplied {
             Some(key) => key,

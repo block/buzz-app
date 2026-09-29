@@ -269,6 +269,11 @@ function ConfiguredAgentModelPicker({
       }
     }
   };
+  const submitApiKey = () => {
+    const submittedKey = apiKey.trim();
+    if (!submittedKey || disabled || busy) return;
+    void run("connect", false, submittedKey);
+  };
   // Selecting Codex starts a headless refresh; defer one microtask so StrictMode's
   // retired effect cannot start a second native probe. Context cleanup aborts it.
   // biome-ignore lint/correctness/useExhaustiveDependencies: key captures the discovery context; draft labels/effort must not restart discovery.
@@ -375,11 +380,16 @@ function ConfiguredAgentModelPicker({
                 disabled={disabled || busy}
                 value={apiKey}
                 onChange={(event) => setApiKey(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  if (!event.nativeEvent.isComposing) submitApiKey();
+                }}
               />
             </Field>
             <Button
               disabled={disabled || busy || !apiKey.trim()}
-              onClick={() => void run("connect", false, apiKey.trim())}
+              onClick={submitApiKey}
             >
               Check key and load models
             </Button>

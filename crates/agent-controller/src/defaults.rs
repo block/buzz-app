@@ -46,8 +46,10 @@ impl BuildDefaults {
                 });
             }
         }
-        if let Some(model) = env.get("BUZZ_AGENT_MODEL") {
-            harness.model.clone_from(model);
+        if !advanced_model_is_authoritative(&harness) {
+            if let Some(model) = env.get("BUZZ_AGENT_MODEL") {
+                harness.model.clone_from(model);
+            }
         }
         if matches!(harness.configuration, Some(crate::AiConfiguration::Default)) {
             harness.model.clear();
@@ -57,6 +59,7 @@ impl BuildDefaults {
 
     /// Next-start selectors safe to project. Environment values stay native:
     /// a selector an environment override decides is named by its key only.
+    /// Explicit Advanced model selections are authoritative instead.
     pub(crate) fn launch_view(
         &self,
         saved: &HarnessEdit,
@@ -69,17 +72,21 @@ impl BuildDefaults {
         let (model_key, provider_key) = selected.keys.unzip();
         let provider_env = provider_key.and_then(set);
         // A blank buzz-agent model follows the provider, which may be hidden.
-        let model_env = model_key.and_then(set).or_else(|| {
-            if model_key != Some("BUZZ_AGENT_MODEL") || !saved.model.is_empty() {
-                None
-            } else if provider_env.is_some() {
-                provider_env
-            } else if databricks(&public.provider) {
-                set("DATABRICKS_MODEL")
-            } else {
-                None
-            }
-        });
+        let model_env = if advanced_model_is_authoritative(&public) {
+            None
+        } else {
+            model_key.and_then(set).or_else(|| {
+                if model_key != Some("BUZZ_AGENT_MODEL") || !saved.model.is_empty() {
+                    None
+                } else if provider_env.is_some() {
+                    provider_env
+                } else if databricks(&public.provider) {
+                    set("DATABRICKS_MODEL")
+                } else {
+                    None
+                }
+            })
+        };
         LaunchView {
             model: selected
                 .model
@@ -109,8 +116,10 @@ pub(crate) struct LaunchView {
 }
 
 /// Worker selector variables and the model/provider values a start passes to
-/// them. Explicit per-agent environment overrides the resolved selectors, and a
-/// blank selector never erases it. `None` keys: the worker has no mapping.
+/// them. Explicit per-agent environment overrides the resolved selectors for
+/// legacy configurations, and a blank selector never erases it. Explicit
+/// Advanced model selections are authoritative. `None` keys: the worker has no
+/// mapping.
 pub(crate) struct Selectors<'a> {
     pub keys: Option<(&'static str, &'static str)>,
     pub model: Option<&'a str>,
@@ -132,7 +141,9 @@ pub(crate) fn selectors<'a>(
     let mut model = saved(&resolved.model);
     let mut provider = None;
     if let Some((model_key, provider_key)) = keys {
-        model = env.get(model_key).map(String::as_str).or(model);
+        if !advanced_model_is_authoritative(resolved) {
+            model = env.get(model_key).map(String::as_str).or(model);
+        }
         provider = env
             .get(provider_key)
             .map(String::as_str)
@@ -143,4 +154,11 @@ pub(crate) fn selectors<'a>(
         model,
         provider,
     }
+}
+
+fn advanced_model_is_authoritative(harness: &HarnessEdit) -> bool {
+    matches!(
+        &harness.configuration,
+        Some(crate::AiConfiguration::Advanced { .. })
+    )
 }

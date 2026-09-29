@@ -1,16 +1,16 @@
 @import "./composer.css" layer(components);
 
 @layer components {
-  /* Keep ordinary text as the fallback, including reduced motion and forced
-     colors. The sweep strengthens the inherited text, never washes it out. */
+  /* Keep ordinary text for reduced motion and forced colors. Soften only the
+     animated base so the standard-text highlight is easier to see. */
   @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
     @supports (background-clip: text) {
       .buzz-shimmer[data-active] {
         background-image: linear-gradient(
           100deg,
-          currentColor 35%,
+          var(--text-metadata) 35%,
           var(--text-standard) 50%,
-          currentColor 65%
+          var(--text-metadata) 65%
         );
         background-size: 200% 100%;
         background-clip: text;

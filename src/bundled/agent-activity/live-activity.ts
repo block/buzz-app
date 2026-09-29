@@ -223,3 +223,45 @@ export function liveLabel(
     ? `${liveAction(latest)}${active.length > 1 ? ` · ${active.length - 1} more actions running` : ""}`
     : "Working…";
 }
+
+/** Hide the live tail once its reported reply is actually present in this thread.
+ * This changes presentation only; a send never ends the underlying turn. */
+export function liveReplyVisible(
+  transcript: ReturnType<typeof activityTranscript>,
+  messageIds: readonly string[],
+): boolean {
+  const order = (entry: TranscriptEntry) =>
+    Math.max(
+      ...entry.sourceIds.map(
+        (id) => transcript.sourceOrder.get(id) ?? -Infinity,
+      ),
+    );
+  return (
+    transcript.groups.length > 0 &&
+    transcript.groups.every((group) => {
+      const delivered = group.entries.filter(
+        (entry) =>
+          entry.status === "completed" &&
+          entry.communication?.direction === "outgoing" &&
+          !!entry.communication.eventId &&
+          messageIds.includes(entry.communication.eventId),
+      );
+      if (!delivered.length) return false;
+      const boundary = Math.max(...delivered.map(order));
+      return !group.entries.some((entry) => {
+        if (
+          !liveWork(entry) ||
+          entry.kind === "thought" ||
+          entry.toolName === "buzz-dev-mcp___Stop" ||
+          delivered.includes(entry)
+        )
+          return false;
+        return (
+          order(entry) > boundary ||
+          (entry.kind === "tool" &&
+            ["pending", "in_progress"].includes(entry.status))
+        );
+      });
+    })
+  );
+}

@@ -1,10 +1,24 @@
+import { lazy, Suspense } from "react";
 import type { PluginModule } from "../../plugins/api";
 import type { RelaySession } from "../../features/relay/session";
 import { activitySelection } from "../../features/agents/activity-target";
 import { ActivityAccessory } from "./ActivityAccessory";
 import { ActivityPanel } from "./ActivityPanel";
-export const inject = ["panels", "relay", "conversation"];
+export const inject = ["panels", "relay", "conversation", "pages"];
 export const apply: PluginModule["apply"] = (ctx) => {
+  if (import.meta.env.DEV) {
+    const Preview = lazy(() => import("./ActivityDebugPage"));
+    ctx.pages.register({
+      id: "activity-preview",
+      title: "Agent activity preview",
+      layout: "workspace",
+      component: () => (
+        <Suspense fallback={<p role="status">Loading preview…</p>}>
+          <Preview />
+        </Suspense>
+      ),
+    });
+  }
   const relay = ctx.relay;
   ctx.effect(() => {
     let session: RelaySession | undefined;

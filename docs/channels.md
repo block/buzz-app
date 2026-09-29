@@ -352,7 +352,9 @@ navigation to a hidden DM remains supported.
 
 The port retains the prepared-store implementation and its behavior tests:
 
-- 64 prepared heads / 4 MiB serialized memory budget, separate from history.
+- 256 prepared heads / 24 MiB serialized memory budget, separate from history, sized
+  so a full roster of opened channels fits. Disk restoration never evicts a newer
+  head for an older record, except for the channel being prepared or opened.
 - Three unpinned history windows; each caps at 2,400 rows or 8 MiB. Mounted readers
   are not evicted by speculative preparation. A budget cap is distinct from EOF.
 - Three read slots, at most one background request, with foreground promotion and
@@ -370,10 +372,14 @@ The port retains the prepared-store implementation and its behavior tests:
 - 1,024 profile entries / 2 MiB signed-record budget, narrow row profile selectors,
   and request-warmed avatars (fetched and decoded, nothing retained; disabled
   under the Save-Data preference). Signature verification yields in batches.
-- Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour
-  expiry. Signed cached events are reverified before display. The same database
-  stores account/relay-scoped startup discovery and sidebar organization (a separate
-  8 MiB global budget); old version-1 head records survive the version-2 upgrade.
+- Account/relay-scoped IndexedDB: 256 records / 16 MiB global disk budget that keeps
+  the newest records, with a 30-day retention backstop for records no access-loss purge
+  reaches (e.g. a signed-out identity). Budget checks and scope purges read index keys
+  only, never saved windows. A restored head is always `cached`, never proof of
+  freshness, and is revalidated on open. Signed cached events are reverified before
+  display. The same database stores account/relay-scoped startup discovery and sidebar
+  organization (a separate 8 MiB global budget); version-1 and version-2 head records
+  survive the version-3 index upgrade.
 - A 60-second head freshness lease; warm revisits reuse heads without new reads.
   Partial discovery never treats an omitted channel as a membership revocation.
   Explicit denial or signed membership removal invalidates private cached views.

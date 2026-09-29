@@ -116,10 +116,10 @@ it.each([
   },
 );
 
-it("finishes a 65-channel populated roster with the production cache limits", async () => {
+it("finishes and retains a 130-channel populated roster with the production cache limits", async () => {
   const ids = Array.from(
-    { length: 65 },
-    (_, index) => `channel-${String(index).padStart(2, "0")}`,
+    { length: 130 },
+    (_, index) => `channel-${String(index).padStart(3, "0")}`,
   );
   const h = await setup(ids);
   for (const id of ids) {
@@ -129,7 +129,8 @@ it("finishes a 65-channel populated roster with the production cache limits", as
     request.respond(head(id));
     await flush();
   }
-  expect(h.store.diagnostics().heads.entries).toBe(64);
+  // Budget regression: a 130-channel roster fits, so the earliest head was not evicted.
+  expect(h.store.diagnostics().heads.entries).toBe(130);
   expect(h.pending).toHaveLength(0);
 });
 

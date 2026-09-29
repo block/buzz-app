@@ -713,6 +713,8 @@ it("creates a channel during initial discovery without committing a list of only
         expect.objectContaining({ id, members: [viewer.pubkey] }),
       ]),
     });
+    // Canonical check, cited from the store's `resolve` docstring: no ready
+    // snapshot ever held only the new channel.
     expect(
       snapshots
         .filter((snapshot) => snapshot.status === "ready")

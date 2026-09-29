@@ -41,7 +41,7 @@ test("nested replies send, collapse, and reveal through links at readable panel 
   ).toHaveCount(0);
   // Ordinary replies are direct siblings, not children of a collapsible panel.
   await expect(
-    history.locator(":scope > ol > li").filter({
+    history.locator(":scope > [data-thread-rows] > ol > li").filter({
       has: page
         .locator("[data-message-id]")
         .filter({ hasText: "Unread reply 0" }),

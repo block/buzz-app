@@ -508,7 +508,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "panel-header",
     name: "PanelHeader",
     purpose:
-      "A panel's header row: optional icon, title, and actions. It composes controls supplied through actions but owns neither the panel container nor the content below it.",
+      "A panel's header row: optional leading navigation, icon, title, and trailing actions. It composes controls supplied through actions but owns neither the panel container nor the content below it.",
     behavior: "Semantic native header",
     variants: ["default", "compact"],
     status: "proposed",

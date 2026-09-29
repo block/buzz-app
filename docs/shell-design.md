@@ -32,7 +32,7 @@ semantic tokens, UI authoring rules and the local component reference.
 - `AppShell.tsx` owns the 56px header, vertical page navigation, contributed panel
   launchers, Settings access, community rail, and page frames. Page navigation sits
   above the channel list outside Settings, using its saved sidebar width
-  and resize behavior. Settings replaces that card with `SettingsSidebar.tsx`,
+  and resize behavior. Settings replaces that region with `SettingsSidebar.tsx`,
   preserving the same width (220px minimum) and returning to the previous view
   with Back. `App.tsx` composes `features/channel-navigation/ChannelSidebar`
   through an ordinary render prop; there is no portal or plugin contract expansion.
@@ -47,9 +47,11 @@ semantic tokens, UI authoring rules and the local component reference.
   main content; this includes conversation and Settings-section selections.
   Desktop layouts retain the visible sidebar and saved width.
   The header keeps history and account/search actions, with no second navigation row.
-  Full-height pages get a 16px outer gutter (8px on narrow screens) and own their
-  card surfaces. The shell adds no white backing behind them. Document pages
-  scroll inside the remaining viewport.
+  The shell owns one joined Panel around navigation and page content, with a
+  16px outer gutter (8px on narrow screens). Nested Panels keep their opaque
+  fill and clipping but drop individual borders, radii, and shadows. Layout
+  owners add one-pixel semantic dividers. Document pages scroll inside the
+  remaining viewport.
 - `SettingsSidebar.tsx` presents community and app sections in the shell's
   replacement sidebar. `Settings.tsx` renders the selected detail pane and retains
   drafts across section changes. The detail pane scrolls independently and keeps
@@ -141,13 +143,44 @@ access in a built app.
 
 ## Messages
 
-The host owns the persistent rounded sidebar card; Messages owns conversation
-and contributed panel cards, with 16px gutters. A single right panel fills the conversation height;
+The host owns the single rounded outer surface and sidebar divider. Messages
+owns flush conversation and contributed-panel regions separated by one-pixel
+dividers. A single right panel fills the conversation height;
 the right-column grid splits available height evenly between a local link card
 and the launched companion card. Below 1000px
 the right column overlays the conversation; it also overlays when the content
 pane is too narrow for two columns. Below 650px it fills the page area.
-Each card contains its own overflow, keeping the composer and close control visible.
+Each region contains its own overflow, keeping the composer and close control visible.
+Ordinary thread opens show a loading status until bounded history and initial
+bottom positioning finish; the first painted replies are already in place.
+Exact-message links reveal their requested row independently. A reader’s scroll
+gesture takes over immediately, and loading failures keep recovery visible.
+Opening a linked detail from inside a thread covers that thread in the same panel
+slot. Profile activity, managed-instance, and owner-profile links explicitly drill
+in through `PanelContext.push`; `open` retains its replacement semantics. Channels
+retains the visited cards and returns one level per Back/Escape, restoring focus,
+scroll position, and local form state. Revisiting an ancestor returns to its
+existing card rather than adding a loop. Close clears the full trail; a channel,
+session, or contribution change retires the trail and its callbacks. The first detail’s header places Back to thread before the title; it restores the
+mounted thread's scroll position, draft, and originating control focus. Escape
+also goes back, while Close dismisses both views. Opening a detail from the main
+timeline still replaces the thread. Drill-in and back use a 12px, 180ms ease-out
+slide/fade; keyboard actions are immediate and reduced motion uses opacity only.
+Joined header separators meet the vertical dividers. The sidebar resize grip stays
+visible throughout a drag while its tooltip stays hidden. Desktop main/secondary
+dividers share that grip and support dragging, arrow keys (Shift for larger
+steps), Home/End, and double-click to reset. Each page retains its chosen split
+while the panel closes and reopens; widths clamp to the available space. Narrow
+overlay layouts hide this divider and keep their normal responsive sizing.
+
+Pointer-opened secondary panels fade and slide in over 180ms and out over 120ms
+with the shared strong ease-out curve. Desktop panels travel 12px; overlays travel
+their full width. The desktop split stays in place until the exit finishes, so
+closing content never collapses mid-transition. Keyboard actions stay immediate;
+reduced motion uses only a fade. Resizing remains immediate.
+`features/panels/PanelDock` retains inert, accessibility-hidden closing content until
+its CSS transitions finish, cancels stale cleanup on reopening, and leaves selection
+and focus restoration with the existing owners. It adds no timer or resize observer.
 Channels opts into the reusable companion prop and owns both cards, including a
 companion-only view without a selected channel or relay. Settings and legacy
 pages use the host fallback frame; opening from those pages does not navigate away.
@@ -168,3 +201,9 @@ The shared conversation layer now supplies bounded thread reading/replies and
 [session-owned unread indicators](unread.md). These are separate from this styling
 pass: counts remain observed rather than exact, manual unread is local-only, and
 reading intent belongs to reusable conversation UI rather than shell navigation.
+
+Harness logs remain owned and authorized by the profile. `PanelSubview` presents
+the log with the same 56px header, Back/Escape and whole-panel Close controls,
+while retaining the profile beneath it. Returning or losing authorization unmounts
+the log and stops its polling; the underlying profile keeps its tab and draft.
+Todos uses the standard 56px header to align with other side panels.

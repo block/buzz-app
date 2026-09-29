@@ -80,6 +80,15 @@ async function link(page, app, target) {
   await expect(
     panel(page).getByRole("heading", { name: "A useful change" }),
   ).toBeVisible();
+  // Geometry assertions observe the settled overlay, not an entrance frame.
+  await panel(page).evaluate(async (element) => {
+    await Promise.allSettled(
+      element
+        .closest("[data-panel-dock]")
+        .getAnimations()
+        .map((animation) => animation.finished),
+    );
+  });
 }
 async function shellFits(page, width) {
   const disclosure = button(page, "Show navigation");
@@ -187,7 +196,7 @@ scroll(
   },
 );
 
-test("bento surfaces, sidebar pages, real link panel and compact community navigation", async ({
+test("joined surface, sidebar pages, real link panel and compact community navigation", async ({
   page,
   app,
 }, testInfo) => {
@@ -201,15 +210,23 @@ test("bento surfaces, sidebar pages, real link panel and compact community navig
     name: "Conversation",
     exact: true,
   });
+  // Real CSS geometry is the contract: one outer surface, flush inner regions.
+  await expect(page.locator(".shell-body > [data-joined]")).toHaveCSS(
+    "border-top-width",
+    "1px",
+  );
+  await expect(conversation).toHaveCSS("border-radius", "0px");
+  await expect(conversation).toHaveCSS("border-top-width", "0px");
+  await expect(conversation).toHaveCSS("box-shadow", "none");
   const before = await box(conversation);
   const rail = await box(
     page.getByRole("navigation", { name: "Communities", exact: true }),
   );
   near(rail.width, 48);
   near(sidebar.x, rail.x + rail.width);
-  near(before.x - sidebar.x - sidebar.width, 8);
-  near(before.y, 56);
-  near(before.height, 760);
+  near(before.x - sidebar.x - sidebar.width, 1);
+  near(before.y, 57);
+  near(before.height, 758);
   const background = await page
     .locator(".shell-background")
     .evaluate((el) => getComputedStyle(el).backgroundImage);
@@ -229,17 +246,17 @@ test("bento surfaces, sidebar pages, real link panel and compact community navig
     exact: true,
   });
   await composer.fill("Layout draft");
-  await page.screenshot({ path: testInfo.outputPath("bento-no-panel.png") });
+  await page.screenshot({ path: testInfo.outputPath("joined-no-panel.png") });
   await link(page, app, "https://github.com/block/buzz/pull/1");
   const main = await box(conversation);
   const dock = await box(panel(page));
   near(dock.y, main.y);
   near(dock.height, main.height);
-  near(dock.x - main.x - main.width, 8);
+  near(dock.x - main.x - main.width, 1);
   near(dock.x + dock.width, 1264);
   await expect(composer).toHaveJSProperty("value", "Layout draft");
   await expect(composer).toBeInViewport();
-  await page.screenshot({ path: testInfo.outputPath("bento-one-panel.png") });
+  await page.screenshot({ path: testInfo.outputPath("joined-one-panel.png") });
   const timeline = page.getByRole("region", {
     name: "Channel message history",
   });
@@ -256,6 +273,8 @@ test("bento surfaces, sidebar pages, real link panel and compact community navig
   near(await timeline.evaluate((el) => el.scrollTop), offset);
   await button(page, "Close channel panel").click();
   await expect(panel(page)).toHaveCount(0);
+  // Inert content leaves the accessibility tree before its visual exit finishes.
+  await expect(page.locator("[data-panel-dock]")).toHaveCount(0);
   near((await box(conversation)).width, before.width);
   await link(page, app, "https://github.com/block/buzz/pull/2");
   await button(page, "Beta").click();
@@ -374,7 +393,7 @@ test("narrow link panels begin after the rendered sidebar", async ({
     page.getByRole("article", { name: "Conversation", exact: true }),
   );
   const dock = await box(panel(page));
-  near(conversation.x - sidebar.x - sidebar.width, 8);
+  near(conversation.x - sidebar.x - sidebar.width, 1);
   near(dock.x, conversation.x);
   expect(dock.x).toBeGreaterThanOrEqual(sidebar.x + sidebar.width);
   // Separate stacking contexts: assert actual hit testing, not unrelated z-index numbers.
@@ -588,7 +607,7 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
     main = await box(conversation);
   near(top.height, bottom.height);
   near(top.y, main.y);
-  near(bottom.y - top.y - top.height, 4);
+  near(bottom.y - top.y - top.height, 1);
   near(bottom.y + bottom.height, main.y + main.height);
   near(top.x, bottom.x);
   await page.screenshot({ path: testInfo.outputPath("bestie-two-panels.png") });
@@ -731,11 +750,12 @@ todosOverlapTest(
     const stacked = async (primary) => {
       await expect(primary).toBeVisible();
       await expect(todos).toBeVisible();
+      near((await box(todos.locator("header.panel-header"))).height, 56);
       const top = await box(primary);
       const bottom = await box(todos);
       near(top.x, bottom.x);
       near(top.width, bottom.width);
-      near(bottom.y - top.y - top.height, 4);
+      near(bottom.y - top.y - top.height, 1);
       const conversation = await box(
         page.getByRole("article", {
           name: "Conversation",
@@ -753,6 +773,17 @@ todosOverlapTest(
         .getByRole("button", { name: /^View thread:/ })
         .click();
       await expect(thread).toBeVisible();
+      await expect(thread).toHaveCSS("border-radius", "0px");
+      await expect(thread).toHaveCSS("border-width", "0px");
+      await expect(thread).toHaveCSS("box-shadow", "none");
+      const threadHeader = await box(thread.locator("header.panel-header"));
+      const channelHeader = await box(
+        page
+          .getByRole("article", { name: "Conversation", exact: true })
+          .locator("header.panel-header"),
+      );
+      near(threadHeader.height, channelHeader.height);
+      near(threadHeader.y, channelHeader.y);
     };
 
     await toggle.click();
@@ -784,7 +815,7 @@ todosOverlapTest(
       (await box(bestie)).y -
         (await box(linked)).y -
         (await box(linked)).height,
-      4,
+      1,
     );
     await button(page, "Close Bestie panel").click();
   },
@@ -817,7 +848,7 @@ readingTest(
         page.getByRole("complementary", { name: "Bestie", exact: true }),
       );
       near(top.height, bottom.height);
-      near(bottom.y - top.y - top.height, 4);
+      near(bottom.y - top.y - top.height, 1);
       await expect(button(page, "Close channel panel")).toBeInViewport();
       await expect(button(page, "Close Bestie panel")).toBeInViewport();
       await page

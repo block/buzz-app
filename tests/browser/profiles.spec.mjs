@@ -423,20 +423,24 @@ test("keyboard harness log entry focuses Back and restores focus on Back or Esca
   await entry.focus();
   await entry.press("Enter");
   const log = profile.getByRole("region", { name: "Harness log" });
-  const back = log.getByRole("button", { name: "Back" });
+  const back = log.getByRole("button", {
+    name: "Back to profile",
+    exact: true,
+  });
   await expect(back).toBeFocused();
   await expect(log.getByTestId("managed-agent-log-content")).toHaveText(
     "fixture harness output",
   );
   await back.press("Enter");
   await expect(profile.getByRole("tab", { name: "Runtime" })).toBeVisible();
-  await expect(
-    profile.getByRole("region", { name: "Profile details" }),
-  ).toBeFocused();
+  await expect(entry).toBeFocused();
   await entry.focus();
   await entry.press("Enter");
   await expect(back).toBeFocused();
   await back.press("Escape");
+  await expect(log).toHaveCount(0);
+  await expect(entry).toBeFocused();
+  await entry.press("Escape");
   await expect(profile).toHaveCount(0);
   await expect(opener).toBeFocused();
 });

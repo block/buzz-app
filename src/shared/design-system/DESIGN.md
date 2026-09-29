@@ -120,7 +120,7 @@ Buzz is a place where people build together and bring their agents into the room
 
 ## Surface and depth
 
-- **Panels sit on the backdrop; the backdrop is a gradient.** Everything else is a panel in a different place. The navigation column is not a special kind of surface.
+- **Panels sit on the backdrop; the backdrop is a gradient.** The app shell uses one `Panel joined` around navigation and content. Nested Panels keep their opaque fill and clipping but lose independent borders, rounding, and shadows; layout owners separate adjacent regions with `border-standard` hairlines. Standalone Panels retain their own outer surface.
 - **A region is separated by a soft fill, not by an outline.** Reach for `bg-inset` before reaching for a border. A bordered box announces its own edges; a filled one lets the content sit in a place. Grouping is the common case, so the quiet treatment is the default one.
 - **Use border-standard for quiet separators, border-prominent for controls and border-focus for keyboard focus.** Error and warning boundaries have their own roles. Measure real surfaces in both themes.
 - **No page-wide gradient behind documentation or dense reading.** The gradient is the product's backdrop for chrome and panels. Behind a column of prose it fights the text and makes contrast position-dependent — such surfaces sit on `bg-panel`.
@@ -295,6 +295,12 @@ Keyboard navigation and reduced motion remove transitions, movement, and blur. T
 show these contracts and their compositions.
 
 ## Compositions
+
+PanelHeader owns one consistent header frame: leading `navigation`, title/icon,
+and trailing `actions`. Use a toolbar IconButton with ArrowLeft for a local back
+action and X for closing the panel. The default 56px height aligns conversation,
+thread, and profile headers; compact is for intentionally denser surfaces.
+Navigation state, focus restoration, and content transitions belong to the host.
 
 Composer pickers reuse PopoverPopup and anchor above the whole composer with a
 4px gap, preserving the shared popup behavior and material.

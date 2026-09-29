@@ -415,6 +415,14 @@
     box-shadow: var(--shadow-xs);
   }
 
+  /* A joined surface keeps one outer edge; nested panels retain opaque
+     fills for responsive overlays while their layout owns the separators. */
+  .panel[data-joined] .panel {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
   /* ============================================================
      Tabs — two surfaces, one control.
 
@@ -622,6 +630,10 @@
     background: var(--border-standard);
     content: "";
     pointer-events: none;
+  }
+
+  .panel[data-joined] .panel-header::after {
+    inset-inline: 0;
   }
 
   .panel-header[data-variant="compact"] {

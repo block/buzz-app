@@ -355,6 +355,33 @@ it("loads history automatically with error-only retry and no routine history con
   expect(h.view.refresh).toHaveBeenCalledTimes(3);
   expect(h.ensure).toHaveBeenCalledOnce();
 });
+it("keeps initial rows pending until positioned, exposes errors, and lets reading interrupt loading", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  h.snapshot.canLoadMore = true;
+  h.render();
+  expect(h.element).toHaveAttribute("data-positioning");
+  expect(h.element.querySelector("[data-thread-rows]")).toHaveAttribute(
+    "inert",
+  );
+  h.snapshot.status = "error";
+  h.snapshot.error = "History unavailable";
+  h.render();
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  expect(
+    within(h.element).getByRole("button", { name: "Retry thread" }),
+  ).toBeVisible();
+  h.snapshot.status = "loading";
+  h.snapshot.error = undefined;
+  h.render();
+  expect(h.element).toHaveAttribute("data-positioning");
+  fireEvent.wheel(h.element);
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  h.scroll(500);
+  h.snapshot.status = "ready";
+  h.snapshot.canLoadMore = false;
+  h.render();
+  expect(h.element.scrollTop).toBe(500);
+});
 it("positions after successful history loading, then follows live replies without another read", () => {
   const h = messagesHarness();
   h.snapshot.status = "loading";
@@ -366,6 +393,10 @@ it("positions after successful history loading, then follows live replies withou
   h.snapshot.status = "ready";
   h.render();
   expect(h.element.scrollTop).toBe(3400);
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  expect(h.element.querySelector("[data-thread-rows]")).not.toHaveAttribute(
+    "inert",
+  );
   h.scroll(3400);
   h.snapshot.replies = [{ ...row, id: "new", content: "live arrival" }];
   h.resize(4800);

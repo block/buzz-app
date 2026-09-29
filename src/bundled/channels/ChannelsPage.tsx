@@ -62,6 +62,8 @@ import {
 import type { Panels, RegisteredPanel } from "../../features/panels/service";
 import type { PagesReader } from "../../features/pages/service";
 import { PanelCard } from "../../features/panels/PanelCard";
+import { usePanelSplit } from "../../features/panels/usePanelSplit";
+import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 import { OutboxStatus } from "./OutboxStatus";
 import { RelayTimings } from "./RelayTimings";
@@ -548,7 +550,13 @@ function ChannelWorkspace({
   useEffect(() => {
     if (thread && !showingThread) setThread(undefined);
   }, [thread, showingThread]);
-  type Opening = { channelId: string; panel: RegisteredPanel; target: string };
+  type Opening = {
+    channelId: string;
+    panel: RegisteredPanel;
+    target: string;
+    parent?: Opening;
+    trigger?: HTMLElement | null;
+  };
   const [opened, setOpened] = useState<Opening>();
   const opening = useRef<Opening | undefined>(undefined);
   const open = useCallback((next: Opening | undefined) => {
@@ -580,10 +588,12 @@ function ChannelWorkspace({
     open,
     handoff?.activityThread,
   ]);
+  const trail: Opening[] = [];
+  for (let entry = opened; entry; entry = entry.parent) trail.unshift(entry);
   const panel =
     opened &&
     opened.channelId === current?.id &&
-    available.includes(opened.panel)
+    trail.every((entry) => available.includes(entry.panel))
       ? opened.panel
       : undefined;
   const mounted = useRef(false);
@@ -721,6 +731,12 @@ function ChannelWorkspace({
     if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
   };
   const panelTrigger = useRef<HTMLElement | null>(null);
+  const restorePanelFocus = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    const trigger = restorePanelFocus.current;
+    restorePanelFocus.current = null;
+    if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+  });
   const close = useCallback(() => {
     open(undefined);
     if (panelTrigger.current?.isConnected)
@@ -750,7 +766,7 @@ function ChannelWorkspace({
     };
   }, [currentId, showingThread?.navigation]);
   const openLink = useCallback(
-    (url: string) => {
+    (url: string, fromThread = false) => {
       const { current, navigation } = destination.current;
       const connection = relay.snapshot();
       if (
@@ -788,8 +804,11 @@ function ChannelWorkspace({
           document.activeElement instanceof HTMLElement
             ? document.activeElement
             : null;
-        if (context.routedThread) select(context.channelId);
-        setThread(undefined);
+        // Thread-origin details cover the live thread instead of retiring it.
+        if (!fromThread) {
+          if (context.routedThread) select(context.channelId);
+          setThread(undefined);
+        }
         open({
           channelId: context.channelId,
           panel: candidate,
@@ -801,13 +820,13 @@ function ChannelWorkspace({
     },
     [panels, open, relay, queries, select, navigator, viewer, scope],
   );
-  const panelActive = () => {
+  const panelActive = (entry: Opening) => {
     const connection = relay.snapshot();
     return !!(
       mounted.current &&
       opened &&
       panel &&
-      opening.current === opened &&
+      opening.current === entry &&
       channel.current === opened.channelId &&
       panels.snapshot().includes(panel) &&
       connection.status === "ready" &&
@@ -815,21 +834,44 @@ function ChannelWorkspace({
       !navigation?.signal.aborted
     );
   };
-  const panelContext =
-    opened && panel
-      ? {
-          channelId: opened.channelId,
-          canOpen: (target: string) => !!panels.resolve(target),
-          open: (target: string) => {
-            if (!panelActive()) return false;
-            const next = panels.resolve(target);
-            if (!next) return false;
-            // Keep the original conversation trigger for close/focus restoration.
-            open({ channelId: opened.channelId, panel: next, target });
-            return true;
-          },
-        }
-      : undefined;
+  const panelContext = (entry: Opening) => ({
+    channelId: entry.channelId,
+    canOpen: (target: string) => !!panels.resolve(target),
+    open: (target: string) => {
+      if (!panelActive(entry)) return false;
+      const next = panels.resolve(target);
+      if (!next) return false;
+      open({ ...entry, panel: next, target });
+      return true;
+    },
+    push: (target: string) => {
+      if (!panelActive(entry)) return false;
+      const next = panels.resolve(target);
+      if (!next) return false;
+      // Returning to an existing ancestor must not create a navigation loop.
+      const existing = trail.find(
+        (item) => item.panel === next && item.target === target,
+      );
+      if (existing === entry) return true;
+      if (existing) {
+        const child = trail[trail.indexOf(existing) + 1];
+        restorePanelFocus.current = child?.trigger ?? null;
+        open(existing);
+      } else {
+        open({
+          channelId: entry.channelId,
+          panel: next,
+          target,
+          parent: entry,
+          trigger:
+            document.activeElement instanceof HTMLElement
+              ? document.activeElement
+              : null,
+        });
+      }
+      return true;
+    },
+  });
   const drawerContext = useMemo(
     () =>
       current && !current.readOnly && viewer && !placeholder
@@ -853,8 +895,9 @@ function ChannelWorkspace({
   const showingPanel =
     !composingMessage &&
     (showingSettings || panel || showingThread || companion || drawer.side);
+  const split = usePanelSplit();
   const workspace = (
-    <div className={`${styles.board} ${showingPanel ? styles.withPanel : ""}`}>
+    <div ref={split.ref} style={split.style} className={styles.board}>
       {current && !current.readOnly && canvasOpen && (
         <ChannelCanvasDialog
           key={`${scope}:${current.id}`}
@@ -1078,187 +1121,229 @@ function ChannelWorkspace({
           close={() => setMediaReview(undefined)}
         />
       )}
-      {showingPanel && !showingMediaReview && (
-        <div className={styles.panelStack}>
-          {showingSettings && (
-            <ChannelSettingsPanel
-              setupTools={
-                current && (
-                  <div style={{ display: "grid", gap: "var(--space-3)" }}>
-                    {!current.readOnly && (
-                      <Button onClick={() => setCanvasOpen(true)}>
-                        Canvas
-                      </Button>
-                    )}
-                    {templateProvider && (
-                      <OwnedContribution
-                        key={current.id}
-                        entry={templateProvider}
-                        registry={providers}
-                      >
-                        {(entry, active) => {
-                          const SaveAs = entry.saveAs;
-                          return (
-                            <SaveAs
-                              session={queries}
-                              channel={current}
-                              active={active}
-                            />
-                          );
-                        }}
-                      </OwnedContribution>
-                    )}
-                    {personal && (
-                      <Select
-                        label="Personal group"
-                        variant="field"
-                        value={personal.assignments[current.id] ?? ""}
-                        groups={[
-                          {
-                            label: "",
-                            options: [
-                              { value: "", label: "No group" },
-                              ...personal.groups.map((g) => ({
-                                value: g.id,
-                                label: g.name,
-                              })),
-                            ],
-                          },
-                        ]}
-                        onValueChange={async (groupId) => {
-                          const assignments = { ...personal.assignments };
-                          if (groupId) assignments[current.id] = groupId;
-                          else delete assignments[current.id];
-                          setKitError("");
-                          try {
-                            await queries.channelKit.save(
-                              { ...personal, assignments },
-                              groupEntry?.eventId,
-                            );
-                          } catch (error) {
-                            setKitError(String(error));
-                          }
-                        }}
-                      />
-                    )}
-                    {kitError && <p role="alert">{kitError}</p>}
-                    {handoff &&
-                      !current.readOnly &&
-                      current.channelType !== "dm" &&
-                      current.channelType !== "session" && (
-                        <ChannelLeaveButton
+      <PanelDock
+        open={!!showingPanel && !showingMediaReview}
+        className={styles.panelStack}
+        resizeHandle={split.handle}
+      >
+        {showingPanel && !showingMediaReview && (
+          <>
+            {showingSettings && (
+              <ChannelSettingsPanel
+                setupTools={
+                  current && (
+                    <div style={{ display: "grid", gap: "var(--space-3)" }}>
+                      {!current.readOnly && (
+                        <Button onClick={() => setCanvasOpen(true)}>
+                          Canvas
+                        </Button>
+                      )}
+                      {templateProvider && (
+                        <OwnedContribution
                           key={current.id}
-                          channelId={current.id}
-                          lifecycle={queries.channelLifecycle}
-                          choose={(trigger) =>
-                            handoff.openLifecycle(current, "leave", trigger)
-                          }
+                          entry={templateProvider}
+                          registry={providers}
+                        >
+                          {(entry, active) => {
+                            const SaveAs = entry.saveAs;
+                            return (
+                              <SaveAs
+                                session={queries}
+                                channel={current}
+                                active={active}
+                              />
+                            );
+                          }}
+                        </OwnedContribution>
+                      )}
+                      {personal && (
+                        <Select
+                          label="Personal group"
+                          variant="field"
+                          value={personal.assignments[current.id] ?? ""}
+                          groups={[
+                            {
+                              label: "",
+                              options: [
+                                { value: "", label: "No group" },
+                                ...personal.groups.map((g) => ({
+                                  value: g.id,
+                                  label: g.name,
+                                })),
+                              ],
+                            },
+                          ]}
+                          onValueChange={async (groupId) => {
+                            const assignments = { ...personal.assignments };
+                            if (groupId) assignments[current.id] = groupId;
+                            else delete assignments[current.id];
+                            setKitError("");
+                            try {
+                              await queries.channelKit.save(
+                                { ...personal, assignments },
+                                groupEntry?.eventId,
+                              );
+                            } catch (error) {
+                              setKitError(String(error));
+                            }
+                          }}
                         />
                       )}
-                  </div>
-                )
-              }
-              key={currentId ?? "channels"}
-              channel={current}
-              close={closeSettings}
-            >
-              <UnreadOptions session={queries} channelId={current?.id} />
-              <LiveStatus
-                live={queries.live}
-                channelId={current?.id}
-                partialRoster={list.coverage === "partial"}
-                diagnostics
-              />
-              <p>
-                {list.coverage === "partial" ? "Partial roster" : "Roster"} ·{" "}
-                {channels.length} channels
-              </p>
-              <Button
-                type="button"
-                onClick={() => queries.channels.refreshList?.()}
-              >
-                Refresh channels
-              </Button>
-              {preferences.error && (
-                <p>Saved groups and stars: {preferences.error}</p>
-              )}
-              {preferences.status !== "unsupported" && (
-                <Button
-                  type="button"
-                  disabled={preferences.status === "loading"}
-                  onClick={preferences.reload}
-                >
-                  Refresh groups and stars
-                </Button>
-              )}
-              {current && (
-                <Button
-                  type="button"
-                  onClick={() => queries.channels.refresh?.(current.id)}
-                >
-                  Refresh messages
-                </Button>
-              )}
-              {queries.outbox ? (
-                <OutboxStatus
-                  outbox={queries.outbox}
-                  profiling={queries.profiling}
-                />
-              ) : (
-                <RelayTimings profiling={queries.profiling} />
-              )}
-            </ChannelSettingsPanel>
-          )}
-          {showingThread && (
-            <div className={styles.retainedPanel} inert={showingSettings}>
-              <ThreadPanel
-                sessionConversation={current?.channelType === "session"}
-                extensions={extensions}
-                session={queries}
-                scope={scope}
-                channelName={current?.name ?? ""}
-                channelId={showingThread.channelId}
-                messageId={showingThread.messageId}
-                navigation={showingThread.navigation}
-                replyRequest={
-                  replyRequest?.channelId === showingThread.channelId &&
-                  replyRequest.messageId === showingThread.messageId &&
-                  replyRequest.entryId === showingThread.navigation?.entryId
-                    ? replyRequest.sequence
-                    : undefined
+                      {kitError && <p role="alert">{kitError}</p>}
+                      {handoff &&
+                        !current.readOnly &&
+                        current.channelType !== "dm" &&
+                        current.channelType !== "session" && (
+                          <ChannelLeaveButton
+                            key={current.id}
+                            channelId={current.id}
+                            lifecycle={queries.channelLifecycle}
+                            choose={(trigger) =>
+                              handoff.openLifecycle(current, "leave", trigger)
+                            }
+                          />
+                        )}
+                    </div>
+                  )
                 }
-                close={closeThread}
-                onOpenLink={openLink}
-                onOpenMediaReview={openMediaReview}
-                canOpenLink={canOpenLink}
-              />
-            </div>
-          )}
+                key={currentId ?? "channels"}
+                channel={current}
+                close={closeSettings}
+              >
+                <UnreadOptions session={queries} channelId={current?.id} />
+                <LiveStatus
+                  live={queries.live}
+                  channelId={current?.id}
+                  partialRoster={list.coverage === "partial"}
+                  diagnostics
+                />
+                <p>
+                  {list.coverage === "partial" ? "Partial roster" : "Roster"} ·{" "}
+                  {channels.length} channels
+                </p>
+                <Button
+                  type="button"
+                  onClick={() => queries.channels.refreshList?.()}
+                >
+                  Refresh channels
+                </Button>
+                {preferences.error && (
+                  <p>Saved groups and stars: {preferences.error}</p>
+                )}
+                {preferences.status !== "unsupported" && (
+                  <Button
+                    type="button"
+                    disabled={preferences.status === "loading"}
+                    onClick={preferences.reload}
+                  >
+                    Refresh groups and stars
+                  </Button>
+                )}
+                {current && (
+                  <Button
+                    type="button"
+                    onClick={() => queries.channels.refresh?.(current.id)}
+                  >
+                    Refresh messages
+                  </Button>
+                )}
+                {queries.outbox ? (
+                  <OutboxStatus
+                    outbox={queries.outbox}
+                    profiling={queries.profiling}
+                  />
+                ) : (
+                  <RelayTimings profiling={queries.profiling} />
+                )}
+              </ChannelSettingsPanel>
+            )}
+            {showingThread && (
+              <div
+                className={styles.retainedPanel}
+                data-thread-layer=""
+                data-covered={!!panel || undefined}
+                inert={showingSettings || !!panel}
+              >
+                <ThreadPanel
+                  sessionConversation={current?.channelType === "session"}
+                  extensions={extensions}
+                  session={queries}
+                  scope={scope}
+                  channelName={current?.name ?? ""}
+                  channelId={showingThread.channelId}
+                  messageId={showingThread.messageId}
+                  navigation={showingThread.navigation}
+                  replyRequest={
+                    replyRequest?.channelId === showingThread.channelId &&
+                    replyRequest.messageId === showingThread.messageId &&
+                    replyRequest.entryId === showingThread.navigation?.entryId
+                      ? replyRequest.sequence
+                      : undefined
+                  }
+                  close={closeThread}
+                  onOpenLink={(url) => openLink(url, true)}
+                  onOpenMediaReview={openMediaReview}
+                  canOpenLink={canOpenLink}
+                />
+              </div>
+            )}
 
-          {panel && opened && (
-            <div className={styles.retainedPanel} inert={showingSettings}>
-              <PanelCard
-                key="target"
-                panel={panel}
-                target={opened.target}
-                context={panelContext}
-                close={close}
-                closeLabel="Close channel panel"
-              />
-            </div>
-          )}
-          {drawer.side && (
-            <div className={styles.retainedPanel} hidden={showingSettings}>
-              {drawer.side}
-            </div>
-          )}
-          {companion && (
-            <div key="companion" className={styles.companion}>
-              {companion}
-            </div>
-          )}
-        </div>
-      )}
+            {panel &&
+              trail.map((entry) => (
+                <div
+                  key={`${entry.panel.key}:${entry.target}`}
+                  className={styles.retainedPanel}
+                  data-panel-layer=""
+                  data-thread-detail={
+                    !!showingThread || !!entry.parent || undefined
+                  }
+                  data-covered={entry !== opened || undefined}
+                  inert={showingSettings || entry !== opened}
+                >
+                  <PanelCard
+                    panel={entry.panel}
+                    target={entry.target}
+                    context={panelContext(entry)}
+                    back={
+                      entry.parent || showingThread
+                        ? {
+                            label: entry.parent
+                              ? `Back to ${entry.parent.panel.title.toLowerCase()}`
+                              : "Back to thread",
+                            onClick: () => {
+                              if (!panelActive(entry)) return;
+                              restorePanelFocus.current = entry.parent
+                                ? (entry.trigger ?? null)
+                                : panelTrigger.current;
+                              open(entry.parent);
+                            },
+                          }
+                        : undefined
+                    }
+                    close={() => {
+                      if (!panelActive(entry)) return;
+                      if (showingThread) {
+                        open(undefined);
+                        closeThread();
+                      } else close();
+                    }}
+                    closeLabel="Close channel panel"
+                  />
+                </div>
+              ))}
+            {drawer.side && (
+              <div className={styles.retainedPanel} hidden={showingSettings}>
+                {drawer.side}
+              </div>
+            )}
+            {companion && (
+              <div key="companion" className={styles.companion}>
+                {companion}
+              </div>
+            )}
+          </>
+        )}
+      </PanelDock>
     </div>
   );
   return (

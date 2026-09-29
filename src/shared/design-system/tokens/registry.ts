@@ -1255,6 +1255,18 @@ export const RADII = [
 
 export const MOTION = [
   {
+    token: "duration-panel-enter",
+    variable: "--duration-panel-enter",
+    value: "180ms",
+    use: "An occasional pointer-opened overlay panel entering from the edge.",
+  },
+  {
+    token: "easing-enter",
+    variable: "--easing-enter",
+    value: "cubic-bezier(.23,1,.32,1)",
+    use: "Responsive entrances and exits with immediate initial movement.",
+  },
+  {
     token: "duration-fast",
     variable: "--duration-fast",
     value: "120ms",

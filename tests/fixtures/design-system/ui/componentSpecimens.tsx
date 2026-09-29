@@ -42,6 +42,7 @@ import { FlexWorkspace } from "../../../../src/shared/design-system/ui/FlexWorks
 import { BentoSpecimen } from "./BentoSpecimen";
 import {
   DotsThreeIcon,
+  ArrowLeftIcon,
   HashIcon,
   ChatCircleIcon,
   PlusIcon,
@@ -552,6 +553,19 @@ function PanelHeaderSpecimen() {
         <PanelHeader
           title="Conversation"
           icon={<ChatCircleIcon size={16} aria-hidden="true" />}
+          actions={actions}
+        />
+      </SpecimenGroup>
+      <SpecimenGroup label="Detail — back navigation before the title">
+        <PanelHeader
+          title="Profile"
+          navigation={
+            <IconButton
+              size="toolbar"
+              aria-label="Back to thread"
+              icon={<ArrowLeftIcon size={18} aria-hidden="true" />}
+            />
+          }
           actions={actions}
         />
       </SpecimenGroup>

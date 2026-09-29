@@ -327,7 +327,7 @@ function ProfileDetails({
       tabIndex={-1}
       className={styles.root}
     >
-      {logAuthorized && logTarget && control ? (
+      {logAuthorized && logTarget && control && (
         <ProfileHarnessLog
           key={`${logTarget.id}:${logTarget.relayUrl}:${viewer}`}
           control={control}
@@ -335,225 +335,223 @@ function ProfileDetails({
           name={name}
           onBack={() => {
             setLogTarget(null);
-            region.current?.focus();
           }}
         />
-      ) : (
-        <>
-          <div className={styles.identity}>
-            <div className={styles.portrait}>
-              <AgentAvatar
-                session={session}
-                agentPubkey={pubkey}
-                channelId={context?.channelId}
-                thinkingDescriptionId={
-                  describeThinking ? thinkingId : undefined
-                }
-                src={picture}
-                alt={
-                  tab === "info" && presence !== "unknown"
-                    ? ""
-                    : `${name} avatar`
-                }
-                fallback={name}
-                size="fill"
-                shape={agentPubkeys.has(pubkey) ? "squircle" : "circle"}
-                statusBadge={presence === "unknown" ? undefined : presence}
-              />
-            </div>
-            <h2 className="text-heading">{name}</h2>
+      )}
+      <div
+        className={styles.profileContents}
+        inert={!!logTarget && logAuthorized}
+        aria-hidden={(!!logTarget && logAuthorized) || undefined}
+      >
+        <div className={styles.identity}>
+          <div className={styles.portrait}>
+            <AgentAvatar
+              session={session}
+              agentPubkey={pubkey}
+              channelId={context?.channelId}
+              thinkingDescriptionId={describeThinking ? thinkingId : undefined}
+              src={picture}
+              alt={
+                tab === "info" && presence !== "unknown" ? "" : `${name} avatar`
+              }
+              fallback={name}
+              size="fill"
+              shape={agentPubkeys.has(pubkey) ? "squircle" : "circle"}
+              statusBadge={presence === "unknown" ? undefined : presence}
+            />
           </div>
-          <Tabs
-            value={selectedTab}
-            onValueChange={setTab}
-            items={[
-              { value: "info", label: "Info" },
-              ...(canViewRuntime
-                ? [{ value: "runtime" as const, label: "Runtime" }]
-                : []),
-              { value: "channels", label: "Channels" },
-              ...(isOwner
-                ? [{ value: "memories" as const, label: "Memories" }]
-                : []),
-            ]}
-            label="Profile sections"
-            variant="panel"
-            renderPanel={(selected) => (
-              <div className={styles.tabContent}>
-                {selected === "info" ? (
-                  <>
-                    <PresenceIndicator
-                      presence={session.presence}
-                      pubkey={pubkey}
-                      profile
-                    />
-                    <UserStatusDisplay session={session} userId={pubkey} />
-                    {canMessage && (
-                      <div>
-                        <Button
-                          size="compact"
-                          loading={openingMessage}
-                          onClick={() => void openMessage()}
-                        >
-                          Message
-                        </Button>
-                        {messageError && <p role="alert">{messageError}</p>}
-                      </div>
-                    )}
-                    {profile?.about && (
-                      <p className={styles.about}>{profile.about}</p>
-                    )}
-                    {control && scope && (
-                      <ProfileAgentRuntime
-                        control={control}
-                        onOpenHarnesses={openHarnesses}
-                        scope={scope}
-                        pubkey={pubkey}
-                        instanceId={instanceId}
-                        owned={isOwner}
-                      />
-                    )}
-                    {children}
-                    {knownAgent && (
-                      <ProfileAgentArchive
-                        session={session}
-                        pubkey={pubkey}
-                        control={control}
-                        scope={scope}
-                        onDeleted={close}
-                      />
-                    )}
-                    {knownAgent && (
-                      <ProfileActivity
-                        session={session}
-                        pubkey={pubkey}
-                        context={context}
-                      />
-                    )}
-                    {control &&
-                      (!knownAgent || ownership.settled) &&
-                      !runtimePending &&
-                      !canViewRuntime && (
-                        <ProfileInstances
-                          errorHandledByHost
-                          control={control}
-                          pubkey={pubkey}
-                          context={context}
-                          session={session}
-                          canOpenPrivate={verifiedOwner === viewer && !!viewer}
-                          selectedId={instanceId}
-                          scope={scope}
-                          communityOrigin={communityOrigin}
-                          viewer={viewer}
-                          knownAgent={knownAgent}
-                        />
-                      )}
-                    <div className={styles.publicKey}>
-                      <div className={styles.keyHeading}>
-                        <h3 className="text-body">Public key</h3>
-                        <Button
-                          size="compact"
-                          variant="ghost"
-                          aria-label="Copy npub"
-                          onClick={() => {
-                            setCopyStatus("");
-                            void Promise.resolve()
-                              .then(() => navigator.clipboard.writeText(npub))
-                              .then(
-                                () => setCopyStatus("Public key copied."),
-                                () =>
-                                  setCopyStatus(
-                                    "Could not copy. Select the public key above to copy it.",
-                                  ),
-                              );
-                          }}
-                        >
-                          <CopyIcon size={16} aria-hidden="true" />
-                          Copy
-                        </Button>
-                      </div>
-                      <code className="font-mono text-mono">{npub}</code>
-                      <span role="status" className={styles.feedback}>
-                        {copyStatus}
-                      </span>
-                    </div>
-                    {knownAgent && verifiedOwner && (
-                      <ProfileAgentIdentity
-                        session={session}
-                        owner={verifiedOwner}
-                        viewer={viewer}
-                        context={context}
-                      />
-                    )}
-                    <ProfilePublicMetadata
-                      key={verifiedOwner ?? "unowned"}
-                      source={publicMetadata}
-                      nip05={profile?.nip05}
-                    />
-                    {!profile &&
-                      (status === "loading" ? (
-                        <p role="status">Loading profile…</p>
-                      ) : (
-                        <p role={status === "error" ? "alert" : undefined}>
-                          {status === "error"
-                            ? "Could not load this profile."
-                            : "No profile metadata is available in this community."}
-                        </p>
-                      ))}
-                    {((!profile && status !== "loading") ||
-                      publicMetadata.failed ||
-                      ownership.failed) && (
+          <h2 className="text-heading">{name}</h2>
+        </div>
+        <Tabs
+          value={selectedTab}
+          onValueChange={setTab}
+          items={[
+            { value: "info", label: "Info" },
+            ...(canViewRuntime
+              ? [{ value: "runtime" as const, label: "Runtime" }]
+              : []),
+            { value: "channels", label: "Channels" },
+            ...(isOwner
+              ? [{ value: "memories" as const, label: "Memories" }]
+              : []),
+          ]}
+          label="Profile sections"
+          variant="panel"
+          renderPanel={(selected) => (
+            <div className={styles.tabContent}>
+              {selected === "info" ? (
+                <>
+                  <PresenceIndicator
+                    presence={session.presence}
+                    pubkey={pubkey}
+                    profile
+                  />
+                  <UserStatusDisplay session={session} userId={pubkey} />
+                  {canMessage && (
+                    <div>
                       <Button
                         size="compact"
-                        onClick={() => {
-                          retry((value) => value + 1);
-                          publicMetadata.retry();
-                        }}
+                        loading={openingMessage}
+                        onClick={() => void openMessage()}
                       >
-                        Retry profile
+                        Message
                       </Button>
-                    )}
-                  </>
-                ) : selected === "runtime" &&
-                  canViewRuntime &&
-                  control &&
-                  verifiedOwner ? (
-                  runtimeAgent ? (
-                    <ProfileRuntime
+                      {messageError && <p role="alert">{messageError}</p>}
+                    </div>
+                  )}
+                  {profile?.about && (
+                    <p className={styles.about}>{profile.about}</p>
+                  )}
+                  {control && scope && (
+                    <ProfileAgentRuntime
                       control={control}
                       onOpenHarnesses={openHarnesses}
-                      agent={runtimeAgent}
+                      scope={scope}
+                      pubkey={pubkey}
+                      instanceId={instanceId}
+                      owned={isOwner}
+                    />
+                  )}
+                  {children}
+                  {knownAgent && (
+                    <ProfileAgentArchive
+                      session={session}
+                      pubkey={pubkey}
+                      control={control}
+                      scope={scope}
+                      onDeleted={close}
+                    />
+                  )}
+                  {knownAgent && (
+                    <ProfileActivity
+                      session={session}
+                      pubkey={pubkey}
+                      context={context}
+                    />
+                  )}
+                  {control &&
+                    (!knownAgent || ownership.settled) &&
+                    !runtimePending &&
+                    !canViewRuntime && (
+                      <ProfileInstances
+                        errorHandledByHost
+                        control={control}
+                        pubkey={pubkey}
+                        context={context}
+                        session={session}
+                        canOpenPrivate={verifiedOwner === viewer && !!viewer}
+                        selectedId={instanceId}
+                        scope={scope}
+                        communityOrigin={communityOrigin}
+                        viewer={viewer}
+                        knownAgent={knownAgent}
+                      />
+                    )}
+                  <div className={styles.publicKey}>
+                    <div className={styles.keyHeading}>
+                      <h3 className="text-body">Public key</h3>
+                      <Button
+                        size="compact"
+                        variant="ghost"
+                        aria-label="Copy npub"
+                        onClick={() => {
+                          setCopyStatus("");
+                          void Promise.resolve()
+                            .then(() => navigator.clipboard.writeText(npub))
+                            .then(
+                              () => setCopyStatus("Public key copied."),
+                              () =>
+                                setCopyStatus(
+                                  "Could not copy. Select the public key above to copy it.",
+                                ),
+                            );
+                        }}
+                      >
+                        <CopyIcon size={16} aria-hidden="true" />
+                        Copy
+                      </Button>
+                    </div>
+                    <code className="font-mono text-mono">{npub}</code>
+                    <span role="status" className={styles.feedback}>
+                      {copyStatus}
+                    </span>
+                  </div>
+                  {knownAgent && verifiedOwner && (
+                    <ProfileAgentIdentity
                       session={session}
                       owner={verifiedOwner}
-                      instances={instances}
-                      authorizeLog={
-                        ownership.status === "ready"
-                          ? session.authorizeAgentLog
-                          : undefined
-                      }
-                      onOpenLog={setLogTarget}
+                      viewer={viewer}
+                      context={context}
                     />
-                  ) : (
-                    <div className={styles.runtimeTab}>{instances}</div>
-                  )
-                ) : selected === "memories" && isOwner ? (
-                  <ProfileMemories session={session} pubkey={pubkey} />
-                ) : (
-                  <ProfileChannels
-                    session={session}
-                    pubkey={pubkey}
-                    navigation={navigation}
-                    communityOrigin={communityOrigin}
-                    viewer={viewer}
-                    control={control}
-                    scope={scope}
+                  )}
+                  <ProfilePublicMetadata
+                    key={verifiedOwner ?? "unowned"}
+                    source={publicMetadata}
+                    nip05={profile?.nip05}
                   />
-                )}
-              </div>
-            )}
-          />
-        </>
-      )}
+                  {!profile &&
+                    (status === "loading" ? (
+                      <p role="status">Loading profile…</p>
+                    ) : (
+                      <p role={status === "error" ? "alert" : undefined}>
+                        {status === "error"
+                          ? "Could not load this profile."
+                          : "No profile metadata is available in this community."}
+                      </p>
+                    ))}
+                  {((!profile && status !== "loading") ||
+                    publicMetadata.failed ||
+                    ownership.failed) && (
+                    <Button
+                      size="compact"
+                      onClick={() => {
+                        retry((value) => value + 1);
+                        publicMetadata.retry();
+                      }}
+                    >
+                      Retry profile
+                    </Button>
+                  )}
+                </>
+              ) : selected === "runtime" &&
+                canViewRuntime &&
+                control &&
+                verifiedOwner ? (
+                runtimeAgent ? (
+                  <ProfileRuntime
+                    control={control}
+                    onOpenHarnesses={openHarnesses}
+                    agent={runtimeAgent}
+                    session={session}
+                    owner={verifiedOwner}
+                    instances={instances}
+                    authorizeLog={
+                      ownership.status === "ready"
+                        ? session.authorizeAgentLog
+                        : undefined
+                    }
+                    onOpenLog={setLogTarget}
+                  />
+                ) : (
+                  <div className={styles.runtimeTab}>{instances}</div>
+                )
+              ) : selected === "memories" && isOwner ? (
+                <ProfileMemories session={session} pubkey={pubkey} />
+              ) : (
+                <ProfileChannels
+                  session={session}
+                  pubkey={pubkey}
+                  navigation={navigation}
+                  communityOrigin={communityOrigin}
+                  viewer={viewer}
+                  control={control}
+                  scope={scope}
+                />
+              )}
+            </div>
+          )}
+        />
+      </div>
     </section>
   );
 }

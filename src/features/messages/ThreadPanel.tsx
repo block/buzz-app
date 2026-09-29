@@ -92,7 +92,6 @@ function ThreadHeader({ close }: Pick<ThreadPanelProps, "close">) {
   }, []);
   return (
     <PanelHeader
-      variant="compact"
       title="Thread"
       actions={
         <IconButton
@@ -276,6 +275,7 @@ function ThreadMessages({
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
+  const [initialPositioned, setInitialPositioned] = useState(false);
   const follow = useRef(true);
   const targetAnchor = useRef<number | undefined>(undefined);
   const selectedRow = useCallback(
@@ -353,6 +353,12 @@ function ThreadMessages({
   const rootTarget =
     navigation?.target.kind === "conversation" &&
     navigation.target.threadRootId === messageId;
+  // Ordinary opens follow the latest reply after bounded history finishes.
+  // Keep that first positioning invisible; exact-message navigation reveals itself.
+  const positioning =
+    !initialPositioned &&
+    (!navigation || rootTarget) &&
+    snapshot.status !== "error";
   const revealed = useMessageReveal({
     scroller,
     settled: positioned,
@@ -483,6 +489,7 @@ function ThreadMessages({
     // subsequent live changes follow only while the reader is at the bottom.
     if (follow.current) element.scrollTop = element.scrollHeight;
     positioned.current = true;
+    setInitialPositioned(true);
   }, [
     snapshot.status,
     snapshot.canLoadMore,
@@ -512,6 +519,7 @@ function ThreadMessages({
   }, [sent, snapshot.replies, expanded]);
   const keepReadingPosition = () => {
     targetAnchor.current = undefined;
+    setInitialPositioned(true);
     if (positioned.current) return;
     positioned.current = true;
     follow.current = false;
@@ -621,6 +629,8 @@ function ThreadMessages({
         ref={scroller}
         className={styles.threadHistory}
         aria-label="Thread messages"
+        aria-busy={positioning}
+        data-positioning={positioning || undefined}
         onScroll={(event) => {
           if (!positioned.current) return;
           const element = event.currentTarget;
@@ -647,35 +657,39 @@ function ThreadMessages({
         }}
         tabIndex={0}
       >
-        {snapshot.root ? (
-          <MessageRow
-            extensions={extensions}
-            session={session}
-            scope={scope}
-            onReply={focusReply}
-            row={snapshot.root}
-            profile={profiles.get(snapshot.root.authorId)}
-            participantProfiles={profiles}
-            agentPubkeys={agentPubkeys}
-            media={session.media}
-            onOpenLink={onOpenLink}
-            canOpenLink={canOpenLink}
-            day={true}
-            layout="thread"
-            retry={session.messages.retry}
-            mediaMode="thread"
-            {...(mediaSeek
-              ? {
-                  mediaSeekTo: mediaSeek.seconds,
-                  mediaSeekRequest: mediaSeek.request,
-                }
-              : {})}
-            {...(onOpenMediaReview ? { onOpenMediaReview: openRootMedia } : {})}
-          />
-        ) : snapshot.status !== "loading" ? (
-          <p className={styles.empty}>Original message unavailable.</p>
-        ) : null}
-        <ol>{renderReplies(undefined)}</ol>
+        <div data-thread-rows="" inert={positioning}>
+          {snapshot.root ? (
+            <MessageRow
+              extensions={extensions}
+              session={session}
+              scope={scope}
+              onReply={focusReply}
+              row={snapshot.root}
+              profile={profiles.get(snapshot.root.authorId)}
+              participantProfiles={profiles}
+              agentPubkeys={agentPubkeys}
+              media={session.media}
+              onOpenLink={onOpenLink}
+              canOpenLink={canOpenLink}
+              day={true}
+              layout="thread"
+              retry={session.messages.retry}
+              mediaMode="thread"
+              {...(mediaSeek
+                ? {
+                    mediaSeekTo: mediaSeek.seconds,
+                    mediaSeekRequest: mediaSeek.request,
+                  }
+                : {})}
+              {...(onOpenMediaReview
+                ? { onOpenMediaReview: openRootMedia }
+                : {})}
+            />
+          ) : snapshot.status !== "loading" ? (
+            <p className={styles.empty}>Original message unavailable.</p>
+          ) : null}
+          <ol>{renderReplies(undefined)}</ol>
+        </div>
         {(snapshot.status === "loading" ||
           (snapshot.status === "ready" && snapshot.canLoadMore)) && (
           <p role="status">Loading thread…</p>

@@ -238,7 +238,9 @@ it("keeps ordinary replies flat and visible when nested branches close or new re
   const parent = screen.getByText("parent").closest("li");
   const peer = screen.getByText("peer").closest("li");
   expect(parent?.parentElement).toBe(peer?.parentElement);
-  expect(parent?.parentElement?.parentElement).toBe(history);
+  expect(parent?.parentElement?.parentElement).toBe(
+    history.querySelector("[data-thread-rows]"),
+  );
   fireEvent.click(screen.getByRole("button", { name: "View 1 reply" }));
   expect(screen.getByText("child")).toBeVisible();
   const collapse = screen.getAllByRole("button", { name: "Hide replies" })[0];

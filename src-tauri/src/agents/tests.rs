@@ -564,10 +564,11 @@ fn real_ipc_preview_source_no_import_and_shutdown_fence() {
         json!({"source":"development","destination":"wss://chosen.example"}),
     )
     .unwrap();
-    assert!(preview["sourcePath"]
-        .as_str()
-        .unwrap()
-        .ends_with("xyz.block.buzz.app.dev/agents/managed-agents.json"));
+    // Compare path components: Windows joins with `\`, Unix with `/`.
+    assert!(
+        std::path::Path::new(preview["sourcePath"].as_str().unwrap())
+            .ends_with("xyz.block.buzz.app.dev/agents/managed-agents.json")
+    );
     assert!(invoke(
         &view,
         "agent_control_import_preview",

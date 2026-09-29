@@ -90,8 +90,14 @@ because execution failed. The old-Buzz ownership guard remains in force.
 
 Mention startup carries the earliest relevant pending send timestamp into the
 bundled runner's existing replay input (bounded by its 15-minute catch-up limit).
-Already-running agents are not restarted. Process state is not proof of a live
-reply; imported identities require old Buzz stopped before handover.
+Already-running agents are not restarted. Mentions during queued or pending startup
+attach their earliest timestamp to that same launch, without another credential
+read or listener. Stop and changed saved revisions retire that input. If launch
+has already finished or the host cannot attach it, the send shows a separate
+replay warning instead of silently treating Waiting as Running. Attachment is not
+proof of delivery; a later credential/launch failure remains visible in Agents.
+Process state is not proof of a live reply; imported identities require old Buzz
+stopped before handover.
 
 The focused Add/Edit dialog contains Name and Agent instructions, followed by
 **AI configuration** in dependency order: **Harness → Provider → Model**. Provider

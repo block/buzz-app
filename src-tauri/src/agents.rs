@@ -240,6 +240,18 @@ struct LogChallenge {
     issued: std::time::Instant,
 }
 
+struct PendingStart {
+    ticket: u64,
+    workspace: Option<String>,
+    status: ProcessStatus,
+    revision: u64,
+    replay_floor: Option<u64>,
+}
+struct MentionReplay {
+    revision: u64,
+    floor: u64,
+}
+
 struct Host {
     controller: Controller,
     imports: Imports,
@@ -248,8 +260,8 @@ struct Host {
     app_data: PathBuf,
     closed: bool,
     credentials: Arc<dyn Credentials>,
-    starts: BTreeMap<String, (u64, Option<String>, ProcessStatus)>,
-    queued: BTreeSet<String>,
+    starts: BTreeMap<String, PendingStart>,
+    queued: BTreeMap<String, Option<MentionReplay>>,
     next_start: u64,
     /// Agents with an explicit Start/Stop since open; queued restore skips them.
     acted: BTreeSet<String>,
@@ -281,7 +293,7 @@ impl Host {
                     "enabled": agent.enabled, "startOnAppLaunch": agent.start_on_app_launch,
                     "selected": agent.start_on_app_launch,
                 }));
-                agent.start_on_app_launch.then_some(agent.id)
+                agent.start_on_app_launch.then_some((agent.id, None))
             })
             .collect();
         let controller = Controller::new(
@@ -311,10 +323,10 @@ impl Host {
     fn snapshot(&mut self) -> Result<Snapshot, String> {
         let mut data = self.controller.snapshot()?;
         for agent in &mut data.agents {
-            if let Some((_, _, status)) = self.starts.get(&agent.id) {
-                agent.status = *status;
+            if let Some(pending) = self.starts.get(&agent.id) {
+                agent.status = pending.status;
                 agent.error = None;
-            } else if self.queued.contains(&agent.id) {
+            } else if self.queued.contains_key(&agent.id) {
                 agent.status = ProcessStatus::Waiting;
                 agent.error = None;
             }
@@ -332,6 +344,40 @@ impl Host {
         self.acted.insert(id.to_owned());
         self.controller.action(id, action)?;
         self.snapshot()
+    }
+    fn take_start(&mut self, id: &str, ticket: u64) -> Result<PendingStart, String> {
+        if self.starts.get(id).map(|pending| pending.ticket) != Some(ticket) {
+            return Err(START_CANCELLED.into());
+        }
+        self.starts.remove(id).ok_or_else(|| START_CANCELLED.into())
+    }
+    fn attach_mention(&mut self, id: &str, revision: u64, floor: u64) -> Result<(), String> {
+        let current = self.controller.snapshot()?;
+        if !current
+            .agents
+            .iter()
+            .any(|a| a.id == id && a.revision == revision)
+        {
+            return Err("Saved settings changed; mention replay was not attached".into());
+        }
+        if let Some(pending) = self.starts.get_mut(id) {
+            if pending.revision != revision {
+                return Err("Saved settings changed; mention replay was not attached".into());
+            }
+            pending.replay_floor = Some(pending.replay_floor.map_or(floor, |old| old.min(floor)));
+        } else if let Some(replay) = self.queued.get_mut(id) {
+            if replay.as_ref().is_some_and(|old| old.revision != revision) {
+                return Err("Saved settings changed; mention replay was not attached".into());
+            }
+            let floor = replay.as_ref().map_or(floor, |old| old.floor.min(floor));
+            *replay = Some(MentionReplay { revision, floor });
+        } else {
+            return Err(
+                "Launch already finished or was cancelled; mention replay could not be confirmed"
+                    .into(),
+            );
+        }
+        Ok(())
     }
     fn refuse_legacy(&self, id: &str) -> Result<(), String> {
         if self.controller.requires_legacy_handover(id)? {
@@ -476,13 +522,25 @@ impl AgentHost {
     }
     pub(crate) async fn restore(&self) {
         let ids = run(self.clone(), |host| {
-            host.queued = host
-                .controller
-                .launch_ids()?
+            let ids = match host.controller.launch_ids() {
+                Ok(ids) => ids,
+                Err(error) => {
+                    for (id, _) in std::mem::take(&mut host.queued) {
+                        host.controller.record_error(&id, error.clone());
+                    }
+                    return Err(error);
+                }
+            };
+            let mut queued = std::mem::take(&mut host.queued);
+            host.queued = ids
                 .into_iter()
                 .filter(|id| !host.acted.contains(id))
+                .map(|id| {
+                    let replay = queued.remove(&id).flatten();
+                    (id, replay)
+                })
                 .collect();
-            Ok(host.queued.iter().cloned().collect::<Vec<_>>())
+            Ok(host.queued.keys().cloned().collect::<Vec<_>>())
         })
         .await
         .unwrap_or_default();
@@ -542,7 +600,7 @@ impl AgentHost {
             let cancelled: Vec<_> = host
                 .starts
                 .iter()
-                .filter(|(_, (_, pending, _))| pending.as_deref() == Some(&workspace))
+                .filter(|(_, pending)| pending.workspace.as_deref() == Some(&workspace))
                 .map(|(id, _)| id.clone())
                 .collect();
             for id in cancelled {
@@ -553,7 +611,7 @@ impl AgentHost {
                 );
             }
             // Queued restore has not acquired a ticket yet; fence it too.
-            let queued: Vec<_> = host.queued.iter().cloned().collect();
+            let queued: Vec<_> = host.queued.keys().cloned().collect();
             for id in queued {
                 if host
                     .controller
@@ -809,6 +867,19 @@ pub(crate) async fn agent_control_delete(
     })
     .await
 }
+// This only annotates an admitted launch; it cannot start or resurrect an agent.
+#[tauri::command]
+pub(crate) async fn agent_control_attach_mention(
+    state: tauri::State<'_, AgentHost>,
+    id: String,
+    expected_revision: u64,
+    replay_floor: u64,
+) -> Result<(), String> {
+    run(state.inner().clone(), move |host| {
+        host.attach_mention(&id, expected_revision, replay_floor)
+    })
+    .await
+}
 #[tauri::command]
 pub(crate) async fn agent_control_action(
     state: tauri::State<'_, AgentHost>,
@@ -888,7 +959,7 @@ async fn start_guarded(
     let target = id.clone();
     let prepared = run(owner.clone(), move |host| {
         let id = target;
-        host.queued.remove(&id);
+        let queued_replay = host.queued.remove(&id).flatten();
         if restore && (host.acted.contains(&id) || !host.controller.launch_ids()?.contains(&id)) {
             return Err("Agent disabled before restore".into());
         }
@@ -908,6 +979,17 @@ async fn start_guarded(
                 return Err(error);
             }
         };
+        if queued_replay
+            .as_ref()
+            .is_some_and(|replay| replay.revision != request.2)
+        {
+            let error = "Saved settings changed; retry Start for pending mentions".to_owned();
+            host.controller.record_error(&id, error.clone());
+            return Err(error);
+        }
+        let replay_floor = queued_replay.map_or(replay_floor, |replay| {
+            Some(replay_floor.map_or(replay.floor, |floor| floor.min(replay.floor)))
+        });
         if let Err(error) = host.refuse_legacy(&id) {
             host.controller.record_error(&id, error.clone());
             return Err(error);
@@ -919,7 +1001,13 @@ async fn start_guarded(
         let ticket = host.next_start;
         host.starts.insert(
             id.clone(),
-            (ticket, request.3.clone(), ProcessStatus::Waiting),
+            PendingStart {
+                ticket,
+                workspace: request.3.clone(),
+                status: ProcessStatus::Waiting,
+                revision: request.2,
+                replay_floor,
+            },
         );
         Ok((request, ticket, host.credentials.clone()))
     })
@@ -943,18 +1031,15 @@ async fn start_guarded(
             let pending = host
                 .starts
                 .get_mut(&target)
-                .filter(|(current, _, _)| *current == ticket)
+                .filter(|pending| pending.ticket == ticket)
                 .ok_or(START_CANCELLED)?;
-            pending.2 = ProcessStatus::Starting;
+            pending.status = ProcessStatus::Starting;
             Ok(())
         })
         .await?;
     }
     run(owner, move |host| {
-        if host.starts.get(&id).map(|(ticket, _, _)| *ticket) != Some(ticket) {
-            return Err(START_CANCELLED.into());
-        }
-        host.starts.remove(&id);
+        let replay_floor = host.take_start(&id, ticket)?.replay_floor;
         let key = match acquired {
             Ok(key) => key,
             Err(error) => {

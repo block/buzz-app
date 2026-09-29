@@ -287,3 +287,64 @@ test("focused actions follow sibling growth and shrinkage without scrolling", as
     await scrolls.dispose();
   }
 });
+
+// Top-layer previews ignore z-index, so only the browser can show a background
+// destination staying clickable above a modal opened while it was hovered.
+test("destination previews yield to modals they are outside", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await page.goto("/tests/fixtures/preview-modal.html");
+  const preview = (name) =>
+    page.getByRole("link", { name: `${name} preview`, exact: true });
+  const clickable = (card) =>
+    card.evaluate((card) => {
+      const rect = card.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + 10, rect.top + 10);
+      return card === hit || card.contains(hit);
+    });
+  const background = preview("Background");
+  await page.getByRole("link", { name: "Open Background" }).hover();
+  await expect(background).toBeVisible();
+  const bounds = await background.boundingBox();
+  await page.mouse.move(bounds.x + 10, bounds.y + 10);
+  await expect.poll(() => clickable(background)).toBe(true);
+
+  await page.getByRole("button", { name: "Open modal" }).focus();
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "Modal" });
+  await expect(dialog).toBeVisible();
+  // Outlast the close delay with the pointer still over the preview.
+  await page.clock.runFor(1000);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          document
+            .querySelector(".buzz-preview-card[data-open]")
+            ?.parentElement?.matches(":popover-open") ?? false,
+      ),
+    )
+    .toBe(false);
+  // The backdrop, not the background preview, receives the click.
+  await page.mouse.click(bounds.x + 10, bounds.y + 10);
+  await expect(dialog).toHaveCount(0);
+  expect(await page.evaluate(() => window.previewClicks)).toEqual([]);
+
+  // A trigger inside the active modal keeps its preview above the backdrop.
+  await page.mouse.move(0, 0);
+  await page.getByRole("button", { name: "Open modal" }).click();
+  await dialog.getByRole("link", { name: "Open Inside" }).hover();
+  const inside = preview("Inside");
+  await expect(inside).toBeVisible();
+  await expect.poll(() => clickable(inside)).toBe(true);
+  await inside.click();
+  expect(await page.evaluate(() => window.previewClicks)).toEqual(["Inside"]);
+
+  // Once dismissed, background previews rejoin the top layer.
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole("link", { name: "Open Background" }).hover();
+  await expect(background).toBeVisible();
+  await expect.poll(() => clickable(background)).toBe(true);
+});

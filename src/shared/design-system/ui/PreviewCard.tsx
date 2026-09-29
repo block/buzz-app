@@ -1,5 +1,6 @@
 import { PreviewCard as BasePreviewCard } from "@base-ui/react/preview-card";
-import { useRef, type ReactElement, type ReactNode } from "react";
+import { useCallback, useRef, type ReactElement, type ReactNode } from "react";
+import { behindActiveModal, observeModals } from "../modalLayer";
 
 export type PreviewCardProps = {
   /** The one interactive element that anchors and reveals this preview. */
@@ -36,6 +37,18 @@ export function PreviewCard({
 }: PreviewCardProps) {
   const triggerRef = useRef<HTMLAnchorElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
+  const promote = useCallback((positioner: HTMLDivElement) => {
+    // Join the top layer after the hovered row's floating actions, but not
+    // above a modal the trigger is outside. The portal is never inside one.
+    // Base UI still owns placement, timing, focus and unmounting.
+    const update = () => {
+      const trigger = triggerRef.current;
+      if (trigger && behindActiveModal(trigger)) positioner.hidePopover?.();
+      else positioner.showPopover?.();
+    };
+    update();
+    return observeModals(update);
+  }, []);
   return (
     <BasePreviewCard.Root open={open} onOpenChange={onOpenChange}>
       <BasePreviewCard.Trigger
@@ -63,11 +76,7 @@ export function PreviewCard({
           positionMethod="fixed"
           className="buzz-preview-card-positioner"
           popover="manual"
-          ref={(element) => {
-            // Join the top layer after the hovered row's floating actions.
-            // Base UI still owns placement, timing, focus and unmounting.
-            element?.showPopover?.();
-          }}
+          ref={promote}
         >
           <BasePreviewCard.Popup
             data-buzz-ui=""

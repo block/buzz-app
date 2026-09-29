@@ -5,6 +5,10 @@ import {
   useSyncExternalStore,
   type RefObject,
 } from "react";
+import {
+  behindActiveModal,
+  observeModals,
+} from "../../shared/design-system/modalLayer";
 
 const floatingQuery =
   "(hover: hover) and (pointer: fine) and (min-width: 640px)";
@@ -107,10 +111,7 @@ export function useFloatingActionBar(
     const position = (anchor: DOMRect) => {
       // A top-layer toolbar can retain hover above a portalled modal's backdrop.
       // Keep actions in the active viewer usable, but suppress background rows.
-      const modal = [...document.querySelectorAll('[aria-modal="true"]')]
-        .filter((element) => !element.closest('[inert], [aria-hidden="true"]'))
-        .at(-1);
-      if (modal && !modal.contains(row)) {
+      if (behindActiveModal(row)) {
         hide();
         return;
       }
@@ -163,21 +164,15 @@ export function useFloatingActionBar(
     observer.observe(slot);
     observer.observe(row);
     if (scroller) observer.observe(scroller);
-    // Modal open/close need not move focus or the pointer. Observe only while
-    // reveal is requested, and share the existing coalesced positioning update.
-    const modals = new MutationObserver(schedule);
-    modals.observe(document.body, {
-      subtree: true,
-      childList: true,
-      attributes: true,
-      attributeFilter: ["aria-modal", "aria-hidden", "inert"],
-    });
+    // Observe modals only while reveal is requested, and share the existing
+    // coalesced positioning update.
+    const unobserveModals = observeModals(schedule);
     return () => {
       cancelAnimationFrame(frame);
       document.removeEventListener("scroll", schedule, true);
       window.removeEventListener("resize", schedule);
       observer.disconnect();
-      modals.disconnect();
+      unobserveModals();
       hide();
     };
   }, [floating, revealed, rowRef, barRef, slotRef, layout]);

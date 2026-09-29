@@ -14,8 +14,9 @@ removal are serialized on the main queue. Empty batches stop the timer. Delivere
 cards do not expire; clicks, explicit dismissal and disappearance retain the
 existing terminal-result handling. Fire-and-forget delivery is unchanged.
 
-The snapshot includes the upstream Rust sources, manifest, build script and tests
-without changes. `src-tauri/tests/notification_polling.m` compiles the actual
+The snapshot includes the upstream manifest, build script and tests unchanged.
+Repository pre-commit rustfmt reorders imports and wraps one assertion in
+`src/bridge.rs`, `src/lib.rs` and `src/pending_guard.rs`; their behavior is unchanged. `src-tauri/tests/notification_polling.m` compiles the actual
 production poll with fake OS/response boundaries; it sends no notifications. Its
 Rust runner includes it in the app's ordinary macOS native test suite. Current CI
 has no macOS runner, so this check requires local macOS validation. Standalone

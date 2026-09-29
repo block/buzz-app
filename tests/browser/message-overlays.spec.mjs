@@ -249,12 +249,12 @@ test("focused actions follow sibling growth and shrinkage without scrolling", as
         .poll(() =>
           actions.evaluate((bar) => ({
             slotTop: bar.parentElement.getBoundingClientRect().top,
-            barTop: bar.getBoundingClientRect().top,
+            barBottom: bar.getBoundingClientRect().bottom,
           })),
         )
         .toEqual({
           slotTop: baseline.top + growth,
-          barTop: baseline.top + growth,
+          barBottom: baseline.top + growth,
         });
       await expect(button).toBeFocused();
       await expect

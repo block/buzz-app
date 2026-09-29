@@ -10,8 +10,7 @@ import {
   observeModals,
 } from "../../shared/design-system/modalLayer";
 
-const floatingQuery =
-  "(hover: hover) and (pointer: fine) and (min-width: 640px)";
+const floatingQuery = "(hover: hover) and (pointer: fine)";
 const subscribe = (notify: () => void) => {
   const query = window.matchMedia?.(floatingQuery);
   query?.addEventListener("change", notify);
@@ -25,7 +24,6 @@ export function useFloatingActionBar(
   barRef: RefObject<HTMLDivElement | null>,
   slotRef: RefObject<HTMLDivElement | null>,
   open: boolean,
-  layout: "timeline" | "thread" | "continuation",
 ) {
   const floating = useSyncExternalStore(subscribe, snapshot, () => false);
   const [revealed, setRevealed] = useState(false);
@@ -69,7 +67,7 @@ export function useFloatingActionBar(
     row.addEventListener("focusin", focusIn);
     row.addEventListener("focusout", focusOut);
     const observer = new MutationObserver(() => {
-      // Removing a focused branch control does not dispatch focusout.
+      // Recheck focus if a control is removed without dispatching focusout.
       focused = row.contains(document.activeElement);
       update();
     });
@@ -106,7 +104,6 @@ export function useFloatingActionBar(
       bar.style.top = "";
       bar.style.left = "";
       bar.style.right = "";
-      bar.style.maxWidth = "";
     };
     const position = (anchor: DOMRect) => {
       // A top-layer toolbar can retain hover above a portalled modal's backdrop.
@@ -116,13 +113,11 @@ export function useFloatingActionBar(
         return;
       }
       const viewport = scroller?.getBoundingClientRect();
-      // Timeline slots have zero height; include the bar itself when testing
-      // intersection so a partially clipped toolbar can still be revealed.
-      const bottom =
-        layout === "timeline" ? anchor.top + bar.offsetHeight : anchor.bottom;
+      // The slot marks the toolbar bottom; CSS lifts it above the author line.
       if (
         viewport &&
-        (bottom <= viewport.top || anchor.top >= viewport.bottom)
+        (anchor.top <= viewport.top ||
+          anchor.top - bar.offsetHeight >= viewport.bottom)
       ) {
         hide();
         return;
@@ -133,7 +128,6 @@ export function useFloatingActionBar(
       bar.style.right = rtl
         ? "auto"
         : `${document.documentElement.clientWidth - anchor.right}px`;
-      bar.style.maxWidth = layout === "timeline" ? `${row.clientWidth}px` : "";
       bar.showPopover?.();
     };
     const schedule = () => {
@@ -175,7 +169,7 @@ export function useFloatingActionBar(
       unobserveModals();
       hide();
     };
-  }, [floating, revealed, rowRef, barRef, slotRef, layout]);
+  }, [floating, revealed, rowRef, barRef, slotRef]);
 
   return floating;
 }

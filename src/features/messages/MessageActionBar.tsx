@@ -36,15 +36,12 @@ export function MessageActionBar({
   link,
   copyText,
   quickControls,
-  branchControl,
   overflowItems,
   messageId,
   menuTriggerRef,
   rowRef,
-  layout = "timeline",
 }: {
   rowRef?: RefObject<HTMLDivElement | null>;
-  layout?: "timeline" | "thread" | "continuation";
   messageId?: string;
   menuTriggerRef?: Ref<HTMLButtonElement>;
   onReply?: (() => void) | undefined;
@@ -52,13 +49,12 @@ export function MessageActionBar({
   link?: string | undefined;
   copyText(): string;
   quickControls?: ReactNode;
-  branchControl?: ReactNode;
   overflowItems?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const barRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
-  const floating = useFloatingActionBar(rowRef, barRef, slotRef, open, layout);
+  const floating = useFloatingActionBar(rowRef, barRef, slotRef, open);
   const [copying, setCopying] = useState(false);
   const [notice, setNotice] = useState<{ text: string; error: boolean }>();
   const busy = useRef(false);
@@ -93,7 +89,6 @@ export function MessageActionBar({
           role="group"
           aria-label="Message actions"
         >
-          {branchControl}
           {quickControls}
           {onReply && (
             <IconButton
@@ -110,7 +105,7 @@ export function MessageActionBar({
               }}
             />
           )}
-          <span className={styles.copyLinkShortcut}>
+          <span>
             <IconButton
               aria-label="Copy link"
               title={link ? "Copy link" : "Message link unavailable"}
@@ -168,17 +163,6 @@ export function MessageActionBar({
                     <CopyIcon />
                   </MenuIcon>
                   Copy message
-                </MenuItem>
-                <MenuItem
-                  disabled={!link || copying}
-                  onClick={() => {
-                    if (link) void copy(() => link, "Link");
-                  }}
-                >
-                  <MenuIcon>
-                    <LinkIcon />
-                  </MenuIcon>
-                  Copy link
                 </MenuItem>
                 {overflowItems}
               </AfterMenuClose.Provider>

@@ -167,7 +167,7 @@ test("selected message actions hide beyond their pane and return with it", async
         const rect = bar.getBoundingClientRect();
         const slot = bar.parentElement.getBoundingClientRect();
         const pane = bar.closest("section").getBoundingClientRect();
-        return Math.abs(rect.top - slot.top) < 1 && rect.top >= pane.top;
+        return Math.abs(rect.bottom - slot.top) < 1 && rect.bottom > pane.top;
       }),
     )
     .toBe(true);

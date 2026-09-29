@@ -16,7 +16,7 @@ const shown = (actions) =>
     .toBe(true);
 
 // Browser-only: top-layer painting/hit testing across containment, real scrolling,
-// and reserved geometry cannot be established in jsdom.
+// and stable header geometry cannot be established in jsdom.
 test("thread actions and growing reactions paint beyond the scroller without moving text", async ({
   page,
   app,
@@ -25,13 +25,13 @@ test("thread actions and growing reactions paint beyond the scroller without mov
     .get("primary/alpha")
     .find((event) => event.content === "Thread root 0");
   let last;
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 7; i++) {
     last = app.append(
       "primary",
       "alpha",
       `Floating reply ${i}\n\nSecond paragraph\n\nThird paragraph`,
       false,
-      false,
+      i === 6,
       root.id,
     );
   }
@@ -49,21 +49,21 @@ test("thread actions and growing reactions paint beyond the scroller without mov
   const actions = actionsFor(row);
   await expect(row).toBeVisible();
   await settle(page, scroller);
-  // Exact placement tests clipping, not wheel physics: leave half the slot below
-  // the viewport while the message remains a reachable hover target.
+  // Leave the author line across the bottom edge, with the lifted toolbar
+  // crossing it and the start of the message still reachable by pointer.
   await actions.evaluate((bar) => {
     const slot = bar.parentElement;
     const scroller = bar.closest("[data-message-scroller]");
     scroller.scrollTop +=
       slot.getBoundingClientRect().top -
       scroller.getBoundingClientRect().bottom +
-      14;
+      -14;
   });
   await settle(page, scroller);
   const restingHeight = (await row.boundingBox()).height;
   const bounds = await scroller.boundingBox();
   const rowBounds = await row.boundingBox();
-  await page.mouse.move(rowBounds.x + 80, bounds.y + bounds.height - 45);
+  await page.mouse.move(rowBounds.x + 80, bounds.y + bounds.height - 2);
   await shown(actions);
   await expect
     .poll(() =>
@@ -75,7 +75,7 @@ test("thread actions and growing reactions paint beyond the scroller without mov
           .getBoundingClientRect().bottom;
         const button = bar.querySelector("button").getBoundingClientRect();
         return {
-          reserved: slot.height === rect.height,
+          anchored: slot.height === 0 && Math.abs(slot.top - rect.bottom) < 1,
           crosses: rect.top < edge && rect.bottom > edge + 4,
           hit: bar.contains(
             document.elementFromPoint(button.x + button.width / 2, edge + 4),
@@ -83,7 +83,7 @@ test("thread actions and growing reactions paint beyond the scroller without mov
         };
       }),
     )
-    .toEqual({ reserved: true, crosses: true, hit: true });
+    .toEqual({ anchored: true, crosses: true, hit: true });
   expect((await row.boundingBox()).height).toBe(restingHeight);
   // Moving onto the escaped controls must keep the row's reveal state alive.
   const quick = actions.getByRole("button", {
@@ -141,10 +141,15 @@ test("timeline actions escape the top edge, track scrolling and preserve keyboar
     "alpha",
     "Floating timeline target\n\nMore text\n\nLast paragraph",
     false,
-    false,
+    true,
   );
   for (let i = 0; i < 8; i++)
-    app.append("primary", "alpha", `Following ${i}\n\nExtra space`, false);
+    app.append(
+      "primary",
+      "alpha",
+      `Following ${i}\n\nExtra space\n\nAnother paragraph\n\nLast paragraph`,
+      false,
+    );
   await open(page, app);
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${target.id}"]`,
@@ -172,7 +177,7 @@ test("timeline actions escape the top edge, track scrolling and preserve keyboar
     scroller.scrollTop +=
       bar.parentElement.getBoundingClientRect().top -
       scroller.getBoundingClientRect().top +
-      6;
+      -10;
   });
   await settle(page, scroller);
   const bounds = await scroller.boundingBox();
@@ -335,7 +340,7 @@ test("menus and pickers retain actions, but modal dialogs cover them", async ({
   await trigger.focus();
   await trigger.press("Enter");
   await page
-    .getByRole("menuitem", { name: "Report message", exact: true })
+    .getByRole("menuitem", { name: "Report", exact: true })
     .press("Enter");
   const dialog = page.getByRole("dialog", {
     name: "Report message",

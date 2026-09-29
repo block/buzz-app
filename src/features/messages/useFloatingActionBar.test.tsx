@@ -84,7 +84,7 @@ function Controls({
 }) {
   const bar = useRef<HTMLDivElement>(null);
   const slot = useRef<HTMLDivElement>(null);
-  const floating = useFloatingActionBar(row, bar, slot, open, "timeline");
+  const floating = useFloatingActionBar(row, bar, slot, open);
   return (
     <div ref={slot}>
       <div
@@ -144,7 +144,7 @@ it("retains reveal across row/bar hover, focus, menu and expanded picker transit
   expect(screen.getByTestId("bar")).toBe(bar);
 });
 
-it("leaves coarse/narrow controls static and cleans up floating mode on media changes and unmount", () => {
+it("leaves coarse-pointer controls static and cleans up floating mode on media changes and unmount", () => {
   mediaMatches = false;
   const { unmount } = render(<Harness />);
   const row = screen.getByTestId("row");

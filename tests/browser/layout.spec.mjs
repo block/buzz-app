@@ -82,6 +82,10 @@ async function link(page, app, target) {
   ).toBeVisible();
 }
 async function shellFits(page, width) {
+  if (width <= 650)
+    await expect(
+      page.locator("[data-shell-sidebar-toggle]"),
+    ).toHaveAccessibleName(/^(Show|Hide) navigation$/);
   const disclosure = button(page, "Show navigation");
   const collapsed = await disclosure.isVisible();
   if (collapsed) await disclosure.click();
@@ -208,8 +212,8 @@ test("bento surfaces, sidebar pages, real link panel and compact community navig
   near(rail.width, 48);
   near(sidebar.x, rail.x + rail.width);
   near(before.x - sidebar.x - sidebar.width, 8);
-  near(before.y, 56);
-  near(before.height, 760);
+  near(before.y, 48);
+  near(before.height, 768);
   const background = await page
     .locator(".shell-background")
     .evaluate((el) => getComputedStyle(el).backgroundImage);
@@ -432,7 +436,11 @@ readingTest(
     await expectBottom();
     // Reopen by keyboard without browser click-to-scroll changing the saved position.
     const target = "https://github.com/block/buzz/pull/4";
-    const saved = await upper(page);
+    // Keep the offscreen opener within the virtualizer's mounted buffer after
+    // focus moves to the panel; this tests restoration to a mounted trigger.
+    await history.hover();
+    await wheel(page, -200);
+    const saved = await anchor(page);
     await expectNonPaging(page, app);
     await page
       .getByRole("link", { name: target, exact: true })
@@ -455,6 +463,9 @@ readingTest(
         };
       });
     await button(page, "Close channel panel").focus();
+    await expect(
+      page.getByRole("link", { name: target, exact: true }),
+    ).not.toBeInViewport();
     await button(page, "Close channel panel").click();
     const trigger = page.getByRole("link", { name: target, exact: true });
     await settle(page);

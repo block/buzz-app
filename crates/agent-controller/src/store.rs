@@ -16,13 +16,13 @@ const MAX_DEFAULTS_BYTES: usize = 1024 * 1024;
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Document {
+pub(crate) struct Document {
     version: u32,
-    agents: Vec<Agent>,
+    pub(crate) agents: Vec<Agent>,
     #[serde(default)]
     parked: BTreeMap<String, ParkedIdentity>,
     #[serde(flatten)]
-    extra: BTreeMap<String, Value>,
+    pub(crate) extra: BTreeMap<String, Value>,
 }
 /// Keyless inventory. Provenance is not proof of present key custody or membership.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,10 +100,21 @@ impl Store {
     pub fn root(&self) -> &Path {
         &self.root
     }
+    pub(crate) fn protected_control_paths(&self) -> Vec<PathBuf> {
+        [
+            "agents.json",
+            "agents.previous.json",
+            "defaults.json",
+            "controller.lock",
+            "control-write",
+        ]
+        .map(|name| self.root.join(name))
+        .into()
+    }
     fn path(&self) -> PathBuf {
         self.root.join("agents.json")
     }
-    fn read(&self) -> Result<Document> {
+    pub(crate) fn read(&self) -> Result<Document> {
         let path = self.path();
         match fs::symlink_metadata(&path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -140,7 +151,7 @@ impl Store {
         validate(&doc)?;
         Ok(doc)
     }
-    fn write(&self, doc: &Document) -> Result<()> {
+    pub(crate) fn write(&self, doc: &Document) -> Result<()> {
         self.write_with_backup(doc, true)
     }
     fn write_with_backup(&self, doc: &Document, backup: bool) -> Result<()> {
@@ -475,7 +486,9 @@ fn validate(doc: &Document) -> Result<()> {
 }
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().ok_or("Missing agent storage directory")?;
-    let mut temp = tempfile::NamedTempFile::new_in(parent)
+    let staging = parent.join("control-write");
+    crate::connection::private_directory(&staging)?;
+    let mut temp = tempfile::NamedTempFile::new_in(staging)
         .map_err(|_| "Could not prepare agent settings write")?;
     temp.write_all(bytes)
         .map_err(|_| "Could not write agent settings")?;

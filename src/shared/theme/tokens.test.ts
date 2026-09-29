@@ -128,10 +128,11 @@ it.each(["light", "dark"] as const)(
   "message text and links contrast with both bubble fills in %s",
   (mode) => {
     const palette = resolvedPalette(mode);
+    // Bubble links use the same foreground as their message, with an underline.
     for (const surface of ["--surface-message", "--surface-message-own"]) {
       for (const text of surface === "--surface-message-own"
         ? ["--text-inverse"]
-        : ["--text-standard", "--text-subtle", "--text-link"]) {
+        : ["--text-standard", "--text-subtle"]) {
         expect(
           contrast(palette[text], palette[surface]),
           `${text} on ${surface}`,

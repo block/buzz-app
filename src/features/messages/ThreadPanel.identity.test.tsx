@@ -139,7 +139,10 @@ it("retains mounted rows through a deferred real-session page and profile noise"
   ]);
   await act(async () => page.respond([root, appended]));
   expect(await screen.findByText("Appended reply body")).toBeInTheDocument();
+  // Appending a same-author reply changes the preceding row's stack boundary.
   expect(bodyRender.mock.calls).toEqual([
+    ["Reply body"],
+    ["Reply body"],
     ["Appended reply body"],
     ["Appended reply body"],
   ]);

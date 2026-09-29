@@ -496,7 +496,7 @@ export const MessageRow = memo(function MessageRow({
               <button
                 className={`${styles.fileAttachment} ${styles.mediaTimeLink}`}
                 type="button"
-                aria-label={`Jump to ${timeReply.label}`}
+                aria-label={timeReply.label}
                 onClick={() => onMediaTime(timeReply.anchor.seconds)}
               >
                 <span className={styles.fileAttachmentIcon}>

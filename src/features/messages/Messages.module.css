@@ -2406,3 +2406,10 @@ span.mediaTimeLink > :is(button, span) {
 .mediaReviewViewer:focus {
   outline: none;
 }
+
+.messageBubble[data-own]:not([data-media-only]) .imageCount {
+  color: inherit;
+}
+.messageBubble:not([data-own]) > :is(.text, .plainText) {
+  --text-link: var(--text-standard);
+}

@@ -38,8 +38,9 @@ Stop. Late completion never closes a subsequently opened dialog. If an operation
 cannot be confirmed, refresh status before repeating it.
 Create is blocked with an explanation if this app’s runtime is unavailable;
 existing agents and profile retry remain intact.
-The dev broker and native host must both support this flow. Packaged human
-signing remains unavailable.
+Without the dev broker, the native identity signs the owner authorization only
+for the key this host prepared for the pending Create; other broker-only helpers
+remain unavailable.
 
 **Not imported from old Buzz** is a separate collapsible section. Expanding it
 loads installed identities for the connected community; already-managed exact

@@ -1177,6 +1177,29 @@ pub(crate) async fn agent_control_create_prepare(
     })
     .await
 }
+/// Owner attestation for the pending create's generated key only. The
+/// identity may read OS credentials, so the agent host stays unlocked.
+#[tauri::command]
+pub(crate) async fn agent_control_create_authorize(
+    state: tauri::State<'_, AgentHost>,
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
+    destination: String,
+    owner: String,
+    pubkey: String,
+) -> Result<Vec<String>, String> {
+    let (owner, pubkey) = run(state.inner().clone(), move |host| {
+        let (_, prepared) = host
+            .creating
+            .as_ref()
+            .ok_or("Create request expired; reopen Add agent")?;
+        if prepared.key.pubkey() != pubkey || !prepared.matches(&destination, &owner)? {
+            return Err("Authorization does not match the pending create request".into());
+        }
+        Ok((owner, pubkey))
+    })
+    .await?;
+    identity.inner().authorize_agent(owner, pubkey).await
+}
 #[tauri::command]
 pub(crate) async fn agent_control_create_commit(
     state: tauri::State<'_, AgentHost>,

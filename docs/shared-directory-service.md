@@ -78,7 +78,7 @@ consumers follow the existing activation wait and timeout described below.
 | Area | Proposed work | Existing code reused or retained |
 | --- | --- | --- |
 | Directory provider and `directoryV1` | **Build** the shared contract, person search/account index, cache and provider lifecycle. | Register the service through existing Cordis APIs; no new host registry. |
-| Provider configuration and authentication | **Build** Directory-specific settings, source declarations and credential handling. | Reuse [settings-card registration](../src/features/settings/service.ts) and the existing desktop host commands/requests described below. No new credential store or HTTP subsystem. |
+| Provider configuration and authentication | **Build** packaged source settings, credential-command integration and a status/refresh card. | Reuse [settings-card registration](../src/features/settings/service.ts) and the existing desktop host commands/requests described below. Credentials stay in memory; no new credential store or HTTP subsystem. |
 | Consumer integration | **Build** lookup/search UI wiring and dependency-scoped cleanup for the first consumer. | Keep the consumer's features, saved selections and fallback inputs in that plugin. Other integrations follow only when needed. |
 | Buzz plugin infrastructure | **Reuse in place.** | [Plugin runtime](../src/plugins/runtime.ts), Cordis registration/injection/disposal, and plugin installation remain host-owned. |
 | Built-in Nostr identities | **Retain in Buzz; do not extract or wrap as `directoryV1`.** | [Profile directory](../src/features/relay/profile-directory.ts) and [identity naming](../src/features/identity-names/service.ts) keep their Nostr/community responsibilities. |
@@ -143,7 +143,11 @@ export type DirectoryStatus = Readonly<{
 
 export interface DirectoryV1 {
   lookup(namespace: string, account: string): DirectoryPerson | undefined;
-  search(query: string, limit: number): readonly DirectoryPerson[];
+  search(
+    query: string,
+    limit: number,
+    namespace?: string,
+  ): readonly DirectoryPerson[];
   status(): DirectoryStatus;
   refresh(): Promise<void>;
   snapshot(): number;
@@ -176,7 +180,13 @@ keeps the last successful snapshot; before the first success it is empty.
 Missing or conflicting mappings return no match.
 Search trims queries and matches directory names and account logins without case
 sensitivity. Empty queries return no results; results have a stable order for the
-same query and snapshot. `limit` is an upper bound, not a promised result count.
+same query, namespace and snapshot. With `namespace`, include only people with an
+unambiguous account in that namespace, filtering before the result limit. An
+unknown namespace returns no results. Without it, return all matching people,
+including those without an account the consumer can use; the consumer decides
+whether they are selectable. The optional filter is part of the initial v1
+contract; making it required later would be a breaking change.
+`limit` is an upper bound, not a promised result count.
 The initial provider caps results at 20 and clamps positive integer limits to
 that cap; invalid limits throw `RangeError`. Start without debounce and measure
 input latency before adding it. Consumers call constant-time `lookup` per item;
@@ -247,11 +257,23 @@ or reload; restoring Directory alone does not recover a timed-out consumer.
 ## Fetching, credentials and cache [deep]
 
 Directory owns fetching and authenticates independently of its consumers. No token
-passes through `DirectoryV1`. Reuse the desktop host's declared-origin requests
-and, when needed, declared commands; Directory owns interpreting and retaining
-credentials. Choose its source and declarations before enabling real organization
-data. Plugins are trusted same-process code; injection is not an access-control
-mechanism.
+passes through `DirectoryV1`. Package the first provider's non-secret source URL
+and source options with the provider, and declare its HTTPS origins and credential
+command in its manifest. On activation, use `ctx.host.runCommand(commandId)` to
+obtain credentials, then use `ctx.host.request` for declared-origin requests.
+The provider validates the command output and identifies the directory account
+before loading data. Keep credentials only in provider memory; never write them
+to preferences, browser storage or logs. The command's underlying login/session
+remains managed by that external tool.
+
+Command failure or expired credentials produces a sanitized failed status and an
+explicit retry action. Retry reacquires credentials through the declared command;
+an account change clears the old snapshot before loading under the new account.
+Disposal clears credentials. Source-setting changes require a provider update and
+reload; the first settings card displays status and offers refresh/retry, without
+editable persistent settings. Choose the concrete source and command in open
+question 2. Plugins are trusted same-process code; injection is not an
+access-control mechanism.
 
 Initial defaults: an in-memory snapshot, a 24-hour freshness threshold, and the
 existing host's
@@ -284,7 +306,8 @@ own disconnect or account change without clearing the provider cache used by oth
 
 Persist no directory records in host preferences, relay events or consumer state.
 Buzz has no plugin configuration or credential store; settings cards register UI
-only. Open question 2 must choose a concrete mechanism before implementation.
+only. Packaged source settings and command-supplied, in-memory credentials avoid
+requiring one for the first provider.
 Consumers escape display names and never use names or mappings for authorization.
 
 **Risks and diagnostics.** Failed loads, stale data and omitted mappings can
@@ -300,11 +323,12 @@ For example, a pull-request review plugin can resolve author names and let users
 choose priority accounts (VIPs). A queue row calls
 `lookup("github.com/login", authorLogin)` and shows the returned
 name or the GitHub login. The panel subscribes once, so a completed refresh updates
-names without refetching GitHub. In the VIP picker, a user searches a directory
-username, explicitly selects a result, and the review plugin saves its GitHub
-login in its existing VIP list. The directory owns neither that list nor its
-meaning. Reloading or disabling Directory leaves the saved account usable; manual
-GitHub entry remains available without person search.
+names without refetching GitHub. In the VIP picker, the consumer calls
+`search(query, 20, "github.com/login")`, so people without a usable GitHub account
+do not consume result slots. The user explicitly selects a result, and the review
+plugin saves its GitHub login in its existing VIP list. The directory owns neither
+that list nor its meaning. Reloading or disabling Directory leaves the saved
+account usable; manual GitHub entry remains available without person search.
 
 1. **Ambiguous query versus conflicting mapping.** Several valid people may match
    a query; show their account logins and require explicit selection. If one
@@ -321,9 +345,9 @@ GitHub entry remains available without person search.
 
 ## Delivery and verification [sketch]
 
-1. Agree the contract and authentication mechanism, then implement Directory with
-   its configuration UI and the first consumer’s integration in coordinated PRs.
-   Keep service types with their first implementation and consumer; no unused
+1. Verify the source and credential command, agree the contract, then implement
+   Directory's status/refresh UI and the first consumer’s integration in coordinated
+   PRs. Keep service types with their first implementation and consumer; no unused
    host registry or alternate provider implementation is required.
 2. Deploy Directory before switching a consumer to the shared API. If it has local
    directory fetching, caching and configuration, remove them; only one directory
@@ -334,7 +358,9 @@ GitHub entry remains available without person search.
    host. Disable Directory to verify fallback. Roll back the consumer migration
    independently if needed; saved selections require no conversion.
 
-Colocated provider tests cover search/identity conflicts, empty data, initial and
+Colocated provider tests cover search/identity conflicts, namespace filtering
+before the cap, unfiltered people without accounts, unknown namespaces, empty
+data, command failure, credential reacquisition and account changes, initial and
 refresh failures, shared refreshes, credential isolation and late-response
 rejection. Consumer component tests cover explicit person selection, preference
 preservation, fallback and clearing stale displayed data. Host integration tests
@@ -377,9 +403,9 @@ Dates are proposed decision deadlines, not delivery commitments.
    Default: Directory’s authoring files. Re-exporting from `@buzz/author` requires
    explicit approval for its FOUNDATION contract. **Owner:** Buzz plugin API
    maintainer. **Needed:** 2026-10-02, before implementation.
-2. Which source, declared origins and credential mechanism will Directory use
-   through the existing desktop host capability? Confirm access with Directory's
-   own credentials; do not assume a consumer's token is available. **Owner:**
+2. Which source URL, declared origins and credential command will ship with the
+   provider? Confirm command output, account identity and token expiry behavior
+   against the chosen source; no consumer token is assumed available. **Owner:**
    Directory maintainer. **Needed:** 2026-10-02, before implementation.
 3. Can the chosen source supply a complete snapshot within the host response
    limits and an agreed total refresh bound? Measure transfer size, load time,
@@ -404,3 +430,4 @@ Dates are proposed decision deadlines, not delivery commitments.
 | Indexed lookup; 20 search results; no debounce initially | Two-way | Adjust provider internals/defaults after measuring; preserve the API contract. |
 | 24-hour freshness; explicit retry; existing host deadline | Two-way | Cache policy changes stay in the provider; request limits remain host-owned. |
 | In-memory cache and shared type-only authoring files | Two-way | Persistence or packaging can change separately; each needs its own compatibility review. |
+| Packaged source settings; command-supplied credentials held in memory | Two-way | A later editable-settings or credential-storage design changes the provider, not the directory consumer API. |

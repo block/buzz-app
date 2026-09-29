@@ -1,4 +1,5 @@
 import { test, expect } from "./source-fixture.mjs";
+import { settle } from "./timeline.mjs";
 
 // Real paint order and clipping cannot be established by DOM component tests.
 test("reaction previews paint above floating message actions", async ({
@@ -183,5 +184,106 @@ test("resolved chip previews fit narrow, intermediate and wide themed views", as
     await page.mouse.move(0, 0);
     await chip.blur();
     await expect(page.locator(".buzz-preview-card")).toHaveCount(0);
+  }
+});
+
+// Browser-only: sibling reflow moves the anchor without resizing the observed
+// row/slot/scroller. jsdom cannot establish this geometry or native focus.
+test("focused actions follow sibling growth and shrinkage without scrolling", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/emoji.html");
+  const rows = page.locator("[data-message-id]");
+  const sibling = rows.nth(0);
+  const row = rows.nth(1);
+  await expect(row).toBeVisible();
+  // Bound the real message list without introducing app traffic that could
+  // accidentally rescue stale positioning through unrelated DOM mutations.
+  await row.evaluate((node) => {
+    const list = node.parentElement;
+    list.setAttribute("data-message-scroller", "");
+    list.style.height = "600px";
+    list.style.overflow = "auto";
+  });
+  const scroller = page.locator("[data-message-scroller]");
+  const actions = row.getByRole("group", {
+    name: "Message actions",
+    includeHidden: true,
+  });
+  await row.hover();
+  await expect
+    .poll(() => actions.evaluate((bar) => bar.matches(":popover-open")))
+    .toBe(true);
+  const button = actions.getByRole("button").first();
+  await button.focus();
+  await page.mouse.move(0, 0);
+  await page.evaluate(() => document.fonts.ready);
+  await settle(page, scroller);
+  const baseline = await actions.evaluate((bar) => {
+    const slot = bar.parentElement;
+    const scroller = bar.closest("[data-message-scroller]");
+    return {
+      top: slot.getBoundingClientRect().top,
+      slotHeight: slot.offsetHeight,
+      rowHeight: bar.closest("[data-layout]").offsetHeight,
+      scrollerHeight: scroller.clientHeight,
+      scrollTop: scroller.scrollTop,
+    };
+  });
+  const scrolls = await scroller.evaluateHandle((node) => {
+    const state = { count: 0 };
+    const listener = () => state.count++;
+    node.addEventListener("scroll", listener);
+    return {
+      state,
+      dispose: () => node.removeEventListener("scroll", listener),
+    };
+  });
+  try {
+    for (const growth of [100, 0]) {
+      // Models an attachment or edit changing only the preceding message's height.
+      await sibling.evaluate((node, growth) => {
+        node.style.paddingBottom = `${growth}px`;
+      }, growth);
+      await expect
+        .poll(() =>
+          actions.evaluate((bar) => ({
+            slotTop: bar.parentElement.getBoundingClientRect().top,
+            barTop: bar.getBoundingClientRect().top,
+          })),
+        )
+        .toEqual({
+          slotTop: baseline.top + growth,
+          barTop: baseline.top + growth,
+        });
+      await expect(button).toBeFocused();
+      await expect
+        .poll(() => actions.evaluate((bar) => bar.matches(":popover-open")))
+        .toBe(true);
+      // Complete layout and scroll-event delivery before the negative assertions.
+      await page.evaluate(
+        () =>
+          new Promise((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(resolve));
+          }),
+      );
+      expect(
+        await actions.evaluate((bar) => ({
+          slotHeight: bar.parentElement.offsetHeight,
+          rowHeight: bar.closest("[data-layout]").offsetHeight,
+          scrollerHeight: bar.closest("[data-message-scroller]").clientHeight,
+          scrollTop: bar.closest("[data-message-scroller]").scrollTop,
+        })),
+      ).toEqual({
+        slotHeight: baseline.slotHeight,
+        rowHeight: baseline.rowHeight,
+        scrollerHeight: baseline.scrollerHeight,
+        scrollTop: baseline.scrollTop,
+      });
+      expect(await scrolls.evaluate(({ state }) => state.count)).toBe(0);
+    }
+  } finally {
+    await scrolls.evaluate(({ dispose }) => dispose());
+    await scrolls.dispose();
   }
 });

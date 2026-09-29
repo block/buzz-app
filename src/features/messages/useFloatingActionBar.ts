@@ -93,6 +93,8 @@ export function useFloatingActionBar(
     if (!floating || !revealed || !row || !bar || !slot) return;
     const scroller = row.closest<HTMLElement>("[data-message-scroller]");
     let frame = 0;
+    let needsPosition = true;
+    let previousAnchor: DOMRect | undefined;
     const hide = () => {
       if (bar.hasAttribute("popover")) bar.hidePopover?.();
       // Closed popovers return to their slot's containing block. Viewport offsets
@@ -102,8 +104,7 @@ export function useFloatingActionBar(
       bar.style.right = "";
       bar.style.maxWidth = "";
     };
-    const position = () => {
-      frame = 0;
+    const position = (anchor: DOMRect) => {
       // A top-layer toolbar can retain hover above a portalled modal's backdrop.
       // Keep actions in the active viewer usable, but suppress background rows.
       const modal = [...document.querySelectorAll('[aria-modal="true"]')]
@@ -113,7 +114,6 @@ export function useFloatingActionBar(
         hide();
         return;
       }
-      const anchor = slot.getBoundingClientRect();
       const viewport = scroller?.getBoundingClientRect();
       // Timeline slots have zero height; include the bar itself when testing
       // intersection so a partially clipped toolbar can still be revealed.
@@ -136,9 +136,27 @@ export function useFloatingActionBar(
       bar.showPopover?.();
     };
     const schedule = () => {
-      if (!frame) frame = requestAnimationFrame(position);
+      needsPosition = true;
     };
-    position();
+    const trackAnchor = () => {
+      // Sibling edits/media can move the slot without resizing any observed node.
+      // Read only while revealed; avoid positioning work when nothing changed.
+      const anchor = slot.getBoundingClientRect();
+      if (
+        needsPosition ||
+        !previousAnchor ||
+        anchor.x !== previousAnchor.x ||
+        anchor.y !== previousAnchor.y ||
+        anchor.width !== previousAnchor.width ||
+        anchor.height !== previousAnchor.height
+      ) {
+        needsPosition = false;
+        position(anchor);
+        previousAnchor = anchor;
+      }
+      frame = requestAnimationFrame(trackAnchor);
+    };
+    trackAnchor();
     document.addEventListener("scroll", schedule, true);
     window.addEventListener("resize", schedule);
     const observer = new ResizeObserver(schedule);

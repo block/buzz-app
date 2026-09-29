@@ -170,6 +170,56 @@ it("leaves coarse/narrow controls static and cleans up floating mode on media ch
   expect(mediaListeners.size).toBe(0);
 });
 
+it("tracks geometry only while revealed and cancels frames on mode changes and unmount", async () => {
+  let nextFrame = 0;
+  const frames = new Map<number, FrameRequestCallback>();
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frames.set(++nextFrame, callback);
+    return nextFrame;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+  const advanceFrame = () =>
+    act(() => {
+      const pending = [...frames];
+      frames.clear();
+      for (const [, callback] of pending) callback(0);
+    });
+  const { unmount } = render(<Harness />);
+  const row = screen.getByTestId("row");
+  const bar = screen.getByTestId("bar");
+  const slot = bar.parentElement;
+  if (!slot) throw new Error("Missing action slot");
+  const readAnchor = vi.spyOn(slot, "getBoundingClientRect");
+  expect(frames.size).toBe(0);
+  fireEvent.pointerEnter(row);
+  // Drain mount mutations before checking idle positioning work.
+  await act(() => Promise.resolve());
+  advanceFrame();
+  const reads = readAnchor.mock.calls.length;
+  const writes = show.mock.calls.length;
+  advanceFrame();
+  expect(readAnchor).toHaveBeenCalledTimes(reads + 1);
+  expect(show).toHaveBeenCalledTimes(writes);
+  expect(frames.size).toBe(1);
+  fireEvent.pointerLeave(row);
+  expect(frames.size).toBe(0);
+  fireEvent.pointerEnter(row);
+  expect(frames.size).toBe(1);
+  act(() => {
+    mediaMatches = false;
+    for (const listener of mediaListeners) listener();
+  });
+  expect(frames.size).toBe(0);
+  act(() => {
+    mediaMatches = true;
+    for (const listener of mediaListeners) listener();
+  });
+  fireEvent.pointerEnter(row);
+  expect(frames.size).toBe(1);
+  unmount();
+  expect(frames.size).toBe(0);
+});
+
 it("suppresses actions outside a modal without relying on pointer or focus movement", async () => {
   const { rerender } = render(<Harness open expanded />);
   const row = screen.getByTestId("row");

@@ -492,6 +492,10 @@ test("Settings loads and publishes the selected community profile", async ({
   ).toBeDisabled();
   await picture.fill("");
   await avatarEditor.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(avatarEditor).toBeHidden();
+  await expect(
+    profileRegion().getByRole("button", { name: "Edit avatar", exact: true }),
+  ).toBeFocused();
   await expect(save()).toBeEnabled();
   await reopenedName.fill("  Updated community profile  ");
   await save().press("Enter");

@@ -13,7 +13,7 @@ use std::{
 const VERSION: &str = "v24.18.0";
 const MAX_ARCHIVE: u64 = 90 * 1024 * 1024;
 const PI: &str = "@earendil-works/pi-coding-agent";
-const ADAPTER: &str = "git+https://github.com/salman1993/buzz-pi-acp.git#fb8f846";
+const ADAPTER: &str = "git+https://github.com/salman1993/buzz-pi-acp.git#cff9964";
 const NPM_FAILED: &str = "npm couldn't install Pi or its adapter; see the install log. If your network blocks the public npm registry, set your mirror in ~/.npmrc or npm_config_registry, then try again, or use the commands below.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

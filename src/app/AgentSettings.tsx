@@ -17,7 +17,7 @@ const acpHint =
   "Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose supports it natively. Pi needs a small adapter, `buzz-pi-acp`. Your existing CLI setup and sign-in are left untouched.";
 const piCommand = "npm install -g @earendil-works/pi-coding-agent";
 const adapterCommand =
-  "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#fb8f846'";
+  "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#cff9964'";
 const labels = {
   ready: "Ready",
   "cli-needed": "CLI needed",

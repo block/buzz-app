@@ -164,7 +164,7 @@ it.each(["cli-needed", "adapter-needed", "ready"] as const)(
       ).toBeVisible();
       expect(
         screen.getByText(
-          /git\+https:\/\/github.com\/salman1993\/buzz-pi-acp.git#fb8f846/,
+          /git\+https:\/\/github.com\/salman1993\/buzz-pi-acp.git#cff9964/,
         ),
       ).toBeVisible();
       const write = vi
@@ -174,7 +174,7 @@ it.each(["cli-needed", "adapter-needed", "ready"] as const)(
         screen.getByRole("button", { name: "Copy Adapter command" }),
       );
       expect(write).toHaveBeenCalledWith(
-        "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#fb8f846'",
+        "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#cff9964'",
       );
       expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(
         "Adapter command copied.",
@@ -433,14 +433,14 @@ it("offers the reviewed adapter command for a ready user-global Pi install", asy
     "/opt/homebrew/bin/buzz-pi-acp",
   );
   expect(screen.getByText(/For a user-global Pi install/)).toBeVisible();
-  expect(screen.getByText(/buzz-pi-acp.git#fb8f846/)).toBeVisible();
+  expect(screen.getByText(/buzz-pi-acp.git#cff9964/)).toBeVisible();
   expect(screen.queryByRole("button", { name: "Copy Pi command" })).toBeNull();
   const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
   await user.click(
     screen.getByRole("button", { name: "Copy Adapter command" }),
   );
   expect(write).toHaveBeenCalledWith(
-    "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#fb8f846'",
+    "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#cff9964'",
   );
 });
 

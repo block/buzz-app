@@ -4,9 +4,9 @@ import {
   activityRecords,
   type ActivityRecord,
 } from "../../features/agents/activity-records";
-import { activityTranscript } from "./transcript";
+import { sendReport } from "./send-boundary";
 import { requestActivity, requestActivityState } from "./request-activity";
-import { responseActivity } from "./response-activity";
+import { reportedActivityTurn } from "./response-activity";
 
 type Snapshot = ReturnType<RelaySession["agentActivity"]["snapshot"]>;
 type Node = {
@@ -121,20 +121,20 @@ export function requestWork(
       });
     }
   }
-  // A loaded message proves existence/author; the strict send selector proves only
-  // one retained report interval. Both are necessary to propagate a handoff.
+  // Loaded exact author/channel plus a validated tool output proves only the
+  // reported producer turn. A multi-send tool cannot delimit individual replies.
   const producers = new Map<string, Node>();
   for (const agent of new Set(nodes.map((node) => node.agent))) {
     const ids = new Set(
-      activityTranscript(
-        snapshot.records
-          .filter((row) => row.agent === agent)
-          .map((row) => ({ ...row, envelopeId: row.id })),
-      ).groups.flatMap((group) =>
-        group.entries.flatMap((entry) =>
-          entry.communication?.eventId ? [entry.communication.eventId] : [],
-        ),
-      ),
+      activityRecords(snapshot.records, agent, channelId).flatMap((row) => {
+        const raw = JSON.parse(row.plaintext);
+        const update = raw.payload?.params?.update;
+        return raw.kind === "acp_read" &&
+          raw.payload?.method === "session/update" &&
+          update
+          ? sendReport(update).ids
+          : [];
+      }),
     );
     for (const id of ids) {
       const row = byId.get(id);
@@ -145,10 +145,15 @@ export function requestWork(
         (row.delivery && row.delivery !== "seen")
       )
         continue;
-      const response = responseActivity(snapshot.records, agent, channelId, id);
-      if (response.status !== "available") continue;
+      const turnId = reportedActivityTurn(
+        snapshot.records,
+        agent,
+        channelId,
+        id,
+      );
+      if (!turnId) continue;
       const node = nodes.find(
-        (node) => node.agent === agent && node.turnId === response.turnId,
+        (node) => node.agent === agent && node.turnId === turnId,
       );
       if (node) producers.set(id, node);
     }

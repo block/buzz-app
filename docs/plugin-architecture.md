@@ -192,8 +192,10 @@ The thread reader folds the
 outgoing root locally while signing/publishing and begins finite thread repair
 only after verified root observation. Local intent never becomes verified evidence.
 A shared request-work header replaces the old per-agent tail. Each agent's work
-attaches to its first strictly linked visible reply through the existing message
-accessory slot; it is whole request-linked work, not a claimed exact answer interval.
+is accessible from every strictly linked visible reply through the existing message
+accessory slot. A blocker or intermediate reply never monopolizes access. Repeated
+controls open the same request-linked work, not separate effort or a claimed exact
+answer interval; no body text or final-answer inference controls their placement.
 Only a direct visible root child removes that agent from the shared header: nested
 branches may be collapsed, so they retain request-level access. All linked agents
 remain inspectable from the compact tabs, including those without answers. Open
@@ -204,9 +206,12 @@ The channel retains neutral View thread and its existing exact-thread working si
 
 `request-work.ts` is a bounded, rebuilt presentation projection, not a new journal:
 all admitted start trigger IDs must resolve to one viewer-request scope. A handoff
-propagates only through the existing strict reported-send boundary and a loaded
-message with matching author/channel. Unresolved cycles, unknown/mixed triggers,
-reused turns and conflicting reports never acquire a guessed scope. Profile Activity
+propagates only through a validated reported producer turn and a loaded message
+with matching author/channel. A tool may return several distinct successful receipts
+in one complete trailing block; they share a producer turn, not individually
+separable response intervals. Exact response diagnostics remain single-send-only.
+Malformed, rejected, repeated or incomplete receipts still fail closed. Unresolved
+cycles, unknown/mixed triggers, reused turns and conflicting reports never acquire a guessed scope. Profile Activity
 remains available for unassigned work. No native/producer changes, new reads, leases,
 routes, timers, or persistence owners are added. A plugin-local weak memo shares
 one pure projection per activity/thread evidence snapshot across reply decorations

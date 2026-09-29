@@ -70,26 +70,29 @@ function WorkHeader(props: ComposerAccessoryProps) {
       .map((row) => row.id),
   );
   const visible = conversationReplies(rows, hidden, threadRootId);
-  const anchors = new Map(
+  const replies = new Map(
     fullWork?.agents.map((agent) => [
       agent.agent,
-      visible.find(
+      visible.filter(
         (row) => agent.responseIds.includes(row.id) && !row.membership,
       ),
     ]),
   );
-  // Only direct visible root children are guaranteed mounted without borrowing
-  // the thread host's branch-expansion state. Keep the overview for nested work.
-  const attached = (key: string) => {
-    const row = anchors.get(key);
-    return row && row.id !== threadRootId && row.replyParentId === threadRootId;
-  };
+  // Every strictly linked visible reply offers the same request-scoped work.
+  // Only direct root children are guaranteed mounted: nested-only work retains
+  // the overview without borrowing the host's branch-expansion state.
+  const attached = (key: string) =>
+    replies
+      .get(key)
+      ?.some(
+        (row) => row.id !== threadRootId && row.replyParentId === threadRootId,
+      );
   const [expanded, setExpanded] = useState(false);
   const displayed =
     fullWork?.agents.filter((agent) =>
       message
         ? agent.agent === message.authorId &&
-          anchors.get(agent.agent)?.id === message.id
+          replies.get(agent.agent)?.some((row) => row.id === message.id)
         : !attached(agent.agent) ||
           (expanded && fullWork.agents.every((item) => attached(item.agent))),
     ) ?? [];

@@ -142,3 +142,30 @@ it("accepts Brad's optional audience field without loosening receipt or boundary
     });
   }
 });
+
+it("admits distinct trailing receipt blocks for producer-turn linkage without inventing per-response boundaries", () => {
+  const other = "c".repeat(64);
+  const stdout = `${receipt({ audience: "agents" })}\n${receipt({ event_id: other, audience: "everyone" })}`;
+  expect(sendReport(completed(`calculated\n${stdout}`))).toMatchObject({
+    ids: [eventId, other],
+    messageIds: [eventId, other],
+    messageId: undefined,
+    ambiguous: true,
+  });
+  expect(reportedSend(tool, completed(stdout))).toBe("ambiguous");
+  for (const output of [
+    `${receipt()}\n${receipt()}`,
+    `${receipt()}\n${receipt({ event_id: other, accepted: false })}`,
+    `${receipt()}\n${receipt({ event_id: other, extra: true })}`,
+    `${stdout}\nmore output`,
+    `${receipt()}\n{"event_id":"${other}",`,
+    `${receipt()}\ninterleaved log\n${receipt({ event_id: other })}`,
+  ])
+    expect(sendReport(completed(output)).messageIds).toEqual([]);
+  for (const patch of [
+    { exit_code: 1 },
+    { timed_out: true },
+    { stdout_truncated: true },
+  ])
+    expect(sendReport(completed(stdout, patch)).messageIds).toEqual([]);
+});

@@ -58,12 +58,8 @@ export function sendReport(completion: ObjectValue) {
     ),
     ...malformedIds,
   ];
-  const candidate = reports.length === 1 ? reports[0] : undefined;
-  const receipt = candidate?.value;
-  const valid =
+  const validReceipt = (receipt: ObjectValue | undefined) =>
     !!receipt &&
-    !malformed.length &&
-    candidate?.index === lines.length - 1 &&
     receipt.accepted === true &&
     hex(receipt.event_id) &&
     typeof receipt.message === "string" &&
@@ -79,6 +75,22 @@ export function sendReport(completion: ObjectValue) {
         "audience",
       ].includes(key),
     );
+  const candidate = reports.length === 1 ? reports[0] : undefined;
+  const receipt = candidate?.value;
+  const valid =
+    !malformed.length &&
+    candidate?.index === lines.length - 1 &&
+    validReceipt(receipt);
+  // A shell can run several sends. A complete, distinct trailing receipt block
+  // links each message to this tool/turn, but cannot delimit per-message work.
+  const validBlock =
+    reports.length > 0 &&
+    !malformed.length &&
+    new Set(ids).size === reports.length &&
+    reports.every(
+      ({ value, index }, i) =>
+        validReceipt(value) && index === lines.length - reports.length + i,
+    );
   const success =
     completion.status === "completed" &&
     object(completion.rawOutput)?.isError === false &&
@@ -87,10 +99,11 @@ export function sendReport(completion: ObjectValue) {
     output.stdout_truncated === false;
   return {
     ids,
-    messageId: valid && success ? String(receipt.event_id) : undefined,
+    messageId: valid && success ? String(receipt?.event_id) : undefined,
+    messageIds: validBlock && success ? ids : [],
     // Receipt report only. Signed message tags remain the authoritative declaration.
     reportedAudience:
-      valid && success && isMessageAudience(receipt.audience)
+      valid && success && isMessageAudience(receipt?.audience)
         ? receipt.audience
         : undefined,
     ambiguous:

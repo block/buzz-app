@@ -21,9 +21,10 @@ for trying Activity, not replacing an everyday installation.
 - Sending a channel message stays in the channel. Open its thread explicitly with
   the working-agent, awaiting-response or View thread control; sending never opens it.
 - Request-linked work starts in a shared header after its viewer request. An agent's
-  work moves into its first strictly linked visible reply, below its author line,
-  without a duplicate avatar or synthetic response. Other participants stay in the
-  header. Nested replies retain request-level access because their branch may be
+  work is accessible from every strictly linked visible reply, below its author
+  line, without a duplicate avatar or synthetic response. Multiple replies open
+  the same request-scoped work, not separate or summed effort. Other participants
+  stay in the header. Nested replies retain request-level access because their branch may be
   collapsed. Actual reply order/nesting and separate follow-up scopes are unchanged.
   An open header popup stays mounted until dismissed even as the last reply arrives.
 - The header names currently working agents while live, then agents with retained
@@ -33,8 +34,10 @@ for trying Activity, not replacing an everyday installation.
   Expand preserves the selected agent in the existing side panel and keeps the thread.
   Attached work covers that agent's request-linked turns, not just that answer's send.
 - Request linkage uses every explicit triggering message ID and uniquely reported
-  sends matched to loaded message author/channel IDs. Cross-request, missing or
-  conflicting links remain unassigned; there is no nearest-time, prose or root-only
+  sends matched to loaded message author/channel IDs. Multiple distinct successful
+  receipts in one tool can link their messages to the same producer turn, never to
+  separate per-response intervals. Failed, duplicate or malformed receipts cannot.
+  Cross-request, missing or conflicting links remain unassigned; there is no nearest-time, prose or root-only
   attribution. This is reported work linked to a request, not proof of coauthorship.
 - “Worked for” is the elapsed local capture span from first retained start to last
   terminal, including overlap/gaps, not summed agent time. It is withheld after

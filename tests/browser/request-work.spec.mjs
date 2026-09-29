@@ -159,7 +159,7 @@ test("one request work header spans agents and replies without absorbing a follo
         },
       },
     });
-  const finish = (i, turn, id, message) =>
+  const finish = (i, turn, id, message, additional = []) =>
     emit(i, turn, "acp_read", {
       method: "session/update",
       params: {
@@ -177,15 +177,19 @@ test("one request work header spans agents and replies without absorbing a follo
                   exit_code: 0,
                   timed_out: false,
                   stdout_truncated: false,
-                  stdout: JSON.stringify({
-                    accepted: true,
-                    event_id: message.id,
-                    message: "",
-                    mention_pubkeys: [],
-                    audience:
-                      message.tags.find((t) => t[0] === "audience")?.[1] ??
-                      "everyone",
-                  }),
+                  stdout: [message, ...additional]
+                    .map((sent) =>
+                      JSON.stringify({
+                        accepted: true,
+                        event_id: sent.id,
+                        message: "",
+                        mention_pubkeys: [],
+                        audience:
+                          sent.tags.find((t) => t[0] === "audience")?.[1] ??
+                          "everyone",
+                      }),
+                    )
+                    .join("\n"),
                 }),
               },
             },
@@ -286,7 +290,9 @@ test("one request work header spans agents and replies without absorbing a follo
   await page.clock.setFixedTime(new Date(time));
   emit(1, "second", "turn_completed");
   const finalAnswer = reply(2, "Order C fits the budget.");
-  finish(2, "third", "check", finalAnswer);
+  const secondHandoff = reply(2, "Synthetic second hidden handoff", "agents");
+  finish(2, "third", "check", secondHandoff, [finalAnswer]);
+  app.relay.publish("primary", secondHandoff);
   app.relay.publish("primary", finalAnswer);
   emit(2, "third", "turn_completed");
   await expect(popup).toBeVisible();
@@ -330,6 +336,26 @@ test("one request work header spans agents and replies without absorbing a follo
   await expect(
     thread.getByRole("region", { name: "Agent work on this request" }),
   ).toHaveCount(3);
+  // A later real answer by the same identity keeps its own access. An earlier
+  // blocker/intermediate answer must not monopolize the request's activity.
+  emit(1, "second-answer", "turn_started", {
+    triggeringEventIds: [request.id],
+  });
+  tool(1, "second-answer", "answer", "buzz messages send --audience everyone");
+  const bubbleFinal = reply(1, "My final portion recommendation.");
+  finish(1, "second-answer", "answer", bubbleFinal);
+  app.relay.publish("primary", bubbleFinal);
+  emit(1, "second-answer", "turn_completed");
+  const laterAnswer = thread.locator(`[data-message-id="${bubbleFinal.id}"]`);
+  await expect(
+    laterAnswer.getByRole("region", { name: "Agent work on this request" }),
+  ).toBeVisible();
+  await expect(
+    firstAnswer.getByRole("region", { name: "Agent work on this request" }),
+  ).toBeVisible();
+  await expect(
+    thread.getByRole("region", { name: "Agent work on this request" }),
+  ).toHaveCount(4);
   // A second request gets a separate anchored header; the first keeps its old records.
   await draft.fill("Follow up on portion sizes.");
   await thread
@@ -350,7 +376,7 @@ test("one request work header spans agents and replies without absorbing a follo
     exact: true,
   });
   await expect(headers).toHaveCount(1);
-  await firstAnswer
+  await laterAnswer
     .getByRole("region", { name: "Agent work on this request" })
     .getByRole("button")
     .click();

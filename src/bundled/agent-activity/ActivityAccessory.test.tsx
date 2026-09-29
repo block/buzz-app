@@ -127,7 +127,7 @@ function fixture() {
     },
   };
 }
-it("renders one request header, never answer decorations/tail messages; retains popup and multiple agents after completion", async () => {
+it("renders one request header without unlinked answer decorations/tail messages; retains popup and multiple agents after completion", async () => {
   const f = fixture();
   const view = render(<ActivityAccessory {...f.props} />, {
     reactStrictMode: true,
@@ -291,9 +291,11 @@ function reportedReply(
   f: ReturnType<typeof fixture>,
   agent: string,
   id: string,
+  turnId = agent,
+  requestId = root,
 ) {
-  f.send(agent, agent, 1, "turn_started", { triggeringEventIds: [root] });
-  f.send(agent, agent, 2, "acp_read", {
+  f.send(agent, turnId, 1, "turn_started", { triggeringEventIds: [requestId] });
+  f.send(agent, turnId, 2, "acp_read", {
     method: "session/update",
     params: {
       update: {
@@ -305,7 +307,7 @@ function reportedReply(
       },
     },
   });
-  f.send(agent, agent, 3, "acp_read", {
+  f.send(agent, turnId, 3, "acp_read", {
     method: "session/update",
     params: {
       update: {
@@ -336,7 +338,7 @@ function reportedReply(
       },
     },
   });
-  f.send(agent, agent, 4, "turn_completed");
+  f.send(agent, turnId, 4, "turn_completed");
 }
 it("attaches each agent's request work to its own real reply; tabs preserve selection on panel expansion", async () => {
   const f = fixture();
@@ -461,6 +463,98 @@ it("keeps an open shared popup stable as all direct replies arrive, then removes
     expect(
       screen.queryByRole("region", { name: "Work linked to this request" }),
     ).toBeNull();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("keeps activity on each exact reply when an earlier blocker precedes an answer; nested, hidden and follow-up work stay scoped", () => {
+  const f = fixture();
+  const request = { ...row(), mentions: [A] };
+  const blocker = {
+    ...row("3".repeat(64)),
+    authorId: A,
+    replyParentId: next,
+    content: "Synthetic blocker",
+  };
+  const answer = {
+    ...row("4".repeat(64)),
+    authorId: A,
+    replyParentId: root,
+    audience: "everyone" as const,
+    content: "Synthetic answer",
+  };
+  const hidden = {
+    ...row("5".repeat(64)),
+    authorId: A,
+    replyParentId: root,
+    audience: "agents" as const,
+  };
+  const unreported = {
+    ...row("6".repeat(64)),
+    authorId: A,
+    replyParentId: root,
+  };
+  const followup = { ...row("7".repeat(64)), authorId: A, replyParentId: next };
+  reportedReply(f, A, blocker.id, "blocker");
+  const content = (replies: ChannelMessage[]) => (
+    <>
+      <ActivityAccessory
+        {...f.props}
+        workRequest={request}
+        threadMessages={[request, row(next), ...replies]}
+      />
+      {replies.map((message) => (
+        <div key={message.id} data-testid={message.id}>
+          <ActivityAccessory
+            {...f.props}
+            workRequest={undefined}
+            threadMessages={[request, row(next), ...replies]}
+            message={message}
+          />
+        </div>
+      ))}
+    </>
+  );
+  const view = render(content([blocker]), { reactStrictMode: true });
+  try {
+    expect(
+      screen.getByRole("region", { name: "Work linked to this request" }),
+    ).toBeVisible();
+    fireEvent.click(within(screen.getByTestId(blocker.id)).getByRole("button"));
+    const popup = screen.getByRole("dialog");
+    reportedReply(f, A, answer.id, "answer");
+    reportedReply(f, A, hidden.id, "handoff");
+    reportedReply(f, A, followup.id, "followup", next);
+    view.rerender(content([blocker, answer, hidden, unreported, followup]));
+    expect(screen.getByRole("dialog")).toBe(popup);
+    expect(
+      screen.queryByRole("region", { name: "Work linked to this request" }),
+    ).toBeNull();
+    for (const reply of [blocker, answer, followup])
+      expect(
+        within(screen.getByTestId(reply.id)).getByRole("region", {
+          name: "Agent work on this request",
+        }),
+      ).toBeInTheDocument();
+    for (const reply of [hidden, unreported])
+      expect(
+        within(screen.getByTestId(reply.id)).queryByRole("region"),
+      ).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Close activity" }));
+    for (const [reply, requestId] of [
+      [answer, root],
+      [followup, next],
+    ] as const) {
+      fireEvent.click(within(screen.getByTestId(reply.id)).getByRole("button"));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open activity in panel" }),
+      );
+      expect(f.props.open).toHaveBeenLastCalledWith(
+        expect.stringContaining(`request=${requestId}&thread=${root}`),
+      );
+    }
   } finally {
     view.unmount();
     f.dispose();

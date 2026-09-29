@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { responseActivity } from "./response-activity";
+import { responseActivity, reportedActivityTurn } from "./response-activity";
 const agent = "a".repeat(64),
   first = "b".repeat(64),
   second = "c".repeat(64);
@@ -355,4 +355,50 @@ it("keeps coordination as a send boundary rather than treating it as turn comple
       (row) => row.id,
     ),
   ).toEqual(["8", "9", "10"]);
+});
+
+it("links distinct sends in one tool to a producer turn but not to individually delimited response intervals", () => {
+  const completion = complete("both", first);
+  const content = completion.content[0]?.content;
+  if (!content) throw Error("fixture requires output");
+  const output = JSON.parse(content.text);
+  const firstReceipt = JSON.parse(output.stdout);
+  output.stdout += `\n${JSON.stringify({ ...firstReceipt, event_id: second })}`;
+  content.text = JSON.stringify(output);
+  const rows = [
+    event(1, "turn_started"),
+    update(2, start("both")),
+    update(3, completion),
+  ];
+  for (const target of [first, second]) {
+    expect(reportedActivityTurn(rows, agent, "alpha", target)).toBe("turn");
+    expect(responseActivity(rows, agent, "alpha", target).status).toBe(
+      "unavailable",
+    );
+  }
+  const invalid = [
+    rows.slice(1),
+    [...rows, update(4, complete("replay", second))],
+    [rows[0], update(2, { ...start("both"), title: "other_tool" }), rows[2]],
+    [
+      rows[0],
+      update(2, start("unfinished")),
+      update(3, start("both")),
+      update(4, completion),
+    ],
+    [
+      rows[0],
+      rows[1],
+      update(3, { ...completion, rawOutput: { isError: true } }),
+    ],
+    [
+      rows[0],
+      rows[1],
+      update(3, { ...completion, rawInput: { command: "changed" } }),
+    ],
+  ];
+  for (const input of invalid)
+    expect(
+      reportedActivityTurn(input as typeof rows, agent, "alpha", second),
+    ).toBeUndefined();
 });

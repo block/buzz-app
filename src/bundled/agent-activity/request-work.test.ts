@@ -363,3 +363,41 @@ it("exposes only strictly reported same-author replies for each independent requ
   );
   expect(mismatch[0]?.agents[0]?.responseIds).toEqual([]);
 });
+
+it("propagates a multi-send handoff and attaches its public answer without merging another request", () => {
+  const f = fixture(),
+    answer = "4".repeat(64);
+  f.start(A, "producer", [root]);
+  f.send(A, "producer", handoff);
+  const index = f.records.findIndex(
+    (row) => JSON.parse(row.plaintext).seq === 3,
+  );
+  const record = f.records[index];
+  if (!record) throw Error("fixture requires completion");
+  const raw = JSON.parse(record.plaintext);
+  const block = raw.payload.params.update.content[0].content;
+  const output = JSON.parse(block.text),
+    receipt = JSON.parse(output.stdout);
+  output.stdout += `\n${JSON.stringify({ ...receipt, event_id: answer, audience: "everyone" })}`;
+  block.text = JSON.stringify(output);
+  f.records[index] = { ...record, plaintext: JSON.stringify(raw) };
+  f.end(A, "producer");
+  f.start(B, "recipient", [handoff]);
+  const rows = [
+    message(root),
+    message(next),
+    message(handoff, A),
+    message(answer, A),
+  ];
+  const work = requestWork(f.snapshot(), rows, "c", root, viewer);
+  expect(work[0]?.agents.map((agent) => agent.agent)).toEqual([A, B]);
+  expect(work[0]?.agents[0]?.responseIds).toEqual([handoff, answer]);
+  expect(work[1]?.agents).toEqual([]);
+  // A rejected sibling makes the entire multi-send output unusable for lineage.
+  output.stdout = `${JSON.stringify(receipt)}\n${JSON.stringify({ ...receipt, event_id: answer, accepted: false })}`;
+  block.text = JSON.stringify(output);
+  f.records[index] = { ...record, plaintext: JSON.stringify(raw) };
+  const rejected = requestWork(f.snapshot(), rows, "c", root, viewer);
+  expect(rejected[0]?.agents[0]?.responseIds).toEqual([]);
+  expect(rejected[0]?.agents.map((agent) => agent.agent)).toEqual([A]);
+});

@@ -30,6 +30,27 @@ export function responseActivity(
   channel: string,
   messageId: string,
 ): ResponseActivity {
+  return selectActivity(records, agent, channel, messageId, false);
+}
+
+/** Exact reported output -> retained producer turn. Multiple sends in one tool
+ * may share this turn, but never claim independently delimited reply intervals. */
+export function reportedActivityTurn(
+  records: readonly Omit<ActivityRecord, "envelopeId">[],
+  agent: string,
+  channel: string,
+  messageId: string,
+): string | undefined {
+  const selected = selectActivity(records, agent, channel, messageId, true);
+  return selected.status === "available" ? selected.turnId : undefined;
+}
+function selectActivity(
+  records: readonly Omit<ActivityRecord, "envelopeId">[],
+  agent: string,
+  channel: string,
+  messageId: string,
+  wholeTurn: boolean,
+): ResponseActivity {
   if (!/^[0-9a-f]{64}$/.test(messageId)) return unavailable;
   const scoped = activityRecords(records, agent, channel);
   if (!scoped.length)
@@ -159,16 +180,19 @@ export function responseActivity(
       if (update.status !== "completed" && update.status !== "failed") continue;
       tool.ended = true;
       tool.end = index;
+      const report = sendReport(update);
       const send = reportedSend(tool.update, update);
-      if (send === "ambiguous") {
+      const messages =
+        wholeTurn && tool.update.title === "buzz-dev-mcp__shell"
+          ? report.messageIds
+          : send && send !== "ambiguous"
+            ? [send.messageId]
+            : [];
+      if (send === "ambiguous" && !messages.length) {
         bad = true;
         break;
       }
-      if (send)
-        boundaries.push({
-          index,
-          message: send.messageId,
-        });
+      for (const message of messages) boundaries.push({ index, message });
     }
     if (bad) continue;
     const candidates = boundaries.filter(
@@ -181,7 +205,7 @@ export function responseActivity(
     const target = candidates[0];
     if (!target) continue;
     const boundaryIndex = boundaries.indexOf(target);
-    const left = boundaries[boundaryIndex - 1]?.index ?? -1;
+    const left = wholeTurn ? -1 : (boundaries[boundaryIndex - 1]?.index ?? -1);
     // Do not divide a tool's start/result across responses. Concurrent complete
     // tools wholly inside the interval are retained without claiming causality.
     if (

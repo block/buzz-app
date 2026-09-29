@@ -16,10 +16,47 @@ workflow publishes an Apple-signed/notarized DMG and a separately Tauri-signed
 updater `.app.tar.gz` and `.sig` for Apple Silicon. The updater archive is
 rebuilt from the verified app in the signed DMG; built-in Tauri artifact
 creation remains disabled because this DMG-only build does not emit an updater
-archive. The release does **not** publish an updater manifest or upload to the
-legacy `block/buzz` updater. An installed app cannot update from these assets
-until an updater-enabled build and a separately hosted preview manifest are
-configured and validated.
+archive. The release does **not** publish an updater manifest automatically
+or upload to the legacy `block/buzz` updater. An installed app cannot update from these assets
+until an updater-enabled build and the preview feed are configured and validated.
+
+## macOS preview updater feed (manual promotion)
+
+The preview endpoint is `https://github.com/block/buzz-app/releases/download/preview-feed/latest.json`.
+This is a dedicated rolling prerelease in `block/buzz-app`, separate from legacy
+`block/buzz`'s `buzz-desktop-latest`. Reserve `stable-feed/latest.json` in this
+repository for a future production channel; this workflow never creates it.
+Neither endpoint is `releases/latest`: versioned builds are prereleases.
+
+**Do not promote merely because the archive exists.** First install an
+updater-enabled DMG manually (older installed builds lack the updater). Verify
+that its embedded public key and preview endpoint match the release configuration,
+and stage a higher signed build. Inspect its archive/signature before promoting
+the version from `main` to a disposable test population:
+
+```sh
+gh workflow run release.yml --repo block/buzz-app --ref main \
+  -f promote_version=0.0.0-preview.<run>.<attempt>
+```
+
+After promotion, exercise discovery, signature verification, download, install,
+relaunch/version, and absent-feed and mismatched-key handling on disposable
+clients before expanding preview distribution. There is no safe way to perform
+a live old→new check against a fixed URL without first exposing a candidate
+to clients already pointed there; keep first promotion manual and controlled.
+The release build does not yet embed the public key or endpoint (#312 owns that).
+
+The promotion job verifies the versioned prerelease contains a nonempty archive
+and signature, builds the `darwin-aarch64` Tauri manifest with the signature
+from that release and an immutable versioned asset URL, refuses rollback and
+changed same-version metadata, and replaces the rolling manifest last. The
+archive and signature remain on the immutable versioned release. The job reads
+back and compares the served manifest; GitHub asset replacement can briefly
+return 404 while the old asset is replaced. Promotion is serialized with the
+release workflow, and a failed upload needs investigation before retrying.
+Recover from a broken feed by promoting a higher tested build; for key loss or
+client failure, distribute a manually installed Apple-signed DMG. Do not assume
+rolling back a signed archive can undo an installed update.
 
 ## Prerequisites
 

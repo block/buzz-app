@@ -315,9 +315,9 @@ it("opens the viewer's profile from the menu avatar and hands focus to the page"
   const menu = await screen.findByRole("menu", { name: "Fixture" });
   const item = screen.getByRole("menuitem", { name: "View your profile" });
   expect(item).toHaveAttribute("data-icon-variant", "avatar");
-  expect(item.querySelector(".buzz-avatar-status")).toHaveAttribute(
+  // Local Online intent supplies no observed badge without a community session.
+  expect(item.querySelector(".buzz-avatar-status")).not.toHaveAttribute(
     "data-status",
-    "online",
   );
   // A keyboard opening lands on the avatar as the first item. The item and the
   // button it renders must activate once between them, not on the opening key.

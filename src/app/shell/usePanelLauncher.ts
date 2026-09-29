@@ -24,15 +24,16 @@ export function usePanelLauncher(panels: Panels, ready: boolean) {
   useEffect(() => {
     const before = previous.current;
     previous.current = opened;
-    // Wait for the menu's event handling to finish before focusing a retained panel.
+    // Focus after the menu's event handling, including first-open fallback bodies.
+    // Preserve focus when the panel's content has already claimed it.
+    const card = panelRef.current;
     if (
-      before &&
       opened &&
       before !== opened &&
-      before.panel === opened.panel &&
-      before.target === opened.target
+      card &&
+      !card.contains(document.activeElement)
     )
-      panelRef.current?.focus();
+      card.focus();
     if (
       before &&
       !opened &&

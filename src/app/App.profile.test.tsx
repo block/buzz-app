@@ -73,7 +73,7 @@ afterEach(async () => {
   window.history.replaceState(null, "", "/");
 });
 
-async function setup() {
+async function setup(connectionError = false) {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -95,7 +95,8 @@ async function setup() {
     "fetch",
     vi.fn(async (url: string, options?: RequestInit) => {
       if (url.endsWith("/identity")) return Response.json({ viewer });
-      if (url.endsWith("/session"))
+      if (url.endsWith("/session")) {
+        if (connectionError) return new Response(null, { status: 502 });
         return Response.json({
           viewer,
           relayAuthor: viewer,
@@ -103,6 +104,7 @@ async function setup() {
           writeKinds: [9],
           directMessages: true,
         });
+      }
       if (url.endsWith("/query")) {
         const filters = JSON.parse(String(options?.body)) as ReadFilter[];
         return Response.json(
@@ -122,9 +124,38 @@ async function setup() {
       <App services={current} />
     </StrictMode>,
   );
-  await waitFor(() => expect(current.relay.snapshot().status).toBe("ready"));
+  await waitFor(() =>
+    expect(current.relay.snapshot().status).toBe(
+      connectionError ? "error" : "ready",
+    ),
+  );
   return user;
 }
+
+it("focuses an unavailable profile on first opening and returns focus after Escape", async () => {
+  const user = await setup(true);
+  await user.click(
+    await screen.findByRole("button", { name: "Open Settings" }),
+  );
+  await screen.findByRole("region", { name: "Settings" });
+  const trigger = screen.getByRole("button", { name: "Your profile" });
+  act(() => trigger.focus());
+  await user.keyboard("{Enter}");
+  const menu = await screen.findByRole("menu");
+  expect(
+    within(menu).getByRole("menuitem", { name: "View your profile" }),
+  ).toHaveFocus();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(menu).not.toBeInTheDocument());
+  const panel = screen.getByRole("complementary", { name: "Profile" });
+  expect(panel).toHaveTextContent(
+    "Connect to a community to view this profile.",
+  );
+  expect(panel).toHaveFocus();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(panel).not.toBeInTheDocument());
+  expect(trigger).toHaveFocus();
+});
 
 it("opens the viewer's community profile from the account menu avatar", async () => {
   const user = await setup();

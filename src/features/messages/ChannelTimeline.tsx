@@ -126,7 +126,7 @@ function Timeline({
     readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
   );
   const savedPosition = useRef(initialPosition);
-  const restoredAnchor = useRef<string | undefined>(undefined);
+  const restoredAnchor = useRef<ReadingPosition["anchor"]>(undefined);
   const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
   const resolveName = useChannelIdentityNames(queries, channelId);
   const profiles = useRowProfiles(queries.profiles, window.rows);
@@ -187,15 +187,42 @@ function Timeline({
       const renderedAnchor = anchor
         ? rows.find(
             (row) =>
-              row.id === anchor ||
-              row.membershipRows?.some((member) => member.id === anchor),
+              row.id === anchor.id ||
+              row.membershipRows?.some((member) => member.id === anchor.id),
           )?.id
         : undefined;
       const position = positionAt(element, renderedAnchor);
+      // A removed saved row cannot keep a restoration alive once a visible row
+      // replaces it. A temporarily unmounted row is still pending measurement.
+      if (anchor && !renderedAnchor && position.anchor)
+        restoredAnchor.current = undefined;
+      // A settled standalone row no longer needs correction. Membership groups
+      // retain the logical anchor even when their representative is in place.
+      if (
+        anchor &&
+        position.anchor?.id === renderedAnchor &&
+        position.anchor?.y === anchor.y &&
+        element.scrollHeight - element.clientHeight - element.scrollTop > 1 &&
+        !rows.some((row) =>
+          row.membershipRows?.some((member) => member.id === anchor.id),
+        )
+      )
+        restoredAnchor.current = undefined;
       // Virtua can emit the restoration scroll before mounting its visible
       // range. An anchorless observation must not erase the saved reading intent.
       // A reader gesture clears restoredAnchor before recording a new position.
       if (anchor && !position.anchor) return;
+      // Cold estimates can leave too little height to reach the saved row/Y.
+      // A bottom clamp with that row still below its target is restoration,
+      // not reader intent. Reachable positions and new gestures remain free.
+      if (
+        anchor &&
+        position.anchor &&
+        position.anchor.id === renderedAnchor &&
+        position.anchor.y > anchor.y + 1 &&
+        element.scrollHeight - element.clientHeight - element.scrollTop <= 1
+      )
+        return;
       const previous = measuredPosition.current;
       // List shrinkage can clamp scrollTop upward without reader movement. An
       // upward offset beyond that clamp is input, including later events from
@@ -207,6 +234,9 @@ function Timeline({
         element.scrollTop <
           previous.offset + Math.min(0, element.scrollHeight - previous.height);
       if (previous && follow.current && !movedUp) position.bottom = true;
+      // Restoration can scroll before Virtua measures rows beneath the anchor,
+      // briefly reaching the estimated bottom. Only reader input may follow.
+      if (restoredAnchor.current) position.bottom = false;
       savedPosition.current = position;
       follow.current = position.bottom;
       measuredPosition.current = {
@@ -353,8 +383,9 @@ function Timeline({
                 row.membershipRows?.some((member) => member.id === anchor.id),
             )
           : -1;
-        if (anchor && index >= 0) {
-          restoredAnchor.current = rows[index]?.id;
+        const row = rows[index];
+        if (anchor && row) {
+          restoredAnchor.current = { id: row.id, y: anchor.y };
           handle.current.scrollToIndex(index, {
             align: "start",
             offset: -anchor.y,
@@ -419,7 +450,7 @@ function Timeline({
           restore.anchor && restoredAnchor.current
             ? {
                 ...restore,
-                anchor: { ...restore.anchor, id: restoredAnchor.current },
+                anchor: { ...restore.anchor, id: restoredAnchor.current.id },
               }
             : restore;
         settled.current = false;

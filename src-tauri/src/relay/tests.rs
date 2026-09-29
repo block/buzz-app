@@ -479,7 +479,10 @@ fn channel_commands_reject_malformed_tags_through_ipc() {
         vec![h.clone(), h.clone()],
         vec![archived.clone(), h.clone()],
     ] {
-        let error = invoke(tags).err().expect("invalid tag must reject");
+        let error = match invoke(tags) {
+            Ok(_) => panic!("invalid tag must reject"),
+            Err(error) => error,
+        };
         assert!(
             !error.to_string().contains("not allowed"),
             "ACL blocked command: {error}"
@@ -516,9 +519,10 @@ fn creation_rejects_truncated_tags_through_existing_ipc() {
                 invoke_key: INVOKE_KEY.into(),
             },
         );
-        let error = response
-            .err()
-            .expect("malformed creation must reject before discovery");
+        let error = match response {
+            Ok(_) => panic!("malformed creation must reject before discovery"),
+            Err(error) => error,
+        };
         assert!(
             !error.to_string().contains("not allowed"),
             "ACL blocked command: {error}"
@@ -536,8 +540,20 @@ async fn discovery_body_is_bounded_for_length_and_chunked_transfer() {
             socket
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
+            let mut bytes = Vec::new();
             let mut buffer = [0; 2048];
-            socket.read(&mut buffer).unwrap();
+            loop {
+                let count = socket.read(&mut buffer).unwrap();
+                assert!(count > 0, "request ended before headers completed");
+                bytes.extend_from_slice(&buffer[..count]);
+                assert!(
+                    bytes.len() <= 16 * 1024,
+                    "request headers exceeded fixture limit"
+                );
+                if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
             if chunked {
                 socket.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").unwrap();
                 // Valid chunked response, over the budget on the first chunk.

@@ -1207,7 +1207,6 @@ it.each([
                 },
               }}
               sessionsEnabled
-              agentsEnabled
             />
           </ChannelNavigationProvider>
         </ToastProvider>,

@@ -16,7 +16,11 @@ import { useAppNavigation } from "./navigation";
 import { NavigationControls } from "./shell/NavigationControls";
 import { registerNavigationShortcuts } from "./shortcuts";
 import { AppShell } from "./shell/AppShell";
-import { pagePresentation, shellPresentation } from "./shell/presentation";
+import {
+  navigationDestinations,
+  pagePresentation,
+  shellPresentation,
+} from "./shell/presentation";
 import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { PanelCard } from "../features/panels/PanelCard";
@@ -125,9 +129,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 sessionsEnabled={route.pages.some(
                   (page) => page.pluginId === "buzz.sessions",
                 )}
-                agentsEnabled={route.pages.some(
-                  (page) => page.key === "buzz.agents/agents",
-                )}
+                destinations={navigationDestinations(route.pages)}
               />
             )
           }

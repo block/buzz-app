@@ -107,6 +107,15 @@
 .sidebar [data-variant="row"] > :is(svg, img) {
   flex-shrink: 0;
 }
+/* Plugin page icons take the row's text color, like the built-in glyphs. */
+.pageIcon {
+  width: 15px;
+  height: 15px;
+  background: currentColor;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: contain;
+}
 .sidebarIcon {
   display: inline-grid;
   width: 18px;

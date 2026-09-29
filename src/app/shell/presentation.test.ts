@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { RegisteredPage } from "../../features/pages/service";
-import { orderPages } from "./presentation";
+import { navigationDestinations, orderPages } from "./presentation";
 
 function page(key: string, title: string): RegisteredPage {
   const separator = key.indexOf("/");
@@ -38,4 +38,35 @@ test("other pages sort by label then full key and cannot claim bundled slots", (
   expect(orderPages([sameId, projects, alpha2, zulu, messages, alpha])).toEqual(
     expected,
   );
+});
+
+test("sidebar destinations list bundled pages first, then external, in declared entry order", () => {
+  const icon = () => null;
+  const channels = {
+    ...messages,
+    navigation: [
+      { title: "Inbox", icon, params: "Inbox" },
+      { title: "Bestie", icon, params: "Bestie" },
+    ],
+  };
+  const agents = {
+    ...page("buzz.agents/agents", "Agents"),
+    navigation: [{ title: "Agents", icon }],
+  };
+  // An external page titled to sort first still follows every bundled page.
+  const external = {
+    ...page("example.threads/threads", "Active threads"),
+    revision: "0123abcd",
+    navigation: [{ title: "Active threads", icon: "/threads.svg" }],
+  };
+  const titles = (pages: RegisteredPage[]) =>
+    navigationDestinations(pages).map(({ entry }) => entry.title);
+  const expected = ["Inbox", "Bestie", "Agents", "Active threads"];
+  expect(titles([external, agents, projects, channels])).toEqual(expected);
+  expect(titles([channels, external, agents])).toEqual(expected);
+  expect(navigationDestinations([external])[0]).toMatchObject({
+    key: "example.threads/threads#0",
+    pluginId: "example.threads",
+    pageId: "threads",
+  });
 });

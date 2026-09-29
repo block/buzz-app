@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ComponentType,
   type ReactNode,
 } from "react";
 import { ChannelLifecycleDialog } from "../../bundled/channels/ChannelLifecycleDialog";
@@ -19,6 +20,7 @@ import type { RelaySession } from "../relay/session";
 import { useChannelList, useRelayConnection } from "../relay/react";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
+import type { NavigationEntry } from "../pages/service";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -41,7 +43,6 @@ import { clientMetrics } from "../developer/client-metrics";
 import {
   BellIcon,
   BellSlashIcon,
-  RobotIcon,
   FolderSimpleIcon,
 } from "../../shared/design-system/icons";
 import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
@@ -67,7 +68,7 @@ import {
 } from "../../bundled/channels/CreateChannelDialog";
 import { writeView } from "../../shared/view-state";
 import { useChannelNavigation } from "./ChannelNavigationState";
-import { channelPlaceholder, newSessionParent } from "./routes";
+import { newSessionParent } from "./routes";
 import { ChannelSidebarResizeHandle } from "./ChannelSidebarResizeHandle";
 import styles from "../../bundled/channels/Channels.module.css";
 
@@ -77,13 +78,14 @@ type Props = {
   providers: TemplateProviders;
   target: OpenTarget;
   sessionsEnabled: boolean;
-  agentsEnabled: boolean;
+  /** Top-level destinations contributed by pages, in host order. */
+  destinations?: readonly SidebarDestination[] | undefined;
 };
 export function ChannelSidebar(props: Props) {
   const connection = useRelayConnection(props.relay);
   const navigation = (
     <SidebarNavigation
-      agentsEnabled={props.agentsEnabled}
+      destinations={props.destinations}
       navigator={props.navigator}
       scope={connection.scope ?? "disconnected"}
       target={props.target}
@@ -128,75 +130,49 @@ export function ChannelSidebar(props: Props) {
 
 type SidebarNavigationProps = Pick<
   Props,
-  "agentsEnabled" | "navigator" | "target"
+  "destinations" | "navigator" | "target"
 > & {
   scope: string;
   viewer?: string | undefined;
 };
 
 function SidebarNavigation({
-  agentsEnabled,
+  destinations = [],
   navigator,
   scope,
   target,
   viewer,
 }: SidebarNavigationProps) {
-  const placeholder =
-    target.kind === "page" && target.pluginId === "buzz.channels"
-      ? channelPlaceholder(target.route?.params)
-      : undefined;
   const communityOrigin = viewer
     ? scope.slice(0, -(viewer.length + 1))
     : undefined;
-  const openChannelDestination = (destination: "Inbox" | "Bestie") => {
-    if (!viewer || communityOrigin === undefined) return;
-    void navigator.open({
-      version: 1,
-      kind: "page",
-      pluginId: "buzz.channels",
-      pageId: "channels",
-      scope: { viewer, communityOrigin },
-      route: { version: 1, params: destination },
-    });
-  };
-  const destinations = [
-    {
-      title: "Inbox",
-      icon: <BellIcon weight="bold" size={15} />,
-      selected: placeholder === "Inbox",
-      disabled: !viewer || communityOrigin === undefined,
-      open: () => openChannelDestination("Inbox"),
-    },
-    {
-      title: "Bestie",
-      icon: <img src="/bestie.png" alt="" width={17} height={17} />,
-      selected: placeholder === "Bestie",
-      disabled: !viewer || communityOrigin === undefined,
-      open: () => openChannelDestination("Bestie"),
-    },
-    ...(agentsEnabled
-      ? [
-          {
-            title: "Agents",
-            disabled: false,
-            icon: <RobotIcon weight="bold" size={15} />,
-            selected:
-              target.kind === "page" && target.pluginId === "buzz.agents",
-            open: () =>
-              void navigator.open({
-                version: 1,
-                kind: "page",
-                pluginId: "buzz.agents",
-                pageId: "agents",
-                scope:
-                  viewer && communityOrigin !== undefined
-                    ? { viewer, communityOrigin }
-                    : null,
-              }),
-          },
-        ]
-      : []),
-  ];
+  const community =
+    viewer && communityOrigin !== undefined
+      ? { viewer, communityOrigin }
+      : null;
+  const items = destinations.map(({ key, pluginId, pageId, entry }) => ({
+    key,
+    title: entry.title,
+    icon: <PageIcon icon={entry.icon} />,
+    disabled: !!entry.requiresCommunity && !community,
+    selected:
+      target.kind === "page" &&
+      target.pluginId === pluginId &&
+      target.pageId === pageId &&
+      (entry.params === undefined ||
+        JSON.stringify(target.route?.params) === JSON.stringify(entry.params)),
+    open: () =>
+      void navigator.open({
+        version: 1,
+        kind: "page",
+        pluginId,
+        pageId,
+        scope: community,
+        ...(entry.params !== undefined && {
+          route: { version: 1, params: entry.params },
+        }),
+      }),
+  }));
   return (
     <>
       <div className={styles.sidebarBrand}>
@@ -207,9 +183,9 @@ function SidebarNavigation({
         />
       </div>
       <div className={styles.destinations}>
-        {destinations.map(({ title, icon, selected, disabled, open }) => (
+        {items.map(({ key, title, icon, selected, disabled, open }) => (
           <NavigationItem
-            key={title}
+            key={key}
             label={title}
             disabled={disabled}
             selected={selected}
@@ -221,6 +197,23 @@ function SidebarNavigation({
     </>
   );
 }
+// Image URLs are masks so plugin icons follow the row's text color.
+function PageIcon({ icon: Icon }: { icon: string | ComponentType }) {
+  if (typeof Icon === "function") return <Icon />;
+  return (
+    <span
+      aria-hidden="true"
+      className={styles.pageIcon}
+      style={{ maskImage: `url(${JSON.stringify(Icon)})` }}
+    />
+  );
+}
+export type SidebarDestination = Readonly<{
+  key: string;
+  pluginId: string;
+  pageId: string;
+  entry: NavigationEntry;
+}>;
 class SidebarBoundary extends Component<
   { children: ReactNode; fallback: ReactNode },
   { failed: boolean }
@@ -253,7 +246,7 @@ function ReadySidebar({
   providers,
   target,
   sessionsEnabled,
-  agentsEnabled,
+  destinations,
   queries,
   cached,
   connectionError,
@@ -972,7 +965,7 @@ function ReadySidebar({
             )}
             <SidebarUnread listRef={sidebar.list}>
               <SidebarNavigation
-                agentsEnabled={agentsEnabled}
+                destinations={destinations}
                 navigator={navigator}
                 scope={scope}
                 target={target}

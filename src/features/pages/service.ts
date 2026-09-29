@@ -25,6 +25,18 @@ export type Page = Readonly<{
   }>;
   /** This page acknowledges its own domain reveal rather than just successful mounting. */
   handlesNavigation?: boolean;
+  /** Top-level sidebar destinations that open this page, in order. */
+  navigation?: readonly NavigationEntry[];
+}>;
+/** One sidebar destination. Params select a view inside the page and must pass
+ * its route validation; entries without params open the page's default view. */
+export type NavigationEntry = Readonly<{
+  title: string;
+  /** A component, or an image URL drawn as a mask in the current text color. */
+  icon: string | ComponentType;
+  params?: import("../navigation/targets").JsonValue;
+  /** Disabled until a community is selected. */
+  requiresCommunity?: boolean;
 }>;
 export type RegisteredPage = Contribution<Page>;
 export type PagesReader = {
@@ -70,6 +82,41 @@ export class PagesService extends Service implements Pages {
         typeof page.route.validate !== "function")
     )
       throw new Error("Invalid page route contract");
-    this.contributions.register(this.ctx, page);
+    if (
+      page.navigation !== undefined &&
+      (!Array.isArray(page.navigation) ||
+        !page.navigation.every((entry) => validEntry(page, entry)))
+    )
+      throw new Error("Invalid page navigation entry");
+    this.contributions.register(this.ctx, {
+      ...page,
+      ...(page.navigation && {
+        navigation: Object.freeze(
+          page.navigation.map((entry) =>
+            Object.freeze({
+              title: entry.title,
+              icon: entry.icon,
+              ...(entry.params !== undefined && {
+                params: structuredClone(entry.params),
+              }),
+              ...(entry.requiresCommunity && { requiresCommunity: true }),
+            }),
+          ),
+        ),
+      }),
+    });
   }
+}
+
+function validEntry(page: Page, entry: NavigationEntry) {
+  return (
+    !!entry &&
+    typeof entry.title === "string" &&
+    !!entry.title.trim() &&
+    (typeof entry.icon === "function" ||
+      (typeof entry.icon === "string" && !!entry.icon.trim())) &&
+    (entry.requiresCommunity === undefined ||
+      typeof entry.requiresCommunity === "boolean") &&
+    (entry.params === undefined || page.route?.validate(entry.params) === true)
+  );
 }

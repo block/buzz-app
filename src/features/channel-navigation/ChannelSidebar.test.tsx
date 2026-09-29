@@ -17,7 +17,8 @@ import type { SidebarPreferences } from "../relay/sidebar-preferences";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { ChannelList } from "../relay/contracts";
 import type { Navigation } from "../navigation/controller";
-import { ChannelSidebar } from "./ChannelSidebar";
+import type { OpenTarget } from "../navigation/targets";
+import { ChannelSidebar, type SidebarDestination } from "./ChannelSidebar";
 import { ChannelNavigationProvider } from "./ChannelNavigationState";
 
 const { rowRender, menuRender } = vi.hoisted(() => ({
@@ -74,6 +75,16 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
+const icon = () => null;
+// The bundled channels page's two destinations, as the host orders them.
+const channelDestinations: SidebarDestination[] = ["Inbox", "Bestie"].map(
+  (title, index) => ({
+    key: `buzz.channels/channels#${index}`,
+    pluginId: "buzz.channels",
+    pageId: "channels",
+    entry: { title, icon, params: title, requiresCommunity: true },
+  }),
+);
 const noProviders: [] = [];
 const providers = {
   snapshot: () => noProviders,
@@ -86,6 +97,7 @@ function fixture(
     typeof createSidebarPreferencesStore
   >["queries"],
   status: RelaySnapshot["status"] = "ready",
+  destinations: SidebarDestination[] = channelDestinations,
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
@@ -123,20 +135,24 @@ function fixture(
     async clearCache() {},
   } satisfies RelayData;
   const navigator = { open: vi.fn() } as unknown as Navigation;
-  const view = (id: string, sessionsEnabled = true) => (
+  const view = (
+    id: string,
+    sessionsEnabled = true,
+    target: OpenTarget = {
+      version: 1,
+      kind: "conversation",
+      channelId: id,
+      scope: { viewer: "viewer", communityOrigin: "https://relay.test" },
+    },
+  ) => (
     <ChannelNavigationProvider relay={relay}>
       <ChannelSidebar
         relay={relay}
         navigator={navigator}
         providers={providers}
-        target={{
-          version: 1,
-          kind: "conversation",
-          channelId: id,
-          scope: { viewer: "viewer", communityOrigin: "https://relay.test" },
-        }}
+        target={target}
         sessionsEnabled={sessionsEnabled}
-        agentsEnabled={true}
+        destinations={destinations}
       />
     </ChannelNavigationProvider>
   );
@@ -299,6 +315,72 @@ it("opens Inbox and Bestie in the ready community", () => {
       route: { version: 1, params: name },
     });
   }
+});
+
+it("renders contributed destinations, selects the open view and disables community-only entries", () => {
+  const external: SidebarDestination = {
+    key: "example.threads/threads#0",
+    pluginId: "example.threads",
+    pageId: "threads",
+    entry: { title: "Active threads", icon: "/threads.svg" },
+  };
+  const h = fixture(undefined, "ready", [...channelDestinations, external]);
+  const { rerender } = render(h.view("alpha"));
+  const names = screen
+    .getAllByRole("button")
+    .map((button) => button.textContent)
+    .filter((text) =>
+      ["Inbox", "Bestie", "Active threads"].includes(text ?? ""),
+    );
+  expect(names).toEqual(["Inbox", "Bestie", "Active threads"]);
+  const threads = screen.getByRole("button", { name: "Active threads" });
+  expect(threads.querySelector("[style*='threads.svg']")).not.toBeNull();
+  fireEvent.click(threads);
+  expect(h.navigator.open).toHaveBeenLastCalledWith({
+    version: 1,
+    kind: "page",
+    pluginId: "example.threads",
+    pageId: "threads",
+    scope: { viewer: "viewer", communityOrigin: "https://relay.test" },
+  });
+  expect(threads).not.toHaveAttribute("aria-current");
+  rerender(
+    h.view("alpha", true, {
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.channels",
+      pageId: "channels",
+      route: { version: 1, params: "Bestie" },
+    }),
+  );
+  expect(screen.getByRole("button", { name: "Bestie" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  expect(screen.getByRole("button", { name: "Inbox" })).not.toHaveAttribute(
+    "aria-current",
+  );
+});
+
+it("keeps unscoped destinations usable before a community connects", () => {
+  const external: SidebarDestination = {
+    key: "example.threads/threads#0",
+    pluginId: "example.threads",
+    pageId: "threads",
+    entry: { title: "Active threads", icon },
+  };
+  const h = fixture(undefined, "connecting", [
+    ...channelDestinations,
+    external,
+  ]);
+  render(h.view("alpha"));
+  expect(screen.getByRole("button", { name: "Inbox" })).toBeDisabled();
+  const threads = screen.getByRole("button", { name: "Active threads" });
+  expect(threads).toBeEnabled();
+  fireEvent.click(threads);
+  expect(h.navigator.open).toHaveBeenLastCalledWith(
+    expect.objectContaining({ pluginId: "example.threads", scope: null }),
+  );
 });
 
 it("opens creation from a legacy subgroup + with that destination selected and retained in the create input", async () => {

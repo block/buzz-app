@@ -6,7 +6,10 @@ import {
   LightningIcon,
   RobotIcon,
 } from "../../shared/design-system/icons/index";
-import type { RegisteredPage } from "../../features/pages/service";
+import type {
+  NavigationEntry,
+  RegisteredPage,
+} from "../../features/pages/service";
 
 // Shell-owned presentation keeps plugin content independent of navigation chrome.
 // Add page identities here; unknown plugins inherit a consistent layout default.
@@ -34,6 +37,20 @@ export function orderPages(pages: readonly RegisteredPage[]) {
   );
 }
 
+// Sidebar destinations: bundled pages before external ones, each group in page
+// order, and each page's entries in the order it declared them.
+export function navigationDestinations(pages: readonly RegisteredPage[]) {
+  const bundled = pages.filter((page) => page.revision === "bundled");
+  const external = pages.filter((page) => page.revision !== "bundled");
+  return [...orderPages(bundled), ...orderPages(external)].flatMap((page) =>
+    (page.navigation ?? []).map((entry: NavigationEntry, index) => ({
+      key: `${page.key}#${index}`,
+      pluginId: page.pluginId,
+      pageId: page.id,
+      entry,
+    })),
+  );
+}
 export function pagePresentation(page: RegisteredPage) {
   if (page.id === "channels") return shellPresentation.channels;
   return {

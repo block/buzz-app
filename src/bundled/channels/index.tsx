@@ -2,6 +2,7 @@ import { isChannelRoute } from "../../features/channel-navigation/routes";
 import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
 import { ChannelSetupSettings } from "./ChannelSetupSettings";
+import { BellIcon } from "../../shared/design-system/icons";
 export const inject = [
   "pages",
   "agentControl",
@@ -38,6 +39,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
     companion: true,
     handlesNavigation: true,
     route: { version: 1, validate: isChannelRoute },
+    navigation: [
+      {
+        title: "Inbox",
+        icon: () => <BellIcon weight="bold" size={15} />,
+        params: "Inbox",
+        requiresCommunity: true,
+      },
+      {
+        title: "Bestie",
+        icon: () => <img src="/bestie.png" alt="" width={17} height={17} />,
+        params: "Bestie",
+        requiresCommunity: true,
+      },
+    ],
     component: ({ companion, navigation }) => (
       <ChannelsPage
         agentControl={agentControl}

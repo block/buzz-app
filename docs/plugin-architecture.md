@@ -59,7 +59,8 @@ The host composes one channel sidebar beside independently mounted pages. It reu
 session-owned roster, unread, creation and preferences capabilities; it does not
 retain a hidden Channels page or message reader. Sidebar and page render errors
 have separate boundaries. Sidebar presentation helpers currently remain importable
-from `bundled/channels`; no public sidebar contribution contract is introduced.
+from `bundled/channels`. The only sidebar contribution is a page's top-level
+destinations (see `navigation` below); channel rows and sections stay host-owned.
 
 Channels is the page-authoring example, not a thin registration wrapper over a
 host-owned product page. Keep page-specific components, styles, interactions and tests
@@ -80,6 +81,16 @@ A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.panels.register({ id, title, matches, launcher?, component })`. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends.
+
+A page may add top-level sidebar destinations with
+`navigation: [{ title, icon, params?, requiresCommunity? }]`. Each entry opens the
+page; `params` selects a view inside it and must pass the page's `route.validate`,
+so one page can offer several destinations (Channels offers Inbox and Bestie). The
+icon is a component or an image URL drawn in the current text color. An entry
+with `requiresCommunity` is disabled until a community is selected. The host
+lists bundled pages before external ones, keeps each page's entries in declared
+order, and marks an entry selected when its page and params are open. The
+sidebar has no other built-in destinations.
 
 A page calls `panels.resolve(target)` and renders `PanelView` with the resulting
 contribution, the target string, and a close callback. The first active matcher

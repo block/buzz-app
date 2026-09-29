@@ -153,6 +153,8 @@ test.describe("community administration permissions", () => {
       name: "Settings sections",
     });
     await expect(sections).toContainText("Administration");
+    // The account menu finishes its focus handoff before testing section focus.
+    await expect(page.getByRole("main")).toBeFocused();
     const membership = sections.getByRole("button", {
       name: "Membership",
       exact: true,

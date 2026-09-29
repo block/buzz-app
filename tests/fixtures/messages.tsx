@@ -189,6 +189,10 @@ let failRepair = false;
 const rejected = new Set<string>();
 let releaseOlderPage: (() => void) | undefined;
 let holdOlderPage = false;
+let failOlderPages = 0;
+let failLegacyContinuation = new URLSearchParams(location.search).has(
+  "failLegacyContinuation",
+);
 const owner = createRelaySession({
   scope: "https://fixture.test",
   viewer: viewer.pubkey,
@@ -257,6 +261,10 @@ const owner = createRelaySession({
                 holdOlderPage = false;
                 releaseOlderPage = undefined;
               }
+              if (filter.until !== undefined && failOlderPages > 0) {
+                failOlderPages--;
+                throw new Error("Older page failed");
+              }
               const eligible = events
                 .filter(
                   (event) =>
@@ -319,6 +327,10 @@ const owner = createRelaySession({
                 }),
               ];
             }
+            if (failLegacyContinuation && filter.thread_cursor !== undefined) {
+              failLegacyContinuation = false;
+              throw new Error("Legacy continuation failed");
+            }
             return events
               .filter((event) => {
                 if (threadReference(event)?.rootId !== rootId) return false;
@@ -367,6 +379,9 @@ Object.assign(window, {
     },
     releaseOlderPage() {
       releaseOlderPage?.();
+    },
+    failOlderPages(count: number) {
+      failOlderPages = count;
     },
     holdReconnectRepair() {
       repairGate = true;

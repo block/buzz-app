@@ -770,6 +770,12 @@ function ThreadMessages({
       };
     void view.loadMore();
   };
+  const showOlderPageStatus =
+    snapshot.direction === "older" &&
+    snapshot.readKind === "older" &&
+    !!snapshot.root;
+  const retryThread = () =>
+    void (showOlderPageStatus ? view.loadMore() : view.refresh());
   return (
     <MessageEditScope>
       <section
@@ -877,9 +883,7 @@ function ThreadMessages({
           <p className={styles.empty}>Original message unavailable.</p>
         ) : null}
         <ol>
-          {snapshot.direction === "older" &&
-            snapshot.readKind === "older" &&
-            snapshot.root &&
+          {showOlderPageStatus &&
             (snapshot.status === "loading" || snapshot.error) && (
               <li className={styles.threadHistoryPageStatus}>
                 {snapshot.status === "loading" ? (
@@ -887,7 +891,7 @@ function ThreadMessages({
                 ) : (
                   <>
                     <p role="alert">{snapshot.error}</p>
-                    <Button type="button" onClick={() => void view.refresh()}>
+                    <Button type="button" onClick={retryThread}>
                       Retry thread
                     </Button>
                   </>
@@ -896,8 +900,7 @@ function ThreadMessages({
             )}
           {renderReplies(undefined)}
         </ol>
-        {(snapshot.status === "loading" &&
-          (snapshot.direction !== "older" || snapshot.readKind !== "older")) ||
+        {(snapshot.status === "loading" && !showOlderPageStatus) ||
         (snapshot.direction !== "older" &&
           snapshot.status === "ready" &&
           snapshot.canLoadMore) ? (
@@ -906,15 +909,13 @@ function ThreadMessages({
         {snapshot.targetStatus === "unavailable" && (
           <p role="status">Selected message unavailable.</p>
         )}
-        {snapshot.error &&
-          (snapshot.readKind !== "older" || !snapshot.root) && (
-            <p role="alert">{snapshot.error}</p>
-          )}
+        {snapshot.error && !showOlderPageStatus && (
+          <p role="alert">{snapshot.error}</p>
+        )}
         {snapshot.limited && !snapshot.error && (
           <p className={styles.threadNote}>Thread history limit reached.</p>
         )}
-        {((snapshot.error &&
-          (snapshot.readKind !== "older" || !snapshot.root)) ||
+        {((snapshot.error && !showOlderPageStatus) ||
           snapshot.targetStatus === "unavailable") && (
           <div className={styles.threadHistoryControls}>
             <Button type="button" onClick={() => void view.refresh()}>

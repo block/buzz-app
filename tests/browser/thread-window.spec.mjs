@@ -51,6 +51,97 @@ test("reconnect repair failure keeps retry reachable at the newest replies", asy
   }
 });
 
+test("older-page retry repeats the failed continuation at the scrollback cue", async ({
+  page,
+}) => {
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1`,
+    );
+    const history = page.getByRole("region", { name: "Thread messages" });
+    const replies = history.locator("ol [data-message-id]");
+    await expect(replies).toHaveCount(10);
+    await history.hover();
+    await page.mouse.wheel(0, -4000);
+    await expect(replies).toHaveCount(60);
+    await page.evaluate(() => window.messagesFixture.failOlderPages(2));
+    await history.hover();
+    await page.mouse.wheel(0, -4000);
+    const error = history.getByRole("alert");
+    const retry = history.getByRole("button", { name: "Retry thread" });
+    await expect(error).toContainText("Older page failed");
+    await expect(retry).toBeInViewport();
+    await retry.click();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.messagesFixture.report.filters.length),
+      )
+      .toBe(4);
+    await expect(error).toContainText("Older page failed");
+    await expect(retry).toBeInViewport();
+    await retry.click();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.messagesFixture.report.filters.length),
+      )
+      .toBe(5);
+    await expect(replies).toHaveCount(110);
+    await expect(retry).toHaveCount(0);
+    const filters = await page.evaluate(
+      () => window.messagesFixture.report.filters,
+    );
+    expect(filters).toHaveLength(5);
+    expect(filters[2].until).toBeDefined();
+    for (const filter of filters.slice(3)) {
+      expect(filter.until).toBe(filters[2].until);
+      expect(filter.before_id).toBe(filters[2].before_id);
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test("legacy continuation failure exposes recovery after retained replies", async ({
+  page,
+}) => {
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?failLegacyContinuation=1`,
+    );
+    const history = page.getByRole("region", { name: "Thread messages" });
+    const replies = history.locator("ol [data-message-id]");
+    // The first page is started on mount; the next page is a separate read.
+    await expect(replies).toHaveCount(50);
+    const error = history.getByRole("alert");
+    const retry = history.getByRole("button", { name: "Retry thread" });
+    await expect(error).toContainText("Legacy continuation failed");
+    await expect(retry).toBeVisible();
+    await retry.click();
+    await expect(replies).toHaveCount(61);
+    await expect(error).toHaveCount(0);
+  } finally {
+    await server.close();
+  }
+});
+
 // Browser boundary: actual layout/scroll anchoring and user demand over the real
 // StrictMode session and ThreadPanel. Protocol permutations stay in owner tests.
 test("older-page cue stays between root and replies while the request is held", async ({

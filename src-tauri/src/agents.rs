@@ -17,6 +17,7 @@ pub(crate) struct Snapshot {
     import_available: bool,
     create_available: bool,
     avatar_editing_available: bool,
+    local_inventory_actions: bool,
     default_workspace: String,
     harness_options: Vec<HarnessOption>,
     databricks_defaults: crate::agent_models::Defaults,
@@ -40,6 +41,7 @@ impl Snapshot {
             import_available,
             create_available: import_available,
             avatar_editing_available: true,
+            local_inventory_actions: true,
             default_workspace: workspace.to_string_lossy().into_owned(),
             harness_options: harness_options(app_data),
             databricks_defaults: crate::agent_models::defaults(),
@@ -907,6 +909,13 @@ fn startup_trace(value: serde_json::Value) {
 pub(crate) const NOT_WAITING_FOR_GOOSE: &str = "Agent no longer waiting for Goose";
 pub(crate) const NOT_WAITING_FOR_PI: &str = "Agent no longer waiting for Pi";
 #[derive(Clone, Copy)]
+#[cfg_attr(
+    not(any(target_os = "macos", target_os = "linux")),
+    expect(
+        dead_code,
+        reason = "Harness installation is unavailable on this platform"
+    )
+)]
 pub(crate) enum InstallRestart {
     Goose,
     Pi,
@@ -1061,6 +1070,29 @@ async fn start_guarded(
             host.controller.record_error(&id, error);
         }
         host.snapshot()
+    })
+    .await
+}
+#[tauri::command]
+pub(crate) async fn agent_control_use_here(
+    state: tauri::State<'_, AgentHost>,
+    id: String,
+    resolution: buzz_agent_controller::CommunityResolution,
+) -> Result<Snapshot, String> {
+    run(state.inner().clone(), move |host| {
+        host.controller.use_here(&id, resolution)?;
+        host.snapshot()
+    })
+    .await
+}
+#[tauri::command]
+pub(crate) async fn agent_control_clone_settings(
+    state: tauri::State<'_, AgentHost>,
+    source: LegacySource,
+    pubkey: String,
+) -> Result<buzz_agent_controller::CloneSettings, String> {
+    run(state.inner().clone(), move |host| {
+        Imports::clone_settings(source, host.legacy_parent.clone(), &pubkey)
     })
     .await
 }

@@ -121,6 +121,10 @@ impl RuntimeBundle {
             .env("BUZZ_ACP_IDLE_POOL_SLEEP", "900")
             .env("BUZZ_ACP_SUBSCRIBE", "mentions")
             .env("BUZZ_ACP_RESPOND_TO", respond_to)
+            .env(
+                "BUZZ_ACP_SESSION_POLICY",
+                agent.session_policy.unwrap_or_default().as_str(),
+            )
             .env("BUZZ_ACP_DEDUP", "queue")
             .env("BUZZ_ACP_MULTIPLE_EVENT_HANDLING", "steer")
             .env("BUZZ_ACP_MCP_COMMAND", self.executable("buzz-dev-mcp")?)
@@ -486,6 +490,14 @@ impl Controller {
                 || !agent.imported.is_null(),
         )
     }
+    pub fn use_here(
+        &mut self,
+        id: &str,
+        resolution: crate::CommunityResolution,
+    ) -> Result<ControlSnapshot> {
+        self.store.use_here(id, resolution)?;
+        self.snapshot()
+    }
     pub fn prepare_import(
         &self,
         imports: &mut crate::Imports,
@@ -584,12 +596,18 @@ impl Controller {
             .collect())
     }
     pub fn delete(&mut self, id: &str, revision: u64) -> Result<ControlSnapshot> {
-        let agent = self
-            .store
-            .agents()?
-            .into_iter()
+        let agents = self.store.agents()?;
+        let agent = agents
+            .iter()
             .find(|agent| agent.id == id)
+            .cloned()
             .ok_or("Agent no longer exists")?;
+        // Use here setups of one identity share its key; keep it for the others.
+        let shared = agents.iter().any(|other| {
+            other.id != agent.id
+                && other.credential_id == agent.credential_id
+                && other.pubkey == agent.pubkey
+        });
         if agent.revision != revision {
             return Err("Agent settings changed. Reload before deleting".into());
         }
@@ -601,8 +619,10 @@ impl Controller {
         self.store.enabled(id, false)?;
         // A failed settings write leaves the card available for an explicit retry.
         // Credential deletion is idempotent, so that retry can finish cleanup.
-        self.credentials
-            .delete(&agent.credential_id, &agent.pubkey)?;
+        if !shared {
+            self.credentials
+                .delete(&agent.credential_id, &agent.pubkey)?;
+        }
         self.store.remove(id, revision)?;
         self.errors.remove(id);
         self.snapshot()
@@ -652,7 +672,7 @@ impl Controller {
             .store
             .agents()?
             .into_iter()
-            .filter(Agent::starts_on_launch)
+            .filter(|a| a.starts_on_launch() && a.configured())
         {
             // Like the host restore, a launch preference is a Start: it enables.
             if let Err(error) = self
@@ -673,6 +693,9 @@ impl Controller {
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
         let agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);
+        if !agent.configured() {
+            return Err("Choose Use here before opening this identity’s credentials".into());
+        }
         let workspace = effective_databricks(&agent)?.map(|s| s.host);
         self.bundle.as_ref().map_err(Clone::clone)?;
         Ok((agent.credential_id, agent.pubkey, agent.revision, workspace))
@@ -714,7 +737,7 @@ impl Controller {
             .store
             .agents()?
             .into_iter()
-            .filter(Agent::starts_on_launch)
+            .filter(|a| a.starts_on_launch() && a.configured())
             .map(|a| a.id)
             .collect())
     }
@@ -739,6 +762,9 @@ impl Controller {
             .into_iter()
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
+        if !agent.configured() {
+            return Err("Choose Use here before starting this imported identity".into());
+        }
         if !agent.enabled {
             return Err("Agent is disabled".into());
         }

@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
-import { createAgentControl, savedMessage } from "../features/agents/control";
+import { createAgentControl } from "../features/agents/control";
 import { controlFixture } from "../features/agents/control-testing";
 import { AgentDefaultsCard } from "./AgentDefaultsCard";
 import { useSyncExternalStore } from "react";
@@ -21,6 +21,7 @@ function setup(restarted = 0, restartFailures = 0) {
     provider: "databricks_v2",
     model: "old-model",
     effort: "high",
+    sessionPolicy: "channel",
     environmentKeys: ["SAVED_TOKEN"],
   };
   const saveDefaults = fixture.host.saveDefaults;
@@ -40,34 +41,6 @@ function setup(restarted = 0, restartFailures = 0) {
   return { fixture, control };
 }
 
-it("words save results by restart count", () => {
-  expect(savedMessage(0)).toBe("Saved.");
-  expect(savedMessage(undefined)).toBe("Saved.");
-  expect(savedMessage(1)).toBe("Saved. Restarted 1 agent.");
-  expect(savedMessage(3)).toBe("Saved. Restarted 3 agents.");
-  expect(savedMessage(0, 1)).toBe(
-    "Saved. 1 agent couldn’t restart with the new settings; check Agents.",
-  );
-  expect(savedMessage(2, 3)).toBe(
-    "Saved. Restarted 2 agents. 3 agents couldn’t restart with the new settings; check Agents.",
-  );
-});
-
-it("warns when saved defaults could not be applied by a restart", async () => {
-  const user = userEvent.setup();
-  const { control } = setup(1, 1);
-  await control.refresh();
-  const card = await screen.findByRole("region", { name: "Agent defaults" });
-  await user.clear(within(card).getByLabelText("Default model"));
-  await user.type(within(card).getByLabelText("Default model"), "next");
-  await user.click(within(card).getByRole("button", { name: "Save defaults" }));
-  expect(
-    await within(card).findByText(
-      "Saved. Restarted 1 agent. 1 agent couldn’t restart with the new settings; check Agents.",
-    ),
-  ).toBeVisible();
-});
-
 it("discard clears unfinished environment inputs as well as the saved draft", async () => {
   const user = userEvent.setup();
   const { control } = setup();
@@ -85,7 +58,7 @@ it("discard clears unfinished environment inputs as well as the saved draft", as
 
 it("changing the default harness clears model and effort and saves write-only env", async () => {
   const user = userEvent.setup();
-  const { fixture, control } = setup(2);
+  const { fixture, control } = setup(2, 1);
   await control.refresh();
   const card = await screen.findByRole("region", { name: "Agent defaults" });
   expect(within(card).getByLabelText("Default model")).toHaveValue("old-model");
@@ -96,6 +69,10 @@ it("changing the default harness clears model and effort and saves write-only en
     within(card).getByRole("combobox", { name: "Default harness" }),
   );
   await user.click(await screen.findByRole("option", { name: "Goose" }));
+  await user.click(
+    within(card).getByRole("combobox", { name: "Conversation context" }),
+  );
+  await user.click(await screen.findByRole("option", { name: "Each thread" }));
   expect(within(card).getByLabelText("Default model")).toHaveValue("");
   expect(within(card).getByLabelText("Default effort")).toHaveValue("");
   await user.type(within(card).getByLabelText("Name"), "NEW_KEY");
@@ -106,7 +83,9 @@ it("changing the default harness clears model and effort and saves write-only en
   );
   await user.click(within(card).getByRole("button", { name: "Save defaults" }));
   expect(
-    await within(card).findByText("Saved. Restarted 2 agents."),
+    await within(card).findByText(
+      "Saved. Restarted 2 agents. 1 agent couldn’t restart with the new settings; check Agents.",
+    ),
   ).toBeVisible();
   expect(fixture.calls.find((c) => c.action === "saveDefaults")).toEqual({
     action: "saveDefaults",
@@ -116,6 +95,7 @@ it("changing the default harness clears model and effort and saves write-only en
         provider: "databricks_v2",
         model: "",
         effort: "",
+        sessionPolicy: "thread",
         environment: { NEW_KEY: "secret-value", SAVED_TOKEN: null },
       },
     },

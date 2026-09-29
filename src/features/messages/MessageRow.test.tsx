@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { stubAvatarBrowserApis } from "../agents/avatar-testing";
+stubAvatarBrowserApis();
 import { expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render as renderDom,
@@ -18,6 +21,12 @@ import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
 import type { RelaySession } from "../relay/session";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 
+vi.mock("../../shared/design-system/ui/agent-thinking/ThinkingBadge", () => ({
+  ThinkingBadge: ({ children }: { children: React.ReactNode }) => (
+    <span className="badge-pill-root">{children}</span>
+  ),
+}));
+
 const row: ChannelMessage = {
   id: "root",
   channelId: "channel",
@@ -31,12 +40,34 @@ const row: ChannelMessage = {
   replyCount: 23,
 };
 
-it("badges agent and human bylines with known presence", () => {
+it("keeps agent badges but omits human presence and status symbols from messages", () => {
   const agentRow = { ...row, authorId: "a".repeat(64) };
   const subscribe = vi.fn(() => () => {});
   const status = vi.fn<() => "online" | "unknown">(() => "online");
   const channels = { channels: [], status: "ready" };
+  let working = false;
+  const activityListeners = new Set<() => void>();
   const session = {
+    agentActivity: {
+      snapshot: () => ({
+        turns: working
+          ? [
+              {
+                agent: agentRow.authorId,
+                channelId: row.channelId,
+                state: "working",
+              },
+            ]
+          : [],
+        typing: [],
+      }),
+      subscribe: (listener: () => void) => {
+        activityListeners.add(listener);
+        return () => {
+          activityListeners.delete(listener);
+        };
+      },
+    },
     presence: { subscribe, status, limited: () => false },
     messages: { report: undefined },
     channels: {
@@ -58,12 +89,12 @@ it("badges agent and human bylines with known presence", () => {
       />,
     );
   const agent = show(true);
-  expect(agent).toContain('data-status="online"');
-  expect(agent).toContain('aria-label="Agent, online"');
+  expect(agent).toContain('class="badge-pill-root"');
+  expect(agent).toContain('aria-label="Agent, available"');
   const human = show(false);
-  expect(human).toContain('data-status="online"');
-  expect(human).toContain('aria-label="aaaaaaaaaa avatar, online"');
-  expect(status).toHaveBeenCalledTimes(2);
+  expect(human).not.toContain('data-status="online"');
+  expect(human).not.toContain("data-compact");
+  expect(status).toHaveBeenCalledTimes(1);
   const props = {
     row: agentRow,
     session,
@@ -90,7 +121,25 @@ it("badges agent and human bylines with known presence", () => {
   );
   expect(
     screen.getByRole("button", { name: "View aaaaaaaaaa profile" }),
-  ).toHaveAccessibleDescription("Presence: online");
+  ).toHaveAccessibleDescription(/^Presence: online\s*$/);
+  act(() => {
+    working = true;
+    for (const listener of activityListeners) listener();
+  });
+  expect(
+    screen.getByRole("button", { name: "View aaaaaaaaaa profile" }),
+  ).toHaveAccessibleDescription("Presence: online Agent is thinking");
+  expect(document.querySelector(".agent-motion-avatar")).toHaveAttribute(
+    "aria-hidden",
+    "true",
+  );
+  act(() => {
+    working = false;
+    for (const listener of activityListeners) listener();
+  });
+  expect(
+    screen.getByRole("button", { name: "View aaaaaaaaaa profile" }),
+  ).toHaveAccessibleDescription(/^Presence: online\s*$/);
   mounted.unmount();
   status.mockReturnValue("unknown");
   const unknown = renderDom(<MessageRow {...props} canOpenLink={() => true} />);
@@ -100,11 +149,7 @@ it("badges agent and human bylines with known presence", () => {
   unknown.unmount();
   subscribe.mockClear();
   renderDom(<MessageRow {...props} />);
-  expect(subscribe).toHaveBeenCalledWith(
-    agentRow.authorId,
-    expect.any(Function),
-    false,
-  );
+  expect(subscribe).not.toHaveBeenCalled();
   cleanup();
 });
 it.each(["bare", "angle", "markdown", "escaped"] as const)(
@@ -163,6 +208,7 @@ it.each(["bare", "angle", "markdown", "escaped"] as const)(
 );
 
 it.each([
+  ["😀 🙏 👏", [], true],
   ["😀 🙏 👏 😄", [], true],
   ["😀".repeat(40), [], true],
   [
@@ -896,13 +942,145 @@ it.each(["sending", "failed"] as const)(
         screen.getByRole("button", { name: "More message actions" }),
       );
       await screen.findByRole("menu");
-      expect(screen.getAllByRole("menuitem")).toHaveLength(2);
+      expect(
+        screen.getAllByRole("menuitem").map((item) => item.textContent),
+      ).toEqual(["Copy message"]);
       expect(screen.queryByRole("separator")).toBeNull();
     } finally {
       cleanup();
     }
   },
 );
+
+// These contracts belong to the rendered row, rather than a shallow ThreadPanel fixture.
+function renderMessage(
+  patch: Partial<import("./MessageRow").MessageRowProps> = {},
+) {
+  return renderDom(
+    <MessageRow
+      row={row}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+      {...patch}
+    />,
+  );
+}
+
+it("rejects attachment URLs outside the shared safe-link policy", () => {
+  const media = vi.fn((url: string) => url);
+  const view = renderMessage({
+    row: {
+      ...row,
+      attachments: [
+        { url: "https://safe.test/a.png", kind: "image" },
+        { url: "https://user:secret@unsafe.test/a.png", kind: "image" },
+        { url: "http://unsafe.test/a.png", kind: "image" },
+      ],
+    },
+    media,
+  });
+  try {
+    const links = screen.getAllByRole("link", {
+      name: "Open image attachment",
+    });
+    expect(media).toHaveBeenCalledExactlyOnceWith("https://safe.test/a.png");
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute("href", "https://safe.test/a.png");
+    expect(view.container.innerHTML).not.toContain("unsafe.test");
+  } finally {
+    view.unmount();
+  }
+});
+
+it.each([true, false])(
+  "renders a stripped timecode body with seeking available=%s",
+  (canSeek) => {
+    const seek = vi.fn();
+    const view = renderMessage({
+      row: { ...row, content: "⏱ 0:42 — **Change** the title" },
+      ...(canSeek ? { onMediaTime: seek } : {}),
+    });
+    try {
+      expect(screen.getByText("Change").tagName).toBe("STRONG");
+      expect(view.container).toHaveTextContent("Change the title");
+      expect(view.container.textContent?.match(/0:42/g)).toHaveLength(1);
+      expect(view.container).not.toHaveTextContent("⏱");
+      if (canSeek) {
+        fireEvent.click(screen.getByRole("button", { name: "0:42" }));
+        expect(seek).toHaveBeenCalledExactlyOnceWith(42);
+      } else {
+        expect(screen.queryByRole("button", { name: "0:42" })).toBeNull();
+        expect(screen.getByText("0:42").tagName).toBe("SPAN");
+      }
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+it.each([undefined, "canonical-root"])(
+  "opens the selected row with canonical root %s and retains trigger focus",
+  (threadRootId) => {
+    const open = vi.fn();
+    const view = renderMessage({
+      row: { ...row, threadRootId },
+      onOpenThread: open,
+    });
+    try {
+      const trigger = screen.getByRole("button", {
+        name: "View thread: 23 replies",
+      });
+      fireEvent.click(trigger);
+      expect(trigger).toHaveFocus();
+      expect(open).toHaveBeenCalledExactlyOnceWith(
+        row.id,
+        threadRootId ?? row.id,
+      );
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+it("bounds reply participants and projects artwork with fallback initials", () => {
+  const media = vi.fn((url: string) =>
+    url === "https://safe/avatar" ? "https://proxy/avatar" : undefined,
+  );
+  const view = renderMessage({
+    row: { ...row, participants: ["p1", "p2", "p3", "p4", "p5"] },
+    participantProfiles: new Map([
+      ["p1", { name: "Alice", picture: "https://safe/avatar" }],
+      ["p2", { name: "Brain", picture: "http://unsafe" }],
+    ]),
+    media,
+    onOpenThread: () => {},
+  });
+  try {
+    const trigger = screen.getByRole("button", {
+      name: "View thread: 23 replies",
+    });
+    expect(
+      [...trigger.querySelectorAll("[title]")].map((e) =>
+        e.getAttribute("title"),
+      ),
+    ).toEqual(["Alice", "Brain", "p3"]);
+    expect(trigger.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://proxy/avatar",
+    );
+    expect(trigger.querySelectorAll("img")).toHaveLength(1);
+    expect(trigger.querySelector('[title="Brain"]')).toHaveTextContent("B");
+    expect(trigger.querySelector('[title="p3"]')).toHaveTextContent("P");
+    expect(trigger).toHaveTextContent("+2");
+    expect(media).toHaveBeenCalledWith("https://safe/avatar", "small");
+    expect(media).toHaveBeenCalledWith("http://unsafe", "small");
+  } finally {
+    view.unmount();
+  }
+});
 
 it.each([1, 2, 3, 4, 5, 10])(
   "keeps all %i images reachable in a labelled strip",

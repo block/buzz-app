@@ -51,6 +51,15 @@ for (const multiple of [false, true]) {
               width === 640 ? "2" : "1",
             );
           }, width);
+          const toggle = page.locator("[data-shell-sidebar-toggle]");
+          await expect(toggle).toHaveAccessibleName(
+            width <= 650
+              ? /^(Show|Hide) navigation$/
+              : /^(Show|Hide) Channel sidebar$/,
+          );
+          if ((await toggle.getAttribute("aria-expanded")) === "false")
+            await toggle.click();
+          await expect(alpha).toBeVisible();
           // Resize only while closed: moving a hover popup away from the pointer
           // legitimately dismisses it, racing the next row interaction.
           await openPopup();

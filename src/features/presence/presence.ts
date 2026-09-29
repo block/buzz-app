@@ -334,7 +334,8 @@ export function createPresence(
       if (subject.profiles) profiles.set(key, subject);
       else profiles.delete(key);
       if (
-        (!selected.has(key) && selected.size < 256) ||
+        (!selected.has(key) &&
+          (selected.size < 256 || key === transport?.viewer)) ||
         priority !== subject.profiles > 0
       )
         demand();

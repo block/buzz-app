@@ -550,16 +550,34 @@ it("live evidence fences held snapshots and invalidation retires observation", a
   owner.dispose();
 });
 
-it("always keeps the demanded viewer within the 256 subject cap", async () => {
-  const h = setup();
-  for (let i = 3; i < 263; i++) h.owner.subscribe(key(i), () => {}, true);
-  h.owner.subscribe(h.transport.viewer, () => {}, true);
-  await vi.advanceTimersByTimeAsync(100);
-  expect(h.read.mock.calls[0]?.[0]).toHaveLength(256);
-  expect(h.read.mock.calls[0]?.[0]).toContain(h.transport.viewer);
-  expect(h.owner.limited(h.transport.viewer)).toBe(false);
-  h.owner.dispose();
-});
+it.each([undefined, true])(
+  "keeps late viewer demand within the 256 subject cap (profile: %s)",
+  async (profile) => {
+    const h = setup();
+    try {
+      for (let i = 3; i < 259; i++) h.owner.subscribe(key(i), () => {}, true);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(h.owner.status(key(258))).toBe("online");
+      const displaced = vi.fn();
+      h.owner.subscribe(key(258), displaced, true);
+      h.owner.subscribe(h.transport.viewer, () => {}, profile);
+      expect(h.owner.limited(h.transport.viewer)).toBe(false);
+      expect(h.owner.limited(key(258))).toBe(true);
+      expect(h.owner.status(key(258))).toBe("unknown");
+      expect(displaced).toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(h.read).toHaveBeenCalledTimes(2);
+      const authors = h.read.mock.lastCall?.[0];
+      expect(authors).toHaveLength(256);
+      expect(new Set(authors).size).toBe(256);
+      expect(authors).toContain(h.transport.viewer);
+      expect(authors).not.toContain(key(258));
+      expect(h.owner.status(h.transport.viewer)).toBe("online");
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
 
 it("starts commands without jitter and retries at the real gate, including same-value commands", async () => {
   const h = setup();

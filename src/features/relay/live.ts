@@ -37,10 +37,7 @@ export function createLiveAdmission() {
     presenceReady: () => performance.now() >= Math.max(cooldown, presenceNext),
     presenceDelay: () =>
       Math.ceil(
-        Math.max(
-          presenceBusy ? 250 : 0,
-          Math.max(cooldown, presenceNext) - performance.now(),
-        ),
+        Math.max(0, Math.max(cooldown, presenceNext) - performance.now()),
       ),
     tryPresence() {
       if (presenceBusy || !this.presenceReady()) return;
@@ -876,7 +873,11 @@ export function subscribeRelayTraffic(
       )
         return null;
       const release = admission.tryPresence();
-      if (!release) return { retryAfterMs: admission.presenceDelay() };
+      // Busy alone is not a retry deadline; only actual gates get boundary retries.
+      if (!release)
+        return admission.presenceReady()
+          ? null
+          : { retryAfterMs: admission.presenceDelay() };
       const current = generation;
       const bounded = AbortSignal.any([signal, AbortSignal.timeout(10000)]);
       try {

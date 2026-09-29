@@ -12,10 +12,17 @@ export async function openPage(page, name, { connected = true } = {}) {
   await expect(
     page.getByRole("button", { name: "Switch to Primary", exact: true }),
   ).toBeVisible();
-  const choices = await pageChoices(page);
+  await pageChoices(page);
+  await selectPage(page, name, { connected });
+}
+
+// Select from an already-open palette, including tests that inspect page order.
+export async function selectPage(page, name, { connected = true } = {}) {
   const dialog = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const input = dialog.getByRole("combobox", { name: "Search Buzz" });
-  const choice = choices.getByRole("option", { name, exact: true });
+  const choice = dialog
+    .getByRole("group", { name: "Actions", exact: true })
+    .getByRole("option", { name, exact: true });
   // Registered page actions are visible only after the plugin catalog is ready.
   await expect(choice).toBeVisible();
   // Until the community connects, the palette is a placeholder. The connected
@@ -42,4 +49,24 @@ export async function openPage(page, name, { connected = true } = {}) {
   }
   await input.press("Enter");
   await expect(dialog).not.toBeVisible();
+}
+
+export async function selectSettingsSection(page, name) {
+  await expect(
+    page.locator("[data-shell-sidebar-toggle]"),
+  ).toHaveAccessibleName(
+    page.viewportSize().width <= 650
+      ? /^(Show|Hide) navigation$/
+      : /^(Show|Hide) Channel sidebar$/,
+  );
+  const show = page.getByRole("button", {
+    name: "Show navigation",
+    exact: true,
+  });
+  if (await show.isVisible()) await show.click();
+  await page
+    .getByRole("complementary", { name: "Settings sidebar", exact: true })
+    .getByRole("button", { name, exact: true })
+    .click();
+  await expect(page.getByRole("region", { name, exact: true })).toBeVisible();
 }

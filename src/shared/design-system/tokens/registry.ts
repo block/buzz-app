@@ -425,7 +425,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "status-away",
         variable: "--status-away",
         pointsAt: "amber-10 light / amber-10 dark",
-        use: "Away avatar badge center and availability label tint; label text uses text-warning. The avatar badge uses status-avatar-away-border for contrast.",
+        use: "Unoutlined Away avatar badge and availability label tint; label text uses text-warning. The light badge has an accepted non-text contrast shortfall; see DESIGN.md.",
         status: "core",
       },
       {
@@ -433,13 +433,6 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--status-avatar-online-border",
         pointsAt: "green-11 light / green-11 dark",
         use: "Online avatar outline; provides 3:1 against adjacent surfaces.",
-        status: "core",
-      },
-      {
-        token: "status-avatar-away-border",
-        variable: "--status-avatar-away-border",
-        pointsAt: "amber-11 light / amber-11 dark",
-        use: "Away avatar outline; provides 3:1 against adjacent surfaces.",
         status: "core",
       },
       {
@@ -1238,13 +1231,19 @@ export const RADII = [
     token: "radius-control",
     variable: "--radius-control",
     value: "12px",
-    use: "Inputs and compact icon controls. Text buttons use radius-pill.",
+    use: "Inputs and compact icon controls. Text buttons use radius-capsule.",
   },
   {
     token: "radius-panel",
     variable: "--radius-panel",
     value: "24px",
     use: "Every major workspace panel.",
+  },
+  {
+    token: "radius-capsule",
+    variable: "--radius-capsule",
+    value: "26px",
+    use: "Text buttons and similarly sized actions: capsule-shaped through large (52px), bounded on taller controls.",
   },
   {
     token: "radius-pill",

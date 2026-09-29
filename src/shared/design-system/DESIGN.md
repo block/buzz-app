@@ -67,12 +67,15 @@ clipped artwork, and avatars without a badge retain their full shape. The agent
 cutout and badge follow the squircle contour; agent badges use live presence and leave
 unknown status unbadged. All three statuses use solid fills: green for Online,
 yellow for Away, and grey for Offline, with semantic light and dark values.
-Online and Away retain step-10 centers inside a 1px inset, same-hue step-11
-outline. The outline supplies the 3:1 non-text boundary on panel, popup,
-selected and hover surfaces; measure that rendered boundary, not the inset
-center against a surface it does not touch. Offline stays unoutlined. The
-badge footprint and Bézier artwork cutout are unchanged. This establishes
-boundary contrast, not a blanket WCAG conformance claim for presence.
+Online retains its step-10 center inside a 1px inset, same-hue step-11
+outline, which supplies the 3:1 non-text boundary on supported opaque surfaces.
+Away uses an unoutlined Amber 10 fill at the designer's explicit request.
+**Known accessibility tradeoff:** the light Away badge falls below the WCAG
+1.4.11 3:1 non-text contrast target on supported neutral surfaces. The contrast
+guard reports exact accepted light-mode role/color/surface pairs; other pairs
+remain enforced. This exception is not an accessibility pass. Dark Away meets
+3:1 on these opaque surfaces. Offline stays unoutlined. Badge footprints,
+Bézier artwork cutouts, presence behavior and accessible names are unchanged.
 
 ## Public identity text
 
@@ -161,11 +164,20 @@ recipes remain so this temporary visual decision can be reversed in one place.
 Button and IconButton share prominent, subtle, ghost, inverted, destructive,
 outline and link emphasis. Inverted is for an inverse surface; link keeps its
 background clear and underlines on interaction. Its
-32 / 40 / 52px sizes are sm / md / lg at the default scale; labels may wrap and
-increase height at larger text settings. Text buttons use pill corners. Fields
-use the shared control corner. Small buttons use 16px side padding and 16px
-icons; medium and large use 24px side padding and 24px icons. Labels use the
-complete text-label-sm / text-label roles, with an 8px icon gap.
+32 / 40 / 52px sizes are sm / md / lg at the default scale, with minimum
+heights that accommodate larger text. Text buttons use `--radius-capsule`
+(1.625rem / 26px): capsule-shaped through the default 52px large size,
+clamped naturally on shorter controls, and bounded on taller ones. Reuse this
+role for similarly sized actions; `--radius-pill` remains the fully round role
+for circles and pills of any height. Fields retain `--radius-control`.
+
+Button labels stay on one line and do not shrink in flex layouts, following
+shadcn's `whitespace-nowrap shrink-0` behavior without changing Buzz's sizing,
+emphasis, or Base UI interactions. Parents must reflow whole controls or provide
+scrolling when space is limited. Composite reply summaries may reflow whole
+avatar/count groups without wrapping individual labels. Small buttons use 16px
+side padding and 16px icons; medium and large use 24px side padding and 24px icons.
+Labels use the complete text-label-sm / text-label roles, with an 8px icon gap.
 
 IconButton defaults to round and uses the same sm/md/lg sizes. Existing names
 remain compatibility aliases: primary/solid → prominent, quiet → subtle,
@@ -239,6 +251,11 @@ while the frame owns the active perimeter stroke. Read-only values can be
 read and copied; disabled actions cannot change a value. Search clear restores
 input focus. Features still own filtering, custom values, and async recovery.
 
+SearchField, Combobox.Control, and code Textarea default to no autocorrection,
+capitalization, or spellcheck. Callers can override these defaults explicitly.
+Ordinary Input and prose Textarea retain platform defaults. See the
+[exact-text input audit](../../../docs/input-correction-audit.md) for remaining fields.
+
 The Forms page in Just Design documents states, usage, and a form-in-dialog
 example. Review it with both themes, narrow widths, and enlarged text before
 introducing another form treatment.
@@ -292,8 +309,15 @@ close button and actions. Pending operations set preventClose so Escape and the
 close button agree. It retains the app's explicit dismissal behavior: outside
 clicks do not discard a form. Provide initialFocus for search dialogs and
 finalFocus when a flow has an external trigger or opens a second dialog.
+An explicit finalFocus applies only while focus is still in the closing popup
+or on the page body. If the user already moved focus elsewhere, closing leaves
+it there, as the default `true` does (`ui/finalFocus.ts`, shared by Menu,
+Popover and Dialog).
 Editors can supply `headerActions` beside Close and `leadingActions` before the
-trailing footer actions. `onEscape` may return true to consume Escape for an
+trailing footer actions. Footer actions wrap as whole controls, never shrinking
+single-line labels. When one action exceeds the available width, the footer
+scrolls horizontally from a safe start edge so both ends remain reachable.
+`onEscape` may return true to consume Escape for an
 inline layer (such as an inspector) before dismissing the dialog. Nested modal
 layers still use Dialog so Base UI owns their focus trap and dismissal order;
 `placement="right"` and explicit `dismissOnOutsideClick` suit inspector sheets.
@@ -349,6 +373,18 @@ Route navigation uses NavigationItem with aria-current instead. NavigationItem
 offers an `option` variant for picker rows with even 8px padding and immediate
 hover feedback. It forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
+
+PreviewCard may expose one supplemental action through `actionRef`, such as copying
+an identity's full npub. Action previews open without a delay so immediate Tab
+navigation reaches the action. They remain non-modal and never take focus on hover. Tab
+from the trigger reaches the action; Shift+Tab returns to the trigger; forward Tab
+continues after the trigger. Escape dismisses the preview before restoring focus,
+but never pulls focus back if the user moved it during exit. Closing previews
+are no longer Tab destinations.
+The positioned portal owns its layer above dialogs. An optional content anchor
+keeps previews near compact identity content inside wider actionable rows. Identity
+previews prefer above that content (with Base UI collision handling), leaving
+the hovered row’s trailing action unobstructed.
 
 ## Menu row corners
 

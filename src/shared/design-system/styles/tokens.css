@@ -514,7 +514,6 @@
   --status-avatar-online: var(--green-10);
   --status-avatar-online-border: var(--green-11);
   --status-away: var(--amber-10);
-  --status-avatar-away-border: var(--amber-11);
   --status-offline: var(--neutral-8);
   --text-accent: var(--purple-12);
   --text-link: var(--blue-11);
@@ -570,7 +569,6 @@
   --status-avatar-online: var(--green-10);
   --status-avatar-online-border: var(--green-11);
   --status-away: var(--amber-10);
-  --status-avatar-away-border: var(--amber-11);
   --status-offline: var(--neutral-10);
   --text-accent: var(--purple-12);
   --text-link: var(--blue-11);
@@ -693,6 +691,8 @@
   --radius-panel: var(--corner-panel);
   --radius-control: var(--corner-control);
   --radius-row: var(--corner-row);
+  /* Half the large (52px) action height; smaller controls clamp naturally. */
+  --radius-capsule: 1.625rem;
   --radius-pill: var(--corner-round);
   /* A chip reads as a chip in running text, so it takes a tighter corner than
      a control and gets its own role rather than borrowing one. */

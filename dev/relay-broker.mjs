@@ -14,6 +14,7 @@ import { assertSidebarSortIntent, mutateSidebarSort } from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import { parseGitRead } from "../src/features/projects/git.ts";
 import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
+import { validateDetailsTemplate } from "../src/features/relay/channel-details-protocol.ts";
 import { validateArchiveRequestTemplate } from "../src/features/relay/identity-archive-protocol.ts";
 import {
   prepareChannelKit,
@@ -84,6 +85,7 @@ import {
   liveChannels,
   liveJoined,
   subscribeRelayTraffic,
+  livePresenceAuthors,
 } from "../src/features/relay/live.ts";
 import {
   communityDestination,
@@ -1424,6 +1426,7 @@ export function relayBrokerPlugin({
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
               channelLifecycle: true,
+              channelDetails: true,
               identityArchives: true,
               workflowReads: true,
               projectGit: true,
@@ -1451,10 +1454,13 @@ export function relayBrokerPlugin({
               "/api/relay/stream-interests",
               "/api/relay/stream-observer",
               "/api/relay/stream-presence",
+              "/api/relay/stream-presence-authors",
             ].includes(route) &&
             req.method === "POST"
           ) {
             const publishingPresence = route === "/api/relay/stream-presence";
+            const watchingPresence =
+              route === "/api/relay/stream-presence-authors";
             const prioritizing = route === "/api/relay/stream-priority";
             const observing = route === "/api/relay/stream-observer";
             const updating = route === "/api/relay/stream-interests";
@@ -1463,11 +1469,18 @@ export function relayBrokerPlugin({
               raw += part;
               if (
                 Buffer.byteLength(raw) >
-                (updating ? 450000 : prioritizing ? 9000 : 256)
+                (updating
+                  ? 450000
+                  : watchingPresence
+                    ? 20000
+                    : prioritizing
+                      ? 9000
+                      : 256)
               )
                 return json(res, 413, { error: "Live control too large" });
             }
             let streamId,
+              presenceAuthors,
               priority,
               observer,
               status,
@@ -1488,6 +1501,8 @@ export function relayBrokerPlugin({
                   throw new Error("Invalid presence");
               }
               if (observing) observer = observerGeneration(body.observer);
+              if (watchingPresence)
+                presenceAuthors = livePresenceAuthors(body.authors);
               if (updating) {
                 interests = liveChannels(body.channels);
                 joined = liveJoined(interests, body.joined ?? []);
@@ -1514,7 +1529,10 @@ export function relayBrokerPlugin({
             )
               return json(res, 400, { error: "Invalid live control" });
             const stream = streams.get(streamId);
-            if (publishingPresence && (!stream || stream.relay !== relay))
+            if (
+              (publishingPresence || watchingPresence) &&
+              (!stream || stream.relay !== relay)
+            )
               return json(res, 200, { accepted: null });
             if (!stream || stream.relay !== relay)
               return json(res, 404, {
@@ -1529,7 +1547,14 @@ export function relayBrokerPlugin({
                   status,
                   cancel.signal,
                 );
-                if (!res.destroyed) return json(res, 200, { accepted });
+                if (!res.destroyed)
+                  return json(
+                    res,
+                    200,
+                    accepted && typeof accepted === "object"
+                      ? { accepted: null, retryAfterMs: accepted.retryAfterMs }
+                      : { accepted },
+                  );
               } finally {
                 res.off("close", abort);
               }
@@ -1552,6 +1577,8 @@ export function relayBrokerPlugin({
               stream.traffic.update(interests, joined);
             } else if (prioritizing) stream.traffic.prioritize(priority);
             else if (observing) stream.traffic.observe(observer);
+            else if (watchingPresence)
+              stream.traffic.watchPresence(presenceAuthors);
             else stream.traffic.retry();
             return json(res, 200, { accepted: true });
           }
@@ -1562,7 +1589,12 @@ export function relayBrokerPlugin({
               if (Buffer.byteLength(raw) > 300000)
                 return json(res, 413, { error: "Live interests too large" });
             }
-            let channels, joined, priority, observer, interestRevision;
+            let channels,
+              joined,
+              priority,
+              observer,
+              interestRevision,
+              presenceAuthors;
             try {
               const body = JSON.parse(raw);
               channels = liveChannels(body.channels);
@@ -1574,6 +1606,7 @@ export function relayBrokerPlugin({
               )
                 throw new Error("Invalid interest revision");
               observer = observerGeneration(body.observer ?? null);
+              presenceAuthors = livePresenceAuthors(body.presenceAuthors ?? []);
               liveChannels(body.priority ?? []);
               if (body.priority?.length > 64)
                 throw new Error("Priority capacity reached");
@@ -1668,6 +1701,7 @@ export function relayBrokerPlugin({
                       interestRevision: stream.interestRevision,
                     });
                 },
+                presence: (event) => write("presence", event),
                 telemetry: (event, generation) => {
                   if (res.destroyed) return;
                   try {
@@ -1704,6 +1738,7 @@ export function relayBrokerPlugin({
             );
             principal.streams++;
             traffic.observe(observer);
+            traffic.watchPresence(presenceAuthors);
             traffic.prioritize(priority);
             traffic.update(channels, joined);
             const keepAlive = setInterval(
@@ -1897,6 +1932,8 @@ export function relayBrokerPlugin({
               "/api/relay/presence-snapshot",
               "/api/relay/channel-activity",
               "/api/relay/sign",
+              "/api/relay/channel-details-sign",
+              "/api/relay/channel-details-publish",
               "/api/relay/channel-lifecycle-sign",
               "/api/relay/channel-lifecycle-publish",
               "/api/relay/identity-archive-sign",
@@ -1909,6 +1946,7 @@ export function relayBrokerPlugin({
               "/api/relay/direct-message",
               "/api/relay/authorize-agent",
               "/api/relay/agent-log-proof",
+              "/api/relay/resolve-agent-community",
               "/api/relay/claim",
               "/api/relay/accept-policy",
               "/api/relay/invite",
@@ -2040,6 +2078,32 @@ export function relayBrokerPlugin({
               schnorr.sign(createHash("sha256").update(message).digest(), key),
             ).toString("hex");
             return json(res, 200, { signature });
+          }
+          if (route === "/api/relay/resolve-agent-community") {
+            if (
+              !scoped ||
+              filters?.owner !== viewer ||
+              !/^[0-9a-f]{64}$/.test(filters?.pubkey ?? "") ||
+              filters.pubkey === viewer ||
+              filters?.confirmed !== true ||
+              Object.keys(filters).length !== 3
+            )
+              return json(res, 400, {
+                error: "Explicit owner community resolution required",
+              });
+            // The signed account confirms setup intent. Native verifies it against
+            // retained source-owner authorization; inventory is not permission.
+            cancel.signal.throwIfAborted();
+            const relayUrl = relay.replace(/^https:/, "wss:");
+            const digest = createHash("sha256")
+              .update(`nostr:agent-community:${filters.pubkey}:${relayUrl}`)
+              .digest();
+            return json(res, 200, {
+              pubkey: filters.pubkey,
+              relayUrl,
+              owner: viewer,
+              signature: Buffer.from(schnorr.sign(digest, key)).toString("hex"),
+            });
           }
           if (route === "/api/relay/authorize-agent") {
             if (
@@ -2211,6 +2275,9 @@ export function relayBrokerPlugin({
               sent: false,
             });
           const timings = [];
+          const details =
+            route === "/api/relay/channel-details-sign" ||
+            route === "/api/relay/channel-details-publish";
           const lifecycle =
             route === "/api/relay/channel-lifecycle-sign" ||
             route === "/api/relay/channel-lifecycle-publish";
@@ -2219,10 +2286,12 @@ export function relayBrokerPlugin({
             route === "/api/relay/identity-archive-publish";
           const signing =
             route === "/api/relay/sign" ||
+            route === "/api/relay/channel-details-sign" ||
             route === "/api/relay/channel-lifecycle-sign" ||
             route === "/api/relay/identity-archive-sign";
           const publishing =
             route === "/api/relay/publish" ||
+            route === "/api/relay/channel-details-publish" ||
             route === "/api/relay/channel-lifecycle-publish" ||
             route === "/api/relay/identity-archive-publish";
           if (signing || publishing) {
@@ -2234,6 +2303,15 @@ export function relayBrokerPlugin({
               } catch {
                 return json(res, 400, {
                   error: "Invalid identity archive request",
+                  sent: false,
+                });
+              }
+            } else if (details) {
+              try {
+                validateDetailsTemplate(filters);
+              } catch {
+                return json(res, 400, {
+                  error: "Invalid channel details command",
                   sent: false,
                 });
               }

@@ -29,29 +29,34 @@ semantic tokens, UI authoring rules and the local component reference.
   Channels is presented as Messages. Legacy tone props are retained for
   compatibility; all pages share the supplied gradient and repeating CSS dots.
   Add recognized page presentation here without changing plugin contracts.
-- `AppShell.tsx` owns the 56px header, vertical page navigation, contributed panel
+- `AppShell.tsx` owns the 48px header, vertical page navigation, contributed panel
   launchers, Settings access, community rail, and page frames. Page navigation sits
-  above the persistent channel list on every page, using its saved sidebar width
-  and resize behavior. `App.tsx` composes `features/channel-navigation/ChannelSidebar`
+  above the channel list outside Settings, using its saved sidebar width
+  and resize behavior. Settings replaces that card with `SettingsSidebar.tsx`,
+  preserving the same width (220px minimum) and returning to the previous view
+  with Back. `App.tsx` composes `features/channel-navigation/ChannelSidebar`
   through an ordinary render prop; there is no portal or plugin contract expansion.
   Sidebar session state resets on scope/connection generation without remounting
   unrelated pages. Its own error boundary keeps page navigation and Settings usable.
   Page buttons use shared navigation rows and focus the main region on selection.
   A scrollable page list leaves room for channels at short heights.
-  At widths up to 650px, Settings collapses this navigation behind the header’s
+  At widths up to 650px, every page collapses navigation behind the header’s
   Show navigation button to preserve readable content at 200% text size. The
-  disclosure overlays Settings, supports Escape, and keeps sidebar state mounted.
-  Other pages and desktop Settings retain the visible sidebar.
+  220px disclosure overlays content, supports Escape, and keeps sidebar state
+  mounted. A navigation selection closes the phone drawer and hands focus to the
+  main content; this includes conversation and Settings-section selections.
+  Messages, Agents, and desktop Settings share an animated header toggle; hiding
+  the sidebar preserves its mounted state and saved width. Reduced motion disables
+  the transition. Other desktop pages retain the visible sidebar.
   The header keeps history and account/search actions, with no second navigation row.
   Full-height pages get a 16px outer gutter (8px on narrow screens) and own their
   card surfaces. The shell adds no white backing behind them. Document pages
   scroll inside the remaining viewport.
-- `Settings.tsx` presents Profile, Plugins and Appearance as selectable sections in a left
-  sidebar, opening on Profile. When the content area is narrow (including beside
-  a companion panel), the section buttons form a compact row above the content.
-  Navigation and details scroll together inside the solid container at narrow
-  widths, so wrapped navigation cannot consume the detail pane's height. Wide
-  layouts keep independently scrolling navigation and details.
+- `SettingsSidebar.tsx` presents community and app sections in the shell's
+  replacement sidebar. `Settings.tsx` renders the selected detail pane and retains
+  drafts across section changes. The detail pane scrolls independently and keeps
+  an accessible level-one Settings heading. Standalone Settings fixtures retain
+  their embedded navigation, which becomes a compact row at narrow widths.
   Native buttons use normal Tab/Enter navigation and expose the current section.
   `ProfileSettings.tsx` edits the local default inline with Save and Cancel,
   sharing fields and validation with community setup. Cancel restores the saved
@@ -95,7 +100,11 @@ Enter/Space selects without closing the menu. See
 [presence ownership and limitations](presence.md). Escape, outside click and Tab
 leaving dismiss the menu; Escape returns focus to the avatar. Selecting Settings
 focuses the main region after the menu finishes closing, unless focus has already
-moved into the page.
+moved into the page. With a community selected, the avatar inside the menu is a
+menu item that opens the viewer's own profile in the shell companion slot, using
+the same `profile` panel as other profile links; the panel takes focus, and
+closing it returns focus to the header avatar. Personal space has no community
+profile, so its menu avatar stays presentational.
 The avatar does not display the selected community's profile. It uses a configured
 HTTPS picture directly, with the name's first letter on a missing/failed picture
 or a person icon when unnamed. No sample person's photo is used as the user's
@@ -152,6 +161,9 @@ Disabling Bestie removes its snake and open card without evicting a local link c
 The shell supplies the outer page gutter. Channel previews, roster labels, and routine refresh
 and freshness indicators are omitted. Channel Settings → Diagnostics keeps
 manual refresh, outbox inspection, and timing capture available on demand.
+Background thread reads and sidebar enrichment/reconnection do not insert progress
+rows into populated views. Initial empty loads still explain the wait; failures
+and their retry controls remain visible.
 
 The composer preserves the session's text sending and keyboard behavior. Its
 rounded input and lavender send arrow follow the reference; unsupported upload,

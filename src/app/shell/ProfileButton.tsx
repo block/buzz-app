@@ -1,4 +1,5 @@
 import { formatPublicKey } from "../../shared/identity/public-key";
+import { usePresenceStatus } from "../../features/presence/react";
 import { useRelayConnection } from "../../features/relay/react";
 import { avatarSource } from "../../shared/avatar-source";
 import { useUserStatus } from "../../features/user-status/useUserStatus";
@@ -15,6 +16,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import {
+  CircleNotchIcon,
   SmileyIcon,
   CheckIcon,
   GearIcon,
@@ -48,11 +50,14 @@ export function ProfileButton({
   accountActions,
   settingsSelected,
   onSettings,
+  onProfile,
 }: {
   communities: Communities;
   accountActions: AccountActionsService;
   settingsSelected: boolean;
   onSettings(): void;
+  /** Present only while a panel can show the viewer's own profile. */
+  onProfile?: ((trigger: HTMLButtonElement) => void) | undefined;
 }) {
   const {
     profile: localProfile,
@@ -63,11 +68,49 @@ export function ProfileButton({
     communities.presence.subscribe,
     communities.presence.snapshot,
   );
-  const label = { online: "Online", away: "Away", offline: "Offline" }[
-    presence.status
-  ];
   const connection = useRelayConnection(communities.relay);
   const session = connection.session;
+  const observed = usePresenceStatus(
+    selected && connection.viewer === viewer ? session?.presence : undefined,
+    viewer ?? undefined,
+  );
+  const label = {
+    online: "Online",
+    away: "Away",
+    offline: "Offline",
+    unknown: "Status unavailable",
+  }[observed];
+  const [statusChange, setStatusChange] = useState<{
+    target: "online" | "away" | "offline";
+    session: typeof session;
+    viewer: typeof viewer;
+    community: typeof selected;
+    failed?: boolean;
+  }>();
+  const currentChange =
+    statusChange?.session === session &&
+    statusChange?.viewer === viewer &&
+    statusChange?.community === selected
+      ? statusChange
+      : undefined;
+  const pending =
+    currentChange && !currentChange.failed && observed !== currentChange.target;
+  useEffect(() => {
+    if (!statusChange) return;
+    if (!currentChange || observed === currentChange.target)
+      setStatusChange(undefined);
+  }, [statusChange, currentChange, observed]);
+  useEffect(() => {
+    if (!statusChange || statusChange.failed) return;
+    // One deadline per click; intermediate observations must not extend it.
+    // This is confirmation feedback, not a publication retry or optimistic evidence.
+    const timer = setTimeout(() => {
+      setStatusChange((current) =>
+        current === statusChange ? { ...current, failed: true } : current,
+      );
+    }, 15000);
+    return () => clearTimeout(timer);
+  }, [statusChange]);
   // The selected session owns community identity; never copy it into local defaults.
   const profiles =
     selected && connection.viewer === viewer ? session?.profiles : undefined;
@@ -121,7 +164,8 @@ export function ProfileButton({
   const profileTrigger = useRef<HTMLButtonElement>(null);
   const openingStatus = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const openingSettings = useRef(false);
+  // Settings or the profile panel takes focus once the menu has closed.
+  const handoff = useRef(false);
   const actions = useSyncExternalStore(
     accountActions.subscribe,
     accountActions.snapshot,
@@ -140,7 +184,7 @@ export function ProfileButton({
       fallback={name}
       fallbackContent={displayName ? undefined : <UserIcon size={19} />}
       size="fill"
-      statusBadge={viewer ? presence.status : undefined}
+      statusBadge={viewer && observed !== "unknown" ? observed : undefined}
     />
   );
   return (
@@ -151,7 +195,7 @@ export function ProfileButton({
         onOpenChange={(open) => {
           setMenuOpen(open);
           if (open) {
-            openingSettings.current = false;
+            handoff.current = false;
             openingStatus.current = false;
           } else {
             statusEditor.cancelOpening();
@@ -161,9 +205,10 @@ export function ProfileButton({
         onOpenChangeComplete={(open) => {
           // Let the menu finish its keyboard handling before handing focus to
           // the page. Other dismissals retain the shared menu's focus behavior.
-          if (!open && openingSettings.current) {
+          if (!open && handoff.current) {
             const main = document.getElementById("main-content");
-            // A user may already be editing Settings while the menu animates out.
+            // A user may already be editing Settings, or the profile panel may
+            // have focused itself, while the menu animates out.
             if (!main?.contains(document.activeElement)) main?.focus();
           }
         }}
@@ -179,9 +224,15 @@ export function ProfileButton({
               shape="round"
               icon={
                 <span
-                  className="pointer-events-none relative flex size-full items-center justify-center rounded-full"
+                  className={styles.triggerAvatar}
                   role="img"
-                  aria-label={viewer ? `Your status: ${label}` : "Your avatar"}
+                  aria-label={
+                    viewer
+                      ? observed === "unknown"
+                        ? "Your status is unavailable"
+                        : `Your status: ${label}`
+                      : "Your avatar"
+                  }
                 >
                   {avatar}
                 </span>
@@ -193,36 +244,80 @@ export function ProfileButton({
           align="end"
           sideOffset={8}
           aria-labelledby={accountLabel}
-          finalFocus={() => !openingSettings.current && !openingStatus.current}
+          finalFocus={() => !handoff.current && !openingStatus.current}
         >
           <span id={accountLabel} className="sr-only">
             {name}
           </span>
           <div className={styles.profileHeader}>
-            <span className={styles.profileAvatar}>{avatar}</span>
+            <span className={styles.profileAvatar}>
+              {onProfile ? (
+                <MenuItem
+                  nativeButton
+                  onClick={() => {
+                    const trigger = profileTrigger.current;
+                    if (!trigger) return;
+                    handoff.current = true;
+                    onProfile(trigger);
+                  }}
+                  render={
+                    <IconButton
+                      type="button"
+                      aria-label="View your profile"
+                      variant="avatar"
+                      shape="round"
+                      icon={avatar}
+                    />
+                  }
+                />
+              ) : (
+                avatar
+              )}
+            </span>
             <div className={styles.profileDetails}>
               <p className="m-0 truncate text-label-sm">{name}</p>
               {viewer && (
                 <MenuRoot modal={false}>
-                  <span
-                    className={styles.availability}
-                    data-status={presence.status}
-                  >
+                  <span className={styles.availability} data-status={observed}>
                     <MenuTrigger
-                      aria-label={`Availability: ${label}`}
+                      aria-label={`Availability: ${label}${pending ? `, updating to ${currentChange.target}` : ""}`}
                       render={
                         <Button variant="subtle" size="xs">
+                          {pending && (
+                            <CircleNotchIcon
+                              size={12}
+                              aria-hidden="true"
+                              className="motion-safe:animate-spin"
+                            />
+                          )}
                           {label}
+                          {pending && (
+                            <span role="status" className="sr-only">
+                              Updating to {currentChange?.target}…
+                            </span>
+                          )}
                         </Button>
                       }
                     />
                   </span>
                   <MenuPopup align="start">
                     <MenuRadioGroup
-                      value={presence.status}
-                      onValueChange={(value) =>
-                        communities.presence.setPreference(value)
-                      }
+                      value={observed === "unknown" ? "" : observed}
+                      onValueChange={(value) => {
+                        if (
+                          value !== "online" &&
+                          value !== "away" &&
+                          value !== "offline"
+                        )
+                          return;
+                        setStatusChange({
+                          target: value,
+                          session,
+                          viewer,
+                          community: selected,
+                        });
+                        communities.presence.setPreference(value);
+                      }}
                       aria-label="Availability"
                     >
                       {(
@@ -232,7 +327,11 @@ export function ProfileButton({
                           ["offline", "Offline"],
                         ] as const
                       ).map(([value, name]) => (
-                        <MenuRadioItem key={value} value={value}>
+                        <MenuRadioItem
+                          key={value}
+                          value={value}
+                          closeOnClick={false}
+                        >
                           {name}
                         </MenuRadioItem>
                       ))}
@@ -242,6 +341,14 @@ export function ProfileButton({
               )}
             </div>
           </div>
+          {currentChange?.failed && (
+            <p
+              role="alert"
+              className="mx-3 my-2 max-w-56 text-body-sm text-danger"
+            >
+              Could not confirm your status. Try again.
+            </p>
+          )}
           {presence.error && (
             <p
               role="alert"
@@ -320,7 +427,7 @@ export function ProfileButton({
           <MenuItem
             aria-current={settingsSelected ? "page" : undefined}
             onClick={() => {
-              openingSettings.current = true;
+              handoff.current = true;
               onSettings();
             }}
           >

@@ -203,27 +203,33 @@ export function AgentEditor({
                         <div className="space-y-4">
                           <div className="space-y-1">
                             <p className="text-body-sm">
+                              {state.status === "error" && "Last known: "}
                               {agentProcessLabel(agent)}
                             </p>
                             <p className="text-body-sm text-subtle">
-                              {agent.enabled
-                                ? !state.data?.runtimeAvailable
-                                  ? "Enabled intent saved · execution unavailable"
+                              {agent.configured === false
+                                ? "Imported · close the editor and choose Use here before starting"
+                                : agent.enabled
+                                  ? !state.data?.runtimeAvailable
+                                    ? "Enabled intent saved · execution unavailable"
+                                    : agent.startOnAppLaunch
+                                      ? "Enabled · starts with buzz-app"
+                                      : "Enabled · manual-start only"
                                   : agent.startOnAppLaunch
-                                    ? "Enabled · starts with buzz-app"
-                                    : "Enabled · manual-start only"
-                                : agent.startOnAppLaunch
-                                  ? "Stopped · starts with buzz-app"
-                                  : "Stopped · a later sent mention can start this agent"}
+                                    ? "Start on launch enabled"
+                                    : "Manual start · a later sent mention can start this agent"}
                             </p>
                           </div>
                           <div className="flex flex-wrap gap-2">
-                            {agent.status !== "running" && (
+                            {(agent.status === "stopped" ||
+                              agent.status === "failed") && (
                               <Button
                                 disabled={launchBlocked}
                                 onClick={() => act("start")}
                               >
-                                Start
+                                {agent.status === "failed"
+                                  ? "Retry start"
+                                  : "Start"}
                               </Button>
                             )}
                             <Button
@@ -243,8 +249,8 @@ export function AgentEditor({
                             Saved revision {agent.revision} · Running revision{" "}
                             {agent.runningRevision ?? "none"}.
                             {unapplied && " Saved changes are not running yet."}{" "}
-                            Stop ends current work; a later sent mention can
-                            start it again.
+                            Stop ends current work. After setup, a later sent
+                            mention can start it again.
                           </p>
                         </div>
                       ),

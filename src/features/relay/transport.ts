@@ -83,6 +83,8 @@ export interface ReadTransport {
   readonly workflows?: WorkflowHost;
   /** Narrow lifecycle signer/publisher; never supplied to the message outbox. */
   readonly channelLifecycle?: RelayWriter;
+  /** Name/about/private-only metadata writer, separate from lifecycle and outbox. */
+  readonly channelDetails?: RelayWriter;
   /** Narrow NIP-IA 9035/9036 signer/publisher; never supplied to the message outbox. */
   readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
@@ -101,7 +103,12 @@ export interface ReadTransport {
     requestId: string,
     priority: "foreground" | "background",
   ): Promise<RelayEvent[]>;
-  /** Broker-only, complete bounded presence read. null is a local admission skip. */
+  /** Demand-scoped verified ephemeral events on the session-owned socket. */
+  observePresence?(
+    authors: readonly string[],
+    receive: (event: RelayEvent) => void,
+  ): () => void;
+  /** Complete bounded presence read. null is a local admission skip. */
   presenceSnapshot?(
     authors: readonly string[],
     signal: AbortSignal,
@@ -245,6 +252,31 @@ function measuredLive(
   };
 }
 
+/** Binds the presence owner to the existing session stream, including startup ordering. */
+function presenceObservation() {
+  let traffic: LiveSubscription | undefined;
+  let authors: readonly string[] = [];
+  let listener: ((event: RelayEvent) => void) | undefined;
+  return {
+    receive: (event: RelayEvent) => listener?.(event),
+    attach(value: LiveSubscription) {
+      traffic = value;
+      traffic.watchPresence?.(authors);
+    },
+    observe(keys: readonly string[], receive: (event: RelayEvent) => void) {
+      authors = keys;
+      listener = receive;
+      traffic?.watchPresence?.(authors);
+      return () => {
+        if (listener !== receive) return;
+        listener = undefined;
+        authors = [];
+        traffic?.watchPresence?.(authors);
+      };
+    },
+  };
+}
+
 async function parsePresence(
   raw: unknown,
   authors: readonly string[],
@@ -336,6 +368,7 @@ export async function connectBrokerTransport(
     attachmentUploads?: boolean;
     directMessages?: boolean;
     channelLifecycle?: boolean;
+    channelDetails?: boolean;
     identityArchives?: boolean;
     relayUrl?: string;
     relayHttpUrl?: string;
@@ -368,6 +401,7 @@ export async function connectBrokerTransport(
       "Relay broker session is malformed",
     );
   let traffic: LiveSubscription | undefined;
+  const presence = presenceObservation();
   const relayHttpUrl = relayHttpBase(session.relayHttpUrl, session.relayUrl);
   const publicationHeaders = () => ({
     "Content-Type": "application/json",
@@ -405,6 +439,7 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.presence && session.live
       ? {
+          observePresence: presence.observe,
           async presenceSnapshot(
             authors: readonly string[],
             signal: AbortSignal,
@@ -450,8 +485,12 @@ export async function connectBrokerTransport(
           subscribe: (callbacks: LiveCallbacks) => {
             traffic = subscribeBrokerTraffic(
               endpoint,
-              measuredLive(endpoint, callbacks),
+              measuredLive(endpoint, {
+                ...callbacks,
+                presence: presence.receive,
+              }),
             );
+            presence.attach(traffic);
             return traffic;
           },
         }
@@ -776,6 +815,9 @@ export async function connectBrokerTransport(
           },
         }
       : {}),
+    ...(session.channelDetails === true
+      ? { channelDetails: routeWriter("channel-details") }
+      : {}),
     ...(session.channelLifecycle === true
       ? { channelLifecycle: routeWriter("channel-lifecycle") }
       : {}),
@@ -945,8 +987,50 @@ export async function connectSignedTransport(
   const principal = () => signedAdmissions(httpOrigin, viewer);
   const profiling = createRelayProfiler();
   const verify = createEventVerifier();
+  const presence = presenceObservation();
   return {
     profiling,
+    observePresence: presence.observe,
+    async presenceSnapshot(authors, signal) {
+      const filters = [{ kinds: [20001], authors, limit: authors.length }];
+      if (!presenceFilter(filters)) throw new Error("Invalid presence demand");
+      const lane = principal().api;
+      const release = lane.tryPresence();
+      if (!release) return null;
+      const bounded = AbortSignal.any([signal, AbortSignal.timeout(10000)]);
+      try {
+        const response = await signedPost(
+          signer,
+          `${httpOrigin}/query`,
+          filters,
+          bounded,
+          profiling,
+          "presence",
+          lane,
+          "background",
+          true,
+        );
+        if (!response.ok) {
+          const failure = await readApiFailure(response);
+          if (failure.quota === "api" && failure.retryAfterMs !== undefined)
+            lane.pause(failure.retryAfterMs);
+          throw new ReadError(
+            "unavailable",
+            failure.error,
+            response.status,
+            failure.retryAfterMs,
+          );
+        }
+        return await parsePresence(
+          JSON.parse(await presenceText(response)),
+          authors,
+          relayAuthor,
+          bounded,
+        );
+      } finally {
+        release();
+      }
+    },
     subscribe: (callbacks) => {
       const owner = principal();
       owner.streams++;
@@ -956,7 +1040,10 @@ export async function connectSignedTransport(
           httpOrigin.replace(/^http/, "ws"),
           (event) => signer.signEvent(event),
           viewer,
-          measuredLive(httpOrigin, callbacks),
+          measuredLive(httpOrigin, {
+            ...callbacks,
+            presence: presence.receive,
+          }),
           undefined,
           owner.live,
         );
@@ -964,6 +1051,7 @@ export async function connectSignedTransport(
         owner.streams--;
         throw error;
       }
+      presence.attach(traffic);
       let closed = false;
       return {
         ...traffic,
@@ -1041,23 +1129,23 @@ async function signedPost(
   id: string,
   admission: Parameters<typeof admittedApiRequest>[0],
   priority: "foreground" | "background" = "foreground",
+  optionalPresence = false,
 ) {
+  const dispatch = (request: () => Promise<Response>) =>
+    optionalPresence
+      ? admission.prepare(request)
+      : admittedApiRequest(admission, request, signal, priority);
   signal?.throwIfAborted();
   return admission.prepare(async () => {
     const body = JSON.stringify(value);
     const request = signer.request?.bind(signer);
     if (request)
-      return admittedApiRequest(
-        admission,
-        () => {
-          signal?.throwIfAborted();
-          return profiling.measureAsync("http.fetch", id, () =>
-            request(url, body, signal),
-          );
-        },
-        signal,
-        priority,
-      );
+      return dispatch(() => {
+        signal?.throwIfAborted();
+        return profiling.measureAsync("http.fetch", id, () =>
+          request(url, body, signal),
+        );
+      });
     const payload = hex(
       await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)),
     );
@@ -1080,30 +1168,25 @@ async function signedPost(
     // server pause learned during asynchronous signing.
     const queued = profiling.start("http.admission", id);
     try {
-      return await admittedApiRequest(
-        admission,
-        () => {
-          queued();
-          signal?.throwIfAborted();
-          if (Math.abs(Math.floor(Date.now() / 1000) - auth.created_at) > 45)
-            throw new ApiNotSent(
-              "Request authentication expired before dispatch; retry available",
-            );
-          return profiling.measureAsync("http.fetch", id, () =>
-            fetch(url, {
-              method: "POST",
-              headers: {
-                Authorization: `Nostr ${btoa(JSON.stringify(auth))}`,
-                "Content-Type": "application/json",
-              },
-              body,
-              signal: signal ?? null,
-            }),
+      return await dispatch(() => {
+        queued();
+        signal?.throwIfAborted();
+        if (Math.abs(Math.floor(Date.now() / 1000) - auth.created_at) > 45)
+          throw new ApiNotSent(
+            "Request authentication expired before dispatch; retry available",
           );
-        },
-        signal,
-        priority,
-      );
+        return profiling.measureAsync("http.fetch", id, () =>
+          fetch(url, {
+            method: "POST",
+            headers: {
+              Authorization: `Nostr ${btoa(JSON.stringify(auth))}`,
+              "Content-Type": "application/json",
+            },
+            body,
+            signal: signal ?? null,
+          }),
+        );
+      });
     } finally {
       queued();
     }

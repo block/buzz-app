@@ -121,6 +121,10 @@ impl RuntimeBundle {
             .env("BUZZ_ACP_IDLE_POOL_SLEEP", "900")
             .env("BUZZ_ACP_SUBSCRIBE", "mentions")
             .env("BUZZ_ACP_RESPOND_TO", respond_to)
+            .env(
+                "BUZZ_ACP_SESSION_POLICY",
+                agent.session_policy.unwrap_or_default().as_str(),
+            )
             .env("BUZZ_ACP_DEDUP", "queue")
             .env("BUZZ_ACP_MULTIPLE_EVENT_HANDLING", "steer")
             .env("BUZZ_ACP_MCP_COMMAND", self.executable("buzz-dev-mcp")?)
@@ -318,10 +322,12 @@ pub struct ModelContext {
     pub filter: Option<String>,
     pub model_overridden: bool,
 }
-/// Native-only Goose catalog context; environment values never enter a snapshot.
+/// Native-only Goose model context; environment values never enter a snapshot.
 pub struct GooseModelContext {
     pub command: PathBuf,
+    pub workspace: PathBuf,
     pub provider_id: String,
+    pub model_id: String,
     pub environment: BTreeMap<String, String>,
     pub model_overridden: bool,
 }
@@ -350,15 +356,16 @@ impl Controller {
         }
     }
     pub fn snapshot(&mut self) -> Result<ControlSnapshot> {
-        let saved = self.store.agents()?;
+        let (saved, parked) = self.store.inventory()?;
         let defaults = self.store.defaults()?;
         let command = |name| {
-            let path = self.bundle.as_ref().ok()?.executable(name).ok()?;
+            let path = self.bundle.as_ref().ok()?.display_path(name)?;
             Some(path.to_string_lossy().into_owned())
         };
         let (acp_command, mcp_command) = (command("buzz-acp"), command("buzz-dev-mcp"));
         let mut snapshot = ControlSnapshot {
             agents: saved.iter().map(|a| a.view(&defaults)).collect(),
+            parked,
             runtime_available: self.bundle.is_ok(),
             runtime_message: self.bundle.as_ref().err().cloned(),
             default_settings: defaults.view(),
@@ -434,7 +441,7 @@ impl Controller {
         edit: AgentEdit,
     ) -> Result<GooseModelContext> {
         let agent = self.edited_agent(id, revision, edit)?;
-        goose_model_context(&agent.harness, &agent.environment)
+        goose_model_context(&agent.harness, &agent.workspace, &agent.environment)
     }
     pub fn pi_model_context(
         &self,
@@ -468,7 +475,7 @@ impl Controller {
     }
     pub fn draft_goose_model_context(edit: AgentEdit) -> Result<GooseModelContext> {
         let environment = draft_environment(edit.environment);
-        goose_model_context(&edit.harness, &environment)
+        goose_model_context(&edit.harness, &edit.workspace, &environment)
     }
     pub fn draft_model_context(edit: AgentEdit) -> Result<ModelContext> {
         let environment = draft_environment(edit.environment);
@@ -485,6 +492,14 @@ impl Controller {
             agent.extra.get("nativeCreated") != Some(&serde_json::Value::Bool(true))
                 || !agent.imported.is_null(),
         )
+    }
+    pub fn use_here(
+        &mut self,
+        id: &str,
+        resolution: crate::CommunityResolution,
+    ) -> Result<ControlSnapshot> {
+        self.store.use_here(id, resolution)?;
+        self.snapshot()
     }
     pub fn prepare_import(
         &self,
@@ -584,12 +599,18 @@ impl Controller {
             .collect())
     }
     pub fn delete(&mut self, id: &str, revision: u64) -> Result<ControlSnapshot> {
-        let agent = self
-            .store
-            .agents()?
-            .into_iter()
+        let agents = self.store.agents()?;
+        let agent = agents
+            .iter()
             .find(|agent| agent.id == id)
+            .cloned()
             .ok_or("Agent no longer exists")?;
+        // Use here setups of one identity share its key; keep it for the others.
+        let shared = agents.iter().any(|other| {
+            other.id != agent.id
+                && other.credential_id == agent.credential_id
+                && other.pubkey == agent.pubkey
+        });
         if agent.revision != revision {
             return Err("Agent settings changed. Reload before deleting".into());
         }
@@ -601,8 +622,10 @@ impl Controller {
         self.store.enabled(id, false)?;
         // A failed settings write leaves the card available for an explicit retry.
         // Credential deletion is idempotent, so that retry can finish cleanup.
-        self.credentials
-            .delete(&agent.credential_id, &agent.pubkey)?;
+        if !shared {
+            self.credentials
+                .delete(&agent.credential_id, &agent.pubkey)?;
+        }
         self.store.remove(id, revision)?;
         self.errors.remove(id);
         self.snapshot()
@@ -652,7 +675,7 @@ impl Controller {
             .store
             .agents()?
             .into_iter()
-            .filter(Agent::starts_on_launch)
+            .filter(|a| a.starts_on_launch() && a.configured())
         {
             // Like the host restore, a launch preference is a Start: it enables.
             if let Err(error) = self
@@ -673,10 +696,14 @@ impl Controller {
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
         let agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);
+        if !agent.configured() {
+            return Err("Choose Use here before opening this identity’s credentials".into());
+        }
         let workspace = effective_databricks(&agent)?.map(|s| s.host);
         self.bundle.as_ref().map_err(Clone::clone)?;
         Ok((agent.credential_id, agent.pubkey, agent.revision, workspace))
     }
+    /// Record the action outcome; the native host projects one final snapshot.
     pub fn action_with_key(
         &mut self,
         id: &str,
@@ -684,7 +711,7 @@ impl Controller {
         revision: u64,
         key: &crate::Secret,
         replay_floor: Option<u64>,
-    ) -> Result<ControlSnapshot> {
+    ) -> Result<()> {
         if self.credential_request(id)?.2 != revision {
             return Err("Saved settings changed while opening credentials; retry Start".into());
         }
@@ -692,7 +719,7 @@ impl Controller {
         if matches!(action, Action::Restart) {
             if let Err(error) = self.stop(id) {
                 self.errors.insert(id.into(), error);
-                return self.snapshot();
+                return Ok(());
             }
         }
         match self.start_with_key(id, Some(key), replay_floor) {
@@ -703,7 +730,7 @@ impl Controller {
                 self.errors.insert(id.into(), error);
             }
         }
-        self.snapshot()
+        Ok(())
     }
     pub fn record_error(&mut self, id: &str, error: String) {
         self.errors.insert(id.into(), error);
@@ -713,7 +740,7 @@ impl Controller {
             .store
             .agents()?
             .into_iter()
-            .filter(Agent::starts_on_launch)
+            .filter(|a| a.starts_on_launch() && a.configured())
             .map(|a| a.id)
             .collect())
     }
@@ -738,6 +765,9 @@ impl Controller {
             .into_iter()
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
+        if !agent.configured() {
+            return Err("Choose Use here before starting this imported identity".into());
+        }
         if !agent.enabled {
             return Err("Agent is disabled".into());
         }
@@ -924,6 +954,7 @@ fn model_context_with_defaults(
 
 fn goose_model_context(
     harness: &crate::HarnessEdit,
+    workspace: &str,
     environment: &BTreeMap<String, String>,
 ) -> Result<GooseModelContext> {
     crate::config::validate_environment(environment)?;
@@ -941,7 +972,12 @@ fn goose_model_context(
     }
     Ok(GooseModelContext {
         command,
+        workspace: workspace.into(),
         provider_id: provider.clone(),
+        model_id: environment
+            .get("GOOSE_MODEL")
+            .unwrap_or(&harness.model)
+            .clone(),
         environment: environment.clone(),
         model_overridden: environment.contains_key("GOOSE_MODEL"),
     })

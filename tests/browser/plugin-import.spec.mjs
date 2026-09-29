@@ -1,3 +1,4 @@
+import { selectSettingsSection } from "./navigation.mjs";
 import { openPage, pageChoices } from "./navigation.mjs";
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
@@ -8,7 +9,7 @@ async function openPlugins(page, origin) {
   await page.goto(origin);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await selectSettingsSection(page, "Plugins");
 }
 // Native IPC is the boundary fixture; Settings -> manager -> platform adapter are production.
 async function nativeImports(page, samples = []) {
@@ -184,7 +185,18 @@ test("Settings text buttons contain enlarged labels without resizing icon button
                   `${button.textContent}: content overflows button`,
                 );
             }
-            if (box.left < bounds.left || box.right > bounds.right)
+            const actions = button.closest('[aria-label="Load plugins"]');
+            if (actions) {
+              const viewport = actions.getBoundingClientRect();
+              if (
+                getComputedStyle(actions).overflowX !== "auto" ||
+                viewport.left < bounds.left ||
+                viewport.right > bounds.right
+              )
+                failures.push(
+                  "Plugin actions lack contained horizontal scrolling",
+                );
+            } else if (box.left < bounds.left || box.right > bounds.right)
               failures.push(`${button.textContent}: button overflows section`);
           }
           return failures;
@@ -193,7 +205,7 @@ test("Settings text buttons contain enlarged labels without resizing icon button
       .toEqual([]);
   };
   for (const scale of [100, 200]) {
-    await button(page, "Appearance").click();
+    await selectSettingsSection(page, "Appearance");
     if (scale === 200) {
       for (let i = 0; i < 10; i++)
         await button(page, "Increase text size").click();
@@ -207,7 +219,7 @@ test("Settings text buttons contain enlarged labels without resizing icon button
       [1280, "Light"],
     ]) {
       await page.setViewportSize({ width, height: 900 });
-      await button(page, "Appearance").click();
+      await selectSettingsSection(page, "Appearance");
       const appearance = page.getByRole("region", {
         name: "Appearance",
         exact: true,
@@ -255,7 +267,7 @@ test("Settings text buttons contain enlarged labels without resizing icon button
             ),
         )
         .not.toContain(false);
-      await button(page, "Plugins").click();
+      await selectSettingsSection(page, "Plugins");
       const plugins = page.getByRole("region", {
         name: "Plugins",
         exact: true,
@@ -264,7 +276,7 @@ test("Settings text buttons contain enlarged labels without resizing icon button
       await expect(button(page, "Load from Git")).toBeVisible();
       await checkButtons(plugins, scale);
       if (scale === 200 && width === 320) {
-        // Prove this exercises wrapped text, not just a one-line button.
+        // Labels stay single-line; the parent makes oversized actions reachable.
         const lines = await button(page, "Load from folder").evaluate(
           (button) => {
             const walker = document.createTreeWalker(
@@ -280,7 +292,40 @@ test("Settings text buttons contain enlarged labels without resizing icon button
             return tops.size;
           },
         );
-        expect(lines).toBeGreaterThan(1);
+        expect(lines).toBe(1);
+        const actions = plugins.getByRole("group", { name: "Load plugins" });
+        await expect
+          .poll(() =>
+            actions.evaluate((node) => node.scrollWidth > node.clientWidth),
+          )
+          .toBe(true);
+        for (const edge of ["start", "end"]) {
+          const issues = await actions.evaluate((node, edge) => {
+            node.scrollLeft = edge === "start" ? 0 : node.scrollWidth;
+            const bounds = node.getBoundingClientRect();
+            return [...node.querySelectorAll("button")].flatMap((button) => {
+              const box = button.getBoundingClientRect();
+              const reachable =
+                edge === "start"
+                  ? box.left >= bounds.left - 1
+                  : box.right <= bounds.right + 1;
+              return reachable ? [] : [button.textContent];
+            });
+          }, edge);
+          expect(issues).toEqual([]);
+        }
+        // Keyboard focus must also reach the later action inside the scroller.
+        await button(page, "Load from folder").focus();
+        await page.keyboard.press("Tab");
+        await expect(button(page, "Load from Git")).toBeFocused();
+        await page.keyboard.press("Enter");
+        await expect(
+          page.getByRole("textbox", { name: "Git or GitHub repository" }),
+        ).toBeVisible();
+        await button(page, "Load from Git").click();
+        await actions.evaluate((node) => {
+          node.scrollLeft = 0;
+        });
       }
       await page.screenshot({
         path: info.outputPath(`settings-buttons-${scale}-${width}.png`),
@@ -299,8 +344,8 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await expect(page.getByRole("radio")).toHaveCount(2);
   await expect(button(page, "Install plugin")).toHaveCount(0);
   await page.getByRole("radio", { name: /Example two/ }).check();
-  await button(page, "Profile").click();
-  await button(page, "Plugins").click();
+  await selectSettingsSection(page, "Profile");
+  await selectSettingsSection(page, "Plugins");
   await expect(page.getByRole("radio", { name: /Example two/ })).toBeChecked();
   await expect(
     page.getByText(
@@ -425,7 +470,7 @@ test("checked-in local examples activate and work independently", async ({
   );
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await selectSettingsSection(page, "Plugins");
   await page.getByRole("switch", { name: "Enable Counter playground" }).click();
   const navigation = await pageChoices(page);
   await expect(

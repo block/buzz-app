@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
+import { parse } from "yaml";
 
 const script = new URL("../../scripts/preview-feed.mjs", import.meta.url)
   .pathname;
@@ -160,4 +161,39 @@ test("preview rollback compares the complete canonical SemVer without number rou
     writeFileSync(current, JSON.stringify({ ...candidate, version: invalid }));
     assert.match(execute("verify", current).stderr, /Invalid preview version/);
   }
+});
+
+test("successful preview publication promotes automatically; manual recovery bypasses skipped builds", () => {
+  const workflow = parse(
+    readFileSync(
+      new URL("../../.github/workflows/release.yml", import.meta.url),
+      "utf8",
+    ),
+  );
+  const { build, publish, promote_preview: promotion } = workflow.jobs;
+  assert.match(build.if, /!inputs\.promote_version/);
+  assert.equal(publish.needs, "build");
+  assert.deepEqual(promotion.needs, ["build", "publish"]);
+  assert.match(promotion.if, /!cancelled\(\)/);
+  assert.match(promotion.if, /!inputs\.candidates/);
+  assert.match(
+    promotion.if,
+    /inputs\.promote_version == '' && needs\.build\.result == 'success' && needs\.publish\.result == 'success'/,
+  );
+  assert.match(
+    promotion.if,
+    /inputs\.promote_version != '' && needs\.build\.result == 'skipped' && needs\.publish\.result == 'skipped'/,
+  );
+  assert.equal(promotion.permissions.contents, "write");
+  const promotionStep = promotion.steps.find((step) =>
+    step.run?.includes("scripts/preview-feed.mjs verify"),
+  );
+  assert.equal(
+    promotionStep.env.VERSION,
+    `\${{ inputs.promote_version || needs.build.outputs.version }}`,
+  );
+  assert.ok(
+    promotionStep.run.indexOf("scripts/preview-feed.mjs verify") <
+      promotionStep.run.indexOf("gh release upload preview-feed"),
+  );
 });

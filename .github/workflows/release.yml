@@ -182,8 +182,13 @@ jobs:
             --notes "Apple Silicon macOS preview from commit $SOURCE_SHA. Built, signed, and notarized by Actions run $GITHUB_RUN_ID."
 
   promote_preview:
-    name: Promote validated macOS preview
-    if: github.repository == 'block/buzz-app' && github.ref == 'refs/heads/main' && inputs.promote_version != '' && !inputs.candidates
+    name: Promote verified macOS preview
+    needs: [build, publish]
+    # Explicit promotions skip build/publish; automatic promotions require both to succeed.
+    if: >-
+      ${{ !cancelled() && github.repository == 'block/buzz-app' && github.ref == 'refs/heads/main' && !inputs.candidates &&
+          ((inputs.promote_version != '' && needs.build.result == 'skipped' && needs.publish.result == 'skipped') ||
+           (inputs.promote_version == '' && needs.build.result == 'success' && needs.publish.result == 'success')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -196,7 +201,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          VERSION: ${{ inputs.promote_version }}
+          VERSION: ${{ inputs.promote_version || needs.build.outputs.version }}
         run: |
           set -euo pipefail
           # Validate the version before using it in release asset paths.

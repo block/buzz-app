@@ -1,6 +1,5 @@
 // Block-hosted community accounts through the development broker's /api/builderlab routes.
 export const HOST_SUFFIX = "communities.buzz.xyz";
-export const LIMIT = 5;
 export const VALID_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const ACKNOWLEDGEMENT_VERSION = 1;
 export const DELETION_PENDING_KEY = "buzz.hosted-community-deletion.v1";
@@ -64,7 +63,7 @@ const messages: Record<string, string> = {
   missing_mapping: "Connect your Buzz identity before creating a community.",
   invalid_name: "Use lowercase letters, numbers, and hyphens.",
   taken: "That Buzz address is already taken.",
-  limit_reached: `You've reached the limit of ${LIMIT} hosted communities.`,
+  limit_reached: "You've reached your current community quota.",
   relay_unavailable: "Community provisioning is temporarily unavailable.",
   identity_already_bound:
     "This Builderlab account is connected to another Buzz identity.",

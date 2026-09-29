@@ -885,9 +885,12 @@ it("shows the server's limit_reached message when quota is absent", async () => 
   vi.useRealTimers();
   expect(await screen.findByText("That address is available.")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Create community" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "You've reached the limit of 5 hosted communities.",
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(
+    "You've reached your current community quota.",
   );
+  expect(alert).not.toHaveTextContent(/\d/);
+  expect(alert).not.toHaveTextContent("limit of 5");
   expect(calls).toContainEqual(["/api/builderlab/create", { name: "north" }]);
 });
 

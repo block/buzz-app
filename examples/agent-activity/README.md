@@ -86,3 +86,27 @@ or agent processes are used. This page is a dev fixture, not a shipped route.
 The main app's existing Activity panel now uses that renderer. Moving the entry
 into messages and preserving a thread beside the detached panel are still pending;
 this sample does not claim those integrations are complete.
+
+## State playground
+
+Open `/examples/agent-activity/playground.html` on the offline preview server.
+For this testing worktree, use port 1453:
+
+```sh
+bin/pnpm exec vite --config examples/agent-activity/vite.config.ts --port 1453 --strictPort
+```
+
+Seventeen selectable, frozen scenarios cover working, reported reply delivery,
+ended without reply, failure/recovery, unknown work, feed interruption/retry,
+empty/connecting/disabled/unsupported feeds, namesake agents, coordination,
+long/trimmed activity, missing response boundaries, and saved-history reads/errors.
+Switch between Inline, Panel, Profile and Response; toggle dark/narrow views;
+reset to restore sample data and disclosure state. The production activity,
+response, coordination and saved-history components render synthetic session data.
+The surrounding inline conversation is fixture chrome. The original drag-out
+study remains separately linked; this page does not simulate native docking.
+
+History uses an in-memory host: the first read in History read error rejects,
+Retry succeeds, and deletion touches only the fixture. No account, relay, agent,
+real file or persistent history is accessed. Frozen states test presentation, not
+liveness expiry, producer delivery, native persistence or notifications.

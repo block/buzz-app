@@ -1,4 +1,11 @@
 {
   "extends": "../../tsconfig.json",
-  "include": ["./main.tsx", "./stream.tsx", "./week.tsx", "./vite.config.ts"]
+  "include": [
+    "./playground.tsx",
+    "./playground-data.ts",
+    "./main.tsx",
+    "./stream.tsx",
+    "./week.tsx",
+    "./vite.config.ts"
+  ]
 }

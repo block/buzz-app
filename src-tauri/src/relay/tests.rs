@@ -642,3 +642,125 @@ async fn sidebar_decoder_interoperates_with_nostr_tools_nip44_v2() {
         serde_json::json!({"version":1,"channels":{"cross":{"muted":true,"updatedAt":1}}})
     );
 }
+
+#[tokio::test]
+async fn sidebar_signer_matches_projection_lengths_and_preserves_unknown_sort_entries() {
+    let host = IdentityHost::fixture();
+    let unicode = "界".repeat(120);
+    let groups = serde_json::json!({"version":1,"sections":[{"id":"group","name":unicode,"order":0}],"assignments":{"c":"group"}});
+    let event = host
+        .sign_sidebar("channel-sections".into(), groups.clone(), 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        host.decode_sidebar(vec![event]).await.unwrap()["channel-sections"],
+        groups
+    );
+    // A valid head from another client must remain writable after a native move.
+    let mut existing = groups.clone();
+    existing["assignments"]["other"] = serde_json::json!("group");
+    let event = host
+        .sign_sidebar("channel-sections".into(), existing.clone(), 2)
+        .await
+        .unwrap();
+    assert_eq!(
+        host.decode_sidebar(vec![event]).await.unwrap()["channel-sections"],
+        existing
+    );
+    // Same preservation vector as dev/sidebar-sort.test.mjs: unrelated modes,
+    // section keys and top-level metadata survive an override update.
+    let sort = serde_json::json!({"version":1,"future":{"x":1},"groups":{
+        "channels":"recent","section:elsewhere":"recent","future":"next-mode","section:work":"recent"
+    }});
+    let event = host
+        .sign_sidebar("channel-sort".into(), sort.clone(), 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        host.decode_sidebar(vec![event]).await.unwrap()["channel-sort"],
+        sort
+    );
+    assert!(host.sign_sidebar("channel-sections".into(), serde_json::json!({"version":1,"sections":[{"id":"group","name":"界".repeat(257),"order":0}],"assignments":{}}), 1).await.is_err());
+}
+
+#[tokio::test]
+async fn sidebar_signer_supports_large_records_without_expanding_general_signing() {
+    let host = IdentityHost::fixture();
+    let channels: serde_json::Map<String, serde_json::Value> = (0..500)
+        .map(|i| {
+            (
+                format!("{i:08x}-1234-1234-1234-123456789abc"),
+                serde_json::json!({"starred":true,"updatedAt":1700000000000_u64}),
+            )
+        })
+        .collect();
+    let event = host
+        .sign_sidebar(
+            "channel-stars".into(),
+            serde_json::json!({"version":1,"channels":channels}),
+            1,
+        )
+        .await
+        .unwrap();
+    verify(&event);
+    assert!(event["content"].as_str().unwrap().len() > 64 * 1024);
+    assert_eq!(
+        host.decode_sidebar(vec![event]).await.unwrap()["channel-stars"]["channels"]
+            .as_object()
+            .unwrap()
+            .len(),
+        500
+    );
+    let muted: serde_json::Map<String, serde_json::Value> = (0..500)
+        .map(|i| {
+            (
+                format!("{i:08x}-1234-1234-1234-123456789abc"),
+                serde_json::json!({"muted":i % 2 == 0,"updatedAt":1700000000000_u64}),
+            )
+        })
+        .collect();
+    let event = host
+        .sign_sidebar(
+            "channel-mutes".into(),
+            serde_json::json!({"version":1,"channels":muted}),
+            1,
+        )
+        .await
+        .unwrap();
+    verify(&event);
+    assert_eq!(
+        host.decode_sidebar(vec![event]).await.unwrap()["channel-mutes"]["channels"]
+            .as_object()
+            .unwrap()
+            .len(),
+        500
+    );
+    let assignments: serde_json::Map<String, serde_json::Value> = (0..1000)
+        .map(|i| {
+            (
+                format!("{i:08x}-1234-1234-1234-123456789abc"),
+                serde_json::json!("group"),
+            )
+        })
+        .collect();
+    let event = host.sign_sidebar("channel-sections".into(), serde_json::json!({
+        "version":1,"sections":[{"id":"group","name":"Work","order":0}],"assignments":assignments
+    }), 1).await.unwrap();
+    verify(&event);
+    assert_eq!(
+        host.decode_sidebar(vec![event]).await.unwrap()["channel-sections"]["assignments"]
+            .as_object()
+            .unwrap()
+            .len(),
+        1000
+    );
+    assert!(host
+        .sign(EventTemplate {
+            kind: 9,
+            created_at: 1,
+            tags: vec![],
+            content: "x".repeat(65_536)
+        })
+        .await
+        .is_err());
+}

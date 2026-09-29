@@ -32,6 +32,14 @@ pub(crate) struct EventTemplate {
 
 impl Key {
     fn sign(&self, event: EventTemplate) -> Result<serde_json::Value> {
+        self.sign_bounded(event, 64 * 1024)
+    }
+
+    fn sign_bounded(
+        &self,
+        event: EventTemplate,
+        max_event_bytes: usize,
+    ) -> Result<serde_json::Value> {
         let pubkey = self.viewer()?;
         let serialized = serde_json::to_vec(&serde_json::json!([
             0,
@@ -42,7 +50,7 @@ impl Key {
             event.content
         ]))
         .map_err(|_| "Could not encode relay event")?;
-        if serialized.len() > 64 * 1024 {
+        if serialized.len() > max_event_bytes {
             return Err("Relay event is too large".into());
         }
         let hash = Sha256::digest(serialized);
@@ -263,7 +271,7 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
     }
     let text = |v: &serde_json::Value, max: usize| {
         v.as_str()
-            .is_some_and(|s| !s.trim().is_empty() && s.len() <= max)
+            .is_some_and(|s| !s.trim().is_empty() && s.encode_utf16().count() <= max)
     };
     match coordinate {
         "channel-sections" => {
@@ -296,10 +304,10 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             }
             if assignments.iter().any(|(id, section)| {
                 id.trim().is_empty()
-                    || id.len() > 256
+                    || id.encode_utf16().count() > 256
                     || !section
                         .as_str()
-                        .is_some_and(|v| !v.trim().is_empty() && v.len() <= 256)
+                        .is_some_and(|v| !v.trim().is_empty() && v.encode_utf16().count() <= 256)
             }) {
                 return Err(invalid());
             }
@@ -320,7 +328,7 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             for (id, entry) in channels {
                 let entry = entry.as_object().ok_or_else(invalid)?;
                 if id.trim().is_empty()
-                    || id.len() > 256
+                    || id.encode_utf16().count() > 256
                     || !entry.get(field).is_some_and(|v| v.is_boolean())
                     || !entry
                         .get("updatedAt")
@@ -337,12 +345,9 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                 .and_then(|v| v.as_object())
                 .ok_or_else(invalid)?;
             if groups.len() > 104
-                || groups.iter().any(|(group, mode)| {
-                    group.len() > 264
-                        || !(matches!(group.as_str(), "starred" | "channels" | "forums" | "dms")
-                            || (group.starts_with("section:") && group.len() > 8))
-                        || !matches!(mode.as_str(), Some("alpha" | "recent"))
-                })
+                || groups
+                    .iter()
+                    .any(|(group, mode)| group.encode_utf16().count() > 264 || !mode.is_string())
             {
                 return Err(invalid());
             }
@@ -448,7 +453,8 @@ impl IdentityHost {
         }
         validate_sidebar_payload(&coordinate, &payload)?;
         let plaintext = serde_json::to_string(&payload).map_err(|_| "Invalid sidebar payload")?;
-        if plaintext.len() > 128 * 1024 {
+        // NIP-44 v2 cannot encrypt plaintext larger than 65,535 bytes.
+        if plaintext.len() > 65_535 {
             return Err("Sidebar plaintext budget exceeded".into());
         }
         with_identity(self.clone(), move |identity| {
@@ -461,15 +467,18 @@ impl IdentityHost {
             let public = Keys::new(secret.clone()).public_key();
             let content = nip44::encrypt(&secret, &public, &plaintext, nip44::Version::V2)
                 .map_err(|_| "Could not encrypt sidebar preferences")?;
-            key.sign(EventTemplate {
-                kind: 30078,
-                created_at,
-                content,
-                tags: vec![
-                    vec!["d".into(), coordinate.clone()],
-                    vec!["t".into(), coordinate],
-                ],
-            })
+            key.sign_bounded(
+                EventTemplate {
+                    kind: 30078,
+                    created_at,
+                    content,
+                    tags: vec![
+                        vec!["d".into(), coordinate.clone()],
+                        vec!["t".into(), coordinate],
+                    ],
+                },
+                128 * 1024,
+            )
         })
         .await
     }

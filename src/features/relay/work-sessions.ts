@@ -157,6 +157,11 @@ export function createWorkSessions(
     });
     check();
   }
+  /** Resolves once the channel list shows `id` with the expected membership.
+   * Admission never comes from the command's acknowledgment: the list must
+   * carry a relay-signed roster. That evidence arrives by an exact one-channel
+   * read first; only when that read leaves the gate unsatisfied does the full
+   * viewer-roster discovery run. Both apply through the same discovery path. */
   async function refresh(
     id: string,
     expected: {
@@ -167,9 +172,11 @@ export function createWorkSessions(
     sessionOnly = true,
   ) {
     writer(!sessionOnly);
+    let settled = false;
     const wait = new Promise<void>((resolve, reject) => {
       let unsubscribe = () => {};
       const done = (error?: Error) => {
+        settled = true;
         unsubscribe();
         clearTimeout(timer);
         signal.removeEventListener("abort", abort);
@@ -213,7 +220,23 @@ export function createWorkSessions(
       if (signal.aborted) abort();
       else inspect(false); // An earlier roster error does not decide this retry.
     });
-    channels.refreshList?.();
+    // The gate may time out or abort while a read is in flight; its rejection
+    // stays observed here and is rethrown below.
+    const gate = wait.catch(() => {});
+    if (!settled)
+      // The store skips ids it already authorizes, so agent additions to a
+      // joined channel go straight to the full discovery below.
+      await Promise.race([
+        gate,
+        (async () => {
+          try {
+            await channels.resolve?.([id], { signal });
+          } catch {
+            // A failed or stale exact read leaves the decision to discovery.
+          }
+        })(),
+      ]);
+    if (!settled) channels.refreshList?.();
     await wait;
   }
   async function refreshMembership(id: string) {

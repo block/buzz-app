@@ -599,13 +599,15 @@ type RelaySessionRead = ReturnType<
 >["session"]["read"];
 function setup(
   channelCreation = true,
-  channelList: ReturnType<ChannelQueries["list"]> = {
+  initialList: ReturnType<ChannelQueries["list"]> = {
     status: "ready",
     channels: [],
   },
 ) {
   let items: readonly OutgoingEvent[] = [{ event, delivery: "accepted" }];
+  let channelList = initialList;
   const listeners = new Set<() => void>();
+  const listListeners = new Set<() => void>();
   const receipts = {
     snapshot: () => items,
     subscribe: (fn: () => void) => {
@@ -630,10 +632,20 @@ function setup(
     }),
     dismiss: vi.fn(async () => {}),
   };
+  // The store's exact lookup applies through discovery and notifies the list;
+  // tests script that by changing the list from inside `resolve`.
+  const resolve = vi.fn<NonNullable<ChannelQueries["resolve"]>>(async () => {});
+  const refreshList = vi.fn();
   const channels = {
     list: () => channelList,
-    subscribeList: () => () => {},
-    refreshList: vi.fn(),
+    subscribeList: (fn: () => void) => {
+      listListeners.add(fn);
+      return () => {
+        listListeners.delete(fn);
+      };
+    },
+    resolve,
+    refreshList,
   } as unknown as ChannelQueries;
   const reader = { read: vi.fn(async () => [event]) };
   const controller = new AbortController();
@@ -647,11 +659,18 @@ function setup(
     ),
     outbox,
     channels,
+    resolve,
+    refreshList,
     reader,
     listeners,
+    listListeners,
     controller,
     setItems: (next: readonly OutgoingEvent[]) => {
       items = next;
+    },
+    setList: (next: ReturnType<ChannelQueries["list"]>) => {
+      channelList = next;
+      for (const fn of listListeners) fn();
     },
   };
 }
@@ -671,7 +690,141 @@ it("accepts already-applied creator membership without a refresh notification", 
   await expect(
     test.service.refresh(id, { member }, false),
   ).resolves.toBeUndefined();
-  expect(test.channels.refreshList).toHaveBeenCalledOnce();
+  // A list that already carries the signed membership needs no further read.
+  expect(test.resolve).not.toHaveBeenCalled();
+  expect(test.refreshList).not.toHaveBeenCalled();
+  expect(test.listListeners.size).toBe(0);
+});
+it("admits a new channel from its exact lookup without a full discovery", async () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const member = "a".repeat(64);
+  const test = setup();
+  test.resolve.mockImplementation(async (ids) => {
+    expect(ids).toEqual([id]);
+    test.setList({
+      status: "ready",
+      channels: [{ id, name: "Release notes", members: [member] }],
+    });
+  });
+  await expect(
+    test.service.refresh(id, { member }, false),
+  ).resolves.toBeUndefined();
+  expect(test.resolve).toHaveBeenCalledExactlyOnceWith([id], {
+    signal: test.controller.signal,
+  });
+  expect(test.refreshList).not.toHaveBeenCalled();
+  expect(test.listListeners.size).toBe(0);
+});
+it("admits a channel the live roster lists while its exact lookup is still in flight", async () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const member = "a".repeat(64);
+  const test = setup();
+  test.resolve.mockImplementation(() => new Promise<void>(() => {}));
+  const refreshing = test.service.refresh(id, { member }, false);
+  await vi.waitFor(() => expect(test.resolve).toHaveBeenCalledOnce());
+  test.setList({
+    status: "ready",
+    channels: [{ id, name: "Release notes", members: [member] }],
+  });
+  await expect(refreshing).resolves.toBeUndefined();
+  expect(test.refreshList).not.toHaveBeenCalled();
+});
+it.each([
+  ["without the viewer", async () => {}],
+  [
+    "as stale",
+    async () => {
+      throw new DOMException("Stale channel resolution", "AbortError");
+    },
+  ],
+])(
+  "falls back to the full discovery when the exact lookup returns %s",
+  async (_outcome, lookup) => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const member = "a".repeat(64);
+    const test = setup();
+    test.resolve.mockImplementation(lookup);
+    let settled = false;
+    const refreshing = test.service
+      .refresh(id, { member }, false)
+      .finally(() => {
+        settled = true;
+      });
+    await vi.waitFor(() => expect(test.refreshList).toHaveBeenCalledOnce());
+    expect(test.resolve).toHaveBeenCalledExactlyOnceWith([id], {
+      signal: test.controller.signal,
+    });
+    expect(test.resolve.mock.invocationCallOrder[0]).toBeLessThan(
+      test.refreshList.mock.invocationCallOrder[0] ?? 0,
+    );
+    await flush();
+    expect(settled).toBe(false);
+    test.setList({
+      status: "ready",
+      channels: [{ id, name: "Release notes", members: [member] }],
+    });
+    await expect(refreshing).resolves.toBeUndefined();
+    expect(test.refreshList).toHaveBeenCalledOnce();
+    expect(test.listListeners.size).toBe(0);
+  },
+);
+it.each([true, false])(
+  "gives up 15 seconds after refresh starts when the exact lookup never answers (session: %s)",
+  async (sessionOnly) => {
+    vi.useFakeTimers();
+    try {
+      const id = "11111111-1111-4111-8111-111111111111";
+      const member = "a".repeat(64);
+      const test = setup();
+      test.resolve.mockImplementation(() => new Promise<void>(() => {}));
+      let settled = false;
+      const refreshing = test.service
+        .refresh(id, { member }, sessionOnly)
+        .finally(() => {
+          settled = true;
+        });
+      const failure = expect(refreshing).rejects.toThrow(
+        sessionOnly
+          ? /membership is still loading/
+          : /Agent addition is unconfirmed/,
+      );
+      await vi.advanceTimersByTimeAsync(14_999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await failure;
+      // The deadline decided; a hung exact read must not start discovery late.
+      expect(test.refreshList).not.toHaveBeenCalled();
+      expect(test.listListeners.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+it("counts the fallback discovery against the same 15 second deadline", async () => {
+  vi.useFakeTimers();
+  try {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const member = "a".repeat(64);
+    const test = setup();
+    let settled = false;
+    const refreshing = test.service
+      .refresh(id, { member }, false)
+      .finally(() => {
+        settled = true;
+      });
+    const failure = expect(refreshing).rejects.toThrow(
+      /Agent addition is unconfirmed/,
+    );
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(test.refreshList).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await failure;
+    expect(test.listListeners.size).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 it("retries the same unknown event and confirms restored receipts through verified reads", async () => {
   const test = setup();

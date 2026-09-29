@@ -15,14 +15,15 @@ import { validateArchiveRequestTemplate } from "./identity-archive-protocol";
 import { workflowHost, workflowRunsPath } from "../workflows/http";
 import { WORKFLOW_KINDS } from "../workflows/protocol";
 
+import { PublishRejected } from "./outbox";
+
 import {
+  acceptPublish,
   connectSignedTransport,
   admittedSignedWorkflowRead,
   type ReadTransport,
   type Signer,
 } from "./transport";
-import { PublishRejected } from "./outbox";
-import { readApiFailure } from "./http-admission";
 
 export const nativeWriteKinds = [
   30078,
@@ -36,7 +37,6 @@ export const nativeWriteKinds = [
   40100,
   42000,
   ...WORKFLOW_KINDS,
-
 ] as const;
 
 /** Cancellation fences JS results; a dispatched native write may still complete. */
@@ -169,39 +169,13 @@ export async function connectNativeTransport(
         body: string;
       }>("relay_channel_publish", { community: origin, route, event });
       signal.throwIfAborted();
-      if (result.status !== 200) {
-        if ([400, 401, 403, 404, 413, 422].includes(result.status))
-          throw new PublishRejected(
-            `Relay rejected the message (${result.status})`,
-          );
-        const response = new Response(result.body, {
+      return acceptPublish(
+        new Response(result.body, {
           status: result.status,
           headers: result.headers,
-        });
-        const failure = await readApiFailure(response);
-        if (failure.sent === false || failure.quota === "api")
-          throw new PublishRejected(failure.error);
-        throw new Error(
-          `Relay delivery could not be confirmed (${result.status})`,
-        );
-      }
-      const receipt: unknown = JSON.parse(result.body);
-      if (
-        !receipt ||
-        typeof receipt !== "object" ||
-        (receipt as { event_id?: unknown }).event_id !== event.id ||
-        typeof (receipt as { accepted?: unknown }).accepted !== "boolean"
-      )
-        throw new Error("Relay returned an invalid delivery receipt");
-      if ((receipt as { accepted: boolean }).accepted === false)
-        throw new PublishRejected(
-          typeof (receipt as { message?: unknown }).message === "string"
-            ? (receipt as { message: string }).message
-            : "Relay rejected the message",
-        );
-      return typeof (receipt as { message?: unknown }).message === "string"
-        ? (receipt as { message: string }).message
-        : "";
+        }),
+        event.id,
+      );
     },
   });
   // Capabilities describe implemented host operations, not everything this key can sign.

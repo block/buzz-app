@@ -9,12 +9,6 @@ fn identifier(value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
-fn key(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
 fn text(value: Option<&Value>, max: usize, required: bool) -> bool {
     value
         .and_then(Value::as_str)
@@ -27,8 +21,13 @@ fn keys(value: Option<&Value>, max: usize, ids: bool) -> bool {
     let mut unique = std::collections::HashSet::new();
     list.len() <= max
         && list.iter().all(|v| {
-            v.as_str()
-                .is_some_and(|s| (if ids { identifier(s) } else { key(s) }) && unique.insert(s))
+            v.as_str().is_some_and(|s| {
+                (if ids {
+                    identifier(s)
+                } else {
+                    super::hex_key(s)
+                }) && unique.insert(s)
+            })
         })
 }
 fn lineup(value: &Value) -> bool {
@@ -167,7 +166,7 @@ pub(super) async fn validate_ciphertext(
     host: &IdentityHost,
     event: &Value,
     community: &str,
-) -> Result<()> {
+) -> Result<Value> {
     if event.get("kind") != Some(&Value::from(30078)) {
         return Err("Invalid channel recipe".into());
     }
@@ -183,7 +182,8 @@ pub(super) async fn validate_ciphertext(
         return Err("Invalid channel recipe".into());
     }
     let raw: Value = serde_json::from_str(&plaintext).map_err(|_| "Invalid channel recipe")?;
-    admission(event, &raw, community)
+    admission(event, &raw, community)?;
+    Ok(raw)
 }
 
 pub(super) fn prepare(raw: &Value, community: &str) -> Result<()> {

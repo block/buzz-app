@@ -723,6 +723,14 @@ it("routes lifecycle sign/publish separately from the message writer and preserv
   await expect(
     transport.channelLifecycle.publish(event, signal),
   ).rejects.toBeInstanceOf(PublishRejected);
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 429,
+    headers: {},
+    body: JSON.stringify({ sent: false, error: "rate-limited: try later" }),
+  });
+  await expect(
+    transport.channelLifecycle.publish(event, signal),
+  ).rejects.toThrow("rate-limited: unrecognized reason");
 });
 
 it("prepares and decodes only verified community-scoped recipe records", async () => {

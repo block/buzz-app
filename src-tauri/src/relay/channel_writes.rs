@@ -8,15 +8,12 @@ pub(super) fn uuid(value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
-fn hex_key(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-}
 fn tag<'a>(event: &'a EventTemplate, index: usize, name: &str) -> Option<&'a str> {
     let t = event.tags.get(index)?;
-    (t.len() == 2 && t[0] == name).then_some(t[1].as_str())
+    match t.as_slice() {
+        [key, value] if key == name => Some(value.as_str()),
+        _ => None,
+    }
 }
 fn common(event: &EventTemplate) -> bool {
     event.content.is_empty() && event.created_at <= i64::MAX as u64
@@ -35,7 +32,10 @@ fn details(event: &EventTemplate) -> bool {
     uuid(id)
         && !name.is_empty()
         && name.chars().count() <= 120
-        && name.trim_matches(|c: char| c == '#' || c.is_whitespace()) == name
+        && name
+            .trim_start_matches(|c: char| c == '#' || c.is_whitespace())
+            .trim_end_matches(char::is_whitespace)
+            == name
         && about.chars().count() <= 1000
         && !about.contains("Buzz session (")
         && (event.tags.len() == 3 || tag(event, 3, "visibility") == Some("private"))
@@ -61,7 +61,7 @@ fn archive(event: &EventTemplate) -> bool {
     let Some(target) = tag(event, 1, "p") else {
         return false;
     };
-    if !hex_key(target) {
+    if !super::hex_key(target) {
         return false;
     }
     if event.tags.len() == 2 {
@@ -70,7 +70,7 @@ fn archive(event: &EventTemplate) -> bool {
     let auth = &event.tags[2];
     auth.len() == 4
         && auth[0] == "auth"
-        && hex_key(&auth[1])
+        && super::hex_key(&auth[1])
         && auth[1] != target
         && auth[3].len() == 128
         && auth[3]
@@ -86,11 +86,7 @@ fn valid(route: &str, event: &EventTemplate) -> bool {
     }
 }
 fn template(event: &Value) -> Result<EventTemplate> {
-    serde_json::from_value(serde_json::json!({
-        "kind": event.get("kind"), "created_at": event.get("created_at"),
-        "tags": event.get("tags"), "content": event.get("content"),
-    }))
-    .map_err(|_| "Invalid channel lifecycle command".into())
+    super::template(event, "Invalid channel lifecycle command")
 }
 fn validate(route: &str, event: &Value, viewer: Option<&str>) -> Result<EventTemplate> {
     let parsed = template(event)?;
@@ -100,9 +96,7 @@ fn validate(route: &str, event: &Value, viewer: Option<&str>) -> Result<EventTem
         return Err("Invalid channel lifecycle command".into());
     }
     if viewer.is_some() {
-        let raw: nostr::Event =
-            serde_json::from_value(event.clone()).map_err(|_| "Invalid outgoing signature")?;
-        raw.verify().map_err(|_| "Invalid outgoing signature")?;
+        super::verify_signature(event)?;
     }
     Ok(parsed)
 }
@@ -133,7 +127,7 @@ pub(crate) async fn relay_channel_publish(
     if body.len() > MAX_BODY {
         return Err("Invalid relay request body".into());
     }
-    send(host.inner(), url, "POST", Some(body)).await
+    send(host.inner(), url, "POST", Some(body), true, MAX_RESPONSE).await
 }
 
 #[cfg(test)]
@@ -156,6 +150,15 @@ mod tests {
         assert!(!valid("channel-lifecycle", &event));
         event.kind = 9035;
         assert!(!valid("identity-archive", &event));
+        event.kind = 9002;
+        event.tags = vec![
+            vec!["h".into(), uuid::Uuid::nil().to_string()],
+            vec!["name".into(), "C#".into()],
+            vec!["about".into(), "".into()],
+        ];
+        assert!(valid("channel-details", &event));
+        event.tags[1][1] = "#C".into();
+        assert!(!valid("channel-details", &event));
     }
 }
 
@@ -197,20 +200,7 @@ pub(crate) async fn relay_kit_decode(
         {
             return Err("Invalid channel recipe".into());
         }
-        let ciphertext = event
-            .get("content")
-            .and_then(Value::as_str)
-            .ok_or("Invalid channel recipe")?;
-        if ciphertext.len() > 24 * 1024 {
-            return Err("Invalid channel recipe".into());
-        }
-        let plaintext = host.kit_cipher(ciphertext.to_owned(), false).await?;
-        if plaintext.len() > 16 * 1024 {
-            return Err("Invalid channel recipe".into());
-        }
-        let record: Value =
-            serde_json::from_str(&plaintext).map_err(|_| "Invalid channel recipe")?;
-        super::kit::admission(&event, &record, &community)?;
+        let record = super::kit::validate_ciphertext(host.inner(), &event, &community).await?;
         decoded.push(serde_json::json!({"eventId": event["id"], "record": record}));
     }
     Ok(decoded)
@@ -228,7 +218,7 @@ pub(crate) async fn relay_direct_message(
     if pubkeys.is_empty()
         || pubkeys.len() > 8
         || unique.len() != pubkeys.len()
-        || pubkeys.iter().any(|p| !hex_key(p) || p == &viewer)
+        || pubkeys.iter().any(|p| !super::hex_key(p) || p == &viewer)
     {
         return Err("Choose between one and eight other people.".into());
     }
@@ -251,7 +241,7 @@ pub(crate) async fn relay_direct_message(
         })
         .await?;
     let body = serde_json::to_string(&event).map_err(|_| "Invalid channel lifecycle command")?;
-    let response = send(host.inner(), url, "POST", Some(body)).await?;
+    let response = send(host.inner(), url, "POST", Some(body), true, MAX_RESPONSE).await?;
     if response.status != 200 {
         return Err("The direct message could not be opened. Try again.".into());
     }
@@ -385,6 +375,21 @@ mod boundary_tests {
             ],
         };
         assert!(creation(&event));
+        for malformed in [
+            vec![],
+            vec!["h".into()],
+            vec!["h".into(), "x".into(), "extra".into()],
+        ] {
+            event.tags[0] = malformed;
+            assert!(!creation(&event));
+        }
+        event.tags[0] = vec!["h".into(), uuid::Uuid::new_v4().to_string()];
+        event.tags.swap(0, 1);
+        assert!(!creation(&event));
+        event.tags.swap(0, 1);
+        event.tags[1] = event.tags[0].clone();
+        assert!(!creation(&event));
+        event.tags[1] = vec!["name".into(), "Team".into()];
         event.tags.push(vec!["p".into(), "attacker".into()]);
         assert!(!creation(&event));
         event.tags.pop();

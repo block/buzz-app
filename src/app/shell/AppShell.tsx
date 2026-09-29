@@ -20,6 +20,7 @@ const titleBarDragProps = macDesktop ? macTitleBarDragHandlers : {};
 export function AppShell({
   pages,
   selected,
+  navigationAttempt,
   onSelect,
   tone,
   workspace,
@@ -35,6 +36,7 @@ export function AppShell({
 }: {
   pages: readonly RegisteredPage[];
   selected: string;
+  navigationAttempt: string;
   onSelect: (key: string) => void;
   tone: string;
   workspace?: boolean;
@@ -51,10 +53,13 @@ export function AppShell({
   const fillsWorkspace = workspace || selected === "settings";
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationToggle = useRef<HTMLButtonElement>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Every destination change closes the navigation drawer.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Only a new navigation attempt closes the drawer; opening the disclosure must not retrigger this effect.
   useEffect(() => {
+    if (navigationOpen && navigationToggle.current?.getClientRects().length) {
+      document.getElementById("main-content")?.focus({ preventScroll: true });
+    }
     setNavigationOpen(false);
-  }, [selected]);
+  }, [navigationAttempt]);
   const pageNavigation = (
     <nav aria-label="Pages" className="shell-pages">
       {orderPages(pages).map((page) => {

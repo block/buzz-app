@@ -54,10 +54,5 @@ export async function selectSettingsSection(page, name) {
     .getByRole("complementary", { name: "Settings sidebar", exact: true })
     .getByRole("button", { name, exact: true })
     .click();
-  const hide = page.getByRole("button", {
-    name: "Hide navigation",
-    exact: true,
-  });
-  if (await hide.isVisible()) await hide.click();
   await expect(page.getByRole("region", { name, exact: true })).toBeVisible();
 }

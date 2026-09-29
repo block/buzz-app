@@ -315,11 +315,6 @@ test("placeholder destinations retain companion layout across navigation and res
     });
     if (await show.isVisible()) await show.click();
     await sidebar.getByRole("button", { name, exact: true }).click();
-    const hide = page.getByRole("button", {
-      name: "Hide navigation",
-      exact: true,
-    });
-    if (await hide.isVisible()) await hide.click();
   };
   for (const width of [1440, 900, 600]) {
     await page.setViewportSize({ width, height: 950 });

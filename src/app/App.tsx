@@ -154,6 +154,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
           companion={pageOwnsCompanion ? undefined : companion}
           pages={startup === "ready" ? route.pages : []}
           selected={route.selected}
+          navigationAttempt={route.state.attempt.id}
           onSelect={select}
           tone={presentation.tone}
           workspace={startup === "ready" && route.page?.layout === "workspace"}

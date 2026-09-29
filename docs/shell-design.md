@@ -43,7 +43,9 @@ semantic tokens, UI authoring rules and the local component reference.
   At widths up to 650px, every page collapses navigation behind the header’s
   Show navigation button to preserve readable content at 200% text size. The
   220px disclosure overlays content, supports Escape, and keeps sidebar state
-  mounted. Desktop layouts retain the visible sidebar and saved width.
+  mounted. A navigation selection closes the phone drawer and hands focus to the
+  main content; this includes conversation and Settings-section selections.
+  Desktop layouts retain the visible sidebar and saved width.
   The header keeps history and account/search actions, with no second navigation row.
   Full-height pages get a 16px outer gutter (8px on narrow screens) and own their
   card surfaces. The shell adds no white backing behind them. Document pages

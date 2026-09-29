@@ -20,6 +20,7 @@ test("Settings replaces the channel sidenav and Back restores the prior view", a
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   const settingsSidebar = page.getByRole("complementary", {
     name: "Settings sidebar",
+    includeHidden: true,
   });
   await expect(settingsSidebar).toBeVisible();
   await expect(
@@ -68,6 +69,7 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   await showNavigation.click();
   const settingsSidebar = page.getByRole("complementary", {
     name: "Settings sidebar",
+    includeHidden: true,
   });
   await settingsSidebar
     .getByRole("button", { name: "Plugins", exact: true })
@@ -98,8 +100,6 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   await expect(toggle).toBeInViewport({ ratio: 1 });
   // The replacement Settings pane remains reachable by disclosure at narrow
   // widths and is persistent at desktop widths.
-  await expect(settingsSidebar).toBeVisible();
-  await button(page, "Hide navigation").click();
   await expect(settingsSidebar).toBeHidden();
   await expect(showNavigation).toHaveAttribute("aria-expanded", "false");
   await showNavigation.click();
@@ -107,11 +107,10 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   const profile = settingsSidebar.getByRole("button", {
     name: "Profile",
     exact: true,
+    includeHidden: true,
   });
   await profile.click();
   await expect(profile).toHaveAttribute("aria-current", "page");
-  await expect(settingsSidebar).toBeVisible();
-  await button(page, "Hide navigation").click();
   await expect(settingsSidebar).toBeHidden();
   await page.setViewportSize({ width: 1280, height: 900 });
   await expect(settingsSidebar).toBeVisible();
@@ -223,6 +222,7 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await tab(true);
     await expect(button(page, "Search Buzz")).toBeFocused();
   }
+  await page.setViewportSize({ width: 1280, height: 844 });
   await avatar.focus();
   await page.keyboard.press("Enter");
   await expect(availability).toBeFocused();
@@ -233,16 +233,19 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   await expect(page.getByRole("main")).toBeFocused();
   const settingsSidebar = page.getByRole("complementary", {
     name: "Settings sidebar",
+    includeHidden: true,
   });
   if (await button(page, "Show navigation").isVisible())
     await button(page, "Show navigation").click();
   await expect(settingsSidebar).toBeVisible();
   const sections = settingsSidebar.getByRole("navigation", {
     name: "Settings sections",
+    includeHidden: true,
   });
   const profile = sections.getByRole("button", {
     name: "Profile",
     exact: true,
+    includeHidden: true,
   });
   const personalGroups = sections.getByRole("button", {
     name: "Personal groups",
@@ -263,6 +266,7 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   const plugins = sections.getByRole("button", {
     name: "Plugins",
     exact: true,
+    includeHidden: true,
   });
   const profileContent = page.getByRole("region", {
     name: "Profile",
@@ -321,7 +325,8 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await page.keyboard.press("Enter");
     await expect(plugins).toHaveAttribute("aria-current", "page");
     await expect(profile).not.toHaveAttribute("aria-current");
-    await expect(plugins).toBeFocused();
+    if (width === 1280) await expect(plugins).toBeFocused();
+    else await expect(page.getByRole("main")).toBeFocused();
     await expect(profileContent).toHaveCount(0);
     await expect(pluginContent).toBeVisible();
     await expect(
@@ -347,7 +352,7 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
       expect(navigation.x + navigation.width).toBeLessThan(content.x);
       expect(content.y - frame.y).toBe(25);
     } else {
-      await expect(settingsSidebar).toBeVisible();
+      await expect(settingsSidebar).toBeHidden();
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth),
       ).toBe(width);
@@ -355,12 +360,19 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await page.screenshot({
       path: testInfo.outputPath(`settings-${width}.png`),
     });
+    if (width === 390) await button(page, "Show navigation").click();
     await profile.focus();
     await expect(profile).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(profile).toHaveAttribute("aria-current", "page");
     await expect(profileContent).toBeVisible();
     await expect(pluginContent).toHaveCount(0);
+    if (width === 390) {
+      await expect(settingsSidebar).toBeHidden();
+      await expect(page.getByRole("main")).toBeFocused();
+      await button(page, "Show navigation").click();
+      await profile.focus();
+    }
     await tab();
     await expect(personalGroups).toBeFocused();
     await tab();

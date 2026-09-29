@@ -73,6 +73,18 @@ test("narrow Settings drawer matches the clamped channel sidebar", async ({
   await expect
     .poll(async () => (await channels.boundingBox())?.width)
     .toBe(220);
+  await channels
+    .getByRole("button", { name: "Beta", exact: true })
+    .press("Enter");
+  await expect(channels).toBeHidden();
+  const composer = page.getByRole("textbox", {
+    name: "Message #Beta",
+    exact: true,
+  });
+  await expect(composer).toBeFocused();
+  await page.keyboard.type("Usable destination");
+  await expect(composer).toHaveText("Usable destination");
+  await composer.fill("");
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page
@@ -85,6 +97,26 @@ test("narrow Settings drawer matches the clamped channel sidebar", async ({
   await expect
     .poll(async () => (await settings.boundingBox())?.width)
     .toBe(220);
+  await settings
+    .getByRole("button", { name: "Notifications", exact: true })
+    .press("Enter");
+  await expect(settings).toBeHidden();
+  await expect(page.getByRole("main")).toBeFocused();
+  await expect(
+    page.getByRole("region", { name: "Notifications", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Show navigation", exact: true })
+    .click();
+  // Selecting the current section is a new attempt, not a new history visit.
+  await settings
+    .getByRole("button", { name: "Notifications", exact: true })
+    .press("Enter");
+  await expect(settings).toBeHidden();
+  await expect(page.getByRole("main")).toBeFocused();
+  await page
+    .getByRole("button", { name: "Show navigation", exact: true })
+    .click();
   await settings.getByRole("button", { name: "Back", exact: true }).click();
   await page
     .getByRole("button", { name: "Show navigation", exact: true })

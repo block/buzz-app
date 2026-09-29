@@ -60,7 +60,8 @@ import {
 } from "react";
 import {
   DotsThreeIcon,
-  ColumnsIcon,
+  ArrowSquareLeftIcon,
+  ArrowSquareRightIcon,
   PlugIcon,
   ChatCircleIcon,
   GearIcon,
@@ -1427,7 +1428,19 @@ function ChannelWorkspace({
                             tabState.setPaneOpen(!showingPanel);
                             if (!showingPanel && !rootTabIds.length) addTab();
                           }}
-                          icon={<ColumnsIcon size="1rem" aria-hidden="true" />}
+                          icon={
+                            showingPanel ? (
+                              <ArrowSquareRightIcon
+                                size="1rem"
+                                aria-hidden="true"
+                              />
+                            ) : (
+                              <ArrowSquareLeftIcon
+                                size="1rem"
+                                aria-hidden="true"
+                              />
+                            )
+                          }
                         />
                       )}
                     </>

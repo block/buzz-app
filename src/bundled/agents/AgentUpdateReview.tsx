@@ -6,6 +6,7 @@ import { AgentEditor } from "./AgentEditor";
 import type { AgentControl, AgentView } from "../../features/agents/control";
 import type { ChannelList } from "../../features/relay/contracts";
 import type { AgentManagementRequest } from "../../features/agents/management-request";
+import { relayOrigin } from "../../features/communities/destination";
 
 export type PendingManagementRequest = {
   agent: string;
@@ -36,6 +37,9 @@ export function AgentUpdateReview({
     connection.session.channels.list,
   );
   const [requests, setRequests] = useState<PendingManagementRequest[]>([]);
+  const [refreshedRequestId, setRefreshedRequestId] = useState<string | null>(
+    null,
+  );
   const request = requests[0] ?? null;
   useEffect(() => {
     if (connection.status !== "ready") return;
@@ -58,16 +62,35 @@ export function AgentUpdateReview({
     if (authorized === false) setRequests((pending) => pending.slice(1));
   }, [channelList, request]);
   useEffect(() => {
-    if (request) void control.refresh();
+    if (!request) {
+      setRefreshedRequestId(null);
+      return;
+    }
+    const requestId = request.value.requestId;
+    setRefreshedRequestId(null);
+    let current = true;
+    void control.refresh().finally(() => {
+      if (current) setRefreshedRequestId(requestId);
+    });
+    return () => {
+      current = false;
+    };
   }, [control, request]);
   const matches = useMemo(() => {
-    if (!request) return [];
-    const target = request.value.request.agentName.trim().toLocaleLowerCase();
-    return (controlState.data?.agents ?? []).filter(
-      (agent) => agent.name.trim().toLocaleLowerCase() === target,
+    if (!request || !connection.scope) return [];
+    const community = connection.scope.split(":").slice(0, -1).join(":");
+    return matchingManagementAgents(
+      controlState.data?.agents ?? [],
+      request,
+      community,
     );
-  }, [controlState.data?.agents, request]);
-  if (!request || channelList.status !== "ready") return null;
+  }, [connection.scope, controlState.data?.agents, request]);
+  if (
+    !request ||
+    channelList.status !== "ready" ||
+    refreshedRequestId !== request.value.requestId
+  )
+    return null;
   const dismiss = () => setRequests((pending) => pending.slice(1));
   const agent = matches.length === 1 ? matches[0] : undefined;
   if (!agent) {
@@ -86,6 +109,7 @@ export function AgentUpdateReview({
   const initial = requestedDraft(agent, request.value);
   return (
     <AgentEditor
+      key={request.value.requestId}
       agent={agent}
       control={control}
       state={controlState}
@@ -93,6 +117,21 @@ export function AgentUpdateReview({
       notice="Requested by an agent. Review every field before saving."
       onClose={dismiss}
     />
+  );
+}
+
+export function matchingManagementAgents(
+  agents: readonly AgentView[],
+  request: PendingManagementRequest,
+  community: string,
+): AgentView[] {
+  const target = request.value.request.agentName.trim().toLocaleLowerCase();
+  const origin = relayOrigin(community);
+  return agents.filter(
+    (agent) =>
+      agent.name.trim().toLocaleLowerCase() === target &&
+      relayOrigin(agent.relayUrl) === origin &&
+      agent.pubkey === request.agent,
   );
 }
 

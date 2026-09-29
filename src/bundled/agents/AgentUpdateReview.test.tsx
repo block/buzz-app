@@ -3,6 +3,7 @@ import { controlFixture } from "../../features/agents/control-testing";
 import {
   enqueueManagementRequest,
   managementRequesterAuthorized,
+  matchingManagementAgents,
   type PendingManagementRequest,
   requestedDraft,
 } from "./AgentUpdateReview";
@@ -44,6 +45,30 @@ const pending = (
       model: "gpt-6-sol",
     },
   },
+});
+
+it("matches only personal agents configured for the request community", () => {
+  const { agent } = controlFixture();
+  const request = pending("request-1", agent.pubkey);
+  expect(
+    matchingManagementAgents(
+      [
+        agent,
+        {
+          ...agent,
+          id: "other-community",
+          relayUrl: "wss://other.example.test",
+        },
+        {
+          ...agent,
+          id: "same-community-other-owner",
+          pubkey: "cd".repeat(32),
+        },
+      ],
+      request,
+      "https://relay.example.test",
+    ).map(({ id }) => id),
+  ).toEqual(["fixture-agent"]);
 });
 
 it("queues requests received while another review is open and bounds the queue", () => {

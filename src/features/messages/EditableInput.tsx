@@ -47,7 +47,10 @@ import {
   composerCodeFence,
 } from "./composer-blocks";
 import { composerLinkLabel } from "./composer-link-label";
-import { applyComposerCodeInput } from "./composer-code-input";
+import {
+  applyComposerInlineInput,
+  composerInlineDelimiters,
+} from "./composer-inline-input";
 import { composerMarkdown } from "./composer-markdown";
 import {
   mentionDraft,
@@ -906,15 +909,25 @@ export function EditableInput({
             composerSchema.marks.code.isInSet(editor.state.storedMarks ?? [])
           )
             tr.setStoredMarks(marks);
-          const codeInput =
-            text === "`" &&
+          const previous = editor.state;
+          editor.dispatch(tr.scrollIntoView());
+          // A closing delimiter converts its span in a second transaction: one
+          // undo restores the typed source, closing character included, and the
+          // next keystroke never merges into the conversion. Near maxLength the
+          // typed character itself can be filtered out; then nothing converts.
+          if (
             from === to &&
+            composerInlineDelimiters.has(text) &&
             !composing.current &&
             !editor.composing &&
-            applyComposerCodeInput(tr);
-          if (codeInput) closeHistory(tr);
-          editor.dispatch(tr.scrollIntoView());
-          if (codeInput) separateHistory = true;
+            editor.state !== previous
+          ) {
+            const conversion = editor.state.tr;
+            if (applyComposerInlineInput(conversion, text)) {
+              editor.dispatch(closeHistory(conversion).scrollIntoView());
+              separateHistory = true;
+            }
+          }
           return true;
         },
         handleKeyDown(_view, event) {

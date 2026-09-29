@@ -206,17 +206,17 @@ it("batches joined background interests without rebalance and fences retired bat
 });
 
 describe("per-channel replay allowance", () => {
-  const now = 1_700_001_000;
-  let hotHistory: ReturnType<typeof message>[];
+  const now = 1_700_000_100;
+  let hot: ReturnType<typeof message>[];
   beforeAll(() => {
-    // Prepare real signatures separately from replay execution, like the other
-    // scale fixtures. Keep 501 distinct messages to overflow the 500-event cap.
+    // Signing also verifies each signature. Keep large fixture construction
+    // separate from the behavior budget; socket delivery still verifies all 501
+    // distinct received events through the real live/session path.
     const author = keypair();
-    hotHistory = Array.from({ length: 501 }, (_, i) =>
+    hot = Array.from({ length: 501 }, (_, i) =>
       message(author, "hot", `hot-${i}`, now - 1),
     );
   });
-
   it("keeps quiet-channel unread evidence when another filter fills its replay allowance", async () => {
     vi.useFakeTimers({ now: now * 1000 });
     const h = setup([]);
@@ -250,7 +250,7 @@ describe("per-channel replay allowance", () => {
           ["p", h.key.pubkey],
         ],
       });
-      const history = [quiet, ...hotHistory];
+      const history = [quiet, ...hot];
       // Relay's existing OR contract applies each filter's limit separately.
       // The former multi-h filter loses quiet to the 500 newer hot events.
       const delivered = new Set<string>();
@@ -275,6 +275,10 @@ describe("per-channel replay allowance", () => {
       }
       await h.first.receive(["EOSE", batch[1]]);
       expect(delivered.has(quiet.id)).toBe(true);
+      expect(delivered.size).toBe(501);
+      expect(
+        owner.session.unread.snapshot({ kind: "channel", channelId: "hot" }),
+      ).toMatchObject({ observedCount: 500, attentionCount: 0 });
       expect(
         owner.session.unread.snapshot({ kind: "channel", channelId: "quiet" }),
       ).toMatchObject({ observedCount: 1, attentionCount: 1 });

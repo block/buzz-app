@@ -49,11 +49,15 @@ The release build must embed the same pinned public key and preview endpoint as
 that integration are ineligible even if their updater archive and signature
 exist. The promotion gate downloads the archive and signature, verifies the
 Minisign archive and trusted-comment signatures against the client's pinned
-key, and requires the authenticated `version:` to equal the candidate version.
-Legacy signatures without a signed version cannot be promoted. A mismatch
-fails before the rolling manifest is replaced. First confirm the release CI
-signer emits that field; merely enabling the client's version requirement
-without changing signer output breaks updates.
+key. CLI 2.11.x signs the archive and trusted comment but does not embed an
+authenticated version. The gate accepts that format and verifies both
+signatures, but cannot bind the advertised feed version to those signed bytes.
+A feed-response attacker can replay an older authentic archive/signature under
+a higher advertised version. Keep promotion controlled; schedule a coordinated
+CLI/updater 2.12.x bump that emits `version:` and enables
+`requireSignedVersion`, then require the same version at promotion. Do not enable
+the client flag alone: 2.11.x signatures would fail. A signature mismatch
+fails before the rolling manifest is replaced.
 
 The job builds the `darwin-aarch64` Tauri manifest with the signature from that
 release and an immutable versioned asset URL, refuses full-SemVer rollback and

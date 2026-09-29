@@ -44,7 +44,7 @@ function fixture(dir, version = "0.0.0-preview.22.1") {
   const manifest = join(dir, "manifest.json");
   writeFileSync(archive, "fixture archive bytes");
   writeFileSync(binary, `compiled: ${endpoint} ${encodedKey}`);
-  function sign(versionField = version, signingKey = privateKey) {
+  function sign(versionField = "", signingKey = privateKey) {
     const record = Buffer.concat([
       Buffer.from("ED"),
       keyId,
@@ -79,7 +79,7 @@ function fixture(dir, version = "0.0.0-preview.22.1") {
   return { archive, binary, sig, manifest, sign, execute };
 }
 
-test("preview candidate requires verified archive, signed version, and updater-enabled binary", () => {
+test("preview candidate requires verified archive and updater-enabled binary with CLI 2.11.x signatures", () => {
   const dir = mkdtempSync(join(tmpdir(), "preview-feed-"));
   const { archive, binary, sig, manifest, sign, execute } = fixture(dir);
   const validSignature = readFileSync(sig, "utf8").trim();
@@ -115,10 +115,19 @@ test("preview candidate requires verified archive, signed version, and updater-e
   const otherKey = generateKeyPairSync("ed25519").privateKey;
   sign(undefined, otherKey);
   assert.match(execute("verify").stderr, /Archive signature invalid/);
+  // A signed archive can be replayed under another advertised version until
+  // the signer and updater both enforce version binding in 2.12.x.
   sign("99.0.0-preview.999.1");
-  assert.match(execute("verify").stderr, /Signed version does not match/);
-  sign("");
-  assert.match(execute("verify").stderr, /Signed version does not match/);
+  assert.equal(execute("generate").status, 0);
+  sign();
+  const modifiedComment = Buffer.from(
+    readFileSync(sig, "utf8").trim(),
+    "base64",
+  )
+    .toString("utf8")
+    .replace("trusted comment: timestamp:1", "trusted comment: timestamp:2");
+  writeFileSync(sig, `${Buffer.from(modifiedComment).toString("base64")}\n`);
+  assert.match(execute("verify").stderr, /Trusted comment signature invalid/);
   sign();
   writeFileSync(sig, "YWJjZA==\n");
   assert.notEqual(execute("verify").status, 0);

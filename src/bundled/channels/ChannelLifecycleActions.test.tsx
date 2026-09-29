@@ -93,7 +93,12 @@ it("keeps unavailable permission checks distinct from forbidden and offers expli
     .setup()
     .click(screen.getByRole("button", { name: "Retry channel permissions" }));
   await waitFor(() => expect(lifecycle.load).toHaveBeenCalledTimes(2));
-  expect(screen.queryByRole("button")).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Retry channel permissions" }),
+  ).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: "Retry channel permissions" }),
+  ).toHaveAttribute("aria-busy", "true");
   await act(async () => gate.resolve(settings));
   expect(
     await screen.findByRole("button", { name: "Leave channel" }),
@@ -315,3 +320,107 @@ it.each([true, false])(
     expect(lifecycle.run).not.toHaveBeenCalled();
   },
 );
+
+const unavailable = { ...settings, canArchive: true, deleteUnavailable: true };
+it.each([
+  {
+    name: "Delete allowed",
+    value: { ...settings, canDelete: true },
+    target: "Delete channel",
+  },
+  {
+    name: "repeated profile failure",
+    value: unavailable,
+    target: "Retry Delete check",
+  },
+  { name: "Delete forbidden", value: settings, target: "Leave channel" },
+  {
+    name: "Archive only",
+    value: { ...settings, canLeave: false, canArchive: true },
+    target: "Archive channel",
+  },
+  {
+    name: "no actions",
+    value: { ...settings, canLeave: false },
+    target: undefined,
+  },
+  {
+    name: "permissions failure",
+    value: undefined,
+    target: "Retry channel permissions",
+  },
+])(
+  "keeps keyboard focus through held retry: $name",
+  async ({ value, target }) => {
+    const lifecycle = capability();
+    lifecycle.load.mockResolvedValueOnce(unavailable);
+    const choose = vi.fn();
+    render(
+      <ChannelLifecycleActions
+        channelId={settings.channelId}
+        lifecycle={lifecycle}
+        choose={choose}
+      />,
+    );
+    const retry = await screen.findByRole("button", {
+      name: "Retry Delete check",
+    });
+    const gate = deferred<ChannelLifecycleSettings>();
+    lifecycle.load.mockImplementationOnce(async () => {
+      const result = await gate.promise;
+      if (!value) throw new Error("Permissions unavailable");
+      return result;
+    });
+    const user = userEvent.setup();
+    retry.focus();
+    await user.keyboard("{Enter}");
+    try {
+      await waitFor(() => expect(lifecycle.load).toHaveBeenCalledTimes(2));
+      expect(retry).toHaveFocus();
+      expect(retry).toHaveAttribute("aria-busy", "true");
+      expect(screen.getAllByRole("button")).toEqual([retry]);
+      await user.keyboard("{Enter}");
+      expect(lifecycle.load).toHaveBeenCalledTimes(2);
+    } finally {
+      await act(async () => gate.resolve(value ?? settings));
+    }
+    const result = target
+      ? screen.getByRole("button", { name: target })
+      : screen.getByRole("status");
+    expect(result).toHaveFocus();
+    if (!target)
+      expect(result).toHaveTextContent("No channel actions available.");
+    expect(choose).not.toHaveBeenCalled();
+    expect(lifecycle.run).not.toHaveBeenCalled();
+  },
+);
+it("does not steal focus when the user leaves a pending retry", async () => {
+  const lifecycle = capability();
+  lifecycle.load.mockResolvedValueOnce(unavailable);
+  render(
+    <>
+      <ChannelLifecycleActions
+        channelId={settings.channelId}
+        lifecycle={lifecycle}
+        choose={vi.fn()}
+      />
+      <button type="button">Other setting</button>
+    </>,
+  );
+  const retry = await screen.findByRole("button", {
+    name: "Retry Delete check",
+  });
+  const gate = deferred<ChannelLifecycleSettings>();
+  lifecycle.load.mockReturnValueOnce(gate.promise);
+  const user = userEvent.setup();
+  retry.focus();
+  await user.keyboard("{Enter}");
+  try {
+    await waitFor(() => expect(lifecycle.load).toHaveBeenCalledTimes(2));
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Other setting" })).toHaveFocus();
+  } finally {
+    await act(async () => gate.resolve({ ...settings, canDelete: true }));
+  }
+  expect(screen.getByRole("button", { name: "Other setting" })).toHaveFocus();
+});

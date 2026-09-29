@@ -309,7 +309,11 @@ existing shared verifier owns these checks; no new relay query or deployment is
 needed. Direct owners, DMs, archived channels and Archive/Leave execution do not
 require these optional profile reads. A failed five-second owner-profile lookup
 preserves independently established Archive/Leave, omits Delete and exposes
-"Delete check unavailable" with explicit retry in both surfaces.
+"Delete check unavailable" with explicit retry in both surfaces. Settings keeps
+its retry button focusable and busy during a fresh read, without retaining stale
+actions. If focus is still on recovery when the read finishes, it moves to the
+retry, an allowed action (Delete first), or a no-actions status. Moving focus
+elsewhere while waiting cancels that handoff.
 
 **Profile provenance is not the relay's persisted authorization mapping.** It is
 an eligibility hint for offering an attempt, not proof the command will succeed.

@@ -125,11 +125,7 @@
 }
 .author {
   font-weight: var(--type-weight-medium);
-  --user-status-emoji-size: 14px;
-  display: inline-flex;
-  align-items: baseline;
   min-width: 0;
-  gap: var(--space-1);
 }
 .text {
   margin: var(--space-1) 0 0;

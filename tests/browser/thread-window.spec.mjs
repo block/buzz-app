@@ -255,25 +255,35 @@ test("newest window positions immediately; scrollback preserves the visible repl
     expect(initial).toHaveLength(1);
     expect(initial[0].thread_window).toBe(true);
     // A user gesture, not mounting or live reflow, asks for older history.
+    await page.evaluate(() => window.messagesFixture.holdOlderPage());
+    // The wheel may still move the viewport after dispatch. Measure only after
+    // the continuation is pending, then release it to isolate prepend geometry.
     await history.evaluate((el) => {
       el.scrollTop = 0;
       el.dispatchEvent(new Event("scroll"));
     });
+    await history.hover();
+    await page.mouse.wheel(0, -300);
+    await expect(history.getByText("Loading older replies…")).toBeVisible();
     const anchor = history.locator("ol [data-message-id]").first();
     const id = await anchor.getAttribute("data-message-id");
     const before = await anchor.evaluate(
       (el) => el.getBoundingClientRect().top,
     );
-    await history.hover();
-    await page.mouse.wheel(0, -300);
+    await page.evaluate(() => window.messagesFixture.releaseOlderPage());
     await expect(replies).toHaveCount(60);
+    // WebKit exposes integral scrollTop for this fractional-height row. The
+    // post-gesture anchor may round by one CSS pixel; larger shifts are defects.
     await expect
       .poll(() =>
         history
           .locator(`[data-message-id="${id}"]`)
-          .evaluate((el) => el.getBoundingClientRect().top),
+          .evaluate(
+            (el, before) => Math.abs(el.getBoundingClientRect().top - before),
+            before,
+          ),
       )
-      .toBeCloseTo(before, 0);
+      .toBeLessThan(test.info().project.name === "webkit" ? 1 : 0.5);
     const top = await history.evaluate((el) => el.scrollTop);
     await page.evaluate(() => window.messagesFixture.live());
     await expect(replies).toHaveCount(61);
@@ -302,6 +312,9 @@ test("newest window positions immediately; scrollback preserves the visible repl
     ).toBe(true);
     expect(errors.unexplained()).toEqual([]);
   } finally {
+    await page
+      .evaluate(() => window.messagesFixture.releaseOlderPage())
+      .catch(() => {});
     await server.close();
   }
 });

@@ -839,3 +839,30 @@ it("revoked ordinary presentation cannot position or complete after loading", ()
   expect(h.element.scrollTop).toBe(0);
   expect(navigation.complete).not.toHaveBeenCalled();
 });
+
+it("retains its owned thread view for renames and remounts for destination, scope and session changes", () => {
+  const h = messagesHarness();
+  const mounted = render(<ThreadPanel {...h.props} />);
+  const history = () => screen.getByRole("region", { name: "Thread messages" });
+  const initial = history();
+  mounted.rerender(<ThreadPanel {...h.props} />);
+  mounted.rerender(<ThreadPanel {...h.props} channelName="Renamed" />);
+  expect(history()).toBe(initial);
+  expect(h.thread).toHaveBeenCalledTimes(1);
+  const changes: Partial<ThreadPanelProps>[] = [
+    { channelId: "other" },
+    { messageId: "other" },
+    { scope: "other" },
+    { session: { ...h.session } },
+  ];
+  for (const change of changes) {
+    mounted.rerender(<ThreadPanel {...h.props} />);
+    const previous = history();
+    const owned = h.view;
+    const count = h.thread.mock.calls.length;
+    mounted.rerender(<ThreadPanel {...h.props} {...change} />);
+    expect(history()).not.toBe(previous);
+    expect(owned.dispose).toHaveBeenCalledTimes(1);
+    expect(h.thread).toHaveBeenCalledTimes(count + 1);
+  }
+});

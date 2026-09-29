@@ -8,7 +8,7 @@ import type {
 import type { RelaySession } from "../../features/relay/session";
 import type { Profile } from "../../features/relay/contracts";
 import { Button } from "../../shared/design-system/ui/Button";
-import { AgentCard } from "./AgentCard";
+import { AgentCard, type ProfileResolver } from "./AgentCard";
 import { agentSetupConfirmationAvailable } from "../../features/communities/api";
 import { agentSetupUnavailableMessage } from "./LocalInventoryAction";
 import { ManagedAgentActions } from "./ManagedAgentActions";
@@ -29,6 +29,7 @@ export function InventoryIdentityCard({
   remove,
   importedId,
   resolveProfile,
+  profileKeys,
   onUseHere,
   onImport,
   selectedSource,
@@ -45,9 +46,8 @@ export function InventoryIdentityCard({
   duplicate?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
   importedId: string | null;
-  resolveProfile?:
-    | ((pubkey: string) => ((trigger: HTMLButtonElement) => void) | undefined)
-    | undefined;
+  resolveProfile?: ProfileResolver | undefined;
+  profileKeys?: ReadonlySet<string> | undefined;
   onUseHere(pubkey: string): void;
   onImport(pubkey: string, source?: ImportSource): void;
   selectedSource: ImportSource | undefined;
@@ -76,7 +76,9 @@ export function InventoryIdentityCard({
       identities={[{ pubkey: row.pubkey, name: row.displayName }]}
       session={session}
       editable={setups}
-      onViewProfile={resolveProfile?.(row.pubkey)}
+      onViewProfile={
+        profileKeys?.has(row.pubkey) ? resolveProfile?.(row.pubkey) : undefined
+      }
       onEdit={setups.length ? edit : undefined}
       onDuplicate={setups.length ? duplicate : undefined}
       onDelete={setups.length ? remove : undefined}

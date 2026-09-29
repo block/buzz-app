@@ -99,7 +99,7 @@ function setup(
           : "ready",
     scope:
       mode === "connected"
-        ? `wss://relay.example.test:${"de".repeat(32)}`
+        ? `https://relay.example.test:${"de".repeat(32)}`
         : "A",
     ...(mode === "connected" ? { viewer: "de".repeat(32) } : {}),
     generation: 1,
@@ -145,7 +145,7 @@ function setup(
     connect() {
       snapshot = {
         status: "ready",
-        scope: `wss://relay.example.test:${"de".repeat(32)}`,
+        scope: `https://relay.example.test:${"de".repeat(32)}`,
         viewer: "de".repeat(32),
         generation: snapshot.generation,
         session: snapshot.session,
@@ -175,7 +175,7 @@ it("opens the selected managed agent in the existing profile panel", async () =>
     resolve: (target) => (panel.matches(target) ? panel : undefined),
     register: () => {},
   };
-  const { f } = setup("ready", undefined, undefined, undefined, panels);
+  const { f } = setup("connected", undefined, undefined, undefined, panels);
   const [card] = await screen.findAllByRole("article", {
     name: "Agent Fixture agent",
   });
@@ -201,6 +201,51 @@ it("opens the selected managed agent in the existing profile panel", async () =>
       within(card).getByRole("button", { name: "Actions for Fixture agent" }),
     ).toHaveFocus(),
   );
+});
+
+it("offers View profile only for an identity in the selected community", async () => {
+  const panel = {
+    id: "profile",
+    title: "Profile",
+    matches: (_target: string) => true,
+    component: () => <p>Existing profile panel</p>,
+    key: "buzz.profiles/profile",
+    pluginId: "buzz.profiles",
+    revision: "test",
+  } satisfies RegisteredPanel;
+  const installed = [panel];
+  const panels: Panels = {
+    snapshot: () => installed,
+    subscribe: () => () => {},
+    resolve: (target) => (panel.matches(target) ? panel : undefined),
+    register: () => {},
+  };
+  setup("connected", undefined, undefined, undefined, panels);
+  const cards = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  const here = cards.find((card) =>
+    card.textContent?.includes("wss://relay.example.test"),
+  );
+  const elsewhere = cards.find((card) =>
+    card.textContent?.includes("wss://second.example"),
+  );
+  if (!here || !elsewhere) throw Error("Expected both community setups");
+
+  fireEvent.click(
+    within(here).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", { name: "View profile" }),
+  ).toBeVisible();
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+
+  fireEvent.click(
+    within(elsewhere).getByRole("button", {
+      name: "Actions for Fixture agent",
+    }),
+  );
+  expect(screen.queryByRole("menuitem", { name: "View profile" })).toBeNull();
 });
 
 it("keeps the shell companion in the page-owned companion slot", async () => {
@@ -242,7 +287,14 @@ it("keeps the shell companion mounted while the profile is open", async () => {
     resolve: (target) => (panel.matches(target) ? panel : undefined),
     register: () => {},
   };
-  setup("ready", undefined, undefined, undefined, panels, <ShellCompanion />);
+  setup(
+    "connected",
+    undefined,
+    undefined,
+    undefined,
+    panels,
+    <ShellCompanion />,
+  );
   const [card] = await screen.findAllByRole("article", {
     name: "Agent Fixture agent",
   });

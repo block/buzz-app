@@ -26,6 +26,10 @@ import type { AgentLibrary } from "../../features/agents/library";
 import type { AgentView } from "../../features/agents/control";
 import type { RelaySession } from "../../features/relay/session";
 
+export type ProfileResolver = (
+  pubkey: string,
+) => ((trigger: HTMLButtonElement) => void) | undefined;
+
 export function AgentCard({
   name,
   avatar,
@@ -201,7 +205,7 @@ export function AgentCard({
       <div
         className={
           children
-            ? `flex min-w-0 items-center gap-3 ${onEdit ? "pr-6" : ""}`
+            ? `flex min-w-0 items-center gap-3 ${onEdit || onViewProfile ? "pr-6" : ""}`
             : "flex flex-col items-center gap-6 text-center"
         }
       >

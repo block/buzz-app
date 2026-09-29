@@ -23,9 +23,10 @@ import { relayOrigin } from "../../features/communities/destination";
 import { useRelayConnection } from "../../features/relay/react";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
+import { sameCommunityAgents } from "../../features/agents/choices";
 import { AgentLibrary } from "./AgentLibrary";
 import { Button } from "../../shared/design-system/ui/Button";
-import { AgentCard } from "./AgentCard";
+import { AgentCard, type ProfileResolver } from "./AgentCard";
 import { AgentControlPanel } from "./AgentControlPanel";
 import { ManagedAgentActions } from "./ManagedAgentActions";
 import { PanelCard } from "../../features/panels/PanelCard";
@@ -76,7 +77,7 @@ export function AgentsPage({
     if (profile && !registeredPanels.includes(profile.panel))
       setProfile(undefined);
   }, [profile, registeredPanels]);
-  const resolveProfile = (pubkey: string) => {
+  const resolveProfile: ProfileResolver = (pubkey) => {
     const target = profileTarget(pubkey);
     const panel = target && panels?.resolve(target);
     return target && panel
@@ -222,6 +223,14 @@ export function AgentsPage({
                           control={control}
                           connection={connection}
                           resolveProfile={resolveProfile}
+                          profileKeys={
+                            new Set(
+                              sameCommunityAgents(
+                                state.data?.agents ?? [],
+                                connection.scope ?? "",
+                              ).map((agent) => agent.pubkey),
+                            )
+                          }
                           onUseHere={onUseHere}
                           onImport={onImport}
                         />
@@ -284,9 +293,7 @@ function ManagedAgents({
   control: AgentControl;
   connection: RelaySnapshot;
   destination: string;
-  resolveProfile(
-    pubkey: string,
-  ): ((trigger: HTMLButtonElement) => void) | undefined;
+  resolveProfile: ProfileResolver;
   headerActions: HTMLElement | null;
   onUseHere(pubkey: string): void;
 }) {
@@ -328,7 +335,11 @@ function ManagedAgents({
               onEdit={edit}
               onDuplicate={duplicate}
               onDelete={control.delete ? remove : undefined}
-              onViewProfile={resolveProfile(agent.pubkey)}
+              onViewProfile={
+                sameCommunityAgents([agent], connection.scope ?? "").length
+                  ? resolveProfile(agent.pubkey)
+                  : undefined
+              }
             >
               <ManagedAgentActions
                 agent={agent}

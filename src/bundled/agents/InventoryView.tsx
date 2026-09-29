@@ -8,7 +8,7 @@ import type {
 } from "../../features/agents/control";
 import type { RelaySession } from "../../features/relay/session";
 import type { Profile } from "../../features/relay/contracts";
-import { AgentCard } from "./AgentCard";
+import { AgentCard, type ProfileResolver } from "./AgentCard";
 import { inventoryDecision, inventoryGroups } from "./inventory-decisions";
 import type { AgentInventoryIdentity } from "./inventory-model";
 import type { identityTiles } from "./identity-tiles";
@@ -31,6 +31,7 @@ export function InventoryView({
   remove,
   importedId,
   resolveProfile,
+  profileKeys,
   onUseHere,
   onImport,
   children,
@@ -46,9 +47,8 @@ export function InventoryView({
   duplicate?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
   importedId: string | null;
-  resolveProfile?:
-    | ((pubkey: string) => ((trigger: HTMLButtonElement) => void) | undefined)
-    | undefined;
+  resolveProfile?: ProfileResolver | undefined;
+  profileKeys?: ReadonlySet<string> | undefined;
   onUseHere(pubkey: string): void;
   onImport(pubkey: string, source?: ImportSource): void;
   children?: ReactNode;
@@ -104,6 +104,7 @@ export function InventoryView({
                 remove={remove}
                 importedId={importedId}
                 resolveProfile={resolveProfile}
+                profileKeys={profileKeys}
                 onUseHere={onUseHere}
                 onImport={onImport}
                 selectedSource={selectedSources[row.pubkey]}

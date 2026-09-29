@@ -674,6 +674,12 @@ function setup(
     },
   };
 }
+/** The signal `refresh` handed its exact lookup, released once the gate decides. */
+function lookupSignal(test: ReturnType<typeof setup>) {
+  const signal = test.resolve.mock.lastCall?.[1]?.signal;
+  expect(signal).toBeInstanceOf(AbortSignal);
+  return signal as AbortSignal;
+}
 it("confirms completed journal receipts after they leave the pending outbox", async () => {
   const test = setup();
   await test.service.delivered(event.id);
@@ -710,8 +716,9 @@ it("admits a new channel from its exact lookup without a full discovery", async 
     test.service.refresh(id, { member }, false),
   ).resolves.toBeUndefined();
   expect(test.resolve).toHaveBeenCalledExactlyOnceWith([id], {
-    signal: test.controller.signal,
+    signal: expect.any(AbortSignal),
   });
+  expect(lookupSignal(test).aborted).toBe(true);
   expect(test.refreshList).not.toHaveBeenCalled();
   expect(test.listListeners.size).toBe(0);
 });
@@ -722,11 +729,17 @@ it("admits a channel the live roster lists while its exact lookup is still in fl
   test.resolve.mockImplementation(() => new Promise<void>(() => {}));
   const refreshing = test.service.refresh(id, { member }, false);
   await vi.waitFor(() => expect(test.resolve).toHaveBeenCalledOnce());
+  const lookup = lookupSignal(test);
+  expect(lookup.aborted).toBe(false);
   test.setList({
     status: "ready",
     channels: [{ id, name: "Release notes", members: [member] }],
   });
   await expect(refreshing).resolves.toBeUndefined();
+  // The live roster decided, so the in-flight exact read is released rather
+  // than left holding a reader slot until the connection closes.
+  expect(lookup.aborted).toBe(true);
+  expect(test.controller.signal.aborted).toBe(false);
   expect(test.refreshList).not.toHaveBeenCalled();
 });
 it.each([
@@ -752,7 +765,7 @@ it.each([
       });
     await vi.waitFor(() => expect(test.refreshList).toHaveBeenCalledOnce());
     expect(test.resolve).toHaveBeenCalledExactlyOnceWith([id], {
-      signal: test.controller.signal,
+      signal: expect.any(AbortSignal),
     });
     expect(test.resolve.mock.invocationCallOrder[0]).toBeLessThan(
       test.refreshList.mock.invocationCallOrder[0] ?? 0,
@@ -792,8 +805,11 @@ it.each([true, false])(
       expect(settled).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
       await failure;
-      // The deadline decided; a hung exact read must not start discovery late.
+      // The deadline decided; a hung exact read must not start discovery late,
+      // and its reader slot is released without waiting for the connection.
       expect(test.refreshList).not.toHaveBeenCalled();
+      expect(lookupSignal(test).aborted).toBe(true);
+      expect(test.controller.signal.aborted).toBe(false);
       expect(test.listListeners.size).toBe(0);
     } finally {
       vi.useRealTimers();

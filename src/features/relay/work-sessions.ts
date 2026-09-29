@@ -173,6 +173,9 @@ export function createWorkSessions(
   ) {
     writer(!sessionOnly);
     let settled = false;
+    // Aborted once the gate decides, so a still-running exact read releases
+    // its reader slot instead of holding it until the connection closes.
+    const exact = new AbortController();
     const wait = new Promise<void>((resolve, reject) => {
       let unsubscribe = () => {};
       const done = (error?: Error) => {
@@ -180,6 +183,7 @@ export function createWorkSessions(
         unsubscribe();
         clearTimeout(timer);
         signal.removeEventListener("abort", abort);
+        exact.abort();
         error ? reject(error) : resolve();
       };
       const abort = () => done(new Error("The community connection changed."));
@@ -230,7 +234,9 @@ export function createWorkSessions(
         gate,
         (async () => {
           try {
-            await channels.resolve?.([id], { signal });
+            await channels.resolve?.([id], {
+              signal: AbortSignal.any([signal, exact.signal]),
+            });
           } catch {
             // A failed or stale exact read leaves the decision to discovery.
           }

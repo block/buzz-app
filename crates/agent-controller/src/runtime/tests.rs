@@ -627,6 +627,7 @@ fn exact_command_has_no_ambient_identity_and_launch_failure_is_truthful() {
     assert_eq!(env["BUZZ_AUTH_TAG"], crate::secret::test_attestation(PUB));
     assert_eq!(env["BUZZ_ACP_AGENTS"], "2");
     assert_eq!(env["BUZZ_ACP_EFFORT_LEVEL"], "high");
+    assert_eq!(env["BUZZ_ACP_RELAY_OBSERVER"], "false");
     for absent in [
         "BUZZ_MANAGED_AGENT",
         "BUZZ_MANAGED_AGENT_START_NONCE",
@@ -2111,4 +2112,30 @@ fn databricks_environment_override_is_not_projected_as_a_restart_selector() {
     let wire = serde_json::to_string(&entries).unwrap();
     assert!(wire.contains("DATABRICKS_MODEL"));
     assert!(!wire.contains("secret-model") && !wire.contains("new-secret"));
+}
+
+#[test]
+#[cfg(unix)]
+fn codex_launch_enables_owner_encrypted_observer() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let adapter = tools.path().join("codex-acp");
+    std::fs::write(&adapter, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&adapter, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut a = agent(dir.path());
+    a.harness.command = adapter.to_string_lossy().into_owned();
+    a.harness.provider.clear();
+    let command = bundle(tools.path())
+        .command_with_defaults(
+            &a,
+            &Secret::parse(KEY, PUB).unwrap(),
+            &crate::BuildDefaults::default(),
+        )
+        .unwrap();
+    let observer = command
+        .get_envs()
+        .find(|(key, _)| *key == "BUZZ_ACP_RELAY_OBSERVER")
+        .and_then(|(_, value)| value);
+    assert_eq!(observer, Some(std::ffi::OsStr::new("true")));
 }

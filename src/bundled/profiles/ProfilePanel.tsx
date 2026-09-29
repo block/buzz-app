@@ -396,6 +396,7 @@ function ProfileDetails({
                     )}
                     {control && scope && (
                       <ProfileAgentRuntime
+                        session={session}
                         control={control}
                         onOpenHarnesses={openHarnesses}
                         scope={scope}

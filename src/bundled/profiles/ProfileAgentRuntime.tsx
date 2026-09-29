@@ -1,3 +1,4 @@
+import type { RelaySession } from "../../features/relay/session";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { AgentControl } from "../../features/agents/control";
 import type { OpenResult } from "../../features/navigation/controller";
@@ -12,6 +13,7 @@ import styles from "./Profiles.module.css";
  * native identity is unambiguous; the caller supplies ownership evidence. */
 export function ProfileAgentRuntime({
   control,
+  session,
   onOpenHarnesses,
   scope,
   pubkey,
@@ -19,6 +21,7 @@ export function ProfileAgentRuntime({
   owned = false,
 }: {
   control: AgentControl;
+  session?: RelaySession | undefined;
   onOpenHarnesses?: (() => Promise<OpenResult>) | undefined;
   scope: string;
   pubkey: string;
@@ -97,6 +100,7 @@ export function ProfileAgentRuntime({
       {editing && owned && uniqueAgent?.id === agent.id && (
         <AgentEditor
           agent={agent}
+          session={session}
           control={control}
           state={state}
           onClose={() => setEditing(false)}

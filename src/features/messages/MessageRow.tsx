@@ -158,7 +158,8 @@ export const MessageRow = memo(function MessageRow({
   );
   const presenceId = useId();
   const thinkingId = useId();
-  const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
+  const timeReply =
+    row.diff || row.plugin ? undefined : parseMediaTimeReply(row.content);
   const displayRow = timeReply ? { ...row, content: timeReply.content } : row;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
@@ -186,6 +187,7 @@ export const MessageRow = memo(function MessageRow({
   }, [reportActive, keepMounted, row.id]);
   const report =
     !row.membership &&
+    !row.plugin &&
     (!row.delivery || ["accepted", "seen"].includes(row.delivery))
       ? session?.messages.report
       : undefined;
@@ -209,7 +211,9 @@ export const MessageRow = memo(function MessageRow({
       previous.push(attachment);
     else attachmentGroups.push([attachment]);
   }
-  const body = row.diff ? (
+  const body = row.plugin ? (
+    <p className="text-body-sm">Unsupported item</p>
+  ) : row.diff ? (
     <div>
       <p className="text-label-sm">{row.diff.filePath || "Diff"}</p>
       {row.diff.description && (
@@ -246,7 +250,7 @@ export const MessageRow = memo(function MessageRow({
     />
   );
   return (
-    <div data-message-id={row.id}>
+    <div data-message-id={row.id} data-plugin-row={row.plugin ? "" : undefined}>
       {day && (
         <div className={styles.day}>
           <span>
@@ -354,15 +358,17 @@ export const MessageRow = memo(function MessageRow({
                 menuTriggerRef={menuTrigger}
                 messageId={row.id}
                 onReply={
-                  (onReply ? () => onReply(row.id) : undefined) ??
-                  (onOpenThread
-                    ? () =>
-                        onOpenThread(
-                          row.threadRootId ?? row.id,
-                          row.threadRootId ?? row.id,
-                          "reply",
-                        )
-                    : undefined)
+                  row.plugin
+                    ? undefined
+                    : ((onReply ? () => onReply(row.id) : undefined) ??
+                      (onOpenThread
+                        ? () =>
+                            onOpenThread(
+                              row.threadRootId ?? row.id,
+                              row.threadRootId ?? row.id,
+                              "reply",
+                            )
+                        : undefined))
                 }
                 replyDisabled={
                   !!(
@@ -377,7 +383,7 @@ export const MessageRow = memo(function MessageRow({
                         channel.id === row.channelId && !channel.readOnly,
                     ))
                 }
-                link={messageCopyLink(row, scope)}
+                link={row.plugin ? undefined : messageCopyLink(row, scope)}
                 copyText={() =>
                   messageCopyText(row, directory.profiles, directory.agents)
                 }

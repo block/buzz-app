@@ -517,6 +517,24 @@ renderers. The host retains author/time chrome, actions, attachments and session
 ownership. `MessageRenderer` is a host-matched author-preview type, not event
 admission or cross-version capability negotiation.
 
+`registerTimelineKind({ id, title, kind, matches?, component })` brings a non-message
+event kind into channel timelines. While the plugin is active, the kind is
+added to channel window reads and live routes, and fold turns each event into a
+`ChannelMessage` whose `plugin` field carries the kind and tags alongside the raw
+content. The host frames the row with author and time, and `component` renders
+the body. Plugin rows are never replied to, reacted to, edited, reported or
+linked, and they do not count toward unread, typing, notification, search or
+sidebar-preview evidence.
+Kinds the host already reads or routes for channels, and kinds outside 0–65535,
+fail activation. The host does not check relay support: the plugin must choose a
+channel-scoped (`h`-tagged) kind that the target relay stores, otherwise no
+events arrive. Live routes pick up
+the kind immediately, including through the dev broker; channels that are already
+open read its history on their next load. The optional `matches`
+declines individual rows (for example an event the plugin cannot parse). The
+timeline leaves out any plugin row that no active renderer claims, including rows
+folded before the plugin unloaded, instead of showing a placeholder.
+
 The bundled **Diff viewer** (`buzz.diffs`) handles `ChannelMessage.diff` from legacy
 kind 40008. Shared history, live, thread and exact readers retain these messages
 independently of the plugin, preserving raw patches rather than interpreting them

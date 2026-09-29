@@ -131,7 +131,7 @@ export function UnreadOptions({
           onClick={() => {
             const last = session.channels
               .window(channelId)
-              .rows.filter((row) => !row.membership)
+              .rows.filter((row) => !row.membership && !row.plugin)
               .at(-1);
             if (last)
               run(

@@ -2211,3 +2211,54 @@ it("reports the remaining presence gate without extending it and honors cooldown
   expect(admission.presenceDelay()).toBe(0);
   admission.tryPresence()?.();
 });
+it("plugin row kinds renew established channel routes live-only before closing them and reject host kinds", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  h.owner.update(["a", "b"], ["b"]);
+  await h.first.auth();
+  await vi.advanceTimersByTimeAsync(750);
+  const initial = h.first.requests().filter((r) => r[2]["#h"]);
+  expect(initial.map((r) => r[2]["#h"])).toEqual([["a"], ["b"]]);
+  for (const [, wire] of initial) await h.first.receive(["EOSE", wire]);
+  const before = h.first.requests().length;
+  h.owner.kinds?.([40006, 40006]);
+  const renewed = h.first.requests().slice(before);
+  expect(renewed.map((r) => r[2]["#h"])).toEqual([["a"], ["b"]]);
+  for (const r of renewed)
+    expect(r[2]).toMatchObject({
+      kinds: expect.arrayContaining([9, 40006]),
+      limit: 0,
+    });
+  for (const [, wire] of initial)
+    expect(h.first.sent).not.toContainEqual(["CLOSE", wire]);
+  for (const [, wire] of renewed) await h.first.receive(["EOSE", wire]);
+  for (const [, wire] of initial)
+    expect(h.first.sent).toContainEqual(["CLOSE", wire]);
+  const sent = h.first.sent.length;
+  h.owner.kinds?.([40006]);
+  expect(h.first.sent).toHaveLength(sent);
+  expect(() => h.owner.kinds?.([7])).toThrow();
+  h.owner.dispose();
+});
+it("plugin row kinds restart a channel route that is still replaying", async () => {
+  vi.useFakeTimers();
+  const h = setup(["a"]);
+  await h.first.auth();
+  await vi.advanceTimersByTimeAsync(750);
+  const [, wire] = required(h.first.requests().find((r) => r[2]["#h"]));
+  const before = h.first.requests().length;
+  h.owner.kinds?.([40006]);
+  expect(h.first.sent).toContainEqual(["CLOSE", wire]);
+  const restarted = h.first.requests().slice(before);
+  expect(restarted).toHaveLength(1);
+  expect(restarted[0]?.[2]).toMatchObject({
+    kinds: expect.arrayContaining([9, 40006]),
+    "#h": ["a"],
+    limit: 500,
+  });
+  h.owner.dispose();
+});
+function required<T>(value: T | undefined): T {
+  assert.exists(value);
+  return value;
+}

@@ -189,6 +189,7 @@ export function MessageManagementItems({
     !management ||
     row.membership ||
     row.diff ||
+    row.plugin ||
     (row.delivery && !["accepted", "seen"].includes(row.delivery))
   )
     return null;

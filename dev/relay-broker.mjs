@@ -87,6 +87,7 @@ import {
   subscribeRelayTraffic,
   livePresenceAuthors,
 } from "../src/features/relay/live.ts";
+import { pluginRowKindList } from "../src/features/relay/kinds.ts";
 import {
   communityDestination,
   parseCommunityAliases,
@@ -1486,6 +1487,7 @@ export function relayBrokerPlugin({
               status,
               interests,
               joined,
+              kinds,
               removed,
               interestRevision;
             try {
@@ -1506,6 +1508,7 @@ export function relayBrokerPlugin({
               if (updating) {
                 interests = liveChannels(body.channels);
                 joined = liveJoined(interests, body.joined ?? []);
+                kinds = pluginRowKindList(body.kinds ?? []);
                 removed = liveChannels(body.removed ?? []);
                 interestRevision = body.interestRevision;
                 if (
@@ -1574,6 +1577,7 @@ export function relayBrokerPlugin({
               stream.interestRevision = interestRevision;
               stream.channels = interests;
               stream.joined = joined;
+              stream.traffic.kinds(kinds);
               stream.traffic.update(interests, joined);
             } else if (prioritizing) stream.traffic.prioritize(priority);
             else if (observing) stream.traffic.observe(observer);
@@ -1591,6 +1595,7 @@ export function relayBrokerPlugin({
             }
             let channels,
               joined,
+              kinds,
               priority,
               observer,
               interestRevision,
@@ -1599,6 +1604,7 @@ export function relayBrokerPlugin({
               const body = JSON.parse(raw);
               channels = liveChannels(body.channels);
               joined = liveJoined(channels, body.joined ?? []);
+              kinds = pluginRowKindList(body.kinds ?? []);
               interestRevision = body.interestRevision ?? 0;
               if (
                 !Number.isSafeInteger(interestRevision) ||
@@ -1740,6 +1746,7 @@ export function relayBrokerPlugin({
             traffic.observe(observer);
             traffic.watchPresence(presenceAuthors);
             traffic.prioritize(priority);
+            traffic.kinds(kinds);
             traffic.update(channels, joined);
             const keepAlive = setInterval(
               () => res.write(": keepalive\n\n"),

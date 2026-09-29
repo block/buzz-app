@@ -1,5 +1,6 @@
 import { observerFrame, observerGeneration } from "../agents/observer";
 import { eventDto } from "./events";
+import { pluginRowKindList } from "./kinds";
 import {
   liveChannels,
   livePresenceAuthors,
@@ -26,6 +27,7 @@ export function subscribeBrokerTraffic(
   // Only IDs in the last dispatched snapshot can have a host wire (at most 1024).
   const removed = new Set<string>();
   let interestRevision = 0;
+  let kinds: number[] = [];
   const addedAt = new Map<string, number>();
   const currentChannel = (id: string, revision: unknown) => {
     const minimum = addedAt.get(id);
@@ -98,6 +100,7 @@ export function subscribeBrokerTraffic(
           body: JSON.stringify({
             channels,
             joined,
+            kinds,
             priority,
             observer,
             presenceAuthors,
@@ -272,6 +275,7 @@ export function subscribeBrokerTraffic(
       streamId,
       channels,
       joined,
+      kinds,
       removed: [...removed],
       interestRevision,
     });
@@ -439,6 +443,13 @@ export function subscribeBrokerTraffic(
       if (closed || JSON.stringify(next) === JSON.stringify(priority)) return;
       priority = next;
       sendPriority();
+    },
+    kinds(input) {
+      const next = pluginRowKindList(input);
+      if (closed || JSON.stringify(next) === JSON.stringify(kinds)) return;
+      kinds = next;
+      interestRevision++;
+      sendInterests();
     },
     update(input, batchable = []) {
       const next = liveChannels(input);

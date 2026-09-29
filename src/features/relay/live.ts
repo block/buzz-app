@@ -13,6 +13,7 @@ import {
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
 import { eventDto } from "./events.ts";
 import { EMOJI_SET } from "./emoji.ts";
+import { CHANNEL_LIVE_KINDS, pluginRowKindList } from "./kinds.ts";
 
 export const LIVE_CHANNEL_CAPACITY = 1022;
 export const LIVE_BATCH_SIZE = 10; // Relay's per-REQ filter cap; replay stays per channel.
@@ -128,6 +129,8 @@ export type LiveSubscription = {
   identity?(): string | undefined;
   publish?(event: VerifiedEvent, signal: AbortSignal): Promise<string>;
   update(channels: readonly string[], joined?: readonly string[]): void;
+  /** Plugin row kinds added to every channel route; a change renews open channel routes. */
+  kinds?(kinds: readonly number[]): void;
   /** Host demand only: reorder existing pending routes, never grant new interests. */
   prioritize?(channels: readonly string[]): void;
   observe?(generation: number | null): void;
@@ -193,10 +196,6 @@ type Route = {
   quotaRetries: number;
   deadline?: ReturnType<typeof setTimeout>;
 };
-export const CHANNEL_KINDS = [
-  9, 40002, 40008, 45001, 45003, 40099, 40100, 40003, 5, 9005, 7, 39000, 39002,
-  39005, 20002,
-];
 /** One authenticated socket, bounded joined-channel batches, singleton previews and two globals.
  * Recent replay is opportunistic: finite reads own catch-up and history bounds. */
 export function subscribeRelayTraffic(
@@ -227,6 +226,7 @@ export function subscribeRelayTraffic(
   // Keep denial callbacks in one scheduling transaction; updates can retire
   // individual lifetimes without admitting a replacement mid-denial.
   let denying: Set<string> | undefined;
+  let rowKinds: number[] = [];
   let priority: string[] = [];
   let observer: number | null = null;
   let presenceAuthors: readonly string[] = [];
@@ -537,7 +537,10 @@ export function subscribeRelayTraffic(
         ? (route.liveOnly
             ? [scope(route)]
             : scope(route).map((id) => [id])
-          ).map((ids) => ({ kinds: CHANNEL_KINDS, "#h": ids }))
+          ).map((ids) => ({
+            kinds: [...CHANNEL_LIVE_KINDS, ...rowKinds],
+            "#h": ids,
+          }))
         : [
             route.id === "presence"
               ? { kinds: [20001], authors: presenceAuthors }
@@ -973,6 +976,23 @@ export function subscribeRelayTraffic(
       interests = next;
       joined = nextJoined;
       sync();
+    },
+    kinds(input) {
+      const next = pluginRowKindList(input);
+      if (closed || JSON.stringify(next) === JSON.stringify(rowKinds)) return;
+      rowKinds = next;
+      // Unsent routes read rowKinds at dispatch. Established routes renew
+      // live-only behind their current wire; a route still replaying restarts.
+      for (const route of [...routes.values()])
+        if (scope(route).length && route.wire) {
+          if (route.status === "live" || route.liveOnly) replace(route);
+          else {
+            closeWire(route);
+            route.count = 0;
+          }
+        }
+      pump();
+      notify();
     },
     retry() {
       if (closed) return;

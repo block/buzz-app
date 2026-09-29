@@ -5,7 +5,9 @@ use std::{process::Stdio, time::Duration};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 const MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_TEST_BYTES: u64 = 1024 * 1024;
 const METHOD: &str = "_goose/unstable/providers/supported-models/list";
+const TEST_FAILURE: &str = "Goose could not complete a request with this provider and model. Check its credentials, model and network, then test again.";
 
 struct CheckChild(tokio::process::Child);
 impl Drop for CheckChild {
@@ -42,11 +44,13 @@ pub(super) async fn test(context: GooseModelContext) -> Result<(), String> {
             "--max-turns",
             "1",
             "--quiet",
+            "--output-format",
+            "json",
         ])
         .current_dir(context.workspace)
         .env_clear()
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
     for name in [
@@ -77,12 +81,57 @@ pub(super) async fn test(context: GooseModelContext) -> Result<(), String> {
             .spawn()
             .map_err(|_| "Could not start Goose to test the model".to_owned())?,
     );
-    let status = tokio::time::timeout(Duration::from_secs(30), child.0.wait()).await;
-    match status {
-        Ok(Ok(status)) if status.success() => Ok(()),
-        Ok(_) => Err("Goose could not complete a request with this provider and model. Check its credentials, model and network, then test again.".into()),
-        Err(_) => Err("Goose connection test timed out. Check the network, then test again.".into()),
+    let stdout = child.0.stdout.take().ok_or(TEST_FAILURE)?;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let mut output = Vec::new();
+        stdout
+            .take(MAX_TEST_BYTES + 1)
+            .read_to_end(&mut output)
+            .await
+            .map_err(|_| TEST_FAILURE)?;
+        if output.len() as u64 > MAX_TEST_BYTES {
+            return Err(TEST_FAILURE.into());
+        }
+        let status = child.0.wait().await.map_err(|_| TEST_FAILURE)?;
+        let response: Value = serde_json::from_slice(&output).map_err(|_| TEST_FAILURE)?;
+        if status.success() && successful_reply(&response) {
+            Ok(())
+        } else {
+            Err(TEST_FAILURE.into())
+        }
+    })
+    .await
+    .map_err(|_| {
+        "Goose connection test timed out. Check the network, then test again.".to_owned()
+    })?
+}
+
+fn successful_reply(response: &Value) -> bool {
+    if response["metadata"]["status"] != "completed" {
+        return false;
     }
+    let Some(messages) = response["messages"].as_array() else {
+        return false;
+    };
+    let mut replied = false;
+    for content in messages
+        .iter()
+        .filter(|message| message["role"] == "assistant")
+        .filter_map(|message| message["content"].as_array())
+        .flatten()
+    {
+        if content["type"] == "error" {
+            return false;
+        }
+        if content["type"] == "text"
+            && content["text"]
+                .as_str()
+                .is_some_and(|text| !text.trim().is_empty())
+        {
+            replied = true;
+        }
+    }
+    replied
 }
 
 pub(super) async fn fetch(context: GooseModelContext) -> Result<Vec<String>, String> {

@@ -142,14 +142,26 @@ fn goose_connection_test_uses_the_draft_model_and_environment() {
     use std::os::unix::fs::PermissionsExt;
     let (dir, _, _app, view) = fixture();
     let goose = dir.path().join("goose");
-    std::fs::write(
-        &goose,
-        format!(
-            "#!/bin/sh\n[ \"$1 $2 $3\" = 'run --text Reply OK.' ] || exit 1\n[ \"$4 $5 $6 $7 $8\" = '--no-session --no-profile --max-turns 1 --quiet' ] || exit 1\n[ \"$GOOSE_PROVIDER\" = 'openai' ] || exit 1\n[ \"$GOOSE_MODEL\" = 'effective-model' ] || exit 1\n[ \"$GOOSE_MAX_TOKENS\" = '10' ] || exit 1\n[ \"$GOOSE_THINKING_EFFORT\" = 'off' ] || exit 1\n[ \"$OPENAI_API_KEY\" = 'draft-key' ] || exit 1\n[ \"$(pwd)\" = '{}' ] || exit 1\nexit 0\n",
-            dir.path().canonicalize().unwrap().display()
-        ),
-    )
-    .unwrap();
+    let script = r#"#!/bin/sh
+[ "$1 $2 $3" = 'run --text Reply OK.' ] || exit 1
+[ "$4 $5 $6 $7 $8 $9" = '--no-session --no-profile --max-turns 1 --quiet --output-format' ] || exit 1
+[ "${10}" = 'json' ] || exit 1
+[ "$GOOSE_PROVIDER" = 'openai' ] || exit 1
+[ "$GOOSE_MODEL" = 'effective-model' ] || exit 1
+[ "$GOOSE_MAX_TOKENS" = '10' ] || exit 1
+[ "$GOOSE_THINKING_EFFORT" = 'off' ] || exit 1
+[ "$(pwd)" = '__WORKSPACE__' ] || exit 1
+if [ "$OPENAI_API_KEY" = 'draft-key' ]; then
+  printf '%s\n' '{"metadata":{"status":"completed"},"messages":[{"role":"assistant","content":[{"type":"text","text":"OK"}]}]}'
+else
+  printf '%s\n' '{"metadata":{"status":"completed"},"messages":[{"role":"assistant","content":[{"type":"error","error":"authentication failed"}]}]}'
+fi
+"#
+    .replace(
+        "__WORKSPACE__",
+        &dir.path().canonicalize().unwrap().display().to_string(),
+    );
+    std::fs::write(&goose, script).unwrap();
     std::fs::set_permissions(&goose, std::fs::Permissions::from_mode(0o700)).unwrap();
     let edit = json!({"name":"Goose","systemPrompt":"","workspace":dir.path(),
         "harness":{"command":goose,"args":["acp"],"provider":"openai","model":"visible-model"},

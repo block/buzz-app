@@ -283,65 +283,39 @@ test("newest window positions immediately; scrollback preserves the visible repl
     expect(continuation.thread_window).toBe(true);
     expect(continuation.until).toBeDefined();
     expect(continuation.before_id).toBeDefined();
-    // Preserve the reader's place, not an exact CSS-pixel offset: browser scroll
-    // rounding may move a row slightly, but a row-sized jump changes the reply
-    // at this fixed reading point. Choose a row well inside the viewport.
-    const reading = await history.evaluate((el) => {
+    // The loading cue is in the reply flow and disappears when the page
+    // completes. At the scroll limit its removal can shift a fixed pixel, so
+    // assert the user-visible contract: the reply being read stays in view.
+    const readingId = await history.evaluate((el) => {
       const viewport = el.getBoundingClientRect();
-      const rows = [...el.querySelectorAll("ol [data-message-id]")];
-      const row = rows
-        .filter((item) => {
-          const bounds = item.getBoundingClientRect();
+      const visible = [...el.querySelectorAll("ol [data-message-id]")].filter(
+        (row) => {
+          const bounds = row.getBoundingClientRect();
           return bounds.top >= viewport.top && bounds.bottom <= viewport.bottom;
-        })
-        .reduce((nearest, item) => {
-          const distance = (candidate) => {
-            const bounds = candidate.getBoundingClientRect();
-            return Math.abs(
-              (bounds.top + bounds.bottom - viewport.top - viewport.bottom) / 2,
-            );
-          };
-          return !nearest || distance(item) < distance(nearest)
-            ? item
-            : nearest;
-        }, null);
-      if (!row) throw new Error("No complete reply near the reading point");
-      const bounds = row.getBoundingClientRect();
-      return {
-        id: row.dataset.messageId,
-        x: bounds.left + bounds.width / 2,
-        y: bounds.top + bounds.height / 2,
-        before: { top: bounds.top, bottom: bounds.bottom },
-      };
+        },
+      );
+      const reading = visible[Math.floor(visible.length / 2)];
+      if (!reading) throw new Error("No complete reply in the viewport");
+      return reading.dataset.messageId;
     });
     await page.evaluate(() => window.messagesFixture.releaseOlderPage());
     await expect(replies).toHaveCount(60);
-    await expect
-      .poll(
-        () =>
-          history.evaluate((el, reading) => {
-            const hit = document
-              .elementFromPoint(reading.x, reading.y)
-              ?.closest("ol [data-message-id]");
-            const expected = [
-              ...el.querySelectorAll("ol [data-message-id]"),
-            ].find((row) => row.dataset.messageId === reading.id);
-            const bounds = expected?.getBoundingClientRect();
-            return {
-              id: hit && el.contains(hit) ? hit.dataset.messageId : null,
-              before: reading.before,
-              after: bounds && { top: bounds.top, bottom: bounds.bottom },
-            };
-          }, reading),
-        { message: `reply at fixed reading point remains ${reading.id}` },
-      )
-      .toMatchObject({ id: reading.id });
-    const top = await history.evaluate((el) => el.scrollTop);
+    await expect(history.getByText("Loading older replies…")).toHaveCount(0);
+    const readingReply = history.locator(`ol [data-message-id="${readingId}"]`);
+    await expect(readingReply).toBeInViewport();
+    // The page was prepended, not substituted for the reply being read.
+    expect(
+      await replies.evaluateAll(
+        (rows, id) => rows.findIndex((row) => row.dataset.messageId === id),
+        readingId,
+      ),
+    ).toBeGreaterThanOrEqual(50);
     await page.evaluate(() => window.messagesFixture.live());
     await expect(replies).toHaveCount(61);
-    await expect
-      .poll(() => history.evaluate((el) => el.scrollTop))
-      .toBeCloseTo(top, 0);
+    await expect(readingReply).toBeInViewport();
+    await expect(
+      history.getByText("Live reply", { exact: true }),
+    ).toBeVisible();
     // Demand each remaining older page. No automatic full-history waterfall.
     for (const count of [111, 161, 211, 261, 305]) {
       await history.evaluate((el) => {

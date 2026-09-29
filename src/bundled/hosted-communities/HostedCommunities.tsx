@@ -573,11 +573,11 @@ export function HostedCommunities({ active }: { active(): boolean }) {
           <div className="mt-8 flex items-center justify-between gap-3">
             <h3 className="m-0 text-label">
               Your communities{" "}
-              <span className="text-body-sm text-muted">
-                {quotaState
-                  ? `${quotaState.used} of ${quotaState.limit} used`
-                  : "Community quota unavailable"}
-              </span>
+              {quotaState && (
+                <span className="text-body-sm text-muted">
+                  {quotaState.used} of {quotaState.limit} used
+                </span>
+              )}
             </h3>
             <Button
               variant="ghost"
@@ -780,13 +780,12 @@ export function HostedCommunities({ active }: { active(): boolean }) {
             </div>
           )}
           <CreateCommunity
-            enabled={ready && quotaState?.canCreate === true}
+            enabled={ready && quotaState?.canCreate !== false}
             atLimit={Boolean(
               quotaState &&
                 !quotaState.canCreate &&
                 quotaState.used >= quotaState.limit,
             )}
-            quotaUnavailable={!quotaState}
             {...(quotaState ? { limit: quotaState.limit } : {})}
             busy={busy}
             creating={action === "create"}
@@ -964,7 +963,6 @@ function DeleteCommunityDialog({
 function CreateCommunity({
   enabled,
   atLimit,
-  quotaUnavailable,
   limit,
   busy,
   creating,
@@ -972,7 +970,6 @@ function CreateCommunity({
 }: {
   enabled: boolean;
   atLimit: boolean;
-  quotaUnavailable: boolean;
   limit?: number;
   busy: boolean;
   creating: boolean;
@@ -1022,12 +1019,6 @@ function CreateCommunity({
         <p className="text-body-sm text-muted">
           You’ve reached the limit of {limit} hosted communities. Transfer one
           to free up a slot before creating another.
-        </p>
-      )}
-      {quotaUnavailable && (
-        <p className="text-body-sm text-muted">
-          Community quota unavailable. Creating is paused until the server
-          returns authoritative usage.
         </p>
       )}
       <Field

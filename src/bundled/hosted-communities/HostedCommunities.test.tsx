@@ -51,21 +51,6 @@ beforeEach(() => {
       if (!handler) return Response.json({ error: "missing" }, { status: 404 });
       const result = await handler(body);
       if (result instanceof Response) return result;
-      if (
-        url === "/api/builderlab/list" &&
-        result &&
-        typeof result === "object" &&
-        "communities" in result &&
-        !("quota_used" in result)
-      ) {
-        const communities = (result as { communities: unknown[] }).communities;
-        return Response.json({
-          ...result,
-          quota_used: communities.length,
-          quota_limit: 5,
-          can_create: communities.length < 5,
-        });
-      }
       return Response.json(result);
     }),
   );
@@ -184,6 +169,9 @@ it("rejects invalid names and blocks create at the community limit", async () =>
       name: `c${index}`,
       normalized_host: `c${index}.communities.buzz.xyz`,
     })),
+    quota_used: 5,
+    quota_limit: 5,
+    can_create: false,
   });
   renderCard();
   expect(await screen.findByText("5 of 5 used")).toBeInTheDocument();
@@ -430,6 +418,9 @@ const listed = {
   communities: [
     { id: "c1", name: "north", normalized_host: "north.communities.buzz.xyz" },
   ],
+  quota_used: 1,
+  quota_limit: 5,
+  can_create: true,
 };
 
 it("drops a failed copy handoff when the identity is unpaired", async () => {
@@ -577,7 +568,12 @@ it("completes a transfer when the following refresh fails", async () => {
   expect(
     screen.queryByRole("button", { name: "Transfer" }),
   ).not.toBeInTheDocument();
-  routes["/api/builderlab/list"] = () => ({ communities: [] });
+  routes["/api/builderlab/list"] = () => ({
+    communities: [],
+    quota_used: 0,
+    quota_limit: 5,
+    can_create: true,
+  });
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
   expect(await screen.findByText("0 of 5 used")).toBeInTheDocument();
   expect(
@@ -851,12 +847,48 @@ async function confirmDeletion(host = archived.normalized_host) {
   );
 }
 
-it("uses authoritative quota and fails closed when the projection is missing", async () => {
-  routes["/api/builderlab/list"] = () => Response.json({ communities: [] });
+it.each([
+  ["absent", {}],
+  ["incomplete", { quota_used: 5, quota_limit: 5 }],
+  ["malformed", { quota_used: "5", quota_limit: 5, can_create: false }],
+])(
+  "keeps Create available when the quota projection is %s",
+  async (_label, projection) => {
+    routes["/api/builderlab/list"] = () => ({
+      communities: Array.from({ length: 5 }, (_, index) => ({
+        id: `c${index}`,
+        name: `c${index}`,
+        normalized_host: `c${index}.communities.buzz.xyz`,
+      })),
+      ...projection,
+    });
+    renderCard();
+    const input = await screen.findByPlaceholderText("north-star");
+    await waitFor(() => expect(input).toBeEnabled());
+    expect(screen.queryByText(/quota unavailable/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\d+ of \d+ used/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/reached the limit/)).not.toBeInTheDocument();
+  },
+);
+
+it("shows the server's limit_reached message when quota is absent", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [] });
+  routes["/api/builderlab/availability"] = () => ({ available: true });
+  routes["/api/builderlab/create"] = () =>
+    Response.json({ error: { code: "limit_reached" } }, { status: 409 });
   renderCard();
-  expect(await screen.findByText("Community quota unavailable")).toBeVisible();
-  expect(screen.getByPlaceholderText("north-star")).toBeDisabled();
-  expect(screen.queryByText(/0 of 5 used/)).not.toBeInTheDocument();
+  const input = await screen.findByPlaceholderText("north-star");
+  await waitFor(() => expect(input).toBeEnabled());
+  vi.useFakeTimers();
+  fireEvent.change(input, { target: { value: "north" } });
+  await act(() => vi.advanceTimersByTimeAsync(500));
+  vi.useRealTimers();
+  expect(await screen.findByText("That address is available.")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Create community" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "You've reached the limit of 5 hosted communities.",
+  );
+  expect(calls).toContainEqual(["/api/builderlab/create", { name: "north" }]);
 });
 
 it("shows deletion only for literal capability true and requires the byte-exact host plus explicit confirmation", async () => {

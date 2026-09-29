@@ -102,7 +102,7 @@ export function ChannelLifecycleDialog({
       <p id="channel-lifecycle-description">{copy[action].detail}</p>
       {error && <p role="alert">{error}</p>}
       {busy && (
-        <p role="status">
+        <p role="status" className="sr-only">
           Checking permissions and waiting for relay confirmation…
         </p>
       )}
@@ -113,7 +113,8 @@ export function ChannelLifecycleDialog({
         <Button
           type="button"
           variant={action === "delete" ? "destructive" : "prominent"}
-          disabled={busy || refreshRequired}
+          loading={busy}
+          disabled={refreshRequired}
           onClick={() => void submit()}
         >
           {copy[action].title}

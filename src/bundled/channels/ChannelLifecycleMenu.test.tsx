@@ -270,7 +270,12 @@ it("confirmation, pending lockout and failed-write recovery stay in the actual d
   expect(lifecycle.run).not.toHaveBeenCalled();
   await user.click(confirm);
   await waitFor(() => expect(lifecycle.run).toHaveBeenCalledOnce());
-  expect(confirm.disabled).toBe(true);
+  expect(confirm).toHaveAttribute("aria-disabled", "true");
+  expect(confirm).toHaveAttribute("aria-busy", "true");
+  expect(confirm.querySelector(".buzz-button-spinner")).not.toBeNull();
+  expect(screen.getByRole("status")).toHaveClass("sr-only");
+  await user.click(confirm);
+  expect(lifecycle.run).toHaveBeenCalledOnce();
   expect(
     (screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement)
       .disabled,
@@ -279,6 +284,8 @@ it("confirmation, pending lockout and failed-write recovery stay in the actual d
   expect((await screen.findByRole("alert")).textContent).toBe("relay rejected");
   expect(completed).not.toHaveBeenCalled();
   expect(confirm.disabled).toBe(false);
+  expect(confirm).not.toHaveAttribute("aria-busy", "true");
+  expect(confirm.querySelector(".buzz-button-spinner")).toBeNull();
   await user.click(confirm);
   await waitFor(() => expect(completed).toHaveBeenCalledOnce());
 });
@@ -328,6 +335,12 @@ it.each(["leave", "hide", "archive", "unarchive"] as const)(
       "id",
       expect.any(AbortSignal),
     );
+    expect(confirm).toHaveAttribute("aria-disabled", "true");
+    expect(confirm).toHaveAttribute("aria-busy", "true");
+    expect(confirm.querySelector(".buzz-button-spinner")).not.toBeNull();
+    expect(screen.getByRole("status")).toHaveClass("sr-only");
+    await user.click(confirm);
+    expect(lifecycle.run).toHaveBeenCalledOnce();
     const signal = vi.mocked(lifecycle.run).mock.calls[0]?.[2];
     view.unmount();
     expect(signal?.aborted).toBe(true);

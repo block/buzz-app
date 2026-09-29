@@ -315,7 +315,8 @@ execution do not require these optional profile reads. A failed five-second owne
 preserves independently established Archive/Leave, omits Delete and exposes
 "Delete check unavailable" with explicit retry in both surfaces. Settings keeps
 its retry button focusable and busy during a fresh read, without retaining stale
-actions. If focus is still on recovery when the read finishes, it moves to the
+actions. Pending progress stays inside the button spinner, not a duplicate visible
+status sentence. If focus is still on recovery when the read finishes, it moves to the
 retry, an allowed action (Delete first), or a no-actions status. Moving focus
 elsewhere while waiting cancels that handoff.
 
@@ -352,7 +353,11 @@ deletion.
 These controls hand off to the same persistent sidebar confirmation/navigation
 owner, so confirmed removal can unmount Settings without cancelling completion.
 Cancellation returns focus to the originating Settings button (or the sidebar
-fallback if that entry has gone away). Archive retains messages and membership;
+fallback if that entry has gone away). Archive retains the current conversation,
+messages, membership and open Settings, replacing Archive with Unarchive after a
+fresh permission read. The conversation stays selected after reload; archived
+write restrictions still apply. When refreshed Settings actions remount, focus
+returns to its persistent Close control instead of an unrelated sidebar row;
 joined archived channels remain available by name in search, labeled **Archived
 channel**, but stay out of the sidebar and Recent activity. Open the search result
 and Settings to restore it. This uses the existing membership discovery and exact
@@ -367,7 +372,11 @@ archive-only validator even while the browser has the new action. A page reload
 alone does not update that host module.
 Archive, Unarchive and Leave use the default button style in Settings. Archive,
 Unarchive, Leave and Hide confirmation primary actions use the prominent variant; Delete remains destructive and Cancel
-keeps the default secondary style.
+keeps the default secondary style. Every shared confirmation shows its pending
+state inside the primary button using the standard loading spinner (with an
+accessible status), without adding a visible status paragraph. Duplicate submission
+and Cancel/Escape remain blocked until the operation settles; rejection restores
+the action, while an uncertain outcome still blocks blind resubmission.
 Delete keeps the named-channel warning and destructive confirmation button without
 requiring the channel name to be typed. Metadata and member-role editing remain
 separate.
@@ -393,9 +402,9 @@ confirmation has an uncertain outcome, the dialog warns that the command may hav
 taken effect, disables blind resubmission and asks the user to close and refresh
 channels. Cancellation/cache clear/session replacement fence late results but cannot
 retract a request already sent. Cancellation returns focus to the originating row;
-confirmed removal moves an active conversation to another available destination
+confirmed Delete, Leave or Hide moves an active conversation to another available destination
 (or the neutral Messages page) with a visible sidebar-row focus fallback. Last-row
-completion uses the explicit version-1 Channels route `"empty"`, which bypasses
+Delete/Leave/Hide completion uses the explicit version-1 Channels route `"empty"`, which bypasses
 saved/default conversation selection, including after reload. Retained archived or
 hidden membership cannot reopen itself through that destination; intentional exact
 navigation to a hidden DM remains supported.
@@ -478,6 +487,12 @@ Behavior matrices live in `channel-details.test.ts`,
 Real-relay Save/privacy changes require deliberate testing on a disposable channel;
 unit/broker tests and a browser Cancel walkthrough do not establish live-write or
 native acceptance.
+
+Permission lookup for Edit details uses a loading Edit details button, with an
+accessible status but no visible checking paragraph. The button is not actionable
+until permission resolves; denied permission and failed reads keep their existing
+explanation/recovery. Saving also uses the action's spinner without a duplicate
+visible status paragraph; uncertain-save guidance remains visible.
 
 ## Performance and correctness carried from Astra
 

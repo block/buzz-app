@@ -66,6 +66,39 @@ function harness() {
   };
   return { capability, load, save, check, setAttempt };
 }
+it.each([true, false])(
+  "uses the Edit button spinner during permission lookup (allowed: %s)",
+  async (canEdit) => {
+    const h = harness();
+    const gate = deferred<ChannelDetails>();
+    h.load.mockImplementationOnce(() => gate.promise);
+    const user = userEvent.setup();
+    render(
+      <ChannelDetailsEditor capability={h.capability} channel={channel} />,
+    );
+    const button = screen.getByRole("button", { name: "Edit details" });
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button.querySelector(".buzz-button-spinner")).not.toBeNull();
+    expect(screen.getByRole("status")).toHaveClass("sr-only");
+    await user.click(button);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await act(async () => gate.resolve({ ...base, canEdit }));
+    if (canEdit) {
+      expect(button).not.toHaveAttribute("aria-busy", "true");
+      await user.click(button);
+      expect(screen.getByRole("dialog")).toBeVisible();
+    } else {
+      expect(screen.queryByRole("button", { name: "Edit details" })).toBeNull();
+      expect(
+        screen.getByText(
+          "Only current channel owners and admins can edit these details.",
+        ),
+      ).toBeVisible();
+    }
+  },
+);
+
 it("edits deliberately, cancels every field, and sends all fields only on Save", async () => {
   const h = harness();
   const user = userEvent.setup();

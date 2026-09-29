@@ -9,7 +9,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey } from "nostr-tools";
 import { StrictMode } from "react";
 import { App } from "./App";
@@ -62,6 +62,15 @@ const recipient = finalizeEvent(
   },
   new Uint8Array(32).fill(7),
 );
+// jsdom has no media queries; responsive geometry is covered in browser tests.
+beforeEach(() => {
+  vi.stubGlobal("matchMedia", (media: string) => ({
+    media,
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+});
 let services: AppServices | undefined;
 afterEach(async () => {
   cleanup();

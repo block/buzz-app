@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   render,
   screen,
@@ -10,13 +11,26 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey } from "nostr-tools";
+import { StrictMode } from "react";
 import { App } from "./App";
 import { createServices, type AppServices } from "./services";
 import { matchesEvent } from "../features/relay/projection";
 import type { ReadFilter } from "../features/relay/events";
+import { composerDOMFixture } from "../features/messages/composer-testing";
+import type { ComposerInputElement } from "../features/messages/composer-dom";
 
+composerDOMFixture();
+
+// jsdom has no IndexedDB; this flow keeps its message unsent.
+vi.mock("../features/relay/outbox-storage", () => ({
+  browserOutboxStorage: () => ({ load: () => [], save: () => {} }),
+}));
 vi.mock("../bundled", async () => ({
   bundledPlugins: [
+    {
+      manifest: { id: "buzz.channels", name: "Channels", apiVersion: 1 },
+      module: await import("../bundled/channels"),
+    },
     {
       manifest: { id: "buzz.projects", name: "Projects", apiVersion: 1 },
       module: await import("../bundled/projects"),
@@ -39,6 +53,15 @@ const profile = finalizeEvent(
   },
   key,
 );
+const recipient = finalizeEvent(
+  {
+    kind: 0,
+    created_at: 1,
+    content: JSON.stringify({ name: "Draft recipient" }),
+    tags: [],
+  },
+  new Uint8Array(32).fill(7),
+);
 let services: AppServices | undefined;
 afterEach(async () => {
   cleanup();
@@ -50,7 +73,7 @@ afterEach(async () => {
   window.history.replaceState(null, "", "/");
 });
 
-it("opens the viewer's community profile from the account menu avatar", async () => {
+async function setup() {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -73,11 +96,17 @@ it("opens the viewer's community profile from the account menu avatar", async ()
     vi.fn(async (url: string, options?: RequestInit) => {
       if (url.endsWith("/identity")) return Response.json({ viewer });
       if (url.endsWith("/session"))
-        return Response.json({ viewer, relayAuthor: viewer, relayUrl: origin });
+        return Response.json({
+          viewer,
+          relayAuthor: viewer,
+          relayUrl: origin,
+          writeKinds: [9],
+          directMessages: true,
+        });
       if (url.endsWith("/query")) {
         const filters = JSON.parse(String(options?.body)) as ReadFilter[];
         return Response.json(
-          [profile].filter((event) =>
+          [profile, recipient].filter((event) =>
             filters.some((filter) => matchesEvent(event, filter)),
           ),
         );
@@ -88,8 +117,17 @@ it("opens the viewer's community profile from the account menu avatar", async ()
   const user = userEvent.setup();
   services = createServices();
   const current = services;
-  render(<App services={current} />);
+  render(
+    <StrictMode>
+      <App services={current} />
+    </StrictMode>,
+  );
   await waitFor(() => expect(current.relay.snapshot().status).toBe("ready"));
+  return user;
+}
+
+it("opens the viewer's community profile from the account menu avatar", async () => {
+  const user = await setup();
   const trigger = screen.getByRole("button", { name: "Your profile" });
   await user.click(trigger);
   const menu = await screen.findByRole("menu", { name: "Community name" });
@@ -111,4 +149,54 @@ it("opens the viewer's community profile from the account menu avatar", async ()
   );
   await waitFor(() => expect(panel).not.toBeInTheDocument());
   expect(trigger).toHaveFocus();
+});
+
+it("opens the viewer's profile from New message without discarding recipients or the draft", async () => {
+  const user = await setup();
+  await user.click(await screen.findByRole("button", { name: "New message" }));
+  const composing = await screen.findByRole("region", { name: "New message" });
+  await user.click(
+    await screen.findByRole("option", { name: "Draft recipient" }),
+  );
+  const editor = within(composing).getByRole<ComposerInputElement>("textbox", {
+    name: "Message Draft recipient",
+  });
+  await user.click(editor);
+  await user.type(editor, "Keep this unsent draft");
+  const assertDraft = () => {
+    expect(screen.getByRole("region", { name: "New message" })).toBe(composing);
+    expect(
+      within(composing).getByRole("textbox", {
+        name: "Message Draft recipient",
+      }),
+    ).toBe(editor);
+    expect(editor).toHaveTextContent("Keep this unsent draft");
+    expect(
+      within(composing).getByRole("button", { name: "Remove Draft recipient" }),
+    ).toBeVisible();
+  };
+
+  const trigger = screen.getByRole("button", { name: "Your profile" });
+  await user.click(trigger);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "View your profile" }),
+  );
+  const panel = await screen.findByRole("complementary", { name: "Profile" });
+  expect(
+    await within(panel).findByRole("heading", { name: "Community name" }),
+  ).toBeVisible();
+  assertDraft();
+
+  await user.click(
+    within(panel).getByRole("button", { name: "Close Profile panel" }),
+  );
+  await waitFor(() => expect(panel).not.toBeInTheDocument());
+  assertDraft();
+  await user.click(editor);
+  act(() => {
+    editor.focus();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+  });
+  await user.keyboard(" and keep editing");
+  expect(editor).toHaveTextContent("Keep this unsent draft and keep editing");
 });

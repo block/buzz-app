@@ -173,7 +173,9 @@ readingTest(
     await expectAnchor(page, reloadedAnchor);
     const jumpToLatest = history(page).locator("button[data-jump-to-latest]");
     await expect(jumpToLatest).toBeVisible();
-    await jumpToLatest.click();
+    await jumpToLatest.focus();
+    await page.keyboard.press("Enter");
+    await expect(history(page)).toBeFocused();
     await expect(
       history(page).locator(`[data-message-id="${held.id}"]`),
     ).toBeInViewport();

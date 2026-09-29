@@ -471,21 +471,27 @@ function ThreadMessages({
   }, [view, snapshot]);
   useLayoutEffect(() => {
     const previous = previousReplies.current;
-    const arrivals = previous.complete
-      ? snapshot.replies.filter(
-          (reply) =>
-            !previous.ids.has(reply.id) &&
-            reply.createdAt >= previous.latestCreatedAt,
-        ).length
-      : 0;
-    previousReplies.current = {
-      ids: new Set(snapshot.replies.map((reply) => reply.id)),
-      latestCreatedAt: Math.max(
-        previous.latestCreatedAt,
-        ...snapshot.replies.map((reply) => reply.createdAt),
-      ),
-      complete: snapshot.status === "ready" && !snapshot.canLoadMore,
-    };
+    const complete = snapshot.status === "ready" && !snapshot.canLoadMore;
+    // Initial traversal has no baseline. Once complete, retain the last
+    // observed replies through reconnect loading so recovery can reconcile them.
+    if (!complete && !previous.complete) return;
+    const arrivals =
+      complete && previous.complete
+        ? snapshot.replies.filter(
+            (reply) =>
+              !previous.ids.has(reply.id) &&
+              reply.createdAt >= previous.latestCreatedAt,
+          ).length
+        : 0;
+    if (complete)
+      previousReplies.current = {
+        ids: new Set(snapshot.replies.map((reply) => reply.id)),
+        latestCreatedAt: Math.max(
+          previous.latestCreatedAt,
+          ...snapshot.replies.map((reply) => reply.createdAt),
+        ),
+        complete: true,
+      };
     if (arrivals > 0 && !follow.current)
       setNewMessageCount((count) => count + arrivals);
   }, [snapshot.status, snapshot.canLoadMore, snapshot.replies]);
@@ -566,6 +572,7 @@ function ThreadMessages({
     positioned.current = true;
     follow.current = true;
     jumpingToLatest.current = true;
+    element.focus({ preventScroll: true });
     setShowJumpToLatest(false);
     setNewMessageCount(0);
     element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });

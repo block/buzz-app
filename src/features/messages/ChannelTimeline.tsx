@@ -230,6 +230,7 @@ function Timeline({
     follow.current = true;
     restoredAnchor.current = undefined;
     userScrolled.current = false;
+    scroller.current?.focus({ preventScroll: true });
     setShowJumpToLatest(false);
     setNewMessageCount(0);
     handle.current.scrollToIndex(rows.length - 1, {
@@ -317,7 +318,12 @@ function Timeline({
       last: rows.at(-1)?.id,
       ids: new Set(rows.map((row) => row.id)),
     };
-    if (arrivals > 0 && previousIds.size > 0 && !follow.current && !targetId) {
+    if (
+      arrivals > 0 &&
+      previousIds.size > 0 &&
+      !follow.current &&
+      (!targetId || exactRevealed.current === navigation?.signal)
+    ) {
       setNewMessageCount((count) => count + arrivals);
     }
     if (

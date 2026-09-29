@@ -205,6 +205,7 @@ function setup({
     clientHeight: 668,
     scrollHeight: 3706,
     scrollTop: 2388,
+    focus: vi.fn(),
     getBoundingClientRect: () => ({ top: 0 }),
     querySelector: () => list,
     querySelectorAll: () =>

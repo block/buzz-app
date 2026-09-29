@@ -207,6 +207,7 @@ export function AgentsPage({
                       importedId,
                       label,
                       onUseHere,
+                      onImport,
                     ) =>
                       state.status === "unavailable" ? (
                         library
@@ -222,6 +223,7 @@ export function AgentsPage({
                           connection={connection}
                           resolveProfile={resolveProfile}
                           onUseHere={onUseHere}
+                          onImport={onImport}
                         />
                       ) : (
                         <ManagedAgents
@@ -235,6 +237,7 @@ export function AgentsPage({
                           importedId={importedId}
                           control={control}
                           connection={connection}
+                          destination={importDestination}
                           resolveProfile={resolveProfile}
                           headerActions={headerActions}
                         />
@@ -266,15 +269,13 @@ function ManagedAgents({
   importedId,
   control,
   connection,
-  resolveProfile,
   label,
+  destination,
+  resolveProfile,
   headerActions,
   onUseHere,
 }: {
   label(agent: AgentView): string;
-  resolveProfile(
-    pubkey: string,
-  ): ((trigger: HTMLButtonElement) => void) | undefined;
   state: AgentControlState;
   edit(agent: AgentView, avatar?: string): void;
   duplicate(agent: AgentView): void;
@@ -282,6 +283,10 @@ function ManagedAgents({
   importedId: string | null;
   control: AgentControl;
   connection: RelaySnapshot;
+  destination: string;
+  resolveProfile(
+    pubkey: string,
+  ): ((trigger: HTMLButtonElement) => void) | undefined;
   headerActions: HTMLElement | null;
   onUseHere(pubkey: string): void;
 }) {
@@ -331,6 +336,10 @@ function ManagedAgents({
                 state={state}
                 control={control}
                 imported={agent.id === importedId}
+                destination={destination}
+                owner={
+                  connection.status === "ready" ? (connection.viewer ?? "") : ""
+                }
               />
             </AgentCard>
           );

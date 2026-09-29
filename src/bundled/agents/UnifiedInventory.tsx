@@ -4,6 +4,7 @@ import type {
   AgentControl,
   AgentControlState,
   AgentView,
+  ImportSource,
 } from "../../features/agents/control";
 import { relayOrigin } from "../../features/communities/destination";
 import { useIdentityNames } from "../../features/identity-names/react";
@@ -23,6 +24,7 @@ export function UnifiedInventory({
   importedId,
   resolveProfile,
   onUseHere,
+  onImport,
 }: {
   state: AgentControlState;
   control: AgentControl;
@@ -35,6 +37,7 @@ export function UnifiedInventory({
     | ((pubkey: string) => ((trigger: HTMLButtonElement) => void) | undefined)
     | undefined;
   onUseHere(pubkey: string): void;
+  onImport(pubkey: string, source?: ImportSource): void;
 }) {
   const { agentLibrary: library, archives, profiles } = connection.session;
   const publicProfiles = useSyncExternalStore(
@@ -109,6 +112,7 @@ export function UnifiedInventory({
       importedId={importedId}
       resolveProfile={resolveProfile}
       onUseHere={onUseHere}
+      onImport={onImport}
     >
       {data.inventoryWarnings?.map((warning) => (
         <p key={warning} role="alert">

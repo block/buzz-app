@@ -253,8 +253,8 @@ export function useAppNavigation(services: AppServices) {
       void navigation.open({
         version: 1,
         kind: "page",
-        pluginId: "buzz.channels",
-        pageId: "channels",
+        pluginId: "buzz.inbox",
+        pageId: "inbox",
         ...(selectedClient.selected
           ? {
               scope: {
@@ -264,7 +264,6 @@ export function useAppNavigation(services: AppServices) {
               },
             }
           : { scope: null }),
-        route: { version: 1, params: "Inbox" },
       });
     },
     retry() {

@@ -49,6 +49,7 @@ import {
 } from "./read-state-storage";
 import { createTyping } from "./typing";
 import { createUnread } from "./unread";
+import { createInboxFeed } from "./inbox-feed";
 import type { IncomingListener, IncomingMessage } from "./incoming";
 import { objectBody } from "./body";
 import type { ChannelList } from "./contracts";
@@ -386,6 +387,7 @@ export function createRelaySession(
       for (const purge of views.values()) purge();
       commit();
       unread.purge();
+      inboxFeed.clear();
     } finally {
       if (--revoking === 0) {
         const pending = [...notifications];
@@ -515,6 +517,7 @@ export function createRelaySession(
           recent.set(event.id, { event, revision: ++revision });
         reads.accept(visible);
         unread.accept(visible);
+        inboxFeed.receive(visible);
         writes?.observe(visible);
         if (epoch !== accessEpoch) return;
         profiles.accept(visible);
@@ -770,6 +773,12 @@ export function createRelaySession(
     // Repair owns evidence only, not timeline/history ingestion. The shared
     // scheduler and verified transport stay shared; unread fences access epochs.
     reader: requests.reader,
+    viewer: transport?.viewer ?? "",
+    notify,
+  });
+  const inboxFeed = createInboxFeed({
+    reader: verified,
+    channels: channels.queries,
     viewer: transport?.viewer ?? "",
     notify,
   });
@@ -1656,6 +1665,7 @@ export function createRelaySession(
     statuses: statuses.queries,
     agentLibrary: agentLibrary.queries,
     agentChoices,
+    inboxFeed,
     workflows: workflows.capability,
     projects,
     projectGit: transport?.projectGit
@@ -2101,6 +2111,7 @@ export function createRelaySession(
         workflows.interrupt();
         channels.staleHeads();
         unread.stale();
+        inboxFeed.stale();
       }
       // Access-revoked CLOSED is a refresh hint, not signed archive/membership
       // authority. Aggregate snapshots repeat failures; only react to a new one.
@@ -2148,6 +2159,7 @@ export function createRelaySession(
               emoji.reconnect();
               statuses.reconnect();
               unread.reconnect();
+              inboxFeed.reconnect();
               for (const refresh of refreshers) void refresh();
             }
           }, 0);
@@ -2246,6 +2258,7 @@ export function createRelaySession(
         for (const clear of views.values()) clear(true);
         recent.clear();
         unread.clear();
+        inboxFeed.clear();
         requests.invalidate();
         profiles.clear();
         emoji.clear();
@@ -2282,6 +2295,7 @@ export function createRelaySession(
       for (const timer of timers) clearTimeout(timer);
       for (const dispose of [...views.keys()]) dispose();
       unread.dispose();
+      inboxFeed.dispose();
       writes?.dispose();
       requests.dispose();
       channels.dispose();

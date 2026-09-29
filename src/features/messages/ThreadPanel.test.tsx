@@ -77,6 +77,7 @@ vi.mock("./MessageComposer", () => ({
     channelId,
     scope,
     onSend,
+    disabled,
   }: MessageComposerProps) => (
     <section
       aria-label="Composer"
@@ -84,7 +85,11 @@ vi.mock("./MessageComposer", () => ({
       data-channel={channelId}
       data-scope={scope}
     >
-      <button type="button" onClick={() => onSend?.("own-reply")}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onSend?.("own-reply")}
+      >
         Send fixture reply
       </button>
     </section>
@@ -134,6 +139,8 @@ function ordinaryNavigation() {
 function messagesHarness(
   navigation?: PageNavigation,
   onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"],
+  requireReadyRoot = false,
+  revealSelected = false,
 ) {
   const snapshot: { -readonly [K in keyof ThreadSnapshot]: ThreadSnapshot[K] } =
     {
@@ -224,6 +231,8 @@ function messagesHarness(
     navigation,
     close,
     onOpenLink: () => false,
+    requireReadyRoot,
+    revealSelected,
     ...(onOpenMediaReview ? { onOpenMediaReview } : {}),
   };
   let mounted: ReturnType<typeof render> | undefined;
@@ -562,6 +571,28 @@ it("routes media in replies through the resolved root review workspace", () => {
   expect(open).toHaveBeenCalledExactlyOnceWith("reply", attachment, 0, true);
 });
 
+it("keeps an embedded draft bound to its exact root and disables it during recovery", () => {
+  const h = messagesHarness(undefined, undefined, true);
+  h.snapshot.status = "loading";
+  h.snapshot.targetStatus = "loading";
+  h.render();
+  expect(h.thread).toHaveBeenCalledWith("channel", row.id, { exact: true });
+  expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
+  h.snapshot.status = "ready";
+  h.snapshot.targetStatus = "ready";
+  h.render();
+  expect(screen.getAllByRole("region", { name: "Composer" })).toHaveLength(1);
+  h.snapshot.status = "error";
+  h.render();
+  expect(
+    screen.getByRole("button", { name: "Send fixture reply" }),
+  ).toBeDisabled();
+  h.snapshot.status = "ready";
+  h.snapshot.root = { ...row, id: "other-root" };
+  h.render();
+  expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
+});
+
 it("uses the resolved root with the shared composer and reveals an own send even while reading above", () => {
   const h = messagesHarness();
   h.snapshot.root = { ...row, id: "resolved-root" };
@@ -767,4 +798,22 @@ it("revoked ordinary presentation cannot position or complete after loading", ()
   h.render();
   expect(h.element.scrollTop).toBe(0);
   expect(navigation.complete).not.toHaveBeenCalled();
+});
+
+it("owns an exact inline Inbox reveal without a synthetic navigation visit and disposes it on unmount", () => {
+  const h = messagesHarness(undefined, undefined, false, true);
+  h.snapshot.targetStatus = "unavailable";
+  h.render(true);
+  expect(h.thread.mock.calls).toEqual([
+    ["channel", row.id, { exact: true }],
+    ["channel", row.id, { exact: true }],
+  ]);
+  expect(screen.getByText("Selected message unavailable.")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Retry thread" }));
+  expect(h.view.refresh).toHaveBeenCalledTimes(2);
+  h.unmount();
+  for (const view of h.views) {
+    expect(view.dispose).toHaveBeenCalledOnce();
+    expect(view.listeners.size).toBe(0);
+  }
 });

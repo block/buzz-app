@@ -9,7 +9,7 @@ import {
   verifyEvent,
 } from "nostr-tools";
 import { writeFile } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { platform, arch } from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -53,6 +53,10 @@ export const test = base.extend({
   iconCongestion: [false, { option: true }],
   dmLabels: [false, { option: true }],
   agentPeers: [false, { option: true }],
+  inboxSessionAgent: [false, { option: true }],
+  inboxDm: [false, { option: true }],
+  inboxDmOldAnchor: [false, { option: true }],
+  inboxThreadWindow: [false, { option: true }],
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
@@ -92,6 +96,10 @@ export const test = base.extend({
       iconCongestion,
       dmLabels,
       agentPeers,
+      inboxSessionAgent,
+      inboxDm,
+      inboxDmOldAnchor,
+      inboxThreadWindow,
       tallMessages,
       membershipActivity,
       historyCounts,
@@ -178,7 +186,9 @@ export const test = base.extend({
         )
       : dmLabels
         ? ["dm-peer", "dm-group"]
-        : [];
+        : inboxDm
+          ? ["dm-peer"]
+          : [];
     const personalChannel = "11111111-1111-4111-8111-111111111111";
     const sortingIds = sortingSidebar ? ["cedar", "maple", "willow"] : [];
     const renamedChannels = new Map();
@@ -427,6 +437,43 @@ export const test = base.extend({
         membershipEvent("member_joined", 1, 1700000741),
       );
     }
+    let inboxDmAnchor;
+    if (inboxDmOldAnchor) {
+      inboxDmAnchor = sign(
+        9,
+        [["h", "dm-peer"]],
+        "Inbox old DM anchor",
+        peerKey,
+        1700000800,
+      );
+      histories
+        .get("primary/dm-peer")
+        .push(
+          inboxDmAnchor,
+          ...Array.from({ length: 24 }, (_, index) =>
+            sign(
+              9,
+              [["h", "dm-peer"]],
+              `Recent DM ${index}`,
+              userKey,
+              1700000810 + index,
+            ),
+          ),
+        );
+    }
+    if (inboxDm) {
+      histories
+        .get("primary/dm-peer")
+        .push(
+          sign(
+            9,
+            [["h", "dm-peer"]],
+            "Inbox DM fixture reply",
+            peerKey,
+            1700000900,
+          ),
+        );
+    }
     if (sidebarUnread) {
       for (const id of ["dm-030", "dm-090"])
         histories.set(`primary/${id}`, [
@@ -528,6 +575,37 @@ export const test = base.extend({
           }),
         ),
       );
+    }
+    // Minimal strict-window Inbox data: one oldest unread anchor outside the
+    // newest ten, and enough replies for an actual signed continuation.
+    let inboxWindow;
+    if (inboxThreadWindow) {
+      const channelId = channels.find((id) => /^[0-9a-f-]{36}$/.test(id));
+      if (!channelId)
+        throw new Error("Inbox window needs a canonical fixture channel");
+      const root = sign(
+        9,
+        [["h", channelId]],
+        "Inbox strict root",
+        userKey,
+        1700000100,
+      );
+      const replies = Array.from({ length: 15 }, (_, index) =>
+        sign(
+          9,
+          [
+            ["h", channelId],
+            ["e", root.id, "", "reply"],
+            ["p", viewer],
+          ],
+          `Inbox strict reply ${index}`,
+          peerKey,
+          1700000200 + index,
+        ),
+      );
+      histories.set(`primary/${channelId}`, [root, ...replies]);
+      threadReplies.set(root.id, replies);
+      inboxWindow = { channelId, root, replies };
     }
     // Signed upstream-only stress data; production traversal and mounting stay real.
     let presenceThread;
@@ -893,7 +971,9 @@ export const test = base.extend({
                 0,
                 [],
                 JSON.stringify({
-                  ...(agentPeers && key !== peerKey ? { is_agent: true } : {}),
+                  ...((agentPeers && key !== peerKey) || inboxSessionAgent
+                    ? { is_agent: true }
+                    : {}),
                   display_name: [
                     "Alice Fixture",
                     "Bob Fixture",
@@ -904,6 +984,43 @@ export const test = base.extend({
               ),
             ),
         ];
+      // Inbox's existing lazy addressed feed also opens after a restored page
+      // visit. Model its actual scope/kinds, never accept unknown queries silently.
+      if (
+        filter["#p"] &&
+        !filter["#h"] &&
+        (filter.kinds?.includes(9) || filter.kinds?.includes(46010))
+      ) {
+        const kinds = filter.kinds.includes(9)
+          ? [
+              9, 40002, 1, 45001, 45003, 1618, 1619, 1621, 1630, 1631, 1632,
+              1633,
+            ]
+          : [46010, 46011, 46012];
+        expect([...filter.kinds].sort((a, b) => a - b)).toEqual(
+          kinds.sort((a, b) => a - b),
+        );
+        expect(filter["#p"]).toEqual([viewer]);
+        expect(filter.limit).toBe(filter.kinds.includes(9) ? 50 : 20);
+        const events = [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .concat(
+            community === "primary"
+              ? [...targetEvents, ...[...threadReplies.values()].flat()]
+              : [],
+          );
+        return [...new Map(events.map((event) => [event.id, event])).values()]
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.tags.some(([k, v]) => k === "p" && v === viewer),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
+      }
       if (filter.search !== undefined)
         return [...histories.entries()]
           .filter(([key]) => key.startsWith(`${community}/`))
@@ -920,6 +1037,9 @@ export const test = base.extend({
           .filter(([key]) => key.startsWith(`${community}/`))
           .flatMap(([, events]) => events)
           .concat(community === "primary" ? targetEvents : [])
+          .concat(
+            community === "primary" ? [...threadReplies.values()].flat() : [],
+          )
           .filter(
             (event) =>
               filter.ids.includes(event.id) &&
@@ -952,6 +1072,75 @@ export const test = base.extend({
             (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
           )
           .slice(0, filter.limit);
+      if (filter.thread_window) {
+        // Independent upstream binding encoder: never use the client verifier
+        // itself to manufacture signed fixture evidence.
+        const channelId = filter["#h"][0],
+          rootId = filter["#e"][0];
+        const candidates = [
+          ...(histories.get(`${community}/${channelId}`) ?? []),
+          ...(community === "primary" ? (threadReplies.get(rootId) ?? []) : []),
+        ];
+        const rows = [
+          ...new Map(candidates.map((event) => [event.id, event])).values(),
+        ]
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.tags.some(
+                ([k, v]) => k === "e" && v.toLowerCase() === rootId,
+              ) &&
+              (filter.until === undefined ||
+                event.created_at < filter.until ||
+                (event.created_at === filter.until &&
+                  event.id > filter.before_id)),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          );
+        const page = rows.slice(0, filter.limit),
+          last = page.at(-1);
+        const hasMore = rows.length > page.length;
+        const binding = createHash("sha256")
+          .update(
+            JSON.stringify([
+              "tw",
+              1,
+              "older",
+              `${community}.example`,
+              viewer,
+              channelId,
+              rootId,
+              filter.limit,
+              filter.depth_limit ?? 100,
+              [...new Set(filter.kinds)].sort((a, b) => a - b),
+              filter.until === undefined
+                ? null
+                : [filter.until, filter.before_id],
+              filter.include_aux ?? false,
+            ]),
+          )
+          .digest("hex");
+        return [
+          ...page,
+          sign(
+            39007,
+            [
+              ["d", `tw:1:${binding}`],
+              ["h", channelId],
+              ["e", rootId],
+            ],
+            JSON.stringify({
+              version: 1,
+              direction: "older",
+              has_more: hasMore,
+              next_cursor: hasMore
+                ? { created_at: last.created_at, id: last.id }
+                : null,
+            }),
+          ),
+        ];
+      }
       if (filter.depth_limit) {
         const rootId = filter["#e"]?.[0];
         const candidates = [
@@ -1027,6 +1216,14 @@ export const test = base.extend({
         throw new Error(`Unexpected query: ${JSON.stringify(filter)}`);
       const candidates = history
         .filter((event) => !filter.kinds || filter.kinds.includes(event.kind))
+        .filter(
+          (event) =>
+            !filter.top_level ||
+            !event.tags.some(
+              ([k, , , marker]) => k === "e" && marker === "reply",
+            ) ||
+            event.tags.some(([k, v]) => k === "broadcast" && v === "1"),
+        )
         .filter(
           (event) =>
             filter.until === undefined ||
@@ -1588,6 +1785,22 @@ export const test = base.extend({
           };
         },
         presenceThread,
+        inboxWindow,
+        inboxDmAnchor,
+        deleteInboxAnchor(event) {
+          const deletion = sign(
+            5,
+            [
+              ["h", inboxWindow.channelId],
+              ["e", event.id],
+            ],
+            "",
+            peerKey,
+            event.created_at + 100,
+          );
+          targetEvents.push(deletion);
+          relay.publish("primary", deletion);
+        },
         exact,
         searchTarget,
         membership(
@@ -1732,10 +1945,12 @@ export const test = base.extend({
         reply(rootId, own = false, deliver = true) {
           const replies = threadReplies.get(rootId);
           if (!replies) throw new Error("Unknown fixture thread");
+          const channelId = replies[0]?.tags.find(([key]) => key === "h")?.[1];
+          if (!channelId) throw new Error("Missing fixture thread channel");
           const event = sign(
             9,
             [
-              ["h", "alpha"],
+              ["h", channelId],
               ["e", rootId, "", "reply"],
             ],
             own ? "My reply" : "New peer reply",

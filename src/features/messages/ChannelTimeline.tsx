@@ -81,6 +81,8 @@ export type ChannelTimelineProps = {
   onOpenLink(url: string): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
+  /** A selected draft preview starts at the returned tail without persisting scroll. */
+  transient?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   onOpenThread?(
     messageId: string,
@@ -118,12 +120,15 @@ function Timeline({
   onOpenLink,
   canOpenLink,
   revealMessageId,
+  transient = false,
   navigation,
   onOpenThread,
   onOpenMediaReview,
 }: ChannelTimelineProps) {
   const [initialPosition] = useState(() =>
-    readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
+    transient
+      ? null
+      : readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
   );
   const savedPosition = useRef(initialPosition);
   const restoredAnchor = useRef<string | undefined>(undefined);
@@ -294,7 +299,8 @@ function Timeline({
     return () => {
       olderDemand.current = false;
       settled.current = false;
-      writeView(scope, `scroll:${channelId}`, savedPosition.current);
+      if (!transient)
+        writeView(scope, `scroll:${channelId}`, savedPosition.current);
       observer.disconnect();
       if (handle.current)
         geometry.set(
@@ -305,7 +311,7 @@ function Timeline({
         );
     };
     // Initial signature only; mutations invalidate the saved cache on remount.
-  }, [channelId, geometry, scope]);
+  }, [channelId, geometry, scope, transient]);
   useLayoutEffect(() => {
     // Row updates include edits/reactions/replies, not only new message IDs.
     // Above-bottom reading and prepend anchoring remain Virtua's responsibility.

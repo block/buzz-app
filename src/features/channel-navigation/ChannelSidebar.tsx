@@ -153,17 +153,21 @@ function SidebarNavigation({
     void navigator.open({
       version: 1,
       kind: "page",
-      pluginId: "buzz.channels",
-      pageId: "channels",
+      pluginId: destination === "Inbox" ? "buzz.inbox" : "buzz.channels",
+      pageId: destination === "Inbox" ? "inbox" : "channels",
       scope: { viewer, communityOrigin },
-      route: { version: 1, params: destination },
+      ...(destination === "Bestie"
+        ? { route: { version: 1, params: destination } }
+        : {}),
     });
   };
   const destinations = [
     {
       title: "Inbox",
       icon: <BellIcon weight="bold" size={15} />,
-      selected: placeholder === "Inbox",
+      selected:
+        placeholder === "Inbox" ||
+        (target.kind === "page" && target.pluginId === "buzz.inbox"),
       disabled: !viewer || communityOrigin === undefined,
       open: () => openChannelDestination("Inbox"),
     },

@@ -125,6 +125,7 @@ function setup({
   historyLimited = false,
   error = undefined as string | undefined,
   initial = undefined as unknown,
+  transient = false,
   mounted = [] as { id: string; y: number }[],
   initialRows = undefined as ChannelMessage[] | undefined,
 } = {}) {
@@ -291,6 +292,7 @@ function setup({
       },
       onOpenLink: () => false,
       revealMessageId,
+      transient,
     });
     if (key !== null && key !== scoped.key) {
       for (const effect of hooks.effects) effect.cleanup?.();
@@ -454,6 +456,14 @@ function setup({
     },
   };
 }
+
+it("starts a transient preview at the returned tail without changing saved canonical reading position", () => {
+  const original = { offset: 42, bottom: false, anchor: { id: "first", y: 5 } };
+  const h = setup({ initial: original, transient: true });
+  expect(h.element.scrollTop).toBeGreaterThan(0);
+  h.unmount();
+  expect(h.saved()).toEqual(original);
+});
 
 it("pins only the focused message by identity across prepend and releases on focus exit", () => {
   const h = setup();

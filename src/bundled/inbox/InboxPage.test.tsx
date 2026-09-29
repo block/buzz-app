@@ -1,0 +1,2024 @@
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import { StrictMode } from "react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { readView, writeView } from "../../shared/view-state";
+import { InboxPage } from "./InboxPage";
+import { composerDOMFixture } from "../../features/messages/composer-testing";
+import { createRelaySession } from "../../features/relay/session";
+import type { RelaySnapshot, RelayData } from "../../features/relay/service";
+import type { Navigation } from "../../features/navigation/controller";
+import type { ReadFilter, RelayEvent } from "../../features/relay/events";
+import { matchesEvent } from "../../features/relay/projection";
+import {
+  readJournal,
+  newReadJournal,
+  type ReadJournal,
+} from "../../features/relay/read-state-storage";
+import {
+  bounds,
+  keypair,
+  message,
+  metadata,
+  profile,
+  roster,
+  signed,
+} from "../../features/relay/testing";
+// @ts-expect-error Node host codec, with disposable test identities only.
+import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+
+const owners: ReturnType<typeof createRelaySession>[] = [];
+composerDOMFixture();
+beforeEach(() => localStorage.clear());
+vi.stubGlobal(
+  "ResizeObserver",
+  class {
+    observe() {}
+    disconnect() {}
+  },
+);
+HTMLElement.prototype.scrollIntoView = vi.fn();
+afterEach(() => {
+  cleanup();
+  for (const owner of owners.splice(0)) owner.dispose();
+  vi.useRealTimers();
+});
+function fixture(
+  options: {
+    failRoster?: boolean;
+    withDm?: boolean;
+    withSenders?: boolean;
+    holdProfiles?: boolean;
+    withWriter?: boolean;
+    sessionChannel?: boolean;
+    memberAgents?: 1 | 2;
+    readCapability?: "read-only" | "unsupported";
+  } = {},
+) {
+  const viewer = keypair(),
+    alice = keypair(),
+    agent = keypair(),
+    profileAgent = keypair(),
+    late = keypair(),
+    unknown = keypair(),
+    relayKey = keypair();
+  let releaseProfiles = () => {};
+  const profilesGate = options.holdProfiles
+    ? new Promise<void>((resolve) => {
+        releaseProfiles = resolve;
+      })
+    : undefined;
+  let rosterFailure = options.failRoster ?? false;
+  let rosterGate: Promise<void> | undefined;
+  let rosterStarted = false;
+  let evidenceReads = 0;
+  const historyRequests: string[] = [];
+  const threadRequests: string[] = [];
+  const exactRequests: string[] = [];
+  const published: RelayEvent[] = [];
+  const historyGates = new Map<string, Promise<void>>();
+  const historyFailures = new Set<string>();
+  const answer = (filter: ReadFilter): RelayEvent[] => {
+    const result = events.filter((event) => matchesEvent(event, filter));
+    if (filter.depth_limit) {
+      return result
+        .filter(
+          (event) =>
+            filter.thread_cursor === undefined ||
+            event.created_at > filter.thread_cursor ||
+            (event.created_at === filter.thread_cursor &&
+              event.id > (filter.thread_cursor_id ?? "")),
+        )
+        .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
+        .slice(0, filter.limit);
+    }
+    if (filter.top_level && filter["#h"]?.[0]) {
+      return [
+        ...result,
+        ...events.filter(
+          (event) =>
+            event.kind === 5 &&
+            event.tags.some(
+              ([key, value]) => key === "h" && value === filter["#h"]?.[0],
+            ),
+        ),
+        bounds(
+          relayKey,
+          filter["#h"][0],
+          filter.until === undefined
+            ? "head"
+            : `${filter.until}:${filter.before_id}`,
+          { has_more: false, next_cursor: null },
+        ),
+      ];
+    }
+    // Inbox's addressed feed is modeled by the existing unread evidence here.
+    return result.slice(0, filter.limit);
+  };
+  let journal: ReadJournal | undefined;
+  let saveFailure = false;
+  let failThreadSave = false;
+  let hold: Promise<void> | undefined;
+  let saveStarted = false;
+  let emit: (events: readonly RelayEvent[]) => void = () => {};
+  const roots = [message(viewer, "room", "Our discussion", 20)];
+  const mention = message(alice, "room", "Please review **this**", 21, [
+    ["p", viewer.pubkey],
+  ]);
+  const reply = message(alice, "room", "A thread update", 22, [
+    ["e", roots[0]?.id ?? "", "", "reply"],
+  ]);
+  const events = [
+    roster(
+      relayKey,
+      "room",
+      [
+        viewer.pubkey,
+        alice.pubkey,
+        ...(options.memberAgents ? [agent.pubkey] : []),
+        ...(options.memberAgents === 2 ? [profileAgent.pubkey] : []),
+      ],
+      10,
+    ),
+    metadata(
+      relayKey,
+      "room",
+      "Design",
+      10,
+      options.sessionChannel
+        ? [
+            ["t", "stream"],
+            ["private"],
+            ["about", "Buzz session (buzz.sessions/v1)"],
+          ]
+        : [["t", "stream"]],
+    ),
+    profile(alice, { name: "Alice" }),
+    ...roots,
+    mention,
+    reply,
+    ...(options.withDm
+      ? [
+          roster(relayKey, "dm-room", [viewer.pubkey, alice.pubkey], 10),
+          metadata(relayKey, "dm-room", "Direct message", 10, [
+            ["t", "dm"],
+            ["hidden"],
+          ]),
+          message(alice, "dm-room", "A direct reply", 23),
+        ]
+      : []),
+    ...(options.withSenders
+      ? [
+          roster(relayKey, "agent-dm", [viewer.pubkey, agent.pubkey], 10),
+          metadata(relayKey, "agent-dm", "Agent direct", 10, [
+            ["t", "dm"],
+            ["hidden"],
+          ]),
+          message(agent, "agent-dm", "Agent direct reply", 24),
+          message(agent, "room", "Agent mention", 25, [["p", viewer.pubkey]]),
+          message(unknown, "room", "Unprofiled mention", 26, [
+            ["p", viewer.pubkey],
+          ]),
+          profile(profileAgent, { name: "Public agent", is_agent: true }),
+          message(profileAgent, "room", "Public agent mention", 27, [
+            ["p", viewer.pubkey],
+          ]),
+          message(late, "room", "Late profile mention", 28, [
+            ["p", viewer.pubkey],
+          ]),
+        ]
+      : []),
+  ];
+  if (options.readCapability) {
+    journal = {
+      ...newReadJournal(),
+      state: {
+        frontiers: { [`msg:${mention.id}`]: mention.created_at },
+        overrides: {},
+      },
+      localUnread: { [`msg:${"f".repeat(64)}`]: 1 },
+      revision: 1,
+      acceptedRevision: 1,
+    };
+  }
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relayKey.pubkey,
+      query: async (filters) => {
+        if (profilesGate && filters.some((filter) => filter.kinds?.includes(0)))
+          await profilesGate;
+        if (filters.some((filter) => filter.kinds?.includes(39002))) {
+          rosterStarted = true;
+          if (rosterGate) await rosterGate;
+          if (rosterFailure) throw new Error("roster offline");
+        }
+        if (filters.some((filter) => filter.kinds?.includes(9)))
+          evidenceReads++;
+        for (const filter of filters) {
+          const channelId = filter["#h"]?.[0];
+          if (filter.top_level && channelId) historyRequests.push(channelId);
+          if (filter.depth_limit && channelId) threadRequests.push(channelId);
+          if (filter.ids && channelId) exactRequests.push(...filter.ids);
+          if (
+            (filter.top_level || filter.depth_limit || filter.ids) &&
+            channelId
+          ) {
+            await historyGates.get(channelId);
+            if (historyFailures.has(channelId))
+              throw new Error("history offline");
+          }
+        }
+        return filters.flatMap(answer);
+      },
+      media: () => undefined,
+      ...(options.withWriter
+        ? {
+            writer: {
+              kinds: [9, 9007],
+              sign: async (template: import("nostr-tools").EventTemplate) =>
+                signed(viewer, template),
+              publish: async (event: RelayEvent) => {
+                published.push(event);
+              },
+            },
+          }
+        : {}),
+      ...(options.withSenders || options.memberAgents
+        ? {
+            readAgentLibrary: async () => ({
+              definitions: [],
+              identities: [
+                { pubkey: agent.pubkey, name: "Scout" },
+                ...(options.memberAgents === 2
+                  ? [{ pubkey: profileAgent.pubkey, name: "Second agent" }]
+                  : []),
+              ],
+            }),
+          }
+        : {}),
+      subscribe(callbacks) {
+        if (options.memberAgents)
+          callbacks.state({ status: "connected", routes: [] });
+        emit = callbacks.receive;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+      ...(options.readCapability === "unsupported"
+        ? {}
+        : {
+            readState: {
+              decode: async (records: readonly RelayEvent[]) =>
+                decodeReadState(records, viewer.secret),
+              ...(options.readCapability === "read-only"
+                ? {}
+                : {
+                    sign: async (
+                      intent: import("../../features/relay/read-state-host").ReadStateSigning,
+                    ) => signReadState(intent, viewer.secret),
+                    publish: async (event: RelayEvent) => {
+                      events.push(event);
+                    },
+                  }),
+            },
+          }),
+    },
+    {
+      outboxStorage: { load: () => [], save: () => {} },
+      readStateStorage: {
+        async update(change) {
+          if (hold) {
+            saveStarted = true;
+            const wait = hold;
+            hold = undefined;
+            await wait;
+          }
+          if (saveFailure) {
+            saveFailure = false;
+            throw new Error("disk full");
+          }
+          const next = readJournal(change(journal), viewer.pubkey);
+          if (
+            failThreadSave &&
+            Object.keys(next.state.frontiers).some(
+              (key) =>
+                key.startsWith("thread:") &&
+                next.state.frontiers[key] !== journal?.state.frontiers[key],
+            )
+          ) {
+            failThreadSave = false;
+            throw new Error("thread disk full");
+          }
+          journal = next;
+          return journal;
+        },
+        close() {},
+      },
+      readPublisherLock: async (_signal, work) => work(),
+    },
+  );
+  owners.push(owner);
+  if (!options.failRoster) emit(events);
+  const scope = {
+    viewer: viewer.pubkey,
+    communityOrigin: "https://relay.test",
+  };
+  const readSteps: {
+    target: Parameters<typeof owner.session.unread.markThrough>[0];
+    id: string;
+    work: ReturnType<typeof owner.session.unread.markThrough>;
+  }[] = [];
+  const observedSession = {
+    ...owner.session,
+    unread: {
+      ...owner.session.unread,
+      markThrough(
+        target: Parameters<typeof owner.session.unread.markThrough>[0],
+        id: string,
+      ) {
+        const work = owner.session.unread.markThrough(target, id);
+        readSteps.push({ target, id, work });
+        return work;
+      },
+    },
+  };
+  let connection: RelaySnapshot = {
+    status: "ready",
+    generation: 1,
+    scope: `${scope.communityOrigin}:${scope.viewer}`,
+    viewer: scope.viewer,
+    session: observedSession,
+  };
+  const subscribers = new Set<() => void>();
+  const relay: RelayData = {
+    snapshot: () => connection,
+    subscribe(listener) {
+      subscribers.add(listener);
+      return () => subscribers.delete(listener);
+    },
+    retry() {},
+    disconnect() {},
+    clearCache: owner.clearCache,
+  };
+  const open = vi.fn<Navigation["open"]>(async () => ({ status: "opened" }));
+  return {
+    owner,
+    relay,
+    readSteps,
+    evidenceReads: () => evidenceReads,
+    historyRequests,
+    threadRequests,
+    exactRequests,
+    published,
+    deleteHistory(channelId: string) {
+      const deletions = events
+        .filter(
+          (e) =>
+            e.kind === 9 &&
+            e.tags.some(([k, v]) => k === "h" && v === channelId),
+        )
+        .map((event) =>
+          signed(event.pubkey === viewer.pubkey ? viewer : alice, {
+            kind: 5,
+            tags: [
+              ["h", channelId],
+              ["e", event.id],
+            ],
+            content: "",
+            created_at: 200,
+          }),
+        );
+      events.push(...deletions);
+      emit(deletions);
+    },
+    retireThreadRoot() {
+      const root = roots[0];
+      if (!root) throw new Error("Missing fixture root");
+      const deletion = signed(viewer, {
+        kind: 5,
+        tags: [
+          ["h", "room"],
+          ["e", root.id],
+        ],
+        content: "",
+        created_at: 200,
+      });
+      events.push(deletion);
+      emit([deletion]);
+    },
+    root: roots[0],
+    failHistory(channelId: string) {
+      historyFailures.add(channelId);
+    },
+    recoverHistory(channelId: string) {
+      historyFailures.delete(channelId);
+    },
+    emptyHistory(channelId: string) {
+      for (let i = events.length - 1; i >= 0; i--)
+        if (
+          events[i]?.kind === 9 &&
+          events[i]?.tags.some(([k, v]) => k === "h" && v === channelId)
+        )
+          events.splice(i, 1);
+    },
+    holdHistory(channelId: string) {
+      let release = () => {};
+      historyGates.set(
+        channelId,
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+      );
+      return () => {
+        historyGates.delete(channelId);
+        release();
+      };
+    },
+    rosterStarted: () => rosterStarted,
+    releaseProfiles,
+    agent,
+    unknown,
+    late,
+    alice,
+    viewer,
+    profileAgent,
+    emit,
+    events,
+    publishLateProfile() {
+      act(() => emit([profile(late, { name: "Late person" }, 30)]));
+    },
+    publishAgentProfile() {
+      act(() => emit([profile(agent, { name: "Scout", is_agent: true }, 27)]));
+    },
+    publishMalformedProfile() {
+      act(() =>
+        emit([
+          signed(unknown, {
+            kind: 0,
+            tags: [],
+            content: "broken",
+            created_at: 27,
+          }),
+        ]),
+      );
+    },
+    recoverRoster() {
+      rosterFailure = false;
+      rosterStarted = false;
+      let release = () => {};
+      rosterGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return release;
+    },
+    scope,
+    mention,
+    reply,
+    open,
+    journal: () => journal,
+    view: (
+      <StrictMode>
+        <InboxPage
+          relay={relay}
+          navigator={{ open } as unknown as Navigation}
+        />
+      </StrictMode>
+    ),
+    revokeRoom() {
+      emit([roster(relayKey, "room", [alice.pubkey], 100)]);
+    },
+    restoreRoom() {
+      const restored = roster(
+        relayKey,
+        "room",
+        [viewer.pubkey, alice.pubkey],
+        101,
+      );
+      events.push(restored);
+      emit([restored, mention, reply, ...roots]);
+    },
+    renameRoom() {
+      const renamed = metadata(relayKey, "room", "Renamed", 99, [
+        ["t", "stream"],
+      ]);
+      events.push(renamed);
+      emit([renamed]);
+    },
+    failSave() {
+      saveFailure = true;
+    },
+    failThreadSave() {
+      failThreadSave = true;
+    },
+    saveStarted: () => saveStarted,
+    holdSave() {
+      saveStarted = false;
+      let release = () => {};
+      hold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return release;
+    },
+    disconnect() {
+      connection = { ...connection, status: "disconnected", generation: 2 };
+      for (const listener of subscribers) listener();
+    },
+  };
+}
+const rows = () =>
+  within(
+    screen.getByRole("list", { name: "Inbox conversations" }),
+  ).queryAllByRole("listitem");
+async function chooseFilter(label: string, control = "Activity type") {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: control }));
+  await user.click(await screen.findByRole("option", { name: label }));
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: control })).toHaveTextContent(
+      label,
+    ),
+  );
+}
+async function openRowMenu(
+  method: "context" | "keyboard" | "contextKey" = "context",
+) {
+  const row = rows()[0];
+  if (!row) throw new Error("Missing inbox row");
+  if (method === "context")
+    fireEvent.contextMenu(within(row).getByRole("button", { name: /^Open / }), {
+      clientX: 20,
+      clientY: 20,
+    });
+  else {
+    const open = within(row).getByRole("button", { name: /^Open / });
+    open.focus();
+    fireEvent.keyDown(
+      open,
+      method === "keyboard"
+        ? { key: "F10", shiftKey: true }
+        : { key: "ContextMenu" },
+    );
+  }
+  return screen.findByRole("menuitem", { name: "Mark unread" });
+}
+it("filters real session evidence, opens an exact message and marks it read, and shares durable local unread", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Checking recent activity…"),
+    ).not.toBeInTheDocument(),
+  );
+  expect(rows()).toHaveLength(2);
+  await chooseFilter("Mentions");
+  expect(rows()).toHaveLength(1);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Open Alice in #Design" }),
+  );
+  expect(
+    await screen.findByRole("region", { name: "Inbox detail" }),
+  ).toBeInTheDocument();
+  expect(h.open).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Open in channel" }));
+  await waitFor(() =>
+    expect(h.open).toHaveBeenCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope: h.scope,
+      channelId: "room",
+      messageId: h.mention.id,
+    }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("img", { name: "Unread" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21);
+  expect(
+    h.owner.session.unread.snapshot({ kind: "channel", channelId: "room" })
+      .observedCount,
+  ).toBe(1);
+  fireEvent.click(await openRowMenu("keyboard"));
+  await waitFor(() =>
+    expect(screen.getByRole("img", { name: "Unread" })).toBeInTheDocument(),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in #Design" }),
+  );
+  expect(screen.getByRole("img", { name: "Unread" })).toBeInTheDocument();
+  expect(
+    screen.queryByText(/Marked unread on this device/),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Unread only" }));
+  expect(rows()).toHaveLength(1);
+  await chooseFilter("Threads");
+  expect(rows()).toHaveLength(1);
+  expect(screen.getByText("A thread update")).toBeInTheDocument();
+});
+
+it("puts the actual channel or DM source below the sender without category tags", async () => {
+  const h = fixture({ withDm: true });
+  render(h.view);
+  await screen.findByText("A direct reply");
+  await waitFor(() => expect(rows()).toHaveLength(3));
+  const dmRow = rows().find((row) =>
+    row.textContent?.includes("A direct reply"),
+  );
+  const mentionRow = rows().find((row) =>
+    row.textContent?.includes("Please review this"),
+  );
+  if (!dmRow || !mentionRow) throw new Error("Expected DM and channel rows");
+  const dmSource = dmRow.querySelector("[data-inbox-source]");
+  const channelSource = mentionRow.querySelector("[data-inbox-source]");
+  expect(dmSource).toHaveTextContent("DM · Alice");
+  expect(channelSource).toHaveTextContent("#Design");
+  expect(
+    within(dmRow).getByText("Alice", { selector: "strong" }),
+  ).toBeInTheDocument();
+  expect(
+    within(mentionRow).getByText("Alice", { selector: "strong" }),
+  ).toBeInTheDocument();
+  expect(dmSource).toHaveClass(/source/);
+  expect(channelSource).toHaveClass(/source/);
+  expect(
+    (dmSource?.compareDocumentPosition(
+      within(dmRow).getByText("A direct reply"),
+    ) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    (channelSource?.compareDocumentPosition(
+      within(mentionRow).getByText("Please review this"),
+    ) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  for (const row of [dmRow, mentionRow]) {
+    expect(row).not.toHaveTextContent(
+      / · (Mention|Thread|Agent)|Needs action|Project update/,
+    );
+  }
+  expect(
+    within(dmRow).getByRole("button", { name: "Open Alice in DM · Alice" }),
+  ).toBeInTheDocument();
+  await chooseFilter("DMs");
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]).toHaveTextContent("A direct reply");
+  await chooseFilter("Mentions");
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]).toHaveTextContent("Please review this");
+  await chooseFilter("All activity");
+  expect(rows()).toHaveLength(3);
+});
+
+it("intersects activity and representative sender evidence without inferring missing profiles", async () => {
+  const h = fixture({ withDm: true, withSenders: true, holdProfiles: true });
+  render(h.view);
+  await screen.findByText("Agent direct reply");
+  expect(
+    screen.getByRole("combobox", { name: "Activity type" }),
+  ).toHaveTextContent("All activity");
+  expect(screen.getByRole("combobox", { name: "Sender" })).toHaveTextContent(
+    "Everyone",
+  );
+  await chooseFilter("DMs");
+  await chooseFilter("Agents", "Sender");
+  // Inbox's idle-only ensure reads the shared choices; no filter-owned inventory.
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]).toHaveTextContent("Agent direct reply");
+  await chooseFilter("Mentions");
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]).toHaveTextContent("Agent mention");
+  await chooseFilter("Humans", "Sender");
+  expect(rows()).toHaveLength(0);
+  try {
+    await act(async () => h.releaseProfiles());
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).toHaveTextContent("Please review this");
+    await chooseFilter("Agents", "Sender");
+    h.publishAgentProfile();
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    expect(
+      rows().some((row) => row.textContent?.includes("Public agent mention")),
+    ).toBe(true);
+    await chooseFilter("Humans", "Sender");
+    h.publishMalformedProfile();
+    h.publishLateProfile();
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    expect(
+      rows().some((row) => row.textContent?.includes("Late profile mention")),
+    ).toBe(true);
+    expect(
+      rows().some((row) => row.textContent?.includes("Unprofiled mention")),
+    ).toBe(false);
+    await chooseFilter("Everyone", "Sender");
+    await waitFor(() => expect(rows().length).toBeGreaterThan(4));
+    expect(
+      rows().some((row) => row.textContent?.includes("Unprofiled mention")),
+    ).toBe(true);
+    expect(h.journal()?.state.frontiers).toEqual({}); // filtering never marks read
+  } finally {
+    h.releaseProfiles();
+  }
+});
+
+it("omits visible row overflow buttons and preserves disabled unread via right-click", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  const row = rows()[0];
+  if (!row) throw new Error("Missing inbox row");
+  expect(within(row).getAllByRole("button")).toHaveLength(1);
+  expect(
+    within(row).queryByRole("button", { name: /^Actions for / }),
+  ).not.toBeInTheDocument();
+  expect(row.querySelector("[data-inbox-row-overflow]")).toBeNull();
+  expect(within(row).getByRole("img", { name: "Unread" })).toBeInTheDocument();
+  const action = await openRowMenu("context");
+  expect(action).toHaveAttribute("aria-disabled", "true");
+  expect(
+    screen.queryByRole("region", { name: "Inbox detail" }),
+  ).not.toBeInTheDocument();
+  expect(h.journal()?.state.frontiers).toEqual({});
+});
+
+it("opens local unread actions with the ContextMenu key without changing selection", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in #Design" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("img", { name: "Unread" }),
+    ).not.toBeInTheDocument(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Close thread" }));
+  const action = await openRowMenu("contextKey");
+  expect(action).toHaveTextContent("Mark unread");
+  expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21);
+  expect(
+    screen.queryByRole("region", { name: "Inbox detail" }),
+  ).not.toBeInTheDocument();
+  fireEvent.keyDown(action, { key: "Escape" });
+});
+
+it("holds read actions pending, surfaces storage failure, and retries without losing evidence", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  const release = h.holdSave();
+  h.failSave();
+  try {
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open Alice in #Design" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("region", { name: "Inbox detail" }),
+      ).toBeInTheDocument(),
+    );
+  } finally {
+    await act(async () => release());
+  }
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  expect(screen.getByText("Please review this")).toBeInTheDocument();
+  expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("img", { name: "Unread" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21);
+});
+
+it.each([false, true])(
+  "a two-step Inbox read admits the second prefix only while mounted (retire=%s)",
+  async (retire) => {
+    const h = fixture();
+    const root = message(h.alice, "room", "Two-step root", 30, [
+      ["p", h.viewer.pubkey],
+    ]);
+    const child = message(h.alice, "room", "Two-step reply", 31, [
+      ["p", h.viewer.pubkey],
+      ["e", root.id, "", "reply"],
+    ]);
+    h.events.push(root, child);
+    h.emit([root, child]);
+    render(h.view);
+    await screen.findByText("Two-step root");
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Checking recent activity…"),
+      ).not.toBeInTheDocument(),
+    );
+    const row = h.owner.session.unread
+      .inbox()
+      .items.find((item) => item.id === `room:${root.id}`);
+    if (!row) throw Error("Missing two-step conversation");
+    expect(row.readThrough).toEqual([
+      {
+        target: { kind: "message", channelId: "room", messageId: root.id },
+        messageId: root.id,
+      },
+      {
+        target: { kind: "thread", channelId: "room", rootId: root.id },
+        messageId: child.id,
+      },
+    ]);
+    const release = h.holdSave();
+    try {
+      const target = rows().find((row) =>
+        row.textContent?.includes("Two-step root"),
+      );
+      if (!target) throw Error("Missing two-step row");
+      fireEvent.click(within(target).getByRole("button"));
+      await waitFor(() => expect(h.saveStarted()).toBe(true));
+      expect(h.readSteps).toHaveLength(1);
+      expect(h.readSteps[0]?.id).toBe(root.id);
+      if (retire) act(() => h.disconnect());
+    } finally {
+      await act(async () => release());
+    }
+    const first = h.readSteps[0];
+    if (!first) throw Error("First read never started");
+    await act(async () => {
+      await first.work;
+    });
+    if (!retire) {
+      await waitFor(() => expect(h.readSteps).toHaveLength(2));
+      const second = h.readSteps[1];
+      if (!second) throw Error("Second read never started");
+      await act(async () => {
+        await second.work;
+      });
+      expect(second.id).toBe(child.id);
+      expect(h.journal()?.state.frontiers[`thread:${root.id}`]).toBe(31);
+    } else {
+      expect(h.readSteps).toHaveLength(1);
+      expect(h.journal()?.state.frontiers[`thread:${root.id}`]).toBeUndefined();
+      expect(
+        screen.getByText("Choose a community to see your inbox."),
+      ).toBeInTheDocument();
+    }
+    expect(h.journal()?.state.frontiers[`msg:${root.id}`]).toBe(30);
+  },
+);
+
+it("shows two accessible filters without removed options, bulk action or coverage boilerplate", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  expect(screen.getAllByRole("combobox")).toHaveLength(2);
+  expect(
+    screen.getByRole("combobox", { name: "Activity type" }),
+  ).toHaveTextContent("All activity");
+  expect(screen.getByRole("combobox", { name: "Sender" })).toHaveTextContent(
+    "Everyone",
+  );
+  expect(screen.getByText("Activity type")).toHaveClass("sr-only");
+  expect(screen.getByText("Sender", { selector: ".sr-only" })).toHaveClass(
+    "sr-only",
+  );
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", {
+      name: /Mark shown as read|Mark as read|Mark unread/,
+    }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByText(
+      /Verified recent conversations|Results are bounded|Feed history reached its result limit|Read-state sync is unavailable on this host/,
+    ),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("checkbox", { name: "Unread only" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Refresh" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("combobox", { name: "Activity type" }));
+  for (const label of ["Projects", "Needs action"]) {
+    expect(
+      screen.queryByRole("option", { name: label }),
+    ).not.toBeInTheDocument();
+  }
+  expect(screen.queryByText("Activity")).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("option", { name: "All activity" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("option", { name: "Drafts" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Drafts" })).toBeInTheDocument();
+});
+
+it("waits for roster recovery before explicit evidence refresh", async () => {
+  const h = fixture({ failRoster: true });
+  render(h.view);
+  expect(await screen.findByRole("alert")).toHaveTextContent("roster offline");
+  const baseline = h.evidenceReads();
+  const release = h.recoverRoster();
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+    await waitFor(() => expect(h.rosterStarted()).toBe(true));
+    expect(h.evidenceReads()).toBe(baseline);
+  } finally {
+    await act(async () => release());
+  }
+  await screen.findByText("Please review this");
+  expect(h.evidenceReads()).toBeGreaterThan(baseline);
+});
+
+it("Drafts shares the composer storage, gates origin navigation on current membership, and deletes only after consent", async () => {
+  const h = fixture({ withWriter: true });
+  const root = h.mention.id;
+  const key = `draft:room:thread:${root}`;
+  const saved = {
+    text: "Draft reply @Alice",
+    recipients: [
+      { pubkey: h.mention.pubkey, name: "Alice", start: 12, end: 18 },
+    ],
+  };
+  writeView(h.owner.session.scope, key, saved);
+  writeView("other-scope", "draft:room", "Private other viewer draft");
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Threads");
+  await chooseFilter("Humans", "Sender");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Unread only" }));
+  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  expect(
+    screen.queryByRole("combobox", { name: "Activity type" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("combobox", { name: "Sender" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("checkbox", { name: "Unread only" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Back to Inbox" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Refresh" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("list", { name: "Drafts" })).toHaveTextContent(
+    "Draft reply @Alice",
+  );
+  expect(
+    screen.queryByText(/Private other viewer draft/),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByText(/Saved drafts on this device/),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Back to drafts" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Continue in conversation" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open draft for #Design" }),
+  );
+  expect(
+    screen.getByRole("heading", { name: "Draft · Reply in #Design" }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Delete draft…" })).toHaveAttribute(
+    "data-variant",
+    "destructive",
+  );
+  expect(screen.getByRole("button", { name: "Delete draft…" })).toHaveAttribute(
+    "data-size",
+    "sm",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Open in origin" }));
+  await waitFor(() =>
+    expect(h.open).toHaveBeenCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope: h.scope,
+      channelId: "room",
+      messageId: root,
+      threadRootId: root,
+    }),
+  );
+  expect(readView(h.owner.session.scope, key, "")).toEqual(saved);
+  fireEvent.click(screen.getByRole("button", { name: "Delete draft…" }));
+  expect(readView(h.owner.session.scope, key, "")).toEqual(saved);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(readView(h.owner.session.scope, key, "")).toEqual(saved);
+  fireEvent.click(screen.getByRole("button", { name: "Delete draft…" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
+  expect(readView(h.owner.session.scope, key, "")).toBe("");
+  expect(screen.getByText("No drafts")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Back to Inbox" }));
+  expect(
+    screen.getByRole("combobox", { name: "Activity type" }),
+  ).toHaveTextContent("Threads");
+  expect(screen.getByRole("combobox", { name: "Sender" })).toHaveTextContent(
+    "Humans",
+  );
+  expect(screen.getByRole("checkbox", { name: "Unread only" })).toBeChecked();
+  expect(h.journal()?.state.frontiers).toEqual({});
+});
+
+it("Drafts responds to same-window editor changes and disables composition if membership disappears", async () => {
+  const h = fixture({ withWriter: true });
+  render(h.view);
+  await screen.findByText("Please review this");
+  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  expect(screen.getByText("No drafts")).toBeVisible();
+  act(() =>
+    writeView(h.owner.session.scope, "draft:room", {
+      text: "Unsent message",
+      recipients: [],
+    }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open draft for #Design" }),
+  );
+  expect(screen.getByRole("button", { name: "Open in origin" })).toBeEnabled();
+  expect(screen.getByRole("textbox", { name: "Message #Design" })).toHaveValue(
+    "Unsent message",
+  );
+  act(() => h.revokeRoom());
+  expect(
+    screen.queryByRole("button", { name: "Open in origin" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("textbox", { name: "Message #Design" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Delete draft…" }));
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(
+    screen.getByRole("heading", { name: "Draft · Unavailable conversation" }),
+  ).toBeInTheDocument();
+  expect(readView(h.owner.session.scope, "draft:room", "")).toMatchObject({
+    text: "Unsent message",
+  });
+  expect(h.open).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Close detail" }));
+  expect(
+    screen.queryByRole("region", { name: "Draft detail" }),
+  ).not.toBeInTheDocument();
+  expect(readView(h.owner.session.scope, "draft:room", "")).toMatchObject({
+    text: "Unsent message",
+  });
+});
+
+it("a failed confirmed draft deletion keeps the original saved text and remains retryable", async () => {
+  const h = fixture();
+  const key = "draft:room";
+  writeView(h.owner.session.scope, key, "Do not discard me");
+  render(h.view);
+  await screen.findByText("Please review this");
+  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open draft for #Design" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Delete draft…" }));
+  const failure = vi
+    .spyOn(Storage.prototype, "removeItem")
+    .mockImplementation(() => {
+      throw new Error("disk full");
+    });
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("disk full");
+    expect(readView(h.owner.session.scope, key, "")).toBe("Do not discard me");
+  } finally {
+    failure.mockRestore();
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
+  expect(readView(h.owner.session.scope, key, "")).toBe("");
+  expect(screen.getByText("No drafts")).toBeInTheDocument();
+});
+
+it("a selected DM draft reads only its real window and preserves its scoped composer", async () => {
+  const h = fixture({ withDm: true, withWriter: true });
+  writeView(h.owner.session.scope, "draft:dm-room", "DM draft body");
+  writeView(h.owner.session.scope, "draft:room", "Channel draft body");
+  render(h.view);
+  await screen.findByText("A direct reply");
+  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  expect(h.owner.session.channels.window("room").status).toBe("idle");
+  expect(h.owner.session.channels.window("dm-room").status).toBe("idle");
+  fireEvent.click(screen.getByRole("button", { name: "Open draft for Alice" }));
+  const preview = () =>
+    screen.getByRole("region", { name: "Conversation preview" });
+  await waitFor(() =>
+    expect(h.owner.session.channels.window("dm-room").status).toBe("ready"),
+  );
+  expect(
+    h.owner.session.channels
+      .window("dm-room")
+      .rows.some((row) => row.content === "A direct reply"),
+  ).toBe(true);
+  expect(h.owner.session.channels.window("room").status).toBe("idle");
+  expect(
+    within(preview()).getByRole("textbox", { name: "Message DM with Alice" }),
+  ).toHaveValue("DM draft body");
+  expect(within(preview()).getAllByRole("form")).toHaveLength(1);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open draft for #Design" }),
+  );
+  await waitFor(() =>
+    expect(h.owner.session.channels.window("room").status).toBe("ready"),
+  );
+  expect(
+    within(preview()).getByRole("textbox", { name: "Message #Design" }),
+  ).toHaveValue("Channel draft body");
+  expect(
+    screen.queryByRole("textbox", { name: "Message DM with Alice" }),
+  ).not.toBeInTheDocument();
+  expect(readView(h.owner.session.scope, "draft:dm-room", "")).toBe(
+    "DM draft body",
+  );
+});
+
+it("a selected draft edits through the shared scoped composer without navigating or sending", async () => {
+  const h = fixture({ withWriter: true });
+  const key = "draft:room";
+  writeView(h.owner.session.scope, key, "First draft");
+  render(h.view);
+  await screen.findByText("Please review this");
+  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open draft for #Design" }),
+  );
+  const input = screen.getByRole("textbox", { name: "Message #Design" });
+  expect(input).toHaveValue("First draft");
+  fireEvent.input(input, { target: { value: "Revised draft" } });
+  await waitFor(() =>
+    expect(readView(h.owner.session.scope, key, "")).toMatchObject({
+      text: "Revised draft",
+    }),
+  );
+  expect(h.open).not.toHaveBeenCalled();
+  expect(h.journal()?.state.frontiers).toEqual({});
+});
+
+it("DM draft headings use exact roster participants and recover as profile evidence arrives", async () => {
+  const h = fixture({ withDm: true, holdProfiles: true, withWriter: true });
+  const key = "draft:dm-room";
+  writeView(h.owner.session.scope, key, {
+    text: "  hi\n  again ",
+    recipients: [],
+  });
+  render(h.view);
+  await screen.findByText("A direct reply");
+  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  const detail = () => screen.getByRole("region", { name: "Draft detail" });
+  const row = screen.getByRole("list", { name: "Drafts" });
+  expect(row).toHaveTextContent("DM");
+  fireEvent.click(
+    within(row).getByRole("button", { name: /^Open draft for / }),
+  );
+  expect(
+    within(detail()).getByRole("heading", { name: /Draft · DM to npub/ }),
+  ).toBeInTheDocument();
+  expect(
+    within(detail()).getByRole("textbox", { name: /Message DM with npub/ }),
+  ).toHaveValue("  hi\n  again ");
+  try {
+    await act(async () => h.releaseProfiles());
+    await waitFor(() =>
+      expect(
+        within(detail()).getByRole("heading", { name: "Draft · DM to Alice" }),
+      ).toBeInTheDocument(),
+    );
+    expect(h.journal()?.state.frontiers).toEqual({});
+  } finally {
+    h.releaseProfiles();
+  }
+});
+
+it("cache clear shows explicit refresh instead of a spinner with no pending work", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Checking recent activity…"),
+    ).not.toBeInTheDocument(),
+  );
+  await act(async () => {
+    await h.owner.clearCache();
+  });
+  expect(screen.getByText("Check recent activity.")).toBeVisible();
+  expect(
+    screen.queryByText("Checking recent activity…"),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByText("Please review this");
+});
+
+it("holds selected history, surfaces failure, and retries to a genuinely empty channel without losing the draft", async () => {
+  const h = fixture({ withDm: true, withWriter: true });
+  writeView(
+    h.owner.session.scope,
+    "draft:dm-room",
+    "Keep while history recovers",
+  );
+  render(h.view);
+  await screen.findByText("A direct reply");
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Checking recent activity…"),
+    ).not.toBeInTheDocument(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  const release = h.holdHistory("dm-room");
+  h.failHistory("dm-room");
+  try {
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open draft for Alice" }),
+    );
+    await waitFor(() => expect(h.historyRequests).toContain("dm-room"));
+    expect(screen.queryByText("No messages yet.")).not.toBeInTheDocument();
+    expect(h.owner.session.channels.window("dm-room").status).toBe("loading");
+    expect(screen.getAllByRole("textbox")).toHaveLength(1);
+  } finally {
+    await act(async () => release());
+  }
+  expect(
+    await screen.findByRole("button", { name: "Retry conversation" }),
+  ).toBeInTheDocument();
+  expect(
+    screen
+      .getAllByRole("alert")
+      .some((node) => node.textContent?.includes("history offline")),
+  ).toBe(true);
+  expect(screen.queryByText("Loading conversation…")).not.toBeInTheDocument();
+  act(() => h.deleteHistory("dm-room"));
+  h.recoverHistory("dm-room");
+  fireEvent.click(screen.getByRole("button", { name: "Retry conversation" }));
+  await screen.findByText("No messages yet.");
+  expect(
+    screen.queryByRole("button", { name: "Retry conversation" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("textbox", { name: "Message DM with Alice" }),
+  ).toHaveValue("Keep while history recovers");
+});
+
+it("retargets a held DM history without leaking the old context or draft and sends only to the selected channel", async () => {
+  const h = fixture({ withDm: true, withWriter: true });
+  writeView(h.owner.session.scope, "draft:dm-room", "Keep DM draft");
+  writeView(h.owner.session.scope, "draft:room", "Send this channel draft");
+  render(h.view);
+  await screen.findByText("A direct reply");
+  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  const release = h.holdHistory("dm-room");
+  try {
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open draft for Alice" }),
+    );
+    await waitFor(() => expect(h.historyRequests).toContain("dm-room"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open draft for #Design" }),
+    );
+    await waitFor(() =>
+      expect(h.owner.session.channels.window("room").status).toBe("ready"),
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Message #Design" }),
+    ).toHaveValue("Send this channel draft");
+    expect(
+      screen.queryByRole("textbox", { name: /Message DM/ }),
+    ).not.toBeInTheDocument();
+  } finally {
+    await act(async () => release());
+  }
+  await waitFor(() =>
+    expect(h.owner.session.channels.window("dm-room").status).toBe("ready"),
+  );
+  expect(screen.getAllByRole("textbox")).toHaveLength(1);
+  const detail = screen.getByRole("region", { name: "Draft detail" });
+  expect(
+    within(detail).getByRole("region", { name: "Channel message history" }),
+  ).toHaveAttribute("data-channel-timeline", "room");
+  fireEvent.click(within(detail).getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(h.published).toHaveLength(1));
+  expect(h.published[0]).toMatchObject({
+    kind: 9,
+    content: "Send this channel draft",
+  });
+  expect(h.published[0]?.tags).toContainEqual(["h", "room"]);
+  expect(h.published[0]?.tags.some(([tag]) => tag === "e")).toBe(false);
+  expect(readView(h.owner.session.scope, "draft:dm-room", "")).toBe(
+    "Keep DM draft",
+  );
+});
+
+it("renders an exact draft thread's real root and replies with one composer and sends to that root", async () => {
+  const h = fixture({ withWriter: true });
+  if (!h.root) throw new Error("Missing root");
+  const key = `draft:room:thread:${h.root.id}`;
+  writeView(h.owner.session.scope, key, "Thread draft to send");
+  render(h.view);
+  await screen.findByText("Please review this");
+  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  const release = h.holdHistory("room");
+  try {
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open draft for #Design" }),
+    );
+    await waitFor(() => expect(h.exactRequests).toContain(h.root?.id));
+    expect(
+      screen.queryByRole("textbox", { name: "Reply to thread" }),
+    ).not.toBeInTheDocument();
+  } finally {
+    await act(async () => release());
+  }
+  const history = await screen.findByRole("region", {
+    name: "Thread messages",
+  });
+  await within(history).findByText("Our discussion");
+  await within(history).findByText("A thread update");
+  const input = await screen.findByRole("textbox", { name: "Reply to thread" });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
+  );
+  expect(input).toHaveValue("Thread draft to send");
+  expect(screen.getAllByRole("textbox")).toHaveLength(1);
+  expect(h.historyRequests).toHaveLength(0);
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(h.published).toHaveLength(1));
+  expect(h.published[0]?.tags).toContainEqual(["h", "room"]);
+  expect(h.published[0]?.tags).toContainEqual(["e", h.root.id, "", "reply"]);
+  expect(readView(h.owner.session.scope, key, "")).toMatchObject({ text: "" });
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("region", { name: "Draft detail" }),
+    ).not.toBeInTheDocument(),
+  );
+});
+
+it("keeps the scoped draft but removes its thread composer and history when the root is deleted", async () => {
+  const h = fixture({ withWriter: true });
+  if (!h.root) throw new Error("Missing root");
+  const key = `draft:room:thread:${h.root.id}`;
+  writeView(h.owner.session.scope, key, "Do not retarget this reply");
+  render(h.view);
+  await screen.findByText("Please review this");
+  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open draft for #Design" }),
+  );
+  await screen.findByRole("textbox", { name: "Reply to thread" });
+  act(() => h.retireThreadRoot());
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("textbox", { name: "Reply to thread" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(screen.queryByText("Our discussion")).not.toBeInTheDocument();
+  expect(readView(h.owner.session.scope, key, "")).toBe(
+    "Do not retarget this reply",
+  );
+  expect(h.published).toHaveLength(0);
+});
+
+it("keeps a failed origin navigation above the retained preview instead of adding a grid column", async () => {
+  const h = fixture({ withDm: true, withWriter: true });
+  h.open.mockResolvedValue({ status: "failed", reason: "unavailable" });
+  render(h.view);
+  await screen.findByText("A direct reply");
+  await chooseFilter("DMs");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in DM · Alice" }),
+  );
+  const detail = screen.getByRole("region", { name: "Inbox detail" });
+  const preview = within(detail).getByRole("region", {
+    name: "Conversation preview",
+  });
+  fireEvent.click(
+    within(detail).getByRole("button", { name: "Open in channel" }),
+  );
+  const error = await within(detail).findByRole("alert");
+  expect(error).toHaveTextContent("This conversation could not be opened");
+  expect(error.parentElement).toBe(preview.parentElement);
+  expect(preview.parentElement?.parentElement).toBe(detail);
+  expect(within(preview).getAllByRole("textbox")).toHaveLength(1);
+});
+
+it("retries thread history failure without another composer and never rebinds a malformed saved thread coordinate", async () => {
+  const h = fixture({ withWriter: true });
+  if (!h.root) throw new Error("Missing root");
+  const key = `draft:room:thread:${h.root.id}`;
+  writeView(h.owner.session.scope, key, "Retry this thread draft");
+  render(h.view);
+  await screen.findByText("Please review this");
+  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  h.failHistory("room");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open draft for #Design" }),
+  );
+  const retry = await screen.findByRole("button", { name: "Retry thread" });
+  expect(
+    screen.queryByRole("textbox", { name: "Reply to thread" }),
+  ).not.toBeInTheDocument();
+  h.recoverHistory("room");
+  fireEvent.click(retry);
+  const composer = await screen.findByRole("textbox", {
+    name: "Reply to thread",
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
+  );
+  expect(composer).toHaveValue("Retry this thread draft");
+  fireEvent.click(screen.getByRole("button", { name: "Close thread" }));
+  // A saved reply ID cannot silently resolve to another root-keyed draft.
+  act(() => {
+    writeView(h.owner.session.scope, key, "");
+    writeView(
+      h.owner.session.scope,
+      `draft:room:thread:${h.reply.id}`,
+      "Invalid coordinate draft",
+    );
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open draft for #Design" }),
+  );
+  await screen.findByText(/This saved draft does not identify a thread root/);
+  expect(
+    screen.queryByRole("textbox", { name: "Reply to thread" }),
+  ).not.toBeInTheDocument();
+  expect(
+    readView(h.owner.session.scope, `draft:room:thread:${h.reply.id}`, ""),
+  ).toBe("Invalid coordinate draft");
+  expect(h.published).toHaveLength(0);
+});
+
+it("sends a DM draft only to its restored destination through the session outbox", async () => {
+  const h = fixture({ withDm: true, withWriter: true });
+  writeView(h.owner.session.scope, "draft:dm-room", "Only this DM");
+  render(h.view);
+  await screen.findByText("A direct reply");
+  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open draft for Alice" }));
+  const detail = screen.getByRole("region", { name: "Draft detail" });
+  expect(
+    within(detail).getByRole("textbox", { name: "Message DM with Alice" }),
+  ).toHaveValue("Only this DM");
+  fireEvent.click(within(detail).getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(h.published).toHaveLength(1));
+  expect(h.published[0]).toMatchObject({ kind: 9, content: "Only this DM" });
+  expect(h.published[0]?.tags).toContainEqual(["h", "dm-room"]);
+  expect(h.published[0]?.tags.some(([tag]) => tag === "e")).toBe(false);
+});
+
+it("does not accept a second row selection while its explicit read is pending", async () => {
+  const h = fixture({ withDm: true });
+  render(h.view);
+  await screen.findByText("A direct reply");
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Checking recent activity…"),
+    ).not.toBeInTheDocument(),
+  );
+  const release = h.holdSave();
+  try {
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open Alice in DM · Alice" }),
+    );
+    await waitFor(() => expect(h.saveStarted()).toBe(true));
+    const other = rows().find((row) =>
+      row.textContent?.includes("Please review this"),
+    );
+    if (!other) throw Error("missing second row");
+    const button = within(other).getByRole("button");
+    expect(button).toBeDisabled();
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "true");
+    fireEvent.click(button);
+    expect(
+      screen.getByRole("heading", { name: "DM with Alice" }),
+    ).toBeInTheDocument();
+    expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
+  } finally {
+    await act(async () => release());
+  }
+  await waitFor(() =>
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  const other = rows().find((row) =>
+    row.textContent?.includes("Please review this"),
+  );
+  if (!other) throw Error("missing second row");
+  fireEvent.click(within(other).getByRole("button"));
+  await waitFor(() =>
+    expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21),
+  );
+});
+it("Retry repeats a rejected mark-unread mutation, not just evidence refresh", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in #Design" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("img", { name: "Unread" }),
+    ).not.toBeInTheDocument(),
+  );
+  h.failSave();
+  fireEvent.click(await openRowMenu());
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  expect(h.journal()?.localUnread[`msg:${h.mention.id}`]).toBeUndefined();
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  await waitFor(() =>
+    expect(h.journal()?.localUnread[`msg:${h.mention.id}`]).toBeTypeOf(
+      "number",
+    ),
+  );
+  expect(screen.getByRole("img", { name: "Unread" })).toBeInTheDocument();
+  expect(screen.queryByText("disk full")).not.toBeInTheDocument();
+});
+it("a failed captured read cannot retry after access retirement", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  h.failSave();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in #Design" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  act(() => h.revokeRoom());
+  await waitFor(() => expect(rows()).toHaveLength(0));
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Inbox action expired",
+  );
+  expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
+});
+it("closing a pending failed action cancels its retry intent without cancelling admitted storage", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  const release = h.holdSave();
+  h.failSave();
+  try {
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open Alice in #Design" }),
+    );
+    await waitFor(() => expect(h.saveStarted()).toBe(true));
+    fireEvent.click(screen.getByRole("button", { name: "Close thread" }));
+  } finally {
+    await act(async () => release());
+  }
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  await waitFor(() =>
+    expect(screen.queryByText("disk full")).not.toBeInTheDocument(),
+  );
+  expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
+});
+it("classifies cached profile-only agents beyond the first 50 without unbounded enrichment", async () => {
+  const h = fixture();
+  const agent = profile(
+    h.profileAgent,
+    { name: "Cached outside", is_agent: true },
+    100,
+  );
+  const first = Array.from({ length: 51 }, (_, index) =>
+    message(h.unknown, "room", `Unknown ${index}`, 100 + index, [
+      ["p", h.viewer.pubkey],
+    ]),
+  );
+  const outside = message(h.profileAgent, "room", "Outside first fifty", 90, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.events.push(agent, ...first, outside);
+  h.emit([agent, ...first, outside]);
+  render(h.view);
+  await screen.findByText("Unknown 50");
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Checking recent activity…"),
+    ).not.toBeInTheDocument(),
+  );
+  // Roster completion clears optional profiles; restore genuinely shared cache evidence after it.
+  act(() => h.emit([agent]));
+  await chooseFilter("Agents", "Sender");
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]).toHaveTextContent("Outside first fifty");
+  await chooseFilter("Humans", "Sender");
+  expect(
+    rows().some((row) => row.textContent?.includes("Outside first fifty")),
+  ).toBe(false);
+  act(() => h.emit([profile(h.profileAgent, { name: "Cached outside" }, 101)]));
+  await waitFor(() =>
+    expect(
+      rows().some((row) => row.textContent?.includes("Outside first fifty")),
+    ).toBe(true),
+  );
+});
+
+it("meaningful Drafts survive 500 empty records and keep an emptied selected editor until close", async () => {
+  const h = fixture({ withWriter: true });
+  for (let i = 0; i < 510; i++)
+    writeView(h.owner.session.scope, `draft:empty-${i}`, { text: "  " });
+  writeView(h.owner.session.scope, "draft:room", {
+    text: "Keep editing",
+    recipients: [],
+  });
+  render(h.view);
+  await screen.findByText("Please review this");
+  fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open draft for #Design" }),
+  );
+  const editor = await screen.findByRole("textbox", {
+    name: "Message #Design",
+  });
+  fireEvent.change(editor, { target: { value: "" } });
+  await waitFor(() =>
+    expect(
+      readView(h.owner.session.scope, "draft:room", "missing"),
+    ).toMatchObject({ text: "" }),
+  );
+  expect(screen.getByRole("textbox", { name: "Message #Design" })).toBe(editor);
+  expect(
+    screen.getByRole("region", { name: "Draft detail" }),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Close detail" }));
+  expect(
+    screen.queryByRole("region", { name: "Draft detail" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText("No drafts")).toBeInTheDocument();
+});
+it("feed invalidation has its own local recovery even when shared unread stays ready", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await waitFor(() =>
+    expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready"),
+  );
+  expect(h.owner.session.unread.inbox().status).toBe("ready");
+  act(() => h.owner.session.inboxFeed.clear());
+  expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() =>
+    expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready"),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Refresh" }),
+  ).not.toBeInTheDocument();
+});
+it("a newer manual intent invalidates retry of an earlier rejected read", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  h.failSave();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in #Design" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  await act(async () =>
+    h.owner.session.unread.markUnreadLocal({
+      kind: "message",
+      channelId: "room",
+      messageId: h.mention.id,
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Inbox action expired",
+  );
+  expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
+  expect(h.journal()?.localUnread[`msg:${h.mention.id}`]).toBeTypeOf("number");
+});
+
+it("same-value manual writes after a failed mark-unread supersede retry even without a projection change", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in #Design" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("img", { name: "Unread" }),
+    ).not.toBeInTheDocument(),
+  );
+  h.failSave();
+  fireEvent.click(await openRowMenu());
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  // An explicit newer read at the same saved frontier has the same visual snapshot.
+  await act(async () =>
+    h.owner.session.unread.markThrough(
+      { kind: "message", channelId: "room", messageId: h.mention.id },
+      h.mention.id,
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Inbox action expired",
+  );
+  expect(h.journal()?.localUnread[`msg:${h.mention.id}`]).toBeUndefined();
+});
+
+it("routine delayed publication does not cancel Retry for a failed mark-unread save", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in #Design" }),
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21);
+  const revision = h.owner.session.unread.revision();
+  fireEvent.contextMenu(within(rows()[0] as HTMLElement).getByRole("button"), {
+    clientX: 20,
+    clientY: 20,
+  });
+  const release = h.holdSave();
+  h.failSave();
+  try {
+    fireEvent.click(screen.getByRole("menuitem", { name: "Mark unread" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(h.saveStarted()).toBe(true);
+  } finally {
+    await act(async () => release());
+  }
+  expect(screen.getByRole("alert")).toHaveTextContent("disk full");
+  // Run the already-scheduled publication, including its no-op storage reread.
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000);
+  });
+  expect(h.journal()?.acceptedRevision).toBe(revision);
+  expect(h.owner.session.unread.revision()).toBe(revision);
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(h.journal()?.localUnread[`msg:${h.mention.id}`]).toBeTypeOf("number");
+  expect(screen.queryByText("disk full")).not.toBeInTheDocument();
+});
+
+it.each([true, false])(
+  "Inbox activity replies preserve shared recipient policy (session=%s)",
+  async (sessionChannel) => {
+    const h = fixture({ withWriter: true, sessionChannel, memberAgents: 1 });
+    render(h.view);
+    await screen.findByText("Please review this");
+    await chooseFilter("Mentions");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open Alice in #Design" }),
+    );
+    const editor = await screen.findByRole("textbox", {
+      name: "Reply to thread",
+    });
+    fireEvent.change(editor, { target: { value: "Respond to this" } });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => {
+      const alerts = screen.queryAllByRole("alert").map((el) => el.textContent);
+      const failed = h.owner.session.outbox
+        ?.snapshot()
+        .filter((row) => row.delivery === "failed");
+      expect({ alerts, failed, published: h.published.length }).toEqual({
+        alerts: [],
+        failed: [],
+        published: 1,
+      });
+    });
+    const sent = h.published[0];
+    if (!sent) throw Error("Missing publication");
+    expect(sent.tags).toContainEqual(["h", "room"]);
+    expect(sent.tags).toContainEqual(["e", h.mention.id, "", "reply"]);
+    expect(sent.tags.filter(([name]) => name === "p")).toEqual(
+      sessionChannel ? [["p", h.agent.pubkey]] : [],
+    );
+  },
+);
+it("Inbox session activity with multiple agents requires an explicit recipient", async () => {
+  const h = fixture({
+    withWriter: true,
+    sessionChannel: true,
+    memberAgents: 2,
+  });
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in #Design" }),
+  );
+  const editor = await screen.findByRole("textbox", {
+    name: "Reply to thread",
+  });
+  fireEvent.change(editor, { target: { value: "Choose someone first" } });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  expect(
+    await screen.findByText(
+      "There are multiple agents in this session. @mention who should respond.",
+    ),
+  ).toBeInTheDocument();
+  expect(h.published).toEqual([]);
+  expect(editor).toHaveValue("Choose someone first");
+});
+
+it.each(["preview", "name", "history"])(
+  "failed unread Retry survives harmless channel %s replacement",
+  async (change) => {
+    const h = fixture();
+    render(h.view);
+    await screen.findByText("Please review this");
+    await chooseFilter("Mentions");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open Alice in #Design" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("img", { name: "Unread" }),
+      ).not.toBeInTheDocument(),
+    );
+    const before = h.owner.session.channels
+      .list()
+      .channels.find((channel) => channel.id === "room");
+    const revision = h.owner.session.unread.revision();
+    const row = h.owner.session.unread
+      .inbox()
+      .items.find((row) => row.messageId === h.mention.id);
+    if (!before || !row) throw Error("Missing ready evidence");
+    h.failSave();
+    fireEvent.click(await openRowMenu());
+    expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+    if (change === "name") act(() => h.renameRoom());
+    else if (change === "preview")
+      act(() => h.emit([message(h.alice, "room", "Unrelated traffic", 60)]));
+    else {
+      h.events.push(message(h.alice, "room", "Historical preview", 61));
+      act(() => h.owner.session.channels.ensure("room"));
+      await waitFor(() =>
+        expect(h.owner.session.channels.window("room").status).toBe("ready"),
+      );
+    }
+    await waitFor(() =>
+      expect(
+        h.owner.session.channels
+          .list()
+          .channels.find((channel) => channel.id === "room"),
+      ).not.toBe(before),
+    );
+    expect(h.owner.session.unread.revision()).toBe(revision);
+    expect(
+      h.owner.session.unread.inbox().items.find((item) => item.id === row.id),
+    ).toEqual(row);
+    fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+    await waitFor(() =>
+      expect(h.journal()?.localUnread[`msg:${h.mention.id}`]).toBeTypeOf(
+        "number",
+      ),
+    );
+  },
+);
+it("revoke and regrant cannot revive a captured failed Inbox mutation", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  h.failSave();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in #Design" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  act(() => {
+    h.revokeRoom();
+    h.restoreRoom();
+  });
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  expect(
+    await screen.findByText(
+      "Inbox action expired. Close and reopen the conversation.",
+    ),
+  ).toBeInTheDocument();
+  expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
+});
+
+it.each(["read-only", "unsupported"] as const)(
+  "%s host cannot create an unread mark it cannot clear",
+  async (readCapability) => {
+    const h = fixture({ readCapability });
+    render(h.view);
+    await screen.findByText("Please review this");
+    await chooseFilter("Mentions");
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Checking recent activity…"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(h.owner.session.unread.sync().capability).toBe(readCapability);
+    expect(rows()).toHaveLength(1);
+    expect(
+      within(rows()[0] as HTMLElement).queryByRole("img", { name: "Unread" }),
+    ).not.toBeInTheDocument();
+    const before = h.journal();
+    if (!before) throw Error("Missing saved read state");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open Alice in #Design" }),
+    );
+    await screen.findByRole("region", { name: "Thread messages" });
+    const action = await openRowMenu();
+    expect(action).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(action);
+    await act(async () => {});
+    expect(h.journal()).toEqual(before);
+    expect(h.journal()?.localUnread).toEqual({ [`msg:${"f".repeat(64)}`]: 1 });
+  },
+);
+it("retiring a session with an open unread menu cannot mutate its replacement", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in #Design" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("img", { name: "Unread" }),
+    ).not.toBeInTheDocument(),
+  );
+  const action = await openRowMenu();
+  const before = h.journal();
+  act(() => h.disconnect());
+  expect(action).not.toBeInTheDocument();
+  fireEvent.click(action);
+  await act(async () => {});
+  expect(h.journal()).toEqual(before);
+});
+
+it("a two-step read retries its rejected thread prefix without losing the saved first step", async () => {
+  const h = fixture();
+  const root = message(h.alice, "room", "Partial root", 30, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const child = message(h.alice, "room", "Partial reply", 31, [
+    ["p", h.viewer.pubkey],
+    ["e", root.id, "", "reply"],
+  ]);
+  h.events.push(root, child);
+  h.emit([root, child]);
+  render(h.view);
+  await screen.findByText("Partial root");
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Checking recent activity…"),
+    ).not.toBeInTheDocument(),
+  );
+  h.failThreadSave();
+  const row = rows().find((row) => row.textContent?.includes("Partial root"));
+  if (!row) throw Error("Missing two-step row");
+  fireEvent.click(within(row).getByRole("button"));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "thread disk full",
+  );
+  expect(h.readSteps.map((step) => step.id)).toEqual([root.id, child.id]);
+  expect(h.journal()?.state.frontiers[`msg:${root.id}`]).toBe(30);
+  expect(h.journal()?.state.frontiers[`thread:${root.id}`]).toBeUndefined();
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  await waitFor(() =>
+    expect(h.journal()?.state.frontiers[`thread:${root.id}`]).toBe(31),
+  );
+  expect(h.journal()?.state.frontiers[`msg:${root.id}`]).toBe(30);
+});

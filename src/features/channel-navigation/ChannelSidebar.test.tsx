@@ -293,10 +293,10 @@ it("opens Inbox and Bestie in the ready community", () => {
     expect(h.navigator.open).toHaveBeenLastCalledWith({
       version: 1,
       kind: "page",
-      pluginId: "buzz.channels",
-      pageId: "channels",
+      pluginId: name === "Inbox" ? "buzz.inbox" : "buzz.channels",
+      pageId: name === "Inbox" ? "inbox" : "channels",
       scope: { viewer: "viewer", communityOrigin: "https://relay.test" },
-      route: { version: 1, params: name },
+      ...(name === "Bestie" ? { route: { version: 1, params: name } } : {}),
     });
   }
 });

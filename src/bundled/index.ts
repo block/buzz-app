@@ -1,3 +1,5 @@
+import inboxManifest from "./inbox/manifest.json";
+import * as inbox from "./inbox";
 import todosManifest from "./todos/manifest.json";
 import * as todos from "./todos";
 import diffsManifest from "./diffs/manifest.json";
@@ -41,6 +43,7 @@ import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  { manifest: { ...inboxManifest, apiVersion: 1 }, module: inbox },
   { manifest: { ...feedbackManifest, apiVersion: 1 }, module: feedback },
   {
     manifest: { ...todosManifest, apiVersion: 1 },

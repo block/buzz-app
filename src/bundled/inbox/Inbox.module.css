@@ -1,0 +1,354 @@
+.page {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+  flex: 1;
+  min-height: 0;
+}
+
+.workspace:not([data-selected]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.listPane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 var(--space-panel-inset) var(--space-panel-inset);
+  border-inline-start: 1px solid var(--border-subtle);
+}
+
+.detailHeading {
+  display: flex;
+  flex: 0 0 3rem;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-block-start: var(--space-2);
+}
+
+.detailHeading h2 {
+  min-height: var(--size-control-sm);
+  display: flex;
+  align-items: center;
+}
+
+.detailHeading h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailActions {
+  display: flex;
+  align-items: center;
+}
+
+.detailBody {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.detailBody > :last-child {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Both panes share the naturally sized controls/header row, even when the
+   unread toggle wraps beneath the paired selects. */
+.workspace[data-selected] {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.workspace[data-selected] > .listPane,
+.workspace[data-selected] > .detail {
+  display: grid;
+  grid-row: 1 / span 2;
+  grid-template-rows: subgrid;
+}
+
+.workspace[data-selected] > .detail > .detailBody {
+  grid-row: 2;
+  min-height: 0;
+}
+
+.previewFrame {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-panel);
+  background: var(--surface-panel);
+  box-shadow: var(--shadow-xs);
+}
+
+.previewHistory {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (max-width: 700px) {
+  .workspace[data-selected] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .workspace[data-selected] > .listPane {
+    display: none;
+  }
+  .detail {
+    border-inline-start: 0;
+  }
+  .workspace[data-selected] > .detail {
+    grid-column: 1;
+  }
+}
+
+.toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  min-height: 3rem;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-inline: var(--space-panel-inset);
+}
+
+.filterPair {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.toolbar > :last-child {
+  margin-inline-start: auto;
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.draftWorkspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+  min-height: 0;
+  flex: 1;
+}
+
+.draftWorkspace:not([data-selected]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.draftList {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.draftDetail {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-inline-start: 1px solid var(--border-subtle);
+  padding: 0 var(--space-panel-inset) var(--space-panel-inset);
+}
+
+.draftHeading {
+  display: flex;
+  flex: 0 0 3rem;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.draftHeading h3 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.draftEditor {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.draftEditor > :first-child {
+  flex: 1;
+  min-height: 0;
+}
+
+.draftActions {
+  padding-top: var(--space-2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+@container (max-width: 650px) {
+  .draftWorkspace {
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
+  }
+  .draftList {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+  .draftDetail {
+    flex: 0 0 auto;
+    height: max(28rem, 70vh);
+    padding-inline: var(--space-2);
+    border-inline-start: 0;
+    border-top: 1px solid var(--border-subtle);
+  }
+}
+
+.coverage,
+.notice {
+  margin: 0;
+  padding: var(--space-3) var(--space-panel-inset);
+}
+
+.notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.empty {
+  padding: var(--space-page-section-gap) var(--space-panel-inset);
+  max-width: 65ch;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0 var(--space-row-gap) var(--space-panel-inset);
+}
+
+.draftList .list {
+  padding-top: var(--space-2);
+}
+
+.row {
+  min-width: 0;
+}
+
+.rowSurface {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-row-gap);
+  min-width: 0;
+}
+
+.unreadSlot {
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+}
+
+.unreadDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-navigation-unread);
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  white-space: normal;
+  padding-block: var(--space-row-gap);
+}
+
+.heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-control-inset);
+}
+
+.sender {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sourceLine {
+  display: flex;
+  min-width: 0;
+}
+
+.source {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  border-radius: var(--radius-chip);
+  padding-inline: var(--space-chip-inset);
+  background: var(--affordance-subtle);
+  color: var(--text-subtle);
+}
+
+.sourceName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .row {
+    padding-bottom: var(--space-3);
+  }
+  .rowSurface {
+    gap: var(--space-1);
+  }
+}

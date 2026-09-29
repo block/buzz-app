@@ -358,6 +358,19 @@ function ChannelWorkspace({
   const CurrentChannelIcon = channelIcon(current);
   useEffect(() => {
     if (navigation?.signal.aborted) return;
+    if (placeholder === "Inbox" && navigation && viewer) {
+      navigation.resolve({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.inbox",
+        pageId: "inbox",
+        scope: {
+          viewer,
+          communityOrigin: scope.slice(0, -(viewer.length + 1)),
+        },
+      });
+      return;
+    }
     if (composingMessage || placeholder) {
       navigation?.complete({ status: "opened" });
       return;

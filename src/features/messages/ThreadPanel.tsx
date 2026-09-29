@@ -46,7 +46,13 @@ export type ThreadPanelProps = {
   messageId: string;
   replyRequest?: number | undefined;
   navigation?: PageNavigation | undefined;
+  headerActions?: ReactNode | undefined;
+  /** A draft reply may send only after the exact root and its context resolve. */
+  requireReadyRoot?: boolean | undefined;
+  /** Inline Inbox visits retain/reveal the exact selected message, even outside the newest window. */
+  revealSelected?: boolean | undefined;
   close(): void;
+  onSend?: ((id: string) => void) | undefined;
   onOpenLink(url: string): boolean;
   onOpenMediaReview?(
     messageId: string,
@@ -73,7 +79,7 @@ export function ThreadPanel(props: ThreadPanelProps) {
         }
       }}
     >
-      <ThreadHeader close={props.close} />
+      <ThreadHeader close={props.close} actions={props.headerActions} />
       <OwnedThreadPanel
         key={messageViewKey(
           props.session,
@@ -86,7 +92,10 @@ export function ThreadPanel(props: ThreadPanelProps) {
     </aside>
   );
 }
-function ThreadHeader({ close }: Pick<ThreadPanelProps, "close">) {
+function ThreadHeader({
+  close,
+  actions,
+}: Pick<ThreadPanelProps, "close"> & { actions?: ReactNode }) {
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     closeButton.current?.focus();
@@ -96,13 +105,16 @@ function ThreadHeader({ close }: Pick<ThreadPanelProps, "close">) {
       variant="compact"
       title="Thread"
       actions={
-        <IconButton
-          ref={closeButton}
-          size="toolbar"
-          aria-label="Close thread"
-          onClick={close}
-          icon={<XIcon size={18} aria-hidden="true" />}
-        />
+        <>
+          {actions}
+          <IconButton
+            ref={closeButton}
+            size="toolbar"
+            aria-label="Close thread"
+            onClick={close}
+            icon={<XIcon size={18} aria-hidden="true" />}
+          />
+        </>
       }
     />
   );
@@ -117,9 +129,12 @@ function OwnedThreadPanel({
   navigation,
   onOpenLink,
   onOpenMediaReview,
+  onSend,
   canOpenLink,
   sessionConversation,
   replyRequest,
+  requireReadyRoot,
+  revealSelected,
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
@@ -130,8 +145,10 @@ function OwnedThreadPanel({
     try {
       if (navigation?.signal.aborted) return;
       const exact =
-        navigation?.target.kind === "conversation" &&
-        navigation.target.threadRootId !== messageId;
+        requireReadyRoot ||
+        revealSelected ||
+        (navigation?.target.kind === "conversation" &&
+          navigation.target.threadRootId !== messageId);
       const owned = exact
         ? session.thread(channelId, messageId, { exact: true })
         : session.thread(channelId, messageId);
@@ -151,7 +168,15 @@ function OwnedThreadPanel({
       setError(String(error));
       navigation?.complete({ status: "failed", reason: "unavailable" });
     }
-  }, [session, channelId, messageId, attempt, navigation]);
+  }, [
+    session,
+    channelId,
+    messageId,
+    attempt,
+    navigation,
+    requireReadyRoot,
+    revealSelected,
+  ]);
   return error ? (
     <div className={styles.empty} role="alert">
       <p>{error}</p>
@@ -171,8 +196,11 @@ function OwnedThreadPanel({
       navigation={navigation}
       messageId={messageId}
       replyRequest={replyRequest}
+      requireReadyRoot={requireReadyRoot}
+      revealSelected={revealSelected}
       onOpenLink={onOpenLink}
       onOpenMediaReview={onOpenMediaReview}
+      onSend={onSend}
       canOpenLink={canOpenLink}
     />
   ) : (
@@ -192,11 +220,16 @@ function ThreadMessages({
   navigation,
   onOpenLink,
   onOpenMediaReview,
+  onSend,
   canOpenLink,
   sessionConversation,
   replyRequest,
+  requireReadyRoot,
+  revealSelected,
 }: {
+  revealSelected?: boolean | undefined;
   sessionConversation?: boolean | undefined;
+  requireReadyRoot?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -208,6 +241,7 @@ function ThreadMessages({
   navigation?: PageNavigation | undefined;
   onOpenLink(url: string): boolean;
   onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"];
+  onSend?: ThreadPanelProps["onSend"];
   canOpenLink?: ((target: string) => boolean) | undefined;
 }) {
   const snapshot = useSyncExternalStore(
@@ -394,11 +428,20 @@ function ThreadMessages({
   const rootTarget =
     navigation?.target.kind === "conversation" &&
     navigation.target.threadRootId === messageId;
+  const [inlineReveal, setInlineReveal] = useState<AbortSignal>();
+  useEffect(() => {
+    if (!revealSelected) return;
+    const request = new AbortController();
+    setInlineReveal(request.signal);
+    return () => request.abort();
+  }, [revealSelected]);
+  const revealSignal =
+    inlineReveal ?? (rootTarget ? undefined : navigation?.signal);
   const revealed = useMessageReveal({
     scroller,
     settled: positioned,
     messageId,
-    signal: rootTarget ? undefined : navigation?.signal,
+    signal: revealSignal,
     ready:
       snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
     complete: completeTarget,
@@ -534,7 +577,8 @@ function ThreadMessages({
       navigation.complete({ status: "opened" });
     }
     if (
-      (navigation && !rootTarget && revealed.current !== navigation.signal) ||
+      (revealSelected && !inlineReveal) ||
+      (revealSignal && revealed.current !== revealSignal) ||
       (!positioned.current &&
         (snapshot.status !== "ready" ||
           (snapshot.direction !== "older" && snapshot.canLoadMore)))
@@ -589,6 +633,9 @@ function ThreadMessages({
     sent,
     navigation,
     rootTarget,
+    revealSelected,
+    inlineReveal,
+    revealSignal,
     revealed,
     selectedOffset,
     tree,
@@ -892,6 +939,14 @@ function ThreadMessages({
             )}
           {renderReplies(undefined)}
         </ol>
+        {requireReadyRoot &&
+          snapshot.root &&
+          snapshot.root.id !== messageId && (
+            <p role="status">
+              This saved draft does not identify a thread root. Open its origin
+              to check the destination.
+            </p>
+          )}
         {(snapshot.status === "loading" && !showOlderPageStatus) ||
         (snapshot.direction !== "older" &&
           snapshot.status === "ready" &&
@@ -916,74 +971,82 @@ function ThreadMessages({
           </div>
         )}
       </section>
-      {snapshot.root && (
-        <MessageComposer
-          sessionConversation={sessionConversation}
-          key={`${scope}:${channelId}:${snapshot.root.id}`}
-          extensions={extensions}
-          session={session}
-          scope={scope}
-          channelId={channelId}
-          channelName={channelName}
-          placeholder={`Reply in thread to ${resolveName(snapshot.root.authorId, profiles.get(snapshot.root.authorId)?.name ?? formatPublicKey(snapshot.root.authorId) ?? "Unknown author")}`}
-          threadRootId={snapshot.root.id}
-          replyParentId={replyParent}
-          disabled={!!replyParent && !selectedParent}
-          replyContext={
-            replyParent && !selectedParent ? (
-              <div className={styles.replyContext}>
-                <span>Reply target is no longer available.</span>
-                <Button size="sm" onClick={focusReply}>
-                  Cancel reply target
-                </Button>
-              </div>
-            ) : (
-              selectedParent && (
+      {snapshot.root &&
+        (!requireReadyRoot ||
+          (snapshot.root.id === messageId &&
+            snapshot.targetStatus === "ready")) && (
+          <MessageComposer
+            sessionConversation={sessionConversation}
+            key={`${scope}:${channelId}:${snapshot.root.id}`}
+            extensions={extensions}
+            session={session}
+            scope={scope}
+            channelId={channelId}
+            channelName={channelName}
+            placeholder={`Reply in thread to ${resolveName(snapshot.root.authorId, profiles.get(snapshot.root.authorId)?.name ?? formatPublicKey(snapshot.root.authorId) ?? "Unknown author")}`}
+            threadRootId={snapshot.root.id}
+            replyParentId={replyParent}
+            disabled={
+              (requireReadyRoot &&
+                (snapshot.status !== "ready" || !!snapshot.error)) ||
+              (!!replyParent && !selectedParent)
+            }
+            replyContext={
+              replyParent && !selectedParent ? (
                 <div className={styles.replyContext}>
-                  <div>
-                    <span>
-                      Replying to{" "}
-                      {resolveName(
-                        selectedParent.authorId,
-                        profiles.get(selectedParent.authorId)?.name ??
-                          formatPublicKey(selectedParent.authorId) ??
-                          "Unknown author",
-                      )}
-                    </span>
-                    <p>{selectedParent.content}</p>
-                  </div>
-                  <IconButton
-                    size="sm"
-                    aria-label="Cancel reply target"
-                    onClick={focusReply}
-                    icon={<XIcon size={16} aria-hidden="true" />}
-                  />
+                  <span>Reply target is no longer available.</span>
+                  <Button size="sm" onClick={focusReply}>
+                    Cancel reply target
+                  </Button>
                 </div>
+              ) : (
+                selectedParent && (
+                  <div className={styles.replyContext}>
+                    <div>
+                      <span>
+                        Replying to{" "}
+                        {resolveName(
+                          selectedParent.authorId,
+                          profiles.get(selectedParent.authorId)?.name ??
+                            formatPublicKey(selectedParent.authorId) ??
+                            "Unknown author",
+                        )}
+                      </span>
+                      <p>{selectedParent.content}</p>
+                    </div>
+                    <IconButton
+                      size="sm"
+                      aria-label="Cancel reply target"
+                      onClick={focusReply}
+                      icon={<XIcon size={16} aria-hidden="true" />}
+                    />
+                  </div>
+                )
               )
-            )
-          }
-          editMessages={rows}
-          focusRequest={replyFocus}
-          onOpenLink={onOpenLink}
-          canOpenLink={canOpenLink}
-          onSend={(id) => {
-            targetAnchor.current = undefined;
-            positioned.current = true;
-            follow.current = !selectedParent;
-            if (selectedParent)
-              setExpanded(
-                (current) =>
-                  new Set([
-                    ...current,
-                    selectedParent.id,
-                    ...tree.ancestors(selectedParent.id),
-                  ]),
-              );
-            setReplyParent(undefined);
-            setSent(id);
-          }}
-        />
-      )}
+            }
+            editMessages={rows}
+            focusRequest={replyFocus}
+            onOpenLink={onOpenLink}
+            canOpenLink={canOpenLink}
+            onSend={(id) => {
+              targetAnchor.current = undefined;
+              positioned.current = true;
+              follow.current = !selectedParent;
+              if (selectedParent)
+                setExpanded(
+                  (current) =>
+                    new Set([
+                      ...current,
+                      selectedParent.id,
+                      ...tree.ancestors(selectedParent.id),
+                    ]),
+                );
+              setReplyParent(undefined);
+              setSent(id);
+              onSend?.(id);
+            }}
+          />
+        )}
     </MessageEditScope>
   );
 }

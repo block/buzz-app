@@ -22,6 +22,7 @@ export function UnifiedInventory({
   remove,
   importedId,
   resolveProfile,
+  onUseHere,
 }: {
   state: AgentControlState;
   control: AgentControl;
@@ -33,6 +34,7 @@ export function UnifiedInventory({
   resolveProfile?:
     | ((pubkey: string) => ((trigger: HTMLButtonElement) => void) | undefined)
     | undefined;
+  onUseHere(pubkey: string): void;
 }) {
   const { agentLibrary: library, archives, profiles } = connection.session;
   const publicProfiles = useSyncExternalStore(
@@ -106,6 +108,7 @@ export function UnifiedInventory({
       remove={remove}
       importedId={importedId}
       resolveProfile={resolveProfile}
+      onUseHere={onUseHere}
     >
       {data.inventoryWarnings?.map((warning) => (
         <p key={warning} role="alert">

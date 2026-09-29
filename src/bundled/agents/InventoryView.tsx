@@ -30,6 +30,7 @@ export function InventoryView({
   remove,
   importedId,
   resolveProfile,
+  onUseHere,
   children,
 }: {
   state: AgentControlState;
@@ -46,6 +47,7 @@ export function InventoryView({
   resolveProfile?:
     | ((pubkey: string) => ((trigger: HTMLButtonElement) => void) | undefined)
     | undefined;
+  onUseHere(pubkey: string): void;
   children?: ReactNode;
 }) {
   const data = state.data;
@@ -81,10 +83,11 @@ export function InventoryView({
         <section key={group} aria-label={group} className="flex flex-col gap-3">
           <h2 className="m-0 text-heading">{group}</h2>
           <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] items-start gap-4">
-            {identities.map(({ row }) => (
+            {identities.map(({ row, decision }) => (
               <InventoryIdentityCard
                 key={row.pubkey}
                 row={row}
+                decision={decision}
                 state={state}
                 control={control}
                 session={session}
@@ -95,6 +98,7 @@ export function InventoryView({
                 remove={remove}
                 importedId={importedId}
                 resolveProfile={resolveProfile}
+                onUseHere={onUseHere}
               />
             ))}
           </div>

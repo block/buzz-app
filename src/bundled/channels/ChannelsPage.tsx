@@ -18,6 +18,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useChannelPanels } from "./useChannelPanels";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
+import { ChannelLeaveButton } from "./ChannelLeaveButton";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import {
@@ -67,6 +68,10 @@ import { RelayTimings } from "./RelayTimings";
 import { LiveStatus } from "./LiveStatus";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { MessageComposer } from "../../features/messages/MessageComposer";
+import {
+  MessageManagement,
+  MessageManagementStatus,
+} from "../../features/messages/MessageManagement";
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
@@ -859,7 +864,7 @@ function ChannelWorkspace({
   const showingPanel =
     !composingMessage &&
     (showingSettings || panel || showingThread || companion || drawer.side);
-  return (
+  const workspace = (
     <div className={`${styles.board} ${showingPanel ? styles.withPanel : ""}`}>
       {current && !current.readOnly && canvasOpen && (
         <ChannelCanvasDialog
@@ -977,6 +982,7 @@ function ChannelWorkspace({
                 />
               )}
               <SessionColumn enabled={flatSession}>
+                <MessageManagementStatus />
                 {!cached && (
                   <LiveStatus
                     live={queries.live}
@@ -1147,6 +1153,19 @@ function ChannelWorkspace({
                       />
                     )}
                     {kitError && <p role="alert">{kitError}</p>}
+                    {handoff &&
+                      !current.readOnly &&
+                      current.channelType !== "dm" &&
+                      current.channelType !== "session" && (
+                        <ChannelLeaveButton
+                          key={current.id}
+                          channelId={current.id}
+                          lifecycle={queries.channelLifecycle}
+                          choose={(trigger) =>
+                            handoff.openLifecycle(current, "leave", trigger)
+                          }
+                        />
+                      )}
                   </div>
                 )
               }
@@ -1252,6 +1271,11 @@ function ChannelWorkspace({
         </div>
       )}
     </div>
+  );
+  return (
+    <MessageManagement session={queries} channelId={currentId}>
+      {workspace}
+    </MessageManagement>
   );
 }
 

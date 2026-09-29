@@ -180,7 +180,7 @@ impl RuntimeBundle {
                 command.env(env, n.to_string());
             }
         }
-        if let Some(effort) = record["effort_level"].as_str() {
+        if let Some(effort) = crate::agent_defaults::effort(agent) {
             command.env("BUZZ_ACP_EFFORT_LEVEL", effort);
         }
         Ok(command)
@@ -230,6 +230,26 @@ fn databricks_with_defaults(
     settings.validate()?;
     Ok(Some(settings))
 }
+/// App-owned npm shims and the pinned Node binary are separate from user-global tools.
+/// `app_data` is Tauri's resolved app-data directory, never browser input.
+pub fn managed_tool(app_data: &Path, name: &str) -> Option<PathBuf> {
+    let path = match name {
+        "pi" | "buzz-pi-acp" => app_data.join("node-tools/bin").join(name),
+        "node" => app_data.join("runtimes/node/v24.18.0").join(
+            match (std::env::consts::OS, std::env::consts::ARCH) {
+                ("macos", "aarch64") => "darwin-arm64/bin/node",
+                ("macos", "x86_64") => "darwin-x64/bin/node",
+                ("linux", "aarch64") => "linux-arm64/bin/node",
+                ("linux", "x86_64") => "linux-x64/bin/node",
+                _ => return None,
+            },
+        ),
+        _ => return None,
+    };
+    executable(&path).ok()?;
+    Some(path)
+}
+
 pub fn installed(name: &str) -> Option<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
@@ -331,15 +351,17 @@ impl Controller {
     }
     pub fn snapshot(&mut self) -> Result<ControlSnapshot> {
         let saved = self.store.agents()?;
+        let defaults = self.store.defaults()?;
         let command = |name| {
-            let path = self.bundle.as_ref().ok()?.executable(name).ok()?;
+            let path = self.bundle.as_ref().ok()?.display_path(name)?;
             Some(path.to_string_lossy().into_owned())
         };
         let (acp_command, mcp_command) = (command("buzz-acp"), command("buzz-dev-mcp"));
         let mut snapshot = ControlSnapshot {
-            agents: saved.iter().map(Agent::view).collect(),
+            agents: saved.iter().map(|a| a.view(&defaults)).collect(),
             runtime_available: self.bundle.is_ok(),
             runtime_message: self.bundle.as_ref().err().cloned(),
+            default_settings: defaults.view(),
         };
         for (saved, agent) in saved.iter().zip(&mut snapshot.agents) {
             agent.acp_command.clone_from(&acp_command);
@@ -349,9 +371,12 @@ impl Controller {
                     Ok(true) => {
                         agent.status = ProcessStatus::Running;
                         agent.running_revision = Some(run.revision);
+                        // Effective settings, so inherited default changes count.
                         agent.restart_diff = crate::restart::diff(
                             &run.spawned,
-                            &crate::restart::spawn_config(saved),
+                            &crate::restart::spawn_config(&crate::agent_defaults::effective(
+                                saved, &defaults,
+                            )),
                         );
                     }
                     Ok(false) => {
@@ -393,7 +418,10 @@ impl Controller {
             );
         }
         agent.apply(edit)?;
-        Ok(agent)
+        Ok(crate::agent_defaults::effective(
+            &agent,
+            &self.store.defaults()?,
+        ))
     }
     pub fn model_context(&self, id: &str, revision: u64, edit: AgentEdit) -> Result<ModelContext> {
         let agent = self.edited_agent(id, revision, edit)?;
@@ -416,6 +444,20 @@ impl Controller {
     ) -> Result<crate::pi::PiContext> {
         let agent = self.edited_agent(id, revision, edit)?;
         crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment)
+    }
+    /// Resolve unsaved Create drafts against the same native defaults as a saved start.
+    pub fn effective_draft(&self, mut edit: AgentEdit) -> Result<AgentEdit> {
+        let mut environment = draft_environment(edit.environment);
+        crate::agent_defaults::effective_settings(
+            &mut edit.harness,
+            &mut environment,
+            &self.store.defaults()?,
+        );
+        edit.environment = environment
+            .into_iter()
+            .map(|(key, value)| (key, Some(value)))
+            .collect();
+        Ok(edit)
     }
     pub fn draft_pi_model_context(edit: AgentEdit) -> Result<crate::pi::PiContext> {
         crate::pi::PiContext::new(
@@ -502,6 +544,44 @@ impl Controller {
     pub fn save(&mut self, id: &str, revision: u64, edit: AgentEdit) -> Result<ControlSnapshot> {
         self.store.save(id, revision, edit)?;
         self.snapshot()
+    }
+    /// Native-only Agent defaults `DATABRICKS_HOST`, for Disconnect recovery of
+    /// an inherited workspace the renderer never sees. Never serialized.
+    pub fn inherited_workspace(&self) -> Result<Option<String>> {
+        Ok(self
+            .store
+            .defaults()?
+            .environment
+            .get("DATABRICKS_HOST")
+            .cloned())
+    }
+    pub fn save_defaults(&mut self, edit: crate::AgentDefaultsEdit) -> Result<ControlSnapshot> {
+        let mut defaults = self.store.defaults()?;
+        defaults.apply(edit)?;
+        self.store.save_defaults(&defaults)?;
+        self.snapshot()
+    }
+    /// Effective launch settings of each live agent, for restart-on-save. Values
+    /// stay native; callers compare before/after a save.
+    pub fn running_settings(&mut self) -> Result<BTreeMap<String, serde_json::Value>> {
+        let defaults = self.store.defaults()?;
+        let live: Vec<_> = self
+            .snapshot()?
+            .agents
+            .into_iter()
+            .filter(|a| a.enabled && a.status == ProcessStatus::Running)
+            .map(|a| a.id)
+            .collect();
+        Ok(self
+            .store
+            .agents()?
+            .iter()
+            .filter(|a| live.contains(&a.id))
+            .map(|a| {
+                let effective = crate::agent_defaults::effective(a, &defaults);
+                (a.id.clone(), crate::restart::spawn_config(&effective))
+            })
+            .collect())
     }
     pub fn delete(&mut self, id: &str, revision: u64) -> Result<ControlSnapshot> {
         let agent = self
@@ -592,10 +672,12 @@ impl Controller {
             .into_iter()
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
+        let agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);
         let workspace = effective_databricks(&agent)?.map(|s| s.host);
         self.bundle.as_ref().map_err(Clone::clone)?;
         Ok((agent.credential_id, agent.pubkey, agent.revision, workspace))
     }
+    /// Record the action outcome; the native host projects one final snapshot.
     pub fn action_with_key(
         &mut self,
         id: &str,
@@ -603,7 +685,7 @@ impl Controller {
         revision: u64,
         key: &crate::Secret,
         replay_floor: Option<u64>,
-    ) -> Result<ControlSnapshot> {
+    ) -> Result<()> {
         if self.credential_request(id)?.2 != revision {
             return Err("Saved settings changed while opening credentials; retry Start".into());
         }
@@ -611,7 +693,7 @@ impl Controller {
         if matches!(action, Action::Restart) {
             if let Err(error) = self.stop(id) {
                 self.errors.insert(id.into(), error);
-                return self.snapshot();
+                return Ok(());
             }
         }
         match self.start_with_key(id, Some(key), replay_floor) {
@@ -622,7 +704,7 @@ impl Controller {
                 self.errors.insert(id.into(), error);
             }
         }
-        self.snapshot()
+        Ok(())
     }
     pub fn record_error(&mut self, id: &str, error: String) {
         self.errors.insert(id.into(), error);
@@ -660,6 +742,8 @@ impl Controller {
         if !agent.enabled {
             return Err("Agent is disabled".into());
         }
+        // Blank fields inherit agent defaults at each start; never saved back.
+        let agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);
         let bundle = self.bundle.as_ref().map_err(Clone::clone)?;
         #[cfg(not(unix))]
         let ownership = crate::ownership::Ownership::acquire(&self.ownership_root, &agent.id)?;

@@ -9,8 +9,21 @@ notifications; unset or any other value keeps normal behavior. This development
 gate never rewrites saved preferences. Settings shows the pause and how to remove
 it; normal behavior still honors account choices and system permission.
 Production builds ignore this variable.
-Browser sound uses the Notification API. Desktop sound is managed in OS settings;
-there is no separate audio player.
+Notification sound is app-owned on browser and desktop: Buzz bundles a set of
+alert sounds under `public/sounds/`, and the notifications service plays the
+per-category selection (with a shared default) in the running app after a
+banner submission is accepted. OS banners are always submitted silent, so the
+system never plays a second sound: the browser banner sets `silent: true`, the
+Windows toast is built with silent audio (`sound(None)`), Linux Notify sends
+the standard `suppress-sound` hint, and the macOS backend never sets a sound
+name. Because a submission can resolve after state has moved on, the audio
+decision stays under revalidation until the platform resolves it: any interval
+of Sound turned off, alerts or the category disabled, or revoked
+access/eligibility cancels the sound for good (without affecting the banner),
+and the sound also requires the same live account generation and currently
+allowed, eligible, Sound-enabled state when the submission is accepted.
+Settings offers per-category sound selection with an in-app preview; the
+Sound switch turns playback off without disabling alerts.
 
 ```ts
 export const inject = ["notifications"];
@@ -85,11 +98,12 @@ generic category text.
 
 The browser adapter works only in a running tab with the Notification API.
 Desktop builds use one small Tauri bridge into maintained native backends:
-mac-notification-sys on macOS, the freedesktop notification interface through
-zbus on Linux, and tauri-winrt-notification on Windows. Linux uses the already
+a locally patched mac-notification-sys 0.6.15 on macOS, the freedesktop notification
+interface through zbus on Linux, and tauri-winrt-notification on Windows. Linux uses the already
 locked zbus dependency directly because notify-rust's send-then-listen wrapper
 can lose early actions. No dependency upgrade or new native FFI is needed.
-Banner permission and sound remain system-controlled; no permission-only plugin
+Banner permission remains system-controlled; alert sound is app-owned and plays
+in the renderer, not through the native backends. No permission-only plugin
 or synthetic desktop notification is installed. The macOS Dock settings below
 provide an explicit system authorization action. The main-window-only bridge
 carries display text and an opaque presentation ID, never an account, credential
@@ -98,7 +112,12 @@ submission.
 
 Desktop clicks restore/foreground Buzz and then call the existing activation
 closure. macOS explicitly waits for a body click off the UI thread (the generic
-notify-rust wrapper omits that flag). Windows retains its callback when the
+notify-rust wrapper omits that flag). Its local dependency patch shares one
+main-run-loop dismissal poll across all waiting notifications: one synchronous
+Notification Center query per 0.5-second tick, rather than one per card. The poll
+stops when no waits remain; retained cards do not expire. See
+[`BUZZ_PATCH.md`](../vendor/mac-notification-sys/BUZZ_PATCH.md) for provenance and
+regression coverage. Windows retains its callback when the
 banner fades, because timeout is not removal from Notification Center. Linux
 requests the standard default action and checks that the notification service
 supports actions. A single, sender-filtered receiver is armed on the same D-Bus
@@ -112,8 +131,10 @@ focus policy still applies. Dismissal never navigates. Observable send/focus
 failures reach Settings without retry; a focus error does not discard navigation.
 
 Banner permission state is not observable through these backends. Settings
-describes permission and sound as system-controlled, without ineffective desktop
-banner permission or sound controls. The bridge accepts a submission before waiting for
+omits ineffective desktop banner permission controls (the page subtitle uses the
+reference copy and does not describe permission handling); sound controls are
+effective on desktop because
+playback happens in the app. The bridge accepts a submission before waiting for
 interaction: acceptance is **not** proof that a visible banner appeared. The macOS
 backend does not expose all delivery failures, and no uniform withdrawal/receipt
 guarantee is promised.

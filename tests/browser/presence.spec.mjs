@@ -81,8 +81,15 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
       .poll(() => app.report.presencePublications.length, { timeout: 75000 })
       .toBeGreaterThan(0);
     expect(
-      app.relay.requests.some(({ filter }) => filter.kinds.includes(20001)),
-    ).toBe(false);
+      app.relay.requests.some(({ filters }) =>
+        filters.some(
+          (filter) =>
+            filter.kinds.includes(20001) &&
+            filter.limit === 0 &&
+            filter.authors.length <= 256,
+        ),
+      ),
+    ).toBe(true);
     await profile.screenshot({
       path: test.info().outputPath("presence-profile.png"),
     });
@@ -245,13 +252,23 @@ test.describe("human message bylines show known presence", () => {
         .first()
         .locator(".buzz-avatar-status"),
     ).toHaveAttribute("data-status", "online");
+    // Opening a profile replaces the thread pane. Verify its live badge first.
+    app.presence("away");
+    for (const surface of [timeline, thread]) {
+      await expect(
+        surface
+          .getByRole("button", { name: "View Alice Fixture profile" })
+          .first()
+          .locator(".buzz-avatar-status"),
+      ).toHaveAttribute("data-status", "away");
+    }
     await thread
       .getByRole("button", { name: "View Alice Fixture profile", exact: true })
       .first()
       .click();
     const profile = page.getByRole("region", { name: "Profile details" });
     await expect(
-      profile.getByRole("img", { name: "Presence: Active" }),
+      profile.getByRole("img", { name: "Presence: Away" }),
     ).toBeVisible();
     expect(
       app.report.presenceSnapshots.some((snapshot) =>
@@ -260,14 +277,21 @@ test.describe("human message bylines show known presence", () => {
     ).toBe(true);
     await expect(profile.locator(".buzz-avatar-status")).toHaveAttribute(
       "data-status",
-      "online",
+      "away",
     );
     await expect(
       profile.getByRole("img", { name: "Alice Fixture avatar, online" }),
     ).toHaveCount(0);
     expect(
-      app.relay.requests.some(({ filter }) => filter.kinds.includes(20001)),
-    ).toBe(false);
+      app.relay.requests.some(({ filters }) =>
+        filters.some(
+          (filter) =>
+            filter.kinds.includes(20001) &&
+            filter.limit === 0 &&
+            filter.authors.length <= 256,
+        ),
+      ),
+    ).toBe(true);
   });
 });
 
@@ -289,8 +313,8 @@ test("real same-origin windows queue one publisher and transfer its Web Lock on 
     .toBe(1);
   const owner = (await presenceLocks(page)).held[0];
   const second = await context.newPage();
+  const pageErrors = app.watchPageErrors(second);
   const errors = [];
-  second.on("pageerror", (error) => errors.push(error.message));
   second.on("console", (message) => {
     if (message.type() === "error") errors.push(message.text());
   });
@@ -336,7 +360,7 @@ test("real same-origin windows queue one publisher and transfer its Web Lock on 
     expect(app.report.presencePublications.at(-1).event.content).toBe(
       "offline",
     );
-    expect(errors).toEqual([]);
+    expect([...pageErrors.unexplained(), ...errors]).toEqual([]);
     app.report.measurements.push({
       publisherLockHandoff: { owner: owner.clientId, successor },
     });
@@ -387,7 +411,7 @@ test("presence becomes usable during held HTTP work and unfinished subscription 
         ([kind, id]) =>
           kind === "EOSE" &&
           app.relay.requests.some(
-            (req) => req.id === id && req.route === "alpha",
+            (req) => req.id === id && req.routes.includes("alpha"),
           ),
       ),
     ).toBe(false);
@@ -454,6 +478,17 @@ test("avatar choices publish through the existing socket and persist across relo
     name: "Your profile",
     exact: true,
   });
+  const composer = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await composer.fill("My presence follows the shared directory");
+  await composer.press("Enter");
+  const ownRow = page
+    .locator("[data-message-id]")
+    .filter({ hasText: "My presence follows the shared directory" });
+  await expect(ownRow).toBeVisible();
+  const ownBadge = ownRow.locator(".buzz-avatar-status");
   const badge = avatar.locator(".buzz-avatar-status-dot");
   const account = page.getByRole("menu", { name: "Fixture Reader" });
   const published = (status) =>
@@ -489,11 +524,65 @@ test("avatar choices publish through the existing socket and persist across relo
     page.getByRole("button", { name: "Availability: Online", exact: true }),
   ).toHaveCSS("color", "rgb(43, 154, 102)");
   await page.getByRole("button", { name: /^Availability:/ }).click();
-  await page.getByRole("menuitemradio", { name: "Away", exact: true }).click();
+  const attempts = [];
+  const recordPresence = async (response) => {
+    if (response.url().endsWith("/stream-presence"))
+      attempts.push(await response.json());
+  };
+  page.on("response", recordPresence);
+  const commandedAt = performance.now();
+  const pendingPublication = Promise.withResolvers();
+  const releasePublication = Promise.withResolvers();
+  await page.route("**/stream-presence", async (route) => {
+    pendingPublication.resolve();
+    await releasePublication.promise;
+    await route.continue();
+  });
+  try {
+    await page
+      .getByRole("menuitemradio", { name: "Away", exact: true })
+      .click();
+    await pendingPublication.promise;
+    await expect(
+      page
+        .getByRole("status", { name: "" })
+        .filter({ hasText: "Updating to away" }),
+    ).toBeVisible();
+    await expect(
+      avatar.getByRole("img", { name: "Your status: Online" }),
+    ).toBeVisible();
+    await expect(ownBadge).toHaveAttribute("data-status", "online");
+    await expect(
+      page.getByRole("menuitemradio", { name: "Online", exact: true }),
+    ).toBeChecked();
+    await expect(
+      page.getByRole("menuitemradio", { name: "Away", exact: true }),
+    ).not.toBeChecked();
+  } finally {
+    releasePublication.resolve();
+  }
   await expect(
     avatar.getByRole("img", { name: "Your status: Away" }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 10000 });
+  await expect(
+    page.getByText("Updating to away…", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitemradio", { name: "Away", exact: true }),
+  ).toBeChecked();
+  await page.unroute("**/stream-presence");
+  page.off("response", recordPresence);
+  const sent = app.report.presencePublications.filter(
+    ({ community }) => community === "primary",
+  );
+  app.report.measurements.push({
+    presenceCommandToVisibleMs: performance.now() - commandedAt,
+    presenceSendGapMs: sent.at(-1).at - sent.at(-2).at,
+    presenceAttempts: attempts,
+    note: "includes the explicit pending-UI assertion gate and browser automation",
+  });
   await expect(badge).toHaveCSS("background-color", "rgb(171, 100, 0)");
+  await expect(ownBadge).toHaveAttribute("data-status", "away");
   await expect
     .poll(() =>
       badge.evaluate(
@@ -523,6 +612,7 @@ test("avatar choices publish through the existing socket and persist across relo
     .getByRole("menuitemradio", { name: "Offline", exact: true })
     .click();
   await expect.poll(() => published("offline")).toBeGreaterThan(0);
+  await expect(ownBadge).toHaveAttribute("data-status", "offline");
   await page.reload();
   await expect(
     avatar.getByRole("img", { name: "Your status: Offline" }),

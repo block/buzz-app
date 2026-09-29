@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
+import { watchPageErrors } from "./page-errors.mjs";
 
 test("statuses edit, synchronize, clear, reject stale traffic and retain failed drafts", async ({
   page,
@@ -15,8 +16,7 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     server: { host: "127.0.0.1", port: 0, open: false },
     preview: { open: false },
   });
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const errors = watchPageErrors(page);
   try {
     await page.route("https://emoji.test/**", (route) =>
       route.fulfill({
@@ -163,6 +163,36 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     await expect(
       dmName.locator('[aria-label="🏠 Working remotely"]'),
     ).toBeVisible();
+    const dmStatusLayout = await dmName.evaluate((label) => {
+      const nameContent = label.firstElementChild;
+      const name = nameContent?.firstElementChild;
+      const status = label.querySelector('[aria-label="🏠 Working remotely"]');
+      if (!(name instanceof HTMLElement) || !(status instanceof HTMLElement))
+        throw new Error("Missing DM name or status");
+      const nameBounds = name.getBoundingClientRect();
+      const statusBounds = status.getBoundingClientRect();
+      const contentBounds = nameContent.getBoundingClientRect();
+      return {
+        hasAccessoryContract: nameContent.hasAttribute("data-name-accessory"),
+        nameWidth: nameBounds.width,
+        nameScrollWidth: name.scrollWidth,
+        nameRight: nameBounds.right,
+        statusLeft: statusBounds.left,
+        statusRight: statusBounds.right,
+        contentRight: contentBounds.right,
+        labelRight: label.getBoundingClientRect().right,
+      };
+    });
+    expect(dmStatusLayout.hasAccessoryContract).toBe(true);
+    expect(dmStatusLayout.nameWidth).toBeCloseTo(
+      dmStatusLayout.nameScrollWidth,
+      0,
+    );
+    expect(dmStatusLayout.statusLeft - dmStatusLayout.nameRight).toBe(8);
+    expect(dmStatusLayout.contentRight).toBe(dmStatusLayout.statusRight);
+    expect(
+      dmStatusLayout.labelRight - dmStatusLayout.statusRight,
+    ).toBeGreaterThan(20);
     await expect(dmName.locator("[tabindex]")).toHaveCount(0);
     // Real text geometry catches a full-width label pushing the status away.
     const expectStatusBesideName = async () => {
@@ -261,7 +291,7 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
         /linear-gradient/,
       );
     }
-    expect(errors).toEqual([]);
+    expect(errors.unexplained()).toEqual([]);
   } finally {
     await server.close();
   }

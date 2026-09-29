@@ -20,6 +20,7 @@ const titleBarDragProps = macDesktop ? macTitleBarDragHandlers : {};
 export function AppShell({
   pages,
   selected,
+  navigationAttempt,
   onSelect,
   tone,
   workspace,
@@ -35,6 +36,7 @@ export function AppShell({
 }: {
   pages: readonly RegisteredPage[];
   selected: string;
+  navigationAttempt: string;
   onSelect: (key: string) => void;
   tone: string;
   workspace?: boolean;
@@ -61,22 +63,25 @@ export function AppShell({
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
   }, []);
-  const settingsOverlay = selected === "settings" && narrow;
   const collapsibleSidebar = channelsNavigation || selected === "settings";
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationToggle = useRef<HTMLButtonElement>(null);
-  const visibleSidebar = settingsOverlay ? navigationOpen : sidebarOpen;
-  const toggleLabel = settingsOverlay
+  const visibleSidebar = narrow ? navigationOpen : sidebarOpen;
+  const toggleLabel = narrow
     ? navigationOpen
       ? "Hide navigation"
       : "Show navigation"
     : sidebarOpen
       ? "Hide Channel sidebar"
       : "Show Channel sidebar";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Only a navigation attempt closes the drawer.
   useEffect(() => {
-    if (selected !== "settings") setNavigationOpen(false);
-  }, [selected]);
+    if (navigationOpen && navigationToggle.current?.getClientRects().length) {
+      document.getElementById("main-content")?.focus({ preventScroll: true });
+    }
+    setNavigationOpen(false);
+  }, [navigationAttempt]);
   const pageNavigation = (
     <nav aria-label="Pages" className="shell-pages">
       {orderPages(pages).map((page) => {
@@ -126,7 +131,7 @@ export function AppShell({
           data-tauri-drag-region={macDesktop ? undefined : true}
           {...titleBarDragProps}
         >
-          {collapsibleSidebar && (
+          {(collapsibleSidebar || narrow) && (
             <IconButton
               ref={navigationToggle}
               data-shell-sidebar-toggle=""
@@ -138,7 +143,7 @@ export function AppShell({
               aria-controls="shell-navigation"
               title={toggleLabel}
               onClick={() => {
-                if (settingsOverlay) setNavigationOpen((open) => !open);
+                if (narrow) setNavigationOpen((open) => !open);
                 else setSidebarOpen((open) => !open);
               }}
               icon={<SidebarIcon aria-hidden="true" size={16} />}
@@ -175,11 +180,11 @@ export function AppShell({
             id="shell-navigation"
             className="shell-navigation"
             data-sidebar-collapsible={
-              (collapsibleSidebar && !settingsOverlay) || undefined
+              (collapsibleSidebar && !narrow) || undefined
             }
             data-sidebar-open={visibleSidebar || undefined}
-            aria-hidden={collapsibleSidebar && !visibleSidebar}
-            inert={collapsibleSidebar && !visibleSidebar}
+            aria-hidden={(collapsibleSidebar || narrow) && !visibleSidebar}
+            inert={(collapsibleSidebar || narrow) && !visibleSidebar}
             data-expanded={navigationOpen}
             onKeyDown={(event) => {
               if (

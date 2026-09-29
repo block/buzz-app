@@ -401,3 +401,53 @@ it.each([false, true])(
     expect(notify).not.toHaveBeenCalled();
   },
 );
+
+it("reprojects retained nonchat candidates after joining from an empty admitted snapshot without another feed read", async () => {
+  const h = setup();
+  h.live.receive([
+    roster(h.relay, "room", [h.alice.pubkey], 10),
+    metadata(h.relay, "room", "Room", 10, [["public"]]),
+  ]);
+  const issue = signed(h.alice, {
+    kind: 1621,
+    content: "Addressed issue",
+    created_at: 20,
+    tags: [
+      ["h", "room"],
+      ["p", h.viewer.pubkey],
+    ],
+  });
+  const approval = signed(h.alice, {
+    kind: 46010,
+    content: "Approval",
+    created_at: 21,
+    tags: [
+      ["h", "room"],
+      ["p", h.viewer.pubkey],
+    ],
+  });
+  const work = h.session.inboxFeed.ensure();
+  (await take(h, 9)).resolve([issue]);
+  (await take(h, 46010)).resolve([approval]);
+  await work;
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "ready",
+    mentions: [],
+    needsAction: [],
+  });
+  const reads = h.query.mock.calls.filter(([filters]) =>
+    filters.some((f) => f.kinds?.includes(46010) || f.kinds?.includes(9)),
+  ).length;
+  h.admit([h.viewer.pubkey, h.alice.pubkey], 30);
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "ready",
+    mentions: [issue],
+    needsAction: [approval],
+  });
+  await h.session.inboxFeed.ensure();
+  expect(
+    h.query.mock.calls.filter(([filters]) =>
+      filters.some((f) => f.kinds?.includes(46010) || f.kinds?.includes(9)),
+    ).length,
+  ).toBe(reads);
+});

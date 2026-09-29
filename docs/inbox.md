@@ -30,7 +30,8 @@ does not enable it.
 - Stable conversation IDs, newest relevant activity ordering and the oldest
   observed unread message as the opening anchor (latest when read). Selecting an
   unread row opens inline detail and marks its verified observed prefix read; a
-  failed read leaves the dot and shows an error. Hosts without frontier sync keep
+  failed read leaves the dot and shows an error with Retry above both panes,
+  including when narrow detail hides the list. Hosts without frontier sync keep
   the dot. The DM and thread views reuse the shared timeline, thread panel and
   scoped composer. Normal threads, DM previews and selected drafts share the
   same rounded, lightly bordered conversation treatment with a compact header,
@@ -63,7 +64,8 @@ does not enable it.
   recovery disables sending without rebinding the draft to another root.
   The top-right Open in origin arrow navigates to the original conversation
   separately. Delete remains a
-  small destructive action gated by confirmation; storage failures keep the
+  small destructive action gated by confirmation; focus moves to the confirmation
+  action and returns to the original trigger on Cancel. Storage failures keep the
   draft. The list remains usable beside the conversation (or above it when
   the Inbox column is narrow), with a bounded, scrollable history area. The
   inner close icon dismisses selection; Back to Inbox is the only page-return
@@ -81,7 +83,9 @@ evidence and read actions. `session.inboxFeed` owns finite, verified addressed
 history and live reconciliation. Its admitted channel events contribute to the
 shared unread fold, never a second raw row projection that could resurrect
 own/deleted messages or invent unresolved conversation roots. Nonchat projection
-stays bounded; project updates use the evidenced issue/PR root kind, otherwise
+stays bounded and reprojects retained candidates on membership changes, including
+an empty admitted view becoming eligible after joining; this starts no new read.
+Project updates use the evidenced issue/PR root kind, otherwise
 open the repository rather than guessing an item type. Arrivals and admitted
 deletions during a finite read are reconciled inside that attempt's bounds and
 generation. Inbox owns only presentation, filtering and selection. No parallel signing or persistence capability is added. Optional

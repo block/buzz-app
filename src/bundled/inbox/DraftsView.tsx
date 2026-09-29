@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
 import { ChannelPreview } from "./ChannelPreview";
@@ -68,6 +75,16 @@ export function DraftsView({
   const channels = list.channels;
   const [limit, setLimit] = useState(50);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteTrigger = useRef<HTMLButtonElement>(null);
+  const deleteConfirm = useRef<HTMLButtonElement>(null);
+  const deleteFocus = useRef<"confirm" | "trigger" | undefined>(undefined);
+  useLayoutEffect(() => {
+    const target = deleteFocus.current;
+    deleteFocus.current = undefined;
+    if (target === "confirm" && confirmDelete) deleteConfirm.current?.focus();
+    else if (target === "trigger" && !confirmDelete)
+      deleteTrigger.current?.focus();
+  }, [confirmDelete]);
   const [error, setError] = useState<string>();
   const active = entries.find((entry) => entry.key === selected);
   const channelFor = (channelId: string) =>
@@ -372,7 +389,11 @@ export function DraftsView({
               <Button
                 size="sm"
                 variant="destructive"
-                onClick={() => setConfirmDelete(true)}
+                ref={deleteTrigger}
+                onClick={() => {
+                  deleteFocus.current = "confirm";
+                  setConfirmDelete(true);
+                }}
               >
                 Delete draft…
               </Button>
@@ -381,13 +402,21 @@ export function DraftsView({
                 <span className="text-body">
                   Delete this saved draft on this device?
                 </span>
-                <Button size="sm" variant="destructive" onClick={remove}>
+                <Button
+                  ref={deleteConfirm}
+                  size="sm"
+                  variant="destructive"
+                  onClick={remove}
+                >
                   Delete draft
                 </Button>
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => setConfirmDelete(false)}
+                  onClick={() => {
+                    deleteFocus.current = "trigger";
+                    setConfirmDelete(false);
+                  }}
                 >
                   Cancel
                 </Button>

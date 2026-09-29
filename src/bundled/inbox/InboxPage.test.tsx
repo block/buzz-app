@@ -2022,3 +2022,26 @@ it("a two-step read retries its rejected thread prefix without losing the saved 
   );
   expect(h.journal()?.state.frontiers[`msg:${root.id}`]).toBe(30);
 });
+
+it("hands keyboard focus into draft deletion and back on cancel without changing the saved draft", async () => {
+  const h = fixture({ withWriter: true });
+  writeView(h.owner.session.scope, "draft:room", "Keep this draft");
+  render(h.view);
+  await screen.findByText("Please review this");
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Drafts" }));
+  await user.click(
+    screen.getByRole("button", { name: "Open draft for #Design" }),
+  );
+  const trigger = screen.getByRole("button", { name: "Delete draft…" });
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  expect(screen.getByRole("button", { name: "Delete draft" })).toHaveFocus();
+  await user.tab();
+  expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(screen.getByRole("button", { name: "Delete draft…" })).toHaveFocus();
+  expect(readView(h.owner.session.scope, "draft:room", "")).toBe(
+    "Keep this draft",
+  );
+});

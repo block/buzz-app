@@ -159,15 +159,22 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     await sidebar
       .getByRole("button", { name: destination, exact: true })
       .click();
-    await expect(
-      page.getByText("Content coming soon", { exact: true }),
-    ).toBeVisible();
+    const destinationPage =
+      destination === "Inbox"
+        ? page.getByRole("region", { name: "Inbox", exact: true })
+        : page.getByRole("article", { name: "Conversation", exact: true });
+    await expect(destinationPage).toBeVisible();
+    if (destination === "Inbox")
+      await expect(
+        destinationPage.getByRole("combobox", { name: "Activity type" }),
+      ).toBeVisible();
+    else
+      await expect(
+        page.getByText("Content coming soon", { exact: true }),
+      ).toBeVisible();
     await expect(drawer).toHaveCount(0);
     await expect(launcher).toHaveCount(0);
-    const placeholder = page.getByRole("article", {
-      name: "Conversation",
-      exact: true,
-    });
+    const placeholder = destinationPage;
     await expect
       .poll(() =>
         placeholder.evaluate((el) => {

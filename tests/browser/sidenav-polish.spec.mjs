@@ -555,7 +555,7 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
 });
 
 // A real grid/overlay measurement is needed: DOM presence misses implicit columns.
-test("placeholder destinations retain companion layout across navigation and resize", async ({
+test("Inbox and placeholder destinations retain companion layout across navigation and resize", async ({
   page,
   app,
 }) => {
@@ -570,12 +570,12 @@ test("placeholder destinations retain companion layout across navigation and res
     name: "Conversation",
     exact: true,
   });
-  const checkGeometry = async (overlay) => {
+  const checkGeometry = async (overlay, surface = conversation) => {
     await expect(companion).toBeVisible();
     await expect
       .poll(async () => {
         const card = await companion.boundingBox();
-        const body = await conversation.boundingBox();
+        const body = await surface.boundingBox();
         if (!card || !body) return false;
         return overlay
           ? Math.abs(card.x + card.width - body.x - body.width) < 2 &&
@@ -603,7 +603,10 @@ test("placeholder destinations retain companion layout across navigation and res
     await page.setViewportSize({ width, height: 950 });
     await selectChannel("Inbox");
     await launcher.click();
-    await checkGeometry(width <= 1000);
+    await checkGeometry(
+      width <= 1000,
+      page.getByRole("region", { name: "Inbox", exact: true }),
+    );
     await selectChannel("Bestie");
     await expect(
       conversation.getByRole("heading", { name: "Bestie", exact: true }),
@@ -614,7 +617,10 @@ test("placeholder destinations retain companion layout across navigation and res
     await selectChannel("Alpha");
     await launcher.click();
     await selectChannel("Inbox");
-    await checkGeometry(width <= 1000);
+    await checkGeometry(
+      width <= 1000,
+      page.getByRole("region", { name: "Inbox", exact: true }),
+    );
     await launcher.click();
   }
 });

@@ -448,6 +448,14 @@ export function InboxView({
           </Button>
         }
       />
+      {!drafts && failure && (
+        <div className={styles.notice} role="alert">
+          <p className="text-body">{failure}</p>
+          <Button size="sm" disabled={pending} onClick={retry}>
+            Retry inbox
+          </Button>
+        </div>
+      )}
       <div
         className={styles.workspace}
         data-selected={(!drafts && !!selected) || undefined}
@@ -496,14 +504,6 @@ export function InboxView({
             />
           ) : (
             <div className={styles.scroll}>
-              {failure && (
-                <div className={styles.notice} role="alert">
-                  <p className="text-body">{failure}</p>
-                  <Button size="sm" disabled={pending} onClick={retry}>
-                    Retry inbox
-                  </Button>
-                </div>
-              )}
               {inbox.freshness === "stale" && !failure && (
                 <div className={styles.notice} role="status">
                   <span className="text-body text-subtle">

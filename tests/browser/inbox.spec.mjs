@@ -754,3 +754,91 @@ test.describe("Inbox session reply admission", () => {
     ]);
   });
 });
+
+// Browser-only: CSS hides the list at this width. Real IndexedDB rejection must
+// remain visible/retryable while the selected detail is mounted, not just in DOM.
+test("narrow selected detail keeps a rejected read save and its captured Retry visible", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    const put = IDBObjectStore.prototype.put;
+    window.inboxReadFailure = { armed: false, failures: 0, saves: 0 };
+    IDBObjectStore.prototype.put = function (value, ...args) {
+      if (
+        this.name === "partitions" &&
+        this.transaction.db.name === "buzz-read-state-v1"
+      ) {
+        if (
+          window.inboxReadFailure.armed &&
+          Object.keys(value?.state?.frontiers ?? {}).length
+        ) {
+          window.inboxReadFailure.failures++;
+          throw new Error("Synthetic read storage failure");
+        }
+        this.transaction.addEventListener(
+          "complete",
+          () => {
+            window.inboxReadFailure.saves++;
+          },
+          { once: true },
+        );
+      }
+      return put.call(this, value, ...args);
+    };
+  });
+  await open(page, app);
+  await page
+    .getByRole("button", { name: "Show navigation", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+  await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
+  await inbox.getByRole("combobox", { name: "Activity type" }).click();
+  await page.getByRole("option", { name: "Mentions", exact: true }).click();
+  const row = inbox
+    .getByRole("list", { name: "Inbox conversations" })
+    .getByRole("listitem")
+    .first();
+  await expect(row.getByRole("img", { name: "Unread" })).toBeVisible();
+  await page.evaluate(() => {
+    window.inboxReadFailure.armed = true;
+  });
+  try {
+    await row.getByRole("button", { name: /^Open / }).click();
+    const detail = inbox.getByRole("complementary", {
+      name: "Thread",
+      exact: true,
+    });
+    await expect(detail).toBeVisible();
+    const alert = inbox
+      .getByRole("alert")
+      .filter({ hasText: "Synthetic read storage failure" });
+    await expect(alert).toBeVisible();
+    await expect(
+      alert.getByRole("button", { name: "Retry inbox" }),
+    ).toBeInViewport();
+    await expect(
+      inbox.getByRole("list", { name: "Inbox conversations" }),
+    ).not.toBeVisible();
+    const saves = await page.evaluate(() => {
+      window.inboxReadFailure.armed = false;
+      return window.inboxReadFailure.saves;
+    });
+    await alert.getByRole("button", { name: "Retry inbox" }).click();
+    await expect(alert).toHaveCount(0);
+    await expect
+      .poll(() => page.evaluate(() => window.inboxReadFailure.saves))
+      .toBeGreaterThan(saves);
+    await expect(detail).toBeVisible();
+    await detail
+      .getByRole("button", { name: "Close thread", exact: true })
+      .click();
+    await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
+  } finally {
+    await page.evaluate(() => {
+      window.inboxReadFailure.armed = false;
+    });
+  }
+});

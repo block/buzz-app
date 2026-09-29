@@ -65,7 +65,7 @@ export function createInboxFeed({
   });
   const listeners = new Set<() => void>();
   const stopChannels = channels.subscribeList(() => {
-    if (snapshot.mentions.length || snapshot.needsAction.length) publish({});
+    if (rawMentions.length || rawActions.length) publish({});
   });
   const admitted = (event: RelayEvent) => {
     if (!event.tags.some(([name, value]) => name === "p" && value === viewer))

@@ -898,7 +898,14 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   // Header search owns page navigation, including while narrow Settings
   // collapses the sidebar; its Pages group must preserve plugin ordering.
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
-  const titles = ["Messages", "Projects", "Agents", "Sessions", "Workflows"];
+  const titles = [
+    "Messages",
+    "Projects",
+    "Agents",
+    "Inbox",
+    "Sessions",
+    "Workflows",
+  ];
   const expectPageOrder = async (expected) => {
     const choices = await pageChoices(page);
     await expect(choices.getByRole("option")).toHaveText([
@@ -971,7 +978,13 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   });
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "false");
-  await expectPageOrder(["Messages", "Agents", "Sessions", "Workflows"]);
+  await expectPageOrder([
+    "Messages",
+    "Agents",
+    "Inbox",
+    "Sessions",
+    "Workflows",
+  ]);
   await closeSearch();
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "true");

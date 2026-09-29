@@ -27,37 +27,10 @@ import styles from "./Channels.module.css";
 
 const noSessions: readonly ChannelSummary[] = [];
 const noSubscribe = () => () => {};
+const noAgents: readonly string[] = [];
 const noProfiles = new Map<string, Profile>();
 
-// Own the connected row inside the memo boundary. Selecting another channel
-// must not rebuild every unchanged row's controls and subscriptions.
-export const ChannelSidebarItem = memo(function ChannelSidebarItem({
-  channel,
-  profile,
-  session,
-  working,
-  selected,
-  collapsed,
-  onToggle,
-  draft,
-  draftSelected,
-  sessions = noSessions,
-  onSelect,
-  onNewSession,
-  onOpenThread,
-  onOpenWorkingAgent,
-  onOpenAgentActivity,
-  onHideDm,
-  menuEnabled,
-  sectionKey,
-  onOpenMenu,
-  menuOpen = false,
-  menuAnchor,
-  menuContent,
-  onCloseMenu,
-  onMenuClosed,
-  menuFinalFocus,
-}: {
+type ItemProps = {
   channel: ChannelSummary;
   profile?: Profile | undefined;
   session: RelaySession;
@@ -92,26 +65,80 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   onCloseMenu?: () => void;
   onMenuClosed?: (channelId: string) => void;
   menuFinalFocus?: (channelId: string) => HTMLElement | false;
-}) {
-  const peer =
-    channel.channelType === "dm" && channel.participants?.length === 1
-      ? channel.participants[0]
-      : undefined;
-  const presence = usePresenceStatus(peer ? session.presence : undefined, peer);
-  // Idle rows retain no activity/profile subscription. Primitive snapshots keep
-  // an active row stable when unrelated agent frames arrive.
-  const agentKeys = useSyncExternalStore(
-    working ? session.agentActivity.subscribe : noSubscribe,
-    () =>
-      working
-        ? workingAgents(session.agentActivity.snapshot(), channel.id).join(",")
-        : "",
+};
+
+function WorkingChannelSidebarItem(props: ItemProps) {
+  const { channel, session } = props;
+  // Only active rows subscribe; idle rows are numerous in large sidebars.
+  const agentKeys = useSyncExternalStore(session.agentActivity.subscribe, () =>
+    workingAgents(session.agentActivity.snapshot(), channel.id).join(","),
   );
   const agents = agentKeys ? agentKeys.split(",") : [];
   const agentProfiles = useSyncExternalStore(
     agents.length ? session.profiles.subscribe : noSubscribe,
     agents.length ? session.profiles.snapshot : () => noProfiles,
   );
+  return (
+    <ChannelSidebarItemCore
+      {...props}
+      agents={agents}
+      agentProfiles={agentProfiles}
+    />
+  );
+}
+
+// Own the connected row inside the memo boundary. Selecting another channel
+// must not rebuild every unchanged row's controls and subscriptions.
+export const ChannelSidebarItem = memo(function ChannelSidebarItem(
+  props: ItemProps,
+) {
+  return props.working ? (
+    <WorkingChannelSidebarItem {...props} />
+  ) : (
+    <ChannelSidebarItemCore
+      {...props}
+      agents={noAgents}
+      agentProfiles={noProfiles}
+    />
+  );
+});
+
+function ChannelSidebarItemCore({
+  channel,
+  profile,
+  session,
+  selected,
+  collapsed,
+  onToggle,
+  draft,
+  draftSelected,
+  sessions = noSessions,
+  onSelect,
+  onNewSession,
+  onOpenThread,
+  onOpenWorkingAgent,
+  onOpenAgentActivity,
+  onHideDm,
+  menuEnabled,
+  sectionKey,
+  onOpenMenu,
+  menuOpen = false,
+  menuAnchor,
+  menuContent,
+  onCloseMenu,
+  onMenuClosed,
+  menuFinalFocus,
+  agents,
+  agentProfiles,
+}: ItemProps & {
+  agents: readonly string[];
+  agentProfiles: ReadonlyMap<string, Profile>;
+}) {
+  const peer =
+    channel.channelType === "dm" && channel.participants?.length === 1
+      ? channel.participants[0]
+      : undefined;
+  const presence = usePresenceStatus(peer ? session.presence : undefined, peer);
   const keyLabels = publicKeyLabels(agents);
   const agentName = (agent: string) =>
     agentProfiles.get(agent)?.name ?? keyLabels.get(agent) ?? "Agent";
@@ -281,4 +308,4 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
       </MenuPopup>
     </ContextMenuRoot>
   );
-});
+}

@@ -581,13 +581,8 @@ test("a reveal while the narrow drawer is closed runs when the drawer opens", as
   await expect(alpha).toBeInViewport({ ratio: 1 });
 });
 
-for (const destination of [
-  "Projects",
-  "Agents",
-  "Workflows",
-  "Settings",
-  "Back/Forward",
-]) {
+// Back/Forward leaves through Projects, so Projects needs no case of its own.
+for (const destination of ["Agents", "Workflows", "Settings", "Back/Forward"]) {
   test(`sidebar state survives Messages → ${destination} → Messages`, async ({
     page,
     app,

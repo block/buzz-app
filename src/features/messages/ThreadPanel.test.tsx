@@ -265,6 +265,13 @@ function messagesHarness(
         screen.queryByRole("region", { name: "Thread messages" }) ?? element;
       return element;
     },
+    rerenderProps() {
+      mounted?.rerender(
+        <div role="application" onKeyDown={bubble}>
+          <ThreadPanel {...props} />
+        </div>,
+      );
+    },
     resize(value: number) {
       height = value;
     },
@@ -421,7 +428,7 @@ it("keeps initial thread loading until available content has been positioned", (
   expect(within(section).getByText("root")).toBeVisible();
   expect(within(section).queryByText("Loading thread…")).toBeNull();
 });
-it("keeps a seeded initial refresh unread until legacy continuation is positioned", async () => {
+it("keeps seeded rows usable but unread until the initial legacy walk settles", async () => {
   vi.useFakeTimers();
   const h = messagesHarness(ordinaryNavigation());
   h.resize(600);
@@ -447,7 +454,10 @@ it("keeps a seeded initial refresh unread until legacy continuation is positione
   h.snapshot.readKind = "refresh";
   h.render();
   h.element.focus();
-  expect(h.element).toHaveAttribute("data-positioning");
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  expect(h.element.querySelector("[data-thread-rows]")).not.toHaveAttribute(
+    "inert",
+  );
   await act(() => vi.advanceTimersByTimeAsync(300));
   expect(reading).not.toHaveBeenCalled();
 
@@ -461,11 +471,14 @@ it("keeps a seeded initial refresh unread until legacy continuation is positione
   h.snapshot.status = "loading";
   h.snapshot.readKind = "older";
   h.render();
-  expect(h.element).toHaveAttribute("data-positioning");
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  expect(h.element.querySelector("[data-thread-rows]")).not.toHaveAttribute(
+    "inert",
+  );
   await act(() => vi.advanceTimersByTimeAsync(300));
   expect(reading).not.toHaveBeenCalled();
 
-  // The empty continuation changes neither rows nor geometry. Positioning must
+  // The empty continuation changes neither rows nor geometry. Readiness must
   // wake the existing reader, without a new focus or scroll gesture.
   h.snapshot.status = "ready";
   h.snapshot.readKind = undefined;
@@ -477,6 +490,70 @@ it("keeps a seeded initial refresh unread until legacy continuation is positione
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(observe).toHaveBeenCalledExactlyOnceWith([row.id, "reply"]);
 });
+it.each([false, true])(
+  "reads a background-completed exact thread after fresh dwell (deactivate before reveal=%s)",
+  async (deactivateBeforeReveal) => {
+    vi.useFakeTimers();
+    const navigation = ordinaryNavigation();
+    navigation.target.threadRootId = "different-root";
+    const h = messagesHarness(navigation);
+    h.props.active = deactivateBeforeReveal;
+    h.resize(600);
+    vi.mocked(document.hasFocus).mockReturnValue(true);
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+      new DOMRect(0, 0, 500, 500),
+    ] as unknown as DOMRectList);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 500, 500),
+    );
+    const observe = vi.fn(async () => {});
+    const reading = vi.fn(() => ({
+      view: vi.fn(),
+      observe,
+      catchUp: vi.fn(async () => {}),
+      dispose: vi.fn(),
+    }));
+    Object.assign(h.session.unread, {
+      sync: () => ({ capability: "frontier-sync" }),
+      reading,
+    });
+    h.snapshot.status = "loading";
+    h.snapshot.targetStatus = "loading";
+    h.render();
+    // The workspace owns inactive tab inertness and focus, not ThreadPanel.
+    const host = screen.getByRole("application");
+    host.setAttribute("inert", "");
+    (document.activeElement as HTMLElement).blur();
+    h.snapshot.targetStatus = "ready";
+    h.snapshot.target = row;
+    h.render();
+    h.snapshot.status = "ready";
+    h.render();
+    if (deactivateBeforeReveal) {
+      expect(navigation.complete).not.toHaveBeenCalled();
+      // Props alone complete the background visit; the snapshot is unchanged.
+      h.props.active = false;
+      h.rerenderProps();
+    }
+    expect(navigation.complete).toHaveBeenCalledExactlyOnceWith({
+      status: "opened",
+    });
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(observe).not.toHaveBeenCalled();
+    expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
+
+    h.props.active = true;
+    h.rerenderProps();
+    host.removeAttribute("inert");
+    h.element.focus();
+    await act(() => vi.advanceTimersByTimeAsync(299));
+    expect(observe).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(observe).toHaveBeenCalledExactlyOnceWith([row.id]);
+    expect(h.element).toHaveFocus();
+    expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
+  },
+);
 it("keeps older-page loading quiet and retry between root and replies", () => {
   const h = messagesHarness();
   h.snapshot.direction = "older";

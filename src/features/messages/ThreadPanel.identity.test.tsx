@@ -117,10 +117,7 @@ it("retains mounted rows through a deferred real-session page and profile noise"
     (request) => request !== initial && !request.signal?.aborted,
   );
   if (!page) throw new Error("Deferred thread page was not requested");
-  expect(screen.getByText("Loading thread…")).toBeInTheDocument();
-  expect(
-    screen.getByRole("region", { name: "Thread messages" }),
-  ).toHaveAttribute("data-positioning");
+  expect(screen.queryByText("Loading thread…")).not.toBeInTheDocument();
   bodyRender.mockClear();
 
   // An unrelated signed profile preserves the selected map, but the shared
@@ -147,30 +144,6 @@ it("retains mounted rows through a deferred real-session page and profile noise"
     ["Appended reply body"],
   ]);
   bodyRender.mockClear();
-
-  // Finish the initial legacy walk before interacting with its retained rows.
-  await waitFor(() =>
-    expect(
-      wire.pending.filter(
-        (request) =>
-          request !== initial && request !== page && !request.signal?.aborted,
-      ),
-    ).toHaveLength(1),
-  );
-  const continuation = wire.pending.find(
-    (request) =>
-      request !== initial && request !== page && !request.signal?.aborted,
-  );
-  if (!continuation) throw new Error("Final continuation was not requested");
-  // The legacy request also revalidates the root: no more replies still returns it.
-  await act(async () => continuation.respond([root]));
-  await waitFor(() =>
-    expect(screen.queryByText("Loading thread…")).not.toBeInTheDocument(),
-  );
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  expect(
-    screen.getByRole("region", { name: "Thread messages" }),
-  ).not.toHaveAttribute("data-positioning");
 
   fireEvent.click(screen.getByRole("button", { name: "0:42" }));
   expect(screen.getByTestId("video-seek")).toHaveTextContent("42");

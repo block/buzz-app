@@ -288,6 +288,7 @@ function ThreadMessages({
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
+  const readingSettled = useRef(false);
   const [initialPositioned, setInitialPositioned] = useState(false);
   const follow = useRef(true);
   const jumpingToLatest = useRef(false);
@@ -367,6 +368,8 @@ function ThreadMessages({
     // Exact lookup can finish before context. Preserve this row's reading
     // position through prepended history without refocusing it after opening.
     targetAnchor.current = selectedOffset();
+    readingSettled.current = true;
+    readingPositioned(scroller.current);
     navigation?.complete({ status: "opened" });
   }, [navigation, selectedOffset]);
   const prepareTarget = useCallback(() => {
@@ -566,7 +569,6 @@ function ThreadMessages({
           !(
             snapshot.status === "loading" &&
             snapshot.readKind === "refresh" &&
-            snapshot.direction !== undefined &&
             snapshot.root
           )) ||
           (snapshot.direction !== "older" && snapshot.canLoadMore)))
@@ -629,6 +631,25 @@ function ThreadMessages({
     tree,
     expanded,
   ]);
+  // Main's retained presentation can be usable before the initial history walk
+  // finishes. That is not yet automatic reading intent. Exact revealed targets
+  // remain individually readable; later background refreshes keep earned readiness.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active can complete an exact background visit in the preceding layout effect without changing the snapshot.
+  useLayoutEffect(() => {
+    if (
+      !positioned.current ||
+      readingSettled.current ||
+      (navigation && !rootTarget && revealed.current !== navigation.signal)
+    )
+      return;
+    if (
+      snapshot.status === "ready" &&
+      (snapshot.direction === "older" || !snapshot.canLoadMore)
+    ) {
+      readingSettled.current = true;
+      readingPositioned(scroller.current);
+    }
+  }, [active, navigation, rootTarget, revealed, snapshot]);
   // An own send can land in the middle of a branch, not at the list bottom.
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry DOM lookup after history or branch visibility changes.
   useLayoutEffect(() => {
@@ -818,7 +839,7 @@ function ThreadMessages({
         session={session}
         channelId={channelId}
         scroller={scroller}
-        settled={positioned}
+        settled={readingSettled}
         rootId={snapshot.root?.id}
         // A visible exact reply can outlive its unavailable root. Until resolved,
         // observe rows individually; an absent root must not mean channel catch-up.

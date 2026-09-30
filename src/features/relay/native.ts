@@ -1,6 +1,20 @@
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
+import {
+  audioDemuxer,
+  isHeic,
+  isVoiceNote,
+  videoDemuxer,
+} from "./video-preparation";
+import {
+  hostUpload,
+  readUploadResponse,
+  UPLOAD_TIMEOUT_MS,
+  UploadError,
+  UPLOAD_MAX_BYTES,
+  validateUploadResult,
+} from "./attachments";
 import { eventDto, type RelayEvent } from "./events";
 import {
   coordinate,
@@ -17,6 +31,14 @@ import { WORKFLOW_KINDS } from "../workflows/protocol";
 
 import { PublishRejected } from "./outbox";
 
+import { readCoordinate, parseReadBlob } from "./read-state-model";
+import type { ReadStateSigning } from "./read-state-host";
+import {
+  readSnapshotCommunity,
+  readSnapshotFilter,
+  parseReadSnapshot,
+  readSnapshotText,
+} from "./read-state-snapshot";
 import {
   memoryAgent,
   memoryListing,
@@ -26,12 +48,26 @@ import type { AgentLibrary } from "../agents/library";
 import { observerFrame } from "../agents/observer";
 import {
   acceptPublish,
+  admitSignedRequest,
   connectSignedTransport,
   admittedSignedWorkflowRead,
   type ReadTransport,
   type Signer,
 } from "./transport";
 import { nativeSidebar } from "./native-sidebar";
+import { readApiFailure } from "./http-admission";
+
+async function nativeReadInvoke<T>(
+  command: string,
+  args: Record<string, unknown>,
+) {
+  try {
+    return await invoke<T>(command, args);
+  } catch (error) {
+    // Tauri commands reject with a string; domain health expects an Error.
+    throw typeof error === "string" ? new Error(error) : error;
+  }
+}
 
 export const nativeWriteKinds = [
   30078,
@@ -40,6 +76,7 @@ export const nativeWriteKinds = [
   1984,
   9000,
   9001,
+  30030,
   30315,
   40003,
   40100,
@@ -86,6 +123,109 @@ function nativeResponse(result: {
   );
 }
 
+/** Relay media through the native `buzz-media` scheme (`src-tauri/src/relay.rs`),
+ * which signs each Blossom `get`, including every `Range` request. */
+export function nativeMediaUrl(url: string): string {
+  return convertFileSrc(url, "buzz-media");
+}
+
+/** Raw IPC bytes; native code hashes, signs and sends them to `PUT /upload`.
+ * Aborting settles at once and tells native code to drop the request. */
+async function nativeUpload(
+  origin: string,
+  file: File,
+  signal: AbortSignal,
+  preparation?: string,
+) {
+  const bytes = await file.arrayBuffer();
+  signal.throwIfAborted();
+  const id = crypto.randomUUID();
+  let abort = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    abort = () => {
+      invoke("relay_upload_cancel", { id }).catch(() => {});
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+  });
+  try {
+    const result = await Promise.race([
+      invoke<{
+        status: number;
+        headers: Record<string, string>;
+        body: string;
+      }>("relay_upload", bytes, {
+        headers: {
+          "x-buzz-upload-id": id,
+          "x-buzz-community": origin,
+          "x-buzz-content-type": file.type || "application/octet-stream",
+          ...(preparation ? { "x-buzz-preparation": preparation } : {}),
+        },
+      }),
+      aborted,
+    ]);
+    return new Response(result.body, {
+      status: result.status,
+      headers: result.headers,
+    });
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
+}
+
+/** Preparation is performed and uploaded inside the host. Converted bytes never
+ * cross back into JS; only the validated relay descriptor does. */
+async function nativeAttachmentUpload(
+  origin: string,
+  file: File,
+  signal: AbortSignal,
+) {
+  signal.throwIfAborted();
+  if (!file.size || file.size > UPLOAD_MAX_BYTES) throw new UploadError("size");
+  const header = new Uint8Array(await file.slice(0, 4096).arrayBuffer());
+  signal.throwIfAborted();
+  const voice = isVoiceNote(file.name);
+  const heic = !voice && isHeic(header, file.name);
+  if (voice && file.size > 128 * 1024 * 1024) throw new UploadError("size");
+  const demuxer = voice
+    ? audioDemuxer(header)
+    : heic
+      ? "mov"
+      : videoDemuxer(header);
+  if (!demuxer) {
+    if (voice || file.type.startsWith("video/")) throw new UploadError("video");
+    return hostUpload(
+      (item, bounded) => nativeUpload(origin, item, bounded),
+      origin,
+    )(file, signal);
+  }
+  // Native preparation has its own 600 s deadline; leave a separate upload
+  // budget, as broker prepareMedia + hostUpload do.
+  const bounded = AbortSignal.any([
+    signal,
+    AbortSignal.timeout(600_000 + UPLOAD_TIMEOUT_MS),
+  ]);
+  const response = await nativeUpload(
+    origin,
+    file,
+    bounded,
+    `${heic ? "image" : voice ? "voice" : "video"}:${demuxer}`,
+  );
+  bounded.throwIfAborted();
+  const body = await readUploadResponse(response);
+  const type = heic ? "image/jpeg" : "video/mp4";
+  const name = `${file.name.replace(/\.[^.]+$/, "") || "Attachment"}.${heic ? "jpg" : "mp4"}`;
+  bounded.throwIfAborted();
+  const size = (body as { size?: number } | null)?.size;
+  if (
+    typeof size !== "number" ||
+    (body as { type?: string } | null)?.type !== type
+  )
+    throw new UploadError("invalid");
+  return validateUploadResult(body, origin, size, name);
+}
+
 export function nativeRelaySigner(community: string): Signer {
   const origin = communityDestination(community).url;
   return {
@@ -115,6 +255,8 @@ export function nativeRelaySigner(community: string): Signer {
         signal,
       );
     },
+    upload: (file, signal) => nativeUpload(origin, file, signal),
+    media: nativeMediaUrl,
   };
 }
 
@@ -145,6 +287,7 @@ export async function connectNativeTransport(
   );
   signal?.throwIfAborted();
   const writer = transport.writer;
+  const readCommunity = readSnapshotCommunity(info.read_state_snapshot);
   if (!writer) throw new Error("Native relay writer is unavailable");
   const commandWriter = (
     route: "channel-details" | "channel-lifecycle" | "identity-archive",
@@ -383,6 +526,104 @@ export async function connectNativeTransport(
       return signature;
     },
     ...nativeSidebar(transport),
+    readState: {
+      ...(readCommunity ? { communityId: readCommunity } : {}),
+      async decode(events: readonly RelayEvent[], signal: AbortSignal) {
+        signal.throwIfAborted();
+        const decoded = await nativeReadInvoke<
+          { eventId: string; blob: unknown }[]
+        >("relay_decode_read_state", {
+          community: origin,
+          events,
+        });
+        signal.throwIfAborted();
+        for (const item of decoded) parseReadBlob(item.blob);
+        return decoded;
+      },
+      async sign(intent: ReadStateSigning, signal: AbortSignal) {
+        signal.throwIfAborted();
+        parseReadBlob(intent.blob);
+        const event = eventDto(
+          await nativeReadInvoke("relay_sign_read_state", {
+            community: origin,
+            intent,
+          }),
+        );
+        signal.throwIfAborted();
+        if (event.pubkey !== transport.viewer || !readCoordinate(event))
+          throw new Error("Invalid read-state event");
+        return event;
+      },
+      async publish(event: RelayEvent, signal: AbortSignal) {
+        signal.throwIfAborted();
+        if (event.pubkey !== transport.viewer || !readCoordinate(event))
+          throw new Error("Invalid read-state event");
+        const response = await admitSignedRequest(
+          origin,
+          transport.viewer,
+          async () => {
+            // Tauri IPC cannot abort the underlying request. Keep admission until
+            // it settles even if the caller no longer needs the receipt.
+            const result = await nativeReadInvoke<{
+              status: number;
+              headers: Record<string, string>;
+              body: string;
+            }>("relay_publish_read_state", { community: origin, event });
+            return nativeResponse(result);
+          },
+          signal,
+        );
+        signal.throwIfAborted();
+        await acceptPublish(response, event.id);
+      },
+    },
+    ...(readCommunity
+      ? {
+          async readStateSnapshot(signal: AbortSignal, _requestId, priority) {
+            const response = await admitSignedRequest(
+              origin,
+              transport.viewer,
+              () =>
+                nativeRelayRequest(
+                  origin,
+                  "/query",
+                  readSnapshotFilter(transport.viewer),
+                ),
+              signal,
+              priority,
+            );
+            signal.throwIfAborted();
+            if (!response.ok)
+              throw new Error((await readApiFailure(response)).error);
+            return parseReadSnapshot(
+              JSON.parse(await readSnapshotText(response)),
+              transport.viewer,
+              readCommunity,
+              signal,
+            );
+          },
+        }
+      : {}),
+    async channelActivity(channelIds, signal) {
+      if (
+        channelIds.length < 1 ||
+        channelIds.length > 128 ||
+        channelIds.some((id) => !/^[a-zA-Z0-9_-]{1,128}$/.test(id))
+      )
+        throw new Error("Activity filter rejected");
+      return transport.query(
+        channelIds.map((channelId) => ({
+          kinds: [9, 40002, 40008, 45001, 45003],
+          "#h": [channelId],
+          limit: 1,
+        })),
+        signal,
+        "channel-activity",
+        "background",
+      );
+    },
+    uploadAttachment: (file, signal) =>
+      nativeAttachmentUpload(origin, file, signal),
     writer: {
       ...writer,
       kinds: creation ? [...nativeWriteKinds, 9007] : nativeWriteKinds,

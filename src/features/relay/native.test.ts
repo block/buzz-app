@@ -14,6 +14,8 @@ import { createMessages } from "./messages";
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   isTauri: () => true,
+  convertFileSrc: (path: string, protocol: string) =>
+    `${protocol}://localhost/${encodeURIComponent(path)}`,
 }));
 const viewer = keypair(),
   relay = keypair();
@@ -24,12 +26,18 @@ type Request = {
   method: string;
   body: string | null;
 };
+let discovery: Record<string, unknown> = {};
 let respond: (
   request: Request,
 ) =>
   | { status?: number; body: unknown }
   | Promise<{ status?: number; body: unknown }>;
 const requests: Request[] = [];
+const uploads: { bytes: Uint8Array; headers: Record<string, string> }[] = [];
+let uploadResponse: () => { status?: number; body: unknown };
+const cancels: string[] = [];
+let hangUploads = false;
+let preparedResponse: (() => { status?: number; body: unknown }) | undefined;
 const owners: ReturnType<typeof createOutbox>[] = [];
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -42,6 +50,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(1700000010000);
   requests.length = 0;
+  discovery = {};
   respond = () => ({ body: [] });
   vi.stubGlobal(
     "fetch",
@@ -49,7 +58,12 @@ beforeEach(() => {
       throw new Error("Packaged connections must not call the dev broker");
     }),
   );
-  vi.mocked(invoke).mockImplementation(async (command, args) => {
+  uploads.length = 0;
+  cancels.length = 0;
+  hangUploads = false;
+  preparedResponse = undefined;
+  uploadResponse = () => ({ status: 500, body: "" });
+  vi.mocked(invoke).mockImplementation(async (command, args, options) => {
     if (command === "identity_restore") return viewer.pubkey;
     if (command === "relay_sign") {
       expect(
@@ -62,12 +76,36 @@ beforeEach(() => {
       requests.push(request);
       const result =
         request.path === "/"
-          ? { body: { self: relay.pubkey } }
+          ? { body: { self: relay.pubkey, ...discovery } }
           : await respond(request);
       return {
         status: result.status ?? 200,
         headers: {},
         body: JSON.stringify(result.body),
+      };
+    }
+    if (command === "relay_upload_cancel") {
+      cancels.push((args as { id: string }).id);
+      return null;
+    }
+    if (command === "relay_upload") {
+      if (hangUploads) return new Promise(() => {});
+      uploads.push({
+        bytes: new Uint8Array(args as ArrayBuffer),
+        headers: (options as { headers: Record<string, string> }).headers,
+      });
+      const result = (options as { headers: Record<string, string> }).headers[
+        "x-buzz-preparation"
+      ]
+        ? (preparedResponse?.() ?? uploadResponse())
+        : uploadResponse();
+      return {
+        status: result.status ?? 200,
+        headers: {},
+        body:
+          typeof result.body === "string"
+            ? result.body
+            : JSON.stringify(result.body),
       };
     }
     throw new Error(`Unexpected native command: ${command}`);
@@ -572,7 +610,7 @@ it("workflow history surfaces bounded host refusals and fences late native resul
 });
 
 it("shares workflow history admission and cooldown with signed queries", async () => {
-  const transport = await connectNativeTransport(community);
+  const transport = await connectNativeTransport("https://workflow-quota.test");
   assert.exists(transport.workflows);
   const id = "11111111-1111-4111-8111-111111111111";
   const quota = '{"error":"rate-limited: quota exceeded; retry in 60s"}';
@@ -986,4 +1024,509 @@ it("exposes purpose-bound agent readers and fences obsolete observer decoding", 
       "nonce",
     ),
   ).rejects.toThrow("Log authorization unavailable");
+});
+
+const hash = "c".repeat(64);
+it("routes relay media through the authenticated native scheme only", async () => {
+  const transport = await connectNativeTransport(community);
+  const media = `${community}/media/${hash}.png`;
+  expect(transport.media(media)).toBe(
+    `buzz-media://localhost/${encodeURIComponent(media)}`,
+  );
+  expect(transport.media(media, "small")).toBe(
+    `buzz-media://localhost/${encodeURIComponent(`${community}/media/${hash}.thumb.jpg`)}`,
+  );
+  expect(transport.media("https://images.test/cat.png")).toBe(
+    "https://images.test/cat.png",
+  );
+  expect(transport.media("http://images.test/cat.png")).toBeUndefined();
+});
+
+it("publishes custom emoji sets", async () => {
+  const transport = await connectNativeTransport(community);
+  expect(transport.writer?.kinds).toContain(30030);
+});
+
+it("uploads exact bytes natively and validates the relay descriptor", async () => {
+  const transport = await connectNativeTransport(community);
+  assert(transport.uploadAttachment);
+  uploadResponse = () => ({
+    body: {
+      url: `${community}/media/${hash}.png`,
+      type: "image/png",
+      size: 3,
+      sha256: hash,
+    },
+  });
+  const file = new File([new Uint8Array([1, 2, 3])], "a.png", {
+    type: "image/png",
+  });
+  await expect(
+    transport.uploadAttachment(file, new AbortController().signal),
+  ).resolves.toEqual({
+    name: "a.png",
+    url: `${community}/media/${hash}.png`,
+    type: "image/png",
+    size: 3,
+    sha256: hash,
+  });
+  expect(uploads).toEqual([
+    {
+      bytes: new Uint8Array([1, 2, 3]),
+      headers: {
+        "x-buzz-upload-id": expect.stringMatching(/^[0-9a-f-]{36}$/),
+        "x-buzz-community": community,
+        "x-buzz-content-type": "image/png",
+      },
+    },
+  ]);
+  uploadResponse = () => ({
+    body: {
+      url: `https://other.test/media/${hash}.png`,
+      type: "image/png",
+      size: 3,
+      sha256: hash,
+    },
+  });
+  await expect(
+    transport.uploadAttachment(file, new AbortController().signal),
+  ).rejects.toMatchObject({ code: "invalid" });
+});
+
+it.each([
+  [401, "", "denied"],
+  [413, "", "size"],
+  [429, "", "capacity"],
+  [422, { error: "metadata forbidden" }, "metadata"],
+  [415, { error: "unsupported container" }, "rejected"],
+  [500, "internal error", "failed"],
+])(
+  "maps relay upload status %i to a user-facing failure",
+  async (status, body, code) => {
+    const transport = await connectNativeTransport(community);
+    assert(transport.uploadAttachment);
+    uploadResponse = () => ({ status, body });
+    await expect(
+      transport.uploadAttachment(
+        new File(["x"], "a.bin"),
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code });
+  },
+);
+
+it("settles a cancelled native upload at once and cancels it natively", async () => {
+  const transport = await connectNativeTransport(community);
+  assert(transport.uploadAttachment);
+  hangUploads = true;
+  const controller = new AbortController();
+  const pending = transport.uploadAttachment(
+    new File(["x"], "a.bin"),
+    controller.signal,
+  );
+  await vi.waitFor(() =>
+    expect(vi.mocked(invoke).mock.calls.at(-1)?.[0]).toBe("relay_upload"),
+  );
+  const [, , options] = vi.mocked(invoke).mock.calls.at(-1) ?? [];
+  controller.abort();
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  expect(cancels).toEqual([
+    (options as { headers: Record<string, string> }).headers[
+      "x-buzz-upload-id"
+    ],
+  ]);
+});
+
+it("exposes read-state only for advertised snapshots and keeps signing purpose-bound", async () => {
+  const unsupported = await connectNativeTransport(community);
+  expect(unsupported.readState).toBeDefined();
+  expect(unsupported.readStateSnapshot).toBeUndefined();
+  discovery = {
+    read_state_snapshot: {
+      version: 1,
+      community_id: "11111111-1111-4111-8111-111111111111",
+    },
+  };
+  const transport = await connectNativeTransport(community);
+  assert.exists(transport.readState);
+  assert.exists(transport.readStateSnapshot);
+  const signal = new AbortController().signal;
+  const blob = {
+    v: 1,
+    client_id: "fixture",
+    contexts: { channel: 1 },
+  } as const;
+  const event = signed(viewer, {
+    kind: 30078,
+    created_at: 1700000010,
+    tags: [
+      ["d", `read-state:${"a".repeat(32)}`],
+      ["t", "read-state"],
+    ],
+    content: "ciphertext",
+  });
+  vi.mocked(invoke).mockImplementationOnce(async (command, args) => {
+    expect(command).toBe("relay_sign_read_state");
+    expect(args).toEqual({
+      community,
+      intent: { slot: "a".repeat(32), createdAt: 1700000010, blob },
+    });
+    return event;
+  });
+  expect(
+    await transport.readState.sign?.(
+      { slot: "a".repeat(32), createdAt: 1700000010, blob },
+      signal,
+    ),
+  ).toEqual(event);
+  vi.mocked(invoke).mockImplementationOnce(async (command) => {
+    expect(command).toBe("relay_decode_read_state");
+    return [{ eventId: event.id, blob }];
+  });
+  expect(await transport.readState.decode([event], signal)).toEqual([
+    { eventId: event.id, blob },
+  ]);
+  vi.mocked(invoke).mockImplementationOnce(async (command, args) => {
+    expect(command).toBe("relay_publish_read_state");
+    expect(args).toEqual({ community, event });
+    return {
+      status: 200,
+      headers: {},
+      body: JSON.stringify({ accepted: true, event_id: event.id }),
+    };
+  });
+  await transport.readState.publish?.(event, signal);
+  expect(requests.every((r) => r.path !== "/events")).toBe(true);
+});
+
+it("native snapshot quota pauses reads and publication on the same principal", async () => {
+  discovery = {
+    read_state_snapshot: {
+      version: 1,
+      community_id: "11111111-1111-4111-8111-111111111111",
+    },
+  };
+  const transport = await connectNativeTransport("https://snapshot-quota.test");
+  assert.exists(transport.readState);
+  const signal = new AbortController().signal;
+  const event = signed(viewer, {
+    kind: 30078,
+    created_at: 1700000010,
+    tags: [
+      ["d", `read-state:${"a".repeat(32)}`],
+      ["t", "read-state"],
+    ],
+    content: "ciphertext",
+  });
+  respond = () => ({
+    status: 429,
+    body: { error: "rate-limited: quota exceeded; retry in 30s" },
+  });
+  await expect(
+    transport.readStateSnapshot?.(signal, "read", "foreground"),
+  ).rejects.toThrow("rate-limited: quota exceeded");
+  const dispatched = requests.length;
+  await expect(
+    transport.query([{ kinds: [9], limit: 1 }], signal),
+  ).rejects.toThrow("Relay requests paused");
+  await expect(transport.readState.publish?.(event, signal)).rejects.toThrow(
+    "Relay requests paused",
+  );
+  expect(requests).toHaveLength(dispatched);
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.some(([command]) => command === "relay_publish_read_state"),
+  ).toBe(false);
+});
+
+it("native publication shares quota admission and preserves receipt and IPC failures", async () => {
+  discovery = {
+    read_state_snapshot: {
+      version: 1,
+      community_id: "11111111-1111-4111-8111-111111111111",
+    },
+  };
+  const transport = await connectNativeTransport(
+    "https://publication-quota.test",
+  );
+  assert.exists(transport.readState);
+  const signal = new AbortController().signal;
+  const event = signed(viewer, {
+    kind: 30078,
+    created_at: 1700000010,
+    tags: [
+      ["d", `read-state:${"a".repeat(32)}`],
+      ["t", "read-state"],
+    ],
+    content: "ciphertext",
+  });
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 200,
+    headers: {},
+    body: JSON.stringify({
+      accepted: false,
+      event_id: event.id,
+      message: "blocked: read-state quota",
+    }),
+  });
+  await expect(transport.readState.publish?.(event, signal)).rejects.toThrow(
+    "blocked: read-state quota",
+  );
+  vi.mocked(invoke).mockRejectedValueOnce("Relay response was interrupted");
+  await expect(transport.readState.publish?.(event, signal)).rejects.toThrow(
+    "Relay response was interrupted",
+  );
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 429,
+    headers: {},
+    body: JSON.stringify({
+      error: "rate-limited: quota exceeded; retry in 30s",
+    }),
+  });
+  await expect(transport.readState.publish?.(event, signal)).rejects.toThrow(
+    "rate-limited: quota exceeded",
+  );
+  const dispatched = requests.length;
+  const publications = vi
+    .mocked(invoke)
+    .mock.calls.filter(
+      ([command]) => command === "relay_publish_read_state",
+    ).length;
+  await expect(
+    transport.query([{ kinds: [9], limit: 1 }], signal),
+  ).rejects.toThrow("Relay requests paused");
+  await expect(
+    transport.readStateSnapshot?.(signal, "read", "foreground"),
+  ).rejects.toThrow("Relay requests paused");
+  expect(requests).toHaveLength(dispatched);
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "relay_publish_read_state"),
+  ).toHaveLength(publications);
+});
+
+it("holds native publication admission until cancelled IPC settles", async () => {
+  const transport = await connectNativeTransport(
+    "https://publication-slots.test",
+  );
+  const readState = transport.readState;
+  assert.exists(readState);
+  const event = signed(viewer, {
+    kind: 30078,
+    created_at: 1700000010,
+    tags: [
+      ["d", `read-state:${"a".repeat(32)}`],
+      ["t", "read-state"],
+    ],
+    content: "ciphertext",
+  });
+  const gates = Array.from({ length: 6 }, () =>
+    deferred<{
+      status: number;
+      headers: Record<string, string>;
+      body: string;
+    }>(),
+  );
+  for (const gate of gates)
+    vi.mocked(invoke).mockImplementationOnce(() => gate.promise);
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 200,
+    headers: {},
+    body: JSON.stringify({ accepted: true, event_id: event.id }),
+  });
+  const controllers = gates.map(() => new AbortController());
+  const publications = controllers.map((controller) =>
+    readState.publish?.(event, controller.signal),
+  );
+  const settled = Promise.allSettled(publications);
+  try {
+    await vi.waitFor(() =>
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(
+            ([command]) => command === "relay_publish_read_state",
+          ),
+      ).toHaveLength(6),
+    );
+    controllers[0]?.abort();
+    const queued = readState.publish?.(event, new AbortController().signal);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(
+          ([command]) => command === "relay_publish_read_state",
+        ),
+    ).toHaveLength(6);
+    gates[0]?.resolve({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({ accepted: true, event_id: event.id }),
+    });
+    await vi.waitFor(() =>
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(
+            ([command]) => command === "relay_publish_read_state",
+          ),
+      ).toHaveLength(7),
+    );
+    await expect(queued).resolves.toBeUndefined();
+  } finally {
+    for (const gate of gates)
+      gate.resolve({
+        status: 200,
+        headers: {},
+        body: JSON.stringify({ accepted: true, event_id: event.id }),
+      });
+    await settled;
+  }
+});
+
+it("reads the complete snapshot and activity through the native query route", async () => {
+  discovery = {
+    read_state_snapshot: {
+      version: 1,
+      community_id: "11111111-1111-4111-8111-111111111111",
+    },
+  };
+  const transport = await connectNativeTransport(community);
+  const signal = new AbortController().signal;
+  respond = () => ({
+    body: {
+      read_state_snapshot: 1,
+      complete: true,
+      pubkey: viewer.pubkey,
+      community_id: "11111111-1111-4111-8111-111111111111",
+      snapshot_id: "a".repeat(64),
+      events: [],
+    },
+  });
+  await expect(
+    transport.readStateSnapshot?.(signal, "read", "foreground"),
+  ).resolves.toEqual([]);
+  expect(JSON.parse(requests.at(-1)?.body ?? "null")).toEqual([
+    {
+      kinds: [30078],
+      authors: [viewer.pubkey],
+      read_state_snapshot: 1,
+    },
+  ]);
+  const activity = message(viewer, "channel", "recent", 1700000000);
+  respond = () => ({ body: [activity] });
+  await expect(
+    transport.channelActivity?.(["channel"], signal),
+  ).resolves.toEqual([activity]);
+  expect(JSON.parse(requests.at(-1)?.body ?? "null")).toEqual([
+    {
+      kinds: [9, 40002, 40008, 45001, 45003],
+      "#h": ["channel"],
+      limit: 1,
+    },
+  ]);
+  await expect(
+    transport.channelActivity?.(["bad/channel"], signal),
+  ).rejects.toThrow("Activity filter rejected");
+});
+
+it("prepares HEIC and video in the native upload without dev-broker fetches", async () => {
+  const transport = await connectNativeTransport(community);
+  assert(transport.uploadAttachment);
+  preparedResponse = () => ({
+    body: {
+      url: `${community}/media/${hash}.jpg`,
+      type: "image/jpeg",
+      size: 5,
+      sha256: hash,
+    },
+  });
+  const heic = new File(
+    [new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 104, 101, 105, 99])],
+    "a.heic",
+    { type: "image/heic" },
+  );
+  await expect(
+    transport.uploadAttachment(heic, new AbortController().signal),
+  ).resolves.toMatchObject({
+    name: "a.jpg",
+    type: "image/jpeg",
+    size: 5,
+  });
+  expect(uploads.at(-1)?.headers).toMatchObject({
+    "x-buzz-preparation": "image:mov",
+    "x-buzz-community": community,
+  });
+  preparedResponse = () => ({
+    body: {
+      url: `${community}/media/${hash}.mp4`,
+      type: "video/mp4",
+      size: 7,
+      sha256: hash,
+    },
+  });
+  const avi = new File(
+    [new Uint8Array([82, 73, 70, 70, 0, 0, 0, 0, 65, 86, 73, 32])],
+    "b.avi",
+    { type: "video/avi" },
+  );
+  await expect(
+    transport.uploadAttachment(avi, new AbortController().signal),
+  ).resolves.toMatchObject({
+    name: "b.mp4",
+    type: "video/mp4",
+    size: 7,
+  });
+  expect(uploads.at(-1)?.headers["x-buzz-preparation"]).toBe("video:avi");
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it.each([
+  [403, { error: "no access" }, "denied"],
+  [413, { error: "too large" }, "size"],
+  [429, { error: "busy" }, "capacity"],
+  [422, { error: "metadata forbidden" }, "metadata"],
+  [415, { error: "unsupported" }, "rejected"],
+  [400, { code: "io" }, "io"],
+])(
+  "maps prepared-upload response %i through the shared policy",
+  async (status, body, code) => {
+    const transport = await connectNativeTransport(community);
+    assert(transport.uploadAttachment);
+    preparedResponse = () => ({ status, body });
+    const avi = new File(
+      [new Uint8Array([82, 73, 70, 70, 0, 0, 0, 0, 65, 86, 73, 32])],
+      "b.avi",
+      { type: "video/avi" },
+    );
+    await expect(
+      transport.uploadAttachment(avi, new AbortController().signal),
+    ).rejects.toMatchObject({ code });
+  },
+);
+
+it("refuses native preparation failures and does not accept a mismatched prepared type", async () => {
+  const transport = await connectNativeTransport(community);
+  assert(transport.uploadAttachment);
+  const heic = new File(
+    [new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 104, 101, 105, 99])],
+    "a.heic",
+  );
+  preparedResponse = () => ({ status: 503, body: { code: "ffmpeg" } });
+  await expect(
+    transport.uploadAttachment(heic, new AbortController().signal),
+  ).rejects.toMatchObject({ code: "ffmpeg" });
+  preparedResponse = () => ({
+    body: {
+      url: `${community}/media/${hash}.mp4`,
+      type: "video/mp4",
+      size: 3,
+      sha256: hash,
+    },
+  });
+  await expect(
+    transport.uploadAttachment(heic, new AbortController().signal),
+  ).rejects.toMatchObject({ code: "invalid" });
 });

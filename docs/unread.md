@@ -73,6 +73,13 @@ could hide unseen siblings. Oversized rows that never fit fully are not auto-rea
   this also covers messages at or before the cut that arrive later.
   With no message evidence, it clears only the channel's local mark and invents
   no frontier. Success means local durability; publication may still be pending.
+- `markAllChannelsRead()` runs `markChannelRead` one channel at a time over the
+  accessible listed channels that still show unread evidence or a local mark, so
+  an already-read community costs no writes. One failing channel does not stop
+  the sweep; the first failure is rethrown afterwards. A channel whose grant is
+  revoked before its turn is skipped, not failed; like a grant that arrives
+  mid-sweep, it waits for the next explicit action. The community rail's
+  Mark all as read uses it for the selected community only.
 - `markUnreadLocal(target)` is durable **on this browser profile/device only**.
   Automatic reading does not clear it. An explicit mark-through clears that
   target's local mark. `syncedManualUnread` is `false`.
@@ -141,17 +148,20 @@ for newer manual-unread intent.
 ## Durable sync and privacy
 
 The journal is separate from disposable message caches in `buzz-read-state-v1`,
-partitioned by relay/community scope and viewer. IndexedDB strict read/write
+partitioned by relay/community scope and viewer. Leaving a community deletes that
+partition along with the community's other device state; other partitions are
+untouched. IndexedDB strict read/write
 transactions merge concurrent local windows; Web Locks serialize the publisher.
 Without host decoding the capability is `unsupported`; without safe serialized
 sign/publish it is `read-only`. Read sync requires `frontier-sync`. Local manual
 intent can still be saved independently of remote capability.
 
 Signed kind-30078 NIP-RS blobs use self-encryption and a persisted random coordinate
-slot/client ID. The Node development broker alone owns the key, narrow codec,
-signing, same-origin checks, scoped NIP-98 and relay admission. Plugins receive no
-generic encryption or arbitrary-kind signing capability. Packaged builds do not
-include this development broker and do not gain a native read-state signer here.
+slot/client ID. The Node development broker or the packaged Tauri identity host
+owns the key and narrow codec. Native decode verifies own signed NIP-RS coordinates; native signing
+accepts only bounded read-state intent, and publication rechecks the signed event
+before sending it. Plugins receive no generic encryption or arbitrary-kind signing
+capability. Both transports use scoped NIP-98 for reads and writes.
 
 Accepted local intent is saved before signing; the exact signed event is saved
 before sending. Lost responses/readback retain that event identity for retry.

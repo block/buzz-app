@@ -577,11 +577,14 @@ ownership and trusted-plugin authority do not change.
 renders the existing `ThreadPanel` without its side-panel header, close control
 or Escape dismissal; the page owns the surrounding header and placement. The
 host supplies the rest of the Channels thread behavior: contribution renderers,
-message management (edit, delete, mark read/unread, and the channel visit those
-rely on), session-channel recipients, Buzz link navigation, and one modal at a
-time for a registered panel or media review. The page passes its current ready
-session and stable community/viewer scope; retargeting disposes the old thread
-and its modal. The page holds no second message reader, cache or outbox.
+message management (edit, delete, mark read/unread, and a notice above the
+thread to retry or discard a failed edit or deletion), session-channel
+recipients, Buzz link navigation, and one modal at a time for a registered panel
+or media review. The page passes its current ready session and stable
+community/viewer scope; retargeting disposes the old thread and its modal. As in
+Channels, showing a thread is one visit to its channel for unread state, and
+that visit lasts across threads of the same channel. The page holds no second
+message reader, cache or outbox.
 Exact message links still navigate to Channels rather than the page's route.
 
 ### Composer ownership and mention tools

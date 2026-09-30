@@ -11,7 +11,10 @@ import { buzzLinkTarget } from "../navigation/buzz-links";
 import { PanelView } from "../panels/PanelView";
 import type { RegisteredPanel } from "../panels/service";
 import { MediaReviewViewer } from "../messages/MediaReviewViewer";
-import { MessageManagement } from "../messages/MessageManagement";
+import {
+  MessageManagement,
+  MessageManagementStatus,
+} from "../messages/MessageManagement";
 import { ThreadPanel, type ThreadPanelProps } from "../messages/ThreadPanel";
 import { messageViewKey } from "../messages/view-key";
 
@@ -35,18 +38,21 @@ type Overlay =
       panel?: undefined;
     };
 
-/** Retargeting remounts, so overlays and message actions never outlive their thread. */
+/**
+ * As in Channels, the channel visit and message recovery span threads of one
+ * channel; retargeting remounts only the thread and its overlay.
+ */
 export function EmbeddedThread(props: Props) {
+  const { session, scope, channelId, messageId } = props;
   return (
-    <OwnedEmbeddedThread
-      key={messageViewKey(
-        props.session,
-        props.scope,
-        props.channelId,
-        props.messageId,
-      )}
-      {...props}
-    />
+    <MessageManagement
+      key={messageViewKey(session, scope, channelId)}
+      session={session}
+      channelId={channelId}
+    >
+      <MessageManagementStatus />
+      <OwnedEmbeddedThread key={messageId} {...props} />
+    </MessageManagement>
   );
 }
 
@@ -100,7 +106,7 @@ function OwnedEmbeddedThread({ host, extensions, ...props }: Props) {
     return true;
   };
   return (
-    <MessageManagement session={session} channelId={channelId}>
+    <>
       <ThreadPanel
         {...props}
         sessionConversation={channels.some(
@@ -169,6 +175,6 @@ function OwnedEmbeddedThread({ host, extensions, ...props }: Props) {
           close={() => setOverlay(undefined)}
         />
       )}
-    </MessageManagement>
+    </>
   );
 }

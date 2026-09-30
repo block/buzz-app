@@ -17,6 +17,7 @@ import { useMessageDeletion } from "../messages/MessageManagement";
 import type { MessageRowProps } from "../messages/MessageRow";
 import type { PanelProps, RegisteredPanel } from "../panels/service";
 import type { ChannelMessage } from "../relay/contracts";
+import type { OutgoingEvent } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
 
 // The real ThreadPanel and MessageManagement are composed; only leaf UI with
@@ -69,7 +70,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function fixture(channelType: "stream" | "session" = "stream") {
+function fixture(
+  channelType: "stream" | "session" = "stream",
+  operations: readonly OutgoingEvent[] = [],
+) {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -112,8 +116,29 @@ function fixture(channelType: "stream" | "session" = "stream") {
     canLoadMore: false,
     limited: false,
   };
-  const channels = { channels: [{ id: "c", name: "Channel", channelType }] };
+  const viewer = "a".repeat(64);
+  const channels = {
+    channels: [
+      { id: "c", name: "Channel", channelType, members: [viewer] },
+      { id: "d", name: "Other", channelType, members: [viewer] },
+    ],
+  };
+  const unread = {
+    sync: () => ({ capability: "unsupported" }),
+    snapshot: () => undefined,
+    subscribe: () => () => {},
+    attention: () => ({ unread: false }),
+    enterChannel: vi.fn(async () => {}),
+    leaveChannel: vi.fn(),
+  };
+  const outbox = {
+    subscribe: () => () => {},
+    snapshot: () => operations,
+    supports: () => true,
+    retry: vi.fn(),
+  };
   const session = {
+    viewer,
     thread: () => ({
       snapshot: () => thread,
       subscribe: () => () => {},
@@ -126,14 +151,10 @@ function fixture(channelType: "stream" | "session" = "stream") {
     agentChoices: createAgentLibrary(undefined).queries,
     messages: { retry() {} },
     media: () => undefined,
-    unread: {
-      sync: () => ({ capability: "unsupported" }),
-      snapshot: () => undefined,
-      subscribe: () => () => {},
-      attention: () => ({ unread: false }),
-    },
+    unread,
+    outbox,
   } as unknown as RelaySession;
-  const scope = `https://fixture.test:${"a".repeat(64)}`;
+  const scope = `https://fixture.test:${viewer}`;
   const host = {
     panels: {
       snapshot: () => panels,
@@ -159,6 +180,8 @@ function fixture(channelType: "stream" | "session" = "stream") {
   };
   return {
     props,
+    unread,
+    outbox,
     listeners,
     panelProps: () => captured,
     removePanels() {
@@ -215,3 +238,40 @@ it.each([
     );
   },
 );
+
+it("keeps one channel visit while the thread is retargeted within a channel", () => {
+  const h = fixture();
+  const view = render(<EmbeddedThread {...h.props} />);
+  expect(h.unread.enterChannel).toHaveBeenCalledExactlyOnceWith("c");
+  view.rerender(<EmbeddedThread {...h.props} messageId={"c".repeat(64)} />);
+  expect(h.unread.enterChannel).toHaveBeenCalledOnce();
+  expect(h.unread.leaveChannel).not.toHaveBeenCalled();
+  // Leaving the channel is the barrier: the visit does follow the channel.
+  view.rerender(<EmbeddedThread {...h.props} channelId="d" />);
+  expect(h.unread.leaveChannel).toHaveBeenCalledExactlyOnceWith("c");
+  expect(h.unread.enterChannel).toHaveBeenLastCalledWith("d");
+});
+
+it("offers recovery for a failed edit left in the outbox", () => {
+  const h = fixture("stream", [
+    {
+      event: {
+        id: "edit",
+        kind: 40003,
+        content: "edited",
+        tags: [
+          ["h", "c"],
+          ["e", "a".repeat(64)],
+        ],
+      },
+      delivery: "failed",
+      error: "Relay refused the edit.",
+    } as unknown as OutgoingEvent,
+  ]);
+  render(<EmbeddedThread {...h.props} />);
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Message edit: Relay refused the edit.",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Retry message update" }));
+  expect(h.outbox.retry).toHaveBeenCalledExactlyOnceWith("edit");
+});

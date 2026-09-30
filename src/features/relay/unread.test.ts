@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
-import { sidebarFixture, sidebarRow } from "./sidebar-testing";
+import { deferredSidebar, sidebarFixture, sidebarRow } from "./sidebar-testing";
 import { keypair, message, metadata, roster } from "./testing";
 import type { LiveCallbacks } from "./live";
 import type { RelayEvent } from "./events";
@@ -477,4 +477,91 @@ it("a covered observed thread anchor does not mask an incomplete lower-bound tai
     attentionVisible: true,
   });
   expect(h.unread.activity(channel).items).toHaveLength(1);
+});
+
+it("community sweep skips quiet channels, clears manual-only channels and continues past a failed save", async () => {
+  const h = setup();
+  h.grant(other);
+  const quiet = "21234567-89ab-cdef-0123-456789abcdef";
+  h.grant(quiet);
+  for (const id of [channel, other, quiet]) h.bff.rows.set(id, sidebarRow(id));
+  await h.unread.ensure();
+  await h.unread.markUnreadLocal(target);
+  await h.unread.markUnreadLocal({ kind: "channel", channelId: other });
+  const order = h.session.channels
+    .list()
+    .channels.map((c) => c.id)
+    .filter((id) => id !== quiet);
+  const first = order[0],
+    second = order[1];
+  if (!first || !second) throw new Error("Missing sweep channels");
+  const update = vi.spyOn(h.bff.storage, "update");
+  update.mockRejectedValueOnce(new Error("disk full"));
+  await expect(h.unread.markAllChannelsRead()).rejects.toThrow("disk full");
+  expect(h.bff.journal().manual).toEqual([
+    { kind: "channel", channelId: first },
+  ]);
+  expect(h.unread.snapshot({ kind: "channel", channelId: second }).manual).toBe(
+    "none",
+  );
+  expect(await h.unread.markAllChannelsRead()).toHaveLength(1);
+  update.mockClear();
+  expect(await h.unread.markAllChannelsRead()).toEqual([]);
+  expect(update).not.toHaveBeenCalled();
+  expect(h.bff.api.write).not.toHaveBeenCalled();
+});
+
+it("community sweep skips grants revoked while its first save is committing", async () => {
+  const h = setup();
+  h.grant(other);
+  for (const id of [channel, other]) h.bff.rows.set(id, sidebarRow(id));
+  await h.unread.ensure();
+  for (const id of [channel, other])
+    await h.unread.markUnreadLocal({ kind: "channel", channelId: id });
+  const [first, second] = h.session.channels.list().channels.map((c) => c.id);
+  if (!first || !second) throw new Error("Missing sweep channels");
+  const held = deferredSidebar<void>(),
+    started = deferredSidebar<void>();
+  const update = h.bff.storage.update;
+  vi.spyOn(h.bff.storage, "update").mockImplementationOnce(async (change) => {
+    const result = await update(change);
+    started.resolve();
+    await held.promise;
+    return result;
+  });
+  const sweep = h.unread.markAllChannelsRead();
+  try {
+    await started.promise;
+    expect(h.bff.journal().manual).toEqual([
+      { kind: "channel", channelId: second },
+    ]);
+    h.grant(second, [], 20);
+  } finally {
+    held.resolve();
+  }
+  expect(await sweep).toHaveLength(1);
+  expect(h.bff.journal().manual).toEqual([
+    { kind: "channel", channelId: second },
+  ]);
+});
+
+it("community sweep sends fixed cuts only for relay unread evidence and leaves unknown quiet", async () => {
+  const h = setup();
+  h.grant(other);
+  const anchor = "a".repeat(64);
+  h.bff.rows.set(
+    channel,
+    sidebarRow(channel, {
+      unread: { status: "at_least", value: 2 },
+      latest_message_id: anchor,
+      latest_message_at: 25,
+    }),
+  );
+  h.bff.rows.set(other, sidebarRow(other, { unread: { status: "unknown" } }));
+  await h.unread.ensure();
+  expect(await h.unread.markAllChannelsRead()).toHaveLength(1);
+  await vi.waitFor(() => expect(h.bff.api.write).toHaveBeenCalledOnce());
+  expect(h.bff.api.write.mock.calls[0]?.[0]).toEqual([
+    { type: "mark_channel_read", channel_id: channel, message_id: anchor },
+  ]);
 });

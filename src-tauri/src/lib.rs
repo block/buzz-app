@@ -18,9 +18,11 @@ use os_idle::get_os_idle_seconds;
 mod relay;
 use identity::{identity_create, identity_export, identity_import, identity_restore, IdentityHost};
 use relay::{
-    relay_channel_publish, relay_channel_sign, relay_decode_sidebar, relay_direct_message,
-    relay_http, relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_sign,
-    relay_sign_sidebar, relay_workflow_runs,
+    media_download, relay_agent_library, relay_agent_log_proof, relay_agent_memories_read,
+    relay_agent_observer, relay_agent_resolve, relay_channel_publish, relay_channel_sign,
+    relay_decode_sidebar, relay_direct_message, relay_http, relay_kit_decode, relay_kit_prepare,
+    relay_kit_sign, relay_sign, relay_sign_sidebar, relay_upload, relay_upload_cancel,
+    relay_workflow_runs,
 };
 mod terminal;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
@@ -33,9 +35,9 @@ use agents::{
     agent_control_action, agent_control_attach_mention, agent_control_clone_settings,
     agent_control_create_authorize, agent_control_create_commit, agent_control_create_prepare,
     agent_control_creation_profile, agent_control_delete, agent_control_import_commit,
-    agent_control_import_preview, agent_control_log_challenge, agent_control_read_log,
-    agent_control_save, agent_control_save_defaults, agent_control_snapshot,
-    agent_control_start_on_app_launch, agent_control_use_here, AgentHost,
+    agent_control_import_preview, agent_control_local_clone_settings, agent_control_log_challenge,
+    agent_control_read_log, agent_control_save, agent_control_save_defaults,
+    agent_control_snapshot, agent_control_start_on_app_launch, agent_control_use_here, AgentHost,
 };
 use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},
@@ -387,6 +389,14 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_direct_message,
         relay_decode_sidebar,
         relay_sign_sidebar,
+        relay_agent_resolve,
+        relay_agent_log_proof,
+        relay_agent_observer,
+        relay_agent_memories_read,
+        relay_agent_library,
+        relay_upload,
+        relay_upload_cancel,
+        media_download,
         get_os_idle_seconds,
         plugin_import_folder,
         plugin_import_git,
@@ -409,6 +419,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         goose_install,
         pi_install,
         agent_control_use_here,
+        agent_control_local_clone_settings,
         agent_control_save,
         agent_control_save_defaults,
         agent_control_delete,
@@ -502,6 +513,8 @@ pub fn run() {
     };
     builder
         .manage(IdentityHost::default())
+        .manage(relay::Uploads::default())
+        .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())
         .manage(HarnessSetup::default())
         .manage(Terminals::default())

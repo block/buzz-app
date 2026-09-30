@@ -79,6 +79,8 @@ export interface UnreadCapability {
   ): Promise<ReadMutationResult>;
   clearUnreadLocal(target: UnreadTarget): Promise<ReadMutationResult>;
   markChannelRead(channelId: string): Promise<ReadMutationResult>;
+  /** Sweep the accessible listed unread channels; continue past individual failures. */
+  markAllChannelsRead(): Promise<readonly ReadMutationResult[]>;
   markUnreadLocal(target: UnreadTarget): Promise<ReadMutationResult>;
   readonly syncedManualUnread: false;
 }
@@ -611,6 +613,31 @@ export function createUnread({
         (t) => t.channelId === channelId,
         valid,
       );
+    },
+    async markAllChannelsRead() {
+      if (closed) throw new Error("Read target unavailable");
+      const pending = channels
+        .list()
+        .channels.filter((channel) => allowed(channel.id))
+        .map((channel) => channel.id)
+        .filter((channelId) => {
+          const current = snapshot({ kind: "channel", channelId });
+          return current.unreadVisible || current.manual !== "none";
+        });
+      const results: ReadMutationResult[] = [];
+      let failure: unknown;
+      let failed = false;
+      for (const channelId of pending) {
+        if (!allowed(channelId)) continue;
+        try {
+          results.push(await capability.markChannelRead(channelId));
+        } catch (error) {
+          if (!failed) failure = error;
+          failed = true;
+        }
+      }
+      if (failed) throw failure;
+      return results;
     },
     async markUnreadLocal(target) {
       const generation = epoch;

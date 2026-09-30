@@ -1842,6 +1842,14 @@ fn real_ipc_import_uses_selected_memory_custody_and_stays_disabled() {
         .unwrap()
         .contains_key(selected["id"].as_str().unwrap()));
     assert_eq!(imported["agents"][0]["configured"], true);
+    let cloned = invoke(
+        &view,
+        "agent_control_local_clone_settings",
+        json!({"id": selected["id"]}),
+    )
+    .unwrap();
+    assert!(cloned.get("systemPrompt").is_some());
+    assert_eq!(cloned.as_object().unwrap().len(), 2);
     assert_eq!(imported["agents"][0]["enabled"], false);
     assert_eq!(imported["agents"][0]["status"], "stopped");
     assert!(!imported.to_string().contains(KEY));
@@ -2223,6 +2231,17 @@ fn native_create_authorization_binds_the_prepared_key_owner_and_identity() {
     // A requested owner or key other than the prepared one is never signed.
     assert_eq!(authorize(&other, &pubkey).unwrap_err(), mismatch);
     assert_eq!(authorize(identity, &"ab".repeat(32)).unwrap_err(), mismatch);
+    assert_eq!(
+        invoke(
+            &view,
+            "agent_control_create_authorize",
+            json!({
+                "destination": "https://other.example", "owner": identity, "pubkey": pubkey
+            })
+        )
+        .unwrap_err(),
+        mismatch
+    );
     let auth = authorize(identity, &pubkey).unwrap();
     assert_eq!(auth[1], identity);
     let commit = |auth: &Value| {

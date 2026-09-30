@@ -74,9 +74,10 @@ Native sessions do **not** fall through to the dev broker signer.
 
 The native identity owner signs event templates and authenticates HTTP with
 NIP-98, including the exact request URL, method, a body hash on POST and a fresh nonce
-for each attempt. Native networking permits only the discovery, join-policy, invite
-acceptance/claim, query, event and bounded workflow run-history routes on HTTPS
-origins, with bounded bodies, timeouts and no redirects. JavaScript never obtains the private key for transport.
+for each attempt. Native networking permits only discovery, join-policy, invite
+mint/acceptance/claim, relay-advertised GIF search, query, event and bounded
+workflow run-history routes on HTTPS origins, with bounded bodies, timeouts and
+no redirects. JavaScript never obtains the private key for transport.
 NIP-11 `self` establishes relay authority; the operator-contact `pubkey` is not
 a substitute. The existing live owner handles WSS/NIP-42 authentication and
 signature verification. IPC permissions remain limited to the main WebView.
@@ -86,7 +87,8 @@ and opening direct messages use purpose-bound native commands. Creation kind 900
 advertised only when NIP-11 reports NIP-29 support. NIP-44 stays in the native
 identity owner; recipe plaintext is never returned by a generic decrypt command.
 
-Community admission, kind-0 profile reads/publication and the adapter's advertised
+Community admission, kind-0 profile reads/publication, the NIP-43 leave request
+(kind 28936, signed only in its empty protected shape) and the adapter's advertised
 message/event writes use this identity. [Join recovery](communities.md#packaged-admission-and-recovery)
 records public progress before remote changes. The existing durable outbox retains
 uncertain delivery across restart; retry uses the same signed event with fresh HTTP
@@ -94,10 +96,23 @@ authentication. Events older than 15 minutes get a strong ID readback instead of
 being republished or silently re-dated. Missing/failed readback retains uncertainty;
 the user must inspect the conversation before explicitly sending a new message.
 
-Optional capabilities are absent until implemented: protected media/upload,
-repository HTTP and other broker-only
-helpers are not claimed by this adapter. Public HTTPS avatars/icons can display;
-protected media does not gain access from the image CSP allowance. NIP-FI assertion
+Protected media and uploads are native, because the webview cannot attach Blossom
+(kind 24242) authentication itself: `<img>`, `<video>` and `<audio>` send no custom
+headers, and the CSP keeps `connect-src` closed to general HTTPS. Relay `/media/`
+URLs selected by shared TypeScript render through the `buzz-media` URI scheme,
+which validates HTTPS and the `/media/<hash>` URL shape but does not enforce
+saved-community membership; the selected server receives a short-lived token
+scoped to its origin. The scheme signs a fresh 60-second `get` token per request
+and forwards only a bounded single `Range`; non-image/video/audio types (and SVG)
+are served with download disposition and `nosniff`. The main webview does not navigate to protected media for downloads: a narrowly scoped native command authenticates the bounded media GET, saves to the OS Downloads directory without replacing existing files, and rejects unsafe filenames. `relay_upload`
+hashes, signs (`upload` + `x`) and sends the exact bytes JavaScript passes it;
+shared TypeScript (`hostUpload`) owns limits, error mapping and descriptor
+validation. JavaScript never signs kind 24242. Packaged HEIC and video
+preparation uses fixed demuxers and ffmpeg arguments in the native host, then
+hashes and uploads only the converted bytes; JavaScript receives the descriptor,
+not the prepared file. ffmpeg must be installed on the computer.
+Member changes, repository HTTP and other broker-only helpers are not claimed
+by this adapter. NIP-FI assertion
 acquisition is not implemented, so deployments enforcing it are outside acceptance.
 Windows/Linux custody, credential migration and release-signing acceptance remain
 separate limitations.

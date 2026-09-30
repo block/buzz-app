@@ -14,6 +14,8 @@ import { createMessages } from "./messages";
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   isTauri: () => true,
+  convertFileSrc: (path: string, protocol: string) =>
+    `${protocol}://localhost/${encodeURIComponent(path)}`,
 }));
 const viewer = keypair(),
   relay = keypair();
@@ -24,12 +26,18 @@ type Request = {
   method: string;
   body: string | null;
 };
+let discovery: Record<string, unknown> = {};
 let respond: (
   request: Request,
 ) =>
   | { status?: number; body: unknown }
   | Promise<{ status?: number; body: unknown }>;
 const requests: Request[] = [];
+const uploads: { bytes: Uint8Array; headers: Record<string, string> }[] = [];
+let uploadResponse: () => { status?: number; body: unknown };
+const cancels: string[] = [];
+let hangUploads = false;
+let preparedResponse: (() => { status?: number; body: unknown }) | undefined;
 const owners: ReturnType<typeof createOutbox>[] = [];
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -42,6 +50,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(1700000010000);
   requests.length = 0;
+  discovery = {};
   respond = () => ({ body: [] });
   vi.stubGlobal(
     "fetch",
@@ -49,7 +58,12 @@ beforeEach(() => {
       throw new Error("Packaged connections must not call the dev broker");
     }),
   );
-  vi.mocked(invoke).mockImplementation(async (command, args) => {
+  uploads.length = 0;
+  cancels.length = 0;
+  hangUploads = false;
+  preparedResponse = undefined;
+  uploadResponse = () => ({ status: 500, body: "" });
+  vi.mocked(invoke).mockImplementation(async (command, args, options) => {
     if (command === "identity_restore") return viewer.pubkey;
     if (command === "relay_sign") {
       expect(
@@ -62,12 +76,36 @@ beforeEach(() => {
       requests.push(request);
       const result =
         request.path === "/"
-          ? { body: { self: relay.pubkey } }
+          ? { body: { self: relay.pubkey, ...discovery } }
           : await respond(request);
       return {
         status: result.status ?? 200,
         headers: {},
         body: JSON.stringify(result.body),
+      };
+    }
+    if (command === "relay_upload_cancel") {
+      cancels.push((args as { id: string }).id);
+      return null;
+    }
+    if (command === "relay_upload") {
+      if (hangUploads) return new Promise(() => {});
+      uploads.push({
+        bytes: new Uint8Array(args as ArrayBuffer),
+        headers: (options as { headers: Record<string, string> }).headers,
+      });
+      const result = (options as { headers: Record<string, string> }).headers[
+        "x-buzz-preparation"
+      ]
+        ? (preparedResponse?.() ?? uploadResponse())
+        : uploadResponse();
+      return {
+        status: result.status ?? 200,
+        headers: {},
+        body:
+          typeof result.body === "string"
+            ? result.body
+            : JSON.stringify(result.body),
       };
     }
     throw new Error(`Unexpected native command: ${command}`);
@@ -572,7 +610,7 @@ it("workflow history surfaces bounded host refusals and fences late native resul
 });
 
 it("shares workflow history admission and cooldown with signed queries", async () => {
-  const transport = await connectNativeTransport(community);
+  const transport = await connectNativeTransport("https://workflow-quota.test");
   assert.exists(transport.workflows);
   const id = "11111111-1111-4111-8111-111111111111";
   const quota = '{"error":"rate-limited: quota exceeded; retry in 60s"}';
@@ -795,4 +833,405 @@ it("opens direct messages through a purpose-bound command and validates the resu
   await expect(
     transport.openDirectMessage([relay.pubkey], new AbortController().signal),
   ).rejects.toThrow("invalid direct message");
+});
+
+it("discards a pending observer decode after disconnect and reconnect", async () => {
+  const sockets: Socket[] = [];
+  class Socket {
+    readyState = 1;
+    onmessage?: (event: { data: string }) => Promise<void>;
+    onclose?: () => void;
+    sent: unknown[][] = [];
+    constructor() {
+      sockets.push(this);
+    }
+    send(raw: string) {
+      this.sent.push(JSON.parse(raw));
+    }
+    close() {
+      this.readyState = 3;
+      this.onclose?.();
+    }
+    async receive(value: unknown) {
+      await this.onmessage?.({ data: JSON.stringify(value) });
+    }
+  }
+  vi.stubGlobal("WebSocket", Socket);
+  const decoded = deferred<unknown>();
+  const dispatch = vi.mocked(invoke);
+  const original = dispatch.getMockImplementation();
+  let observerCalls = 0;
+  dispatch.mockImplementation(async (command, args) => {
+    if (command === "relay_agent_observer") {
+      if (++observerCalls === 1) return decoded.promise;
+      const event = (args as { event: VerifiedEvent }).event;
+      return {
+        id: event.id,
+        agent: event.pubkey,
+        createdAt: event.created_at,
+        plaintext: "{}",
+      };
+    }
+    return original?.(command, args);
+  });
+  const transport = await connectNativeTransport(community);
+  const observer = vi.fn();
+  const traffic = transport.subscribe?.({
+    receive: vi.fn(),
+    state: vi.fn(),
+    established: vi.fn(),
+    denied: vi.fn(),
+    observer,
+  });
+  assert.exists(traffic);
+  try {
+    const authenticate = async (socket: Socket) => {
+      await socket.receive(["AUTH", "nonce"]);
+      const proof = socket.sent.find(
+        ([kind]) => kind === "AUTH",
+      )?.[1] as VerifiedEvent;
+      await socket.receive(["OK", proof.id, true]);
+    };
+    traffic.observe?.(1);
+    const old = sockets[0];
+    assert.exists(old);
+    await authenticate(old);
+    const route = old.sent.find(
+      ([kind, , filter]) =>
+        kind === "REQ" &&
+        (filter as { kinds?: number[] }).kinds?.includes(24200),
+    );
+    assert.exists(route);
+    await old.receive(["EOSE", route[1]]);
+    const frame = signed(keypair(), {
+      kind: 24200,
+      created_at: 1700000010,
+      tags: [["p", viewer.pubkey]],
+      content: "cipher",
+    });
+    await old.receive(["EVENT", route[1], frame]);
+    expect(
+      dispatch.mock.calls.some(
+        ([command]) => command === "relay_agent_observer",
+      ),
+    ).toBe(true);
+    old.onclose?.();
+    vi.useRealTimers();
+    await vi.waitFor(() => expect(sockets.length).toBe(2));
+    const current = sockets[1];
+    assert.exists(current);
+    await authenticate(current);
+    const nextRoute = current.sent.find(
+      ([kind, , filter]) =>
+        kind === "REQ" &&
+        (filter as { kinds?: number[] }).kinds?.includes(24200),
+    );
+    assert.exists(nextRoute);
+    await current.receive(["EOSE", nextRoute[1]]);
+    decoded.resolve({
+      id: frame.id,
+      agent: frame.pubkey,
+      createdAt: frame.created_at,
+      plaintext: "{}",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(observer).not.toHaveBeenCalled();
+    const fresh = signed(keypair(), {
+      kind: 24200,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [["p", viewer.pubkey]],
+      content: "cipher",
+    });
+    await current.receive(["EVENT", nextRoute[1], fresh]);
+    await vi.waitFor(() => expect(observer).toHaveBeenCalledTimes(1));
+    expect(observer.mock.calls[0]?.[0].id).toBe(fresh.id);
+  } finally {
+    traffic.dispose();
+  }
+});
+
+it("sorts host memory projections with the same locale collation as the broker", async () => {
+  const transport = await connectNativeTransport(community);
+  const agent = keypair();
+  const entries = ["mem/b", "mem/b_c", "mem/b-c", "mem/b/c", "mem/bc"]
+    .reverse()
+    .map((slug, i) => ({
+      slug,
+      body: slug,
+      eventId: i.toString(16).padStart(64, "0"),
+      createdAt: 1,
+    }));
+  vi.mocked(invoke).mockResolvedValueOnce({ entries, partial: false });
+  expect(
+    (
+      await transport.readAgentMemories?.(
+        agent.pubkey,
+        new AbortController().signal,
+      )
+    )?.entries.map((entry) => entry.slug),
+  ).toEqual(["mem/b", "mem/b_c", "mem/b-c", "mem/b/c", "mem/bc"]);
+});
+
+it("exposes purpose-bound agent readers and fences obsolete observer decoding", async () => {
+  const transport = await connectNativeTransport(community);
+  expect(transport.agentActivity).toBe(true);
+  const signal = new AbortController().signal;
+  const agent = keypair();
+  const dispatch = vi.mocked(invoke);
+  dispatch.mockImplementationOnce(async (command) => {
+    expect(command).toBe("relay_agent_library");
+    return { definitions: [], identities: [] };
+  });
+  expect(await transport.readAgentLibrary?.(signal)).toEqual({
+    definitions: [],
+    identities: [],
+  });
+  dispatch.mockImplementationOnce(async (command, args) => {
+    expect(command).toBe("relay_agent_memories_read");
+    expect(args).toEqual({ community, agent: agent.pubkey });
+    return { entries: [], partial: true };
+  });
+  expect(await transport.readAgentMemories?.(agent.pubkey, signal)).toEqual({
+    entries: [],
+    partial: true,
+  });
+  await expect(
+    transport.readAgentMemories?.(viewer.pubkey, signal),
+  ).rejects.toThrow("Invalid memory target");
+  dispatch.mockImplementationOnce(async (command, args) => {
+    expect(command).toBe("relay_agent_log_proof");
+    expect(args).toEqual({
+      community,
+      target: {
+        id: "id",
+        pubkey: agent.pubkey,
+        relayUrl: "wss://packaged.test",
+        nonce: "nonce",
+      },
+    });
+    return "a".repeat(128);
+  });
+  expect(
+    await transport.authorizeAgentLog?.(
+      { id: "id", pubkey: agent.pubkey, relayUrl: "wss://packaged.test" },
+      "nonce",
+    ),
+  ).toBe("a".repeat(128));
+  await expect(
+    transport.authorizeAgentLog?.(
+      { id: "id", pubkey: agent.pubkey, relayUrl: "wss://other.test" },
+      "nonce",
+    ),
+  ).rejects.toThrow("Log authorization unavailable");
+});
+
+const hash = "c".repeat(64);
+it("routes relay media through the authenticated native scheme only", async () => {
+  const transport = await connectNativeTransport(community);
+  const media = `${community}/media/${hash}.png`;
+  expect(transport.media(media)).toBe(
+    `buzz-media://localhost/${encodeURIComponent(media)}`,
+  );
+  expect(transport.media(media, "small")).toBe(
+    `buzz-media://localhost/${encodeURIComponent(`${community}/media/${hash}.thumb.jpg`)}`,
+  );
+  expect(transport.media("https://images.test/cat.png")).toBe(
+    "https://images.test/cat.png",
+  );
+  expect(transport.media("http://images.test/cat.png")).toBeUndefined();
+});
+
+it("publishes custom emoji sets", async () => {
+  const transport = await connectNativeTransport(community);
+  expect(transport.writer?.kinds).toContain(30030);
+});
+
+it("uploads exact bytes natively and validates the relay descriptor", async () => {
+  const transport = await connectNativeTransport(community);
+  assert(transport.uploadAttachment);
+  uploadResponse = () => ({
+    body: {
+      url: `${community}/media/${hash}.png`,
+      type: "image/png",
+      size: 3,
+      sha256: hash,
+    },
+  });
+  const file = new File([new Uint8Array([1, 2, 3])], "a.png", {
+    type: "image/png",
+  });
+  await expect(
+    transport.uploadAttachment(file, new AbortController().signal),
+  ).resolves.toEqual({
+    name: "a.png",
+    url: `${community}/media/${hash}.png`,
+    type: "image/png",
+    size: 3,
+    sha256: hash,
+  });
+  expect(uploads).toEqual([
+    {
+      bytes: new Uint8Array([1, 2, 3]),
+      headers: {
+        "x-buzz-upload-id": expect.stringMatching(/^[0-9a-f-]{36}$/),
+        "x-buzz-community": community,
+        "x-buzz-content-type": "image/png",
+      },
+    },
+  ]);
+  uploadResponse = () => ({
+    body: {
+      url: `https://other.test/media/${hash}.png`,
+      type: "image/png",
+      size: 3,
+      sha256: hash,
+    },
+  });
+  await expect(
+    transport.uploadAttachment(file, new AbortController().signal),
+  ).rejects.toMatchObject({ code: "invalid" });
+});
+
+it.each([
+  [401, "", "denied"],
+  [413, "", "size"],
+  [429, "", "capacity"],
+  [422, { error: "metadata forbidden" }, "metadata"],
+  [415, { error: "unsupported container" }, "rejected"],
+  [500, "internal error", "failed"],
+])(
+  "maps relay upload status %i to a user-facing failure",
+  async (status, body, code) => {
+    const transport = await connectNativeTransport(community);
+    assert(transport.uploadAttachment);
+    uploadResponse = () => ({ status, body });
+    await expect(
+      transport.uploadAttachment(
+        new File(["x"], "a.bin"),
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code });
+  },
+);
+
+it("settles a cancelled native upload at once and cancels it natively", async () => {
+  const transport = await connectNativeTransport(community);
+  assert(transport.uploadAttachment);
+  hangUploads = true;
+  const controller = new AbortController();
+  const pending = transport.uploadAttachment(
+    new File(["x"], "a.bin"),
+    controller.signal,
+  );
+  await vi.waitFor(() =>
+    expect(vi.mocked(invoke).mock.calls.at(-1)?.[0]).toBe("relay_upload"),
+  );
+  const [, , options] = vi.mocked(invoke).mock.calls.at(-1) ?? [];
+  controller.abort();
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  expect(cancels).toEqual([
+    (options as { headers: Record<string, string> }).headers[
+      "x-buzz-upload-id"
+    ],
+  ]);
+});
+
+it("prepares HEIC and video in the native upload without dev-broker fetches", async () => {
+  const transport = await connectNativeTransport(community);
+  assert(transport.uploadAttachment);
+  preparedResponse = () => ({
+    body: {
+      url: `${community}/media/${hash}.jpg`,
+      type: "image/jpeg",
+      size: 5,
+      sha256: hash,
+    },
+  });
+  const heic = new File(
+    [new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 104, 101, 105, 99])],
+    "a.heic",
+    { type: "image/heic" },
+  );
+  await expect(
+    transport.uploadAttachment(heic, new AbortController().signal),
+  ).resolves.toMatchObject({
+    name: "a.jpg",
+    type: "image/jpeg",
+    size: 5,
+  });
+  expect(uploads.at(-1)?.headers).toMatchObject({
+    "x-buzz-preparation": "image:mov",
+    "x-buzz-community": community,
+  });
+  preparedResponse = () => ({
+    body: {
+      url: `${community}/media/${hash}.mp4`,
+      type: "video/mp4",
+      size: 7,
+      sha256: hash,
+    },
+  });
+  const avi = new File(
+    [new Uint8Array([82, 73, 70, 70, 0, 0, 0, 0, 65, 86, 73, 32])],
+    "b.avi",
+    { type: "video/avi" },
+  );
+  await expect(
+    transport.uploadAttachment(avi, new AbortController().signal),
+  ).resolves.toMatchObject({
+    name: "b.mp4",
+    type: "video/mp4",
+    size: 7,
+  });
+  expect(uploads.at(-1)?.headers["x-buzz-preparation"]).toBe("video:avi");
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it.each([
+  [403, { error: "no access" }, "denied"],
+  [413, { error: "too large" }, "size"],
+  [429, { error: "busy" }, "capacity"],
+  [422, { error: "metadata forbidden" }, "metadata"],
+  [415, { error: "unsupported" }, "rejected"],
+  [400, { code: "io" }, "io"],
+])(
+  "maps prepared-upload response %i through the shared policy",
+  async (status, body, code) => {
+    const transport = await connectNativeTransport(community);
+    assert(transport.uploadAttachment);
+    preparedResponse = () => ({ status, body });
+    const avi = new File(
+      [new Uint8Array([82, 73, 70, 70, 0, 0, 0, 0, 65, 86, 73, 32])],
+      "b.avi",
+      { type: "video/avi" },
+    );
+    await expect(
+      transport.uploadAttachment(avi, new AbortController().signal),
+    ).rejects.toMatchObject({ code });
+  },
+);
+
+it("refuses native preparation failures and does not accept a mismatched prepared type", async () => {
+  const transport = await connectNativeTransport(community);
+  assert(transport.uploadAttachment);
+  const heic = new File(
+    [new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 104, 101, 105, 99])],
+    "a.heic",
+  );
+  preparedResponse = () => ({ status: 503, body: { code: "ffmpeg" } });
+  await expect(
+    transport.uploadAttachment(heic, new AbortController().signal),
+  ).rejects.toMatchObject({ code: "ffmpeg" });
+  preparedResponse = () => ({
+    body: {
+      url: `${community}/media/${hash}.mp4`,
+      type: "video/mp4",
+      size: 3,
+      sha256: hash,
+    },
+  });
+  await expect(
+    transport.uploadAttachment(heic, new AbortController().signal),
+  ).rejects.toMatchObject({ code: "invalid" });
 });

@@ -1,6 +1,20 @@
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
-import { communityDestination } from "../communities/destination";
+import { communityDestination, relayOrigin } from "../communities/destination";
+import {
+  audioDemuxer,
+  isHeic,
+  isVoiceNote,
+  videoDemuxer,
+} from "./video-preparation";
+import {
+  hostUpload,
+  readUploadResponse,
+  UPLOAD_TIMEOUT_MS,
+  UploadError,
+  UPLOAD_MAX_BYTES,
+  validateUploadResult,
+} from "./attachments";
 import { eventDto, type RelayEvent } from "./events";
 import {
   coordinate,
@@ -18,6 +32,13 @@ import { WORKFLOW_KINDS } from "../workflows/protocol";
 import { PublishRejected } from "./outbox";
 
 import {
+  memoryAgent,
+  memoryListing,
+  type MemoryListing,
+} from "../agents/memory";
+import type { AgentLibrary } from "../agents/library";
+import { observerFrame } from "../agents/observer";
+import {
   acceptPublish,
   connectSignedTransport,
   admittedSignedWorkflowRead,
@@ -33,6 +54,7 @@ export const nativeWriteKinds = [
   1984,
   9000,
   9001,
+  30030,
   30315,
   40003,
   40100,
@@ -79,6 +101,109 @@ function nativeResponse(result: {
   );
 }
 
+/** Relay media through the native `buzz-media` scheme (`src-tauri/src/relay.rs`),
+ * which signs each Blossom `get`, including every `Range` request. */
+export function nativeMediaUrl(url: string): string {
+  return convertFileSrc(url, "buzz-media");
+}
+
+/** Raw IPC bytes; native code hashes, signs and sends them to `PUT /upload`.
+ * Aborting settles at once and tells native code to drop the request. */
+async function nativeUpload(
+  origin: string,
+  file: File,
+  signal: AbortSignal,
+  preparation?: string,
+) {
+  const bytes = await file.arrayBuffer();
+  signal.throwIfAborted();
+  const id = crypto.randomUUID();
+  let abort = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    abort = () => {
+      invoke("relay_upload_cancel", { id }).catch(() => {});
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+  });
+  try {
+    const result = await Promise.race([
+      invoke<{
+        status: number;
+        headers: Record<string, string>;
+        body: string;
+      }>("relay_upload", bytes, {
+        headers: {
+          "x-buzz-upload-id": id,
+          "x-buzz-community": origin,
+          "x-buzz-content-type": file.type || "application/octet-stream",
+          ...(preparation ? { "x-buzz-preparation": preparation } : {}),
+        },
+      }),
+      aborted,
+    ]);
+    return new Response(result.body, {
+      status: result.status,
+      headers: result.headers,
+    });
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
+}
+
+/** Preparation is performed and uploaded inside the host. Converted bytes never
+ * cross back into JS; only the validated relay descriptor does. */
+async function nativeAttachmentUpload(
+  origin: string,
+  file: File,
+  signal: AbortSignal,
+) {
+  signal.throwIfAborted();
+  if (!file.size || file.size > UPLOAD_MAX_BYTES) throw new UploadError("size");
+  const header = new Uint8Array(await file.slice(0, 4096).arrayBuffer());
+  signal.throwIfAborted();
+  const voice = isVoiceNote(file.name);
+  const heic = !voice && isHeic(header, file.name);
+  if (voice && file.size > 128 * 1024 * 1024) throw new UploadError("size");
+  const demuxer = voice
+    ? audioDemuxer(header)
+    : heic
+      ? "mov"
+      : videoDemuxer(header);
+  if (!demuxer) {
+    if (voice || file.type.startsWith("video/")) throw new UploadError("video");
+    return hostUpload(
+      (item, bounded) => nativeUpload(origin, item, bounded),
+      origin,
+    )(file, signal);
+  }
+  // Native preparation has its own 600 s deadline; leave a separate upload
+  // budget, as broker prepareMedia + hostUpload do.
+  const bounded = AbortSignal.any([
+    signal,
+    AbortSignal.timeout(600_000 + UPLOAD_TIMEOUT_MS),
+  ]);
+  const response = await nativeUpload(
+    origin,
+    file,
+    bounded,
+    `${heic ? "image" : voice ? "voice" : "video"}:${demuxer}`,
+  );
+  bounded.throwIfAborted();
+  const body = await readUploadResponse(response);
+  const type = heic ? "image/jpeg" : "video/mp4";
+  const name = `${file.name.replace(/\.[^.]+$/, "") || "Attachment"}.${heic ? "jpg" : "mp4"}`;
+  bounded.throwIfAborted();
+  const size = (body as { size?: number } | null)?.size;
+  if (
+    typeof size !== "number" ||
+    (body as { type?: string } | null)?.type !== type
+  )
+    throw new UploadError("invalid");
+  return validateUploadResult(body, origin, size, name);
+}
+
 export function nativeRelaySigner(community: string): Signer {
   const origin = communityDestination(community).url;
   return {
@@ -108,6 +233,8 @@ export function nativeRelaySigner(community: string): Signer {
         signal,
       );
     },
+    upload: (file, signal) => nativeUpload(origin, file, signal),
+    media: nativeMediaUrl,
   };
 }
 
@@ -284,7 +411,100 @@ export async function connectNativeTransport(
       },
     },
 
+    agentActivity: true,
+    subscribe(callbacks) {
+      let active = true;
+      let observerGeneration: number | null = null;
+      let observerEpoch = 0;
+      let listening = false;
+      const traffic = transport.subscribe?.({
+        ...callbacks,
+        state(snapshot) {
+          const route = snapshot.routes.find((item) => item.id === "observer");
+          const next =
+            snapshot.status === "connected" && route?.status === "live";
+          if (listening && !next) observerEpoch++;
+          listening = next;
+          callbacks.state(snapshot);
+        },
+        telemetry(event, generation) {
+          if (generation !== observerGeneration || !listening) return;
+          const epoch = observerEpoch;
+          void invoke("relay_agent_observer", { community: origin, event })
+            .then((value) => {
+              if (
+                active &&
+                listening &&
+                observerEpoch === epoch &&
+                observerGeneration === generation
+              )
+                callbacks.observer?.(observerFrame(value), generation);
+            })
+            .catch(() => {
+              /* Invalid encrypted telemetry is not chat traffic. */
+            });
+        },
+      });
+      if (!traffic) throw new Error("Native relay stream is unavailable");
+      return {
+        ...traffic,
+        observe(generation) {
+          observerEpoch++;
+          observerGeneration = generation;
+          traffic.observe?.(generation);
+        },
+        dispose() {
+          active = false;
+          observerEpoch++;
+          traffic.dispose();
+        },
+      };
+    },
+    async readAgentLibrary(signal) {
+      signal.throwIfAborted();
+      const result = await invoke<AgentLibrary>("relay_agent_library");
+      signal.throwIfAborted();
+      return result;
+    },
+    async readAgentMemories(
+      agent: string,
+      signal: AbortSignal,
+    ): Promise<MemoryListing> {
+      if (!memoryAgent(agent, transport.viewer))
+        throw new Error("Invalid memory target");
+      const bounded = AbortSignal.any([signal, AbortSignal.timeout(10000)]);
+      bounded.throwIfAborted();
+      let result: unknown;
+      try {
+        result = await invoke<unknown>("relay_agent_memories_read", {
+          community: origin,
+          agent,
+        });
+      } catch (reason) {
+        if (reason === "MemoryDenied") {
+          const denied = new Error("Memory read failed");
+          denied.name = "MemoryDenied";
+          throw denied;
+        }
+        throw reason;
+      }
+      bounded.throwIfAborted();
+      return memoryListing(result);
+    },
+    async authorizeAgentLog(target, nonce) {
+      if (relayOrigin(target.relayUrl) !== origin)
+        throw new Error("Log authorization unavailable");
+      const signature = await invoke<string>("relay_agent_log_proof", {
+        community: origin,
+        target: { ...target, nonce },
+      });
+      if (!/^[0-9a-f]{128}$/.test(signature))
+        throw new Error("Log authorization unavailable");
+      return signature;
+    },
     ...nativeSidebar(transport),
+    uploadAttachment: (file, signal) =>
+      nativeAttachmentUpload(origin, file, signal),
     writer: {
       ...writer,
       kinds: creation ? [...nativeWriteKinds, 9007] : nativeWriteKinds,

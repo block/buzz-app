@@ -163,6 +163,18 @@ export function browserSidebarStorage(scope: string): SidebarStorage {
   };
 }
 
+/** Clear only the departed scope after its session has been disposed. Reuse
+ * strict journal transactions rather than opening a second database owner. */
+export async function purgeSidebarStorage(scope: string) {
+  if (typeof indexedDB === "undefined") return;
+  const storage = browserSidebarStorage(scope);
+  try {
+    await storage.update(() => empty());
+  } finally {
+    storage.close();
+  }
+}
+
 /** Fixed operands need no publisher lock: duplicate sends converge on the relay.
  * Each acknowledgement removes only its own captured operation IDs. */
 export function createSidebarJournal(

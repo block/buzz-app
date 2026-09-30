@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { browserSidebarStorage } from "./sidebar-journal";
+import { browserSidebarStorage, purgeSidebarStorage } from "./sidebar-journal";
 afterEach(() => vi.unstubAllGlobals());
 function fixture() {
   const requests: {
@@ -10,7 +10,9 @@ function fixture() {
     error: Error;
   }[] = [];
   function database() {
+    const put = vi.fn();
     const db = {
+      put,
       close: vi.fn(),
       onversionchange: undefined as (() => void) | undefined,
       transaction: vi.fn(() => {
@@ -19,7 +21,7 @@ function fixture() {
         };
         const tx = {
           oncomplete: undefined as (() => void) | undefined,
-          objectStore: () => ({ get: () => get, put: vi.fn() }),
+          objectStore: () => ({ get: () => get, put }),
         };
         queueMicrotask(() => {
           get.onsuccess?.();
@@ -96,4 +98,24 @@ it("reopens a version-changed connection and rejects a late open after disposal"
   h.requests[1]?.onsuccess?.();
   await rejected;
   expect(h.requests[1]?.result.close).toHaveBeenCalledOnce();
+});
+
+it("clears only the departed sidebar partition using a strict transaction and closes it", async () => {
+  const h = fixture();
+  const purged = purgeSidebarStorage("left:viewer");
+  expect(indexedDB.open).toHaveBeenCalledWith("buzz-sidebar-v1", 1);
+  const request = h.requests[0];
+  if (!request) throw new Error("Missing purge open");
+  request.onsuccess?.();
+  await purged;
+  expect(request.result.transaction).toHaveBeenCalledWith(
+    "partitions",
+    "readwrite",
+    { durability: "strict" },
+  );
+  expect(request.result.put).toHaveBeenCalledExactlyOnceWith(
+    { pending: [], manual: [] },
+    "left:viewer",
+  );
+  expect(request.result.close).toHaveBeenCalledOnce();
 });

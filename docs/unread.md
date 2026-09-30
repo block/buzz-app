@@ -65,6 +65,11 @@ too. Oversized rows that never fit fully are not auto-read.
   unread. It clears the channel's local manual-unread marks. With no latest
   message and a complete row it clears only local marks; an incomplete row is an
   error rather than an invented cut. It does not fetch history or select the row.
+- `markAllChannelsRead()` sweeps accessible listed channels with visible unread
+  evidence or a local mark, one channel at a time. Already-read channels cost no
+  writes. A revoked channel is skipped; other failures do not stop the sweep,
+  and the first failure is rethrown afterwards. Newly granted channels wait for
+  the next action. The community rail uses this for the selected community only.
 - `markUnreadLocal(target)` is durable **on this browser profile/device only**.
   Automatic reading does not clear it. An explicit mark-through clears that
   target's local mark. `syncedManualUnread` is `false`.
@@ -146,7 +151,9 @@ are invalidated by a newer manual-unread action on the channel.
 
 The journal lives in IndexedDB `buzz-sidebar-v1`, store `partitions`, one
 `{pending, manual}` record per relay/community scope and viewer, separate from
-disposable message caches. Strict read/write transactions merge concurrent windows.
+disposable message caches. Leaving a community clears that scope's pending and
+manual sets after disposing its session, retaining only an empty partition record;
+other community/viewer partitions are untouched. Strict read/write transactions merge concurrent windows.
 Intent is saved before sending; each flush sends captured batches of at most 100
 intents and removes exactly the acknowledged operations. Writes are idempotent
 frontier advances, so no publisher lock is needed: any window's flush (on

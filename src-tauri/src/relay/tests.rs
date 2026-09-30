@@ -22,6 +22,11 @@ fn routes_cannot_retarget_credentials_or_expand_http_access() {
     ] {
         assert!(request_url("https://relay.test", path, "POST").is_err());
     }
+    for path in ["/api/invites", "/gifs/search"] {
+        assert!(request_url("https://relay.test", path, "POST").is_ok());
+        assert!(request_url("https://relay.test", path, "GET").is_err());
+    }
+    assert!(request_url("https://relay.test", "/gifs/other", "POST").is_err());
     assert!(request_url("https://relay.test", "/events", "GET").is_err());
     assert_eq!(
         request_url("https://relay.test", "/query", "POST")
@@ -52,7 +57,42 @@ fn websocket_auth_is_bound_to_the_captured_community() {
     assert!(validate_event("https://relay.test", &event).is_err());
 }
 
-fn fixture_server(response: &'static str) -> (Url, std::thread::JoinHandle<(String, String)>) {
+#[test]
+fn leave_requests_sign_only_the_protected_empty_shape() {
+    let leave = |content: &str, tags: Vec<Vec<String>>| EventTemplate {
+        kind: 28936,
+        created_at: 1,
+        content: content.into(),
+        tags,
+    };
+    let protected = || vec![vec!["-".to_string()]];
+    assert!(validate_event("https://relay.test", &leave("", protected())).is_ok());
+    for rejected in [
+        leave("bye", protected()),
+        leave("", vec![]),
+        leave("", vec![vec!["-".into(), "x".into()]]),
+        leave(
+            "",
+            vec![vec!["-".into()], vec!["h".into(), "channel".into()]],
+        ),
+        leave("", vec![vec!["p".into(), "a".repeat(64)]]),
+    ] {
+        assert!(validate_event("https://relay.test", &rejected).is_err());
+    }
+    // Member commands stay owner/admin-only on the broker; native signs none.
+    assert!(validate_event(
+        "https://relay.test",
+        &EventTemplate {
+            kind: 9031,
+            created_at: 1,
+            content: "".into(),
+            tags: vec![vec!["p".into(), "a".repeat(64)]],
+        }
+    )
+    .is_err());
+}
+
+fn fixture_server(response: String) -> (Url, std::thread::JoinHandle<(String, String)>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = Url::parse(&format!("http://{}/query", listener.local_addr().unwrap())).unwrap();
     let task = std::thread::spawn(move || {
@@ -91,7 +131,7 @@ fn fixture_server(response: &'static str) -> (Url, std::thread::JoinHandle<(Stri
 #[tokio::test]
 async fn native_http_signs_exact_bytes_and_never_follows_redirects() {
     // HTTP is test-transport-only; the IPC boundary always requires HTTPS.
-    let (url, task) = fixture_server("HTTP/1.1 302 Found\r\nLocation: https://other.test/\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
+    let (url, task) = fixture_server("HTTP/1.1 302 Found\r\nLocation: https://other.test/\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into());
     let body = r#"[{"kinds":[0],"limit":5}]"#;
     let result = send(
         &IdentityHost::fixture(),
@@ -123,6 +163,28 @@ async fn native_http_signs_exact_bytes_and_never_follows_redirects() {
     verify(&event);
 }
 
+#[tokio::test]
+async fn memory_response_limit_rejects_before_generic_transport_budget() {
+    // The advertised size alone must be rejected. A multi-megabyte server write
+    // blocks the fixture thread after the client closes on this header.
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        2 * 1024 * 1024 + 1
+    );
+    let (url, task) = fixture_server(response);
+    let result = send(
+        &IdentityHost::fixture(),
+        url,
+        "POST",
+        Some("[]".into()),
+        true,
+        2 * 1024 * 1024,
+    )
+    .await;
+    assert!(matches!(result, Err(ref message) if message == "Relay response is too large"));
+    task.join().unwrap();
+}
+
 fn verify(event: &serde_json::Value) {
     let serialized = serde_json::to_vec(&serde_json::json!([
         0,
@@ -144,7 +206,56 @@ fn verify(event: &serde_json::Value) {
 
 #[test]
 fn real_ipc_restores_identity_signs_and_rejects_invalid_requests() {
+    // The path resolver reads HOME at runtime. Isolate it in a child rather
+    // than changing process-global HOME under the parallel test runner.
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child.args([
+        "--exact",
+        "relay::tests::isolated_agent_ipc_probe",
+        "--nocapture",
+    ]);
+    #[cfg(unix)]
+    {
+        let home = tempfile::tempdir().unwrap();
+        #[cfg(target_os = "macos")]
+        let path = home
+            .path()
+            .join("Library/Application Support/xyz.block.buzz.app/agents/managed-agents.json");
+        #[cfg(target_os = "linux")]
+        let path = home
+            .path()
+            .join(".local/share/xyz.block.buzz.app/agents/managed-agents.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "[]").unwrap();
+        child.env("HOME", home.path()).env_remove("XDG_DATA_HOME");
+        let output = child.env("BUZZ_AGENT_IPC_PROBE", "1").output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let output = child.env("BUZZ_AGENT_IPC_PROBE", "1").output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn isolated_agent_ipc_probe() {
+    if std::env::var("BUZZ_AGENT_IPC_PROBE").as_deref() != Ok("1") {
+        return;
+    }
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    #[cfg(unix)]
+    use tauri::Manager;
     let app = mock_builder()
         .manage(IdentityHost::fixture())
         .invoke_handler(crate::commands())
@@ -180,6 +291,56 @@ fn real_ipc_restores_identity_signs_and_rejects_invalid_requests() {
     .unwrap();
     assert_eq!(event["pubkey"], public);
     verify(&event);
+    // The old direct attestation IPC must be absent, not merely unused by the UI.
+    assert!(invoke(
+        "relay_agent_authorize",
+        serde_json::json!({
+            "community": "https://relay.test",
+            "target": {"owner": public, "pubkey": "02".repeat(32)}
+        }),
+    )
+    .is_err());
+    let resolved = invoke("relay_agent_resolve", serde_json::json!({
+        "community": "https://relay.test", "target": {"owner": public, "pubkey": "02".repeat(32), "confirmed": true}
+    })).unwrap();
+    assert_eq!(resolved["relayUrl"], "wss://relay.test");
+    #[cfg(unix)]
+    {
+        let library = invoke("relay_agent_library", serde_json::json!({})).unwrap();
+        assert_eq!(
+            library,
+            serde_json::json!({"definitions": [], "identities": []})
+        );
+        assert!(app
+            .path()
+            .data_dir()
+            .unwrap()
+            .starts_with(std::env::var("HOME").unwrap()));
+    }
+    // Library IPC success is exercised against an isolated HOME on Unix.
+    // Windows known-folder inventory is not isolated here; do not invoke its
+    // reader until a test-only fixture can control that path.
+    // Each must reach the command: a handler refusal is fine; an ACL refusal is not.
+    for (command, input) in [
+        (
+            "relay_agent_memories_read",
+            serde_json::json!({"community": "https://relay.test", "agent": public}),
+        ),
+        (
+            "relay_agent_observer",
+            serde_json::json!({"community": "https://relay.test", "event": {"id": "bad"}}),
+        ),
+        (
+            "relay_agent_log_proof",
+            serde_json::json!({"community": "https://relay.test", "target": {"id": "bad", "pubkey": public, "relayUrl": "wss://relay.test", "nonce": "bad"}}),
+        ),
+    ] {
+        let result = invoke(command, input);
+        assert!(
+            !format!("{result:?}").contains(&format!("{command} not allowed")),
+            "ACL blocked {command}"
+        );
+    }
     assert!(invoke("relay_http", serde_json::json!({
         "community": "https://relay.test", "path": "//other.test/query", "method": "POST", "body": "[]"
     })).is_err());
@@ -307,7 +468,7 @@ fn workflow_signer_rejects_nonworkflow_deletes_and_invalid_commands() {
 
 #[tokio::test]
 async fn workflow_get_is_authenticated_without_payload_and_never_redirects() {
-    let (mut url, task) = fixture_server("HTTP/1.1 302 Found\r\nLocation: https://other.test/\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
+    let (mut url, task) = fixture_server("HTTP/1.1 302 Found\r\nLocation: https://other.test/\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into());
     url.set_path("/workflows/11111111-1111-4111-8111-111111111111/runs");
     url.set_query(Some("limit=20"));
     let response = send(
@@ -956,4 +1117,352 @@ async fn sidebar_decoder_loads_four_populated_bounded_coordinates() {
         500
     );
     assert_eq!(decoded["channel-sort"], sort);
+}
+
+#[test]
+fn js_signs_emoji_sets_but_never_blossom_tokens() {
+    let template = |kind| EventTemplate {
+        kind,
+        created_at: 1,
+        content: "Upload attachment".into(),
+        tags: vec![vec!["t".into(), "upload".into()]],
+    };
+    assert!(validate_event("https://relay.test", &template(30030)).is_ok());
+    assert!(validate_event("https://relay.test", &template(24242)).is_err());
+}
+
+#[test]
+fn media_proxy_only_reaches_relay_blobs() {
+    let hash = "a".repeat(64);
+    for target in [
+        format!("https://relay.test/media/{hash}"),
+        format!("https://relay.test/media/{hash}.png"),
+        format!("https://relay.test:8443/media/{hash}.thumb.jpg"),
+    ] {
+        assert!(media_url(&target).is_some(), "{target}");
+    }
+    for target in [
+        format!("http://relay.test/media/{hash}"),
+        format!("https://u:p@relay.test/media/{hash}"),
+        format!("https://relay.test/media/{hash}?x=1"),
+        format!("https://relay.test/media/{hash}#x"),
+        format!("https://relay.test/upload/{hash}"),
+        format!("https://relay.test/media/{}", "A".repeat(64)),
+        format!("https://relay.test/media/{hash}/../../query"),
+        format!("https://relay.test/media/{hash}.PNG"),
+        "https://relay.test/media/abc".into(),
+        "file:///etc/passwd".into(),
+    ] {
+        assert!(media_url(&target).is_none(), "{target}");
+    }
+}
+
+#[test]
+fn native_downloads_only_accept_authenticated_media_urls() {
+    let hash = "a".repeat(64);
+    let target = format!("https://relay.test/media/{hash}.pdf");
+    let encoded: String =
+        percent_encoding::utf8_percent_encode(&target, percent_encoding::NON_ALPHANUMERIC)
+            .to_string();
+    for url in [
+        format!("buzz-media://localhost/{encoded}"),
+        format!("http://buzz-media.localhost/{encoded}"),
+    ] {
+        assert!(download_target(&url).is_some(), "{url}");
+    }
+    for url in [
+        format!("buzz-media://evil.test/{encoded}"),
+        format!("http://buzz-media.localhost.evil.test/{encoded}"),
+        format!("https://buzz-media.localhost/{encoded}"),
+        format!("buzz-media://localhost:123/{encoded}"),
+        format!("buzz-media://localhost/{encoded}?q=1"),
+        format!("buzz-media://localhost/{encoded}#fragment"),
+        format!("buzz-media://u:p@localhost/{encoded}"),
+        format!(
+            "buzz-media://localhost/{}",
+            percent_encoding::utf8_percent_encode(
+                "https://relay.test/query",
+                percent_encoding::NON_ALPHANUMERIC
+            )
+        ),
+    ] {
+        assert!(download_target(&url).is_none(), "{url}");
+    }
+}
+
+#[test]
+fn download_names_are_safe_and_collisions_do_not_overwrite() {
+    let url = Url::parse(&format!("https://relay.test/media/{}.pdf", "a".repeat(64))).unwrap();
+    for invalid in [
+        "",
+        ".",
+        "..",
+        "../secret",
+        "a/b",
+        "a\\b",
+        "a:b",
+        "a\n.txt",
+        "a?.pdf",
+        "a*.pdf",
+        "a\".pdf",
+        "a<.pdf",
+        "a>.pdf",
+        "a|.pdf",
+        "CON",
+        "con.txt",
+        "NUL.pdf",
+        "COM1.txt",
+        "LPT9",
+        "report.",
+        "report ",
+        "invoice\u{202e}fdp.command",
+        "\u{2066}file\u{2069}.pdf",
+    ] {
+        assert_eq!(
+            download_name(invalid, &url),
+            url.path().rsplit('/').next().unwrap()
+        );
+    }
+    assert_eq!(
+        download_name("Annual report.pdf", &url),
+        "Annual report.pdf"
+    );
+    let dir = std::env::temp_dir().join(format!("buzz-download-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&dir).unwrap();
+    let first = save_download(&dir, "report.pdf", b"first").unwrap();
+    let second = save_download(&dir, "report.pdf", b"second").unwrap();
+    assert_eq!(first.file_name().unwrap(), "report.pdf");
+    assert_eq!(second.file_name().unwrap(), "report (1).pdf");
+    assert_eq!(std::fs::read(&first).unwrap(), b"first");
+    assert_eq!(std::fs::read(&second).unwrap(), b"second");
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::fd::AsRawFd;
+        let mut value = [0u8; 128];
+        let length = unsafe {
+            libc::fgetxattr(
+                std::fs::File::open(&first).unwrap().as_raw_fd(),
+                c"com.apple.quarantine".as_ptr(),
+                value.as_mut_ptr().cast(),
+                value.len(),
+                0,
+                0,
+            )
+        };
+        assert!(length > 0, "missing quarantine mark");
+        assert!(std::str::from_utf8(&value[..length as usize])
+            .unwrap()
+            .starts_with("0081;"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let stream = format!("{}:Zone.Identifier", first.display());
+        assert_eq!(
+            std::fs::read(stream).unwrap(),
+            b"[ZoneTransfer]\r\nZoneId=3\r\n"
+        );
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn media_ranges_are_single_and_bounded() {
+    assert_eq!(media_range("bytes=0-").as_deref(), Some("bytes=0-4194303"));
+    assert_eq!(media_range("bytes=10-20").as_deref(), Some("bytes=10-20"));
+    assert_eq!(
+        media_range("bytes=100-999999999").as_deref(),
+        Some("bytes=100-4194403")
+    );
+    assert!(media_range(&format!("bytes={}-", u64::MAX)).is_none());
+    for value in [
+        "bytes=-500",
+        "bytes=5-1",
+        "bytes=0-1,4-5",
+        "items=0-1",
+        "bytes=x-",
+    ] {
+        assert!(media_range(value).is_none(), "{value}");
+    }
+}
+
+#[test]
+fn media_types_render_only_images_video_and_audio() {
+    assert_eq!(
+        media_type(Some("image/PNG; x=1")),
+        ("image/png".into(), false)
+    );
+    assert_eq!(media_type(Some("video/mp4")), ("video/mp4".into(), false));
+    assert_eq!(media_type(Some("audio/mpeg")), ("audio/mpeg".into(), false));
+    for value in [
+        Some("image/svg+xml"),
+        Some("text/html"),
+        Some("image/"),
+        None,
+    ] {
+        assert_eq!(
+            media_type(value),
+            ("application/octet-stream".into(), true),
+            "{value:?}"
+        );
+    }
+}
+
+fn blossom_event(headers: &str) -> serde_json::Value {
+    let encoded = headers
+        .lines()
+        .find_map(|line| line.strip_prefix("authorization: Nostr "))
+        .unwrap();
+    let event: serde_json::Value =
+        serde_json::from_slice(&STANDARD.decode(encoded).unwrap()).unwrap();
+    verify(&event);
+    event
+}
+
+fn tag<'a>(event: &'a serde_json::Value, name: &str) -> Vec<&'a str> {
+    event["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|tag| tag[0] == name)
+        .map(|tag| tag[1].as_str().unwrap())
+        .collect()
+}
+
+/// The relay's strict NIP-FI rules: one each of `t`, `server`, `expiration`,
+/// expiry within 60 s of creation, non-empty content.
+fn assert_strict(event: &serde_json::Value, verb: &str, server: &str) {
+    assert_eq!(event["kind"], 24242);
+    assert_ne!(event["content"], "");
+    assert_eq!(tag(event, "t"), [verb]);
+    assert_eq!(tag(event, "server"), [server]);
+    let expiration: u64 = tag(event, "expiration")[0].parse().unwrap();
+    assert_eq!(tag(event, "expiration").len(), 1);
+    assert_eq!(expiration, event["created_at"].as_u64().unwrap() + 60);
+}
+
+#[tokio::test]
+async fn media_proxy_signs_a_fresh_get_and_forwards_only_the_range() {
+    let (base, task) = fixture_server(
+        "HTTP/1.1 206 Partial Content\r\nContent-Type: text/html\r\nContent-Range: bytes 0-3/10\r\nContent-Length: 4\r\nConnection: close\r\n\r\n<b>x".into(),
+    );
+    let url = base.join(&format!("/media/{}", "a".repeat(64))).unwrap();
+    let response = fetch_media(
+        &IdentityHost::fixture(),
+        url.clone(),
+        Some("bytes=0-3".into()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), 206);
+    assert_eq!(response.body(), b"<b>x");
+    let header = |name| response.headers().get(name).unwrap().to_str().unwrap();
+    assert_eq!(header("content-type"), "application/octet-stream");
+    assert_eq!(header("content-disposition"), "attachment");
+    assert_eq!(header("x-content-type-options"), "nosniff");
+    assert_eq!(header("content-range"), "bytes 0-3/10");
+    let (headers, _) = task.join().unwrap();
+    assert!(headers.starts_with(&format!("GET {} ", url.path())));
+    assert!(headers.lines().any(|line| line == "range: bytes=0-3"));
+    assert!(!headers.contains("cookie"));
+    let server = &url[url::Position::BeforeHost..url::Position::AfterPort];
+    assert_strict(&blossom_event(&headers), "get", server);
+}
+
+#[tokio::test]
+async fn media_proxy_passes_relay_denials_through_without_a_body() {
+    let (base, task) = fixture_server(
+        "HTTP/1.1 401 Unauthorized\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into(),
+    );
+    let url = base.join(&format!("/media/{}", "b".repeat(64))).unwrap();
+    assert_eq!(
+        fetch_media(&IdentityHost::fixture(), url, None)
+            .await
+            .unwrap_err(),
+        401
+    );
+    task.join().unwrap();
+}
+
+#[tokio::test]
+async fn upload_signs_the_exact_bytes_it_sends() {
+    let (base, task) = fixture_server(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into(),
+    );
+    let url = base.join("/upload").unwrap();
+    // ASCII: the fixture server compares lengths on decoded text.
+    let body = b"PNG fixture bytes".to_vec();
+    let hash = format!("{:x}", Sha256::digest(&body));
+    let result = upload(
+        &IdentityHost::fixture(),
+        url.clone(),
+        Some("image/png"),
+        body.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!((result.status, result.body.as_str()), (200, "{}"));
+    let (headers, sent) = task.join().unwrap();
+    assert_eq!(sent.as_bytes(), body);
+    assert!(headers.starts_with("PUT /upload "));
+    assert!(headers
+        .lines()
+        .any(|line| line == format!("x-sha-256: {hash}")));
+    assert!(headers
+        .lines()
+        .any(|line| line == "content-type: image/png"));
+    let event = blossom_event(&headers);
+    let server = &url[url::Position::BeforeHost..url::Position::AfterPort];
+    assert_strict(&event, "upload", server);
+    assert_eq!(tag(&event, "x"), [hash.as_str()]);
+    assert!(upload(&IdentityHost::fixture(), url, None, Vec::new())
+        .await
+        .is_err());
+}
+
+#[test]
+fn uploads_cancel_before_or_during_and_reject_duplicates() {
+    let uploads = Uploads::default();
+    let mut running = uploads.start("a").unwrap().unwrap();
+    assert!(uploads.start("a").is_err());
+    uploads.cancel("a");
+    assert!(running.try_recv().is_ok());
+    uploads.finish("a");
+    // A cancel that overtakes its upload stops it from starting, once.
+    uploads.cancel("b");
+    assert!(uploads.start("b").unwrap().is_none());
+    assert!(uploads.start("b").unwrap().is_some());
+    for id in ["", "a/b", &"x".repeat(65)] {
+        assert!(upload_id(Some(id)).is_err(), "{id}");
+    }
+    assert!(upload_id(None).is_err());
+}
+
+#[test]
+fn late_cancels_cannot_exhaust_upload_admission() {
+    let uploads = Uploads::default();
+    for n in 0..128 {
+        let id = n.to_string();
+        let _running = uploads.start(&id).unwrap().unwrap();
+        uploads.finish(&id);
+        uploads.cancel(&id); // Renderer received completion after native finished.
+    }
+    assert!(uploads.start("fresh").unwrap().is_some());
+    assert_eq!(uploads.lock().pending.len(), 64);
+    // Early rejection before `start` has the same late-cancel path.
+    uploads.cancel("rejected-before-start");
+    assert!(uploads.start("another").unwrap().is_some());
+    // Even when active admission is full, a pre-cancelled ID never starts.
+    let mut held = Vec::new();
+    for n in 0..62 {
+        held.push(uploads.start(&format!("active-{n}")).unwrap().unwrap());
+    }
+    uploads.cancel("queued");
+    assert!(uploads.start("queued").unwrap().is_none());
+    assert!(uploads.start("overflow").is_err());
+    uploads.finish("active-0");
+    assert!(uploads.start("overflow").unwrap().is_some());
+    uploads.finish("active-1");
+    let mut active = uploads.start("active").unwrap().unwrap();
+    uploads.cancel("active");
+    assert!(active.try_recv().is_ok());
 }

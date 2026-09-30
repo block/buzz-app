@@ -120,8 +120,13 @@ an existing supported credential, live development is unavailable; shell and
 fixture tests still work.
 
 Media attachments in live development need `ffmpeg` on the server’s PATH for
-video, HEIC/HEIF, and the existing `voice-note-*.wav` exception (macOS:
-`brew install ffmpeg`; Linux: your distribution’s ffmpeg package). The broker
+video, HEIC/HEIF, and the existing `voice-note-*.wav` exception. Install ffmpeg on the host (macOS: `brew install ffmpeg`; Linux: your
+distribution’s ffmpeg package); HEIC tile grids require ffmpeg 8 or newer.
+Like `block/buzz`, real conversion tests return early when optional host tools
+are missing; tiled-HEIC tests also require ffmpeg 8+ and ffprobe. These tools are
+not pinned through Hermit or provisioned by CI. Packaged apps use the host's
+installed ffmpeg and reject HEIC preparation if its version is older than 8 or
+cannot be determined. The broker
 prepares canonical H.264/AAC MP4 or single-frame JPEG before upload hashes/signs
 those exact bytes. Missing tools and unsupported codecs fail visibly. No generic
 audio conversion or recording UI is added.
@@ -145,8 +150,10 @@ request-owned, cancelled on disconnect and cleaned before admission is released.
 Picker/paste/drop share the same tab-local draft. Files must finish uploading
 before Send; navigation pauses unfinished uploads for explicit Retry. Reload loses
 unsent files. Background Send, attachment-first new sessions and UX polish are
-separate work. Live uploads currently use the development broker, not a packaged
-native upload implementation.
+separate work. Live uploads use the development broker in dev runs and the
+native `relay_upload` path in packaged desktop builds. The native host prepares
+HEIC and supported video/voice-note inputs with fixed demuxers and bounded child
+processes before upload; it requires ffmpeg installed on the host.
 
 The broker supports reads, live traffic and basic message sending **as your real
 account**. Profile changes and invite admission can also write to real communities.
@@ -159,7 +166,7 @@ Messages, choose a channel, and click a GitHub reference. See
 [the channel extension contract and data budgets](docs/channels.md) for ownership,
 performance, validation, and limitations.
 
-Messages is the landing page. Channels is required and cannot be disabled; optional plugins such as GitHub can be toggled in Settings.
+Messages opens by default. Channels is required and cannot be disabled; optional plugins such as GitHub can be toggled in Settings.
 
 See [client and community ownership](docs/communities.md) for the minimal join/profile flow, session scopes, and switching checks.
 
@@ -221,7 +228,8 @@ to exercise component reuse and contribution lifecycle.
 `apply(ctx)`. `ctx` is a Cordis context. External JSX plugins export
 `inject = ["react", "pages"]` and obtain `const React = ctx.react` inside `apply`, then call
 `ctx.pages.register({ id, title, component })` to contribute a page. A plugin may register
-several pages or none. Page IDs are unique within their plugin. Buzz supplies React
+several pages or none. Page IDs are unique within their plugin. Add `primary: true` for a
+row in the sidebar's page navigation; every active page is listed in search. Buzz supplies React
 and owns the Cordis runtime (`@deepseek-ai/cordis` 4.0.2). Import their types only
 in external plugins; runtime imports are rejected by the scaffold's builder.
 

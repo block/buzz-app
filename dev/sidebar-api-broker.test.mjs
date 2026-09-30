@@ -13,7 +13,8 @@ const channel = "01234567-89ab-cdef-0123-456789abcdef";
 const id = "a".repeat(64);
 async function harness(enabled = true) {
   const key = generateSecretKey();
-  const calls = [];
+  const calls = [],
+    queries = [];
   let handler, next;
   const server = createServer((req, res) => {
     req.headers.origin ??= `http://${req.headers.host}`;
@@ -24,6 +25,10 @@ async function harness(enabled = true) {
     communityAliases: fixtureAliases,
     identity: () => key,
     upstreamFetch: async (url, init) => {
+      if (new URL(url).pathname === "/query") {
+        queries.push(init.body);
+        return Response.json([]);
+      }
       if (!new URL(url).pathname.startsWith("/buzz/v1/"))
         return Response.json({
           self: getPublicKey(key),
@@ -93,6 +98,7 @@ async function harness(enabled = true) {
   return {
     transport: await connectBrokerTransport(base),
     calls,
+    queries,
     base,
     respond(response) {
       next = response;
@@ -125,26 +131,36 @@ it("does not supply an API when capability is absent", async () => {
   const h = await harness(false);
   expect(h.transport.sidebarApi).toBeUndefined();
 });
-it.each([429, 503])(
-  "honors BFF %s Retry-After on the shared lane without transparent retry",
-  async (status) => {
-    const h = await harness();
-    h.respond(
-      Response.json(
-        { error: { code: "temporarily_unavailable", request_id: "bounded" } },
-        { status, headers: { "Retry-After": "17" } },
-      ),
-    );
-    const signal = new AbortController().signal;
-    await expect(
-      h.transport.sidebarApi.sidebar({}, signal),
-    ).rejects.toMatchObject({ status, retryAfterMs: 17000 });
-    await expect(
-      h.transport.sidebarApi.sidebar({}, signal),
-    ).rejects.toMatchObject({ status: 429 });
-    expect(h.calls).toHaveLength(1);
-  },
-);
+const refuse = (h, status) =>
+  h.respond(
+    Response.json(
+      { error: { code: "temporarily_unavailable", request_id: "bounded" } },
+      { status, headers: { "Retry-After": "17" } },
+    ),
+  );
+const profiles = [{ kinds: [0], limit: 1 }];
+it("keeps a BFF 503 Retry-After with the sidebar: no transparent retry, and healthy queries still dispatch", async () => {
+  const h = await harness();
+  refuse(h, 503);
+  await expect(
+    h.transport.sidebarApi.sidebar({}, new AbortController().signal),
+  ).rejects.toMatchObject({ status: 503, retryAfterMs: 17000 });
+  expect(h.calls).toHaveLength(1);
+  expect(await h.transport.query(profiles)).toEqual([]);
+  expect(h.queries).toHaveLength(1);
+});
+it("honors BFF 429 Retry-After on the shared lane: it is the relay's one API quota", async () => {
+  const h = await harness();
+  refuse(h, 429);
+  await expect(
+    h.transport.sidebarApi.sidebar({}, new AbortController().signal),
+  ).rejects.toMatchObject({ status: 429, retryAfterMs: 17000 });
+  await expect(h.transport.query(profiles)).rejects.toMatchObject({
+    status: 429,
+  });
+  expect(h.calls).toHaveLength(1);
+  expect(h.queries).toHaveLength(0);
+});
 
 it("signs a fixed prefix and rejects oversized route bodies before upstream writes", async () => {
   const h = await harness();

@@ -1,5 +1,6 @@
 import { deferredSidebar } from "./sidebar-testing";
 import { afterEach, expect, it, vi } from "vitest";
+import { ReadError } from "./errors";
 import { createSidebarState } from "./sidebar-state";
 import type { SidebarApi, SidebarPage } from "./sidebar-api";
 import type { SidebarJournal } from "./sidebar-journal";
@@ -130,6 +131,54 @@ it("batches live invalidations without counting events and periodically refreshe
   await vi.advanceTimersByTimeAsync(59750);
   expect(h.api.sidebar.mock.calls[2]?.[0]).toEqual({});
 });
+it.each([
+  ["read", "write"],
+  ["write", "read"],
+] as const)(
+  "paces its own %s requests by the relay's Retry-After while %s requests continue",
+  async (refused, free) => {
+    vi.useFakeTimers();
+    const h = harness();
+    await h.owner.ensure();
+    await vi.waitFor(() => expect(h.owner.sync().status).toBe("ready"));
+    const calls = { read: h.api.sidebar, write: h.api.write };
+    const attempt = async (lane: "read" | "write") => {
+      if (lane === "read") h.owner.invalidate(channel);
+      else
+        await h.owner.enqueue(
+          [
+            {
+              intent: {
+                type: "mark_channel_read",
+                channel_id: channel,
+                message_id: "a".repeat(64),
+              },
+              createdAt: 1,
+            },
+          ],
+          () => false,
+          () => true,
+        );
+      await vi.advanceTimersByTimeAsync(250);
+    };
+    const before = calls[refused].mock.calls.length;
+    calls[refused].mockRejectedValueOnce(
+      new ReadError("unavailable", "refused", 503, 17000),
+    );
+    await attempt(refused);
+    expect(calls[refused]).toHaveBeenCalledTimes(before + 1);
+    expect(h.owner.sync().error).toBe("refused");
+    await attempt(refused);
+    expect(calls[refused]).toHaveBeenCalledTimes(before + 1);
+    const freeBefore = calls[free].mock.calls.length;
+    await attempt(free);
+    expect(calls[free].mock.calls.length).toBeGreaterThan(freeBefore);
+    expect(calls[refused]).toHaveBeenCalledTimes(before + 1);
+    await vi.advanceTimersByTimeAsync(16250);
+    await attempt(refused);
+    expect(calls[refused].mock.calls.length).toBeGreaterThan(before + 1);
+  },
+);
 it("fences a late fetch after clear and hides revoked state before notifying", async () => {
   const h = harness();
   let resolve: ((value: SidebarPage) => void) | undefined;

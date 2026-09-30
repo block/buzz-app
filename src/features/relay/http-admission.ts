@@ -263,7 +263,9 @@ export async function admittedApiRequest(
         failure.retryAfterMs = Number.isFinite(duration)
           ? Math.min(86401000, Math.max(1000, duration))
           : 60000;
-        lane.pause(failure.retryAfterMs);
+        // The relay's 429 is its one API quota. A 503 is the accessory's own
+        // outage: its owner keeps the delay, and healthy shared work continues.
+        if (response.status === 429) lane.pause(failure.retryAfterMs);
       }
       if (failure.quota === "api" && failure.retryAfterMs !== undefined)
         lane.pause(failure.retryAfterMs);

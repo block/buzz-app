@@ -12,6 +12,7 @@ import {
   type PendingRead,
   type SidebarManualTarget,
 } from "./sidebar-journal";
+import { ReadError } from "./errors";
 
 const MAX_CHANNELS = 1000;
 const MAX_CONTEXTS = 1000;
@@ -123,6 +124,10 @@ export function createSidebarState({
     periodic: ReturnType<typeof setTimeout> | undefined;
   let serial: Promise<unknown> = Promise.resolve();
   let writes: Promise<unknown> = Promise.resolve();
+  // A relay Retry-After paces the lane it refused, not unrelated requests.
+  const retry: {
+    [lane in "read" | "write"]?: { at: number; error: ReadError };
+  } = {};
   const journal = createSidebarJournal(storage, () => publish());
   const ready = journal.reload().catch((error) => fail(error));
   function publish(change: Partial<SidebarSync> = {}) {
@@ -154,7 +159,15 @@ export function createSidebarState({
     const result = (lane === "write" ? writes : serial).then(async () => {
       if (closed || generation !== epoch)
         throw new DOMException("Sidebar cancelled", "AbortError");
-      return work(owner.signal, generation);
+      const refused = retry[lane];
+      if (refused && performance.now() < refused.at) throw refused.error;
+      try {
+        return await work(owner.signal, generation);
+      } catch (error) {
+        if (error instanceof ReadError && error.retryAfterMs !== undefined)
+          retry[lane] = { at: performance.now() + error.retryAfterMs, error };
+        throw error;
+      }
     });
     if (lane === "write") writes = result.catch(() => {});
     else serial = result.catch(() => {});

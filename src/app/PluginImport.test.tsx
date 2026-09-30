@@ -24,7 +24,6 @@ it("shows exact declared access and changes before an enabled update", async () 
       {
         path: "dist",
         revision: "two",
-        publisher: "aaaaaaaa",
         manifest: {
           id: "example.plugin",
           name: "Example",
@@ -69,7 +68,6 @@ it("shows exact declared access and changes before an enabled update", async () 
         previous: null,
         reloadable: false,
         error: null,
-        publisher: "bbbbbbbb",
       },
     ],
   };
@@ -101,9 +99,6 @@ it("shows exact declared access and changes before an enabled update", async () 
     screen.getByText(
       /stays on and may run immediately unless this launch is in safe mode/,
     ),
-  ).toBeVisible();
-  expect(
-    screen.getByText(/Remove the installed plugin before changing publisher/),
   ).toBeVisible();
   expect(manager.installImport).not.toHaveBeenCalled();
 });

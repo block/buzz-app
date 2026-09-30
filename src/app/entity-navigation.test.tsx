@@ -15,7 +15,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey } from "nostr-tools";
 import { App } from "./App";
 import { createServices, type AppServices } from "./services";
-import type { OpenTarget } from "../features/navigation/targets";
+import {
+  parseOpenTarget,
+  type OpenTarget,
+} from "../features/navigation/targets";
 import { bindDeepLinks } from "../features/navigation/deep-links";
 import { matchesEvent } from "../features/relay/projection";
 import type { ReadFilter } from "../features/relay/events";
@@ -379,7 +382,7 @@ function legacyPageFixture() {
 }
 
 it.each(["Inbox", "Bestie"])(
-  "normalizes old %s targets in the same visit and caller, retaining scope",
+  "normalizes old %s links in the same visit and caller, retaining scope",
   async (name) => {
     const current = legacyPageFixture();
     await screen.findByRole("navigation", { name: "Pages" });
@@ -408,10 +411,11 @@ it.each(["Inbox", "Bestie"])(
         route: { version: 1, params: name },
         ...(scope !== undefined ? { scope } : {}),
       };
+      const bound = parseOpenTarget(old);
       let visit = "";
       let result!: ReturnType<typeof current.navigation.open>;
       act(() => {
-        result = current.navigation.open(old);
+        result = current.navigation.open(bound);
         visit = current.navigation.snapshot().entry.id;
       });
       await waitFor(() =>

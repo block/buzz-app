@@ -1,4 +1,5 @@
 import type { AgentControl } from "../../features/agents/control";
+import { activityTarget } from "../../features/agents/activity-target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import {
   ChannelTabPicker,
@@ -275,6 +276,7 @@ function ChannelWorkspace({
     [navigate],
   );
   const threadTrigger = useRef<HTMLElement | null>(null);
+  const panelTrigger = useRef<HTMLElement | null>(null);
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
   const { channels, profiles } = useChannelLabels(
     list.channels,
@@ -641,24 +643,45 @@ function ChannelWorkspace({
     if (
       activity &&
       activity.channelId === requestedChannel &&
-      activity.rootId === requestedThread
+      activity.messageId === requestedMessage &&
+      activity.entryId === navigation?.entryId &&
+      !activity.signal.aborted &&
+      exact?.request === navigation
     ) {
       threadTrigger.current = activity.trigger;
+      if (!exact.inTimeline) selectOpening(undefined);
       handoff.activityThread.current = undefined;
+    }
+    const activityAgent = handoff?.activityAgent.current;
+    if (activityAgent && activityAgent.channelId === current?.id) {
+      const target = activityTarget(
+        activityAgent.agent,
+        activityAgent.channelId,
+      );
+      const panel = panels.resolve(target);
+      if (panel) {
+        panelTrigger.current = activityAgent.trigger;
+        open({ channelId: activityAgent.channelId, panel, target }, true);
+      }
+      handoff.activityAgent.current = undefined;
     }
   }, [
     draftParent,
     composingMessage,
     requestedMessage,
+    navigation,
     requestedChannel,
-    requestedThread,
     open,
     handoff?.activityThread,
-    navigation,
+    exact?.request,
+    exact?.inTimeline,
     setThread,
     selectOpening,
     currentId,
     thread,
+    handoff?.activityAgent,
+    current?.id,
+    panels,
   ]);
   const panelTabs = entries.filter(
     (entry) =>
@@ -818,7 +841,6 @@ function ChannelWorkspace({
     setThread(undefined);
     if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
   };
-  const panelTrigger = useRef<HTMLElement | null>(null);
   // Availability follows active contributions; dispatch still re-resolves at click time.
   const canOpenLink = useCallback(
     (target: string) =>

@@ -337,8 +337,8 @@ function paragraphMarkdown(block: EditorNode): string {
   };
   const rawText: Handle = (node, parent, state, info) => {
     if (node.type === "text" && raw.has(node)) {
-      // Escape only the boundary ticks/backslash that could absorb a generated
-      // code delimiter; unrelated authored Markdown remains byte-for-byte source.
+      // Escape only raw boundaries that could absorb generated delimiters;
+      // unrelated authored Markdown remains byte-for-byte source.
       let value: string = node.value;
       if (info.before.endsWith("|"))
         value = value.replace(/^\|+/, (pipes) =>
@@ -353,6 +353,16 @@ function paragraphMarkdown(block: EditorNode): string {
       if (info.after.startsWith("`"))
         value = value.replace(/[`\\]+$/, (tail) =>
           tail.replace(/[\\`]/g, "\\$&"),
+        );
+      if (info.before.endsWith("*"))
+        value = value.replace(/^\*+/, (stars) => stars.replaceAll("*", "\\*"));
+      // Emphasis.peek advertises _ even when the handler later chooses *.
+      // Keep authored escape pairs; escape bare stars and a final backslash.
+      if (/^[*_]/.test(info.after))
+        value = value.replace(/[\\*]+$/, (tail) =>
+          tail.replace(/\\[\\*]|\*|\\$/g, (part) =>
+            part.length === 1 ? `\\${part}` : part,
+          ),
         );
       return value;
     }

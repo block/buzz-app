@@ -6,6 +6,8 @@ import {
   readComposerSnapshot,
 } from "./composer-document";
 import { composerMarkdown } from "./composer-markdown";
+import { profileMentionParts } from "./profile-mentions";
+import { profileTarget } from "../profiles/target";
 import { mentionDraft } from "./mention-draft";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmStrikethroughFromMarkdown } from "mdast-util-gfm-strikethrough";
@@ -337,6 +339,104 @@ describe("composer Markdown boundary", () => {
         },
       ],
     });
+  });
+  it.each([
+    ["a", "b", "*", "a*b*\\*"],
+    ["a", "b", "*c", "a*b*\\*c"],
+    ["5*", "x", "y", "5\\**x*y"],
+    ["a**", "b", "c", "a\\*\\**b*c"],
+    ["a", "b", "**c", "a*b*\\*\\*c"],
+  ])(
+    "preserves emphasis beside literal asterisks in %s / %s / %s",
+    (before, inner, after, wire) => {
+      const output = serialize(
+        schema.text(before),
+        schema.text(inner, [schema.marks.italic.create()]),
+        schema.text(after),
+      );
+      expect(output).toBe(wire);
+      expect(fromMarkdown(output).children[0]).toMatchObject({
+        type: "paragraph",
+        children: [
+          { type: "text", value: before },
+          { type: "emphasis", children: [{ type: "text", value: inner }] },
+          { type: "text", value: after },
+        ],
+      });
+    },
+  );
+  it.each([
+    ["a\\*", "a\\**b*c", "a*"],
+    ["a\\\\*", "a\\\\\\**b*c", "a\\*"],
+    ["a\\**", "a\\*\\**b*c", "a**"],
+    ["a*\\", "a\\*\\\\*b*c", "a*\\"],
+    ["a\\", "a\\\\*b*c", "a\\"],
+    ["a\\\\", "a\\\\*b*c", "a\\"],
+  ])(
+    "preserves raw escapes before generated emphasis in %s",
+    (before, wire, rendered) => {
+      const output = serialize(
+        schema.text(before),
+        schema.text("b", [schema.marks.italic.create()]),
+        schema.text("c"),
+      );
+      expect(output).toBe(wire);
+      expect(fromMarkdown(output).children[0]).toMatchObject({
+        type: "paragraph",
+        children: [
+          { type: "text", value: rendered },
+          { type: "emphasis", children: [{ type: "text", value: "b" }] },
+          { type: "text", value: "c" },
+        ],
+      });
+    },
+  );
+  it("keeps an unmarked recipient's exact name beside emphasis and a literal asterisk", () => {
+    const honey = { pubkey: "a".repeat(64), name: "Honey" };
+    const output = serialize(
+      schema.nodes.token.create({ source: "@Honey", recipient: honey }),
+      schema.text("b", [schema.marks.italic.create()]),
+      schema.text("*"),
+    );
+    expect(output).toBe("@Honey*b*\\*");
+    expect(fromMarkdown(output).children[0]).toMatchObject({
+      type: "paragraph",
+      children: [
+        { type: "text", value: "@Honey" },
+        { type: "emphasis", children: [{ type: "text", value: "b" }] },
+        { type: "text", value: "*" },
+      ],
+    });
+    expect(
+      profileMentionParts(
+        { content: output, mentions: [honey.pubkey] },
+        new Map([[honey.pubkey, { name: honey.name }]]),
+      ),
+    ).toEqual([
+      { text: "@Honey", target: profileTarget(honey.pubkey) },
+      { text: "*b*\\*" },
+    ]);
+  });
+  it("keeps generated strong delimiters distinct from literal asterisks", () => {
+    const italic = (text: string) =>
+      schema.text(text, [schema.marks.italic.create()]);
+    for (const children of [
+      [schema.text("a"), italic("b"), bold("c")],
+      [bold("a"), italic("b"), schema.text("c")],
+    ]) {
+      const output = serialize(...children);
+      expect(output).not.toContain("&#");
+      expect(renderedCharacters(fromMarkdown(output).children)).toEqual(
+        children.flatMap((child) =>
+          [...(child.text ?? "")].map((character) => ({
+            character,
+            marks: child.marks.map((mark) =>
+              mark.type.name === "italic" ? "emphasis" : "strong",
+            ),
+          })),
+        ),
+      );
+    }
   });
   it("uses syntax-aware escaping and delimiter flanking", () => {
     expect(serialize(bold("*"))).toBe("**\\***");

@@ -295,6 +295,43 @@ it("follows the parser for intraword delimiters: snake_case stays literal, 5*3*2
   });
 });
 
+it.each(["a*b**", "a*b**c"])(
+  "preserves displayed emphasis when sending %s",
+  async (typed) => {
+    const h = mount();
+    await h.user.keyboard(typed);
+    expect(h.input.querySelector("em")).toHaveTextContent("b");
+    expect(h.markdown()).toBe(`a*b*\\${typed.slice(4)}`);
+    expect(fromMarkdown(h.markdown()).children[0]).toMatchObject({
+      type: "paragraph",
+      children: [
+        { type: "text", value: "a" },
+        { type: "emphasis", children: [{ type: "text", value: "b" }] },
+        { type: "text", value: typed.slice(4) },
+      ],
+    });
+  },
+);
+
+it("preserves toolbar italics after a typed literal asterisk", async () => {
+  const h = mount();
+  await h.user.keyboard("5*");
+  act(() => h.input.toggleFormat("italic"));
+  await h.user.keyboard("x");
+  act(() => h.input.toggleFormat("italic"));
+  await h.user.keyboard("y");
+  expect(h.input.querySelector("em")).toHaveTextContent("x");
+  expect(h.markdown()).toBe("5\\**x*y");
+  expect(fromMarkdown(h.markdown()).children[0]).toMatchObject({
+    type: "paragraph",
+    children: [
+      { type: "text", value: "5*" },
+      { type: "emphasis", children: [{ type: "text", value: "x" }] },
+      { type: "text", value: "y" },
+    ],
+  });
+});
+
 it("converts a span typed on a heading line, which the timeline renders as a heading", async () => {
   const h = mount();
   await h.user.keyboard("# Title **bold**");
@@ -387,6 +424,37 @@ it("italicises a mention typed between asterisks and sends a form the timeline s
     ),
   ).toEqual([
     { text: "*" },
+    { text: "@Honey", target: profileTarget(honey.pubkey) },
+    { text: "* " },
+  ]);
+});
+
+it("keeps an italic mention bound after a literal asterisk", async () => {
+  const h = mount();
+  const honey = { pubkey: "a".repeat(64), name: "Honey" };
+  await h.user.keyboard("a*");
+  act(() => {
+    h.input.insertText("", honey);
+    h.input.setSelectionRange(2, 8);
+    h.input.toggleFormat("italic");
+  });
+  expect(h.input.querySelector('em [data-source="@Honey"]')).not.toBeNull();
+  expect(h.draft().recipients).toEqual([{ ...honey, start: 2, end: 8 }]);
+  expect(h.markdown()).toBe("a\\**@Honey* ");
+  expect(fromMarkdown(h.markdown()).children[0]).toMatchObject({
+    type: "paragraph",
+    children: [
+      { type: "text", value: "a*" },
+      { type: "emphasis", children: [{ type: "text", value: "@Honey" }] },
+    ],
+  });
+  expect(
+    profileMentionParts(
+      { content: h.markdown(), mentions: [honey.pubkey] },
+      new Map([[honey.pubkey, { name: honey.name }]]),
+    ),
+  ).toEqual([
+    { text: "a\\**" },
     { text: "@Honey", target: profileTarget(honey.pubkey) },
     { text: "* " },
   ]);

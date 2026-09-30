@@ -69,9 +69,9 @@ test("video speed options escape the thread and restore focus after selection an
   const menu = page.getByRole("menu", { name: /^Playback speed:/ });
   await expect(menu).toBeVisible();
   // The scoped dark owner must keep the explicit floating recipe, not the
-  // ordinary dark control fill (#333333), even though the host stays light.
+  // ordinary dark control fill (#232323), even though the host stays light.
   await expect(menu).toHaveCSS("--interaction-fill", "#404040");
-  await expect(menu).toHaveCSS("background-color", "rgb(51, 51, 51)");
+  await expect(menu).toHaveCSS("background-color", "rgb(40, 40, 40)");
   const fast = menu.getByRole("menuitemradio", { name: "2x", exact: true });
   await expect
     .poll(() =>
@@ -126,7 +126,7 @@ test("video speed options escape the thread and restore focus after selection an
   await expect(menu).toHaveCSS("--interaction-fill", "#404040");
   await expect(
     menu.getByRole("menuitemradio", { name: "2x", exact: true }),
-  ).toHaveCSS("background-color", "rgb(64, 64, 64)");
+  ).toHaveCSS("background-color", "rgb(46, 46, 46)");
   await expect(
     menu.getByRole("menuitemradio", { name: "2x", exact: true }),
   ).toBeFocused();
@@ -167,9 +167,9 @@ test("unavailable dark media review keeps Retry readable in a light host", async
     "Original message unavailable.",
   );
   await expect(retry).toHaveCSS("color", "rgb(255, 255, 255)");
-  await expect(retry).toHaveCSS("background-color", "rgb(51, 51, 51)");
+  await expect(retry).toHaveCSS("background-color", "rgb(35, 35, 35)");
   await retry.hover();
-  await expect(retry).toHaveCSS("background-color", "rgb(64, 64, 64)");
+  await expect(retry).toHaveCSS("background-color", "rgb(46, 46, 46)");
 });
 
 // Shared preview callers must retain viewport placement and non-stealing focus.

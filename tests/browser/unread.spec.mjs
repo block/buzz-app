@@ -121,7 +121,6 @@ test("built sidebar → visible dwell → durable journal → encrypted broker p
   page,
   app,
 }) => {
-  await page.clock.install();
   await open(page, app);
   await expect
     .poll(() =>
@@ -134,7 +133,11 @@ test("built sidebar → visible dwell → durable journal → encrypted broker p
     /^500 observed unread messages/,
   );
   await park(page);
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  // Install after startup and focus cancellation have settled on the real
+  // clock; pause at a fixed instant rather than the page's ticking clock.
+  const base = Date.now();
+  await page.clock.install({ time: base });
+  await page.clock.pauseAt(base + 20_000);
   await page.clock.runFor(900); // Sidebar focus is not reading, even past dwell.
   expect((await journal(page)).state.frontiers).toEqual({});
   expect(app.report.readPublications).toEqual([]);
@@ -177,7 +180,6 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
   page,
   app,
 }) => {
-  await page.clock.install();
   let release;
   const gate = new Promise((resolve) => {
     release = resolve;
@@ -218,7 +220,11 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
     )
     .toEqual({ status: "reconciled", completeness: "snapshot" });
   await park(page);
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  // As above: install after startup and focus cancellation, then pause at
+  // fixed instants from one base.
+  const base = Date.now();
+  await page.clock.install({ time: base });
+  await page.clock.pauseAt(base + 20_000);
   await history(page).focus();
   const ids = await visible(page);
   expect(ids.length).toBeGreaterThan(0);
@@ -258,7 +264,7 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
     }),
   ).toBeVisible();
   await park(page);
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  await page.clock.pauseAt(base + 40_000);
   await history(page).focus();
   await page.clock.runFor(1000);
   expect((await journal(page)).localUnread[alphaId]).toBeGreaterThan(0);

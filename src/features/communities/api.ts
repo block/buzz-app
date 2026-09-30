@@ -22,7 +22,7 @@ export async function communityRequest<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   if (nativeIdentityEnabled())
-    return nativeCommunityRequest(id, route, body) as Promise<T>;
+    return nativeCommunityRequest(id, route, body, signal) as Promise<T>;
   signal = signal
     ? AbortSignal.any([signal, AbortSignal.timeout(25000)])
     : AbortSignal.timeout(25000);

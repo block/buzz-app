@@ -429,19 +429,16 @@ isolate a malicious plugin. Load only trusted plugin code.
 
 ### Loading from folders and repositories
 
-Authors can publish a signed API v1 build with `buzzodz plugin sign DIST_DIRECTORY
-ARTIFACT_URL` after `buzzodz plugin build`. The command reads the saved Buzz human
-identity from the same OS credential slot as the desktop app; it never exports or
-creates a key. Set up the desktop identity first, then run the command in the same
-OS account and matching debug or release build. Missing or locked storage fails.
-It writes `plugin.artifact.json` (the exact self-contained module and manifest
-snapshot) and `plugin.signature.json` (a signed [NIP-94](https://github.com/nostr-protocol/nips/blob/master/94.md)
-kind 1063 event). The event signs the artifact SHA-256 in `x`, `application/json`
-in `m`, `buzz-plugin-release-v1` in `t`, and the download location in `url`.
-The URL is a source hint; the verified event pubkey is the publisher. Include
-both files in the folder or Git repository users import. Buzz checks the event
-ID, signature and exact artifact bytes before install and each load. Unsigned
-`manifest.json` and `plugin.js` builds remain available for local development.
+Authors can sign a built API v1 plugin with `buzzodz plugin sign DIST_DIRECTORY`
+after `buzzodz plugin build`. The command reads the saved Buzz human identity
+from the same OS credential slot as the desktop app; it never exports or creates
+a key. Use the same OS account and matching debug or release build. Missing or
+locked storage fails. It writes `plugin.artifact.json` and
+`plugin.signature.json` as the local [NIP-PS](nips/NIP-PS.md) file pair. No relay
+or URL is needed. Include both files in the imported folder or Git repository.
+Buzz checks the event ID, signature and exact artifact bytes before install and
+each load. Unsigned `manifest.json` and `plugin.js` builds remain available for
+local development.
 A signed installation can only update from the same publisher; remove and
 reinstall to choose a different publisher. Signing identifies an author, but
 does not sandbox plugin code or make a publisher trustworthy.

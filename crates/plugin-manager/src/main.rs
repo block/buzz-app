@@ -12,7 +12,7 @@ const HELP: &str = "buzzodz [--home ABSOLUTE_PATH] [--profile NAME] plugin COMMA
 Commands:
   init DIRECTORY ID NAME   Create a page-plugin source project
   build DIRECTORY          Run the project's pnpm build script
-  sign DIST_DIRECTORY ARTIFACT_URL  Sign with your saved Buzz human identity
+  sign DIST_DIRECTORY       Sign with your saved Buzz human identity
   install DIRECTORY        Install a built artifact (new plugins start disabled)
   list                     List installed pages and their enabled state
   enable ID | disable ID | remove ID | rollback ID
@@ -69,12 +69,12 @@ fn run() -> Result<()> {
             println!("Built {}", Path::new(directory).join("dist").display());
             return Ok(());
         }
-        ("sign", [directory, url]) => {
-            let publisher = sign_release_saved(Path::new(directory), url)?;
+        ("sign", [directory]) => {
+            let publisher = sign_release_saved(Path::new(directory))?;
             println!("Signed release in {directory} by {publisher}");
             return Ok(());
         }
-        ("sign", _) => return Err("Usage: buzzodz plugin sign DIST_DIRECTORY ARTIFACT_URL".into()),
+        ("sign", _) => return Err("Usage: buzzodz plugin sign DIST_DIRECTORY".into()),
         _ => {}
     }
     let manager = Manager::open(home, &profile, false)?;

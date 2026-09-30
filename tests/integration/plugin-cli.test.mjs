@@ -76,7 +76,10 @@ test("CLI help and errors are readable text with appropriate exit codes", () => 
   assert.equal(help.status, 0);
   assert.match(help.stdout, /^buzzodz .*\n\nCommands:/);
   assert.doesNotMatch(help.stdout, /\\n/);
-  assert.match(help.stdout, /sign DIST_DIRECTORY ARTIFACT_URL/);
+  assert.match(
+    help.stdout,
+    /sign DIST_DIRECTORY\s+Sign with your saved Buzz human identity/,
+  );
   assert.doesNotMatch(help.stdout, /KEY_FILE/);
   const error = cli("plugin", "unknown");
   assert.equal(error.status, 1);
@@ -87,14 +90,10 @@ test("CLI help and errors are readable text with appropriate exit codes", () => 
     "plugin",
     "sign",
     "dist",
-    "key-file",
     "https://example.test/plugin.artifact.json",
   );
   assert.equal(oldSign.status, 1);
-  assert.match(
-    oldSign.stderr,
-    /Usage: buzzodz plugin sign DIST_DIRECTORY ARTIFACT_URL/,
-  );
+  assert.match(oldSign.stderr, /Usage: buzzodz plugin sign DIST_DIRECTORY/);
 });
 test("scaffold builds through pnpm and installs a usable standalone JSX page", async () => {
   await project(async (directory, source) => {

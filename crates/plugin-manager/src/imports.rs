@@ -814,12 +814,7 @@ mod tests {
             .unwrap();
         let repo = git.scratch.path().join("repository");
         let signed = plugin(&repo, "plugins/one/dist", "example.one");
-        crate::sign_release(
-            &signed,
-            &nostr::key::SecretKey::generate().to_secret_hex(),
-            "https://example.test/plugin.artifact.json",
-        )
-        .unwrap();
+        crate::sign_release(&signed, &nostr::key::SecretKey::generate().to_secret_hex()).unwrap();
         fs::remove_file(signed.join("manifest.json")).unwrap();
         fs::remove_file(signed.join("plugin.js")).unwrap();
         plugin(&repo, "plugins/two", "example.two");
@@ -888,9 +883,8 @@ mod tests {
     fn signed_folder_import_load_reload_and_publisher_continuity() {
         let root = tempfile::tempdir().unwrap();
         let source = plugin(root.path(), "dist", "example.signed");
-        let url = "https://example.test/plugin.artifact.json";
         let first_key = nostr::key::SecretKey::generate().to_secret_hex();
-        let publisher = crate::sign_release(&source, &first_key, url).unwrap();
+        let publisher = crate::sign_release(&source, &first_key).unwrap();
         let pair_only = tempfile::tempdir().unwrap();
         for name in ["plugin.artifact.json", "plugin.signature.json"] {
             fs::copy(source.join(name), pair_only.path().join(name)).unwrap();
@@ -932,7 +926,7 @@ mod tests {
         fs::write(&stored, original).unwrap();
         manager.change("disable", "example.signed").unwrap();
         fs::write(source.join("plugin.js"), "export const changed = true;").unwrap();
-        crate::sign_release(&source, &first_key, url).unwrap();
+        crate::sign_release(&source, &first_key).unwrap();
         let second = manager.reload("example.signed").unwrap();
         let second = second
             .plugins
@@ -965,12 +959,7 @@ mod tests {
             .unwrap()
             .contains("first"));
         manager.change("disable", "example.signed").unwrap();
-        crate::sign_release(
-            &source,
-            &nostr::key::SecretKey::generate().to_secret_hex(),
-            url,
-        )
-        .unwrap();
+        crate::sign_release(&source, &nostr::key::SecretKey::generate().to_secret_hex()).unwrap();
         let different = prepare_folder(root.path()).unwrap();
         assert!(different
             .install(&manager, &different.preview.token, "dist")
@@ -996,12 +985,7 @@ mod tests {
     fn signed_pair_never_falls_back_to_unsigned_files() {
         let root = tempfile::tempdir().unwrap();
         let source = plugin(root.path(), "dist", "example.signed");
-        crate::sign_release(
-            &source,
-            &nostr::key::SecretKey::generate().to_secret_hex(),
-            "https://example.test/plugin.artifact.json",
-        )
-        .unwrap();
+        crate::sign_release(&source, &nostr::key::SecretKey::generate().to_secret_hex()).unwrap();
         fs::remove_file(source.join("plugin.signature.json")).unwrap();
         let preview = prepare_folder(root.path()).unwrap();
         assert!(preview.preview.candidates.is_empty());
@@ -1021,12 +1005,7 @@ mod tests {
         let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
         manager.install(&source).unwrap();
         fs::write(source.join("plugin.js"), "export const signed = true;").unwrap();
-        crate::sign_release(
-            &source,
-            &nostr::key::SecretKey::generate().to_secret_hex(),
-            "https://example.test/plugin.artifact.json",
-        )
-        .unwrap();
+        crate::sign_release(&source, &nostr::key::SecretKey::generate().to_secret_hex()).unwrap();
         manager.install(&source).unwrap();
         assert!(manager
             .change("rollback", "example.signed")

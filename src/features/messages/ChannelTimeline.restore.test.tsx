@@ -127,6 +127,12 @@ function mount(bottom = false, revealOnMount = false) {
   const first = window.rows[0];
   if (!first) throw new Error("Missing fixture row");
   const sent = { ...first, id: "sent", content: "New message" };
+  const older = {
+    ...first,
+    id: "older",
+    content: "Older history",
+    createdAt: 0,
+  };
   const sentWindow = { ...window, rows: [...window.rows, sent] };
   const result = render(
     revealOnMount ? tree(sentWindow, sent.id) : tree(window),
@@ -144,6 +150,12 @@ function mount(bottom = false, revealOnMount = false) {
     },
     awaitReveal() {
       result.rerender(tree(window, sent.id));
+    },
+    prependOlder() {
+      // An older-history page lands while the sent row is still revealing.
+      result.rerender(
+        tree({ ...sentWindow, rows: [older, ...sentWindow.rows] }, sent.id),
+      );
     },
     replaceAnchor() {
       const first = window.rows[0];
@@ -236,7 +248,7 @@ it.each(["none", "wheel", "key"])(
 );
 
 it.each(["wheel", "key"])(
-  "reader input before the reveal frame stays authoritative after a row refresh: %s",
+  "reader input before the reveal frame stays authoritative after a row refresh or prepend: %s",
   async (input) => {
     const h = mount();
     await frame();
@@ -253,6 +265,34 @@ it.each(["wheel", "key"])(
     h.refreshSent();
     await frame();
     expect(scroll.toIndex).not.toHaveBeenCalled();
+    // Nor may an older-history page, which reruns the effect as a prepend.
+    h.prependOlder();
+    await frame();
+    expect(scroll.toIndex).not.toHaveBeenCalled();
+  },
+);
+
+it.each([false, true])(
+  "an older-history prepend before the reveal frame still reveals the sent row, read up first=%s",
+  async (readUp) => {
+    const h = mount(true);
+    await frame();
+    await frame();
+    if (readUp) {
+      fireEvent.wheel(
+        screen.getByRole("region", { name: "Channel message history" }),
+      );
+      await frame();
+    }
+    scroll.toIndex.mockClear();
+    h.reveal();
+    // The prepend cancels the reveal frame before it runs; the rerun must
+    // reschedule the reveal at the sent row's new index, not lose it.
+    h.prependOlder();
+    await frame();
+    await frame();
+    expect(scroll.toIndex).toHaveBeenLastCalledWith(2, { align: "end" });
+    expect(scroll.toIndex).not.toHaveBeenCalledWith(1, { align: "end" });
   },
 );
 

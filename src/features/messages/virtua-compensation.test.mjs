@@ -131,6 +131,17 @@ it("does not defer while scrolling or interrupt without a correction", () => {
   expect(c.store.L()[0]).toBe(0);
 });
 
+it("buffers both sides while a shift freezes the scroll direction", () => {
+  const c = setup({ offset: 500 }); // native downward scrolling
+  c.prepend();
+  c.store.W(1, 2500); // compensated offset
+  c.store.W(1, 2400); // upward movement cannot update the frozen direction
+  expect(c.store.i(200)).toEqual([22, 31]);
+  c.store.W(2); // inferred idle restores native direction tracking
+  c.store.W(1, 2300);
+  expect(c.store.i(200)).toEqual([21, 28]);
+});
+
 it("preserves absolute edge correction and RTL axis normalization", () => {
   for (const config of [
     { offset: 1500 },

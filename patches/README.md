@@ -21,6 +21,23 @@ Installed-driver regressions cover both entry points and RTL; a browser regressi
 sets a fractional list height explicitly and requires the final row to be fully
 visible without a pixel tolerance.
 
+## Buffer while the scroll direction is frozen
+
+Virtua renders `bufferSize` only ahead of the scroll direction, and updates that
+direction only during native scrolling. A shift (prepended history) or imperative
+scroll freezes it until the 150ms inferred idle. Continuous trackpad flicks can
+keep it frozen: a downward flick after an upward prepend renders no rows below the
+viewport, and React commits one frame behind, so the leading edge stays blank for
+the rest of the gesture. The range therefore buffers both sides while the
+direction is frozen, as it already does when idle. Native directional buffering
+is unchanged, and the mounted range never exceeds the idle range.
+
+In an isolated WKWebView over real channel history (images, video, live relay),
+fast alternating flicks were measured per frame. In two instrumented runs, all 46
+DOM-coverage gap frames moved downward while shift mode held an upward direction.
+Stock showed 3–96 gap frames per run over ten runs; the patch showed none in six.
+Short main-thread stalls and image decode dips remain.
+
 ## Failure and chosen boundary
 
 In a system WKWebView, native momentum can overwrite an instant programmatic

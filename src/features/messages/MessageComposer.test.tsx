@@ -2975,6 +2975,7 @@ describe("project resource picker", () => {
   ) {
     const h = mount({ extensions: undefined });
     let release: (() => void) | undefined;
+    let fail: (() => void) | undefined;
     const validations: AbortSignal[] = [];
     const load = vi.fn(
       (route: { type: string; tab?: string }, signal: AbortSignal) => {
@@ -2985,8 +2986,9 @@ describe("project resource picker", () => {
             truncated: route.tab === "prs",
           });
         validations.push(signal);
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
           release = () => resolve({});
+          fail = () => reject(new Error("offline"));
         });
       },
     );
@@ -3016,6 +3018,11 @@ describe("project resource picker", () => {
       release: async () => {
         await act(async () => {
           release?.();
+        });
+      },
+      fail: async () => {
+        await act(async () => {
+          fail?.();
         });
       },
       async open() {
@@ -3052,6 +3059,24 @@ describe("project resource picker", () => {
     expect(p.h.messages.send.mock.calls[0]?.[1]).toBe(
       `[Fix login](${resource.uri}) `,
     );
+  });
+
+  it("keeps focus in the popover while a clicked row is checked", async () => {
+    const p = picker();
+    await p.open();
+    await p.h.user.click(await screen.findByRole("button", { name: row }));
+    expect(screen.getByRole("button", { name: row })).toBeDisabled();
+    expect(screen.getByRole("searchbox")).toHaveFocus();
+    expect(screen.getByText("Checking the chosen item…")).toHaveAttribute(
+      "role",
+      "status",
+    );
+    await p.fail();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not check this item",
+    );
+    expect(screen.getByRole("searchbox")).toHaveFocus();
+    expect(screen.queryByText("Checking the chosen item…")).toBeNull();
   });
 
   it("keeps a rejected insertion in the popover with the host reason", async () => {

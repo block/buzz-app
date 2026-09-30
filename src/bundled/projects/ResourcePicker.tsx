@@ -148,6 +148,8 @@ export function ResourcePicker({
     validation.current?.abort();
     const controller = new AbortController();
     validation.current = controller;
+    // Disabling the focused row would drop focus to <body> (Chromium).
+    searchInput.current?.focus();
     setChecking({ id: item.id });
     setRejected(undefined);
     const route = {
@@ -333,6 +335,11 @@ export function ResourcePicker({
                   <p role="status">
                     Showing the latest items only. Some issues or pull requests
                     may be missing.
+                  </p>
+                )}
+                {checking && !checking.failed && (
+                  <p role="status" className="sr-only">
+                    Checking the chosen item…
                   </p>
                 )}
                 {(checking?.failed ?? rejected) && (

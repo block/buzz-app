@@ -479,6 +479,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "border-floating-control",
+        variable: "--border-floating-control",
+        pointsAt: "border-prominent light / neutral-9 dark",
+        use: "Control boundary on floating surfaces, including fields and unchecked choices.",
+        status: "proposed",
+      },
+      {
         token: "border-focus",
         variable: "--border-focus",
         pointsAt: "neutral-12 light / neutral-12 dark",
@@ -597,6 +604,34 @@ export const ROLE_GROUPS: RoleGroup[] = [
         pointsAt: "neutral-2 light / neutral-6 dark",
         use: "Selection within anchored popups, including mention and emoji suggestions. Remains distinct from the raised dark popup surface independently of neutral button hover.",
         status: "core",
+      },
+      {
+        token: "bg-affordance-floating-control",
+        variable: "--affordance-floating-control",
+        pointsAt: "affordance-subtle light / neutral-6 dark",
+        use: "Secondary action at rest on floating surfaces.",
+        status: "proposed",
+      },
+      {
+        token: "bg-affordance-floating-control-hover",
+        variable: "--affordance-floating-control-hover",
+        pointsAt: "affordance-subtle-hover light / neutral-7 dark",
+        use: "Secondary action hover on floating surfaces; pair with standard text.",
+        status: "proposed",
+      },
+      {
+        token: "bg-affordance-floating-control-pressed",
+        variable: "--affordance-floating-control-pressed",
+        pointsAt: "affordance-subtle-pressed light / neutral-8 dark",
+        use: "Pressed action on floating surfaces; pair with standard text.",
+        status: "proposed",
+      },
+      {
+        token: "bg-affordance-floating-selected",
+        variable: "--affordance-floating-selected",
+        pointsAt: "affordance-subtle-pressed light / neutral-6 dark",
+        use: "Persistent selection on floating surfaces, distinct from row hover; pair supporting copy with standard text.",
+        status: "proposed",
       },
       {
         token: "bg-affordance-selected",

@@ -1,3 +1,5 @@
+@reference "../../shared/styles/globals.css";
+
 .picker {
   width: 100%;
   padding: var(--space-4) var(--space-panel-inset);
@@ -18,7 +20,7 @@
   margin-block-start: var(--space-4);
 }
 .categories {
-  --affordance-selected: var(--affordance-subtle);
+  @apply interaction-navigation;
   border-inline-end: 1px solid var(--border-standard);
   padding-inline-end: var(--space-3);
   overflow: auto;

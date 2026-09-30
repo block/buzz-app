@@ -40,7 +40,7 @@
   --type-weight-semibold: 600;
   --size-row: var(--space-6);
   --radius-row: 10px;
-  --affordance-selected: var(--affordance-subtle);
+  @apply interaction-navigation;
   --affordance-panel-hover: var(--affordance-navigation-quiet);
   --sidebar-padding: var(--space-2);
   --sidebar-padding-end: var(--sidebar-padding);
@@ -50,7 +50,7 @@
 }
 .conversation [data-tab-pane-toggle][aria-expanded="true"] {
   /* An open pane shares the selected tab fill, rather than a held press. */
-  --affordance-subtle-pressed: var(--affordance-subtle);
+  --interaction-pressed: var(--affordance-subtle);
 }
 .sidebarScroll {
   min-height: 0;

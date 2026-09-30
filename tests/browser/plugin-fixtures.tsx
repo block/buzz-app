@@ -1,4 +1,5 @@
 // Installed fixture code only; app composition, manager, contributions and UI remain production.
+import { companionPlugins } from "./companion-fixture";
 import * as shortcutCounter from "../../examples/plugins/shortcut-counter/plugin.js";
 import shortcutManifest from "../../examples/plugins/shortcut-counter/manifest.json";
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -255,4 +256,5 @@ export const fixturePlugins: readonly BundledPlugin[] = [
       },
     },
   },
+  ...companionPlugins,
 ];

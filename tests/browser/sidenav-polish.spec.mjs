@@ -596,69 +596,73 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
 });
 
 // A real grid/overlay measurement is needed: DOM presence misses implicit columns.
-test("placeholder destinations retain companion layout across navigation and resize", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
-  const launcher = page.locator('.shell-header button[aria-label="Bestie"]');
-  const companion = page.getByRole("complementary", {
-    name: "Bestie",
-    exact: true,
-  });
-  const conversation = page.getByRole("article", {
-    name: "Conversation",
-    exact: true,
-  });
-  const checkGeometry = async (overlay) => {
-    await expect(companion).toBeVisible();
-    await expect
-      .poll(async () => {
-        const card = await companion.boundingBox();
-        const body = await conversation.boundingBox();
-        if (!card || !body) return false;
-        return overlay
-          ? Math.abs(card.x + card.width - body.x - body.width) < 2 &&
-              card.x < body.x + body.width
-          : card.x >= body.x + body.width;
-      })
-      .toBe(true);
-    await expect
-      .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
-      .toBe(page.viewportSize().width);
-  };
-  const selectChannel = async (name) => {
-    if (page.viewportSize().width <= 650)
-      await expect(
-        page.locator("[data-shell-sidebar-toggle]"),
-      ).toHaveAccessibleName(/^(Show|Hide) navigation$/);
-    const show = page.getByRole("button", {
-      name: "Show navigation",
+test.extend({ companionFixture: true })(
+  "placeholder destinations retain companion layout across navigation and resize",
+  async ({ page, app }) => {
+    await open(page, app);
+    const sidebar = page.getByRole("navigation", {
+      name: "Subscribed channels",
+    });
+    const launcher = page.locator(
+      '.shell-header button[aria-label="Companion fixture"]',
+    );
+    const companion = page.getByRole("complementary", {
+      name: "Companion fixture",
       exact: true,
     });
-    if (await show.isVisible()) await show.click();
-    await sidebar.getByRole("button", { name, exact: true }).click();
-  };
-  for (const width of [1440, 900, 600]) {
-    await page.setViewportSize({ width, height: 950 });
-    await selectChannel("Inbox");
-    await launcher.click();
-    await checkGeometry(width <= 1000);
-    await selectChannel("Bestie");
-    await expect(
-      conversation.getByRole("heading", { name: "Bestie", exact: true }),
-    ).toBeVisible();
-    await checkGeometry(width <= 1000);
-    await launcher.click();
-    await expect(companion).not.toBeVisible();
-    await selectChannel("Alpha");
-    await launcher.click();
-    await selectChannel("Inbox");
-    await checkGeometry(width <= 1000);
-    await launcher.click();
-  }
-});
+    const conversation = page.getByRole("article", {
+      name: "Conversation",
+      exact: true,
+    });
+    const checkGeometry = async (overlay) => {
+      await expect(companion).toBeVisible();
+      await expect
+        .poll(async () => {
+          const card = await companion.boundingBox();
+          const body = await conversation.boundingBox();
+          if (!card || !body) return false;
+          return overlay
+            ? Math.abs(card.x + card.width - body.x - body.width) < 2 &&
+                card.x < body.x + body.width
+            : card.x >= body.x + body.width;
+        })
+        .toBe(true);
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+        .toBe(page.viewportSize().width);
+    };
+    const selectChannel = async (name) => {
+      if (page.viewportSize().width <= 650)
+        await expect(
+          page.locator("[data-shell-sidebar-toggle]"),
+        ).toHaveAccessibleName(/^(Show|Hide) navigation$/);
+      const show = page.getByRole("button", {
+        name: "Show navigation",
+        exact: true,
+      });
+      if (await show.isVisible()) await show.click();
+      await sidebar.getByRole("button", { name, exact: true }).click();
+    };
+    for (const width of [1440, 900, 600]) {
+      await page.setViewportSize({ width, height: 950 });
+      await selectChannel("Inbox");
+      await launcher.click();
+      await checkGeometry(width <= 1000);
+      await selectChannel("Bestie");
+      await expect(
+        conversation.getByRole("heading", { name: "Bestie", exact: true }),
+      ).toBeVisible();
+      await checkGeometry(width <= 1000);
+      await launcher.click();
+      await expect(companion).not.toBeVisible();
+      await selectChannel("Alpha");
+      await launcher.click();
+      await selectChannel("Inbox");
+      await checkGeometry(width <= 1000);
+      await launcher.click();
+    }
+  },
+);
 
 // Real text layout: a rename changes scrollWidth without resizing the label box.
 test("channel name fades follow renames without resizing the sidebar", async ({

@@ -2,6 +2,7 @@ import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, virtuaIdle } from "./timeline.mjs";
 import { holdReadingFocus, releaseReadingFocus } from "./reading.mjs";
+import { crossReadDebounce } from "./read-state.mjs";
 
 test.use({
   productionBroker: true,
@@ -246,6 +247,7 @@ test("thread buttons show observed unread independently, clear only after readin
   await replyComposer.focus();
   await page.clock.runFor(300);
   await expect(replyComposer).toBeFocused();
+  await crossReadDebounce(page, "alpha", directId);
   await expect
     .poll(
       () =>

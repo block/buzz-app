@@ -158,10 +158,13 @@ test("built sidebar → visible dwell → durable journal → encrypted broker p
     .poll(async () => Object.keys((await journal(page)).state.frontiers).sort())
     .toEqual([`activity:${alphaId}`, ...ids.map((id) => `msg:${id}`)].sort());
   await expect(alpha(page).getByRole("img")).toHaveCount(0);
-  await page.clock.resume();
   const stored = await journal(page);
   expect(stored.state.frontiers[alphaId]).toBeUndefined();
-  // The normal debounce, signing, NIP-44, NIP-98 and publication/readback all run.
+  expect(app.report.readPublications).toEqual([]);
+  // The saved journal scheduled publication. Cross its five-second debounce on
+  // the controlled clock; signing, NIP-44, NIP-98 and publication/readback all run.
+  await page.clock.fastForward(5000);
+  await page.clock.resume();
   await expect
     .poll(() => app.report.readPublications.length, { timeout: 12000 })
     .toBe(1);
@@ -359,6 +362,8 @@ test("a surviving window publishes a closed window's durable read intent", async
     ).toBeVisible();
     expect(app.report.readPublications).toEqual([]);
     await page.close(); // Cancel the origin publisher before its normal five-second debounce.
+    // The survivor scheduled its own publication when it showed pending.
+    await survivor.clock.fastForward(5000);
     await survivor.clock.resume(); // The controlled clock is shared by this context.
     await expect
       .poll(() => app.report.readPublications.length, { timeout: 12000 })

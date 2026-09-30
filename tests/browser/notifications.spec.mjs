@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { end, open, settle } from "./timeline.mjs";
+import { crossReadDebounce } from "./read-state.mjs";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 
 test.use({
@@ -295,6 +296,7 @@ for (const kind of ["mention", "thread reply"]) {
       kind === "thread reply"
         ? app.append("primary", "beta", "My prior thread", false)
         : undefined;
+    await page.clock.install();
     await ready(page, app);
     if (root)
       await expect
@@ -364,19 +366,10 @@ for (const kind of ["mention", "thread reply"]) {
         app.report.queries.filter((q) => q.filter.depth_limit),
       ).toHaveLength(0);
     }
+    await crossReadDebounce(page, "beta", incoming.id);
     await expect
       .poll(() => app.report.readPublications.length)
       .toBeGreaterThan(before);
-    await expect
-      .poll(() =>
-        page.evaluate(
-          (id) =>
-            window.fixtureRelay.snapshot().session.unread.attention("beta", id)
-              .unread,
-          incoming.id,
-        ),
-      )
-      .toBe(false);
     if (!root) {
       // Fractional reflow must not leave the last row clipped at maximum scroll.
       await row.evaluate((element) => {

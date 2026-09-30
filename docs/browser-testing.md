@@ -95,6 +95,9 @@ Results go to ignored `test-results/browser/`: each built-app test writes `evide
 with runtime versions, HEAD/dirty status, request ledger, runtime errors and
 measurements. Failure screenshots and traces are retained too. The next invocation
 replaces that output; copy artifacts before a rerun if you need to compare them.
+The one exception is the `chromium-classic-scrollbars` project, whose `evidence.json`,
+failure screenshots and traces land in `test-results/browser-classic-scrollbars/`
+so that its separate invocation cannot clear the measurement evidence.
 A dirty-status listing is not a content hash; tie release claims to a separately
 verified clean commit or source manifest.
 

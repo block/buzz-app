@@ -95,10 +95,26 @@ export type MessageRowProps = {
 // visibility threshold for focus reveals. Only scrollIntoView() opts out of
 // both, so a thumbnail whose far edge is clipped keeps focus without ever
 // coming fully into view. Reveal it within the strip's scroll-padding.
+//
+// Keyboard focus only. React's onFocus is the bubbling focusin, so it also
+// fires for pointer focus, and Chromium focuses a link on mousedown (WebKit
+// does not): revealing there would slide the strip under a held pointer before
+// mouseup, so the press lands on a neighbour or on padding, and the strip
+// visibly jumps on every click of a clipped tile. DESIGN.md wants pointer
+// focus quiet, so gate on html[data-keyboard-navigation] like the composer and
+// the floating action bar. useKeyboardFocusVisibility sets that attribute in
+// a capturing keydown listener, which runs before Tab's default action moves
+// focus, and clears it on the capturing pointerdown that precedes mousedown,
+// so a Tab reveal still runs and a press never does.
 function revealFocusedThumbnail(event: FocusEvent<HTMLDivElement>) {
   const strip = event.currentTarget;
   const target = event.target;
-  if (!(target instanceof HTMLElement) || target === strip) return;
+  if (
+    !(target instanceof HTMLElement) ||
+    target === strip ||
+    !document.documentElement.hasAttribute("data-keyboard-navigation")
+  )
+    return;
   const style = getComputedStyle(strip);
   const bounds = strip.getBoundingClientRect();
   const rect = target.getBoundingClientRect();

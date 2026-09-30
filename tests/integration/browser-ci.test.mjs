@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
 import test from "node:test";
 import { parse } from "yaml";
+import ciConfig from "../browser/playwright.ci.config.mjs";
 import config from "../browser/playwright.config.mjs";
 import { run } from "../browser/run-command.mjs";
 
@@ -237,17 +238,26 @@ test("classic-scrollbar cases run exactly once, after the measurements, without 
   assert.equal(classic.env.PLAYWRIGHT_JSON_OUTPUT_FILE, report);
   // A Playwright run clears the outputDir of every project it selects. The
   // second run must therefore own a directory the measurement report and the
-  // per-test evidence never live in, and the artifact must upload both.
-  const project = config.projects.find(
-    (candidate) => candidate.name === "chromium-classic-scrollbars",
+  // per-test evidence never live in, and the artifact must upload both. The
+  // step runs the CI config, so resolve the project there and require the
+  // local config to agree: a CI-only override of the launch arguments or the
+  // output directory would otherwise pass this gate unnoticed.
+  const classicProject = (candidate) =>
+    candidate.name === "chromium-classic-scrollbars";
+  const project = ciConfig.projects.find(classicProject);
+  assert.ok(project, "chromium-classic-scrollbars project must exist in CI");
+  assert.deepEqual(
+    project,
+    config.projects.find(classicProject),
+    "CI must run the classic project exactly as the local gate defines it",
   );
-  assert.ok(project, "chromium-classic-scrollbars project must exist");
+  assert.equal(ciConfig.outputDir, config.outputDir);
   assert.equal(project.use.browserName, "chromium");
   assert.deepEqual(project.use.launchOptions.ignoreDefaultArgs, [
     "--hide-scrollbars",
   ]);
   const outputDir = (dir) => posix.normalize(posix.join("tests/browser", dir));
-  const measurementDir = outputDir(config.outputDir);
+  const measurementDir = outputDir(ciConfig.outputDir);
   const classicDir = outputDir(project.outputDir);
   assert.notEqual(classicDir, measurementDir);
   assert.ok(!classicDir.startsWith(`${measurementDir}/`));

@@ -886,13 +886,9 @@ fn mark_download(file: &std::fs::File, _path: &std::path::Path) -> std::io::Resu
 #[cfg(target_os = "windows")]
 fn mark_download(_file: &std::fs::File, path: &std::path::Path) -> std::io::Result<()> {
     // Alternate data streams are attached to the same NTFS file, not a sibling.
-    use std::os::windows::ffi::OsStringExt;
-    let mut stream: Vec<u16> = path.as_os_str().encode_wide().collect();
-    stream.extend(":Zone.Identifier".encode_utf16());
-    std::fs::write(
-        std::path::PathBuf::from(std::ffi::OsString::from_wide(&stream)),
-        b"[ZoneTransfer]\r\nZoneId=3\r\n",
-    )
+    let mut stream = path.as_os_str().to_owned();
+    stream.push(":Zone.Identifier");
+    std::fs::write(stream, b"[ZoneTransfer]\r\nZoneId=3\r\n")
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]

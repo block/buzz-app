@@ -74,7 +74,7 @@ export function CommunityRail({
     communityFromScope(connection.scope) === selectedOrigin
       ? connection.session
       : undefined;
-  // Roles come from the relay-signed roster, as the Invites card derives them.
+  // Roles come from the relay-signed roster, as the Membership card derives them.
   // Skip the read where no item could use it.
   const invites = inviteMintingAvailable() && !!onOpenTarget;
   const role = useCommunityRole(

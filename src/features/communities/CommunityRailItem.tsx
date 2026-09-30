@@ -33,8 +33,8 @@ import { communityDestination } from "./destination";
 import type { Membership } from "./service";
 import styles from "./Communities.module.css";
 
-/** The bundled moderation plugin's Invites card, addressed by contribution key. */
-export const INVITES_SECTION = "buzz.moderation/invites";
+/** The bundled moderation plugin's Membership card, addressed by contribution key. */
+export const MEMBERSHIP_SECTION = "buzz.moderation/membership";
 
 /** A community the menu can act on through its own ready session. Absent for
  * inactive communities: no item here ever acquires a session. */
@@ -196,7 +196,7 @@ export function CommunityRailItem({
               open({
                 version: 1,
                 kind: "settings",
-                section: INVITES_SECTION,
+                section: MEMBERSHIP_SECTION,
                 scope,
               })
             }

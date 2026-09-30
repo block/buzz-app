@@ -17,7 +17,7 @@ import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { UnreadCapability } from "../relay/unread";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { CommunityRail } from "./CommunityRail";
-import { INVITES_SECTION } from "./CommunityRailItem";
+import { MEMBERSHIP_SECTION } from "./CommunityRailItem";
 import type { PurgeFailure } from "./device-state";
 import { MEMBERSHIP_KIND, type Role } from "./roster";
 import {
@@ -238,7 +238,7 @@ it("offers the original's actions on the selected community and only reads its r
   expect(
     within(menu).getByRole("menuitem", { name: "Mark all as read" }),
   ).not.toHaveAttribute("aria-disabled");
-  // Role comes from the relay-signed roster, exactly as the Invites card reads it.
+  // Role comes from the relay-signed roster, exactly as the Membership card reads it.
   expect(h.read).toHaveBeenCalledWith(
     [{ kinds: [MEMBERSHIP_KIND], authors: [relayKey], limit: 1 }],
     expect.objectContaining({ fresh: true }),
@@ -461,7 +461,7 @@ it("opens Invites and Community settings scoped to the community", async () => {
   expect(h.onOpenTarget).toHaveBeenLastCalledWith({
     version: 1,
     kind: "settings",
-    section: INVITES_SECTION,
+    section: MEMBERSHIP_SECTION,
     scope: { viewer, communityOrigin: primary },
   });
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());

@@ -10,8 +10,8 @@ const message = (reason: unknown) =>
   reason instanceof Error ? reason.message : String(reason);
 
 /** The viewer's role in one community, derived from the relay-signed roster
- * read through that community's own session. Shared by the Invites settings
- * card and the community rail menu so both gate owner/admin actions alike.
+ * read through that community's own session, so the community rail menu can
+ * gate owner/admin actions on the roles the Membership settings card reads.
  *
  * `members` is `undefined` while the first read is pending, `null` when the
  * community publishes no member list. A failed re-read keeps the last list and

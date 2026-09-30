@@ -129,11 +129,11 @@ origin and reports through the host toast stack. Mark all as read acts only on
 the selected community's ready session and only while its read state can sync;
 elsewhere it stays visible but disabled with a note saying why. Invite to
 community appears only on the selected community, only when the relay-signed
-roster names the viewer an owner or admin (the same derivation the Invites
-settings card uses), and never in native builds, which cannot mint invites; it
-opens the Invites settings card scoped to that community. That card shares the
+roster names the viewer an owner or admin (the same roles the Membership
+settings card reads), and never in native builds, which cannot mint invites; it
+opens the Membership settings card scoped to that community. That card shares the
 rail's gate rather than a copy of it: in native builds it stays registered as a
-read-only member list with a note, without its Invite to community button or
+read-only member list with a note, without its Invite members button or
 per-member actions, so a Settings section, history entry or `buzz://open`
 locator naming it still opens instead of reporting unavailable. Community settings is
 on every community and opens Settings scoped to that community's origin, which

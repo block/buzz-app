@@ -1,9 +1,15 @@
 import { test, expect } from "./source-fixture.mjs";
-import { settle, wheel, anchor, expectAnchor } from "./timeline.mjs";
+import {
+  settle,
+  wheel,
+  anchor,
+  expectAnchor,
+  negativeControl,
+} from "./timeline.mjs";
 
 // Setup only: callers hold image responses until navigation has finished, then
 // release them and assert stability without any corrective scrolling.
-async function navigate(page, direction) {
+async function navigate(page, direction, options) {
   const feed = page.getByRole("region", { name: "Channel message history" });
   const remaining = () =>
     feed.evaluate(
@@ -23,7 +29,7 @@ async function navigate(page, direction) {
   while (true) {
     const before = await remaining();
     if (before < 4) break;
-    await wheel(page, direction * Math.min(2000, before));
+    await wheel(page, direction * Math.min(2000, before), undefined, options);
     expect(
       before - (await remaining()),
       "image navigation retains progress after settling",
@@ -178,7 +184,7 @@ test("image navigation handles partial gestures and rejects blocked input", asyn
 }) => {
   await page.setContent(`
     <section role="region" aria-label="Channel message history"
-      style="height:700px;overflow:auto"><div style="height:14000px"></div></section>
+      style="height:700px;overflow:auto"><div style="height:7000px"></div></section>
   `);
   // Install the fixture's input policy before hover commits WebKit's wheel
   // event regions; adding the first listener immediately before input can lose it.
@@ -207,7 +213,7 @@ test("image navigation handles partial gestures and rejects blocked input", asyn
       element.setAttribute("data-block-wheel", "");
     });
     gestures = 0;
-    await expect(navigate(page, 1)).rejects.toThrow(
+    await expect(navigate(page, 1, negativeControl)).rejects.toThrow(
       "timeline wheel gesture completes",
     );
     expect(gestures).toBe(1);

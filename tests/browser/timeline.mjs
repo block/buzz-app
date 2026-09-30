@@ -31,9 +31,18 @@ export async function settle(page, scroller = history(page)) {
     )
     .toBeGreaterThanOrEqual(3);
 }
+// A negative control proves that a helper rejects a condition the fixture has
+// made permanent. Nothing is pending, so the helper's own poll is the only wait
+// and need not run for the full assertion timeout.
+export const negativeControl = { timeout: 1_000 };
 // Use for gestures that must move before capturing a reading baseline. Geometry
 // can pause mid-gesture in Linux WebKit; only scrollend closes native input.
-export async function wheel(page, deltaY, scroller = history(page)) {
+export async function wheel(
+  page,
+  deltaY,
+  scroller = history(page),
+  { timeout } = {},
+) {
   const completion = await scroller.evaluateHandle((element) => {
     const state = { started: false, done: false };
     const started = () => {
@@ -60,6 +69,7 @@ export async function wheel(page, deltaY, scroller = history(page)) {
         () => (pendingRead = completion.evaluate(({ state }) => state.done)),
         {
           message: "timeline wheel gesture completes",
+          timeout,
         },
       )
       .toBe(true);
@@ -95,7 +105,7 @@ export async function anchor(page) {
     };
   });
 }
-export async function expectAnchor(page, expected) {
+export async function expectAnchor(page, expected, { timeout } = {}) {
   await expect
     .poll(
       async () =>
@@ -111,7 +121,10 @@ export async function expectAnchor(page, expected) {
               )
             : Infinity;
         }, expected),
-      { message: `same visible message ${expected.id} at same viewport Y` },
+      {
+        message: `same visible message ${expected.id} at same viewport Y`,
+        timeout,
+      },
     )
     .toBeLessThan(4);
 }
@@ -148,7 +161,7 @@ export async function open(page, app) {
   await expect(history(page).locator(rowSelector).first()).toBeVisible();
   await settle(page);
 }
-export async function upper(page) {
+export async function upper(page, options) {
   await end(page);
   const distance = () =>
     history(page).evaluate(
@@ -167,7 +180,7 @@ export async function upper(page) {
   for (let gesture = 0; gesture < 4; gesture++) {
     const before = await distance();
     if (before > 400) break;
-    await wheel(page, -(650 - before));
+    await wheel(page, -(650 - before), undefined, options);
     expect(
       await distance(),
       "reading gesture moves away from bottom",

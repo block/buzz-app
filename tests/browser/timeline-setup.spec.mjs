@@ -1,5 +1,11 @@
 import { test, expect } from "./fixture.mjs";
-import { open, upper, anchor, expectAnchor } from "./timeline.mjs";
+import {
+  open,
+  upper,
+  anchor,
+  expectAnchor,
+  negativeControl,
+} from "./timeline.mjs";
 
 // Reading setup must not accidentally exercise older-page loading.
 test.use({
@@ -66,7 +72,7 @@ test("reading anchor handles clipped paragraphs and still detects displacement",
   });
   expect(await anchor(page)).toEqual({ id: saved.id, y: saved.y + 20 });
   // The unchanged oracle must reject a real jump, not merely find the same ID.
-  await expect(expectAnchor(page, saved)).rejects.toThrow(
+  await expect(expectAnchor(page, saved, negativeControl)).rejects.toThrow(
     "same visible message clipped at same viewport Y",
   );
   await page.locator('[data-message-id="next"] p').evaluate((p) => {
@@ -91,7 +97,9 @@ test("reading setup rejects an immobile timeline instead of accepting a bottom a
       passive: false,
     });
   });
-  await expect(upper(page)).rejects.toThrow("timeline wheel gesture completes");
+  await expect(upper(page, negativeControl)).rejects.toThrow(
+    "timeline wheel gesture completes",
+  );
 });
 
 test("wheel setup drains a timed-out DOM read before returning its rejection", async ({
@@ -233,7 +241,7 @@ test("wheel baseline rejects input blocked at the edge instead of accepting a st
     await input(...args);
   };
   try {
-    await expect(wheel(page, -100)).rejects.toThrow(
+    await expect(wheel(page, -100, undefined, negativeControl)).rejects.toThrow(
       "timeline wheel gesture completes",
     );
     expect(await history(page).evaluate((element) => element.scrollTop)).toBe(

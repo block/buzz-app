@@ -42,6 +42,7 @@ function setup(count = 2) {
     return row;
   });
   let allowed = true;
+  let membership: "confirmed" | "cached" | "outsider" = "confirmed";
   const owner = createUnread({
     api: bff.api,
     storage: bff.storage,
@@ -52,7 +53,20 @@ function setup(count = 2) {
     channels: {
       list: () => ({
         status: "ready",
-        channels: allowed ? [{ id: channel, members: ["viewer"] }] : [],
+        channels: allowed
+          ? [
+              membership === "confirmed"
+                ? { id: channel, members: ["viewer"] }
+                : membership === "cached"
+                  ? {
+                      id: channel,
+                      members: ["viewer"],
+                      cached: true,
+                      readOnly: true,
+                    }
+                  : { id: channel, members: ["peer"], readOnly: true },
+            ]
+          : [],
       }),
       subscribeList: () => () => {},
     } as unknown as ChannelQueries,
@@ -84,6 +98,9 @@ function setup(count = 2) {
             : row,
         );
       if (kind === "delete") rows = rows.filter((row) => row.id !== child.id);
+    },
+    setMembership(next: typeof membership) {
+      membership = next;
     },
     drop: () => {
       rows = [];
@@ -244,5 +261,36 @@ it.each(["revoke", "clear", "dispose"] as const)(
     }
     expect(h.journal().manual).toEqual([]);
     expect(h.api.write).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["cached", "outsider"] as const)(
+  "%s read-only membership cannot start reading until membership is confirmed",
+  async (state) => {
+    const h = setup();
+    await h.unread.ensure();
+    // A lease taken under confirmed membership is fenced once it degrades.
+    const earlier = h.unread.reading(channel);
+    h.setMembership(state);
+    expect(() => h.unread.reading(channel)).toThrow(
+      "Reading handle unavailable",
+    );
+    await earlier.observe([h.root]);
+    await Promise.resolve();
+    expect(h.journal().pending).toEqual([]);
+    expect(h.api.write).not.toHaveBeenCalled();
+    earlier.dispose();
+    // Positive arm: the same observation reads once membership is confirmed.
+    h.setMembership("confirmed");
+    const reading = h.unread.reading(channel);
+    await reading.observe([h.root]);
+    await vi.waitFor(() => expect(h.api.write).toHaveBeenCalledOnce());
+    expect(h.api.write.mock.calls[0]?.[0]).toEqual([
+      {
+        type: "mark_through",
+        target: { channel_id: channel },
+        message_id: h.root,
+      },
+    ]);
   },
 );

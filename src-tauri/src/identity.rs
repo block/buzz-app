@@ -517,7 +517,6 @@ impl IdentityHost {
         .await
     }
 
-
     // Only host-owned purpose-bound operations may use this closure. Never expose the
     // secret, or a general decrypt/sign command, to the webview.
     pub(crate) async fn with_key<T: Send + 'static>(

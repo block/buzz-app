@@ -535,6 +535,46 @@ it("live timeline preview updates target only that channel, not the whole sideba
   ).toBe(true);
 });
 
+it.each([5, 9005] as const)(
+  "a live kind %s deletion rereads only its channel and clears the count",
+  async (kind) => {
+    vi.useFakeTimers();
+    const h = setup();
+    const only = message(h.peer, channel, "only unread", 11);
+    h.emit([only]);
+    h.bff.rows.set(
+      channel,
+      sidebarRow(channel, {
+        unread: { status: "exact", value: 1 },
+        latest_message_id: only.id,
+        latest_message_at: 11,
+      }),
+    );
+    await h.unread.ensure();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.snapshot().unread).toEqual({ status: "exact", value: 1 });
+    h.bff.api.sidebar.mockClear();
+    // The relay no longer counts the deleted row; only a reread can show it.
+    h.bff.rows.set(channel, sidebarRow(channel));
+    h.emit([
+      signed(kind === 5 ? h.peer : h.relay, {
+        kind,
+        content: "",
+        created_at: 12,
+        tags: [
+          ["h", channel],
+          ["e", only.id],
+        ],
+      }),
+    ]);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(h.bff.api.sidebar.mock.calls.map(([q]) => q)).toEqual([
+      { channel_ids: [channel] },
+    ]);
+    expect(h.snapshot().unread).toEqual({ status: "exact", value: 0 });
+  },
+);
+
 it.each(["ensure", "refresh"] as const)(
   "replays a roster change during an older %s traversal",
   async (origin) => {

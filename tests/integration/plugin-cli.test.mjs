@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { Context } from "@deepseek-ai/cordis";
@@ -116,6 +117,31 @@ test("scaffold builds through pnpm and installs a usable standalone JSX page", a
     assert.match(enabled.stdout, /Enabled test.page/);
     const listed = cli("--home", directory, "plugin", "list");
     assert.match(listed.stdout, /test.page\s+enabled\s+external\s+Test page/);
+    assert.match(listed.stdout, /Publisher: unsigned/);
+    const keyFile = path.join(directory, "fixture-key");
+    await writeFile(keyFile, randomBytes(32).toString("hex"), { mode: 0o600 });
+    const signed = cli(
+      "plugin",
+      "sign",
+      path.join(source, "dist"),
+      keyFile,
+      "https://example.test/plugin.artifact.json",
+    );
+    assert.equal(signed.status, 0, signed.stderr);
+    assert.match(signed.stdout, /Signed release.* by [0-9a-f]{64}/);
+    const signedInstall = cli(
+      "--home",
+      directory,
+      "plugin",
+      "install",
+      path.join(source, "dist"),
+    );
+    assert.equal(signedInstall.status, 0, signedInstall.stderr);
+    assert.match(signedInstall.stdout, /Publisher: [0-9a-f]{64}/);
+    assert.match(
+      await readFile(path.join(source, "dist/plugin.signature.json"), "utf8"),
+      /"kind": 1063/,
+    );
   });
 });
 test("failed source builds preserve the installed revision", async () => {

@@ -8,6 +8,7 @@ export type PluginInfo = {
   previous: string | null;
   reloadable: boolean;
   error: string | null;
+  publisher?: string | null;
 };
 export type Catalog = {
   profile: string;
@@ -27,7 +28,12 @@ export type ImportPreview = {
   token: string;
   source: string;
   commit: string | null;
-  candidates: { path: string; manifest: PluginManifest; revision: string }[];
+  candidates: {
+    path: string;
+    manifest: PluginManifest;
+    revision: string;
+    publisher?: string | null;
+  }[];
   warnings: string[];
 };
 export type PluginImports = {

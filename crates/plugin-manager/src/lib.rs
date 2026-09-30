@@ -1,4 +1,8 @@
 //! Installation and settings never execute plugin code. Both desktop and CLI use this crate.
+use nostr::{
+    event::{Event, EventBuilder, FinalizeEvent, Kind, Tag},
+    key::{Keys, SecretKey},
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -178,8 +182,12 @@ struct Installed {
     manifest: Manifest,
     current: String,
     #[serde(default)]
+    current_signature: Option<Event>,
+    #[serde(default)]
     current_source: Option<ReloadSource>,
     previous: Option<String>,
+    #[serde(default)]
+    previous_signature: Option<Event>,
     #[serde(default)]
     previous_source: Option<ReloadSource>,
     enabled: bool,
@@ -224,6 +232,87 @@ struct Artifact {
     manifest: Manifest,
     code: String,
 }
+#[derive(Clone)]
+struct Release {
+    bytes: Vec<u8>,
+    signature: Option<Event>,
+}
+const RELEASE_MARKER: &str = "buzz-plugin-release-v1";
+fn release_url(url: &str) -> bool {
+    url::Url::parse(url).is_ok_and(|parsed| {
+        matches!(parsed.scheme(), "https" | "http")
+            && !parsed.host_str().unwrap_or("").is_empty()
+            && parsed.username().is_empty()
+            && parsed.password().is_none()
+    })
+}
+
+fn publisher(bytes: &[u8], signature: &Event) -> Result<String> {
+    publisher_for_hash(&hash(bytes), signature)
+}
+fn publisher_for_hash(digest: &str, signature: &Event) -> Result<String> {
+    signature
+        .verify()
+        .map_err(|_| "Invalid plugin release event ID or signature")?;
+    if signature.kind != Kind::FileMetadata {
+        return Err("Plugin release must be a NIP-94 file metadata event".into());
+    }
+    for (key, expected) in [
+        ("x", digest.to_string()),
+        ("m", "application/json".into()),
+        ("t", RELEASE_MARKER.into()),
+    ] {
+        let values: Vec<&str> = signature
+            .tags
+            .iter()
+            .filter_map(|tag| {
+                let parts = tag.as_slice();
+                (parts.first().map(String::as_str) == Some(key))
+                    .then(|| (parts.len() == 2).then(|| parts[1].as_str()))
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or("Incomplete plugin release tag")?;
+        if values.len() != 1 || values[0] != expected {
+            return Err(format!("Invalid or ambiguous plugin release {key} tag"));
+        }
+    }
+    let urls: Vec<_> = signature
+        .tags
+        .iter()
+        .filter(|tag| tag.as_slice().first().map(String::as_str) == Some("url"))
+        .collect();
+    if urls.len() != 1 || urls[0].as_slice().len() != 2 || !release_url(&urls[0].as_slice()[1]) {
+        return Err("Invalid or ambiguous plugin release url tag".into());
+    }
+    Ok(signature.pubkey.to_hex())
+}
+
+pub fn sign_release(directory: &Path, key_text: &str, url: &str) -> Result<String> {
+    if !release_url(url) {
+        return Err("Release URL must be HTTP(S) without credentials".into());
+    }
+    let bytes = artifact_from_text(
+        &read_limited(&directory.join("manifest.json"))?,
+        read_limited(&directory.join("plugin.js"))?,
+    )?;
+    let secret = SecretKey::parse(key_text.trim()).map_err(|_| "Invalid signing key")?;
+    let event = EventBuilder::new(Kind::FileMetadata, "")
+        .tags([
+            Tag::custom("url", [url]),
+            Tag::custom("m", ["application/json"]),
+            Tag::custom("x", [hash(&bytes).as_str()]),
+            Tag::custom("t", [RELEASE_MARKER]),
+        ])
+        .finalize(&Keys::new(secret))
+        .map_err(err)?;
+    let publisher = publisher(&bytes, &event)?;
+    atomic_write(&directory.join("plugin.artifact.json"), &bytes)?;
+    atomic_write(
+        &directory.join("plugin.signature.json"),
+        &serde_json::to_vec_pretty(&event).map_err(err)?,
+    )?;
+    Ok(publisher)
+}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginInfo {
@@ -234,6 +323,7 @@ pub struct PluginInfo {
     pub previous: Option<String>,
     pub reloadable: bool,
     pub error: Option<String>,
+    pub publisher: Option<String>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -342,7 +432,7 @@ impl Manager {
             .join(id)
             .join(format!("{revision}.json"))
     }
-    fn artifact(&self, id: &str, revision: &str) -> Result<Artifact> {
+    fn artifact(&self, id: &str, revision: &str, signature: Option<&Event>) -> Result<Artifact> {
         valid_id(id)?;
         valid_hash(revision)?;
         let text = read_limited(&self.artifact_path(id, revision))?;
@@ -350,6 +440,9 @@ impl Manager {
             return Err(
                 "Installed artifact failed its integrity check; reinstall or roll back".into(),
             );
+        }
+        if let Some(signature) = signature {
+            publisher(text.as_bytes(), signature)?;
         }
         let a: Artifact = serde_json::from_str(&text).map_err(err)?;
         a.manifest.validate()?;
@@ -403,14 +496,28 @@ impl Manager {
                     previous: None,
                     reloadable: false,
                     error: None,
+                    publisher: None,
                 }
             })
             .collect();
         for (id, p) in registry.installed {
             // Catalog polling stays cheap; verify content hashes before enabling/loading.
-            let error = fs::metadata(self.artifact_path(&id, &p.current))
+            let mut error = fs::metadata(self.artifact_path(&id, &p.current))
                 .map_err(err)
                 .err();
+            let publisher = if error.is_none() {
+                p.current_signature.as_ref().and_then(|signature| {
+                    match publisher_for_hash(&p.current, signature) {
+                        Ok(key) => Some(key),
+                        Err(reason) => {
+                            error = Some(reason);
+                            None
+                        }
+                    }
+                })
+            } else {
+                None
+            };
             plugins.push(PluginInfo {
                 manifest: p.manifest,
                 source: "external",
@@ -419,6 +526,7 @@ impl Manager {
                 previous: p.previous,
                 reloadable: p.current_source.is_some(),
                 error,
+                publisher,
             });
         }
         Ok(Catalog {
@@ -431,13 +539,24 @@ impl Manager {
         let source = ReloadSource::folder(directory.canonicalize().map_err(err)?, ".".into())?;
         self.install_artifact(&prepare_artifact(directory)?, Some(source))
     }
-    fn install_artifact(&self, bytes: &[u8], source: Option<ReloadSource>) -> Result<Catalog> {
-        let Artifact { manifest, .. } = serde_json::from_slice(bytes).map_err(err)?;
+    fn install_artifact(&self, release: &Release, source: Option<ReloadSource>) -> Result<Catalog> {
+        let bytes = &release.bytes;
+        let manifest = release.validate()?;
         let revision = hash(bytes);
         {
             let _lock = self.lock()?;
             let mut registry = self.read()?;
             let old = registry.installed.get(&manifest.id);
+            if let Some(old) = old {
+                if let Some(previous) = &old.current_signature {
+                    let previous_bytes =
+                        read_limited(&self.artifact_path(&manifest.id, &old.current))?;
+                    let previous_publisher = publisher(previous_bytes.as_bytes(), previous)?;
+                    if release.publisher().as_deref() != Some(previous_publisher.as_str()) {
+                        return Err("Publisher changed or signed plugin became unsigned; remove and reinstall to change publisher".into());
+                    }
+                }
+            }
             let (previous, previous_source) = old.map_or((None, None), |p| {
                 if p.current == revision {
                     (p.previous.clone(), p.previous_source.clone())
@@ -446,14 +565,23 @@ impl Manager {
                 }
             });
             let enabled = old.is_some_and(|p| p.enabled);
+            let previous_signature = old.and_then(|p| {
+                if p.current == revision {
+                    p.previous_signature.clone()
+                } else {
+                    p.current_signature.clone()
+                }
+            });
             atomic_write(&self.artifact_path(&manifest.id, &revision), bytes)?;
             registry.installed.insert(
                 manifest.id.clone(),
                 Installed {
                     manifest,
                     current: revision,
+                    current_signature: release.signature.clone(),
                     current_source: source,
                     previous,
+                    previous_signature,
                     previous_source,
                     enabled,
                 },
@@ -487,7 +615,7 @@ impl Manager {
                     .ok_or("Plugin is not installed")?;
                 match action {
                     "enable" => {
-                        self.artifact(id, &p.current)?;
+                        self.artifact(id, &p.current, p.current_signature.as_ref())?;
                         p.enabled = true;
                     }
                     "disable" => p.enabled = false,
@@ -496,11 +624,17 @@ impl Manager {
                     }
                     "rollback" => {
                         let previous = p.previous.clone().ok_or("No previous revision")?;
-                        let a = self.artifact(id, &previous)?;
+                        if p.current_signature.is_some() && p.previous_signature.is_none() {
+                            return Err(
+                                "Cannot roll back a signed plugin to an unsigned revision".into()
+                            );
+                        }
+                        let a = self.artifact(id, &previous, p.previous_signature.as_ref())?;
                         let previous_source = p.previous_source.clone();
                         p.previous = Some(p.current.clone());
                         p.previous_source = p.current_source.clone();
                         p.current = previous;
+                        std::mem::swap(&mut p.current_signature, &mut p.previous_signature);
                         p.current_source = previous_source;
                         p.manifest = a.manifest;
                     }
@@ -548,15 +682,15 @@ impl Manager {
                 plugin.manifest.host.clone().unwrap_or_default(),
             )
         };
-        let bytes = prepare_reload_artifact(&snapshot.1)?;
-        let Artifact { manifest, .. } = serde_json::from_slice(&bytes).map_err(err)?;
+        let release = prepare_reload_artifact(&snapshot.1)?;
+        let manifest = release.validate()?;
         if manifest.id != snapshot.2 {
             return Err("Reloaded plugin manifest ID changed; import it as a new plugin".into());
         }
         if manifest.host.clone().unwrap_or_default() != snapshot.3 {
             return Err("Host access changed; use Load from folder to review it".into());
         }
-        let revision = hash(&bytes);
+        let revision = hash(&release.bytes);
         before_commit();
         {
             let _lock = self.lock()?;
@@ -571,16 +705,31 @@ impl Manager {
             if plugin.current != snapshot.0 || plugin.current_source.as_ref() != Some(&snapshot.1) {
                 return Err("Plugin changed while reload was reading from disk; try again".into());
             }
+            if let Some(previous) = &plugin.current_signature {
+                let old_bytes = read_limited(&self.artifact_path(id, &plugin.current))?;
+                if release.publisher().as_deref()
+                    != Some(publisher(old_bytes.as_bytes(), previous)?.as_str())
+                {
+                    return Err("Publisher changed or signed plugin became unsigned; remove and reinstall to change publisher".into());
+                }
+            }
             let (previous, previous_source) = if plugin.current == revision {
                 (plugin.previous.clone(), plugin.previous_source.clone())
             } else {
                 (Some(plugin.current.clone()), plugin.current_source.clone())
             };
-            atomic_write(&self.artifact_path(&manifest.id, &revision), &bytes)?;
+            let previous_signature = if plugin.current == revision {
+                plugin.previous_signature.clone()
+            } else {
+                plugin.current_signature.clone()
+            };
+            atomic_write(&self.artifact_path(&manifest.id, &revision), &release.bytes)?;
             plugin.manifest = manifest;
             plugin.current = revision;
+            plugin.current_signature = release.signature;
             plugin.current_source = Some(snapshot.1);
             plugin.previous = previous;
+            plugin.previous_signature = previous_signature;
             plugin.previous_source = previous_source;
             self.save(&registry)?;
         }
@@ -617,7 +766,7 @@ impl Manager {
         if !p.enabled || p.current != revision {
             return Err("Plugin was disabled or updated; refresh the catalog".into());
         }
-        self.artifact(id, revision)
+        self.artifact(id, revision, p.current_signature.as_ref())
     }
     pub fn recover(&self) -> Result<Catalog> {
         {
@@ -638,13 +787,37 @@ impl Manager {
         self.catalog()
     }
 }
-fn prepare_artifact(directory: &Path) -> Result<Vec<u8>> {
-    artifact_from_text(
-        &read_limited(&directory.join("manifest.json"))?,
-        read_limited(&directory.join("plugin.js"))?,
-    )
+impl Release {
+    fn validate(&self) -> Result<Manifest> {
+        if self.bytes.len() as u64 > LIMIT {
+            return Err("Plugin artifact exceeds 8 MiB".into());
+        }
+        let artifact: Artifact = serde_json::from_slice(&self.bytes).map_err(err)?;
+        artifact.manifest.validate()?;
+        if is_bundled(&artifact.manifest.id) || artifact.code.trim().is_empty() {
+            return Err("Invalid plugin artifact".into());
+        }
+        if let Some(signature) = &self.signature {
+            if serde_json::to_vec(signature).map_err(err)?.len() > 64 * 1024 {
+                return Err("Plugin release signature exceeds 64 KiB".into());
+            }
+            publisher(&self.bytes, signature)?;
+        }
+        Ok(artifact.manifest)
+    }
+    fn publisher(&self) -> Option<String> {
+        self.signature.as_ref().map(|event| event.pubkey.to_hex())
+    }
 }
-fn prepare_reload_artifact(source: &ReloadSource) -> Result<Vec<u8>> {
+fn prepare_artifact(directory: &Path) -> Result<Release> {
+    let root =
+        cap_std::fs::Dir::open_ambient_dir(directory, cap_std::ambient_authority()).map_err(err)?;
+    imports::read_package(&root, Path::new("."))
+}
+pub fn release_manifest(directory: &Path) -> Result<Manifest> {
+    prepare_artifact(directory)?.validate()
+}
+fn prepare_reload_artifact(source: &ReloadSource) -> Result<Release> {
     let relative = validate_candidate_path(&source.path)?;
     if !fs::symlink_metadata(&source.root)
         .map_err(err)?
@@ -655,10 +828,7 @@ fn prepare_reload_artifact(source: &ReloadSource) -> Result<Vec<u8>> {
     }
     let directory = cap_std::fs::Dir::open_ambient_dir(&source.root, cap_std::ambient_authority())
         .map_err(err)?;
-    artifact_from_text(
-        &imports::read_source_file(&directory, &relative.join("manifest.json"))?,
-        imports::read_source_file(&directory, &relative.join("plugin.js"))?,
-    )
+    imports::read_package(&directory, &relative)
 }
 fn validate_candidate_path(path: &str) -> Result<PathBuf> {
     let path = path.trim();
@@ -763,6 +933,100 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 mod tests {
     use super::{artifact_from_text, Manager, Manifest};
     use std::fs;
+
+    #[test]
+    fn release_requires_valid_event_and_exact_artifact_bytes() {
+        use super::{publisher, RELEASE_MARKER};
+        use nostr::{
+            event::{EventBuilder, FinalizeEvent, Kind, Tag},
+            key::Keys,
+        };
+        let bytes = artifact_from_text(
+            r#"{"id":"example.page","name":"Example","apiVersion":1}"#,
+            "export const code = 1".into(),
+        )
+        .unwrap();
+        let key = Keys::generate();
+        let tags = || {
+            vec![
+                Tag::custom("url", ["https://example.test/plugin.artifact.json"]),
+                Tag::custom("m", ["application/json"]),
+                Tag::custom("x", [super::hash(&bytes)]),
+                Tag::custom("t", [RELEASE_MARKER]),
+            ]
+        };
+        let sign = |tags| {
+            EventBuilder::new(Kind::FileMetadata, "")
+                .tags(tags)
+                .finalize(&key)
+                .unwrap()
+        };
+        let good = sign(tags());
+        assert_eq!(publisher(&bytes, &good).unwrap(), good.pubkey.to_hex());
+        let wrong_kind = EventBuilder::new(Kind::TextNote, "")
+            .tags(tags())
+            .finalize(&key)
+            .unwrap();
+        assert!(publisher(&bytes, &wrong_kind).is_err());
+        for altered in [
+            artifact_from_text(
+                r#"{"id":"example.page","name":"Changed","apiVersion":1}"#,
+                "export const code = 1".into(),
+            )
+            .unwrap(),
+            artifact_from_text(
+                r#"{"id":"example.page","name":"Example","apiVersion":1}"#,
+                "export const code = 2".into(),
+            )
+            .unwrap(),
+        ] {
+            assert!(publisher(&altered, &good).is_err());
+        }
+        let mut bad_id = good.clone();
+        bad_id.id = "00".repeat(32).parse().unwrap();
+        assert!(publisher(&bytes, &bad_id).is_err());
+        let other = EventBuilder::new(Kind::FileMetadata, "")
+            .tags(tags())
+            .finalize(&Keys::generate())
+            .unwrap();
+        let mut bad_sig = good.clone();
+        bad_sig.sig = other.sig;
+        assert!(publisher(&bytes, &bad_sig).is_err());
+        for invalid in [
+            {
+                let mut t = tags();
+                t.pop();
+                t
+            },
+            {
+                let mut t = tags();
+                t[2] = Tag::custom("x", ["00".repeat(32)]);
+                t
+            },
+            {
+                let mut t = tags();
+                t[3] = Tag::custom("t", ["wrong-purpose"]);
+                t
+            },
+            {
+                let mut t = tags();
+                t.push(t[2].clone());
+                t
+            },
+            {
+                let mut t = tags();
+                t[1] = Tag::custom("m", ["text/plain"]);
+                t
+            },
+            {
+                let mut t = tags();
+                t.remove(0);
+                t
+            },
+        ] {
+            assert!(publisher(&bytes, &sign(invalid)).is_err());
+        }
+    }
 
     #[test]
     fn validates_host_declarations_and_old_manifests() {

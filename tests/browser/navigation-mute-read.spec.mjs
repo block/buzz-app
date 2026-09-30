@@ -19,6 +19,9 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await page.addInitScript(() => {
     localStorage.setItem("buzz-appearance.v1", "dark");
   });
+  // Read-state publication waits a five-second debounce. The clock crosses it
+  // once the sidebar shows that the read was saved.
+  await page.clock.install();
   // Sidebar actions and reload must not read the selected conversation.
   await holdReadingFocus(page);
   await open(page, app);
@@ -158,6 +161,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await expect(
     page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible();
+  await page.clock.fastForward(5000);
   await expect
     .poll(
       () =>
@@ -265,6 +269,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
       coordinate: "channel-mutes",
       blob: { channels: { beta: { muted: false } } },
     });
+  await page.clock.fastForward(5000);
   await readStateSettled(page);
   await page.reload();
   await openPage(page, "Messages");

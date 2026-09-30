@@ -827,3 +827,42 @@ it("owns an exact inline Inbox reveal without a synthetic navigation visit and d
     expect(view.listeners.size).toBe(0);
   }
 });
+
+it("without close, the embedded thread keeps its reader but has no close header or Escape dismissal", () => {
+  const thread = vi.fn(() => {
+    throw new Error("fixture unavailable");
+  });
+  const session = { thread } as unknown as RelaySession;
+  const props = {
+    session,
+    scope: "test",
+    channelId: "c",
+    channelName: "Channel",
+    messageId: "root",
+    onOpenLink: () => false,
+    headerActions: <button type="button">Open in origin</button>,
+  };
+  const onEscape = vi.fn();
+  document.addEventListener("keydown", onEscape);
+  const { rerender } = render(<ThreadPanel {...props} />);
+  expect(
+    screen.queryByRole("button", { name: "Close thread" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Open in origin" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("fixture unavailable");
+  fireEvent.keyDown(screen.getByRole("complementary", { name: "Thread" }), {
+    key: "Escape",
+  });
+  document.removeEventListener("keydown", onEscape);
+  expect(onEscape).toHaveBeenCalledOnce();
+  const close = vi.fn();
+  rerender(<ThreadPanel {...props} close={close} />);
+  expect(screen.getByRole("button", { name: "Close thread" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Open in origin" })).toBeVisible();
+  fireEvent.keyDown(screen.getByRole("complementary", { name: "Thread" }), {
+    key: "Escape",
+  });
+  expect(close).toHaveBeenCalledOnce();
+});

@@ -51,7 +51,8 @@ export type ThreadPanelProps = {
   requireReadyRoot?: boolean | undefined;
   /** Inline Inbox visits retain/reveal the exact selected message, even outside the newest window. */
   revealSelected?: boolean | undefined;
-  close(): void;
+  /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
+  close?: (() => void) | undefined;
   onSend?: ((id: string) => void) | undefined;
   onOpenLink(url: string): boolean;
   onOpenMediaReview?(
@@ -65,21 +66,24 @@ export type ThreadPanelProps = {
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
+  const { close } = props;
   return (
     <aside
-      className={styles.thread}
+      className={
+        close ? styles.thread : `${styles.thread} ${styles.embeddedThread}`
+      }
       data-attachment-drop-zone=""
       onDragOver={rejectUnhandledFileDrop}
       onDrop={rejectUnhandledFileDrop}
       aria-label="Thread"
       onKeyDown={(event) => {
-        if (event.key === "Escape") {
+        if (event.key === "Escape" && close) {
           event.stopPropagation();
-          props.close();
+          close();
         }
       }}
     >
-      <ThreadHeader close={props.close} actions={props.headerActions} />
+      {close && <ThreadHeader close={close} actions={props.headerActions} />}
       <OwnedThreadPanel
         key={messageViewKey(
           props.session,
@@ -95,7 +99,10 @@ export function ThreadPanel(props: ThreadPanelProps) {
 function ThreadHeader({
   close,
   actions,
-}: Pick<ThreadPanelProps, "close"> & { actions?: ReactNode }) {
+}: {
+  close(): void;
+  actions?: ReactNode;
+}) {
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     closeButton.current?.focus();

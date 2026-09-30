@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
+import { createUnread } from "./unread";
 import { deferredSidebar, sidebarFixture, sidebarRow } from "./sidebar-testing";
 import { keypair, message, metadata, roster } from "./testing";
 import type { LiveCallbacks } from "./live";
@@ -105,6 +106,217 @@ it("retains message context only while subscribed, including replies without hyd
   h.bff.api.contexts.mockClear();
   await h.unread.refresh();
   expect(h.bff.api.contexts).not.toHaveBeenCalled();
+});
+it("retargets retained message demand when a signed parent reveals the canonical root", async () => {
+  const h = setup();
+  const root = message(h.peer, channel, "root", 10);
+  const parent = message(h.peer, channel, "parent", 11, [
+    ["e", root.id, "", "root"],
+    ["e", root.id, "", "reply"],
+  ]);
+  const child = message(h.peer, channel, "child", 12, [
+    ["e", parent.id, "", "reply"],
+  ]);
+  h.emit([child]);
+  h.bff.messages.set(child.id, {
+    message_id: child.id,
+    status: "unread",
+    attention: true,
+  });
+  const selected = {
+    kind: "message",
+    channelId: channel,
+    messageId: child.id,
+  } as const;
+  const listener = vi.fn();
+  const stop = h.unread.subscribe(selected, listener);
+  await h.unread.refresh();
+  expect(h.unread.attention(channel, child.id).status).toBe("eligible");
+  expect(h.bff.api.contexts.mock.calls.at(-1)?.[0]).toEqual([
+    {
+      target: { channel_id: channel, root_id: parent.id },
+      message_ids: [child.id],
+    },
+  ]);
+  h.bff.api.contexts.mockClear();
+  listener.mockClear();
+  h.emit([parent, root]);
+  await h.unread.refresh();
+  expect(h.bff.api.contexts).toHaveBeenCalled();
+  for (const [queries] of h.bff.api.contexts.mock.calls)
+    expect(queries).toEqual([
+      {
+        target: { channel_id: channel, root_id: root.id },
+        message_ids: [child.id],
+      },
+    ]);
+  expect(listener).toHaveBeenCalled();
+  expect(h.unread.attention(channel, child.id)).toMatchObject({
+    status: "eligible",
+    rootId: root.id,
+  });
+  expect(h.unread.snapshot(selected).unread).toEqual({
+    status: "exact",
+    value: 1,
+  });
+  stop();
+  h.bff.api.contexts.mockClear();
+  await h.unread.refresh();
+  expect(h.bff.api.contexts).not.toHaveBeenCalled();
+});
+it("retargets retained demand after verified parent evidence is evicted, preserving shared consumers", async () => {
+  const h = setup();
+  const root = message(h.peer, channel, "root", 10);
+  const parent = message(h.peer, channel, "parent", 11, [
+    ["e", root.id, "", "root"],
+    ["e", root.id, "", "reply"],
+  ]);
+  const child = message(h.peer, channel, "child", 12, [
+    ["e", parent.id, "", "reply"],
+  ]);
+  const found = new Map(
+    [root, parent, child].map((event) => [event.id, event]),
+  );
+  const owner = createUnread({
+    api: h.bff.api,
+    storage: h.bff.storage,
+    scope: "mutable-evidence",
+    channels: h.session.channels,
+    viewer: h.viewer.pubkey,
+    reader: { read: async () => [] },
+    find: (id) => found.get(id),
+  });
+  cleanups.push(owner.dispose);
+  const selected = {
+    kind: "message",
+    channelId: channel,
+    messageId: child.id,
+  } as const;
+  h.bff.messages.set(child.id, {
+    message_id: child.id,
+    status: "unread",
+    attention: true,
+  });
+  const stop = owner.capability.subscribe(selected, () => {});
+  const stopShared = owner.capability.subscribe(selected, () => {});
+  await owner.capability.refresh();
+  expect(h.bff.api.contexts.mock.calls.at(-1)?.[0]).toEqual([
+    {
+      target: { channel_id: channel, root_id: root.id },
+      message_ids: [child.id],
+    },
+  ]);
+  found.delete(parent.id);
+  h.bff.api.contexts.mockClear();
+  owner.accept([child]);
+  await owner.capability.refresh();
+  expect(h.bff.api.contexts.mock.calls.at(-1)?.[0]).toEqual([
+    {
+      target: { channel_id: channel, root_id: parent.id },
+      message_ids: [child.id],
+    },
+  ]);
+  expect(owner.capability.attention(channel, child.id).status).toBe("eligible");
+  stop();
+  h.bff.api.contexts.mockClear();
+  await owner.capability.refresh();
+  expect(h.bff.api.contexts.mock.calls.at(-1)?.[0]).toEqual([
+    {
+      target: { channel_id: channel, root_id: parent.id },
+      message_ids: [child.id],
+    },
+  ]);
+  stopShared();
+  h.bff.api.contexts.mockClear();
+  await owner.capability.refresh();
+  expect(h.bff.api.contexts).not.toHaveBeenCalled();
+});
+it.each(["unsubscribe", "revoke"])(
+  "does not publish held context results after %s",
+  async (action) => {
+    const h = setup();
+    const child = message(h.peer, channel, "child", 12, [
+      ["e", "a".repeat(64), "", "reply"],
+    ]);
+    h.emit([child]);
+    await h.unread.ensure();
+    const started = deferredSidebar<void>();
+    const held =
+      deferredSidebar<Awaited<ReturnType<typeof h.bff.api.contexts>>>();
+    h.bff.api.contexts.mockImplementationOnce(() => {
+      started.resolve();
+      return held.promise;
+    });
+    const selected = {
+      kind: "message",
+      channelId: channel,
+      messageId: child.id,
+    } as const;
+    const stop = h.unread.subscribe(selected, () => {});
+    await started.promise;
+    try {
+      if (action === "unsubscribe") stop();
+      else h.grant(channel, [], 20);
+    } finally {
+      held.resolve({
+        account: { retention_seconds: 2592000, cutoff_ms: 0 },
+        contexts: [
+          {
+            status: "available",
+            through_timestamp: null,
+            messages: [
+              { message_id: child.id, status: "unread", attention: true },
+            ],
+          },
+        ],
+      });
+    }
+    const count = h.bff.api.contexts.mock.calls.length;
+    await h.unread.refresh();
+    expect(h.bff.api.contexts.mock.calls).toHaveLength(count);
+    expect(h.unread.attention(channel, child.id).status).toBe("unknown");
+    stop();
+  },
+);
+it("retargets shared demand at the lease bound and rejects overflow atomically", async () => {
+  const h = setup();
+  const root = message(h.peer, channel, "root", 10);
+  const parent = message(h.peer, channel, "parent", 11, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const child = message(h.peer, channel, "child", 12, [
+    ["e", parent.id, "", "reply"],
+  ]);
+  h.emit([child]);
+  const selected = {
+    kind: "message",
+    channelId: channel,
+    messageId: child.id,
+  } as const;
+  const stops = Array.from({ length: 1000 }, () =>
+    h.unread.subscribe(selected, () => {}),
+  );
+  expect(() => h.unread.subscribe(selected, () => {})).toThrow("capacity");
+  await h.unread.refresh();
+  h.bff.api.contexts.mockClear();
+  h.emit([parent, root]);
+  await h.unread.refresh();
+  expect(h.bff.api.contexts).toHaveBeenCalled();
+  for (const [queries] of h.bff.api.contexts.mock.calls)
+    expect(queries).toEqual([
+      {
+        target: { channel_id: channel, root_id: root.id },
+        message_ids: [child.id],
+      },
+    ]);
+  for (const stop of stops) stop();
+  h.bff.api.contexts.mockClear();
+  await h.unread.refresh();
+  expect(h.bff.api.contexts).not.toHaveBeenCalled();
+  const stop = h.unread.subscribe(selected, () => {});
+  await h.unread.refresh();
+  expect(h.bff.api.contexts).toHaveBeenCalled();
+  stop();
 });
 it("uses fixed observed message IDs for dwell prefixes and never clears manual unread", async () => {
   const h = setup();

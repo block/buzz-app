@@ -141,6 +141,38 @@ export function createUnread({
     activities = new Map<string, ThreadActivitySnapshot>();
   const previews = new Map<string, RelayEvent>();
   const listeners = new Set<() => void>();
+  type Demand = {
+    target: Extract<UnreadTarget, { kind: "message" }>;
+    key?: string | undefined;
+    lease?: ReturnType<typeof state.retain> | undefined;
+  };
+  const demands = new Set<Demand>();
+  function releaseDemand(demand: Demand) {
+    demand.lease?.dispose();
+    demand.lease = undefined;
+    demand.key = undefined;
+  }
+  function reconcileDemand() {
+    const changed = [...demands].flatMap((demand) => {
+      const message = event(demand.target.messageId);
+      const resolved = message && context(message);
+      const target =
+        resolved?.channel_id === demand.target.channelId ? resolved : undefined;
+      const key = target && contextKey(target);
+      return key !== demand.key ? [{ demand, target, key }] : [];
+    });
+    // Release the whole changed set first: shared selectors must not temporarily
+    // occupy both their old and new contexts at the retained-demand bound.
+    for (const { demand } of changed) releaseDemand(demand);
+    for (const { demand, target, key } of changed) {
+      if (target)
+        demand.lease = state.retain({
+          target,
+          message_ids: [demand.target.messageId],
+        });
+      demand.key = key;
+    }
+  }
   const views = new Map<
     () => void,
     { ids: Set<string>; visible: () => boolean }
@@ -192,6 +224,7 @@ export function createUnread({
   }
   let syncSnapshot = sync();
   function publish() {
+    reconcileDemand();
     activities.clear();
     syncSnapshot = sync();
     for (const listener of listeners) notify(listener);
@@ -441,17 +474,27 @@ export function createUnread({
     attention,
     activity,
     subscribe(target, listener) {
-      const message =
-        target.kind === "message" ? event(target.messageId) : undefined;
-      const resolved = message && context(message);
-      const lease =
-        resolved && message
-          ? state.retain({ target: resolved, message_ids: [message.id] })
-          : undefined;
+      const demand: Demand | undefined =
+        target.kind === "message" ? { target } : undefined;
+      if (demand) {
+        if (demands.size >= 1000)
+          throw new Error("Read context capacity reached");
+        demands.add(demand);
+        try {
+          reconcileDemand();
+        } catch (error) {
+          demands.delete(demand);
+          releaseDemand(demand);
+          throw error;
+        }
+      }
       const off = subscribe(listener);
       return () => {
         off();
-        lease?.dispose();
+        if (demand) {
+          demands.delete(demand);
+          releaseDemand(demand);
+        }
       };
     },
     subscribeActivity: (_channelId, listener) => subscribe(listener),
@@ -689,6 +732,7 @@ export function createUnread({
       }
     },
     accept(events: readonly RelayEvent[]) {
+      reconcileDemand();
       for (const message of events) {
         const id = channelOf(message);
         if (id) state.invalidate(id);
@@ -709,6 +753,7 @@ export function createUnread({
       epoch++;
       for (const stop of [...handles]) stop();
       previews.clear();
+      for (const demand of demands) releaseDemand(demand);
       state.clear();
     },
     dispose() {
@@ -718,6 +763,8 @@ export function createUnread({
       for (const stop of [...handles]) stop();
       stop();
       stopRoster();
+      for (const demand of demands) releaseDemand(demand);
+      demands.clear();
       state.dispose();
       listeners.clear();
       snapshots.clear();

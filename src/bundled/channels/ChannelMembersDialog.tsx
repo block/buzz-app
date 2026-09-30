@@ -3,9 +3,12 @@ import { Button as BaseButton } from "@base-ui/react/button";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import { npubEncode } from "nostr-tools/nip19";
 import {
+  memo,
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -74,6 +77,201 @@ function MemberAvatar({
     </>
   );
 }
+
+/** Query and loading changes must not rebuild unchanged row/menu trees. */
+const MemberIdentityRow = memo(function MemberIdentityRow({
+  session,
+  channelId,
+  pubkey,
+  name,
+  keyLabel,
+  adding,
+  picture,
+  isAgent,
+  roleLabel,
+  archived,
+  ownerName,
+  target,
+  clickable,
+  ownerTarget,
+  ownerClickable,
+  descriptionId,
+  reducedMotion,
+  input,
+  scrollport,
+  focusedAdd,
+  openProfile,
+  onSendMessage,
+  messagePending,
+  add,
+  busy,
+  addDisabled,
+}: {
+  session: RelaySession;
+  channelId: string;
+  pubkey: string;
+  name: string;
+  keyLabel: string | undefined;
+  adding: boolean;
+  picture: string | undefined;
+  isAgent: boolean;
+  roleLabel: string | undefined;
+  archived: boolean;
+  ownerName: string;
+  target: string | undefined;
+  clickable: boolean;
+  ownerTarget: string | undefined;
+  ownerClickable: boolean;
+  descriptionId: string;
+  reducedMotion: boolean | null;
+  input: React.RefObject<HTMLElement | null>;
+  scrollport: React.RefObject<HTMLElement | null>;
+  focusedAdd: React.RefObject<{
+    key: string;
+    button: HTMLButtonElement;
+  } | null>;
+  openProfile(destination: string | undefined): boolean;
+  onSendMessage: ((key: string) => Promise<void>) | undefined;
+  messagePending: boolean;
+  add(key: string): Promise<void>;
+  busy: boolean;
+  addDisabled: boolean;
+}) {
+  const npub = npubEncode(pubkey);
+
+  const expanded = {
+    height: "auto",
+    marginTop: "var(--space-half)",
+    opacity: 1,
+  };
+  const avatar = (
+    <MemberAvatar
+      session={session}
+      pubkey={pubkey}
+      name={name}
+      picture={picture}
+      agent={!!isAgent}
+      descriptionId={descriptionId}
+    />
+  );
+  const viewProfile = () => openProfile(target);
+  const identity = (
+    <div className={styles.profileContent}>
+      {clickable && (
+        <div className={styles.profileHitTarget}>
+          <NavigationItem
+            label=""
+            icon={avatar}
+            aria-label={`Open profile for ${name} (${keyLabel})${isAgent ? ", agent" : ""}${adding ? ", not in this channel" : roleLabel ? `, ${roleLabel}` : ""}${!adding && archived ? ", archived" : ""}`}
+            aria-describedby={descriptionId}
+            onClick={viewProfile}
+          />
+        </div>
+      )}
+      <div
+        className={styles.staticProfile}
+        data-profile-link={clickable || undefined}
+      >
+        {!clickable && avatar}
+        <span className="min-w-0 flex-1">
+          <span className={styles.identity}>
+            <span className={styles.identityName}>
+              <span className={`${styles.name} text-body-sm`}>
+                {name}
+                {pubkey === session.viewer ? " (you)" : ""}
+              </span>
+            </span>
+            {ownerName && (
+              <span className={styles.manager}>
+                {" managed by "}
+                {ownerClickable ? (
+                  <BaseButton
+                    className={referenceStyles.link}
+                    aria-label={`Open owner profile: ${ownerName}`}
+                    onClick={() => openProfile(ownerTarget)}
+                  >
+                    {ownerName}
+                  </BaseButton>
+                ) : (
+                  ownerName
+                )}
+              </span>
+            )}
+          </span>
+          <motion.span
+            className={styles.metadata}
+            variants={{
+              rest: { height: 0, marginTop: 0, opacity: 0 },
+              revealed: expanded,
+              focused: { ...expanded, transition: { duration: 0 } },
+            }}
+            transition={{
+              duration: reducedMotion ? 0 : 0.14,
+              ease: [0.23, 1, 0.32, 1],
+            }}
+          >
+            <span className={styles.metadataContent}>
+              <span
+                className={`${styles.publicKey} text-mono text-body-sm text-subtle`}
+                aria-hidden="true"
+              >
+                {`${npub.slice(0, 11)}…${npub.slice(-6)}`}
+              </span>
+            </span>
+          </motion.span>
+        </span>
+      </div>
+    </div>
+  );
+  return (
+    <MemberRow
+      session={session}
+      channelId={channelId}
+      pubkey={pubkey}
+      name={name}
+      returnFocus={input}
+      scrollport={scrollport}
+      onViewProfile={clickable ? viewProfile : undefined}
+      onViewOwnerProfile={
+        ownerClickable ? () => openProfile(ownerTarget) : undefined
+      }
+      onSendMessage={
+        onSendMessage ? () => void onSendMessage(pubkey) : undefined
+      }
+      messagePending={messagePending}
+      invitationAction={
+        adding ? (
+          <span className={styles.addAction}>
+            <Button
+              variant="prominent"
+              size="xs"
+              aria-label={`Add ${name} (${keyLabel})`}
+              aria-disabled={busy || undefined}
+              disabled={addDisabled}
+              onBlur={(event) => {
+                if (focusedAdd.current?.button === event.currentTarget)
+                  focusedAdd.current = null;
+              }}
+              onClick={(event) => {
+                if (busy) return;
+                if (document.activeElement === event.currentTarget)
+                  focusedAdd.current = {
+                    key: pubkey,
+                    button: event.currentTarget,
+                  };
+                void add(pubkey);
+              }}
+            >
+              {busy ? "Adding…" : "Add"}
+            </Button>
+          </span>
+        ) : undefined
+      }
+    >
+      {identity}
+    </MemberRow>
+  );
+});
 
 type MemberNavigation = {
   onOpenConversation?: ((channelId: string) => boolean) | undefined;
@@ -307,8 +505,9 @@ export function ChannelMembersDialog({
       setRevealedFor(session);
   }, [session, channelId, rosterBusy, namesBusy, rolesSettled]);
   const initialLoading = revealedFor !== session;
-  const known = new Map(
-    agents.identities.map((agent) => [agent.pubkey, agent]),
+  const known = useMemo(
+    () => new Map(agents.identities.map((agent) => [agent.pubkey, agent])),
+    [agents.identities],
   );
   const members = new Set(channel?.members ?? []);
   const archived = new Set(archives.archived);
@@ -361,12 +560,12 @@ export function ChannelMembersDialog({
   const available = [...candidates.values()].filter(
     (person) => !members.has(person.pubkey) && !archived.has(person.pubkey),
   );
+  // Keep roster ownership observed while filtering; retiring the view clears
+  // valid hints and forces every retained agent row through recovery renders.
   const agentKeys = [
     ...new Set([
       ...currentMembers.filter(
-        (key) =>
-          matches(key, label(key)) &&
-          (known.has(key) || profiles.get(key)?.isAgent),
+        (key) => known.has(key) || profiles.get(key)?.isAgent,
       ),
       ...available
         .filter(
@@ -420,65 +619,100 @@ export function ChannelMembersDialog({
     )
       input.current?.focus();
   }, [memberKey]);
-  const add = async (key: string) => {
-    const signal = lifetime.current?.signal;
-    if (!signal) return;
-    setNotice("");
-    try {
-      await session.memberAdditions.add(channelId, key, control);
-      if (!signal.aborted) setNotice(`${label(key)} is in the channel.`);
-    } catch {
-      // Session-owned recovery remains visible if this dialog closes and reopens.
-    }
-  };
+  const add = useCallback(
+    async (key: string) => {
+      const signal = lifetime.current?.signal;
+      if (!signal) return;
+      setNotice("");
+      try {
+        await session.memberAdditions.add(channelId, key, control);
+        if (!signal.aborted)
+          setNotice(
+            `${session.names.resolve(key, session.profiles.snapshot().get(key)?.name ?? formatPublicKey(key) ?? "Unknown member")} is in the channel.`,
+          );
+      } catch {
+        // Session-owned recovery remains visible if this dialog closes and reopens.
+      }
+    },
+    [session, channelId, control],
+  );
 
-  const openMessage = async (key: string) => {
-    const signal = lifetime.current?.signal;
-    if (
-      !signal ||
-      signal.aborted ||
-      messagePending.current ||
-      !onOpenConversation ||
-      !session.directMessages.available ||
-      !session.viewer ||
-      key === session.viewer ||
-      known.has(key) ||
-      profiles.get(key)?.isAgent ||
-      candidates.get(key)?.isAgent ||
-      administration.authority.roles[key] === "bot"
-    )
-      return;
-    messagePending.current = true;
-    setOpeningMessage(true);
-    setMessageError("");
-    try {
-      const destination = await session.directMessages.open([key], signal);
-      if (signal.aborted) return;
-      // The destination owns focus; closing Members must not return it to this header.
-      openingDestination.current = true;
-      if (onOpenConversation(destination)) close();
-      else {
+  const searchAgents = search.people
+    .filter((person) => person.isAgent)
+    .map((person) => person.pubkey)
+    .sort()
+    .join(":");
+  const openMessage = useCallback(
+    async (key: string) => {
+      const signal = lifetime.current?.signal;
+      if (
+        !signal ||
+        signal.aborted ||
+        messagePending.current ||
+        !onOpenConversation ||
+        !session.directMessages.available ||
+        !session.viewer ||
+        key === session.viewer ||
+        known.has(key) ||
+        profiles.get(key)?.isAgent ||
+        searchAgents.split(":").includes(key) ||
+        administration.authority.roles[key] === "bot"
+      )
+        return;
+      messagePending.current = true;
+      setOpeningMessage(true);
+      setMessageError("");
+      try {
+        const destination = await session.directMessages.open([key], signal);
+        if (signal.aborted) return;
+        // The destination owns focus; closing Members must not return it to this header.
+        openingDestination.current = true;
+        if (onOpenConversation(destination)) close();
+        else {
+          openingDestination.current = false;
+          setMessageError(
+            "Could not open the conversation. Try Send message again.",
+          );
+        }
+      } catch (reason) {
         openingDestination.current = false;
-        setMessageError(
-          "Could not open the conversation. Try Send message again.",
-        );
+        if (!signal.aborted)
+          setMessageError(
+            reason instanceof Error
+              ? reason.message
+              : "Could not open the conversation. Try Send message again.",
+          );
+      } finally {
+        if (!signal.aborted) {
+          messagePending.current = false;
+          setOpeningMessage(false);
+        }
       }
-    } catch (reason) {
-      openingDestination.current = false;
-      if (!signal.aborted)
-        setMessageError(
-          reason instanceof Error
-            ? reason.message
-            : "Could not open the conversation. Try Send message again.",
-        );
-    } finally {
-      if (!signal.aborted) {
-        messagePending.current = false;
-        setOpeningMessage(false);
-      }
-    }
-  };
+    },
+    [
+      session,
+      onOpenConversation,
+      close,
+      profiles,
+      known,
+      searchAgents,
+      administration.authority.roles,
+    ],
+  );
 
+  const openProfile = useCallback(
+    (destination: string | undefined) => {
+      if (!destination || !canOpenLink?.(destination)) return false;
+      openingDestination.current = true;
+      if (onOpenLink?.(destination, trigger.current ?? undefined)) {
+        close();
+        return true;
+      }
+      openingDestination.current = false;
+      return false;
+    },
+    [canOpenLink, onOpenLink, trigger, close],
+  );
   const row = (
     key: string,
     name: string,
@@ -487,134 +721,48 @@ export function ChannelMembersDialog({
     agent?: boolean,
   ) => {
     const role = administration.authority.roles[key];
-    const isAgent = agent || known.has(key) || profiles.get(key)?.isAgent;
-    const npub = npubEncode(key);
-    const artwork = picture ?? profiles.get(key)?.picture;
-    const target = profileTarget(key);
-    const clickable = !!target && !!onOpenLink && !!canOpenLink?.(target);
-    const roleLabel =
-      isAgent && role === "bot"
-        ? "member"
-        : (role ??
-          (administration.status === "idle" ||
-          administration.status === "loading"
-            ? undefined
-            : "Role unverified"));
-    const expanded = {
-      height: "auto",
-      marginTop: "var(--space-half)",
-      opacity: 1,
-    };
-    const avatar = (
-      <MemberAvatar
-        session={session}
-        pubkey={key}
-        name={name}
-        picture={artwork}
-        agent={!!isAgent}
-        descriptionId={`${presenceId}-${key}`}
-      />
-    );
-    const openProfile = (destination: string | undefined) => {
-      if (!destination || !canOpenLink?.(destination)) return false;
-      // Hand modal focus to the existing panel, with a stable return target.
-      openingDestination.current = true;
-      if (onOpenLink?.(destination, trigger.current ?? undefined)) {
-        close();
-        return true;
-      }
-      openingDestination.current = false;
-      return false;
-    };
-    const viewProfile = () => openProfile(target);
+    const isAgent = !!(agent || known.has(key) || profiles.get(key)?.isAgent);
     const owner = isAgent ? ownership.owners.get(key) : undefined;
+    const target = profileTarget(key);
     const ownerTarget = owner ? profileTarget(owner) : undefined;
-    const ownerName = owner
-      ? `${label(owner)}${owner === session.viewer ? " (you)" : ""}`
-      : "";
-    const identity = (
-      <div className={styles.profileContent}>
-        {clickable && (
-          <div className={styles.profileHitTarget}>
-            <NavigationItem
-              label=""
-              icon={avatar}
-              aria-label={`Open profile for ${name} (${keys.get(key)})${isAgent ? ", agent" : ""}${adding ? ", not in this channel" : roleLabel ? `, ${roleLabel}` : ""}${!adding && archived.has(key) ? ", archived" : ""}`}
-              aria-describedby={`${presenceId}-${key}`}
-              onClick={viewProfile}
-            />
-          </div>
-        )}
-        <div
-          className={styles.staticProfile}
-          data-profile-link={clickable || undefined}
-        >
-          {!clickable && avatar}
-          <span className="min-w-0 flex-1">
-            <span className={styles.identity}>
-              <span className={styles.identityName}>
-                <span className={`${styles.name} text-body-sm`}>
-                  {name}
-                  {key === session.viewer ? " (you)" : ""}
-                </span>
-              </span>
-              {owner && (
-                <span className={styles.manager}>
-                  {" managed by "}
-                  {ownerTarget && onOpenLink && canOpenLink?.(ownerTarget) ? (
-                    <BaseButton
-                      className={referenceStyles.link}
-                      aria-label={`Open owner profile: ${ownerName}`}
-                      onClick={() => openProfile(ownerTarget)}
-                    >
-                      {ownerName}
-                    </BaseButton>
-                  ) : (
-                    ownerName
-                  )}
-                </span>
-              )}
-            </span>
-            <motion.span
-              className={styles.metadata}
-              variants={{
-                rest: { height: 0, marginTop: 0, opacity: 0 },
-                revealed: expanded,
-                focused: { ...expanded, transition: { duration: 0 } },
-              }}
-              transition={{
-                duration: reducedMotion ? 0 : 0.14,
-                ease: [0.23, 1, 0.32, 1],
-              }}
-            >
-              <span className={styles.metadataContent}>
-                <span
-                  className={`${styles.publicKey} text-mono text-body-sm text-subtle`}
-                  aria-hidden="true"
-                >
-                  {`${npub.slice(0, 11)}…${npub.slice(-6)}`}
-                </span>
-              </span>
-            </motion.span>
-          </span>
-        </div>
-      </div>
-    );
     return (
-      <MemberRow
+      <MemberIdentityRow
         key={key}
         session={session}
         channelId={channelId}
         pubkey={key}
         name={name}
-        returnFocus={input}
-        scrollport={scrollport}
-        onViewProfile={clickable ? viewProfile : undefined}
-        onViewOwnerProfile={
-          ownerTarget && onOpenLink && canOpenLink?.(ownerTarget)
-            ? () => openProfile(ownerTarget)
-            : undefined
+        keyLabel={keys.get(key)}
+        adding={adding}
+        picture={picture ?? profiles.get(key)?.picture}
+        isAgent={isAgent}
+        archived={archived.has(key)}
+        roleLabel={
+          isAgent && role === "bot"
+            ? "member"
+            : (role ??
+              (administration.status === "idle" ||
+              administration.status === "loading"
+                ? undefined
+                : "Role unverified"))
         }
+        ownerName={
+          owner
+            ? `${label(owner)}${owner === session.viewer ? " (you)" : ""}`
+            : ""
+        }
+        target={target}
+        clickable={!!target && !!onOpenLink && !!canOpenLink?.(target)}
+        ownerTarget={ownerTarget}
+        ownerClickable={
+          !!ownerTarget && !!onOpenLink && !!canOpenLink?.(ownerTarget)
+        }
+        descriptionId={`${presenceId}-${key}`}
+        reducedMotion={reducedMotion}
+        input={input}
+        scrollport={scrollport}
+        focusedAdd={focusedAdd}
+        openProfile={openProfile}
         onSendMessage={
           !isAgent &&
           role !== "bot" &&
@@ -622,38 +770,14 @@ export function ChannelMembersDialog({
           session.viewer &&
           session.directMessages.available &&
           onOpenConversation
-            ? () => void openMessage(key)
+            ? openMessage
             : undefined
         }
         messagePending={openingMessage}
-        invitationAction={
-          adding ? (
-            <span className={styles.addAction}>
-              <Button
-                variant="prominent"
-                size="xs"
-                aria-label={`Add ${name} (${keys.get(key)})`}
-                aria-disabled={busy.has(key) || undefined}
-                disabled={rosterBusy || !!rosterError}
-                onBlur={(event) => {
-                  if (focusedAdd.current?.button === event.currentTarget)
-                    focusedAdd.current = null;
-                }}
-                onClick={(event) => {
-                  if (busy.has(key)) return;
-                  if (document.activeElement === event.currentTarget)
-                    focusedAdd.current = { key, button: event.currentTarget };
-                  void add(key);
-                }}
-              >
-                {busy.has(key) ? "Adding…" : "Add"}
-              </Button>
-            </span>
-          ) : undefined
-        }
-      >
-        {identity}
-      </MemberRow>
+        add={add}
+        busy={busy.has(key)}
+        addDisabled={rosterBusy || !!rosterError}
+      />
     );
   };
   return (

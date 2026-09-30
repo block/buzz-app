@@ -266,43 +266,49 @@ export function MemberRow({
         >
           <div className={styles.profile}>{children}</div>
           {invitationAction}
-          <span className={styles.memberActions}>
-            {/* A regular trigger needs its own root: registering it on the
-                context root replaces Base UI's context-menu interaction owner. */}
-            <MenuRoot
-              open={menuOpen === "button"}
-              onOpenChange={(open, details) => {
-                if (open) {
-                  openingProfile.current = false;
-                  menuReturnFocus.current =
-                    details.trigger instanceof HTMLElement
-                      ? details.trigger
-                      : null;
-                }
-                setMenuOpen((current) =>
-                  open ? "button" : current === "button" ? undefined : current,
-                );
-              }}
-            >
-              <MenuTrigger
-                render={
-                  <IconButton
-                    variant="ghost"
-                    size="sm"
-                    aria-label={`Actions for ${name}`}
-                    icon={<DotsThreeIcon size={18} aria-hidden="true" />}
-                  />
-                }
-              />
-              <MenuPopup
-                aria-label={`Actions for ${name}`}
-                align="end"
-                finalFocus={finalFocus}
+          {!invitationAction && (
+            <span className={styles.memberActions}>
+              {/* A regular trigger needs its own root: registering it on the
+                  context root replaces Base UI's context-menu interaction owner. */}
+              <MenuRoot
+                open={menuOpen === "button"}
+                onOpenChange={(open, details) => {
+                  if (open) {
+                    openingProfile.current = false;
+                    menuReturnFocus.current =
+                      details.trigger instanceof HTMLElement
+                        ? details.trigger
+                        : null;
+                  }
+                  setMenuOpen((current) =>
+                    open
+                      ? "button"
+                      : current === "button"
+                        ? undefined
+                        : current,
+                  );
+                }}
               >
-                {menuItems}
-              </MenuPopup>
-            </MenuRoot>
-          </span>
+                <MenuTrigger
+                  render={
+                    <IconButton
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Actions for ${name}`}
+                      icon={<DotsThreeIcon size={18} aria-hidden="true" />}
+                    />
+                  }
+                />
+                <MenuPopup
+                  aria-label={`Actions for ${name}`}
+                  align="end"
+                  finalFocus={finalFocus}
+                >
+                  {menuItems}
+                </MenuPopup>
+              </MenuRoot>
+            </span>
+          )}
         </ContextMenuTrigger>
         <MenuPopup
           aria-label={`Actions for ${name}`}

@@ -778,9 +778,11 @@ it("shares the identity presentation with invitation rows without assigning a ch
   expect(
     within(row).queryByRole("button", { name: /Copy/ }),
   ).not.toBeInTheDocument();
-  await t.user.click(
-    within(row).getByRole("button", { name: "Actions for Fixture agent" }),
-  );
+  expect(
+    within(row).queryByRole("button", { name: "Actions for Fixture agent" }),
+  ).not.toBeInTheDocument();
+  add.focus();
+  await t.user.keyboard("{Shift>}{F10}{/Shift}");
   expect(
     (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
   ).toEqual(["View profile"]);
@@ -950,9 +952,17 @@ it.each([
       owner.focus();
       await t.user.keyboard("{Enter}");
     } else {
-      await t.user.click(
-        screen.getByRole("button", { name: "Actions for Morgan" }),
-      );
+      if (member) {
+        await t.user.click(
+          screen.getByRole("button", { name: "Actions for Morgan" }),
+        );
+      } else {
+        expect(
+          screen.queryByRole("button", { name: "Actions for Morgan" }),
+        ).toBeNull();
+        profileButton.focus();
+        await t.user.keyboard("{Shift>}{F10}{/Shift}");
+      }
       expect(
         (await screen.findAllByRole("menuitem")).map(
           (item) => item.textContent,
@@ -991,8 +1001,12 @@ it.each(["unavailable", "declined"] as const)(
     );
     await t.search();
     await screen.findByText(/managed by/);
-    const actions = screen.getByRole("button", { name: "Actions for Morgan" });
-    await t.user.click(actions);
+    const actions = screen.getByRole("button", { name: /Add Morgan/ });
+    expect(
+      screen.queryByRole("button", { name: "Actions for Morgan" }),
+    ).toBeNull();
+    actions.focus();
+    await t.user.keyboard("{Shift>}{F10}{/Shift}");
     await screen.findByRole("menu", { name: "Actions for Morgan" });
     if (navigation === "unavailable") {
       expect(
@@ -1048,9 +1062,8 @@ it("removes ownership on a newer invalid signed head and never restores it from 
   expect(
     screen.queryByRole("button", { name: /Open owner profile/ }),
   ).not.toBeInTheDocument();
-  await t.user.click(
-    screen.getByRole("button", { name: "Actions for Morgan" }),
-  );
+  screen.getByRole("button", { name: /Add Morgan/ }).focus();
+  await t.user.keyboard("{Shift>}{F10}{/Shift}");
   await screen.findByRole("menu", { name: "Actions for Morgan" });
   expect(
     screen.queryByRole("menuitem", { name: "View owner profile" }),

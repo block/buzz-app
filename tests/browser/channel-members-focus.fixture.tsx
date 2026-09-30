@@ -9,6 +9,9 @@ import { createRoot } from "react-dom/client";
 import { ChannelMembersButton } from "../../src/bundled/channels/ChannelMembersDialog";
 import { createRelaySession } from "../../src/features/relay/session";
 import { matchesEvent } from "../../src/features/relay/projection";
+import { bindNames } from "../../src/features/identity-names/service";
+import { createNameProvider } from "../../src/features/identity-names/directory";
+import { resolveIdentityNames } from "../../src/features/identity-names/policy";
 import {
   keypair,
   profile,
@@ -60,7 +63,11 @@ const managedProfiles = await Promise.all(
     );
     return signed(key, {
       kind: 0,
-      content: JSON.stringify({ name, is_agent: true }),
+      content: JSON.stringify({
+        name,
+        is_agent: true,
+        picture: `https://example.test/${key.pubkey}.png`,
+      }),
       tags: [
         [
           "auth",
@@ -89,12 +96,20 @@ const published = new Promise<void>((resolve) => {
 const held = new Promise<void>((resolve) => {
   releasePublish = resolve;
 });
-const { session } = createRelaySession(
+const searchWork = { images: 0, observations: 0 };
+const provider = createNameProvider({
+  id: "fixture",
+  resolve: resolveIdentityNames,
+});
+const { session: sharedSession } = createRelaySession(
   {
     viewer: viewer.pubkey,
     scope: "https://relay.example.test",
     relayAuthor: relay.pubkey,
-    media: () => undefined,
+    media: () => {
+      searchWork.images++;
+      return undefined;
+    },
     readAgentLibrary: async () => ({ definitions: [], identities: [] }),
     query: async (filters) => {
       if (filters.some((filter) => filter.search)) return candidateProfiles;
@@ -136,8 +151,36 @@ const { session } = createRelaySession(
       },
     },
   },
-  { outboxStorage: { load: () => [], save: () => {} } },
+  {
+    outboxStorage: { load: () => [], save: () => {} },
+    identityNames: {
+      register() {},
+      bind(source) {
+        const names = bindNames(source, {
+          snapshot: () => [provider],
+          subscribe: () => () => {},
+        });
+        return names;
+      },
+    },
+  },
 );
+const session: typeof sharedSession = {
+  ...sharedSession,
+  observe(...args) {
+    if (
+      args[0].some(
+        (filter) =>
+          filter.kinds?.includes(0) &&
+          filter.authors?.some((key) =>
+            managed.some((agent) => agent.key.pubkey === key),
+          ),
+      )
+    )
+      searchWork.observations++;
+    return sharedSession.observe(...args);
+  },
+};
 session.channels.ensureList();
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");
@@ -168,6 +211,7 @@ createRoot(root).render(<Fixture />);
 // The test controls when confirmation arrives; no relay or member is contacted.
 Object.assign(window, {
   focusFixture: {
+    searchWork,
     published,
     namesRequested: () => namesRequested,
     releaseNames: () => releaseNames(),

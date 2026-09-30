@@ -487,7 +487,9 @@ preserve the last verified groups on failure. Visible member names request foreg
 priority; avatars, presence and manager enrichment never gate the initial list.
 Search filters
 each group, omits empty elevated and agent groups, and preserves full group counts.
-Non-member search ranking is unchanged.
+Non-member search ranking is unchanged. Unchanged identity rows retain their rendered
+profile/avatar/menu trees across query and loading updates; changed names, permissions,
+manager evidence, presence and invitation state still update through their existing owners.
 Current-member avatars and rows open the existing Profiles panel when its contribution
 is enabled; the Members dialog closes and closing the profile returns focus to the
 Channel members button. Names and smaller, muted inline **managed by** hints sit
@@ -527,8 +529,9 @@ Channel members button when closed. Invitation rows reuse the same avatar, name,
 managed-by hint and public-key hover/focus presentation, without a channel-role
 badge. Their avatars and identity rows open Profiles just like current members;
 only the separate, extra-small prominent **Add / Adding…** button invites someone.
-Invitation results expose the same identity menu and context-menu entry points,
-with Add separate and no role/removal actions. People and agent avatars both use the
+Invitation results expose the same identity menu through right-click, long-press,
+Context Menu or Shift+F10 only, with no ellipsis button. Add stays separate and
+there are no role/removal actions. People and agent avatars both use the
 shared 32px default size. Both row types
 share a 48px minimum height, growing with their content rather than
 clipping it; profile targets fill the row height, with identity and actions centered.
@@ -574,7 +577,9 @@ Agent runtime/access management is not added to the member menu.
 
 Manager attribution uses the existing NIP-OA verifier on each agent's winning
 signed kind-0 head, combining one dialog-owned live observation with retained
-profile-directory evidence. Verification is event-bound: newer invalid or missing
+profile-directory evidence. Filtering retains the current roster in that observation;
+matching non-member agents join only while offered as invitation candidates.
+Verification is event-bound: newer invalid or missing
 auth removes the claim; older reads cannot restore it. The dialog reuses verification
 for the same identity and signed head while filtering; a changed head is verified
 again, and explicit refresh or session changes reset that reuse. Identity hints, local agent

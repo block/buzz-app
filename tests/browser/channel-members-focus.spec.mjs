@@ -86,15 +86,17 @@ test("identity menus preserve modal focus and addition returns focus only to its
         name: "Actions for Morgan",
         exact: true,
       });
+      await expect(actions).toHaveCount(0);
       expect(await add.boundingBox()).toEqual(before);
-      await actions.click();
+      await identity.click({ button: "right" });
       const menu = page.getByRole("menu", {
         name: "Actions for Morgan",
         exact: true,
       });
       await expect(menu.getByRole("menuitem")).toHaveText(["View profile"]);
+      await opened(menu);
       await page.keyboard.press("Escape");
-      await expect(actions).toBeFocused();
+      await expect(identity).toBeFocused();
       await expect(dialog).toBeVisible();
       await expect(add).toBeEnabled();
       await page.mouse.move(0, 0);
@@ -107,14 +109,15 @@ test("identity menus preserve modal focus and addition returns focus only to its
       await expect(identity).toBeFocused();
       await page.keyboard.press("Tab");
       await expect(add).toBeFocused();
-      await page.keyboard.press("Tab");
-      await expect(actions).toBeFocused();
-      await page.keyboard.press("Enter");
+      await page.keyboard.press("Shift+F10");
+      await opened(menu);
+      await expect(menu).toBeFocused();
+      await page.keyboard.press("ArrowDown");
       await expect(
         menu.getByRole("menuitem", { name: "View profile", exact: true }),
       ).toBeFocused();
       await page.keyboard.press("Escape");
-      await expect(actions).toBeFocused();
+      await expect(add).toBeFocused();
       await expect(
         page.getByRole("dialog", { name: "Morgan identity", exact: true }),
       ).toHaveCount(0);
@@ -795,8 +798,9 @@ test("portaled menu focus does not leave an empty second identity line", async (
 });
 
 // Explicit 60-agent workload: owner verification is real CPU work that does not
-// appear in small, unsigned profile fixtures. This does not measure live relay latency.
-test("member search reuses unchanged owner attestations", async ({
+// appear in small, unsigned profile fixtures. Count observation and row work too.
+// This does not measure live relay latency.
+test("member search reuses unchanged rows and owner observations", async ({
   page,
 }, testInfo) => {
   const { errors } = watchPageErrors(page);
@@ -819,6 +823,23 @@ test("member search reuses unchanged owner attestations", async ({
   ).toHaveCount(60);
   await expect(refresh).toHaveAttribute("aria-busy", "false");
   const before = await page.evaluate(() => window.ownerChecks);
+  const workBefore = await page.evaluate(() => ({
+    ...window.focusFixture.searchWork,
+  }));
+  // Same roster and labels: a query-only update must not rerender avatar/menu trees.
+  await search.fill("Agent");
+  await expect(refresh).toHaveAttribute("aria-busy", "false");
+  await expect(
+    dialog.getByRole("button", { name: /^Open owner profile:/ }),
+  ).toHaveCount(60);
+  expect(await page.evaluate(() => window.focusFixture.searchWork.images)).toBe(
+    workBefore.images,
+  );
+  await search.fill("");
+  await expect(refresh).toHaveAttribute("aria-busy", "false");
+  await expect(
+    dialog.getByRole("button", { name: /^Open owner profile:/ }),
+  ).toHaveCount(60);
   await page.evaluate(() => {
     window.searchFrames = [];
     window.searchSample = true;
@@ -840,6 +861,7 @@ test("member search reuses unchanged owner attestations", async ({
   const sample = await page.evaluate(() => {
     window.searchSample = false;
     return {
+      searchWork: window.focusFixture.searchWork,
       ownerChecks: window.ownerChecks,
       maxFrame: Math.max(...window.searchFrames),
       longFrames: window.searchFrames.filter((ms) => ms > 50).length,
@@ -854,5 +876,6 @@ test("member search reuses unchanged owner attestations", async ({
     ...sample,
   });
   expect(sample.ownerChecks).toBe(before);
+  expect(sample.searchWork.observations).toBe(workBefore.observations);
   expect(errors).toEqual([]);
 });

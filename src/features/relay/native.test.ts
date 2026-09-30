@@ -14,6 +14,8 @@ import { createMessages } from "./messages";
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   isTauri: () => true,
+  convertFileSrc: (path: string, protocol: string) =>
+    `${protocol}://localhost/${encodeURIComponent(path)}`,
 }));
 const viewer = keypair(),
   relay = keypair();
@@ -24,12 +26,17 @@ type Request = {
   method: string;
   body: string | null;
 };
+let discovery: Record<string, unknown> = {};
 let respond: (
   request: Request,
 ) =>
   | { status?: number; body: unknown }
   | Promise<{ status?: number; body: unknown }>;
 const requests: Request[] = [];
+const uploads: { bytes: Uint8Array; headers: Record<string, string> }[] = [];
+let uploadResponse: () => { status?: number; body: unknown };
+const cancels: string[] = [];
+let hangUploads = false;
 const owners: ReturnType<typeof createOutbox>[] = [];
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -42,6 +49,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(1700000010000);
   requests.length = 0;
+  discovery = {};
   respond = () => ({ body: [] });
   vi.stubGlobal(
     "fetch",
@@ -49,7 +57,11 @@ beforeEach(() => {
       throw new Error("Packaged connections must not call the dev broker");
     }),
   );
-  vi.mocked(invoke).mockImplementation(async (command, args) => {
+  uploads.length = 0;
+  cancels.length = 0;
+  hangUploads = false;
+  uploadResponse = () => ({ status: 500, body: "" });
+  vi.mocked(invoke).mockImplementation(async (command, args, options) => {
     if (command === "identity_restore") return viewer.pubkey;
     if (command === "relay_sign") {
       expect(
@@ -62,12 +74,32 @@ beforeEach(() => {
       requests.push(request);
       const result =
         request.path === "/"
-          ? { body: { self: relay.pubkey } }
+          ? { body: { self: relay.pubkey, ...discovery } }
           : await respond(request);
       return {
         status: result.status ?? 200,
         headers: {},
         body: JSON.stringify(result.body),
+      };
+    }
+    if (command === "relay_upload_cancel") {
+      cancels.push((args as { id: string }).id);
+      return null;
+    }
+    if (command === "relay_upload") {
+      if (hangUploads) return new Promise(() => {});
+      uploads.push({
+        bytes: new Uint8Array(args as ArrayBuffer),
+        headers: (options as { headers: Record<string, string> }).headers,
+      });
+      const result = uploadResponse();
+      return {
+        status: result.status ?? 200,
+        headers: {},
+        body:
+          typeof result.body === "string"
+            ? result.body
+            : JSON.stringify(result.body),
       };
     }
     throw new Error(`Unexpected native command: ${command}`);
@@ -572,7 +604,7 @@ it("workflow history surfaces bounded host refusals and fences late native resul
 });
 
 it("shares workflow history admission and cooldown with signed queries", async () => {
-  const transport = await connectNativeTransport(community);
+  const transport = await connectNativeTransport("https://workflow-quota.test");
   assert.exists(transport.workflows);
   const id = "11111111-1111-4111-8111-111111111111";
   const quota = '{"error":"rate-limited: quota exceeded; retry in 60s"}';
@@ -639,4 +671,757 @@ it("holds the shared admission lease until a cancelled native history request se
   await Promise.all(outcomes);
   await expect(query).resolves.toEqual([]);
   expect(requests.at(-1)?.path).toBe("/query");
+});
+
+it("advertises purpose-bound channel capabilities and gates creation on NIP-29", async () => {
+  const transport = await connectNativeTransport(community);
+  expect(transport.archiveAuthority).toBe(relay.pubkey);
+  expect(transport.writer?.kinds).toContain(30078);
+  expect(transport.writer?.kinds).not.toContain(9007);
+  assert.exists(transport.channelLifecycle);
+  assert.exists(transport.channelDetails);
+  assert.exists(transport.identityArchive);
+  assert.exists(transport.channelKit);
+  assert.exists(transport.openDirectMessage);
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 200,
+    headers: {},
+    body: JSON.stringify({ self: relay.pubkey, supported_nips: [29] }),
+  });
+  expect((await connectNativeTransport(community)).writer?.kinds).toContain(
+    9007,
+  );
+});
+
+it("routes lifecycle sign/publish separately from the message writer and preserves definitive rejection", async () => {
+  const transport = await connectNativeTransport(community);
+  assert.exists(transport.channelLifecycle);
+  const signal = new AbortController().signal;
+  const id = "11111111-1111-4111-8111-111111111111";
+  const template = {
+    kind: 9002,
+    created_at: 1700000010,
+    content: "",
+    tags: [
+      ["h", id],
+      ["archived", "true"],
+    ],
+  };
+  const event = signed(viewer, template);
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "identity_restore") return viewer.pubkey;
+    if (command === "relay_http")
+      return {
+        status: 200,
+        headers: {},
+        body: JSON.stringify({ self: relay.pubkey }),
+      };
+    if (command === "relay_channel_sign") {
+      expect(args).toEqual({
+        community,
+        route: "channel-lifecycle",
+        event: template,
+      });
+      return event;
+    }
+    if (command === "relay_channel_publish") {
+      expect(args).toEqual({ community, route: "channel-lifecycle", event });
+      return {
+        status: 200,
+        headers: {},
+        body: JSON.stringify({
+          accepted: true,
+          event_id: event.id,
+          message: "confirmed",
+        }),
+      };
+    }
+    throw new Error(`Unexpected native command: ${command}`);
+  });
+  expect(await transport.channelLifecycle.sign(template, signal)).toEqual(
+    event,
+  );
+  expect(await transport.channelLifecycle.publish(event, signal)).toBe(
+    "confirmed",
+  );
+  expect(
+    vi.mocked(invoke).mock.calls.some(([command]) => command === "relay_sign"),
+  ).toBe(false);
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 403,
+    headers: {},
+    body: JSON.stringify({ error: "denied" }),
+  });
+  await expect(
+    transport.channelLifecycle.publish(event, signal),
+  ).rejects.toBeInstanceOf(PublishRejected);
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 429,
+    headers: {},
+    body: JSON.stringify({ sent: false, error: "rate-limited: try later" }),
+  });
+  await expect(
+    transport.channelLifecycle.publish(event, signal),
+  ).rejects.toThrow("rate-limited: unrecognized reason");
+});
+
+it("prepares and decodes only verified community-scoped recipe records", async () => {
+  const transport = await connectNativeTransport(community);
+  assert.exists(transport.channelKit);
+  const signal = new AbortController().signal;
+  const record = {
+    version: 1 as const,
+    community,
+    deleted: false,
+    value: { type: "team" as const, id: "mine", name: "Mine", agents: [] },
+  };
+  const { coordinate, KIT_TAG } = await import("../channel-templates/model");
+  const event = signed(viewer, {
+    kind: 30078,
+    created_at: 1700000010,
+    content: "encrypted",
+    tags: [
+      ["d", coordinate(record)],
+      ["t", KIT_TAG],
+    ],
+  });
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "relay_kit_prepare") {
+      expect(args).toEqual({ community, record });
+      return "encrypted";
+    }
+    if (command === "relay_kit_decode") {
+      expect(args).toEqual({ community, events: [event] });
+      return [{ eventId: event.id, record }];
+    }
+    throw new Error(`Unexpected native command: ${command}`);
+  });
+  expect(await transport.channelKit.prepare(record, signal)).toBe("encrypted");
+  expect(await transport.channelKit.decode([event], signal)).toEqual([
+    { eventId: event.id, record },
+  ]);
+  await expect(
+    transport.channelKit.decode(
+      [{ ...event, content: "changed" } as VerifiedEvent],
+      signal,
+    ),
+  ).rejects.toThrow();
+});
+
+it("opens direct messages through a purpose-bound command and validates the result", async () => {
+  const transport = await connectNativeTransport(community);
+  assert.exists(transport.openDirectMessage);
+  const id = "11111111-1111-4111-8111-111111111111";
+  vi.mocked(invoke).mockResolvedValueOnce(id);
+  expect(
+    await transport.openDirectMessage(
+      [relay.pubkey],
+      new AbortController().signal,
+    ),
+  ).toBe(id);
+  expect(vi.mocked(invoke).mock.lastCall).toEqual([
+    "relay_direct_message",
+    { community, pubkeys: [relay.pubkey] },
+  ]);
+  vi.mocked(invoke).mockResolvedValueOnce("invalid");
+  await expect(
+    transport.openDirectMessage([relay.pubkey], new AbortController().signal),
+  ).rejects.toThrow("invalid direct message");
+});
+
+it("discards a pending observer decode after disconnect and reconnect", async () => {
+  const sockets: Socket[] = [];
+  class Socket {
+    readyState = 1;
+    onmessage?: (event: { data: string }) => Promise<void>;
+    onclose?: () => void;
+    sent: unknown[][] = [];
+    constructor() {
+      sockets.push(this);
+    }
+    send(raw: string) {
+      this.sent.push(JSON.parse(raw));
+    }
+    close() {
+      this.readyState = 3;
+      this.onclose?.();
+    }
+    async receive(value: unknown) {
+      await this.onmessage?.({ data: JSON.stringify(value) });
+    }
+  }
+  vi.stubGlobal("WebSocket", Socket);
+  const decoded = deferred<unknown>();
+  const dispatch = vi.mocked(invoke);
+  const original = dispatch.getMockImplementation();
+  let observerCalls = 0;
+  dispatch.mockImplementation(async (command, args) => {
+    if (command === "relay_agent_observer") {
+      if (++observerCalls === 1) return decoded.promise;
+      const event = (args as { event: VerifiedEvent }).event;
+      return {
+        id: event.id,
+        agent: event.pubkey,
+        createdAt: event.created_at,
+        plaintext: "{}",
+      };
+    }
+    return original?.(command, args);
+  });
+  const transport = await connectNativeTransport(community);
+  const observer = vi.fn();
+  const traffic = transport.subscribe?.({
+    receive: vi.fn(),
+    state: vi.fn(),
+    established: vi.fn(),
+    denied: vi.fn(),
+    observer,
+  });
+  assert.exists(traffic);
+  try {
+    const authenticate = async (socket: Socket) => {
+      await socket.receive(["AUTH", "nonce"]);
+      const proof = socket.sent.find(
+        ([kind]) => kind === "AUTH",
+      )?.[1] as VerifiedEvent;
+      await socket.receive(["OK", proof.id, true]);
+    };
+    traffic.observe?.(1);
+    const old = sockets[0];
+    assert.exists(old);
+    await authenticate(old);
+    const route = old.sent.find(
+      ([kind, , filter]) =>
+        kind === "REQ" &&
+        (filter as { kinds?: number[] }).kinds?.includes(24200),
+    );
+    assert.exists(route);
+    await old.receive(["EOSE", route[1]]);
+    const frame = signed(keypair(), {
+      kind: 24200,
+      created_at: 1700000010,
+      tags: [["p", viewer.pubkey]],
+      content: "cipher",
+    });
+    await old.receive(["EVENT", route[1], frame]);
+    expect(
+      dispatch.mock.calls.some(
+        ([command]) => command === "relay_agent_observer",
+      ),
+    ).toBe(true);
+    old.onclose?.();
+    vi.useRealTimers();
+    await vi.waitFor(() => expect(sockets.length).toBe(2));
+    const current = sockets[1];
+    assert.exists(current);
+    await authenticate(current);
+    const nextRoute = current.sent.find(
+      ([kind, , filter]) =>
+        kind === "REQ" &&
+        (filter as { kinds?: number[] }).kinds?.includes(24200),
+    );
+    assert.exists(nextRoute);
+    await current.receive(["EOSE", nextRoute[1]]);
+    decoded.resolve({
+      id: frame.id,
+      agent: frame.pubkey,
+      createdAt: frame.created_at,
+      plaintext: "{}",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(observer).not.toHaveBeenCalled();
+    const fresh = signed(keypair(), {
+      kind: 24200,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [["p", viewer.pubkey]],
+      content: "cipher",
+    });
+    await current.receive(["EVENT", nextRoute[1], fresh]);
+    await vi.waitFor(() => expect(observer).toHaveBeenCalledTimes(1));
+    expect(observer.mock.calls[0]?.[0].id).toBe(fresh.id);
+  } finally {
+    traffic.dispose();
+  }
+});
+
+it("sorts host memory projections with the same locale collation as the broker", async () => {
+  const transport = await connectNativeTransport(community);
+  const agent = keypair();
+  const entries = ["mem/b", "mem/b_c", "mem/b-c", "mem/b/c", "mem/bc"]
+    .reverse()
+    .map((slug, i) => ({
+      slug,
+      body: slug,
+      eventId: i.toString(16).padStart(64, "0"),
+      createdAt: 1,
+    }));
+  vi.mocked(invoke).mockResolvedValueOnce({ entries, partial: false });
+  expect(
+    (
+      await transport.readAgentMemories?.(
+        agent.pubkey,
+        new AbortController().signal,
+      )
+    )?.entries.map((entry) => entry.slug),
+  ).toEqual(["mem/b", "mem/b_c", "mem/b-c", "mem/b/c", "mem/bc"]);
+});
+
+it("exposes purpose-bound agent readers and fences obsolete observer decoding", async () => {
+  const transport = await connectNativeTransport(community);
+  expect(transport.agentActivity).toBe(true);
+  const signal = new AbortController().signal;
+  const agent = keypair();
+  const dispatch = vi.mocked(invoke);
+  dispatch.mockImplementationOnce(async (command) => {
+    expect(command).toBe("relay_agent_library");
+    return { definitions: [], identities: [] };
+  });
+  expect(await transport.readAgentLibrary?.(signal)).toEqual({
+    definitions: [],
+    identities: [],
+  });
+  dispatch.mockImplementationOnce(async (command, args) => {
+    expect(command).toBe("relay_agent_memories_read");
+    expect(args).toEqual({ community, agent: agent.pubkey });
+    return { entries: [], partial: true };
+  });
+  expect(await transport.readAgentMemories?.(agent.pubkey, signal)).toEqual({
+    entries: [],
+    partial: true,
+  });
+  await expect(
+    transport.readAgentMemories?.(viewer.pubkey, signal),
+  ).rejects.toThrow("Invalid memory target");
+  dispatch.mockImplementationOnce(async (command, args) => {
+    expect(command).toBe("relay_agent_log_proof");
+    expect(args).toEqual({
+      community,
+      target: {
+        id: "id",
+        pubkey: agent.pubkey,
+        relayUrl: "wss://packaged.test",
+        nonce: "nonce",
+      },
+    });
+    return "a".repeat(128);
+  });
+  expect(
+    await transport.authorizeAgentLog?.(
+      { id: "id", pubkey: agent.pubkey, relayUrl: "wss://packaged.test" },
+      "nonce",
+    ),
+  ).toBe("a".repeat(128));
+  await expect(
+    transport.authorizeAgentLog?.(
+      { id: "id", pubkey: agent.pubkey, relayUrl: "wss://other.test" },
+      "nonce",
+    ),
+  ).rejects.toThrow("Log authorization unavailable");
+});
+
+const hash = "c".repeat(64);
+it("routes relay media through the authenticated native scheme only", async () => {
+  const transport = await connectNativeTransport(community);
+  const media = `${community}/media/${hash}.png`;
+  expect(transport.media(media)).toBe(
+    `buzz-media://localhost/${encodeURIComponent(media)}`,
+  );
+  expect(transport.media(media, "small")).toBe(
+    `buzz-media://localhost/${encodeURIComponent(`${community}/media/${hash}.thumb.jpg`)}`,
+  );
+  expect(transport.media("https://images.test/cat.png")).toBe(
+    "https://images.test/cat.png",
+  );
+  expect(transport.media("http://images.test/cat.png")).toBeUndefined();
+});
+
+it("publishes custom emoji sets", async () => {
+  const transport = await connectNativeTransport(community);
+  expect(transport.writer?.kinds).toContain(30030);
+});
+
+it("uploads exact bytes natively and validates the relay descriptor", async () => {
+  const transport = await connectNativeTransport(community);
+  assert(transport.uploadAttachment);
+  uploadResponse = () => ({
+    body: {
+      url: `${community}/media/${hash}.png`,
+      type: "image/png",
+      size: 3,
+      sha256: hash,
+    },
+  });
+  const file = new File([new Uint8Array([1, 2, 3])], "a.png", {
+    type: "image/png",
+  });
+  await expect(
+    transport.uploadAttachment(file, new AbortController().signal),
+  ).resolves.toEqual({
+    name: "a.png",
+    url: `${community}/media/${hash}.png`,
+    type: "image/png",
+    size: 3,
+    sha256: hash,
+  });
+  expect(uploads).toEqual([
+    {
+      bytes: new Uint8Array([1, 2, 3]),
+      headers: {
+        "x-buzz-upload-id": expect.stringMatching(/^[0-9a-f-]{36}$/),
+        "x-buzz-community": community,
+        "x-buzz-content-type": "image/png",
+      },
+    },
+  ]);
+  uploadResponse = () => ({
+    body: {
+      url: `https://other.test/media/${hash}.png`,
+      type: "image/png",
+      size: 3,
+      sha256: hash,
+    },
+  });
+  await expect(
+    transport.uploadAttachment(file, new AbortController().signal),
+  ).rejects.toMatchObject({ code: "invalid" });
+});
+
+it.each([
+  [401, "", "denied"],
+  [413, "", "size"],
+  [429, "", "capacity"],
+  [422, { error: "metadata forbidden" }, "metadata"],
+  [415, { error: "unsupported container" }, "rejected"],
+  [500, "internal error", "failed"],
+])(
+  "maps relay upload status %i to a user-facing failure",
+  async (status, body, code) => {
+    const transport = await connectNativeTransport(community);
+    assert(transport.uploadAttachment);
+    uploadResponse = () => ({ status, body });
+    await expect(
+      transport.uploadAttachment(
+        new File(["x"], "a.bin"),
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code });
+  },
+);
+
+it("settles a cancelled native upload at once and cancels it natively", async () => {
+  const transport = await connectNativeTransport(community);
+  assert(transport.uploadAttachment);
+  hangUploads = true;
+  const controller = new AbortController();
+  const pending = transport.uploadAttachment(
+    new File(["x"], "a.bin"),
+    controller.signal,
+  );
+  await vi.waitFor(() =>
+    expect(vi.mocked(invoke).mock.calls.at(-1)?.[0]).toBe("relay_upload"),
+  );
+  const [, , options] = vi.mocked(invoke).mock.calls.at(-1) ?? [];
+  controller.abort();
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  expect(cancels).toEqual([
+    (options as { headers: Record<string, string> }).headers[
+      "x-buzz-upload-id"
+    ],
+  ]);
+});
+
+it("exposes read-state only for advertised snapshots and keeps signing purpose-bound", async () => {
+  const unsupported = await connectNativeTransport(community);
+  expect(unsupported.readState).toBeDefined();
+  expect(unsupported.readStateSnapshot).toBeUndefined();
+  discovery = {
+    read_state_snapshot: {
+      version: 1,
+      community_id: "11111111-1111-4111-8111-111111111111",
+    },
+  };
+  const transport = await connectNativeTransport(community);
+  assert.exists(transport.readState);
+  assert.exists(transport.readStateSnapshot);
+  const signal = new AbortController().signal;
+  const blob = {
+    v: 1,
+    client_id: "fixture",
+    contexts: { channel: 1 },
+  } as const;
+  const event = signed(viewer, {
+    kind: 30078,
+    created_at: 1700000010,
+    tags: [
+      ["d", `read-state:${"a".repeat(32)}`],
+      ["t", "read-state"],
+    ],
+    content: "ciphertext",
+  });
+  vi.mocked(invoke).mockImplementationOnce(async (command, args) => {
+    expect(command).toBe("relay_sign_read_state");
+    expect(args).toEqual({
+      community,
+      intent: { slot: "a".repeat(32), createdAt: 1700000010, blob },
+    });
+    return event;
+  });
+  expect(
+    await transport.readState.sign?.(
+      { slot: "a".repeat(32), createdAt: 1700000010, blob },
+      signal,
+    ),
+  ).toEqual(event);
+  vi.mocked(invoke).mockImplementationOnce(async (command) => {
+    expect(command).toBe("relay_decode_read_state");
+    return [{ eventId: event.id, blob }];
+  });
+  expect(await transport.readState.decode([event], signal)).toEqual([
+    { eventId: event.id, blob },
+  ]);
+  vi.mocked(invoke).mockImplementationOnce(async (command, args) => {
+    expect(command).toBe("relay_publish_read_state");
+    expect(args).toEqual({ community, event });
+    return {
+      status: 200,
+      headers: {},
+      body: JSON.stringify({ accepted: true, event_id: event.id }),
+    };
+  });
+  await transport.readState.publish?.(event, signal);
+  expect(requests.every((r) => r.path !== "/events")).toBe(true);
+});
+
+it("native snapshot quota pauses reads and publication on the same principal", async () => {
+  discovery = {
+    read_state_snapshot: {
+      version: 1,
+      community_id: "11111111-1111-4111-8111-111111111111",
+    },
+  };
+  const transport = await connectNativeTransport("https://snapshot-quota.test");
+  assert.exists(transport.readState);
+  const signal = new AbortController().signal;
+  const event = signed(viewer, {
+    kind: 30078,
+    created_at: 1700000010,
+    tags: [
+      ["d", `read-state:${"a".repeat(32)}`],
+      ["t", "read-state"],
+    ],
+    content: "ciphertext",
+  });
+  respond = () => ({
+    status: 429,
+    body: { error: "rate-limited: quota exceeded; retry in 30s" },
+  });
+  await expect(
+    transport.readStateSnapshot?.(signal, "read", "foreground"),
+  ).rejects.toThrow("rate-limited: quota exceeded");
+  const dispatched = requests.length;
+  await expect(
+    transport.query([{ kinds: [9], limit: 1 }], signal),
+  ).rejects.toThrow("Relay requests paused");
+  await expect(transport.readState.publish?.(event, signal)).rejects.toThrow(
+    "Relay requests paused",
+  );
+  expect(requests).toHaveLength(dispatched);
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.some(([command]) => command === "relay_publish_read_state"),
+  ).toBe(false);
+});
+
+it("native publication shares quota admission and preserves receipt and IPC failures", async () => {
+  discovery = {
+    read_state_snapshot: {
+      version: 1,
+      community_id: "11111111-1111-4111-8111-111111111111",
+    },
+  };
+  const transport = await connectNativeTransport(
+    "https://publication-quota.test",
+  );
+  assert.exists(transport.readState);
+  const signal = new AbortController().signal;
+  const event = signed(viewer, {
+    kind: 30078,
+    created_at: 1700000010,
+    tags: [
+      ["d", `read-state:${"a".repeat(32)}`],
+      ["t", "read-state"],
+    ],
+    content: "ciphertext",
+  });
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 200,
+    headers: {},
+    body: JSON.stringify({
+      accepted: false,
+      event_id: event.id,
+      message: "blocked: read-state quota",
+    }),
+  });
+  await expect(transport.readState.publish?.(event, signal)).rejects.toThrow(
+    "blocked: read-state quota",
+  );
+  vi.mocked(invoke).mockRejectedValueOnce("Relay response was interrupted");
+  await expect(transport.readState.publish?.(event, signal)).rejects.toThrow(
+    "Relay response was interrupted",
+  );
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 429,
+    headers: {},
+    body: JSON.stringify({
+      error: "rate-limited: quota exceeded; retry in 30s",
+    }),
+  });
+  await expect(transport.readState.publish?.(event, signal)).rejects.toThrow(
+    "rate-limited: quota exceeded",
+  );
+  const dispatched = requests.length;
+  const publications = vi
+    .mocked(invoke)
+    .mock.calls.filter(
+      ([command]) => command === "relay_publish_read_state",
+    ).length;
+  await expect(
+    transport.query([{ kinds: [9], limit: 1 }], signal),
+  ).rejects.toThrow("Relay requests paused");
+  await expect(
+    transport.readStateSnapshot?.(signal, "read", "foreground"),
+  ).rejects.toThrow("Relay requests paused");
+  expect(requests).toHaveLength(dispatched);
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "relay_publish_read_state"),
+  ).toHaveLength(publications);
+});
+
+it("holds native publication admission until cancelled IPC settles", async () => {
+  const transport = await connectNativeTransport(
+    "https://publication-slots.test",
+  );
+  const readState = transport.readState;
+  assert.exists(readState);
+  const event = signed(viewer, {
+    kind: 30078,
+    created_at: 1700000010,
+    tags: [
+      ["d", `read-state:${"a".repeat(32)}`],
+      ["t", "read-state"],
+    ],
+    content: "ciphertext",
+  });
+  const gates = Array.from({ length: 6 }, () =>
+    deferred<{
+      status: number;
+      headers: Record<string, string>;
+      body: string;
+    }>(),
+  );
+  for (const gate of gates)
+    vi.mocked(invoke).mockImplementationOnce(() => gate.promise);
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 200,
+    headers: {},
+    body: JSON.stringify({ accepted: true, event_id: event.id }),
+  });
+  const controllers = gates.map(() => new AbortController());
+  const publications = controllers.map((controller) =>
+    readState.publish?.(event, controller.signal),
+  );
+  const settled = Promise.allSettled(publications);
+  try {
+    await vi.waitFor(() =>
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(
+            ([command]) => command === "relay_publish_read_state",
+          ),
+      ).toHaveLength(6),
+    );
+    controllers[0]?.abort();
+    const queued = readState.publish?.(event, new AbortController().signal);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(
+          ([command]) => command === "relay_publish_read_state",
+        ),
+    ).toHaveLength(6);
+    gates[0]?.resolve({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({ accepted: true, event_id: event.id }),
+    });
+    await vi.waitFor(() =>
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(
+            ([command]) => command === "relay_publish_read_state",
+          ),
+      ).toHaveLength(7),
+    );
+    await expect(queued).resolves.toBeUndefined();
+  } finally {
+    for (const gate of gates)
+      gate.resolve({
+        status: 200,
+        headers: {},
+        body: JSON.stringify({ accepted: true, event_id: event.id }),
+      });
+    await settled;
+  }
+});
+
+it("reads the complete snapshot and activity through the native query route", async () => {
+  discovery = {
+    read_state_snapshot: {
+      version: 1,
+      community_id: "11111111-1111-4111-8111-111111111111",
+    },
+  };
+  const transport = await connectNativeTransport(community);
+  const signal = new AbortController().signal;
+  respond = () => ({
+    body: {
+      read_state_snapshot: 1,
+      complete: true,
+      pubkey: viewer.pubkey,
+      community_id: "11111111-1111-4111-8111-111111111111",
+      snapshot_id: "a".repeat(64),
+      events: [],
+    },
+  });
+  await expect(
+    transport.readStateSnapshot?.(signal, "read", "foreground"),
+  ).resolves.toEqual([]);
+  expect(JSON.parse(requests.at(-1)?.body ?? "null")).toEqual([
+    {
+      kinds: [30078],
+      authors: [viewer.pubkey],
+      read_state_snapshot: 1,
+    },
+  ]);
+  const activity = message(viewer, "channel", "recent", 1700000000);
+  respond = () => ({ body: [activity] });
+  await expect(
+    transport.channelActivity?.(["channel"], signal),
+  ).resolves.toEqual([activity]);
+  expect(JSON.parse(requests.at(-1)?.body ?? "null")).toEqual([
+    {
+      kinds: [9, 40002, 40008, 45001, 45003],
+      "#h": ["channel"],
+      limit: 1,
+    },
+  ]);
+  await expect(
+    transport.channelActivity?.(["bad/channel"], signal),
+  ).rejects.toThrow("Activity filter rejected");
 });

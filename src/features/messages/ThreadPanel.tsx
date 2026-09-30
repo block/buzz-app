@@ -810,6 +810,7 @@ function ThreadMessages({
     <MessageEditScope>
       <section
         ref={scroller}
+        data-message-scroller
         className={styles.threadHistory}
         aria-label="Thread messages"
         aria-busy={positioning}

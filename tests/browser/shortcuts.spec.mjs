@@ -279,7 +279,8 @@ test("interface zoom preserves an open emoji search and scales its controls", as
   await page.keyboard.press(`${modifier}+=`);
   await scale(page, 1.1);
   await expect
-    .poll(async () => (await emoji.boundingBox()).width)
+    // The old vendor node is briefly absent during the geometry rebuild.
+    .poll(async () => (await emoji.boundingBox())?.width)
     .toBeCloseTo(52.8, 1);
   await expect(search).toBeFocused();
   await expect.poll(range).toEqual([0, 2]);

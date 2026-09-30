@@ -11,6 +11,9 @@ import type { CustomEmoji } from "../relay/emoji";
 import type { RelaySession } from "../relay/session";
 import { profileKey } from "../profiles/target";
 import { scanMarkdown } from "../relay/message-content";
+import { inlineMatches } from "../conversation/InlineText";
+import { isEmojiOnly } from "./emoji-size";
+import type { ChannelMessage } from "../relay/contracts";
 import { MessageMarkdown } from "./MessageMarkdown";
 import type { MentionDraft } from "./mention-draft";
 import { useReferenceDirectory } from "./ReferenceText";
@@ -200,6 +203,26 @@ export function RichComposerInput({
     for (const match of context.text.matchAll(/:([a-z0-9_-]{1,64}):/gi))
       if (shortcodes.has(match[1]?.toLowerCase() ?? ""))
         add(match.index, match.index + match[0].length);
+    const composerRow = (text: string): ChannelMessage => ({
+      id: "composer",
+      authorId: "",
+      createdAt: 0,
+      channelId,
+      content: text,
+      mentions: [],
+      emoji: renderableEmoji,
+      participants: [],
+      attachments: [],
+      reactions: [],
+      replyCount: 0,
+    });
+    for (const match of inlineMatches(
+      { text: context.text, message: composerRow(context.text) },
+      extensions?.inline.snapshot() ?? [],
+    )) {
+      if (isEmojiOnly(context.text.slice(match.start, match.end), []))
+        add(match.start, match.end);
+    }
     const decorations = ranges
       .sort((a, b) => a.start - b.start)
       .map(({ start, end, mention, editAsText }) => {
@@ -243,19 +266,7 @@ export function RichComposerInput({
             />
           ) : (
             <MessageMarkdown
-              row={{
-                id: "composer",
-                authorId: "",
-                createdAt: 0,
-                channelId,
-                content: draft.text.slice(start, end),
-                mentions: mention ? [mention] : [],
-                emoji: renderableEmoji,
-                participants: [],
-                attachments: [],
-                reactions: [],
-                replyCount: 0,
-              }}
+              row={composerRow(draft.text.slice(start, end))}
               directory={directory}
               participantProfiles={profiles}
               session={session}

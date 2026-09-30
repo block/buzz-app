@@ -1,3 +1,4 @@
+import { AnimatedEmoji, animatedEmojiMatches } from "./AnimatedEmoji";
 import { EmojiCompletion } from "./EmojiCompletion";
 import { emojiQuery } from "./emoji-query";
 import type { PluginModule } from "../../plugins/api";
@@ -59,6 +60,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
         disabled={disabled}
         insert={insertText}
       />
+    ),
+  });
+  ctx.conversation.registerInline({
+    id: "animated-preview",
+    title: "Animated emoji preview",
+    matches: ({ text }) => animatedEmojiMatches(text),
+    component: ({ text, content }) => (
+      <AnimatedEmoji text={text} content={content} />
     ),
   });
   ctx.conversation.registerInline({

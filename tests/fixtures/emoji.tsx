@@ -39,6 +39,9 @@ window.addEventListener("pagehide", () => {
 const viewer = keypair(),
   relay = keypair(),
   member = keypair();
+const animatedPreview = new URLSearchParams(location.search).has(
+  "animated-preview",
+);
 const wrap = new URLSearchParams(location.search).has("wrap");
 const long = new URLSearchParams(location.search).has("long");
 const participantProfiles = new Map([
@@ -157,7 +160,9 @@ const sessions = ["a", "b"].map((community) => {
   const root = message(
     viewer,
     "c",
-    "Historic :unknown:party: and https://example.test/:party:",
+    animatedPreview
+      ? "Animated emoji preview: 👍 ❤️ 😂 🎉 🔥 😍 🤔 🚀"
+      : "Historic :unknown:party: and https://example.test/:party:",
     1,
     [["emoji", "party", `${origin}/media/original.png`]],
   );
@@ -238,27 +243,25 @@ const sessions = ["a", "b"].map((community) => {
     [["emoji", "party", `${origin}/media/blocks.png`]],
   );
   owner.session.channels.ensure("c");
-  live.receive([root, broken, unloaded, single, table, blocks]);
-  live.receive([
-    reaction,
-    ...(wrap ? [...wrapReactions, ownReaction] : []),
-    ...longReactions,
-  ]);
+  const sampleEvents = animatedPreview
+    ? [root, message(viewer, "c", "🎉", 2), ...wrapReactions]
+    : [
+        root,
+        reaction,
+        ...(wrap ? [...wrapReactions, ownReaction] : []),
+        ...longReactions,
+        broken,
+        unloaded,
+        single,
+        table,
+        blocks,
+      ];
+  live.receive(sampleEvents);
   return {
     ...owner,
     community,
     root,
-    rows: foldMessages("c", relay.pubkey, [
-      root,
-      reaction,
-      ...(wrap ? [...wrapReactions, ownReaction] : []),
-      ...longReactions,
-      broken,
-      unloaded,
-      single,
-      table,
-      blocks,
-    ]),
+    rows: foldMessages("c", relay.pubkey, sampleEvents),
     replace(empty = false) {
       time++;
       catalog = makeSet(empty);
@@ -365,10 +368,15 @@ function Fixture() {
       <button type="button" onClick={() => setThread(!thread)}>
         Toggle thread
       </button>
-      <h1>Community {item.community}</h1>
+      <h1>
+        {animatedPreview
+          ? "Animated emoji preview"
+          : `Community ${item.community}`}
+      </h1>
 
       <section key={`${selected}/${messageRevision}`}>
-        {(new URLSearchParams(location.search).has("reactions")
+        {(animatedPreview ||
+        new URLSearchParams(location.search).has("reactions")
           ? (liveRows?.rows ?? [])
           : item.rows
         ).map((row) => (

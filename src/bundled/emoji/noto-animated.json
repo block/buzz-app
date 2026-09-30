@@ -1,0 +1,4407 @@
+{
+  "😀": {
+    "code": "1f600",
+    "duration": 2100,
+    "name": "smile"
+  },
+  "😃": {
+    "code": "1f603",
+    "duration": 2400,
+    "name": "smile-with-big-eyes"
+  },
+  "😄": {
+    "code": "1f604",
+    "duration": 2100,
+    "name": "grin"
+  },
+  "😁": {
+    "code": "1f601",
+    "duration": 2340,
+    "name": "grinning"
+  },
+  "😆": {
+    "code": "1f606",
+    "duration": 2790,
+    "name": "laughing"
+  },
+  "😅": {
+    "code": "1f605",
+    "duration": 1800,
+    "name": "grin-sweat"
+  },
+  "😂": {
+    "code": "1f602",
+    "duration": 1770,
+    "name": "joy"
+  },
+  "🤣": {
+    "code": "1f923",
+    "duration": 900,
+    "name": "rofl"
+  },
+  "😭": {
+    "code": "1f62d",
+    "duration": 1800,
+    "name": "loudly-crying"
+  },
+  "😉": {
+    "code": "1f609",
+    "duration": 2250,
+    "name": "wink"
+  },
+  "😗": {
+    "code": "1f617",
+    "duration": 2291,
+    "name": "kissing"
+  },
+  "😙": {
+    "code": "1f619",
+    "duration": 2580,
+    "name": "kissing-smiling-eyes"
+  },
+  "😚": {
+    "code": "1f61a",
+    "duration": 1320,
+    "name": "kissing-closed-eyes"
+  },
+  "😘": {
+    "code": "1f618",
+    "duration": 1590,
+    "name": "kissing-heart"
+  },
+  "🥰": {
+    "code": "1f970",
+    "duration": 1470,
+    "name": "heart-face"
+  },
+  "😍": {
+    "code": "1f60d",
+    "duration": 1560,
+    "name": "heart-eyes"
+  },
+  "🤩": {
+    "code": "1f929",
+    "duration": 1800,
+    "name": "star-struck"
+  },
+  "🥳": {
+    "code": "1f973",
+    "duration": 1620,
+    "name": "partying-face"
+  },
+  "🫠": {
+    "code": "1fae0",
+    "duration": 3450,
+    "name": "melting"
+  },
+  "🙃": {
+    "code": "1f643",
+    "duration": 1590,
+    "name": "upside-down-face"
+  },
+  "🙂": {
+    "code": "1f642",
+    "duration": 3000,
+    "name": "slightly-happy"
+  },
+  "🥲": {
+    "code": "1f972",
+    "duration": 2700,
+    "name": "happy-cry"
+  },
+  "🥹": {
+    "code": "1f979",
+    "duration": 3480,
+    "name": "holding-back-tears"
+  },
+  "😊": {
+    "code": "1f60a",
+    "duration": 2400,
+    "name": "blush"
+  },
+  "☺️": {
+    "code": "263a_fe0f",
+    "duration": 1980,
+    "name": "warm-smile"
+  },
+  "😌": {
+    "code": "1f60c",
+    "duration": 2610,
+    "name": "relieved"
+  },
+  "🙂‍↕️": {
+    "code": "1f642_200d_2195_fe0f",
+    "duration": 1800,
+    "name": "head-nod"
+  },
+  "🙂‍↔️": {
+    "code": "1f642_200d_2194_fe0f",
+    "duration": 1050,
+    "name": "head-shake"
+  },
+  "😏": {
+    "code": "1f60f",
+    "duration": 1800,
+    "name": "smirk"
+  },
+  "🤤": {
+    "code": "1f924",
+    "duration": 1950,
+    "name": "drool"
+  },
+  "😋": {
+    "code": "1f60b",
+    "duration": 1290,
+    "name": "yum"
+  },
+  "😛": {
+    "code": "1f61b",
+    "duration": 1800,
+    "name": "stuck-out-tongue"
+  },
+  "😝": {
+    "code": "1f61d",
+    "duration": 1500,
+    "name": "squinting-tongue"
+  },
+  "😜": {
+    "code": "1f61c",
+    "duration": 1440,
+    "name": "winky-tongue"
+  },
+  "🤪": {
+    "code": "1f92a",
+    "duration": 1650,
+    "name": "zany-face"
+  },
+  "🫪": {
+    "code": "1faea",
+    "duration": 2223,
+    "name": "distorted-face"
+  },
+  "😔": {
+    "code": "1f614",
+    "duration": 2370,
+    "name": "pensive"
+  },
+  "🥺": {
+    "code": "1f97a",
+    "duration": 3090,
+    "name": "pleading"
+  },
+  "😬": {
+    "code": "1f62c",
+    "duration": 2670,
+    "name": "grimacing"
+  },
+  "😑": {
+    "code": "1f611",
+    "duration": 2250,
+    "name": "expressionless"
+  },
+  "😐": {
+    "code": "1f610",
+    "duration": 3000,
+    "name": "neutral-face"
+  },
+  "😶": {
+    "code": "1f636",
+    "duration": 3000,
+    "name": "mouth-none"
+  },
+  "😶‍🌫️": {
+    "code": "1f636_200d_1f32b_fe0f",
+    "duration": 2580,
+    "name": "face-in-clouds"
+  },
+  "🫥": {
+    "code": "1fae5",
+    "duration": 3001,
+    "name": "dotted-line-face"
+  },
+  "🤐": {
+    "code": "1f910",
+    "duration": 3133,
+    "name": "zipper-face"
+  },
+  "🫡": {
+    "code": "1fae1",
+    "duration": 1800,
+    "name": "salute"
+  },
+  "🤔": {
+    "code": "1f914",
+    "duration": 1800,
+    "name": "thinking-face"
+  },
+  "🤫": {
+    "code": "1f92b",
+    "duration": 1800,
+    "name": "shushing-face"
+  },
+  "🫢": {
+    "code": "1fae2",
+    "duration": 990,
+    "name": "hand-over-mouth"
+  },
+  "🤭": {
+    "code": "1f92d",
+    "duration": 1620,
+    "name": "smiling-eyes-with-hand-over-mouth"
+  },
+  "🥱": {
+    "code": "1f971",
+    "duration": 2130,
+    "name": "yawn"
+  },
+  "🤗": {
+    "code": "1f917",
+    "duration": 1800,
+    "name": "hug-face"
+  },
+  "🫣": {
+    "code": "1fae3",
+    "duration": 3484,
+    "name": "peeking"
+  },
+  "😱": {
+    "code": "1f631",
+    "duration": 1530,
+    "name": "screaming"
+  },
+  "🤨": {
+    "code": "1f928",
+    "duration": 1290,
+    "name": "raised-eyebrow"
+  },
+  "🧐": {
+    "code": "1f9d0",
+    "duration": 3060,
+    "name": "monocle"
+  },
+  "😒": {
+    "code": "1f612",
+    "duration": 2880,
+    "name": "unamused"
+  },
+  "🙄": {
+    "code": "1f644",
+    "duration": 2940,
+    "name": "rolling-eyes"
+  },
+  "😮‍💨": {
+    "code": "1f62e_200d_1f4a8",
+    "duration": 1291,
+    "name": "exhale"
+  },
+  "😤": {
+    "code": "1f624",
+    "duration": 1350,
+    "name": "triumph"
+  },
+  "😠": {
+    "code": "1f620",
+    "duration": 1800,
+    "name": "angry"
+  },
+  "😡": {
+    "code": "1f621",
+    "duration": 2700,
+    "name": "rage"
+  },
+  "🤬": {
+    "code": "1f92c",
+    "duration": 2251,
+    "name": "cursing"
+  },
+  "😞": {
+    "code": "1f61e",
+    "duration": 2700,
+    "name": "sad"
+  },
+  "😓": {
+    "code": "1f613",
+    "duration": 2040,
+    "name": "sweat"
+  },
+  "😟": {
+    "code": "1f61f",
+    "duration": 2225,
+    "name": "worried"
+  },
+  "😥": {
+    "code": "1f625",
+    "duration": 3840,
+    "name": "concerned"
+  },
+  "😢": {
+    "code": "1f622",
+    "duration": 1650,
+    "name": "cry"
+  },
+  "☹️": {
+    "code": "2639_fe0f",
+    "duration": 1800,
+    "name": "big-frown"
+  },
+  "🙁": {
+    "code": "1f641",
+    "duration": 2140,
+    "name": "frown"
+  },
+  "🫤": {
+    "code": "1fae4",
+    "duration": 1843,
+    "name": "diagonal-mouth"
+  },
+  "😕": {
+    "code": "1f615",
+    "duration": 3000,
+    "name": "slightly-frowning"
+  },
+  "😰": {
+    "code": "1f630",
+    "duration": 2520,
+    "name": "anxious-with-sweat"
+  },
+  "😨": {
+    "code": "1f628",
+    "duration": 1862,
+    "name": "scared"
+  },
+  "😧": {
+    "code": "1f627",
+    "duration": 1805,
+    "name": "anguished"
+  },
+  "😦": {
+    "code": "1f626",
+    "duration": 2400,
+    "name": "gasp"
+  },
+  "😮": {
+    "code": "1f62e",
+    "duration": 2280,
+    "name": "mouth-open"
+  },
+  "😯": {
+    "code": "1f62f",
+    "duration": 1143,
+    "name": "surprised"
+  },
+  "😲": {
+    "code": "1f632",
+    "duration": 2083,
+    "name": "astonished"
+  },
+  "😳": {
+    "code": "1f633",
+    "duration": 1800,
+    "name": "flushed"
+  },
+  "🤯": {
+    "code": "1f92f",
+    "duration": 2610,
+    "name": "mind-blown"
+  },
+  "😖": {
+    "code": "1f616",
+    "duration": 1830,
+    "name": "scrunched-mouth"
+  },
+  "😣": {
+    "code": "1f623",
+    "duration": 2940,
+    "name": "scrunched-eyes"
+  },
+  "😩": {
+    "code": "1f629",
+    "duration": 1560,
+    "name": "weary"
+  },
+  "😫": {
+    "code": "1f62b",
+    "duration": 1530,
+    "name": "distraught"
+  },
+  "😵": {
+    "code": "1f635",
+    "duration": 2550,
+    "name": "x-eyes"
+  },
+  "😵‍💫": {
+    "code": "1f635_200d_1f4ab",
+    "duration": 1800,
+    "name": "dizzy-face"
+  },
+  "🫨": {
+    "code": "1fae8",
+    "duration": 1711,
+    "name": "shaking-face"
+  },
+  "🥴": {
+    "code": "1f974",
+    "duration": 1620,
+    "name": "woozy"
+  },
+  "🥵": {
+    "code": "1f975",
+    "duration": 1260,
+    "name": "hot-face"
+  },
+  "🥶": {
+    "code": "1f976",
+    "duration": 1830,
+    "name": "cold-face"
+  },
+  "🤢": {
+    "code": "1f922",
+    "duration": 2281,
+    "name": "sick"
+  },
+  "🤮": {
+    "code": "1f92e",
+    "duration": 3481,
+    "name": "vomit"
+  },
+  "🫩": {
+    "code": "1fae9",
+    "duration": 2076,
+    "name": "tired"
+  },
+  "😴": {
+    "code": "1f634",
+    "duration": 1800,
+    "name": "sleep"
+  },
+  "😪": {
+    "code": "1f62a",
+    "duration": 1800,
+    "name": "sleepy"
+  },
+  "🤧": {
+    "code": "1f927",
+    "duration": 2130,
+    "name": "sneeze"
+  },
+  "🤒": {
+    "code": "1f912",
+    "duration": 2130,
+    "name": "thermometer-face"
+  },
+  "🤕": {
+    "code": "1f915",
+    "duration": 2379,
+    "name": "bandage-face"
+  },
+  "😷": {
+    "code": "1f637",
+    "duration": 1841,
+    "name": "mask"
+  },
+  "🤥": {
+    "code": "1f925",
+    "duration": 1740,
+    "name": "liar"
+  },
+  "😇": {
+    "code": "1f607",
+    "duration": 3090,
+    "name": "halo"
+  },
+  "🤠": {
+    "code": "1f920",
+    "duration": 1470,
+    "name": "cowboy"
+  },
+  "🤑": {
+    "code": "1f911",
+    "duration": 2160,
+    "name": "money-face"
+  },
+  "🤓": {
+    "code": "1f913",
+    "duration": 2711,
+    "name": "nerd-face"
+  },
+  "😎": {
+    "code": "1f60e",
+    "duration": 2190,
+    "name": "sunglasses-face"
+  },
+  "🥸": {
+    "code": "1f978",
+    "duration": 3327,
+    "name": "disguise"
+  },
+  "🤡": {
+    "code": "1f921",
+    "duration": 1862,
+    "name": "clown"
+  },
+  "💩": {
+    "code": "1f4a9",
+    "duration": 2160,
+    "name": "poop"
+  },
+  "😈": {
+    "code": "1f608",
+    "duration": 3150,
+    "name": "imp-smile"
+  },
+  "👿": {
+    "code": "1f47f",
+    "duration": 3150,
+    "name": "imp-frown"
+  },
+  "👻": {
+    "code": "1f47b",
+    "duration": 2160,
+    "name": "ghost"
+  },
+  "💀": {
+    "code": "1f480",
+    "duration": 4240,
+    "name": "skull"
+  },
+  "🤖": {
+    "code": "1f916",
+    "duration": 2464,
+    "name": "robot"
+  },
+  "👹": {
+    "code": "1f479",
+    "duration": 2162,
+    "name": "ogre"
+  },
+  "☃️": {
+    "code": "2603_fe0f",
+    "duration": 2610,
+    "name": "snowman-with-snow"
+  },
+  "⛄": {
+    "code": "26c4",
+    "duration": 2550,
+    "name": "snowman"
+  },
+  "👽": {
+    "code": "1f47d",
+    "duration": 2738,
+    "name": "alien"
+  },
+  "👾": {
+    "code": "1f47e",
+    "duration": 960,
+    "name": "alien-monster"
+  },
+  "🌚": {
+    "code": "1f31a",
+    "duration": 2900,
+    "name": "moon-face-new"
+  },
+  "🌝": {
+    "code": "1f31d",
+    "duration": 2900,
+    "name": "moon-face-full"
+  },
+  "🌞": {
+    "code": "1f31e",
+    "duration": 1680,
+    "name": "sun-with-face"
+  },
+  "🌛": {
+    "code": "1f31b",
+    "duration": 3690,
+    "name": "moon-face-first-quarter"
+  },
+  "🌜": {
+    "code": "1f31c",
+    "duration": 3810,
+    "name": "moon-face-last-quarter"
+  },
+  "😺": {
+    "code": "1f63a",
+    "duration": 2226,
+    "name": "smiley-cat"
+  },
+  "😸": {
+    "code": "1f638",
+    "duration": 3031,
+    "name": "smile-cat"
+  },
+  "😹": {
+    "code": "1f639",
+    "duration": 2640,
+    "name": "joy-cat"
+  },
+  "😻": {
+    "code": "1f63b",
+    "duration": 2310,
+    "name": "heart-eyes-cat"
+  },
+  "😼": {
+    "code": "1f63c",
+    "duration": 2660,
+    "name": "smirk-cat"
+  },
+  "😽": {
+    "code": "1f63d",
+    "duration": 2164,
+    "name": "kissing-cat"
+  },
+  "🙀": {
+    "code": "1f640",
+    "duration": 2169,
+    "name": "scream-cat"
+  },
+  "😿": {
+    "code": "1f63f",
+    "duration": 1530,
+    "name": "crying-cat-face"
+  },
+  "😾": {
+    "code": "1f63e",
+    "duration": 1893,
+    "name": "pouting-cat"
+  },
+  "🙈": {
+    "code": "1f648",
+    "duration": 2160,
+    "name": "see-no-evil-monkey"
+  },
+  "🙉": {
+    "code": "1f649",
+    "duration": 2070,
+    "name": "hear-no-evil-monkey"
+  },
+  "🙊": {
+    "code": "1f64a",
+    "duration": 2250,
+    "name": "speak-no-evil-monkey"
+  },
+  "⭐": {
+    "code": "2b50",
+    "duration": 2190,
+    "name": "star"
+  },
+  "🌟": {
+    "code": "1f31f",
+    "duration": 1620,
+    "name": "glowing-star"
+  },
+  "✨": {
+    "code": "2728",
+    "duration": 1830,
+    "name": "sparkles"
+  },
+  "⚡": {
+    "code": "26a1",
+    "duration": 1260,
+    "name": "electricity"
+  },
+  "💥": {
+    "code": "1f4a5",
+    "duration": 1140,
+    "name": "collision"
+  },
+  "🫯": {
+    "code": "1faef",
+    "duration": 930,
+    "name": "fight"
+  },
+  "🕳️": {
+    "code": "1f573_fe0f",
+    "duration": 2580,
+    "name": "hole"
+  },
+  "🔥": {
+    "code": "1f525",
+    "duration": 990,
+    "name": "fire"
+  },
+  "💯": {
+    "code": "1f4af",
+    "duration": 2040,
+    "name": "100"
+  },
+  "🎉": {
+    "code": "1f389",
+    "duration": 1380,
+    "name": "party-popper"
+  },
+  "🎊": {
+    "code": "1f38a",
+    "duration": 2160,
+    "name": "confetti-ball"
+  },
+  "❤️": {
+    "code": "2764_fe0f",
+    "duration": 1800,
+    "name": "red-heart"
+  },
+  "🧡": {
+    "code": "1f9e1",
+    "duration": 1650,
+    "name": "orange-heart"
+  },
+  "💛": {
+    "code": "1f49b",
+    "duration": 1650,
+    "name": "yellow-heart"
+  },
+  "💚": {
+    "code": "1f49a",
+    "duration": 1650,
+    "name": "green-heart"
+  },
+  "🩵": {
+    "code": "1fa75",
+    "duration": 1650,
+    "name": "light-blue-heart"
+  },
+  "💙": {
+    "code": "1f499",
+    "duration": 1650,
+    "name": "blue-heart"
+  },
+  "💜": {
+    "code": "1f49c",
+    "duration": 1650,
+    "name": "purple-heart"
+  },
+  "🤎": {
+    "code": "1f90e",
+    "duration": 1650,
+    "name": "brown-heart"
+  },
+  "🖤": {
+    "code": "1f5a4",
+    "duration": 1650,
+    "name": "black-heart"
+  },
+  "🩶": {
+    "code": "1fa76",
+    "duration": 1650,
+    "name": "grey-heart"
+  },
+  "🤍": {
+    "code": "1f90d",
+    "duration": 1650,
+    "name": "white-heart"
+  },
+  "🩷": {
+    "code": "1fa77",
+    "duration": 1650,
+    "name": "pink-heart"
+  },
+  "💘": {
+    "code": "1f498",
+    "duration": 2226,
+    "name": "cupid"
+  },
+  "💝": {
+    "code": "1f49d",
+    "duration": 4271,
+    "name": "gift-heart"
+  },
+  "💖": {
+    "code": "1f496",
+    "duration": 900,
+    "name": "sparkling-heart"
+  },
+  "💗": {
+    "code": "1f497",
+    "duration": 1650,
+    "name": "heart-grow"
+  },
+  "💓": {
+    "code": "1f493",
+    "duration": 720,
+    "name": "beating-heart"
+  },
+  "💞": {
+    "code": "1f49e",
+    "duration": 900,
+    "name": "revolving-hearts"
+  },
+  "💕": {
+    "code": "1f495",
+    "duration": 1110,
+    "name": "two-hearts"
+  },
+  "💌": {
+    "code": "1f48c",
+    "duration": 2702,
+    "name": "love-letter"
+  },
+  "💟": {
+    "code": "1f49f",
+    "duration": 1310,
+    "name": "heart-box"
+  },
+  "♥️": {
+    "code": "2665_fe0f",
+    "duration": 1959,
+    "name": "heart"
+  },
+  "❣️": {
+    "code": "2763_fe0f",
+    "duration": 1950,
+    "name": "heart-exclamation-point"
+  },
+  "❤️‍🩹": {
+    "code": "2764_fe0f_200d_1fa79",
+    "duration": 2850,
+    "name": "bandaged-heart"
+  },
+  "💔": {
+    "code": "1f494",
+    "duration": 2970,
+    "name": "broken-heart"
+  },
+  "❤️‍🔥": {
+    "code": "2764_fe0f_200d_1f525",
+    "duration": 900,
+    "name": "fire-heart"
+  },
+  "💋": {
+    "code": "1f48b",
+    "duration": 1800,
+    "name": "kiss"
+  },
+  "🫂": {
+    "code": "1fac2",
+    "duration": 1532,
+    "name": "hugging"
+  },
+  "🗣️": {
+    "code": "1f5e3_fe0f",
+    "duration": 1380,
+    "name": "speaking-head"
+  },
+  "👣": {
+    "code": "1f463",
+    "duration": 960,
+    "name": "footprints"
+  },
+  "🫆": {
+    "code": "1fac6",
+    "duration": 1742,
+    "name": "fingerprint"
+  },
+  "🧠": {
+    "code": "1f9e0",
+    "duration": 1200,
+    "name": "brain"
+  },
+  "🫀": {
+    "code": "1fac0",
+    "duration": 1170,
+    "name": "anatomical-heart"
+  },
+  "🩸": {
+    "code": "1fa78",
+    "duration": 1110,
+    "name": "blood"
+  },
+  "🦠": {
+    "code": "1f9a0",
+    "duration": 1080,
+    "name": "microbe"
+  },
+  "🦴": {
+    "code": "1f9b4",
+    "duration": 1980,
+    "name": "bone"
+  },
+  "👀": {
+    "code": "1f440",
+    "duration": 1355,
+    "name": "eyes"
+  },
+  "👁️": {
+    "code": "1f441_fe0f",
+    "duration": 2387,
+    "name": "eye"
+  },
+  "🫦": {
+    "code": "1fae6",
+    "duration": 1440,
+    "name": "biting-lip"
+  },
+  "👃": {
+    "code": "1f443",
+    "duration": 1140,
+    "name": "nose"
+  },
+  "👃🏻": {
+    "code": "1f443_1f3fb",
+    "duration": 1140,
+    "name": "nose"
+  },
+  "👃🏼": {
+    "code": "1f443_1f3fc",
+    "duration": 1140,
+    "name": "nose"
+  },
+  "👃🏽": {
+    "code": "1f443_1f3fd",
+    "duration": 1140,
+    "name": "nose"
+  },
+  "👃🏾": {
+    "code": "1f443_1f3fe",
+    "duration": 1140,
+    "name": "nose"
+  },
+  "👃🏿": {
+    "code": "1f443_1f3ff",
+    "duration": 1140,
+    "name": "nose"
+  },
+  "👂": {
+    "code": "1f442",
+    "duration": 2040,
+    "name": "ear"
+  },
+  "👂🏻": {
+    "code": "1f442_1f3fb",
+    "duration": 2040,
+    "name": "ear"
+  },
+  "👂🏼": {
+    "code": "1f442_1f3fc",
+    "duration": 2040,
+    "name": "ear"
+  },
+  "👂🏽": {
+    "code": "1f442_1f3fd",
+    "duration": 2040,
+    "name": "ear"
+  },
+  "👂🏾": {
+    "code": "1f442_1f3fe",
+    "duration": 2040,
+    "name": "ear"
+  },
+  "👂🏿": {
+    "code": "1f442_1f3ff",
+    "duration": 2040,
+    "name": "ear"
+  },
+  "🦻": {
+    "code": "1f9bb",
+    "duration": 2259,
+    "name": "hearing-aid"
+  },
+  "🦻🏻": {
+    "code": "1f9bb_1f3fb",
+    "duration": 2259,
+    "name": "hearing-aid"
+  },
+  "🦻🏼": {
+    "code": "1f9bb_1f3fc",
+    "duration": 2259,
+    "name": "hearing-aid"
+  },
+  "🦻🏽": {
+    "code": "1f9bb_1f3fd",
+    "duration": 2259,
+    "name": "hearing-aid"
+  },
+  "🦻🏾": {
+    "code": "1f9bb_1f3fe",
+    "duration": 2259,
+    "name": "hearing-aid"
+  },
+  "🦻🏿": {
+    "code": "1f9bb_1f3ff",
+    "duration": 2259,
+    "name": "hearing-aid"
+  },
+  "🦶": {
+    "code": "1f9b6",
+    "duration": 690,
+    "name": "foot"
+  },
+  "🦶🏻": {
+    "code": "1f9b6_1f3fb",
+    "duration": 690,
+    "name": "foot"
+  },
+  "🦶🏼": {
+    "code": "1f9b6_1f3fc",
+    "duration": 690,
+    "name": "foot"
+  },
+  "🦶🏽": {
+    "code": "1f9b6_1f3fd",
+    "duration": 690,
+    "name": "foot"
+  },
+  "🦶🏾": {
+    "code": "1f9b6_1f3fe",
+    "duration": 690,
+    "name": "foot"
+  },
+  "🦶🏿": {
+    "code": "1f9b6_1f3ff",
+    "duration": 690,
+    "name": "foot"
+  },
+  "🦵": {
+    "code": "1f9b5",
+    "duration": 660,
+    "name": "leg"
+  },
+  "🦵🏻": {
+    "code": "1f9b5_1f3fb",
+    "duration": 660,
+    "name": "leg"
+  },
+  "🦵🏼": {
+    "code": "1f9b5_1f3fc",
+    "duration": 660,
+    "name": "leg"
+  },
+  "🦵🏽": {
+    "code": "1f9b5_1f3fd",
+    "duration": 660,
+    "name": "leg"
+  },
+  "🦵🏾": {
+    "code": "1f9b5_1f3fe",
+    "duration": 660,
+    "name": "leg"
+  },
+  "🦵🏿": {
+    "code": "1f9b5_1f3ff",
+    "duration": 660,
+    "name": "leg"
+  },
+  "🦿": {
+    "code": "1f9bf",
+    "duration": 1020,
+    "name": "leg-mechanical"
+  },
+  "🦾": {
+    "code": "1f9be",
+    "duration": 1625,
+    "name": "arm-mechanical"
+  },
+  "💪": {
+    "code": "1f4aa",
+    "duration": 1410,
+    "name": "muscle"
+  },
+  "💪🏻": {
+    "code": "1f4aa_1f3fb",
+    "duration": 1410,
+    "name": "muscle"
+  },
+  "💪🏼": {
+    "code": "1f4aa_1f3fc",
+    "duration": 1410,
+    "name": "muscle"
+  },
+  "💪🏽": {
+    "code": "1f4aa_1f3fd",
+    "duration": 1410,
+    "name": "muscle"
+  },
+  "💪🏾": {
+    "code": "1f4aa_1f3fe",
+    "duration": 1410,
+    "name": "muscle"
+  },
+  "💪🏿": {
+    "code": "1f4aa_1f3ff",
+    "duration": 1410,
+    "name": "muscle"
+  },
+  "👏": {
+    "code": "1f44f",
+    "duration": 660,
+    "name": "clap"
+  },
+  "👏🏻": {
+    "code": "1f44f_1f3fb",
+    "duration": 660,
+    "name": "clap"
+  },
+  "👏🏼": {
+    "code": "1f44f_1f3fc",
+    "duration": 660,
+    "name": "clap"
+  },
+  "👏🏽": {
+    "code": "1f44f_1f3fd",
+    "duration": 660,
+    "name": "clap"
+  },
+  "👏🏾": {
+    "code": "1f44f_1f3fe",
+    "duration": 660,
+    "name": "clap"
+  },
+  "👏🏿": {
+    "code": "1f44f_1f3ff",
+    "duration": 660,
+    "name": "clap"
+  },
+  "👍": {
+    "code": "1f44d",
+    "duration": 720,
+    "name": "thumbs-up"
+  },
+  "👍🏻": {
+    "code": "1f44d_1f3fb",
+    "duration": 720,
+    "name": "thumbs-up"
+  },
+  "👍🏼": {
+    "code": "1f44d_1f3fc",
+    "duration": 720,
+    "name": "thumbs-up"
+  },
+  "👍🏽": {
+    "code": "1f44d_1f3fd",
+    "duration": 720,
+    "name": "thumbs-up"
+  },
+  "👍🏾": {
+    "code": "1f44d_1f3fe",
+    "duration": 720,
+    "name": "thumbs-up"
+  },
+  "👍🏿": {
+    "code": "1f44d_1f3ff",
+    "duration": 720,
+    "name": "thumbs-up"
+  },
+  "👎": {
+    "code": "1f44e",
+    "duration": 780,
+    "name": "thumbs-down"
+  },
+  "👎🏻": {
+    "code": "1f44e_1f3fb",
+    "duration": 780,
+    "name": "thumbs-down"
+  },
+  "👎🏼": {
+    "code": "1f44e_1f3fc",
+    "duration": 780,
+    "name": "thumbs-down"
+  },
+  "👎🏽": {
+    "code": "1f44e_1f3fd",
+    "duration": 780,
+    "name": "thumbs-down"
+  },
+  "👎🏾": {
+    "code": "1f44e_1f3fe",
+    "duration": 780,
+    "name": "thumbs-down"
+  },
+  "👎🏿": {
+    "code": "1f44e_1f3ff",
+    "duration": 780,
+    "name": "thumbs-down"
+  },
+  "🫶": {
+    "code": "1faf6",
+    "duration": 1290,
+    "name": "heart-hands"
+  },
+  "🫶🏻": {
+    "code": "1faf6_1f3fb",
+    "duration": 1290,
+    "name": "heart-hands"
+  },
+  "🫶🏼": {
+    "code": "1faf6_1f3fc",
+    "duration": 1290,
+    "name": "heart-hands"
+  },
+  "🫶🏽": {
+    "code": "1faf6_1f3fd",
+    "duration": 1290,
+    "name": "heart-hands"
+  },
+  "🫶🏾": {
+    "code": "1faf6_1f3fe",
+    "duration": 1290,
+    "name": "heart-hands"
+  },
+  "🫶🏿": {
+    "code": "1faf6_1f3ff",
+    "duration": 1290,
+    "name": "heart-hands"
+  },
+  "🙌": {
+    "code": "1f64c",
+    "duration": 1414,
+    "name": "raising-hands"
+  },
+  "🙌🏻": {
+    "code": "1f64c_1f3fb",
+    "duration": 1414,
+    "name": "raising-hands"
+  },
+  "🙌🏼": {
+    "code": "1f64c_1f3fc",
+    "duration": 1414,
+    "name": "raising-hands"
+  },
+  "🙌🏽": {
+    "code": "1f64c_1f3fd",
+    "duration": 1414,
+    "name": "raising-hands"
+  },
+  "🙌🏾": {
+    "code": "1f64c_1f3fe",
+    "duration": 1414,
+    "name": "raising-hands"
+  },
+  "🙌🏿": {
+    "code": "1f64c_1f3ff",
+    "duration": 1414,
+    "name": "raising-hands"
+  },
+  "👐": {
+    "code": "1f450",
+    "duration": 1532,
+    "name": "open-hands"
+  },
+  "👐🏻": {
+    "code": "1f450_1f3fb",
+    "duration": 1532,
+    "name": "open-hands"
+  },
+  "👐🏼": {
+    "code": "1f450_1f3fc",
+    "duration": 1532,
+    "name": "open-hands"
+  },
+  "👐🏽": {
+    "code": "1f450_1f3fd",
+    "duration": 1532,
+    "name": "open-hands"
+  },
+  "👐🏾": {
+    "code": "1f450_1f3fe",
+    "duration": 1532,
+    "name": "open-hands"
+  },
+  "👐🏿": {
+    "code": "1f450_1f3ff",
+    "duration": 1532,
+    "name": "open-hands"
+  },
+  "🤲": {
+    "code": "1f932",
+    "duration": 1110,
+    "name": "palms-up"
+  },
+  "🤲🏻": {
+    "code": "1f932_1f3fb",
+    "duration": 1110,
+    "name": "palms-up"
+  },
+  "🤲🏼": {
+    "code": "1f932_1f3fc",
+    "duration": 1110,
+    "name": "palms-up"
+  },
+  "🤲🏽": {
+    "code": "1f932_1f3fd",
+    "duration": 1110,
+    "name": "palms-up"
+  },
+  "🤲🏾": {
+    "code": "1f932_1f3fe",
+    "duration": 1110,
+    "name": "palms-up"
+  },
+  "🤲🏿": {
+    "code": "1f932_1f3ff",
+    "duration": 1110,
+    "name": "palms-up"
+  },
+  "🤜": {
+    "code": "1f91c",
+    "duration": 1260,
+    "name": "fist-rightwards"
+  },
+  "🤜🏻": {
+    "code": "1f91c_1f3fb",
+    "duration": 1260,
+    "name": "fist-rightwards"
+  },
+  "🤜🏼": {
+    "code": "1f91c_1f3fc",
+    "duration": 1260,
+    "name": "fist-rightwards"
+  },
+  "🤜🏽": {
+    "code": "1f91c_1f3fd",
+    "duration": 1260,
+    "name": "fist-rightwards"
+  },
+  "🤜🏾": {
+    "code": "1f91c_1f3fe",
+    "duration": 1260,
+    "name": "fist-rightwards"
+  },
+  "🤜🏿": {
+    "code": "1f91c_1f3ff",
+    "duration": 1260,
+    "name": "fist-rightwards"
+  },
+  "🤛": {
+    "code": "1f91b",
+    "duration": 1260,
+    "name": "fist-leftwards"
+  },
+  "🤛🏻": {
+    "code": "1f91b_1f3fb",
+    "duration": 1260,
+    "name": "fist-leftwards"
+  },
+  "🤛🏼": {
+    "code": "1f91b_1f3fc",
+    "duration": 1260,
+    "name": "fist-leftwards"
+  },
+  "🤛🏽": {
+    "code": "1f91b_1f3fd",
+    "duration": 1260,
+    "name": "fist-leftwards"
+  },
+  "🤛🏾": {
+    "code": "1f91b_1f3fe",
+    "duration": 1260,
+    "name": "fist-leftwards"
+  },
+  "🤛🏿": {
+    "code": "1f91b_1f3ff",
+    "duration": 1260,
+    "name": "fist-leftwards"
+  },
+  "✊": {
+    "code": "270a",
+    "duration": 1211,
+    "name": "raised-fist"
+  },
+  "✊🏻": {
+    "code": "270a_1f3fb",
+    "duration": 1211,
+    "name": "raised-fist"
+  },
+  "✊🏼": {
+    "code": "270a_1f3fc",
+    "duration": 1211,
+    "name": "raised-fist"
+  },
+  "✊🏽": {
+    "code": "270a_1f3fd",
+    "duration": 1211,
+    "name": "raised-fist"
+  },
+  "✊🏾": {
+    "code": "270a_1f3fe",
+    "duration": 1211,
+    "name": "raised-fist"
+  },
+  "✊🏿": {
+    "code": "270a_1f3ff",
+    "duration": 1211,
+    "name": "raised-fist"
+  },
+  "👊": {
+    "code": "1f44a",
+    "duration": 570,
+    "name": "fist"
+  },
+  "👊🏻": {
+    "code": "1f44a_1f3fb",
+    "duration": 570,
+    "name": "fist"
+  },
+  "👊🏼": {
+    "code": "1f44a_1f3fc",
+    "duration": 570,
+    "name": "fist"
+  },
+  "👊🏽": {
+    "code": "1f44a_1f3fd",
+    "duration": 570,
+    "name": "fist"
+  },
+  "👊🏾": {
+    "code": "1f44a_1f3fe",
+    "duration": 570,
+    "name": "fist"
+  },
+  "👊🏿": {
+    "code": "1f44a_1f3ff",
+    "duration": 570,
+    "name": "fist"
+  },
+  "🫳": {
+    "code": "1faf3",
+    "duration": 1842,
+    "name": "palm-down"
+  },
+  "🫳🏻": {
+    "code": "1faf3_1f3fb",
+    "duration": 1842,
+    "name": "palm-down"
+  },
+  "🫳🏼": {
+    "code": "1faf3_1f3fc",
+    "duration": 1841,
+    "name": "palm-down"
+  },
+  "🫳🏽": {
+    "code": "1faf3_1f3fd",
+    "duration": 1842,
+    "name": "palm-down"
+  },
+  "🫳🏾": {
+    "code": "1faf3_1f3fe",
+    "duration": 1841,
+    "name": "palm-down"
+  },
+  "🫳🏿": {
+    "code": "1faf3_1f3ff",
+    "duration": 1841,
+    "name": "palm-down"
+  },
+  "🫴": {
+    "code": "1faf4",
+    "duration": 1680,
+    "name": "palm-up"
+  },
+  "🫴🏻": {
+    "code": "1faf4_1f3fb",
+    "duration": 1680,
+    "name": "palm-up"
+  },
+  "🫴🏼": {
+    "code": "1faf4_1f3fc",
+    "duration": 1680,
+    "name": "palm-up"
+  },
+  "🫴🏽": {
+    "code": "1faf4_1f3fd",
+    "duration": 1680,
+    "name": "palm-up"
+  },
+  "🫴🏾": {
+    "code": "1faf4_1f3fe",
+    "duration": 1680,
+    "name": "palm-up"
+  },
+  "🫴🏿": {
+    "code": "1faf4_1f3ff",
+    "duration": 1680,
+    "name": "palm-up"
+  },
+  "🫱": {
+    "code": "1faf1",
+    "duration": 1020,
+    "name": "rightwards-hand"
+  },
+  "🫱🏻": {
+    "code": "1faf1_1f3fb",
+    "duration": 1020,
+    "name": "rightwards-hand"
+  },
+  "🫱🏼": {
+    "code": "1faf1_1f3fc",
+    "duration": 1020,
+    "name": "rightwards-hand"
+  },
+  "🫱🏽": {
+    "code": "1faf1_1f3fd",
+    "duration": 1020,
+    "name": "rightwards-hand"
+  },
+  "🫱🏾": {
+    "code": "1faf1_1f3fe",
+    "duration": 1020,
+    "name": "rightwards-hand"
+  },
+  "🫱🏿": {
+    "code": "1faf1_1f3ff",
+    "duration": 1020,
+    "name": "rightwards-hand"
+  },
+  "🫲": {
+    "code": "1faf2",
+    "duration": 1350,
+    "name": "leftwards-hand"
+  },
+  "🫲🏻": {
+    "code": "1faf2_1f3fb",
+    "duration": 1350,
+    "name": "leftwards-hand"
+  },
+  "🫲🏼": {
+    "code": "1faf2_1f3fc",
+    "duration": 1350,
+    "name": "leftwards-hand"
+  },
+  "🫲🏽": {
+    "code": "1faf2_1f3fd",
+    "duration": 1350,
+    "name": "leftwards-hand"
+  },
+  "🫲🏾": {
+    "code": "1faf2_1f3fe",
+    "duration": 1350,
+    "name": "leftwards-hand"
+  },
+  "🫲🏿": {
+    "code": "1faf2_1f3ff",
+    "duration": 1350,
+    "name": "leftwards-hand"
+  },
+  "🫸": {
+    "code": "1faf8",
+    "duration": 960,
+    "name": "push-rightwards"
+  },
+  "🫸🏻": {
+    "code": "1faf8_1f3fb",
+    "duration": 960,
+    "name": "push-rightwards"
+  },
+  "🫸🏼": {
+    "code": "1faf8_1f3fc",
+    "duration": 960,
+    "name": "push-rightwards"
+  },
+  "🫸🏽": {
+    "code": "1faf8_1f3fd",
+    "duration": 960,
+    "name": "push-rightwards"
+  },
+  "🫸🏾": {
+    "code": "1faf8_1f3fe",
+    "duration": 960,
+    "name": "push-rightwards"
+  },
+  "🫸🏿": {
+    "code": "1faf8_1f3ff",
+    "duration": 960,
+    "name": "push-rightwards"
+  },
+  "🫷": {
+    "code": "1faf7",
+    "duration": 960,
+    "name": "push-leftwards"
+  },
+  "🫷🏻": {
+    "code": "1faf7_1f3fb",
+    "duration": 960,
+    "name": "push-leftwards"
+  },
+  "🫷🏼": {
+    "code": "1faf7_1f3fc",
+    "duration": 960,
+    "name": "push-leftwards"
+  },
+  "🫷🏽": {
+    "code": "1faf7_1f3fd",
+    "duration": 960,
+    "name": "push-leftwards"
+  },
+  "🫷🏾": {
+    "code": "1faf7_1f3fe",
+    "duration": 960,
+    "name": "push-leftwards"
+  },
+  "🫷🏿": {
+    "code": "1faf7_1f3ff",
+    "duration": 960,
+    "name": "push-leftwards"
+  },
+  "👋": {
+    "code": "1f44b",
+    "duration": 1380,
+    "name": "wave"
+  },
+  "👋🏻": {
+    "code": "1f44b_1f3fb",
+    "duration": 1380,
+    "name": "wave"
+  },
+  "👋🏼": {
+    "code": "1f44b_1f3fc",
+    "duration": 1380,
+    "name": "wave"
+  },
+  "👋🏽": {
+    "code": "1f44b_1f3fd",
+    "duration": 1380,
+    "name": "wave"
+  },
+  "👋🏾": {
+    "code": "1f44b_1f3fe",
+    "duration": 1380,
+    "name": "wave"
+  },
+  "👋🏿": {
+    "code": "1f44b_1f3ff",
+    "duration": 1380,
+    "name": "wave"
+  },
+  "🤚": {
+    "code": "1f91a",
+    "duration": 2100,
+    "name": "back-hand"
+  },
+  "🤚🏻": {
+    "code": "1f91a_1f3fb",
+    "duration": 2100,
+    "name": "back-hand"
+  },
+  "🤚🏼": {
+    "code": "1f91a_1f3fc",
+    "duration": 2100,
+    "name": "back-hand"
+  },
+  "🤚🏽": {
+    "code": "1f91a_1f3fd",
+    "duration": 2100,
+    "name": "back-hand"
+  },
+  "🤚🏾": {
+    "code": "1f91a_1f3fe",
+    "duration": 2100,
+    "name": "back-hand"
+  },
+  "🤚🏿": {
+    "code": "1f91a_1f3ff",
+    "duration": 2100,
+    "name": "back-hand"
+  },
+  "🖐️": {
+    "code": "1f590_fe0f",
+    "duration": 1482,
+    "name": "palm"
+  },
+  "🖐🏻": {
+    "code": "1f590_1f3fb",
+    "duration": 1482,
+    "name": "palm"
+  },
+  "🖐🏼": {
+    "code": "1f590_1f3fc",
+    "duration": 1482,
+    "name": "palm"
+  },
+  "🖐🏽": {
+    "code": "1f590_1f3fd",
+    "duration": 1482,
+    "name": "palm"
+  },
+  "🖐🏾": {
+    "code": "1f590_1f3fe",
+    "duration": 1482,
+    "name": "palm"
+  },
+  "🖐🏿": {
+    "code": "1f590_1f3ff",
+    "duration": 1482,
+    "name": "palm"
+  },
+  "✋": {
+    "code": "270b",
+    "duration": 1020,
+    "name": "raised-hand"
+  },
+  "✋🏻": {
+    "code": "270b_1f3fb",
+    "duration": 1020,
+    "name": "raised-hand"
+  },
+  "✋🏼": {
+    "code": "270b_1f3fc",
+    "duration": 1020,
+    "name": "raised-hand"
+  },
+  "✋🏽": {
+    "code": "270b_1f3fd",
+    "duration": 1020,
+    "name": "raised-hand"
+  },
+  "✋🏾": {
+    "code": "270b_1f3fe",
+    "duration": 1020,
+    "name": "raised-hand"
+  },
+  "✋🏿": {
+    "code": "270b_1f3ff",
+    "duration": 1020,
+    "name": "raised-hand"
+  },
+  "🖖": {
+    "code": "1f596",
+    "duration": 1238,
+    "name": "vulcan"
+  },
+  "🖖🏻": {
+    "code": "1f596_1f3fb",
+    "duration": 1238,
+    "name": "vulcan"
+  },
+  "🖖🏼": {
+    "code": "1f596_1f3fc",
+    "duration": 1238,
+    "name": "vulcan"
+  },
+  "🖖🏽": {
+    "code": "1f596_1f3fd",
+    "duration": 1238,
+    "name": "vulcan"
+  },
+  "🖖🏾": {
+    "code": "1f596_1f3fe",
+    "duration": 1238,
+    "name": "vulcan"
+  },
+  "🖖🏿": {
+    "code": "1f596_1f3ff",
+    "duration": 1238,
+    "name": "vulcan"
+  },
+  "🤟": {
+    "code": "1f91f",
+    "duration": 2940,
+    "name": "love-you-gesture"
+  },
+  "🤟🏻": {
+    "code": "1f91f_1f3fb",
+    "duration": 2940,
+    "name": "love-you-gesture"
+  },
+  "🤟🏼": {
+    "code": "1f91f_1f3fc",
+    "duration": 2940,
+    "name": "love-you-gesture"
+  },
+  "🤟🏽": {
+    "code": "1f91f_1f3fd",
+    "duration": 2940,
+    "name": "love-you-gesture"
+  },
+  "🤟🏾": {
+    "code": "1f91f_1f3fe",
+    "duration": 2940,
+    "name": "love-you-gesture"
+  },
+  "🤟🏿": {
+    "code": "1f91f_1f3ff",
+    "duration": 2940,
+    "name": "love-you-gesture"
+  },
+  "🤘": {
+    "code": "1f918",
+    "duration": 1350,
+    "name": "metal"
+  },
+  "🤘🏻": {
+    "code": "1f918_1f3fb",
+    "duration": 1350,
+    "name": "metal"
+  },
+  "🤘🏼": {
+    "code": "1f918_1f3fc",
+    "duration": 1350,
+    "name": "metal"
+  },
+  "🤘🏽": {
+    "code": "1f918_1f3fd",
+    "duration": 1350,
+    "name": "metal"
+  },
+  "🤘🏾": {
+    "code": "1f918_1f3fe",
+    "duration": 1350,
+    "name": "metal"
+  },
+  "🤘🏿": {
+    "code": "1f918_1f3ff",
+    "duration": 1350,
+    "name": "metal"
+  },
+  "✌️": {
+    "code": "270c_fe0f",
+    "duration": 1656,
+    "name": "victory"
+  },
+  "✌🏻": {
+    "code": "270c_1f3fb",
+    "duration": 1656,
+    "name": "victory"
+  },
+  "✌🏼": {
+    "code": "270c_1f3fc",
+    "duration": 1656,
+    "name": "victory"
+  },
+  "✌🏽": {
+    "code": "270c_1f3fd",
+    "duration": 1656,
+    "name": "victory"
+  },
+  "✌🏾": {
+    "code": "270c_1f3fe",
+    "duration": 1656,
+    "name": "victory"
+  },
+  "✌🏿": {
+    "code": "270c_1f3ff",
+    "duration": 1656,
+    "name": "victory"
+  },
+  "🤞": {
+    "code": "1f91e",
+    "duration": 1680,
+    "name": "crossed-fingers"
+  },
+  "🤞🏻": {
+    "code": "1f91e_1f3fb",
+    "duration": 1680,
+    "name": "crossed-fingers"
+  },
+  "🤞🏼": {
+    "code": "1f91e_1f3fc",
+    "duration": 1680,
+    "name": "crossed-fingers"
+  },
+  "🤞🏽": {
+    "code": "1f91e_1f3fd",
+    "duration": 1680,
+    "name": "crossed-fingers"
+  },
+  "🤞🏾": {
+    "code": "1f91e_1f3fe",
+    "duration": 1680,
+    "name": "crossed-fingers"
+  },
+  "🤞🏿": {
+    "code": "1f91e_1f3ff",
+    "duration": 1680,
+    "name": "crossed-fingers"
+  },
+  "🫰": {
+    "code": "1faf0",
+    "duration": 1200,
+    "name": "hand-with-index-finger-and-thumb-crossed"
+  },
+  "🫰🏻": {
+    "code": "1faf0_1f3fb",
+    "duration": 1200,
+    "name": "hand-with-index-finger-and-thumb-crossed"
+  },
+  "🫰🏼": {
+    "code": "1faf0_1f3fc",
+    "duration": 1200,
+    "name": "hand-with-index-finger-and-thumb-crossed"
+  },
+  "🫰🏽": {
+    "code": "1faf0_1f3fd",
+    "duration": 1200,
+    "name": "hand-with-index-finger-and-thumb-crossed"
+  },
+  "🫰🏾": {
+    "code": "1faf0_1f3fe",
+    "duration": 1200,
+    "name": "hand-with-index-finger-and-thumb-crossed"
+  },
+  "🫰🏿": {
+    "code": "1faf0_1f3ff",
+    "duration": 1200,
+    "name": "hand-with-index-finger-and-thumb-crossed"
+  },
+  "🤙": {
+    "code": "1f919",
+    "duration": 2310,
+    "name": "call-me-hand"
+  },
+  "🤙🏻": {
+    "code": "1f919_1f3fb",
+    "duration": 2310,
+    "name": "call-me-hand"
+  },
+  "🤙🏼": {
+    "code": "1f919_1f3fc",
+    "duration": 2310,
+    "name": "call-me-hand"
+  },
+  "🤙🏽": {
+    "code": "1f919_1f3fd",
+    "duration": 2310,
+    "name": "call-me-hand"
+  },
+  "🤙🏾": {
+    "code": "1f919_1f3fe",
+    "duration": 2310,
+    "name": "call-me-hand"
+  },
+  "🤙🏿": {
+    "code": "1f919_1f3ff",
+    "duration": 2310,
+    "name": "call-me-hand"
+  },
+  "🤌": {
+    "code": "1f90c",
+    "duration": 1920,
+    "name": "pinched-fingers"
+  },
+  "🤌🏻": {
+    "code": "1f90c_1f3fb",
+    "duration": 1920,
+    "name": "pinched-fingers"
+  },
+  "🤌🏼": {
+    "code": "1f90c_1f3fc",
+    "duration": 1920,
+    "name": "pinched-fingers"
+  },
+  "🤌🏽": {
+    "code": "1f90c_1f3fd",
+    "duration": 1920,
+    "name": "pinched-fingers"
+  },
+  "🤌🏾": {
+    "code": "1f90c_1f3fe",
+    "duration": 1920,
+    "name": "pinched-fingers"
+  },
+  "🤌🏿": {
+    "code": "1f90c_1f3ff",
+    "duration": 1920,
+    "name": "pinched-fingers"
+  },
+  "🤏": {
+    "code": "1f90f",
+    "duration": 1350,
+    "name": "pinch"
+  },
+  "🤏🏻": {
+    "code": "1f90f_1f3fb",
+    "duration": 1350,
+    "name": "pinch"
+  },
+  "🤏🏼": {
+    "code": "1f90f_1f3fc",
+    "duration": 1350,
+    "name": "pinch"
+  },
+  "🤏🏽": {
+    "code": "1f90f_1f3fd",
+    "duration": 1350,
+    "name": "pinch"
+  },
+  "🤏🏾": {
+    "code": "1f90f_1f3fe",
+    "duration": 1350,
+    "name": "pinch"
+  },
+  "🤏🏿": {
+    "code": "1f90f_1f3ff",
+    "duration": 1350,
+    "name": "pinch"
+  },
+  "👌": {
+    "code": "1f44c",
+    "duration": 810,
+    "name": "ok"
+  },
+  "👌🏻": {
+    "code": "1f44c_1f3fb",
+    "duration": 810,
+    "name": "ok"
+  },
+  "👌🏼": {
+    "code": "1f44c_1f3fc",
+    "duration": 810,
+    "name": "ok"
+  },
+  "👌🏽": {
+    "code": "1f44c_1f3fd",
+    "duration": 810,
+    "name": "ok"
+  },
+  "👌🏾": {
+    "code": "1f44c_1f3fe",
+    "duration": 810,
+    "name": "ok"
+  },
+  "👌🏿": {
+    "code": "1f44c_1f3ff",
+    "duration": 810,
+    "name": "ok"
+  },
+  "🫵": {
+    "code": "1faf5",
+    "duration": 1080,
+    "name": "pointing"
+  },
+  "🫵🏻": {
+    "code": "1faf5_1f3fb",
+    "duration": 1080,
+    "name": "pointing"
+  },
+  "🫵🏼": {
+    "code": "1faf5_1f3fc",
+    "duration": 1080,
+    "name": "pointing"
+  },
+  "🫵🏽": {
+    "code": "1faf5_1f3fd",
+    "duration": 1080,
+    "name": "pointing"
+  },
+  "🫵🏾": {
+    "code": "1faf5_1f3fe",
+    "duration": 1080,
+    "name": "pointing"
+  },
+  "🫵🏿": {
+    "code": "1faf5_1f3ff",
+    "duration": 1080,
+    "name": "pointing"
+  },
+  "👉": {
+    "code": "1f449",
+    "duration": 1590,
+    "name": "point-right"
+  },
+  "👉🏻": {
+    "code": "1f449_1f3fb",
+    "duration": 1590,
+    "name": "point-right"
+  },
+  "👉🏼": {
+    "code": "1f449_1f3fc",
+    "duration": 1590,
+    "name": "point-right"
+  },
+  "👉🏽": {
+    "code": "1f449_1f3fd",
+    "duration": 1590,
+    "name": "point-right"
+  },
+  "👉🏾": {
+    "code": "1f449_1f3fe",
+    "duration": 1590,
+    "name": "point-right"
+  },
+  "👉🏿": {
+    "code": "1f449_1f3ff",
+    "duration": 1590,
+    "name": "point-right"
+  },
+  "👈": {
+    "code": "1f448",
+    "duration": 1590,
+    "name": "point-left"
+  },
+  "👈🏻": {
+    "code": "1f448_1f3fb",
+    "duration": 1590,
+    "name": "point-left"
+  },
+  "👈🏼": {
+    "code": "1f448_1f3fc",
+    "duration": 1590,
+    "name": "point-left"
+  },
+  "👈🏽": {
+    "code": "1f448_1f3fd",
+    "duration": 1590,
+    "name": "point-left"
+  },
+  "👈🏾": {
+    "code": "1f448_1f3fe",
+    "duration": 1590,
+    "name": "point-left"
+  },
+  "👈🏿": {
+    "code": "1f448_1f3ff",
+    "duration": 1590,
+    "name": "point-left"
+  },
+  "☝️": {
+    "code": "261d_fe0f",
+    "duration": 1380,
+    "name": "index-finger"
+  },
+  "☝🏻": {
+    "code": "261d_1f3fb",
+    "duration": 1380,
+    "name": "index-finger"
+  },
+  "☝🏼": {
+    "code": "261d_1f3fc",
+    "duration": 1380,
+    "name": "index-finger"
+  },
+  "☝🏽": {
+    "code": "261d_1f3fd",
+    "duration": 1380,
+    "name": "index-finger"
+  },
+  "☝🏾": {
+    "code": "261d_1f3fe",
+    "duration": 1380,
+    "name": "index-finger"
+  },
+  "☝🏿": {
+    "code": "261d_1f3ff",
+    "duration": 1380,
+    "name": "index-finger"
+  },
+  "👆": {
+    "code": "1f446",
+    "duration": 1590,
+    "name": "point-up"
+  },
+  "👆🏻": {
+    "code": "1f446_1f3fb",
+    "duration": 1590,
+    "name": "point-up"
+  },
+  "👆🏼": {
+    "code": "1f446_1f3fc",
+    "duration": 1590,
+    "name": "point-up"
+  },
+  "👆🏽": {
+    "code": "1f446_1f3fd",
+    "duration": 1590,
+    "name": "point-up"
+  },
+  "👆🏾": {
+    "code": "1f446_1f3fe",
+    "duration": 1590,
+    "name": "point-up"
+  },
+  "👆🏿": {
+    "code": "1f446_1f3ff",
+    "duration": 1590,
+    "name": "point-up"
+  },
+  "👇": {
+    "code": "1f447",
+    "duration": 1590,
+    "name": "point-down"
+  },
+  "👇🏻": {
+    "code": "1f447_1f3fb",
+    "duration": 1590,
+    "name": "point-down"
+  },
+  "👇🏼": {
+    "code": "1f447_1f3fc",
+    "duration": 1590,
+    "name": "point-down"
+  },
+  "👇🏽": {
+    "code": "1f447_1f3fd",
+    "duration": 1590,
+    "name": "point-down"
+  },
+  "👇🏾": {
+    "code": "1f447_1f3fe",
+    "duration": 1590,
+    "name": "point-down"
+  },
+  "👇🏿": {
+    "code": "1f447_1f3ff",
+    "duration": 1590,
+    "name": "point-down"
+  },
+  "🖕": {
+    "code": "1f595",
+    "duration": 1230,
+    "name": "middle-finger"
+  },
+  "🖕🏻": {
+    "code": "1f595_1f3fb",
+    "duration": 1230,
+    "name": "middle-finger"
+  },
+  "🖕🏼": {
+    "code": "1f595_1f3fc",
+    "duration": 1230,
+    "name": "middle-finger"
+  },
+  "🖕🏽": {
+    "code": "1f595_1f3fd",
+    "duration": 1230,
+    "name": "middle-finger"
+  },
+  "🖕🏾": {
+    "code": "1f595_1f3fe",
+    "duration": 1230,
+    "name": "middle-finger"
+  },
+  "🖕🏿": {
+    "code": "1f595_1f3ff",
+    "duration": 1230,
+    "name": "middle-finger"
+  },
+  "✍️": {
+    "code": "270d_fe0f",
+    "duration": 1891,
+    "name": "writing-hand"
+  },
+  "✍🏻": {
+    "code": "270d_1f3fb",
+    "duration": 1891,
+    "name": "writing-hand"
+  },
+  "✍🏼": {
+    "code": "270d_1f3fc",
+    "duration": 1891,
+    "name": "writing-hand"
+  },
+  "✍🏽": {
+    "code": "270d_1f3fd",
+    "duration": 1891,
+    "name": "writing-hand"
+  },
+  "✍🏾": {
+    "code": "270d_1f3fe",
+    "duration": 1891,
+    "name": "writing-hand"
+  },
+  "✍🏿": {
+    "code": "270d_1f3ff",
+    "duration": 1891,
+    "name": "writing-hand"
+  },
+  "🤳": {
+    "code": "1f933",
+    "duration": 1710,
+    "name": "selfie"
+  },
+  "🤳🏻": {
+    "code": "1f933_1f3fb",
+    "duration": 1710,
+    "name": "selfie"
+  },
+  "🤳🏼": {
+    "code": "1f933_1f3fc",
+    "duration": 1710,
+    "name": "selfie"
+  },
+  "🤳🏽": {
+    "code": "1f933_1f3fd",
+    "duration": 1710,
+    "name": "selfie"
+  },
+  "🤳🏾": {
+    "code": "1f933_1f3fe",
+    "duration": 1710,
+    "name": "selfie"
+  },
+  "🤳🏿": {
+    "code": "1f933_1f3ff",
+    "duration": 1710,
+    "name": "selfie"
+  },
+  "🙏": {
+    "code": "1f64f",
+    "duration": 750,
+    "name": "folded-hands"
+  },
+  "🙏🏻": {
+    "code": "1f64f_1f3fb",
+    "duration": 750,
+    "name": "folded-hands"
+  },
+  "🙏🏼": {
+    "code": "1f64f_1f3fc",
+    "duration": 750,
+    "name": "folded-hands"
+  },
+  "🙏🏽": {
+    "code": "1f64f_1f3fd",
+    "duration": 750,
+    "name": "folded-hands"
+  },
+  "🙏🏾": {
+    "code": "1f64f_1f3fe",
+    "duration": 750,
+    "name": "folded-hands"
+  },
+  "🙏🏿": {
+    "code": "1f64f_1f3ff",
+    "duration": 750,
+    "name": "folded-hands"
+  },
+  "💅": {
+    "code": "1f485",
+    "duration": 2430,
+    "name": "nail-care"
+  },
+  "💅🏻": {
+    "code": "1f485_1f3fb",
+    "duration": 2430,
+    "name": "nail-care"
+  },
+  "💅🏼": {
+    "code": "1f485_1f3fc",
+    "duration": 2430,
+    "name": "nail-care"
+  },
+  "💅🏽": {
+    "code": "1f485_1f3fd",
+    "duration": 2430,
+    "name": "nail-care"
+  },
+  "💅🏾": {
+    "code": "1f485_1f3fe",
+    "duration": 2430,
+    "name": "nail-care"
+  },
+  "💅🏿": {
+    "code": "1f485_1f3ff",
+    "duration": 2430,
+    "name": "nail-care"
+  },
+  "🤝": {
+    "code": "1f91d",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🤝🏻": {
+    "code": "1f91d_1f3fb",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏻‍🫲🏼": {
+    "code": "1faf1_1f3fb_200d_1faf2_1f3fc",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏻‍🫲🏽": {
+    "code": "1faf1_1f3fb_200d_1faf2_1f3fd",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏻‍🫲🏾": {
+    "code": "1faf1_1f3fb_200d_1faf2_1f3fe",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏻‍🫲🏿": {
+    "code": "1faf1_1f3fb_200d_1faf2_1f3ff",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏼‍🫲🏻": {
+    "code": "1faf1_1f3fc_200d_1faf2_1f3fb",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🤝🏼": {
+    "code": "1f91d_1f3fc",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏼‍🫲🏽": {
+    "code": "1faf1_1f3fc_200d_1faf2_1f3fd",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏼‍🫲🏾": {
+    "code": "1faf1_1f3fc_200d_1faf2_1f3fe",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏼‍🫲🏿": {
+    "code": "1faf1_1f3fc_200d_1faf2_1f3ff",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏽‍🫲🏻": {
+    "code": "1faf1_1f3fd_200d_1faf2_1f3fb",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏽‍🫲🏼": {
+    "code": "1faf1_1f3fd_200d_1faf2_1f3fc",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🤝🏽": {
+    "code": "1f91d_1f3fd",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏽‍🫲🏾": {
+    "code": "1faf1_1f3fd_200d_1faf2_1f3fe",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏽‍🫲🏿": {
+    "code": "1faf1_1f3fd_200d_1faf2_1f3ff",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏾‍🫲🏻": {
+    "code": "1faf1_1f3fe_200d_1faf2_1f3fb",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏾‍🫲🏼": {
+    "code": "1faf1_1f3fe_200d_1faf2_1f3fc",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏾‍🫲🏽": {
+    "code": "1faf1_1f3fe_200d_1faf2_1f3fd",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🤝🏾": {
+    "code": "1f91d_1f3fe",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏾‍🫲🏿": {
+    "code": "1faf1_1f3fe_200d_1faf2_1f3ff",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏿‍🫲🏻": {
+    "code": "1faf1_1f3ff_200d_1faf2_1f3fb",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏿‍🫲🏼": {
+    "code": "1faf1_1f3ff_200d_1faf2_1f3fc",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏿‍🫲🏽": {
+    "code": "1faf1_1f3ff_200d_1faf2_1f3fd",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🫱🏿‍🫲🏾": {
+    "code": "1faf1_1f3ff_200d_1faf2_1f3fe",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🤝🏿": {
+    "code": "1f91d_1f3ff",
+    "duration": 1080,
+    "name": "handshake"
+  },
+  "🪂": {
+    "code": "1fa82",
+    "duration": 2160,
+    "name": "parachute"
+  },
+  "🫈": {
+    "code": "1fac8",
+    "duration": 2700,
+    "name": "hairy-creature"
+  },
+  "💃": {
+    "code": "1f483",
+    "duration": 1440,
+    "name": "dancer-woman"
+  },
+  "💃🏻": {
+    "code": "1f483_1f3fb",
+    "duration": 1440,
+    "name": "dancer-woman"
+  },
+  "💃🏼": {
+    "code": "1f483_1f3fc",
+    "duration": 1440,
+    "name": "dancer-woman"
+  },
+  "💃🏽": {
+    "code": "1f483_1f3fd",
+    "duration": 1440,
+    "name": "dancer-woman"
+  },
+  "💃🏾": {
+    "code": "1f483_1f3fe",
+    "duration": 1440,
+    "name": "dancer-woman"
+  },
+  "💃🏿": {
+    "code": "1f483_1f3ff",
+    "duration": 1440,
+    "name": "dancer-woman"
+  },
+  "💐": {
+    "code": "1f490",
+    "duration": 2010,
+    "name": "bouquet"
+  },
+  "🌹": {
+    "code": "1f339",
+    "duration": 2160,
+    "name": "rose"
+  },
+  "🥀": {
+    "code": "1f940",
+    "duration": 2160,
+    "name": "wilted-flower"
+  },
+  "🌷": {
+    "code": "1f337",
+    "duration": 3360,
+    "name": "tulip"
+  },
+  "🪷": {
+    "code": "1fab7",
+    "duration": 2793,
+    "name": "lotus"
+  },
+  "🌸": {
+    "code": "1f338",
+    "duration": 3210,
+    "name": "cherry-blossom"
+  },
+  "🪻": {
+    "code": "1fabb",
+    "duration": 3360,
+    "name": "hyacinth"
+  },
+  "🌼": {
+    "code": "1f33c",
+    "duration": 3450,
+    "name": "blossom"
+  },
+  "🍂": {
+    "code": "1f342",
+    "duration": 3180,
+    "name": "fallen-leaf"
+  },
+  "🍁": {
+    "code": "1f341",
+    "duration": 1621,
+    "name": "maple-leaf"
+  },
+  "🍄": {
+    "code": "1f344",
+    "duration": 2432,
+    "name": "mushroom"
+  },
+  "🌿": {
+    "code": "1f33f",
+    "duration": 1800,
+    "name": "herb"
+  },
+  "🌱": {
+    "code": "1f331",
+    "duration": 5190,
+    "name": "plant"
+  },
+  "🍃": {
+    "code": "1f343",
+    "duration": 2340,
+    "name": "leaves"
+  },
+  "🍀": {
+    "code": "1f340",
+    "duration": 1620,
+    "name": "luck"
+  },
+  "🌵": {
+    "code": "1f335",
+    "duration": 2730,
+    "name": "cactus"
+  },
+  "🪾": {
+    "code": "1fabe",
+    "duration": 2460,
+    "name": "leafless-tree"
+  },
+  "🌲": {
+    "code": "1f332",
+    "duration": 2070,
+    "name": "evergreen-tree"
+  },
+  "🪨": {
+    "code": "1faa8",
+    "duration": 2911,
+    "name": "rock"
+  },
+  "🛘": {
+    "code": "1f6d8",
+    "duration": 1260,
+    "name": "debris"
+  },
+  "🌋": {
+    "code": "1f30b",
+    "duration": 1080,
+    "name": "volcano"
+  },
+  "🏞️": {
+    "code": "1f3de_fe0f",
+    "duration": 3630,
+    "name": "national-park"
+  },
+  "🌅": {
+    "code": "1f305",
+    "duration": 4500,
+    "name": "sunrise"
+  },
+  "🌄": {
+    "code": "1f304",
+    "duration": 930,
+    "name": "sunrise-over-mountains"
+  },
+  "🌊": {
+    "code": "1f30a",
+    "duration": 1110,
+    "name": "ocean"
+  },
+  "🌬️": {
+    "code": "1f32c_fe0f",
+    "duration": 1440,
+    "name": "wind-face"
+  },
+  "❄️": {
+    "code": "2744_fe0f",
+    "duration": 4050,
+    "name": "snowflake"
+  },
+  "🌀": {
+    "code": "1f300",
+    "duration": 2250,
+    "name": "cyclone"
+  },
+  "🌪️": {
+    "code": "1f32a_fe0f",
+    "duration": 1800,
+    "name": "tornado"
+  },
+  "🌈": {
+    "code": "1f308",
+    "duration": 1800,
+    "name": "rainbow"
+  },
+  "💧": {
+    "code": "1f4a7",
+    "duration": 960,
+    "name": "droplet"
+  },
+  "☁️": {
+    "code": "2601_fe0f",
+    "duration": 1800,
+    "name": "cloud"
+  },
+  "🌧️": {
+    "code": "1f327_fe0f",
+    "duration": 2940,
+    "name": "rain-cloud"
+  },
+  "🌩️": {
+    "code": "1f329_fe0f",
+    "duration": 1260,
+    "name": "cloud-with-lightning"
+  },
+  "⛅": {
+    "code": "26c5",
+    "duration": 1350,
+    "name": "partly-sunny"
+  },
+  "🪐": {
+    "code": "1fa90",
+    "duration": 1350,
+    "name": "ringed-planet"
+  },
+  "🌍": {
+    "code": "1f30d",
+    "duration": 2430,
+    "name": "globe-showing-Europe-Africa"
+  },
+  "🌎": {
+    "code": "1f30e",
+    "duration": 2430,
+    "name": "globe-showing-Americas"
+  },
+  "🌏": {
+    "code": "1f30f",
+    "duration": 2430,
+    "name": "globe-showing-Asia-Australia"
+  },
+  "🌌": {
+    "code": "1f30c",
+    "duration": 3600,
+    "name": "milky-way"
+  },
+  "☄️": {
+    "code": "2604_fe0f",
+    "duration": 1500,
+    "name": "comet"
+  },
+  "🦁": {
+    "code": "1f981",
+    "duration": 1830,
+    "name": "lion-face"
+  },
+  "🐺": {
+    "code": "1f43a",
+    "duration": 2280,
+    "name": "wolf"
+  },
+  "🐻": {
+    "code": "1f43b",
+    "duration": 1621,
+    "name": "bear-face"
+  },
+  "🐼": {
+    "code": "1f43c",
+    "duration": 2312,
+    "name": "panda"
+  },
+  "🦊": {
+    "code": "1f98a",
+    "duration": 1890,
+    "name": "fox-face"
+  },
+  "🐮": {
+    "code": "1f42e",
+    "duration": 1534,
+    "name": "cow-face"
+  },
+  "🦄": {
+    "code": "1f984",
+    "duration": 3427,
+    "name": "unicorn"
+  },
+  "🦎": {
+    "code": "1f98e",
+    "duration": 1530,
+    "name": "lizard"
+  },
+  "🐉": {
+    "code": "1f409",
+    "duration": 1740,
+    "name": "dragon"
+  },
+  "🦖": {
+    "code": "1f996",
+    "duration": 1410,
+    "name": "t-rex"
+  },
+  "🦕": {
+    "code": "1f995",
+    "duration": 3001,
+    "name": "dinosaur"
+  },
+  "🐢": {
+    "code": "1f422",
+    "duration": 3060,
+    "name": "turtle"
+  },
+  "🐊": {
+    "code": "1f40a",
+    "duration": 2550,
+    "name": "crocodile"
+  },
+  "🐍": {
+    "code": "1f40d",
+    "duration": 2940,
+    "name": "snake"
+  },
+  "🐸": {
+    "code": "1f438",
+    "duration": 3660,
+    "name": "frog"
+  },
+  "🐇": {
+    "code": "1f407",
+    "duration": 1201,
+    "name": "rabbit"
+  },
+  "🐀": {
+    "code": "1f400",
+    "duration": 2100,
+    "name": "rat"
+  },
+  "🐩": {
+    "code": "1f429",
+    "duration": 2520,
+    "name": "poodle"
+  },
+  "🐕": {
+    "code": "1f415",
+    "duration": 2100,
+    "name": "dog"
+  },
+  "🦮": {
+    "code": "1f9ae",
+    "duration": 1950,
+    "name": "guide-dog"
+  },
+  "🐕‍🦺": {
+    "code": "1f415_200d_1f9ba",
+    "duration": 2160,
+    "name": "service-dog"
+  },
+  "🐖": {
+    "code": "1f416",
+    "duration": 3001,
+    "name": "pig"
+  },
+  "🐎": {
+    "code": "1f40e",
+    "duration": 484,
+    "name": "racehorse"
+  },
+  "🫏": {
+    "code": "1facf",
+    "duration": 1800,
+    "name": "donkey"
+  },
+  "🐂": {
+    "code": "1f402",
+    "duration": 2970,
+    "name": "ox"
+  },
+  "🐐": {
+    "code": "1f410",
+    "duration": 1860,
+    "name": "goat"
+  },
+  "🦥": {
+    "code": "1f9a5",
+    "duration": 3630,
+    "name": "sloth"
+  },
+  "🦘": {
+    "code": "1f998",
+    "duration": 1440,
+    "name": "kangaroo"
+  },
+  "🐅": {
+    "code": "1f405",
+    "duration": 4593,
+    "name": "tiger"
+  },
+  "🐒": {
+    "code": "1f412",
+    "duration": 1410,
+    "name": "monkey"
+  },
+  "🦍": {
+    "code": "1f98d",
+    "duration": 2461,
+    "name": "gorilla"
+  },
+  "🦧": {
+    "code": "1f9a7",
+    "duration": 3450,
+    "name": "orangutan"
+  },
+  "🐿️": {
+    "code": "1f43f_fe0f",
+    "duration": 2701,
+    "name": "chipmunk"
+  },
+  "🦝": {
+    "code": "1f99d",
+    "duration": 2910,
+    "name": "raccoon"
+  },
+  "🦔": {
+    "code": "1f994",
+    "duration": 1960,
+    "name": "hedgehog"
+  },
+  "🦦": {
+    "code": "1f9a6",
+    "duration": 2700,
+    "name": "otter"
+  },
+  "🦇": {
+    "code": "1f987",
+    "duration": 900,
+    "name": "bat"
+  },
+  "🐦": {
+    "code": "1f426",
+    "duration": 3034,
+    "name": "bird"
+  },
+  "🐦‍⬛": {
+    "code": "1f426_200d_2b1b",
+    "duration": 3034,
+    "name": "black-bird"
+  },
+  "🐓": {
+    "code": "1f413",
+    "duration": 2580,
+    "name": "rooster"
+  },
+  "🐣": {
+    "code": "1f423",
+    "duration": 2791,
+    "name": "hatching-chick"
+  },
+  "🐤": {
+    "code": "1f424",
+    "duration": 1743,
+    "name": "baby-chick"
+  },
+  "🐥": {
+    "code": "1f425",
+    "duration": 2283,
+    "name": "hatched-chick"
+  },
+  "🦅": {
+    "code": "1f985",
+    "duration": 1200,
+    "name": "eagle"
+  },
+  "🦉": {
+    "code": "1f989",
+    "duration": 2469,
+    "name": "owl"
+  },
+  "🕊️": {
+    "code": "1f54a_fe0f",
+    "duration": 2850,
+    "name": "peace"
+  },
+  "🪿": {
+    "code": "1fabf",
+    "duration": 2160,
+    "name": "goose"
+  },
+  "🦩": {
+    "code": "1f9a9",
+    "duration": 3331,
+    "name": "flamingo"
+  },
+  "🦚": {
+    "code": "1f99a",
+    "duration": 1200,
+    "name": "peacock"
+  },
+  "🐦‍🔥": {
+    "code": "1f426_200d_1f525",
+    "duration": 3540,
+    "name": "phoenix"
+  },
+  "🐧": {
+    "code": "1f427",
+    "duration": 4501,
+    "name": "penguin"
+  },
+  "🦭": {
+    "code": "1f9ad",
+    "duration": 2310,
+    "name": "seal"
+  },
+  "🦈": {
+    "code": "1f988",
+    "duration": 2883,
+    "name": "shark"
+  },
+  "🫍": {
+    "code": "1facd",
+    "duration": 1416,
+    "name": "orca"
+  },
+  "🐬": {
+    "code": "1f42c",
+    "duration": 1560,
+    "name": "dolphin"
+  },
+  "🐳": {
+    "code": "1f433",
+    "duration": 2370,
+    "name": "whale"
+  },
+  "🐟": {
+    "code": "1f41f",
+    "duration": 2160,
+    "name": "fish"
+  },
+  "🐡": {
+    "code": "1f421",
+    "duration": 2520,
+    "name": "blowfish"
+  },
+  "🦞": {
+    "code": "1f99e",
+    "duration": 1650,
+    "name": "lobster"
+  },
+  "🦀": {
+    "code": "1f980",
+    "duration": 2336,
+    "name": "crab"
+  },
+  "🐙": {
+    "code": "1f419",
+    "duration": 1440,
+    "name": "octopus"
+  },
+  "🪼": {
+    "code": "1fabc",
+    "duration": 2280,
+    "name": "jellyfish"
+  },
+  "🫧": {
+    "code": "1fae7",
+    "duration": 2100,
+    "name": "bubbles"
+  },
+  "🦂": {
+    "code": "1f982",
+    "duration": 1530,
+    "name": "scorpion"
+  },
+  "🕷️": {
+    "code": "1f577_fe0f",
+    "duration": 2168,
+    "name": "spider"
+  },
+  "🐌": {
+    "code": "1f40c",
+    "duration": 2430,
+    "name": "snail"
+  },
+  "🐜": {
+    "code": "1f41c",
+    "duration": 3420,
+    "name": "ant"
+  },
+  "🦗": {
+    "code": "1f997",
+    "duration": 1560,
+    "name": "cricket"
+  },
+  "🦟": {
+    "code": "1f99f",
+    "duration": 1620,
+    "name": "mosquito"
+  },
+  "🪳": {
+    "code": "1fab3",
+    "duration": 1950,
+    "name": "cockroach"
+  },
+  "🪰": {
+    "code": "1fab0",
+    "duration": 2160,
+    "name": "fly"
+  },
+  "🐝": {
+    "code": "1f41d",
+    "duration": 4950,
+    "name": "bee"
+  },
+  "🐞": {
+    "code": "1f41e",
+    "duration": 4710,
+    "name": "lady-bug"
+  },
+  "🦋": {
+    "code": "1f98b",
+    "duration": 2520,
+    "name": "butterfly"
+  },
+  "🐛": {
+    "code": "1f41b",
+    "duration": 3332,
+    "name": "bug"
+  },
+  "🪱": {
+    "code": "1fab1",
+    "duration": 3840,
+    "name": "worm"
+  },
+  "🐾": {
+    "code": "1f43e",
+    "duration": 990,
+    "name": "paw prints"
+  },
+  "🍓": {
+    "code": "1f353",
+    "duration": 1500,
+    "name": "strawberry"
+  },
+  "🍒": {
+    "code": "1f352",
+    "duration": 1620,
+    "name": "cherries"
+  },
+  "🍎": {
+    "code": "1f34e",
+    "duration": 900,
+    "name": "red-apple"
+  },
+  "🍅": {
+    "code": "1f345",
+    "duration": 2500,
+    "name": "tomato"
+  },
+  "🍉": {
+    "code": "1f349",
+    "duration": 1800,
+    "name": "watermelon"
+  },
+  "🍊": {
+    "code": "1f34a",
+    "duration": 1440,
+    "name": "tangerine"
+  },
+  "🥕": {
+    "code": "1f955",
+    "duration": 1050,
+    "name": "carrot"
+  },
+  "🥭": {
+    "code": "1f96d",
+    "duration": 1620,
+    "name": "mango"
+  },
+  "🍍": {
+    "code": "1f34d",
+    "duration": 1650,
+    "name": "pineapple"
+  },
+  "🌽": {
+    "code": "1f33d",
+    "duration": 1657,
+    "name": "ear-of-corn"
+  },
+  "🍋": {
+    "code": "1f34b",
+    "duration": 1620,
+    "name": "lemon"
+  },
+  "🍈": {
+    "code": "1f348",
+    "duration": 1620,
+    "name": "melon"
+  },
+  "🍐": {
+    "code": "1f350",
+    "duration": 1830,
+    "name": "pear"
+  },
+  "🫛": {
+    "code": "1fadb",
+    "duration": 1140,
+    "name": "pea-pod"
+  },
+  "🥬": {
+    "code": "1f96c",
+    "duration": 1800,
+    "name": "leafy-green"
+  },
+  "🫑": {
+    "code": "1fad1",
+    "duration": 1620,
+    "name": "bell-pepper"
+  },
+  "🥝": {
+    "code": "1f95d",
+    "duration": 990,
+    "name": "kiwi-fruit"
+  },
+  "🥑": {
+    "code": "1f951",
+    "duration": 930,
+    "name": "avocado"
+  },
+  "🥦": {
+    "code": "1f966",
+    "duration": 1680,
+    "name": "broccoli"
+  },
+  "🥒": {
+    "code": "1f952",
+    "duration": 1560,
+    "name": "cucumber"
+  },
+  "🫐": {
+    "code": "1fad0",
+    "duration": 1500,
+    "name": "blueberries"
+  },
+  "🍇": {
+    "code": "1f347",
+    "duration": 1560,
+    "name": "grapes"
+  },
+  "🫜": {
+    "code": "1fadc",
+    "duration": 600,
+    "name": "root-vegetable"
+  },
+  "🥔": {
+    "code": "1f954",
+    "duration": 1560,
+    "name": "potato"
+  },
+  "🧅": {
+    "code": "1f9c5",
+    "duration": 1800,
+    "name": "onion"
+  },
+  "🫚": {
+    "code": "1fada",
+    "duration": 1560,
+    "name": "ginger"
+  },
+  "🧄": {
+    "code": "1f9c4",
+    "duration": 900,
+    "name": "garlic"
+  },
+  "🫘": {
+    "code": "1fad8",
+    "duration": 1800,
+    "name": "beans"
+  },
+  "🍞": {
+    "code": "1f35e",
+    "duration": 1451,
+    "name": "bread"
+  },
+  "🥞": {
+    "code": "1f95e",
+    "duration": 3661,
+    "name": "pancakes"
+  },
+  "🍳": {
+    "code": "1f373",
+    "duration": 1980,
+    "name": "cooking"
+  },
+  "🧀": {
+    "code": "1f9c0",
+    "duration": 2222,
+    "name": "cheese-wedge"
+  },
+  "🥓": {
+    "code": "1f953",
+    "duration": 2835,
+    "name": "bacon"
+  },
+  "🍗": {
+    "code": "1f357",
+    "duration": 2251,
+    "name": "poultry-leg"
+  },
+  "🍔": {
+    "code": "1f354",
+    "duration": 2200,
+    "name": "hamburger"
+  },
+  "🌭": {
+    "code": "1f32d",
+    "duration": 2754,
+    "name": "hot-dog"
+  },
+  "🥨": {
+    "code": "1f968",
+    "duration": 2343,
+    "name": "pretzel"
+  },
+  "🍕": {
+    "code": "1f355",
+    "duration": 2100,
+    "name": "pizza"
+  },
+  "🌮": {
+    "code": "1f32e",
+    "duration": 2645,
+    "name": "taco"
+  },
+  "🌯": {
+    "code": "1f32f",
+    "duration": 1393,
+    "name": "burrito"
+  },
+  "🍝": {
+    "code": "1f35d",
+    "duration": 1860,
+    "name": "spaghetti"
+  },
+  "🥗": {
+    "code": "1f957",
+    "duration": 2945,
+    "name": "green-salad"
+  },
+  "🍜": {
+    "code": "1f35c",
+    "duration": 1620,
+    "name": "steaming-bowl"
+  },
+  "🍢": {
+    "code": "1f362",
+    "duration": 2430,
+    "name": "oden"
+  },
+  "🍡": {
+    "code": "1f361",
+    "duration": 2460,
+    "name": "dango"
+  },
+  "🍨": {
+    "code": "1f368",
+    "duration": 2672,
+    "name": "ice-cream"
+  },
+  "🍦": {
+    "code": "1f366",
+    "duration": 3541,
+    "name": "soft-ice-cream"
+  },
+  "🥧": {
+    "code": "1f967",
+    "duration": 1890,
+    "name": "pie"
+  },
+  "🍩": {
+    "code": "1f369",
+    "duration": 2800,
+    "name": "doughnut"
+  },
+  "🍪": {
+    "code": "1f36a",
+    "duration": 1620,
+    "name": "cookie"
+  },
+  "🧂": {
+    "code": "1f9c2",
+    "duration": 2820,
+    "name": "salt"
+  },
+  "🍿": {
+    "code": "1f37f",
+    "duration": 2290,
+    "name": "popcorn"
+  },
+  "🧋": {
+    "code": "1f9cb",
+    "duration": 2887,
+    "name": "bubble-tea"
+  },
+  "🧃": {
+    "code": "1f9c3",
+    "duration": 1950,
+    "name": "beverage-box"
+  },
+  "🍼": {
+    "code": "1f37c",
+    "duration": 2610,
+    "name": "baby-bottle"
+  },
+  "🍵": {
+    "code": "1f375",
+    "duration": 1350,
+    "name": "teacup-without-handle"
+  },
+  "☕": {
+    "code": "2615",
+    "duration": 1830,
+    "name": "hot-beverage"
+  },
+  "🫖": {
+    "code": "1fad6",
+    "duration": 2586,
+    "name": "teapot"
+  },
+  "🧉": {
+    "code": "1f9c9",
+    "duration": 3064,
+    "name": "mate"
+  },
+  "🍻": {
+    "code": "1f37b",
+    "duration": 1590,
+    "name": "clinking-beer-mugs"
+  },
+  "🥂": {
+    "code": "1f942",
+    "duration": 2100,
+    "name": "clinking-glasses"
+  },
+  "🍾": {
+    "code": "1f37e",
+    "duration": 2250,
+    "name": "bottle-with-popping-cork"
+  },
+  "🍷": {
+    "code": "1f377",
+    "duration": 1620,
+    "name": "wine-glass"
+  },
+  "🫗": {
+    "code": "1fad7",
+    "duration": 2130,
+    "name": "pour"
+  },
+  "🍹": {
+    "code": "1f379",
+    "duration": 3240,
+    "name": "tropical-drink"
+  },
+  "🥢": {
+    "code": "1f962",
+    "duration": 1920,
+    "name": "chopsticks"
+  },
+  "🍽️": {
+    "code": "1f37d_fe0f",
+    "duration": 1590,
+    "name": "fork-and-knife-with-plate"
+  },
+  "🛑": {
+    "code": "1f6d1",
+    "duration": 1770,
+    "name": "stop-sign"
+  },
+  "🚧": {
+    "code": "1f6a7",
+    "duration": 1449,
+    "name": "construction"
+  },
+  "🚨": {
+    "code": "1f6a8",
+    "duration": 1500,
+    "name": "police-car-light"
+  },
+  "⛽": {
+    "code": "26fd",
+    "duration": 2940,
+    "name": "fuel-pump"
+  },
+  "🛟": {
+    "code": "1f6df",
+    "duration": 2400,
+    "name": "ring-buoy"
+  },
+  "⚓": {
+    "code": "2693",
+    "duration": 2589,
+    "name": "anchor"
+  },
+  "🚦": {
+    "code": "1f6a6",
+    "duration": 1165,
+    "name": "vertical-traffic-light"
+  },
+  "🚲": {
+    "code": "1f6b2",
+    "duration": 2700,
+    "name": "bicycle"
+  },
+  "🏍️": {
+    "code": "1f3cd_fe0f",
+    "duration": 3214,
+    "name": "motorcycle"
+  },
+  "🚗": {
+    "code": "1f697",
+    "duration": 2044,
+    "name": "automobile"
+  },
+  "🚚": {
+    "code": "1f69a",
+    "duration": 2372,
+    "name": "delivery-truck"
+  },
+  "🚜": {
+    "code": "1f69c",
+    "duration": 3032,
+    "name": "tractor"
+  },
+  "🏎️": {
+    "code": "1f3ce_fe0f",
+    "duration": 990,
+    "name": "racing-car"
+  },
+  "🚕": {
+    "code": "1f695",
+    "duration": 3155,
+    "name": "taxi"
+  },
+  "🚌": {
+    "code": "1f68c",
+    "duration": 3274,
+    "name": "bus"
+  },
+  "🚂": {
+    "code": "1f682",
+    "duration": 2881,
+    "name": "locomotive"
+  },
+  "⛵": {
+    "code": "26f5",
+    "duration": 3240,
+    "name": "sailboat"
+  },
+  "🛶": {
+    "code": "1f6f6",
+    "duration": 3120,
+    "name": "canoe"
+  },
+  "🛸": {
+    "code": "1f6f8",
+    "duration": 4171,
+    "name": "flying-saucer"
+  },
+  "🚀": {
+    "code": "1f680",
+    "duration": 600,
+    "name": "rocket"
+  },
+  "✈️": {
+    "code": "2708_fe0f",
+    "duration": 1620,
+    "name": "airplane"
+  },
+  "🛫": {
+    "code": "1f6eb",
+    "duration": 1172,
+    "name": "airplane-departure"
+  },
+  "🛬": {
+    "code": "1f6ec",
+    "duration": 1171,
+    "name": "airplane-arrival"
+  },
+  "🎢": {
+    "code": "1f3a2",
+    "duration": 1290,
+    "name": "roller-coaster"
+  },
+  "🎡": {
+    "code": "1f3a1",
+    "duration": 7260,
+    "name": "ferris-wheel"
+  },
+  "🎠": {
+    "code": "1f3a0",
+    "duration": 1860,
+    "name": "carousel-horse"
+  },
+  "🗿": {
+    "code": "1f5ff",
+    "duration": 1991,
+    "name": "moai"
+  },
+  "🏚️": {
+    "code": "1f3da_fe0f",
+    "duration": 1865,
+    "name": "derelict-house"
+  },
+  "🏠": {
+    "code": "1f3e0",
+    "duration": 3240,
+    "name": "house"
+  },
+  "🏕️": {
+    "code": "1f3d5_fe0f",
+    "duration": 2460,
+    "name": "camping"
+  },
+  "🌇": {
+    "code": "1f307",
+    "duration": 3600,
+    "name": "sunset"
+  },
+  "🎈": {
+    "code": "1f388",
+    "duration": 1440,
+    "name": "balloon"
+  },
+  "🎂": {
+    "code": "1f382",
+    "duration": 2370,
+    "name": "birthday-cake"
+  },
+  "🎁": {
+    "code": "1f381",
+    "duration": 2130,
+    "name": "wrapped-gift"
+  },
+  "🎆": {
+    "code": "1f386",
+    "duration": 1860,
+    "name": "fireworks"
+  },
+  "🪔": {
+    "code": "1fa94",
+    "duration": 2430,
+    "name": "diya-lamp"
+  },
+  "🪅": {
+    "code": "1fa85",
+    "duration": 2670,
+    "name": "piñata"
+  },
+  "🪩": {
+    "code": "1faa9",
+    "duration": 1620,
+    "name": "mirror-ball"
+  },
+  "🥇": {
+    "code": "1f947",
+    "duration": 1800,
+    "name": "gold-medal"
+  },
+  "🥈": {
+    "code": "1f948",
+    "duration": 1800,
+    "name": "silver-medal"
+  },
+  "🥉": {
+    "code": "1f949",
+    "duration": 1800,
+    "name": "bronze-medal"
+  },
+  "🏆": {
+    "code": "1f3c6",
+    "duration": 2040,
+    "name": "trophy"
+  },
+  "⚽": {
+    "code": "26bd",
+    "duration": 1800,
+    "name": "soccer-ball"
+  },
+  "⚾": {
+    "code": "26be",
+    "duration": 2100,
+    "name": "baseball"
+  },
+  "🥎": {
+    "code": "1f94e",
+    "duration": 2100,
+    "name": "softball"
+  },
+  "🏀": {
+    "code": "1f3c0",
+    "duration": 3060,
+    "name": "basketball"
+  },
+  "🏉": {
+    "code": "1f3c9",
+    "duration": 1560,
+    "name": "rugby-football"
+  },
+  "🎾": {
+    "code": "1f3be",
+    "duration": 1260,
+    "name": "tennis"
+  },
+  "🏸": {
+    "code": "1f3f8",
+    "duration": 1260,
+    "name": "badminton"
+  },
+  "🥍": {
+    "code": "1f94d",
+    "duration": 2016,
+    "name": "lacrosse"
+  },
+  "🏏": {
+    "code": "1f3cf",
+    "duration": 1260,
+    "name": "cricket-game"
+  },
+  "🏑": {
+    "code": "1f3d1",
+    "duration": 1920,
+    "name": "field-hockey"
+  },
+  "🏒": {
+    "code": "1f3d2",
+    "duration": 1440,
+    "name": "ice-hockey"
+  },
+  "🎿": {
+    "code": "1f3bf",
+    "duration": 1450,
+    "name": "skis"
+  },
+  "⛸️": {
+    "code": "26f8_fe0f",
+    "duration": 2970,
+    "name": "ice-skate"
+  },
+  "🛼": {
+    "code": "1f6fc",
+    "duration": 2077,
+    "name": "roller-skates"
+  },
+  "🩰": {
+    "code": "1fa70",
+    "duration": 1863,
+    "name": "ballet-shoes"
+  },
+  "🛹": {
+    "code": "1f6f9",
+    "duration": 1350,
+    "name": "skateboard"
+  },
+  "⛳": {
+    "code": "26f3",
+    "duration": 1650,
+    "name": "flag-in-hole"
+  },
+  "🎯": {
+    "code": "1f3af",
+    "duration": 2110,
+    "name": "direct-hit"
+  },
+  "🥏": {
+    "code": "1f94f",
+    "duration": 720,
+    "name": "flying-disc"
+  },
+  "🪃": {
+    "code": "1fa83",
+    "duration": 1760,
+    "name": "boomerang"
+  },
+  "🪁": {
+    "code": "1fa81",
+    "duration": 1440,
+    "name": "kite"
+  },
+  "🎣": {
+    "code": "1f3a3",
+    "duration": 1801,
+    "name": "fishing-pole"
+  },
+  "🥋": {
+    "code": "1f94b",
+    "duration": 2086,
+    "name": "martial-arts-uniform"
+  },
+  "🎱": {
+    "code": "1f3b1",
+    "duration": 780,
+    "name": "8-ball"
+  },
+  "🏓": {
+    "code": "1f3d3",
+    "duration": 934,
+    "name": "ping-pong"
+  },
+  "🎳": {
+    "code": "1f3b3",
+    "duration": 1110,
+    "name": "bowling"
+  },
+  "♟️": {
+    "code": "265f_fe0f",
+    "duration": 2613,
+    "name": "chess-pawn"
+  },
+  "🎲": {
+    "code": "1f3b2",
+    "duration": 1592,
+    "name": "die"
+  },
+  "🎰": {
+    "code": "1f3b0",
+    "duration": 1380,
+    "name": "slot-machine"
+  },
+  "🪄": {
+    "code": "1fa84",
+    "duration": 1444,
+    "name": "wand"
+  },
+  "📷": {
+    "code": "1f4f7",
+    "duration": 3090,
+    "name": "camera"
+  },
+  "📸": {
+    "code": "1f4f8",
+    "duration": 1054,
+    "name": "camera-flash"
+  },
+  "🫟": {
+    "code": "1fadf",
+    "duration": 1320,
+    "name": "splatter"
+  },
+  "🎷": {
+    "code": "1f3b7",
+    "duration": 1710,
+    "name": "saxophone"
+  },
+  "🎺": {
+    "code": "1f3ba",
+    "duration": 1833,
+    "name": "trumpet"
+  },
+  "🪊": {
+    "code": "1fa8a",
+    "duration": 2100,
+    "name": "trombone"
+  },
+  "🎸": {
+    "code": "1f3b8",
+    "duration": 2700,
+    "name": "guitar"
+  },
+  "🪕": {
+    "code": "1fa95",
+    "duration": 2610,
+    "name": "banjo"
+  },
+  "🎻": {
+    "code": "1f3bb",
+    "duration": 5670,
+    "name": "violin"
+  },
+  "🪉": {
+    "code": "1fa89",
+    "duration": 2341,
+    "name": "harp"
+  },
+  "🥁": {
+    "code": "1f941",
+    "duration": 2010,
+    "name": "drum"
+  },
+  "🪇": {
+    "code": "1fa87",
+    "duration": 1380,
+    "name": "maracas"
+  },
+  "📺": {
+    "code": "1f4fa",
+    "duration": 2670,
+    "name": "television"
+  },
+  "🎞️": {
+    "code": "1f39e_fe0f",
+    "duration": 3840,
+    "name": "film"
+  },
+  "🎬": {
+    "code": "1f3ac",
+    "duration": 1351,
+    "name": "clapper"
+  },
+  "🎭": {
+    "code": "1f3ad",
+    "duration": 1980,
+    "name": "performing-arts"
+  },
+  "🎟️": {
+    "code": "1f39f_fe0f",
+    "duration": 1260,
+    "name": "admission-tickets"
+  },
+  "📟": {
+    "code": "1f4df",
+    "duration": 2040,
+    "name": "pager"
+  },
+  "🔌": {
+    "code": "1f50c",
+    "duration": 3030,
+    "name": "electric-plug"
+  },
+  "🔋": {
+    "code": "1f50b",
+    "duration": 1560,
+    "name": "battery-full"
+  },
+  "🪫": {
+    "code": "1faab",
+    "duration": 5490,
+    "name": "battery-low"
+  },
+  "💿": {
+    "code": "1f4bf",
+    "duration": 3240,
+    "name": "optical-disk"
+  },
+  "💻": {
+    "code": "1f4bb",
+    "duration": 2954,
+    "name": "laptop-computer"
+  },
+  "🖨️": {
+    "code": "1f5a8_fe0f",
+    "duration": 1260,
+    "name": "printer"
+  },
+  "🪎": {
+    "code": "1fa8e",
+    "duration": 2040,
+    "name": "treasure"
+  },
+  "🪙": {
+    "code": "1fa99",
+    "duration": 2850,
+    "name": "coin"
+  },
+  "💎": {
+    "code": "1f48e",
+    "duration": 1200,
+    "name": "gem-stone"
+  },
+  "💸": {
+    "code": "1f4b8",
+    "duration": 720,
+    "name": "money-with-wings"
+  },
+  "⚖️": {
+    "code": "2696_fe0f",
+    "duration": 2940,
+    "name": "balance-scale"
+  },
+  "🛒": {
+    "code": "1f6d2",
+    "duration": 3155,
+    "name": "shopping-cart"
+  },
+  "💡": {
+    "code": "1f4a1",
+    "duration": 872,
+    "name": "light-bulb"
+  },
+  "🧹": {
+    "code": "1f9f9",
+    "duration": 1830,
+    "name": "broom"
+  },
+  "🧦": {
+    "code": "1f9e6",
+    "duration": 1952,
+    "name": "socks"
+  },
+  "🎓": {
+    "code": "1f393",
+    "duration": 1260,
+    "name": "graduation-cap"
+  },
+  "👑": {
+    "code": "1f451",
+    "duration": 1711,
+    "name": "crown"
+  },
+  "💍": {
+    "code": "1f48d",
+    "duration": 1350,
+    "name": "ring"
+  },
+  "🪭": {
+    "code": "1faad",
+    "duration": 1830,
+    "name": "fan"
+  },
+  "☂️": {
+    "code": "2602_fe0f",
+    "duration": 2843,
+    "name": "umbrella"
+  },
+  "👠": {
+    "code": "1f460",
+    "duration": 1241,
+    "name": "high-heeled-shoe"
+  },
+  "👟": {
+    "code": "1f45f",
+    "duration": 840,
+    "name": "running-shoe"
+  },
+  "🌡️": {
+    "code": "1f321_fe0f",
+    "duration": 3870,
+    "name": "thermometer"
+  },
+  "🩺": {
+    "code": "1fa7a",
+    "duration": 2340,
+    "name": "stethoscope"
+  },
+  "🛠️": {
+    "code": "1f6e0_fe0f",
+    "duration": 2730,
+    "name": "hammer-and-wrench"
+  },
+  "🪏": {
+    "code": "1fa8f",
+    "duration": 1470,
+    "name": "shovel"
+  },
+  "⚙️": {
+    "code": "2699_fe0f",
+    "duration": 4500,
+    "name": "gear"
+  },
+  "⛓️‍💥": {
+    "code": "26d3_fe0f_200d_1f4a5",
+    "duration": 1777,
+    "name": "broken-chain"
+  },
+  "⛓️": {
+    "code": "26d3_fe0f",
+    "duration": 1710,
+    "name": "chains"
+  },
+  "🖇️": {
+    "code": "1f587_fe0f",
+    "duration": 2700,
+    "name": "linked-paperclips"
+  },
+  "✂️": {
+    "code": "2702_fe0f",
+    "duration": 1290,
+    "name": "scissors"
+  },
+  "✏️": {
+    "code": "270f_fe0f",
+    "duration": 1836,
+    "name": "pencil"
+  },
+  "📚": {
+    "code": "1f4da",
+    "duration": 2191,
+    "name": "books"
+  },
+  "📊": {
+    "code": "1f4ca",
+    "duration": 2684,
+    "name": "bar-chart"
+  },
+  "📈": {
+    "code": "1f4c8",
+    "duration": 784,
+    "name": "chart-increasing"
+  },
+  "📉": {
+    "code": "1f4c9",
+    "duration": 845,
+    "name": "chart-decreasing"
+  },
+  "🗑️": {
+    "code": "1f5d1_fe0f",
+    "duration": 2087,
+    "name": "wastebasket"
+  },
+  "📦": {
+    "code": "1f4e6",
+    "duration": 840,
+    "name": "package"
+  },
+  "🗳️": {
+    "code": "1f5f3_fe0f",
+    "duration": 1260,
+    "name": "ballot-box"
+  },
+  "⏰": {
+    "code": "23f0",
+    "duration": 510,
+    "name": "alarm-clock"
+  },
+  "⌛": {
+    "code": "231b",
+    "duration": 2340,
+    "name": "hourglass-done"
+  },
+  "⏳": {
+    "code": "23f3",
+    "duration": 1980,
+    "name": "hourglass-not-done"
+  },
+  "🛎️": {
+    "code": "1f6ce_fe0f",
+    "duration": 1200,
+    "name": "bellhop-bell"
+  },
+  "🔔": {
+    "code": "1f514",
+    "duration": 720,
+    "name": "bell"
+  },
+  "📣": {
+    "code": "1f4e3",
+    "duration": 1740,
+    "name": "megaphone"
+  },
+  "🔎": {
+    "code": "1f50e",
+    "duration": 2408,
+    "name": "magnifying-glass-tilted-right"
+  },
+  "🔮": {
+    "code": "1f52e",
+    "duration": 2160,
+    "name": "crystal-ball"
+  },
+  "💣": {
+    "code": "1f4a3",
+    "duration": 2010,
+    "name": "bomb"
+  },
+  "🪤": {
+    "code": "1faa4",
+    "duration": 2562,
+    "name": "mouse-trap"
+  },
+  "🔒": {
+    "code": "1f512",
+    "duration": 1952,
+    "name": "locked"
+  },
+  "♠️": {
+    "code": "2660_fe0f",
+    "duration": 1956,
+    "name": "spade"
+  },
+  "♈": {
+    "code": "2648",
+    "duration": 4865,
+    "name": "Aries"
+  },
+  "♉": {
+    "code": "2649",
+    "duration": 4865,
+    "name": "Taurus"
+  },
+  "♊": {
+    "code": "264a",
+    "duration": 4866,
+    "name": "Gemini"
+  },
+  "♋": {
+    "code": "264b",
+    "duration": 4985,
+    "name": "Cancer"
+  },
+  "♌": {
+    "code": "264c",
+    "duration": 4865,
+    "name": "Leo"
+  },
+  "♍": {
+    "code": "264d",
+    "duration": 4866,
+    "name": "Virgo"
+  },
+  "♎": {
+    "code": "264e",
+    "duration": 4863,
+    "name": "Libra"
+  },
+  "♏": {
+    "code": "264f",
+    "duration": 4866,
+    "name": "Scorpio"
+  },
+  "♐": {
+    "code": "2650",
+    "duration": 4865,
+    "name": "Sagittarius"
+  },
+  "♑": {
+    "code": "2651",
+    "duration": 5168,
+    "name": "Capricorn"
+  },
+  "♒": {
+    "code": "2652",
+    "duration": 4985,
+    "name": "Aquarius"
+  },
+  "♓": {
+    "code": "2653",
+    "duration": 4865,
+    "name": "Pisces"
+  },
+  "⛎": {
+    "code": "26ce",
+    "duration": 4835,
+    "name": "Ophiuchus"
+  },
+  "🗯️": {
+    "code": "1f5ef_fe0f",
+    "duration": 1680,
+    "name": "anger-bubble"
+  },
+  "💬": {
+    "code": "1f4ac",
+    "duration": 3662,
+    "name": "speech-bubble"
+  },
+  "❗": {
+    "code": "2757",
+    "duration": 2580,
+    "name": "exclamation"
+  },
+  "❓": {
+    "code": "2753",
+    "duration": 2670,
+    "name": "question"
+  },
+  "⁉️": {
+    "code": "2049_fe0f",
+    "duration": 2790,
+    "name": "exclamation-question-mark"
+  },
+  "‼️": {
+    "code": "203c_fe0f",
+    "duration": 2760,
+    "name": "exclamation-double"
+  },
+  "❌": {
+    "code": "274c",
+    "duration": 990,
+    "name": "cross-mark"
+  },
+  "🆘": {
+    "code": "1f198",
+    "duration": 1308,
+    "name": "sos"
+  },
+  "♨️": {
+    "code": "2668_fe0f",
+    "duration": 1020,
+    "name": "hot-springs"
+  },
+  "📴": {
+    "code": "1f4f4",
+    "duration": 1310,
+    "name": "phone-off"
+  },
+  "☢️": {
+    "code": "2622_fe0f",
+    "duration": 1440,
+    "name": "radioactive"
+  },
+  "☣️": {
+    "code": "2623_fe0f",
+    "duration": 1440,
+    "name": "biohazard"
+  },
+  "⚠️": {
+    "code": "26a0_fe0f",
+    "duration": 1440,
+    "name": "warning"
+  },
+  "✅": {
+    "code": "2705",
+    "duration": 1310,
+    "name": "check-mark"
+  },
+  "🆕": {
+    "code": "1f195",
+    "duration": 1310,
+    "name": "new"
+  },
+  "🆓": {
+    "code": "1f193",
+    "duration": 1310,
+    "name": "free"
+  },
+  "🆙": {
+    "code": "1f199",
+    "duration": 1314,
+    "name": "up!"
+  },
+  "🆗": {
+    "code": "1f197",
+    "duration": 1310,
+    "name": "ok-button"
+  },
+  "🆒": {
+    "code": "1f192",
+    "duration": 1500,
+    "name": "cool"
+  },
+  "🚮": {
+    "code": "1f6ae",
+    "duration": 1297,
+    "name": "litter"
+  },
+  "☮️": {
+    "code": "262e_fe0f",
+    "duration": 1314,
+    "name": "peace-symbol"
+  },
+  "☯️": {
+    "code": "262f_fe0f",
+    "duration": 1314,
+    "name": "yin-yang"
+  },
+  "♾️": {
+    "code": "267e_fe0f",
+    "duration": 1310,
+    "name": "infinity"
+  },
+  "🎶": {
+    "code": "1f3b6",
+    "duration": 900,
+    "name": "musical-notes"
+  },
+  "➕": {
+    "code": "2795",
+    "duration": 2520,
+    "name": "plus-sign"
+  },
+  "©️": {
+    "code": "a9_fe0f",
+    "duration": 1813,
+    "name": "copyright"
+  },
+  "®️": {
+    "code": "ae_fe0f",
+    "duration": 1813,
+    "name": "registered"
+  },
+  "™️": {
+    "code": "2122_fe0f",
+    "duration": 1847,
+    "name": "trade-mark"
+  },
+  "🏁": {
+    "code": "1f3c1",
+    "duration": 3600,
+    "name": "chequered-flag"
+  },
+  "🚩": {
+    "code": "1f6a9",
+    "duration": 3570,
+    "name": "triangular-flag"
+  },
+  "🏴": {
+    "code": "1f3f4",
+    "duration": 3600,
+    "name": "black-flag"
+  },
+  "🏳️": {
+    "code": "1f3f3_fe0f",
+    "duration": 3600,
+    "name": "white-flag"
+  }
+}

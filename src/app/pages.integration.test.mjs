@@ -120,7 +120,10 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     await vi.waitFor(() =>
       assert.equal(services.conversation.tools.snapshot().length, 3),
     );
-    assert.equal(services.conversation.inline.snapshot().length, 1);
+    assert.deepEqual(
+      services.conversation.inline.snapshot().map((renderer) => renderer.id),
+      ["animated-preview", "custom"],
+    );
     await vi.waitFor(() =>
       assert.equal(services.conversation.links.snapshot().length, 1),
     );

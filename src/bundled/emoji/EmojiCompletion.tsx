@@ -1,3 +1,5 @@
+import { AnimatedEmoji } from "./AnimatedEmoji";
+import { notoAsset } from "./noto-playback";
 import {
   useEffect,
   useLayoutEffect,
@@ -136,6 +138,8 @@ export function EmojiCompletion({
             emoji={{ shortcode: item.shortcode, url: item.url }}
             media={session.media}
           />
+        ) : notoAsset(item.text) ? (
+          <AnimatedEmoji text={item.text} hoverOption />
         ) : (
           <NativeEmojiPreview emoji={item.text} />
         ),

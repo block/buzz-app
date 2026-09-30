@@ -1070,3 +1070,64 @@ it.each(["cross-channel", "missing", "valid (control)"] as const)(
     }
   },
 );
+it.each([
+  "stays a member (control)",
+  "leaves a public channel",
+  "leaves a private channel",
+] as const)(
+  "a reading save in flight is not sent when the viewer %s",
+  async (change) => {
+    const h = setup(false);
+    const visibility =
+      change === "leaves a private channel" ? [] : [["public"]];
+    h.emit([
+      roster(h.relay, channel, [h.viewer.pubkey], 10),
+      metadata(h.relay, channel, "Room", 10, visibility),
+    ]);
+    h.bff.rows.set(channel, sidebarRow(channel));
+    h.grant(other);
+    const anchor = "a".repeat(64);
+    h.bff.rows.set(
+      other,
+      sidebarRow(other, { latest_message_id: anchor, latest_message_at: 42 }),
+    );
+    await h.unread.ensure();
+    const row = message(h.peer, channel, "hello", 11);
+    h.emit([row]);
+    const handle = h.unread.reading(channel);
+    const update = h.bff.storage.update;
+    let started!: () => void, release!: () => void;
+    const saving = new Promise<void>((r) => {
+      started = r;
+    });
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    vi.spyOn(h.bff.storage, "update").mockImplementationOnce(async (next) => {
+      started();
+      await gate;
+      return update(next);
+    });
+    const observing = handle.observe([row.id]);
+    await saving;
+    if (change !== "stays a member (control)")
+      h.emit([roster(h.relay, channel, [h.peer.pubkey], 20)]);
+    release();
+    if (change === "stays a member (control)") {
+      await observing;
+      await vi.waitFor(() => expect(h.bff.api.write).toHaveBeenCalledOnce());
+      return;
+    }
+    await expect(observing).rejects.toThrow("Reading context changed");
+    // Flush sends only journal intents: none were saved, so none can be sent.
+    expect(h.bff.journal().pending).toEqual([]);
+    // Barrier: a later flush sends every pending intent, so one that carries
+    // only the other channel's read proves this save never became sendable.
+    await h.unread.markChannelRead(other);
+    await vi.waitFor(() => expect(h.bff.api.write).toHaveBeenCalledOnce());
+    expect(h.bff.api.write.mock.calls[0]?.[0]).toEqual([
+      { type: "mark_channel_read", channel_id: other, message_id: anchor },
+    ]);
+    await vi.waitFor(() => expect(h.bff.journal().pending).toEqual([]));
+  },
+);

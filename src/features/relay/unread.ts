@@ -540,7 +540,6 @@ export function createUnread({
         active &&
         !closed &&
         epoch === generation &&
-        allowed(channelId) &&
         (manualRevision.get(channelId) ?? 0) === manual;
       const dispose = () => {
         active = false;

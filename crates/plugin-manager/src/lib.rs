@@ -518,9 +518,7 @@ impl Manager {
             let old = registry.installed.get(&manifest.id);
             if let Some(old) = old {
                 if let Some(previous) = &old.current_signature {
-                    let previous_bytes =
-                        read_limited(&self.artifact_path(&manifest.id, &old.current))?;
-                    let previous_publisher = publisher(previous_bytes.as_bytes(), previous)?;
+                    let previous_publisher = publisher_for_hash(&old.current, previous)?;
                     if release.publisher().as_deref() != Some(previous_publisher.as_str()) {
                         return Err("Publisher changed or signed plugin became unsigned; remove and reinstall to change publisher".into());
                     }
@@ -675,9 +673,8 @@ impl Manager {
                 return Err("Plugin changed while reload was reading from disk; try again".into());
             }
             if let Some(previous) = &plugin.current_signature {
-                let old_bytes = read_limited(&self.artifact_path(id, &plugin.current))?;
                 if release.publisher().as_deref()
-                    != Some(publisher(old_bytes.as_bytes(), previous)?.as_str())
+                    != Some(publisher_for_hash(&plugin.current, previous)?.as_str())
                 {
                     return Err("Publisher changed or signed plugin became unsigned; remove and reinstall to change publisher".into());
                 }

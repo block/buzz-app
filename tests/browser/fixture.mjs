@@ -37,6 +37,7 @@ export const test = base.extend({
   presenceThreadAuthors: [0, { option: true }],
   threadUnreadMentions: [false, { option: true }],
   threadUnreadJoined: [false, { option: true }],
+  threadUnreadOwnedRoot: [true, { option: true }],
   exactMessages: [false, { option: true }],
   openSearch: [false, { option: true }],
   sessionChannels: [[], { option: true }],
@@ -81,6 +82,7 @@ export const test = base.extend({
       presenceThreadAuthors,
       threadUnreadMentions,
       threadUnreadJoined,
+      threadUnreadOwnedRoot,
       exactMessages,
       openSearch,
       sessionChannels,
@@ -493,7 +495,7 @@ export const test = base.extend({
           // viewer's conversation. The second is a peer thread: it counts only
           // when a mention names the viewer, or the viewer joined it with an
           // older reply that only the membership lookup returns.
-          index === 0 ? userKey : peerKey,
+          index === 0 && threadUnreadOwnedRoot ? userKey : peerKey,
           event.created_at,
         );
         history[history.length - 2 + index] = root;

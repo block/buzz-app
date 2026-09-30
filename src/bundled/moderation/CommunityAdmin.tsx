@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { decode } from "nostr-tools/nip19";
+import { nativeIdentityEnabled } from "../../features/identity/service";
 import { communityFromScope } from "../../features/relay/gifs";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
@@ -58,6 +59,8 @@ const USES = [
 const message = (reason: unknown) =>
   reason instanceof Error ? reason.message : String(reason);
 const STALE = "The member list is out of date. Retry before making changes.";
+const READ_ONLY =
+  "This build can’t change members, but you can share an invite link.";
 
 export function CommunityAdmin({
   relay,
@@ -149,6 +152,8 @@ function Members({
   const stale = !!readError;
   // No new command may start from a roster that is stale or being re-read.
   const locked = stale || refreshing;
+  // Native supports invite links, but not the broker's member-change route.
+  const canChange = !nativeIdentityEnabled();
   const baseName = (pubkey: string) =>
     profiles.get(pubkey)?.name || formatPublicKey(pubkey) || pubkey;
   // Every target gets a key qualifier: self-declared names can look identical
@@ -265,6 +270,7 @@ function Members({
           </Button>
         )}
       </div>
+      {!canChange && <p className="text-body-sm text-muted">{READ_ONLY}</p>}
       {status}
       {error && (
         <p role="alert" className="text-body-sm">
@@ -283,10 +289,12 @@ function Members({
         />
         <ul className="m-0 mt-3 list-none p-0" aria-label="Members">
           {shown.map((member) => {
-            // A stale list must not offer another destructive command.
-            const actions = stale
-              ? []
-              : allowedActions(role, member, member.pubkey === viewer);
+            // A stale list must not offer another destructive command, and a
+            // native build has no route to carry one.
+            const actions =
+              stale || !canChange
+                ? []
+                : allowedActions(role, member, member.pubkey === viewer);
             const label = name(member.pubkey);
             return (
               <li key={member.pubkey} className="flex items-center gap-3 py-2">
@@ -399,7 +407,11 @@ function Members({
         refreshing={refreshing}
         active={active}
         retry={() => void refresh()}
-        add={(pubkey, next) => apply({ action: "add", pubkey, role: next })}
+        add={
+          canChange
+            ? (pubkey, next) => apply({ action: "add", pubkey, role: next })
+            : undefined
+        }
       />
     </>
   );
@@ -488,7 +500,9 @@ function InviteDialog({
   refreshing: boolean;
   active(): boolean;
   retry(): void;
-  add(pubkey: string, role: "admin" | "member"): Promise<void>;
+  add?:
+    | ((pubkey: string, role: "admin" | "member") => Promise<void>)
+    | undefined;
 }) {
   const [ttl, setTtl] = useState(String(3 * DAY));
   const [uses, setUses] = useState("");
@@ -550,7 +564,8 @@ function InviteDialog({
     }
   }
   async function addDirectly() {
-    if (!directKey || identityError || !active() || locked || adding) return;
+    if (!add || !directKey || identityError || !active() || locked || adding)
+      return;
     setAdding(true);
     setError("");
     setNotice("");
@@ -582,61 +597,67 @@ function InviteDialog({
         close();
       }}
       preventClose={adding}
-      title="Add or invite people"
-      description="Add someone by their exact identity, or share a link they can use to join."
+      title={add ? "Add or invite people" : "Invite people"}
+      description={
+        add
+          ? "Add someone by their exact identity, or share a link they can use to join."
+          : "Share a link people can use to join."
+      }
     >
       <div className="flex flex-col gap-6">
-        <section aria-labelledby="add-member-directly">
-          <h3 id="add-member-directly" className="m-0 text-label">
-            Add directly
-          </h3>
-          <p className="mt-1 mb-3 text-body-sm text-muted">
-            Paste the person’s npub or 64-character public key.
-          </p>
-          <form
-            className="flex gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void addDirectly();
-            }}
-          >
-            <div className="min-w-0 flex-1">
-              <InputGroup>
-                <Input
-                  aria-label="Public identity"
-                  placeholder="npub1… or public key"
-                  value={identity}
-                  onChange={(event) => setIdentity(event.currentTarget.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                  disabled={adding}
-                />
-                {owner && (
-                  <Choice
-                    label="Choose member role"
-                    value={role}
-                    options={ROLES_OFFERED}
-                    onChange={(value) => setRole(value as "admin" | "member")}
+        {add && (
+          <section aria-labelledby="add-member-directly">
+            <h3 id="add-member-directly" className="m-0 text-label">
+              Add directly
+            </h3>
+            <p className="mt-1 mb-3 text-body-sm text-muted">
+              Paste the person’s npub or 64-character public key.
+            </p>
+            <form
+              className="flex gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void addDirectly();
+              }}
+            >
+              <div className="min-w-0 flex-1">
+                <InputGroup>
+                  <Input
+                    aria-label="Public identity"
+                    placeholder="npub1… or public key"
+                    value={identity}
+                    onChange={(event) => setIdentity(event.currentTarget.value)}
+                    autoComplete="off"
+                    spellCheck={false}
                     disabled={adding}
                   />
+                  {owner && (
+                    <Choice
+                      label="Choose member role"
+                      value={role}
+                      options={ROLES_OFFERED}
+                      onChange={(value) => setRole(value as "admin" | "member")}
+                      disabled={adding}
+                    />
+                  )}
+                </InputGroup>
+                {identityError && (
+                  <p role="alert" className="mt-2 mb-0 text-body-sm">
+                    {identityError}
+                  </p>
                 )}
-              </InputGroup>
-              {identityError && (
-                <p role="alert" className="mt-2 mb-0 text-body-sm">
-                  {identityError}
-                </p>
-              )}
-            </div>
-            <Button
-              type="submit"
-              variant="primary"
-              loading={adding}
-              disabled={adding || locked || !directKey || !!identityError}
-            >
-              Add member
-            </Button>
-          </form>
-        </section>
+              </div>
+              <Button
+                type="submit"
+                variant="primary"
+                loading={adding}
+                disabled={adding || locked || !directKey || !!identityError}
+              >
+                Add member
+              </Button>
+            </form>
+          </section>
+        )}
         <section aria-labelledby="invite-with-link">
           <h3 id="invite-with-link" className="m-0 text-label">
             Invite with a link

@@ -7,6 +7,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { AccountActionsService } from "../../features/account-actions/service";
 import type { Communities } from "../../features/communities/service";
+import type { OpenTarget } from "../../features/navigation/targets";
 import { CommunityRail } from "../../features/communities/CommunityRail";
 import { ProfileButton } from "./ProfileButton";
 import { PageSearch, type SearchServices } from "./PageSearch";
@@ -31,6 +32,7 @@ export function AppShell({
   searchServices,
   navigationControls,
   onCommunitySelect,
+  onOpenTarget,
   launchers,
   companion,
   children,
@@ -48,6 +50,8 @@ export function AppShell({
   searchServices?: SearchServices;
   navigationControls?: ReactNode;
   onCommunitySelect?: (id: string | null) => void;
+  /** Community menu destinations, opened through the host's navigation. */
+  onOpenTarget?: (target: OpenTarget) => void;
   launchers?: ReactNode;
   companion?: ReactNode;
   children: ReactNode;
@@ -84,9 +88,13 @@ export function AppShell({
     }
     setNavigationOpen(false);
   }, [navigationAttempt]);
-  const pageNavigation = (
+  // Only primary pages get a row; search below still lists every active page.
+  // Every primary page comes from an optional plugin, so an empty list is
+  // reachable; skip the landmark rather than announce an empty region.
+  const primaryPages = orderPages(pages.filter((page) => page.primary));
+  const pageNavigation = primaryPages.length ? (
     <nav aria-label="Pages" className="shell-pages">
-      {orderPages(pages).map((page) => {
+      {primaryPages.map((page) => {
         const { label, icon: Icon } = pagePresentation(page);
         return (
           <NavigationItem
@@ -100,12 +108,16 @@ export function AppShell({
             }}
             selected={selected === page.key}
             label={label}
-            icon={<Icon aria-hidden="true" size={20} />}
+            icon={
+              <span className="shell-page-icon">
+                <Icon aria-hidden="true" weight="bold" size={15} />
+              </span>
+            }
           />
         );
       })}
     </nav>
-  );
+  ) : null;
   return (
     <div
       data-shell-tone={tone}
@@ -175,7 +187,11 @@ export function AppShell({
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <CommunityRail communities={communities} onSelect={onCommunitySelect} />
+        <CommunityRail
+          communities={communities}
+          onSelect={onCommunitySelect}
+          onOpenTarget={onOpenTarget}
+        />
         <div
           className={`shell-body ${selected === "settings" ? "shell-body-settings" : ""}`}
         >

@@ -94,7 +94,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
     <ToastProvider>
       <ChannelNavigationProvider relay={services.relay}>
         <AppShell
-          sidebar={() =>
+          sidebar={(pageNavigation) =>
             settings ? (
               <SettingsSidebar
                 cards={services.settingsCards}
@@ -131,10 +131,9 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 sessionsEnabled={route.pages.some(
                   (page) => page.pluginId === "buzz.sessions",
                 )}
-                agentsEnabled={route.pages.some(
-                  (page) => page.key === "buzz.agents/agents",
-                )}
-              />
+              >
+                {pageNavigation}
+              </ChannelSidebar>
             )
           }
           navigationControls={
@@ -147,6 +146,8 @@ function ConnectedApp({ services }: { services: AppServices }) {
             services.communities.select(id);
             if (!recovering) select("buzz.channels/channels");
           }}
+          // A scoped Settings target selects its community on the way.
+          onOpenTarget={(target) => void services.navigation.open(target)}
           communities={services.communities}
           accountActions={services.accountActions}
           onProfile={

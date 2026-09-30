@@ -7,13 +7,20 @@ import { open, upper } from "./timeline.mjs";
 // above the viewport, and their new heights feed the next correction. The feed
 // must keep the same inline size in both overflow states.
 //
-// Headless Chromium hides scrollbars by default, so drop that flag to get
-// platform scrollbars that take space. Playwright's WebKit uses overlay
-// scrollbars on macOS; the width case skips there and the native manual check
-// on a legacy-scrollbar Mac remains the definitive one.
+// Chromium never runs interruptMomentum (its MacIntel/Apple vendor predicate is
+// false there), so this spec does not exercise the loop. It proves the CSS
+// invariant the fix depends on by replaying the patch's exact inline toggle and
+// restore. Headless Chromium hides scrollbars by default, so drop that flag to
+// get platform scrollbars that take space. Playwright's WebKit uses overlay
+// scrollbars on macOS; the width case skips there and WebKit only runs the
+// toHaveCSS guard. The native manual check on a legacy-scrollbar Mac remains
+// the definitive one for the loop itself.
 test.use({
   historyCounts: { alpha: 640, beta: 20 },
-  launchOptions: { ignoreDefaultArgs: ["--hide-scrollbars"] },
+  // A plain object here would replace the config's launchOptions; merge them.
+  launchOptions: async ({ launchOptions }, use) => {
+    await use({ ...launchOptions, ignoreDefaultArgs: ["--hide-scrollbars"] });
+  },
 });
 const history = (page) =>
   page.getByRole("region", { name: "Channel message history" });
@@ -28,26 +35,28 @@ test("feed width survives the Virtua overflow toggle", async ({
   app,
 }) => {
   await open(page, app);
-  await upper(page);
+  // 640 rows already overflow at the bottom, so decide the skip before paying
+  // for the wheel-gesture detach.
   const space = await history(page).evaluate(
     (element) => element.offsetWidth - element.clientWidth,
   );
   test.skip(space === 0, "scrollbar takes no space here (overlay scrollbars)");
+  await upper(page);
   const readings = await history(page).evaluate((element) => {
-    const read = () => {
-      const bounds = element.getBoundingClientRect();
-      const paragraph = Array.from(
-        element.querySelectorAll("[data-message-id] p"),
-      ).find((p) => {
-        const rect = p.getBoundingClientRect();
-        return rect.top >= bounds.top && rect.bottom <= bounds.bottom;
-      });
-      if (!paragraph) throw new Error("No fully visible message paragraph");
-      return {
-        clientWidth: element.clientWidth,
-        paragraphWidth: paragraph.getBoundingClientRect().width,
-      };
-    };
+    // Pick the measured paragraph once so all three reads compare the same
+    // node even if a state re-wraps enough to change which paragraph fits.
+    const bounds = element.getBoundingClientRect();
+    const paragraph = Array.from(
+      element.querySelectorAll("[data-message-id] p"),
+    ).find((p) => {
+      const rect = p.getBoundingClientRect();
+      return rect.top >= bounds.top && rect.bottom <= bounds.bottom;
+    });
+    if (!paragraph) throw new Error("No fully visible message paragraph");
+    const read = () => ({
+      clientWidth: element.clientWidth,
+      paragraphWidth: paragraph.getBoundingClientRect().width,
+    });
     const before = read();
     // Mirror patches/virtua@0.51.0.patch interruptMomentum() and its restore.
     const style = element.style;

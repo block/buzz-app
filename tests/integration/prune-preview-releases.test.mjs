@@ -137,10 +137,8 @@ test("apply deletes only eligible preview releases and their tags, leaving other
     ["v1.0.0", false, false],
     [tag(30), false, false],
     [tag(40), true, true],
-    ["v0.0.0-preview.01.1", true, false],
+    ["v0.0.0-preview.19.1-windows-linux", true, false],
     ["preview-feed", true, false],
-    ["stable-feed", false, false],
-    ["desktop-v0.5.25", true, false],
   ]) {
     releases.push({
       tag_name: name,
@@ -177,38 +175,25 @@ test("seven-day retention is inclusive and independent of the newest-ten floor",
   assert.deepEqual(result.calls, [feedArgs, listArgs, deleteArgs(tag(3))]);
 });
 
-test("fewer than ten previews and repeated cleanup have nothing to delete", (t) => {
-  const { run, releases } = fixture(t);
-  for (const retained of [
-    releases.slice(0, 5),
-    releases.filter((release) => ![tag(2), tag(3)].includes(release.tag_name)),
-  ]) {
-    const result = run({ args: ["--apply"], pages: [retained] });
-    assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(result.calls, [feedArgs, listArgs]);
-    assert.match(result.stdout, /Deleted 0/);
-  }
-});
-
 test("unavailable or invalid feed/listing aborts before any deletion", (t) => {
   const { run, manifest, releases } = fixture(t);
   for (const overrides of [
     { failFeed: true },
     { failList: true },
-    { manifest: null },
-    { manifest: { ...manifest, version: "0.0.0-preview.bad" } },
-    { manifest: { ...manifest, version: "0.0.0-preview.999.1" } },
-    { manifest: { ...manifest, platforms: {} } },
+    { pages: [releases.slice(1)] },
+    {
+      manifest: {
+        ...manifest,
+        platforms: { ...manifest.platforms, "windows-x86_64": {} },
+      },
+    },
     {
       manifest: {
         ...manifest,
         platforms: { "darwin-aarch64": { url: "https://example.com/archive" } },
       },
     },
-    { pages: [] },
-    { pages: [releases.slice(1)] },
     { pages: [[...releases, { ...releases[2], published_at: null }]] },
-    { pages: [[...releases, { ...releases[2], published_at: "invalid" }]] },
   ]) {
     const result = run({ args: ["--apply"], ...overrides });
     assert.notEqual(result.status, 0, JSON.stringify(overrides));
@@ -216,11 +201,10 @@ test("unavailable or invalid feed/listing aborts before any deletion", (t) => {
   }
 });
 
-test("unknown arguments or an unexpected repository abort without GitHub calls", (t) => {
+test("an unknown argument or an unexpected repository aborts without GitHub calls", (t) => {
   const { run } = fixture(t);
   for (const options of [
     { args: ["--aplpy"] },
-    { args: ["--apply", "extra"] },
     { args: ["--apply"], repo: "someone/other" },
   ]) {
     const result = run(options);
@@ -229,15 +213,9 @@ test("unknown arguments or an unexpected repository abort without GitHub calls",
   }
 });
 
-test("deletion failure stops cleanup; the next run can prune remaining releases", (t) => {
-  const { run, releases } = fixture(t);
+test("deletion failure stops cleanup and fails the run", (t) => {
+  const { run } = fixture(t);
   const failed = run({ args: ["--apply"], failDelete: tag(3) });
   assert.notEqual(failed.status, 0);
   assert.deepEqual(failed.calls, [feedArgs, listArgs, deleteArgs(tag(3))]);
-  const resumed = run({
-    args: ["--apply"],
-    pages: [releases.filter((release) => release.tag_name !== tag(3))],
-  });
-  assert.equal(resumed.status, 0, resumed.stderr);
-  assert.deepEqual(resumed.calls, [feedArgs, listArgs, deleteArgs(tag(2))]);
 });

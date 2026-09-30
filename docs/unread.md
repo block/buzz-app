@@ -147,7 +147,10 @@ opening. References alone do not grant access or trigger a read.
 
 Every write anchors on a message ID; the relay derives the timestamp and rejects
 anchors outside the viewer's membership (`blocked`) or of an ineligible kind or
-wrong context (`invalid`), which surface as a per-channel error. Disposal, cache
+wrong context (`invalid`). The action has already resolved once its intent was
+saved, so either outcome is recorded as the channel's `error` on the unread and
+thread-activity snapshots, which the bundled UI does not render; the channel is
+re-read, and its unread count returning is the feedback. Disposal, cache
 clear or access revoke/regrant invalidates queued intent. Automatic dwell leases
 are invalidated by a newer manual-unread action on the channel.
 
@@ -164,7 +167,9 @@ frontier advances, so no publisher lock is needed: any window's flush (on
 enqueue, focus/visibility or the periodic refresh) delivers every pending intent,
 including one saved by a window that closed before sending. An `unknown` outcome
 keeps the intent for retry. The journal holds at most 1,000 pending and 1,000
-manual entries within 512 KiB; exceeding that is a visible error.
+manual entries within 512 KiB. Exceeding that rejects the action: explicit read
+and unread actions show the error, while automatic reading stops saving without
+a notice.
 
 Manual unread is **local to this browser profile**; `syncedManualUnread` is
 `false`. The relay's advertised retention window (`retention_seconds` in NIP-11
@@ -191,8 +196,9 @@ are separate from the retained-demand limits.
 The journal coalesces dominated pending prefixes before sending. If a newer anchor
 covers an older pending prefix but the relay subsequently blocks the newer anchor
 (for example, unresolved ancestry), the older intent is no longer available as a
-fallback. The blocked action surfaces an error and requires refresh/retry with a
-valid anchor; the client does not manufacture progress from it.
+fallback. The blocked outcome is recorded but not shown, as above; progress
+needs a refresh and a new action with a valid anchor, and the client does not
+manufacture progress from it.
 
 Deployment requires the compatible `/buzz/v1` extension, including five-thread
 summaries and fixed-anchor whole-channel reads. An older or absent descriptor

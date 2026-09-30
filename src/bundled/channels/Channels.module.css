@@ -49,10 +49,12 @@
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  /* Keep row focus outlines inside the scrollport without shifting content. */
+  /* Keep row focus outlines inside the scrollport without shifting content.
+     The end padding exceeds the 4px ring because scroll offsets snap to
+     whole pixels while content height can be fractional. */
   margin-inline: calc(-1 * var(--sidebar-padding))
     calc(-1 * var(--sidebar-padding-end));
-  padding: 0 var(--sidebar-padding-end) var(--space-1) var(--sidebar-padding);
+  padding: 0 var(--sidebar-padding-end) var(--space-1h) var(--sidebar-padding);
 }
 .sidebarBrand {
   height: var(--space-6);

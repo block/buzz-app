@@ -823,23 +823,33 @@ test("non-ready sidebar keeps page rows and Retry reachable by pointer scrolling
       )
       .toBe(true);
   };
+  const expectRingAboveScrollEnd = () =>
+    expect
+      .poll(() =>
+        retry.evaluate((element) => {
+          const style = getComputedStyle(element);
+          const extent =
+            parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset);
+          return (
+            element.getBoundingClientRect().bottom + extent <=
+            element.parentElement.getBoundingClientRect().bottom
+          );
+        }),
+      )
+      .toBe(true);
   await scrollToBottom(retry);
   await expectUnclippedFocus(retry);
-  await expect
-    .poll(() =>
-      retry.evaluate((element) => {
-        const style = getComputedStyle(element);
-        const extent =
-          parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset);
-        // Scroll offsets snap to whole pixels while row heights can be
-        // fractional, so allow less than one pixel at the scroll end.
-        return (
-          element.getBoundingClientRect().bottom + extent <
-          element.parentElement.getBoundingClientRect().bottom + 1
-        );
-      }),
-    )
-    .toBe(true);
+  await expectRingAboveScrollEnd();
+  // Content height can be fractional while scroll offsets snap to whole
+  // pixels; hosted WebKit clipped the ring that way.
+  for (const fraction of [0.3, 0.7]) {
+    const layout = await page.addStyleTag({
+      content: `[aria-label="Channel sidebar"] p { padding-block-end: ${fraction}px; }`,
+    });
+    await scrollToBottom(retry);
+    await expectRingAboveScrollEnd();
+    await layout.evaluate((element) => element.remove());
+  }
   await page.unroute("**/session");
   await retry.click();
   await expect(

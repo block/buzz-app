@@ -536,29 +536,43 @@ mod job {
     #[cfg(test)]
     #[test]
     fn member_gone_before_it_was_opened_fails_stop() {
-        // cmd root -> short-lived cmd, handle closed at its exit -> long ping.
-        let mut command = Command::new(std::env::var_os("ComSpec").unwrap());
-        command.raw_arg("/d /c cmd /d /c exit & ping -n 600 127.0.0.1 >nul");
+        let shell = std::env::var_os("ComSpec").unwrap();
         let mut job = Job::create().unwrap();
-        let mut child = job.spawn(&mut command).unwrap();
+        let mut root = job
+            .spawn(Command::new(&shell).raw_arg("/d /c ping -n 600 127.0.0.1 >nul"))
+            .unwrap();
+        let mut gone = job
+            .spawn(Command::new(&shell).raw_arg("/d /c exit"))
+            .unwrap();
+        // Its own signaled handle proves the exit; holding it pins the ID.
+        assert!(gone.wait().unwrap().success());
         let deadline = Instant::now() + Duration::from_secs(30);
-        while {
+        // Once received, a sweep after the exit also retires the watcher's handle.
+        let key = loop {
             job.sweep();
-            job.seen.len() < 3
-        } {
-            assert!(
-                Instant::now() < deadline,
-                "watcher did not open every member"
-            );
+            if let Some(&key) = job.seen.iter().find(|&&(id, _)| id == gone.id()) {
+                break key;
+            }
+            assert!(Instant::now() < deadline, "watcher did not open the member");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        drop(gone);
+        // Wait until Stop could no longer reopen that exact process.
+        while member(&job.handle, key.0).is_some_and(|(found, _)| found == key) {
+            assert!(Instant::now() < deadline, "exited member was not released");
             std::thread::sleep(Duration::from_millis(10));
         }
-        // As if both notifications were lost; Stop reopens only the live ping.
-        job.seen.retain(|&(id, _)| id == child.id());
+        // As if its notification were lost.
+        job.seen.remove(&key);
         assert_eq!(
             job.stop().unwrap_err(),
             "Agent descendants have not exited; shutdown is incomplete"
         );
-        assert!(child.try_wait().unwrap().is_some(), "root survived Stop");
-        assert_eq!((job.seen.len(), job.held.len()), (2, 0));
+        assert!(root.try_wait().unwrap().is_some(), "root survived Stop");
+        assert!(job.held.is_empty(), "an opened member survived Stop");
+        assert!(
+            !job.seen.contains(&key),
+            "Stop recaptured the missing member"
+        );
     }
 }

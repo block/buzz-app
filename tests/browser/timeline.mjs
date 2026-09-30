@@ -178,3 +178,14 @@ export async function upper(page) {
   );
   return anchor(page);
 }
+// Virtua expires an imperative scroll 150ms after its last size update and
+// restores the list's pointer events 150ms after the last scroll event. Wait
+// for that observable state plus settled geometry before raw pointer input
+// (page.mouse.move has no hit-target retry) or a click Playwright would
+// otherwise retry through alternate scroll alignments. A fake clock is not a
+// substitute: it also reorders requestAnimationFrame against the rendering
+// update.
+export async function virtuaIdle(page, scroller = history(page)) {
+  await expect(scroller.locator("ol")).toHaveCSS("pointer-events", "auto");
+  await settle(page, scroller);
+}

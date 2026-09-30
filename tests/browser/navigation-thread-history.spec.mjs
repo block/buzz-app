@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, virtuaIdle } from "./timeline.mjs";
 
 test.use({
   productionBroker: true,
@@ -141,7 +141,7 @@ for (const reading of [false, true]) {
         .getByRole("button", { name: /^View thread:/ });
       // Virtua can retain its pointer lock after geometry stops moving. Wait
       // for input readiness before Playwright tries alternate scroll alignments.
-      await expect(trigger).toHaveCSS("pointer-events", "auto");
+      await virtuaIdle(page);
       await trigger.click();
       await expect.poll(() => requested).toBe(true);
       // One of the 50 loaded replies is a collapsed descendant.

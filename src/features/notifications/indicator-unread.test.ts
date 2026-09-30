@@ -10,7 +10,7 @@ const cleanups: (() => void)[] = [];
 afterEach(() => {
   for (const stop of cleanups.splice(0).reverse()) stop();
 });
-function setup() {
+function setup(supported = true) {
   const viewer = keypair(),
     peer = keypair(),
     relay = keypair();
@@ -23,7 +23,7 @@ function setup() {
       relayAuthor: relay.pubkey,
       query,
       media: () => undefined,
-      sidebarApi: bff.api,
+      ...(supported ? { sidebarApi: bff.api } : {}),
       subscribe(callbacks) {
         incoming = callbacks.receive;
         return { update() {}, retry() {}, dispose() {} };
@@ -162,6 +162,7 @@ it.each(["personal", "viewer", "disconnected", "membership"])(
         12,
       ),
     ]);
+    await h.count(target.channelId, 2);
     expect(h.project).toHaveBeenCalledTimes(calls);
   },
 );
@@ -187,6 +188,7 @@ it("retargets an already-open community and ignores the prior session after swit
       12,
     ),
   ]);
+  await h.count(target.channelId, 2);
   expect(h.project).toHaveBeenLastCalledWith(false);
   await other.count(target.channelId, 1);
   expect(h.project).toHaveBeenLastCalledWith(true);
@@ -201,7 +203,31 @@ it("retargets an already-open community and ignores the prior session after swit
       14,
     ),
   ]);
+  await other.count(target.channelId, 2);
   h.notify();
   stop();
   expect(h.project).toHaveBeenCalledTimes(calls);
 });
+it.each([
+  ["relay count", true],
+  ["local unread mark", false],
+] as const)(
+  "a channel leaving the roster does not detach the indicator from remaining channels: %s",
+  async (_label, supported) => {
+    const h = setup(supported);
+    const second = "11234567-89ab-cdef-0123-456789abcdef";
+    h.grant();
+    h.grant(second);
+    h.bind();
+    expect(h.project).toHaveBeenLastCalledWith(false);
+    h.emit([roster(h.relay, target.channelId, [], 14)]);
+    expect(h.project).toHaveBeenLastCalledWith(false);
+    if (supported) await h.count(second, 1);
+    else
+      await h.session.unread.markUnreadLocal({
+        kind: "channel",
+        channelId: second,
+      });
+    expect(h.project).toHaveBeenLastCalledWith(true);
+  },
+);

@@ -627,7 +627,9 @@ test.describe("DM preview wiring", () => {
     const human = below.locator('[data-unread-dm="dm-a"] [data-avatar-shape]');
     const agent = below.locator('[data-unread-dm="dm-b"] [data-avatar-shape]');
     await expect(human).toHaveAttribute("data-avatar-shape", "circle");
+    await expect(human).toHaveCSS("border-radius", "50%");
     await expect(agent).toHaveAttribute("data-avatar-shape", "squircle");
+    await expect(agent).toHaveCSS("border-radius", "0px");
     const boxes = await below.locator("[data-unread-dm]").evaluateAll((els) =>
       els.map((el) => {
         const { left, right } = el.getBoundingClientRect();

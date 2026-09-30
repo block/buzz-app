@@ -245,19 +245,11 @@
   isolation: isolate;
   width: max-content;
   max-width: calc(100% - var(--space-2));
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-capsule);
   background: var(--affordance-prominent);
   box-shadow: var(--shadow-sm);
 }
 
-.unreadEdge > button[data-buzz-ui] {
-  border-radius: var(--radius-control);
-  background: var(--affordance-prominent);
-  color: var(--text-inverse);
-  padding-inline: var(--space-1h) calc(var(--space-2) + var(--space-half));
-  font-size: var(--text-body-sm);
-  line-height: var(--text-body-sm--line-height);
-}
 .unreadEdge [class~="buzz-button-label"] {
   gap: var(--space-1h);
   min-width: 0;

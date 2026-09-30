@@ -8,6 +8,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "inbox",
     title: "Inbox",
     layout: "workspace",
+    primary: true,
     component: () => (
       <InboxPage
         relay={relay}

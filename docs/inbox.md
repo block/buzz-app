@@ -1,8 +1,9 @@
 # Inbox: in-progress port
 
 Inbox is a bundled page (`buzz.inbox/inbox`), enabled by default. The sidebar
-opens it in the selected community. Old `buzz.channels/channels` Inbox routes
-resolve to the new page within the same navigation attempt. A disabled Inbox
+lists it through the plugin page's `primary` flag and opens it in the selected
+community. The app navigation owner normalizes old `buzz.channels/channels`
+Inbox routes to this page within the same navigation attempt. A disabled Inbox
 uses the host's unavailable-destination recovery; selecting its sidebar entry
 does not enable it.
 

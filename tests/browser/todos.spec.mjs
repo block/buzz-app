@@ -152,40 +152,36 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     await expect(assignee).toHaveAttribute("data-size", "sm");
     await expect(assignee).toHaveAttribute("data-variant", "ghost");
   };
-  // Channel-specific drawers stay off placeholder destinations, but returning
-  // to the same channel can reopen its Canvas-backed content with a live launcher.
+  // Channel-specific drawers stay off other pages, but returning to the same
+  // channel can reopen its Canvas-backed content with a live launcher.
   const sidebar = page.getByRole("complementary", { name: "Channel sidebar" });
+  const pages = sidebar.getByRole("navigation", { name: "Pages" });
   for (const destination of ["Inbox", "Bestie"]) {
-    await sidebar
-      .getByRole("button", { name: destination, exact: true })
-      .click();
-    const destinationPage =
-      destination === "Inbox"
-        ? page.getByRole("region", { name: "Inbox", exact: true })
-        : page.getByRole("article", { name: "Conversation", exact: true });
-    await expect(destinationPage).toBeVisible();
+    await pages.getByRole("button", { name: destination, exact: true }).click();
+    const surface = page.getByRole("region", {
+      name: destination,
+      exact: true,
+    });
+    await expect(surface).toBeVisible();
     if (destination === "Inbox")
       await expect(
-        destinationPage.getByRole("combobox", { name: "Activity type" }),
+        surface.getByRole("combobox", { name: "Activity type" }),
       ).toBeVisible();
-    else
-      await expect(
-        page.getByText("Content coming soon", { exact: true }),
-      ).toBeVisible();
-    await expect(drawer).toHaveCount(0);
-    await expect(launcher).toHaveCount(0);
-    const placeholder = destinationPage;
     await expect
       .poll(() =>
-        placeholder.evaluate((el) => {
-          const board = el.parentElement;
-          return Math.abs(
-            el.getBoundingClientRect().width -
-              board.getBoundingClientRect().width,
-          );
+        surface.evaluate((element) => {
+          const workspace = document.querySelector("#main-content");
+          return workspace
+            ? Math.abs(
+                element.getBoundingClientRect().width -
+                  workspace.getBoundingClientRect().width,
+              )
+            : Infinity;
         }),
       )
       .toBeLessThan(2);
+    await expect(drawer).toHaveCount(0);
+    await expect(launcher).toHaveCount(0);
     await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
     await expect(drawer).toHaveCount(0);
     await expect(launcher).toHaveAttribute("aria-pressed", "false");

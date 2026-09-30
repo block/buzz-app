@@ -131,6 +131,18 @@ export function listDraftViews(
   return { entries: drafts, limited };
 }
 
+/** Forgets every key saved under one scope, for a community the viewer has left. */
+export function clearViewScope(scope: string) {
+  const prefix = `buzz-view.v1:${JSON.stringify([scope]).slice(0, -1)},`;
+  const stale: string[] = [];
+  for (let index = 0; index < localStorage.length; index++) {
+    const key = localStorage.key(index);
+    if (key?.startsWith(prefix)) stale.push(key);
+  }
+  for (const key of stale) localStorage.removeItem(key);
+  changed(scope);
+}
+
 /** Recovery callers must confirm cleanup before retiring their durable operation. */
 export function clearView(scope: string, ...keys: string[]) {
   for (const key of keys) {

@@ -2,6 +2,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import {
   clearView,
+  clearViewScope,
   draftCoordinates,
   listDraftViews as enumerateDrafts,
   readView,
@@ -115,4 +116,24 @@ it("counts meaningful drafts rather than empty history and never reads another s
   expect(
     enumerateDrafts("scope", meaningful, "draft:empty-509").entries,
   ).toHaveLength(500);
+});
+
+it("community scope cleanup removes only that scope and notifies its same-window draft subscribers", () => {
+  const scope = 'relay:alice"quoted';
+  writeView(scope, "draft:room", "Leaving draft");
+  writeView(scope, "scroll:room", { offset: 42 });
+  writeView(`${scope}-other`, "draft:room", "Keep draft");
+  const listener = vi.fn();
+  const stop = subscribeView(scope, listener);
+  try {
+    clearViewScope(scope);
+    expect(listDraftViews(scope)).toEqual([]);
+    expect(readView(scope, "scroll:room", undefined)).toBeUndefined();
+    expect(listDraftViews(`${scope}-other`)).toEqual([
+      { key: "draft:room", value: "Keep draft" },
+    ]);
+    expect(listener).toHaveBeenCalledOnce();
+  } finally {
+    stop();
+  }
 });

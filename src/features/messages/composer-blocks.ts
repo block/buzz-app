@@ -8,6 +8,7 @@ import {
 import {
   wrapInList,
   liftListItem,
+  sinkListItem,
   splitListItemKeepMarks,
 } from "prosemirror-schema-list";
 import {
@@ -361,10 +362,13 @@ const PREFIX_WINDOW = 12;
 /** Typing the space after a lone `- `, `1. ` or `> ` marker turns the caret's
  * line into a list item or quoted paragraph at once, producing the node the
  * toolbar toggle would: prose after the caret on that line becomes the block's
- * content, and the paragraph's other lines stay where they are. A marker typed
- * after prose, inside a code block, inside pasted fenced source, or on a line
- * holding a token or code/link/literal text stays literal. The caller closes
- * history around the transaction, so one undo restores the typed prefix. */
+ * content, and the paragraph's other lines stay where they are. Inside a quote
+ * the markers nest a list or a second quote; inside a list item a marker of
+ * the item's own list kind, typed as the only text of an item after the first,
+ * nests that item as Tab does. A marker typed after prose, inside a code block,
+ * inside pasted fenced source, or on a line holding a token or
+ * code/link/literal text stays literal. The caller closes history around the
+ * transaction, so one undo restores the typed prefix. */
 export function composerBlockPrefix(
   state: EditorState,
   typed: string,
@@ -387,16 +391,25 @@ export function composerBlockPrefix(
     : match[2]
       ? "ordered_list"
       : "blockquote";
-  // Nesting follows the toolbar. A list may open inside a quote, which the
-  // toolbar produces by toggling a list on quoted prose. Inside a list item
-  // the toolbar switches or lifts the item and Tab nests it, so a marker typed
-  // there stays literal; the toolbar never nests quotes, so a quote marker
-  // inside a quote stays literal too.
-  for (let depth = $from.depth - 1; depth > 0; depth--) {
-    const name = $from.node(depth).type.name;
-    if (name === "list_item") return;
-    if (name === "blockquote" && kind === "blockquote") return;
-  }
+  // Nesting converts where the schema can hold the shape the timeline reads
+  // from the sent text. A paragraph in the document or in a quote wraps, so
+  // `> ` inside a quote nests a second quote as `> > inner` renders. A list
+  // item's first child must stay a paragraph, so a marker typed there can only
+  // nest the item itself, as Tab does: a marker of the item's own list kind,
+  // typed as the only text of an item after the first, sinks that item. A
+  // quote marker or a marker of the other list kind inside an item, a marker
+  // in a list's first item, or one beside the item's prose stays literal text
+  // that still nests once sent: the timeline shows a quote or list inside that
+  // item where the composer shows the marker.
+  const sink = $from.node($from.depth - 1).type === schema.nodes.list_item;
+  if (
+    sink &&
+    ($from.node($from.depth - 2).type !== schema.nodes[kind] ||
+      $from.index($from.depth - 1) !== 0 ||
+      $from.index($from.depth - 2) === 0 ||
+      $from.parent.textContent !== match[0])
+  )
+    return;
   const source = projectComposerDocument(state.doc);
   const text = source.draft.text;
   const caret = source.source($from.pos);
@@ -430,15 +443,28 @@ export function composerBlockPrefix(
   if (!plain) return;
   const marks = $from.marks();
   const tr = state.tr.delete(from, to);
-  isolate(tr);
-  const command =
-    kind === "blockquote"
-      ? wrapIn(schema.nodes.blockquote)
-      : wrapInList(
-          schema.nodes[kind],
-          kind === "ordered_list" ? { order: Number(match[2]) } : null,
-        );
-  if (!apply(tr, command)) return;
+  if (sink) {
+    if (!apply(tr, sinkListItem(schema.nodes.list_item))) return;
+    // A sunk item joins the previous item's nested list when there is one, as
+    // Tab does, and the typed number is then a continuation. A new nested list
+    // starts at the typed number, as a top-level marker does.
+    const $sunk = tr.selection.$from,
+      depth = $sunk.depth - 2;
+    if (kind === "ordered_list" && $sunk.node(depth).childCount === 1)
+      tr.setNodeMarkup($sunk.before(depth), undefined, {
+        order: Number(match[2]),
+      });
+  } else {
+    isolate(tr);
+    const command =
+      kind === "blockquote"
+        ? wrapIn(schema.nodes.blockquote)
+        : wrapInList(
+            schema.nodes[kind],
+            kind === "ordered_list" ? { order: Number(match[2]) } : null,
+          );
+    if (!apply(tr, command)) return;
+  }
   // The marker's own marks (an explicit Bold typing mode) continue into the
   // block, as the typed prose already carried them.
   return marks.length ? tr.setStoredMarks(marks) : tr;

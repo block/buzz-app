@@ -51,6 +51,11 @@ export function composerMarkdown(draft: MentionDraft): string {
 function blocksMarkdown(doc: EditorNode): string {
   const blocks: string[] = [];
   let previous: EditorNode | undefined;
+  // Two lists of one kind separated by a blank line read as one list, so
+  // adjacent lists alternate their marker as mdast-util-to-markdown does: `-`
+  // then `*` for bullets, `.` then `)` for numbers. Any other block between
+  // them starts the sequence again.
+  let alternate = false;
   doc.forEach((block) => {
     // Blank separation prevents lazy quote continuation and adjacent blocks
     // merging on send; ordinary authored paragraph newlines remain unchanged.
@@ -60,6 +65,9 @@ function blocksMarkdown(doc: EditorNode): string {
           ? "\n"
           : "\n\n",
       );
+    const list =
+      block.type.name === "bullet_list" || block.type.name === "ordered_list";
+    alternate = list && previous?.type === block.type && !alternate;
     if (block.type.name === "code_block") {
       const language: unknown = block.attrs.language;
       blocks.push(
@@ -87,16 +95,17 @@ function blocksMarkdown(doc: EditorNode): string {
           .map((line) => (line ? `> ${line}` : ">"))
           .join("\n"),
       );
-    } else if (
-      block.type.name === "bullet_list" ||
-      block.type.name === "ordered_list"
-    ) {
+    } else if (list) {
       const items: string[] = [];
       block.forEach((item, _offset, index) => {
+        // CommonMark reads at most nine digits in a marker, and only the first
+        // number carries meaning, so continuation numbers stop there.
         const prefix =
           block.type.name === "ordered_list"
-            ? `${block.attrs.order + index}. `
-            : "- ";
+            ? `${Math.min(block.attrs.order + index, 999999999)}${alternate ? ")" : "."} `
+            : alternate
+              ? "* "
+              : "- ";
         const lines = blocksMarkdown(item).split("\n");
         items.push(
           prefix +

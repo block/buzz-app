@@ -12,7 +12,7 @@ import { createRef, useState } from "react";
 import { afterEach, expect, it } from "vitest";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { EditableInput } from "./EditableInput";
-import type { ComposerInputElement } from "./composer-dom";
+import type { ComposerFormat, ComposerInputElement } from "./composer-dom";
 import { composerDOMFixture } from "./composer-testing";
 import { composerMarkdown } from "./composer-markdown";
 import { mentionDraft, type MentionDraft } from "./mention-draft";
@@ -38,6 +38,7 @@ function paste(input: ComposerInputElement, text: string) {
 function mount(initial: string | MentionDraft = "") {
   const ref = createRef<ComposerInputElement>();
   let draft: MentionDraft = mentionDraft(initial);
+  let formats: readonly ComposerFormat[] = [];
   const text = draft.text;
   function Editor() {
     const [value, setValue] = useState(draft);
@@ -50,7 +51,9 @@ function mount(initial: string | MentionDraft = "") {
         placeholder="Draft"
         maxLength={16000}
         decorationsFor={() => []}
-        onFormatsChange={() => {}}
+        onFormatsChange={(active) => {
+          formats = active;
+        }}
         onDraftChange={(next) => {
           draft = next;
           setValue(next);
@@ -70,6 +73,8 @@ function mount(initial: string | MentionDraft = "") {
     user: userEvent.setup(),
     markdown: () => composerMarkdown(draft),
     draft: () => draft,
+    /** The formats last reported to the toolbar. */
+    formats: () => formats,
   };
 }
 
@@ -724,7 +729,7 @@ it("quotes the rest of the line when the marker is typed before existing prose",
   expect(h.markdown()).toBe("> quoted\n\nplain");
 });
 
-it("opens a list inside a quote but keeps markers typed inside a list item or a second quote literal", async () => {
+it("opens a list inside a quote but keeps a quote marker typed inside a list item literal, where the sent text still nests", async () => {
   const h = mount();
   await h.user.keyboard("> quote{Shift>}{Enter}{/Shift}- item");
   expect(
@@ -734,12 +739,364 @@ it("opens a list inside a quote but keeps markers typed inside a list item or a 
   await h.user.keyboard("{Shift>}{Enter}{/Shift}> not nested");
   expect(h.input.querySelectorAll("blockquote")).toHaveLength(1);
   expect(h.input.querySelectorAll("ul > li")).toHaveLength(2);
+  expect(h.input).toHaveValue("quote\nitem\n> not nested");
   expect(h.markdown()).toBe("> quote\n>\n> - item\n> - > not nested");
-  const quote = mount();
-  await quote.user.keyboard("> outer{Shift>}{Enter}{/Shift}> inner");
-  expect(quote.input.querySelectorAll("blockquote")).toHaveLength(1);
-  expect(quote.input).toHaveValue("outer\n> inner");
-  expect(quote.markdown()).toBe("> outer\n> > inner");
+  // The composer shows the marker; the timeline reads a quote inside the item,
+  // a shape the schema cannot hold because an item starts with a paragraph.
+  expect(fromMarkdown(h.markdown()).children[0]).toMatchObject({
+    type: "blockquote",
+    children: [
+      { type: "paragraph" },
+      {
+        type: "list",
+        ordered: false,
+        children: [
+          { type: "listItem", children: [{ type: "paragraph" }] },
+          {
+            type: "listItem",
+            children: [
+              {
+                type: "blockquote",
+                children: [
+                  {
+                    type: "paragraph",
+                    children: [{ type: "text", value: "not nested" }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+});
+
+it("nests a second quote as `> ` is typed inside a quote, with the toolbar, Shift+Enter and undo following the nesting", async () => {
+  const h = mount();
+  await h.user.keyboard("> outer{Shift>}{Enter}{/Shift}> inner");
+  expect(
+    h.input.querySelector(":scope > blockquote > blockquote > p"),
+  ).toHaveTextContent("inner");
+  expect(h.input.querySelectorAll("blockquote")).toHaveLength(2);
+  expect(h.input).toHaveValue("outer\ninner");
+  expect(h.markdown()).toBe("> outer\n>\n> > inner");
+  expect(fromMarkdown(h.markdown()).children).toMatchObject([
+    {
+      type: "blockquote",
+      children: [
+        { type: "paragraph", children: [{ type: "text", value: "outer" }] },
+        {
+          type: "blockquote",
+          children: [
+            { type: "paragraph", children: [{ type: "text", value: "inner" }] },
+          ],
+        },
+      ],
+    },
+  ]);
+  // The toolbar reports one quote format, as it does for a single quote.
+  expect(h.formats()).toEqual(["blockquote"]);
+  // Shift+Enter continues the inner quote; an empty last line leaves it for
+  // the outer quote, and once more leaves that.
+  await h.user.keyboard(
+    "{Shift>}{Enter}{/Shift}more{Shift>}{Enter}{Enter}{/Shift}back",
+  );
+  expect(
+    h.input.querySelectorAll(":scope > blockquote > blockquote > p"),
+  ).toHaveLength(2);
+  expect(
+    h.input.querySelector(":scope > blockquote > p:last-child"),
+  ).toHaveTextContent("back");
+  expect(h.formats()).toEqual(["blockquote"]);
+  // Adjacent paragraphs send as lines of one paragraph, as in a single quote.
+  expect(h.markdown()).toBe("> outer\n>\n> > inner\n> > more\n>\n> back");
+  expect(fromMarkdown(h.markdown()).children[0]).toMatchObject({
+    type: "blockquote",
+    children: [
+      { type: "paragraph" },
+      {
+        type: "blockquote",
+        children: [
+          {
+            type: "paragraph",
+            children: [{ type: "text", value: "inner\nmore" }],
+          },
+        ],
+      },
+      { type: "paragraph", children: [{ type: "text", value: "back" }] },
+    ],
+  });
+  await h.user.keyboard("{Shift>}{Enter}{Enter}{/Shift}outside");
+  expect(h.input.querySelector(":scope > p")).toHaveTextContent("outside");
+  expect(h.formats()).toEqual([]);
+  // The toolbar's quote toggle lifts the caret's paragraph out of the inner
+  // quote, one level at a time.
+  act(() => h.input.setSelectionRange(8, 8));
+  expect(h.formats()).toEqual(["blockquote"]);
+  act(() => h.input.toggleFormat("blockquote"));
+  expect(
+    h.input.querySelectorAll(":scope > blockquote > blockquote > p"),
+  ).toHaveLength(1);
+  expect(
+    h.input.querySelectorAll(":scope > blockquote > p")[1],
+  ).toHaveTextContent("inner");
+  const saved = JSON.parse(JSON.stringify(h.draft()));
+  act(() => h.input.reset(saved));
+  expect(h.markdown()).toBe(
+    "> outer\n> inner\n>\n> > more\n>\n> back\n\noutside",
+  );
+});
+
+it("restores the typed `> ` in one undo step when it nested a quote", async () => {
+  const h = mount();
+  await h.user.keyboard("> outer{Shift>}{Enter}{/Shift}> ");
+  expect(h.input.querySelectorAll("blockquote")).toHaveLength(2);
+  expect(h.input).toHaveValue("outer\n");
+  act(() => h.input.undo(false));
+  expect(h.input.querySelectorAll("blockquote")).toHaveLength(1);
+  expect(h.input).toHaveValue("outer\n> ");
+  act(() => h.input.undo(true));
+  expect(
+    h.input.querySelector(":scope > blockquote > blockquote > p"),
+  ).not.toBeNull();
+  await h.user.keyboard("inner");
+  const saved = JSON.parse(JSON.stringify(h.draft()));
+  act(() => h.input.reset(saved));
+  expect(
+    h.input.querySelector(":scope > blockquote > blockquote > p"),
+  ).toHaveTextContent("inner");
+  expect(h.markdown()).toBe("> outer\n>\n> > inner");
+});
+
+it.each([
+  ["- ", "item", "- ", "ul", null, "- item\n  \n  - nested"],
+  ["1. ", "one", "3. ", "ol", "3", "1. one\n   \n   3. nested"],
+] as const)(
+  "nests an empty item after the first as Tab does when %j%j is followed by %j",
+  async (prefix, text, marker, tag, start, wire) => {
+    const h = mount();
+    await h.user.keyboard(`${prefix}${text}{Shift>}{Enter}{/Shift}${marker}`);
+    const nested = h.input.querySelector(`:scope > ${tag} > li > ${tag}`);
+    expect(nested?.querySelector("li")).not.toBeNull();
+    expect(h.input.querySelectorAll("li")).toHaveLength(2);
+    if (start) expect(nested).toHaveAttribute("start", start);
+    else expect(nested).not.toHaveAttribute("start");
+    expect(h.input).toHaveValue(`${text}\n`);
+    act(() => h.input.undo(false));
+    expect(h.input.querySelector(`${tag} ${tag}`)).toBeNull();
+    expect(h.input.querySelectorAll(`:scope > ${tag} > li`)).toHaveLength(2);
+    expect(h.input).toHaveValue(`${text}\n${marker}`);
+    act(() => h.input.undo(true));
+    await h.user.keyboard("nested");
+    expect(h.input.querySelector(`${tag} ${tag} > li`)).toHaveTextContent(
+      "nested",
+    );
+    expect(h.markdown()).toBe(wire);
+    const ordered = tag === "ol";
+    expect(fromMarkdown(wire).children).toMatchObject([
+      {
+        type: "list",
+        ordered,
+        children: [
+          {
+            type: "listItem",
+            children: [
+              { type: "paragraph", children: [{ type: "text", value: text }] },
+              {
+                type: "list",
+                ordered,
+                start: start ? Number(start) : null,
+                children: [
+                  {
+                    type: "listItem",
+                    children: [
+                      {
+                        type: "paragraph",
+                        children: [{ type: "text", value: "nested" }],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    const saved = JSON.parse(JSON.stringify(h.draft()));
+    act(() => h.input.reset(saved));
+    expect(
+      h.input.querySelector(`:scope > ${tag} > li > ${tag}`),
+    ).not.toBeNull();
+    expect(h.markdown()).toBe(wire);
+  },
+);
+
+it("joins the previous item's nested list as Tab does, so the typed number is a continuation there", async () => {
+  const h = mount();
+  await h.user.keyboard(
+    "1. one{Shift>}{Enter}{/Shift}two{Tab}{Shift>}{Enter}{Enter}{/Shift}",
+  );
+  expect(h.input.querySelectorAll(":scope > ol > li")).toHaveLength(2);
+  expect(h.input.querySelectorAll("ol ol > li")).toHaveLength(1);
+  await h.user.keyboard("7. three");
+  expect(h.input.querySelectorAll(":scope > ol > li")).toHaveLength(1);
+  const nested = h.input.querySelector("ol ol");
+  expect(nested).not.toHaveAttribute("start");
+  expect(nested?.querySelectorAll("li")).toHaveLength(2);
+  expect(h.input).toHaveValue("one\ntwo\nthree");
+  expect(h.markdown()).toBe("1. one\n   \n   1. two\n   2. three");
+  expect(fromMarkdown(h.markdown()).children[0]).toMatchObject({
+    type: "list",
+    start: 1,
+    children: [
+      {
+        type: "listItem",
+        children: [
+          { type: "paragraph" },
+          {
+            type: "list",
+            start: 1,
+            children: [{ type: "listItem" }, { type: "listItem" }],
+          },
+        ],
+      },
+    ],
+  });
+});
+
+it("keeps a marker of the other list kind, one beside an item's prose, and one in a first item literal, where the sent text still nests", async () => {
+  const h = mount();
+  await h.user.keyboard("- item{Shift>}{Enter}{/Shift}1. num");
+  expect(h.input.querySelector("ol")).toBeNull();
+  expect(h.input.querySelectorAll("ul > li")).toHaveLength(2);
+  expect(h.input).toHaveValue("item\n1. num");
+  expect(h.markdown()).toBe("- item\n- 1. num");
+  expect(fromMarkdown(h.markdown()).children[0]).toMatchObject({
+    type: "list",
+    ordered: false,
+    children: [
+      { type: "listItem", children: [{ type: "paragraph" }] },
+      {
+        type: "listItem",
+        children: [
+          {
+            type: "list",
+            ordered: true,
+            start: 1,
+            children: [
+              {
+                type: "listItem",
+                children: [
+                  {
+                    type: "paragraph",
+                    children: [{ type: "text", value: "num" }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  const prose = mount();
+  await prose.user.keyboard("- item{Shift>}{Enter}{/Shift}two");
+  act(() => prose.input.setSelectionRange(5, 5));
+  await prose.user.keyboard("- ");
+  expect(prose.input.querySelector("ul ul")).toBeNull();
+  expect(prose.input).toHaveValue("item\n- two");
+  expect(prose.markdown()).toBe("- item\n- - two");
+  const first = mount();
+  await first.user.keyboard("- - nested");
+  expect(first.input.querySelector("ul ul")).toBeNull();
+  expect(first.input.querySelectorAll("li")).toHaveLength(1);
+  expect(first.input).toHaveValue("- nested");
+  expect(first.markdown()).toBe("- - nested");
+  expect(fromMarkdown(first.markdown()).children[0]).toMatchObject({
+    type: "list",
+    children: [
+      {
+        type: "listItem",
+        children: [
+          {
+            type: "list",
+            children: [
+              {
+                type: "listItem",
+                children: [
+                  {
+                    type: "paragraph",
+                    children: [{ type: "text", value: "nested" }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+});
+
+it("caps continuation numbers at nine digits so the timeline reads one list", async () => {
+  const h = mount();
+  await h.user.keyboard("999999999. item{Shift>}{Enter}{/Shift}next");
+  expect(h.input.querySelector(":scope > ol")).toHaveAttribute(
+    "start",
+    "999999999",
+  );
+  expect(h.input.querySelectorAll("ol > li")).toHaveLength(2);
+  expect(h.markdown()).toBe("999999999. item\n999999999. next");
+  expect(fromMarkdown(h.markdown()).children).toMatchObject([
+    {
+      type: "list",
+      ordered: true,
+      start: 999999999,
+      children: [
+        {
+          type: "listItem",
+          children: [
+            { type: "paragraph", children: [{ type: "text", value: "item" }] },
+          ],
+        },
+        {
+          type: "listItem",
+          children: [
+            { type: "paragraph", children: [{ type: "text", value: "next" }] },
+          ],
+        },
+      ],
+    },
+  ]);
+});
+
+it("alternates the marker between adjacent lists of one kind so they stay separate once sent", async () => {
+  const h = mount();
+  await h.user.keyboard(
+    "3. third{Shift>}{Enter}{Enter}{/Shift}1. one{Shift>}{Enter}{/Shift}two",
+  );
+  expect(h.input.querySelectorAll(":scope > ol")).toHaveLength(2);
+  expect(h.markdown()).toBe("3. third\n\n1) one\n2) two");
+  expect(fromMarkdown(h.markdown()).children).toMatchObject([
+    { type: "list", ordered: true, start: 3, children: [{ type: "listItem" }] },
+    {
+      type: "list",
+      ordered: true,
+      start: 1,
+      children: [{ type: "listItem" }, { type: "listItem" }],
+    },
+  ]);
+  const bullets = mount();
+  await bullets.user.keyboard(
+    "- a{Shift>}{Enter}{Enter}{/Shift}- b{Shift>}{Enter}{Enter}{/Shift}- c{Shift>}{Enter}{Enter}{/Shift}text{Shift>}{Enter}{/Shift}- d",
+  );
+  expect(bullets.input.querySelectorAll(":scope > ul")).toHaveLength(4);
+  expect(bullets.markdown()).toBe("- a\n\n* b\n\n- c\n\ntext\n\n- d");
+  expect(
+    fromMarkdown(bullets.markdown()).children.map((node) => node.type),
+  ).toEqual(["list", "list", "list", "paragraph", "list"]);
 });
 
 it("leaves a marker typed after prose, and ordinary spaces, as paragraph text", async () => {

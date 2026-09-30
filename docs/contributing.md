@@ -337,19 +337,20 @@ the complete suite still runs with `pnpm test` / `just scan`:
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
 - **Browser journeys:** twelve runners (Chromium and WebKit, six file-level shards
   per engine), each with two workers. They start alongside measurements on separate
-  runners; `CI required` still requires both lanes. Each functional shard installs
-  only its selected browser engine and Linux libraries; measurements install both
-  Chromium and WebKit. Engine caches are keyed by OS, architecture, Playwright
-  version and engine selection; system-library installation still runs on cache
-  hits. Each runner builds the native plugin-manager fixture in a separately
-  logged setup step before starting Playwright. Browser jobs install the existing
-  `bin/.rust-*.pkg` pin through the runner's rustup with the minimal
-  compiler/Cargo/standard-library profile,
-  avoiding Hermit's full Rust archive on cold runners. `HERMIT_PREPEND_PATH`
-  keeps that toolchain selected inside Hermit-launched pnpm/Node subprocesses;
-  native jobs retain Hermit's Rust, rustfmt and Clippy. The fixture's Rust cache
-  is optional: a cache miss still builds it,
-  outside the browser subprocess timeout. No measurement is repeated on shards,
+  runners; `CI required` still requires both lanes. Browser jobs use the official
+  Playwright Ubuntu 24.04 image pinned by version and digest. It contains browser
+  binaries and OS libraries, avoiding their repeated apt downloads inside each
+  job deadline. Update both workflow image pins with the package's Playwright
+  version; setup verifies the installed package against image metadata and launches
+  the selected engine (both engines for measurements) before tests. No missing
+  image or library silently falls back to downloading or skipping an engine.
+  Hermit still pins Node/pnpm. Functional jobs install `build-essential` for the
+  native fixture and use a commit-pinned Rust installer with the repository's
+  `bin/.rust-*.pkg` version. `HERMIT_PREPEND_PATH` keeps the minimal compiler/Cargo
+  toolchain selected through nested commands. Each runner builds the native
+  plugin-manager fixture before Playwright; its Rust cache is optional. These
+  smaller setup steps still require network access. Native jobs retain their
+  ordinary host toolchain and library setup. No measurement is repeated on shards,
   and no retry hides a failure. Functional jobs also run when measurements fail:
   this spends more runner minutes for faster, independent feedback.
 - **CI required:** fails unless every automatic Linux lane and every browser shard succeeds,

@@ -1,4 +1,5 @@
 import { defineIcon } from "./createDecorativeIcon";
+import { BestieMarkArtwork } from "./BestieMark";
 import { GitHubIssueArtwork } from "./GitHubIssue";
 import { OneDriveLogoArtwork } from "./OneDriveLogo";
 import { ArrowClockwiseIcon as PhosphorArrowClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
@@ -73,6 +74,10 @@ import { ChatsCircleIcon as PhosphorChatsCircleIcon } from "@phosphor-icons/reac
 export const ChatsCircleIcon = defineIcon("phosphor", PhosphorChatsCircleIcon);
 import { CheckIcon as PhosphorCheckIcon } from "@phosphor-icons/react/dist/csr/Check";
 export const CheckIcon = defineIcon("phosphor", PhosphorCheckIcon);
+import { ChecksIcon as PhosphorChecksIcon } from "@phosphor-icons/react/dist/csr/Checks";
+export const ChecksIcon = defineIcon("phosphor", PhosphorChecksIcon);
+import { TicketIcon as PhosphorTicketIcon } from "@phosphor-icons/react/dist/csr/Ticket";
+export const TicketIcon = defineIcon("phosphor", PhosphorTicketIcon);
 import { CopyIcon as PhosphorCopyIcon } from "@phosphor-icons/react/dist/csr/Copy";
 export const CopyIcon = defineIcon("phosphor", PhosphorCopyIcon);
 import { CrownIcon as PhosphorCrownIcon } from "@phosphor-icons/react/dist/csr/Crown";
@@ -257,6 +262,16 @@ export const GitHubIssueIcon = defineIcon("custom", GitHubIssueArtwork, {
   provenance:
     "Buzz-owned mark based on GitHub’s issue symbol and Phosphor Circle geometry.",
   intendedSizes: [{ width: 22, height: 22 }],
+});
+export const BestieIcon = defineIcon("custom", BestieMarkArtwork, {
+  meaning: "Bestie page",
+  category: "Product mark",
+  provenance:
+    "Buzz-owned Bestie artwork from public/bestie.png, framed as an SVG image for icon slots.",
+  intendedSizes: [
+    { width: 15, height: 15 },
+    { width: 17, height: 17 },
+  ],
 });
 
 import { CircleNotchIcon as PhosphorCircleNotchIcon } from "@phosphor-icons/react/dist/csr/CircleNotch";

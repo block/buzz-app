@@ -18,6 +18,7 @@ export function ManagedAgentActions({
   imported,
   destination = "",
   owner = "",
+  showCommunity = true,
   onUseHere,
 }: {
   agent: AgentView;
@@ -26,7 +27,8 @@ export function ManagedAgentActions({
   imported: boolean;
   destination?: string;
   owner?: string;
-  onUseHere?: ((pubkey: string) => void) | undefined;
+  showCommunity?: boolean;
+  onUseHere?: ((pubkey: string, action: "use" | "clone") => void) | undefined;
 }) {
   const [settingUp, setSettingUp] = useState(false);
   const details = useRef<HTMLDivElement>(null);
@@ -81,9 +83,11 @@ export function ManagedAgentActions({
   return (
     <div ref={details} tabIndex={-1} className="flex flex-col gap-2">
       <div className="flex flex-col gap-1">
-        <p className="m-0 break-all text-body-sm text-secondary">
-          {agent.relayUrl}
-        </p>
+        {showCommunity && (
+          <p className="m-0 break-all text-body-sm text-secondary">
+            {agent.relayUrl}
+          </p>
+        )}
         <p className="m-0 text-body-sm">
           {state.status === "error" && "Last known: "}
           {agentProcessLabel(agent)}
@@ -101,7 +105,7 @@ export function ManagedAgentActions({
         (onUseHere ? (
           <Button
             disabled={state.busy || state.status !== "ready"}
-            onClick={() => onUseHere(agent.pubkey)}
+            onClick={() => onUseHere(agent.pubkey, "use")}
           >
             Use here
           </Button>
@@ -109,11 +113,13 @@ export function ManagedAgentActions({
           <LocalInventoryAction
             control={control}
             agent={agent}
+            action="use"
             destination={destination}
             owner={owner}
             disabled={state.busy || state.status !== "ready"}
             onPending={setSettingUp}
             onUsed={() => {}}
+            onClone={() => {}}
           />
         ) : (
           <p>Update the desktop app to set up this imported identity.</p>

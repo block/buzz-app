@@ -23,7 +23,7 @@ pub(crate) use channel_writes::{
     relay_kit_prepare,
 };
 pub(crate) use kit::relay_kit_sign;
-
+mod media_preparation;
 type Result<T> = std::result::Result<T, String>;
 const MAX_BODY: usize = 1024 * 1024;
 const MAX_RESPONSE: usize = 16 * 1024 * 1024;
@@ -64,7 +64,12 @@ fn request_url(community: &str, path: &str, method: &str) -> Result<Url> {
         "GET" => matches!(path, "/" | "/api/join-policy"),
         "POST" => matches!(
             path,
-            "/query" | "/events" | "/api/invites/claim" | "/api/invites/accept-policy"
+            "/query"
+                | "/events"
+                | "/api/invites"
+                | "/api/invites/claim"
+                | "/api/invites/accept-policy"
+                | "/gifs/search"
         ),
         _ => false,
     };
@@ -210,9 +215,15 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         if !channel_writes::creation(event) {
             return Err("Agent enrollment or channel operation unavailable or invalid".into());
         }
+    } else if event.kind == 28936 {
+        // A NIP-43 leave request revokes the signer's own membership: empty
+        // content and exactly the NIP-70 protected tag, nothing else.
+        if !event.content.is_empty() || event.tags != vec![vec!["-".to_string()]] {
+            return Err("A leave request carries no content or other tags".into());
+        }
     } else if !matches!(
         event.kind,
-        0 | 7 | 9 | 1984 | 9000 | 9001 | 20001 | 30030 | 30315 | 40003 | 40100 | 42000
+        0 | 7 | 9 | 1984 | 9000 | 9001 | 20001 | 30030 | 30315 | 40003 | 40100 | 42000 | 45010
     ) {
         return Err("This event is not supported by the packaged relay connection".into());
     }
@@ -724,8 +735,8 @@ fn upload_id(value: Option<&str>) -> Result<&str> {
         .ok_or_else(|| "Invalid upload ID".into())
 }
 
-/// Hashes, signs (`t=upload` + `x`) and sends `PUT /upload` for the exact raw
-/// IPC bytes. Shared TypeScript (`hostUpload`) owns limits, error mapping and
+/// Prepares media when requested, then hashes, signs (`t=upload` + `x`) and
+/// sends `PUT /upload` for the resulting bytes. Shared TypeScript (`hostUpload`) owns limits, error mapping and
 /// descriptor validation, as it does for the dev broker.
 #[tauri::command]
 pub(crate) async fn relay_upload(
@@ -743,14 +754,31 @@ pub(crate) async fn relay_upload(
     };
     // Tauri sets raw IPC `Content-Type` itself, so the file type travels separately.
     let kind = header("x-buzz-content-type");
-    let Some(cancelled) = uploads.start(id)? else {
+    let preparation = header("x-buzz-preparation").map(str::to_owned);
+    let Some(mut cancelled) = uploads.start(id)? else {
         return Err("Upload cancelled".into());
     };
     // Dropping the request future closes the connection, so a cancelled upload
     // stops sending and releases its buffer.
-    let result = tokio::select! {
-        result = upload(host.inner(), url, kind, body.clone()) => result,
-        _ = cancelled => Err("Upload cancelled".into()),
+    let result = if let Err(error) = validate_upload_size(body.len()) {
+        // Preserve preparation's structured size error, but reject before copying
+        // the IPC buffer. Cancellation/admission still takes precedence.
+        if preparation.is_some() {
+            Ok(RelayResponse {
+                status: media_preparation::PreparationError::Size.status(),
+                headers: BTreeMap::new(),
+                body: serde_json::json!({"code": "size"}).to_string(),
+            })
+        } else {
+            Err(error)
+        }
+    } else if let Some(mode) = preparation.as_deref() {
+        upload_prepared(host.inner(), url, body.clone(), mode, &mut cancelled).await
+    } else {
+        tokio::select! {
+            result = upload(host.inner(), url, kind, body.clone()) => result,
+            _ = &mut cancelled => Err("Upload cancelled".into()),
+        }
     };
     uploads.finish(id);
     result
@@ -762,19 +790,61 @@ pub(crate) fn relay_upload_cancel(uploads: tauri::State<'_, Uploads>, id: String
     Ok(())
 }
 
+async fn upload_prepared(
+    host: &IdentityHost,
+    url: Url,
+    body: Vec<u8>,
+    mode: &str,
+    cancelled: &mut oneshot::Receiver<()>,
+) -> Result<RelayResponse> {
+    let (body, kind) = match media_preparation::prepare(body, mode, cancelled).await {
+        Ok(value) => value,
+        Err(media_preparation::PreparationError::Cancelled) => {
+            return Err("Upload cancelled".into())
+        }
+        Err(error) => {
+            return Ok(RelayResponse {
+                status: error.status(),
+                headers: BTreeMap::new(),
+                body: serde_json::json!({ "code": error.code() }).to_string(),
+            })
+        }
+    };
+    tokio::select! {
+        result = upload(host, url, Some(kind), body) => result,
+        _ = cancelled => Err("Upload cancelled".into()),
+    }
+}
+
+fn validate_upload_size(size: usize) -> Result<()> {
+    if size == 0 || size > MAX_UPLOAD {
+        return Err("File exceeds the supported upload limit".into());
+    }
+    Ok(())
+}
+
+async fn hash_upload(body: Vec<u8>) -> Result<(Vec<u8>, String)> {
+    validate_upload_size(body.len())?;
+    // A supported video can be 500 MiB. Hash it off the async executor, moving
+    // the same allocation back to the HTTP body rather than making another copy.
+    tokio::task::spawn_blocking(move || {
+        let hash = format!("{:x}", Sha256::digest(&body));
+        (body, hash)
+    })
+    .await
+    .map_err(|_| "Upload hashing could not complete".into())
+}
+
 async fn upload(
     host: &IdentityHost,
     url: Url,
     kind: Option<&str>,
     body: Vec<u8>,
 ) -> Result<RelayResponse> {
-    if body.is_empty() || body.len() > MAX_UPLOAD {
-        return Err("File exceeds the supported upload limit".into());
-    }
     let kind = kind
         .filter(|kind| valid_type(kind))
         .unwrap_or("application/octet-stream");
-    let hash = format!("{:x}", Sha256::digest(&body));
+    let (body, hash) = hash_upload(body).await?;
     let auth = blossom_auth(
         host,
         &url,

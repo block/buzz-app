@@ -73,6 +73,13 @@ could hide unseen siblings. Oversized rows that never fit fully are not auto-rea
   this also covers messages at or before the cut that arrive later.
   With no message evidence, it clears only the channel's local mark and invents
   no frontier. Success means local durability; publication may still be pending.
+- `markAllChannelsRead()` runs `markChannelRead` one channel at a time over the
+  accessible listed channels that still show unread evidence or a local mark, so
+  an already-read community costs no writes. One failing channel does not stop
+  the sweep; the first failure is rethrown afterwards. A channel whose grant is
+  revoked before its turn is skipped, not failed; like a grant that arrives
+  mid-sweep, it waits for the next explicit action. The community rail's
+  Mark all as read uses it for the selected community only.
 - `markUnreadLocal(target)` is durable **on this browser profile/device only**.
   Automatic reading does not clear it. An explicit mark-through clears that
   target's local mark. `syncedManualUnread` is `false`.
@@ -94,20 +101,23 @@ Channel Settings → Diagnostics exposes explicit actions and Unread status/retr
 observed-zero both omit unread styling; the API preserves the distinction. There is
 no notification, feed, or exact-count service here.
 
-When unread rows are outside the sidebar's scroll viewport, floating “Unread”
-buttons reveal the nearest destination in that direction without exposing a count.
-The internal directional set is still deduplicated by destination for geometry and
-priority: ordinary destinations use a quiet treatment; any DM, mention, broadcast,
-or relevant thread destination promotes the same composition to primary. Thread-only
-rows participate, and DMs remain promoted even when their only evidence is thread
-activity. The controls measure existing rendered badges/dots—no extra unread
+When unread rows are outside the sidebar's scroll viewport, floating `N unread`
+buttons reveal the nearest destination in that direction. The number counts distinct
+offscreen conversations with observed unread state, not messages or an exact
+community total. Any visible copy of a conversation excludes it from that edge.
+Both directions preview up to three eligible one-to-one DM avatars, nearest-first,
+with overlapping artwork and no additional overflow chip. Group/self DMs still count
+but do not borrow one participant's avatar. Previews reuse the sidebar's existing
+profile map and media routing; absent pictures use initials, humans use circles,
+and agents use squircles. Avatar artwork is decorative; the button's accessible
+name gives the conversation count and direction without implying a DM-first target.
+The controls retain the current prominent treatment. Thread-only rows participate.
+The controls measure existing rendered badges/dots—no extra unread
 subscriptions or relay reads just to show them. Search-filtered rows do not
 participate. Collapsed sections use the summary's position and expand when revealed.
 A partly visible row is not outside the fold. Activation scrolls and focuses the
-row, retaining its ordinary focus preparation; it does not select the channel or
-acknowledge any messages. The count is destinations, not a potentially misleading
-aggregate message total. Directional destination counts remain internal and are
-not rendered or announced by the control.
+nearest row, retaining its ordinary focus preparation; it does not select the channel,
+prefer a farther DM, or acknowledge any messages.
 
 Thread buttons keep the summary's total reply count and add a dot when the shared
 thread selector has observed unread replies or explicit thread-unread intent.
@@ -141,7 +151,9 @@ for newer manual-unread intent.
 ## Durable sync and privacy
 
 The journal is separate from disposable message caches in `buzz-read-state-v1`,
-partitioned by relay/community scope and viewer. IndexedDB strict read/write
+partitioned by relay/community scope and viewer. Leaving a community deletes that
+partition along with the community's other device state; other partitions are
+untouched. IndexedDB strict read/write
 transactions merge concurrent local windows; Web Locks serialize the publisher.
 Without host decoding the capability is `unsupported`; without safe serialized
 sign/publish it is `read-only`. Read sync requires `frontier-sync`. Local manual

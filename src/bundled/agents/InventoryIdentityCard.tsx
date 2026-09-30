@@ -7,6 +7,7 @@ import type {
 } from "../../features/agents/control";
 import type { RelaySession } from "../../features/relay/session";
 import type { Profile } from "../../features/relay/contracts";
+import { CaretDownIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard } from "./AgentCard";
 import { ManagedAgentActions } from "./ManagedAgentActions";
@@ -17,6 +18,7 @@ import { type AgentInventoryIdentity, localSetups } from "./inventory-model";
 export function InventoryIdentityCard({
   row,
   decision,
+  community,
   state,
   control,
   session,
@@ -33,6 +35,7 @@ export function InventoryIdentityCard({
 }: {
   row: AgentInventoryIdentity;
   decision: ReturnType<typeof inventoryDecision>;
+  community: string;
   state: AgentControlState;
   control: AgentControl;
   session: RelaySession;
@@ -42,7 +45,11 @@ export function InventoryIdentityCard({
   duplicate?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
   importedId: string | null;
-  onUseHere(pubkey: string): void;
+  onUseHere(
+    pubkey: string,
+    action: "use" | "clone",
+    source?: ImportSource,
+  ): void;
   onImport(pubkey: string, source?: ImportSource): void;
   selectedSource: ImportSource | undefined;
   onSourceChange(source: ImportSource): void;
@@ -62,8 +69,32 @@ export function InventoryIdentityCard({
         ? selected
         : undefined;
   const needsSource = !row.localIdentity && row.oldBuzzSources.length > 1;
+  const cloneAction = (!!row.localIdentity ||
+    row.oldBuzzSources.length > 0) && (
+    <Button
+      variant="subtle"
+      size="compact"
+      title="Create a new agent from this agent’s name and instructions, with a new identity and key. Memories and history are not copied."
+      disabled={
+        state.busy ||
+        state.status !== "ready" ||
+        (row.localIdentity
+          ? !data.localInventoryActions || !control.localCloneSettings
+          : !control.cloneSettings) ||
+        !destination ||
+        (needsSource && !source)
+      }
+      onClick={() =>
+        onUseHere(row.pubkey, "clone", row.localIdentity ? undefined : source)
+      }
+    >
+      Clone
+    </Button>
+  );
   return (
     <AgentCard
+      layout={tile ? "tile" : "row"}
+      headingLevel={community ? 4 : 3}
       name={row.displayName}
       avatar={avatar}
       identities={[{ pubkey: row.pubkey, name: row.displayName }]}
@@ -77,6 +108,8 @@ export function InventoryIdentityCard({
         <ManagedAgentActions
           key={agent.id}
           agent={agent}
+          // A section already names its own community; other setups still show theirs.
+          showCommunity={row.localSetups.get(community) !== agent}
           state={state}
           control={control}
           imported={agent.id === importedId}
@@ -145,7 +178,7 @@ export function InventoryIdentityCard({
                 !data.localInventoryActions ||
                 !control.configureHere
               }
-              onClick={() => onUseHere(row.pubkey)}
+              onClick={() => onUseHere(row.pubkey, "use")}
             >
               Use here
             </Button>
@@ -157,14 +190,30 @@ export function InventoryIdentityCard({
             )}
           </>
         )}
+        {(tile || decision.action === "clone") && cloneAction}
       </div>
       {decision.action === "wait" && (
         <p role="status" className="m-0 text-body-sm text-secondary">
           {decision.blocked}
         </p>
       )}
-      <details className="min-w-0 text-body-sm text-secondary">
-        <summary className="cursor-pointer">Identity &amp; sources</summary>
+      <details
+        className={
+          tile
+            ? "min-w-0 text-body-sm text-secondary"
+            : "agent-inventory-details min-w-0 text-body-sm text-secondary"
+        }
+      >
+        <summary
+          className="cursor-pointer"
+          aria-label={tile ? undefined : `Details for ${row.displayName}`}
+        >
+          {tile ? (
+            "Identity & sources"
+          ) : (
+            <CaretDownIcon size={18} aria-hidden="true" />
+          )}
+        </summary>
         <div className="flex min-w-0 flex-col gap-2 pt-2">
           {[...row.knownCommunities]
             .filter((community) => community && !row.localSetups.has(community))
@@ -184,6 +233,7 @@ export function InventoryIdentityCard({
                 .join(" · ")}
             </p>
           )}
+          {!tile && decision.action !== "clone" && cloneAction}
           <p
             className="m-0 select-all break-all text-mono-sm"
             data-public-key=""

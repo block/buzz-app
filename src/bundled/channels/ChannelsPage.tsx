@@ -1,11 +1,9 @@
 import type { AgentControl } from "../../features/agents/control";
+import { activityTarget } from "../../features/agents/activity-target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { clientMetrics } from "../../features/developer/client-metrics";
 import { ChannelMembersButton } from "./ChannelMembersDialog";
-import {
-  channelPlaceholder,
-  newSessionParent,
-} from "../../features/channel-navigation/routes";
+import { newSessionParent } from "../../features/channel-navigation/routes";
 import { personalGroups } from "../../features/channel-templates/setup";
 import type { TemplateProviders } from "../../features/channel-templates/provider";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
@@ -190,10 +188,6 @@ function ChannelWorkspace({
   const composingMessage =
     navigation?.target.kind === "page" &&
     navigation.target.route?.params === "new-message";
-  const placeholder =
-    navigation?.target.kind === "page"
-      ? channelPlaceholder(navigation.target.route?.params)
-      : undefined;
   const list = useChannelList(queries.channels);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   const kitState = useSyncExternalStore(
@@ -217,6 +211,7 @@ function ChannelWorkspace({
       ? groupEntry.record.value
       : undefined;
   const [canvasOpen, setCanvasOpen] = useState(false);
+  const canvasTrigger = useRef<HTMLButtonElement>(null);
   const [kitError, setKitError] = useState("");
   useEffect(() => {
     void queries.emoji.ensure();
@@ -272,6 +267,7 @@ function ChannelWorkspace({
     [navigate],
   );
   const threadTrigger = useRef<HTMLElement | null>(null);
+  const panelTrigger = useRef<HTMLElement | null>(null);
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
   const { channels } = useChannelLabels(
     list.channels,
@@ -360,7 +356,7 @@ function ChannelWorkspace({
   const CurrentChannelIcon = channelIcon(current);
   useEffect(() => {
     if (navigation?.signal.aborted) return;
-    if (composingMessage || placeholder) {
+    if (composingMessage) {
       navigation?.complete({ status: "opened" });
       return;
     }
@@ -389,7 +385,6 @@ function ChannelWorkspace({
   }, [
     cached,
     composingMessage,
-    placeholder,
     requestedChannel,
     resolving,
     current,
@@ -408,14 +403,14 @@ function ChannelWorkspace({
       : undefined;
   const currentId = current?.id;
   useEffect(() => {
-    if (!currentId || composingMessage || placeholder || draftParent) return;
+    if (!currentId || composingMessage || draftParent) return;
     // Retire this visit's reveal intent without discarding a new-DM handoff.
     return () => {
       setSent((previous) =>
         previous?.channelId === currentId ? undefined : previous,
       );
     };
-  }, [currentId, composingMessage, placeholder, draftParent]);
+  }, [currentId, composingMessage, draftParent]);
   const [settings, setSettings] = useState<{
     channelId: string | undefined;
     entryId: string | undefined;
@@ -568,7 +563,8 @@ function ChannelWorkspace({
     setOpened(next);
   }, []);
   useLayoutEffect(() => {
-    if (draftParent || composingMessage || placeholder || requestedMessage) {
+    if (navigation?.signal.aborted) return;
+    if (draftParent || composingMessage || requestedMessage) {
       setThread(undefined);
       open(undefined);
     }
@@ -576,20 +572,37 @@ function ChannelWorkspace({
     if (
       activity &&
       activity.channelId === requestedChannel &&
-      activity.rootId === requestedThread
+      activity.messageId === requestedMessage &&
+      activity.entryId === navigation?.entryId &&
+      !activity.signal.aborted
     ) {
       threadTrigger.current = activity.trigger;
       handoff.activityThread.current = undefined;
     }
+    const activityAgent = handoff?.activityAgent.current;
+    if (activityAgent && activityAgent.channelId === current?.id) {
+      const target = activityTarget(
+        activityAgent.agent,
+        activityAgent.channelId,
+      );
+      const panel = panels.resolve(target);
+      if (panel) {
+        panelTrigger.current = activityAgent.trigger;
+        open({ channelId: activityAgent.channelId, panel, target });
+      }
+      handoff.activityAgent.current = undefined;
+    }
   }, [
     draftParent,
     composingMessage,
-    placeholder,
     requestedMessage,
+    navigation,
     requestedChannel,
-    requestedThread,
     open,
     handoff?.activityThread,
+    handoff?.activityAgent,
+    current?.id,
+    panels,
   ]);
   const panel =
     opened &&
@@ -731,7 +744,6 @@ function ChannelWorkspace({
     setThread(undefined);
     if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
   };
-  const panelTrigger = useRef<HTMLElement | null>(null);
   const close = useCallback(() => {
     open(undefined);
     if (panelTrigger.current?.isConnected)
@@ -843,7 +855,7 @@ function ChannelWorkspace({
       : undefined;
   const drawerContext = useMemo(
     () =>
-      current && !current.readOnly && viewer && !placeholder
+      current && !current.readOnly && viewer
         ? {
             scope,
             viewer,
@@ -856,7 +868,7 @@ function ChannelWorkspace({
             ...(showingThread && { threadId: showingThread.messageId }),
           }
         : undefined,
-    [scope, viewer, current, showingThread, placeholder],
+    [scope, viewer, current, showingThread],
   );
   const drawer = useChannelPanels(panels, drawerContext, () =>
     setSettings(undefined),
@@ -875,6 +887,7 @@ function ChannelWorkspace({
           channelId={current.id}
           open={canvasOpen}
           onOpenChange={setCanvasOpen}
+          finalFocus={canvasTrigger}
         />
       )}
       <Panel as="article" aria-label="Conversation">
@@ -901,13 +914,6 @@ function ChannelWorkspace({
                 select(channelId);
               }}
             />
-          ) : placeholder ? (
-            <>
-              <PanelHeader title={placeholder} />
-              <div className={styles.placeholder}>
-                <p>Content coming soon</p>
-              </div>
-            </>
           ) : drafting && current ? (
             <NewSessionView parentName={current.name}>
               <NewSessionComposer
@@ -1094,14 +1100,15 @@ function ChannelWorkspace({
         <div className={styles.panelStack}>
           {showingChannelPanel && showingSettings && (
             <ChannelSettingsPanel
+              canvas={queries.canvas}
+              canvasOpen={canvasOpen}
+              openCanvas={(trigger) => {
+                canvasTrigger.current = trigger;
+                setCanvasOpen(true);
+              }}
               setupTools={
                 current && (
                   <div style={{ display: "grid", gap: "var(--space-3)" }}>
-                    {!current.readOnly && (
-                      <Button onClick={() => setCanvasOpen(true)}>
-                        Canvas
-                      </Button>
-                    )}
                     {templateProvider && (
                       <OwnedContribution
                         key={current.id}

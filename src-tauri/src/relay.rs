@@ -735,8 +735,8 @@ fn upload_id(value: Option<&str>) -> Result<&str> {
         .ok_or_else(|| "Invalid upload ID".into())
 }
 
-/// Hashes, signs (`t=upload` + `x`) and sends `PUT /upload` for the exact raw
-/// IPC bytes. Shared TypeScript (`hostUpload`) owns limits, error mapping and
+/// Prepares media when requested, then hashes, signs (`t=upload` + `x`) and
+/// sends `PUT /upload` for the resulting bytes. Shared TypeScript (`hostUpload`) owns limits, error mapping and
 /// descriptor validation, as it does for the dev broker.
 #[tauri::command]
 pub(crate) async fn relay_upload(

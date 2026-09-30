@@ -120,8 +120,7 @@ export async function prepareMedia(req, callerSignal, deliver) {
           source,
           ...(heic
             ? [
-                "-map",
-                "0:v:0",
+                // Automatic selection assembles HEIC grids, not the first tile.
                 "-map_metadata",
                 "-1",
                 "-frames:v",

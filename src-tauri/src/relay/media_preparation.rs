@@ -7,6 +7,8 @@ use tokio::{
     sync::{oneshot, Semaphore},
 };
 
+static SLOTS: OnceLock<Semaphore> = OnceLock::new();
+
 const MAX_INPUT: usize = 500 * 1024 * 1024;
 const MAX_IMAGE: u64 = 50 * 1024 * 1024;
 const MAX_VIDEO: u64 = 500 * 1024 * 1024;
@@ -45,189 +47,73 @@ impl PreparationError {
     }
 }
 
-// Match videoDemuxer's bounded box walk. No URL, path, or demuxer comes from the webview.
-fn mov_brand(header: &[u8]) -> Option<Option<&[u8]>> {
-    let mut offset = 0;
-    while offset + 12 <= header.len() {
-        let kind = &header[offset + 4..offset + 8];
-        if kind == b"ftyp" {
-            let size = u32::from_be_bytes(header[offset..offset + 4].try_into().ok()?) as usize;
-            let end = offset.saturating_add(size).min(header.len());
-            if end < offset + 12 {
-                return None;
-            }
-            let mut brand = offset + 8;
-            while brand + 4 <= end {
-                if matches!(
-                    &header[brand..brand + 4],
-                    b"heic"
-                        | b"heix"
-                        | b"hevc"
-                        | b"hevx"
-                        | b"heim"
-                        | b"heis"
-                        | b"mif1"
-                        | b"msf1"
-                        | b"avif"
-                        | b"avis"
-                ) {
-                    return None;
-                }
-                brand += if brand == offset + 8 { 8 } else { 4 };
-            }
-            return Some(Some(&header[offset + 8..offset + 12]));
-        }
-        if kind == b"moov" || kind == b"mdat" {
-            return Some(None);
-        }
-        if !matches!(kind, b"wide" | b"free" | b"skip") {
-            break;
-        }
-        let size = u32::from_be_bytes(header[offset..offset + 4].try_into().ok()?) as usize;
-        if size < 8 {
-            break;
-        }
-        offset = offset.saturating_add(size);
+// The frontend owns container recognition. The host accepts only this fixed
+// mode table, never paths, URLs or caller-provided ffmpeg arguments. ffmpeg's
+// fixed demuxer validates the actual input; header sniffing is not a sandbox.
+fn allowed_mode(mode: &str, size: usize) -> Option<(&'static str, bool, bool)> {
+    let result = match mode {
+        "image:mov" => ("mov", true, false),
+        "video:mov" => ("mov", false, false),
+        "video:avi" => ("avi", false, false),
+        "video:matroska" => ("matroska", false, false),
+        "video:flv" => ("flv", false, false),
+        "video:asf" => ("asf", false, false),
+        "video:mpeg" => ("mpeg", false, false),
+        "video:m4v" => ("m4v", false, false),
+        "video:mpegvideo" => ("mpegvideo", false, false),
+        "voice:wav" => ("wav", false, true),
+        "voice:flac" => ("flac", false, true),
+        "voice:ogg" => ("ogg", false, true),
+        "voice:aiff" => ("aiff", false, true),
+        "voice:mp3" => ("mp3", false, true),
+        "voice:aac" => ("aac", false, true),
+        "voice:amr" => ("amr", false, true),
+        "voice:mov" => ("mov", false, true),
+        _ => return None,
+    };
+    if result.2 && size > 128 * 1024 * 1024 {
+        return None;
     }
-    None
+    Some(result)
 }
 
-fn allowed_mode(mode: &str, bytes: &[u8]) -> Option<(&'static str, bool, bool)> {
-    let header = &bytes[..bytes.len().min(4096)];
-    let brand = header.get(8..12);
-    let mov = match mov_brand(header) {
-        Some(None) => true,
-        Some(Some(brand)) => {
-            matches!(
-                brand,
-                b"qt  "
-                    | b"avc1"
-                    | b"dash"
-                    | b"iso2"
-                    | b"iso3"
-                    | b"iso4"
-                    | b"iso5"
-                    | b"iso6"
-                    | b"isom"
-                    | b"mmp4"
-                    | b"mp41"
-                    | b"mp42"
-                    | b"mp4v"
-                    | b"mp71"
-                    | b"MSNV"
-                    | b"NDAS"
-                    | b"NDSC"
-                    | b"NDSH"
-                    | b"NDSM"
-                    | b"NDSP"
-                    | b"NDSS"
-                    | b"NSDC"
-                    | b"NDXC"
-                    | b"NDXH"
-                    | b"NDXM"
-                    | b"NDXP"
-                    | b"NDXS"
-                    | b"F4V "
-                    | b"F4P "
-            ) || brand.starts_with(b"M4V")
+fn spawn_conversion(cmd: &mut Command) -> Result<tokio::process::Child, PreparationError> {
+    cmd.spawn().map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            PreparationError::Ffmpeg
+        } else {
+            PreparationError::Io
         }
-        None => false,
-    };
+    })
+}
 
-    let heic = header.get(4..8) == Some(b"ftyp")
-        && header
-            .get(8..32.min(header.len()))
-            .unwrap_or_default()
-            .chunks(4)
-            .any(|b| {
-                matches!(
-                    b,
-                    b"heic" | b"heix" | b"hevc" | b"hevx" | b"heim" | b"heis" | b"mif1" | b"msf1"
-                )
-            });
-    match mode {
-        // A .heic filename alone is not proof of a still image: reject unfamiliar
-        // brands instead of allowing the webview to select arbitrary MOV input.
-        "image:mov" if heic => Some(("mov", true, false)),
-        "video:mov" if mov && !heic => Some(("mov", false, false)),
-        "video:avi" if header.starts_with(b"RIFF") && header.get(8..12) == Some(b"AVI ") => {
-            Some(("avi", false, false))
+async fn wait_for_conversion(
+    mut child: tokio::process::Child,
+    output: &Path,
+    image: bool,
+    cancelled: &mut oneshot::Receiver<()>,
+    timeout: Duration,
+    limit: u64,
+) -> Result<(), PreparationError> {
+    let deadline = tokio::time::sleep(timeout);
+    tokio::pin!(deadline);
+    let mut monitor = tokio::time::interval(Duration::from_millis(250));
+    let status = loop {
+        tokio::select! {
+            status = child.wait() => break status.map_err(|_| PreparationError::Io),
+            _ = &mut *cancelled => { child.kill().await.ok(); return Err(PreparationError::Cancelled); },
+            _ = &mut deadline => { child.kill().await.ok(); return Err(if image { PreparationError::Image } else { PreparationError::Video }); },
+            _ = monitor.tick() => if output_size(output, limit).is_err() { child.kill().await.ok(); return Err(PreparationError::Size); },
         }
-        "video:matroska" if header.starts_with(b"\x1a\x45\xdf\xa3") => {
-            Some(("matroska", false, false))
-        }
-        "video:flv" if header.starts_with(b"FLV") => Some(("flv", false, false)),
-        "video:asf" if header.starts_with(b"\x30\x26\xb2\x75\x8e\x66\xcf\x11\xa6\xd9") => {
-            Some(("asf", false, false))
-        }
-        "video:mpeg"
-            if header.starts_with(b"\x00\x00\x01")
-                && header.get(3).is_some_and(|b| (0xba..=0xbf).contains(b)) =>
-        {
-            Some(("mpeg", false, false))
-        }
-        "video:m4v"
-            if header.starts_with(b"\x00\x00\x01")
-                && header
-                    .get(3)
-                    .is_some_and(|b| matches!(b, 0xb0 | 0xb1 | 0xb5 | 0xb6)) =>
-        {
-            Some(("m4v", false, false))
-        }
-        "video:mpegvideo"
-            if header.starts_with(b"\x00\x00\x01")
-                && header.get(3).is_some_and(|b| (0xb2..=0xb9).contains(b)) =>
-        {
-            Some(("mpegvideo", false, false))
-        }
-        "voice:wav"
-            if header.starts_with(b"RIFF")
-                && header.get(8..12) == Some(b"WAVE")
-                && bytes.len() <= 128 * 1024 * 1024 =>
-        {
-            Some(("wav", false, true))
-        }
-        "voice:flac" if header.starts_with(b"fLaC") && bytes.len() <= 128 * 1024 * 1024 => {
-            Some(("flac", false, true))
-        }
-        "voice:ogg" if header.starts_with(b"OggS") && bytes.len() <= 128 * 1024 * 1024 => {
-            Some(("ogg", false, true))
-        }
-        "voice:aiff"
-            if header.starts_with(b"FORM")
-                && matches!(header.get(8..12), Some(b"AIFF" | b"AIFC"))
-                && bytes.len() <= 128 * 1024 * 1024 =>
-        {
-            Some(("aiff", false, true))
-        }
-        "voice:mp3"
-            if (header.starts_with(b"ID3")
-                || header.first() == Some(&0xff)
-                    && header
-                        .get(1)
-                        .is_some_and(|b| b & 0xe0 == 0xe0 && b & 6 != 0))
-                && bytes.len() <= 128 * 1024 * 1024 =>
-        {
-            Some(("mp3", false, true))
-        }
-        "voice:aac"
-            if header.first() == Some(&0xff)
-                && header.get(1).is_some_and(|b| b & 0xf6 == 0xf0)
-                && bytes.len() <= 128 * 1024 * 1024 =>
-        {
-            Some(("aac", false, true))
-        }
-        "voice:amr" if header.starts_with(b"#!AMR") && bytes.len() <= 128 * 1024 * 1024 => {
-            Some(("amr", false, true))
-        }
-        "voice:mov"
-            if header.get(4..8) == Some(b"ftyp")
-                && matches!(brand, Some(b"M4A " | b"M4B " | b"F4A " | b"F4B "))
-                && bytes.len() <= 128 * 1024 * 1024 =>
-        {
-            Some(("mov", false, true))
-        }
-        _ => None,
+    }?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(if image {
+            PreparationError::Image
+        } else {
+            PreparationError::Video
+        })
     }
 }
 
@@ -260,7 +146,7 @@ pub(super) async fn prepare(
         return Err(PreparationError::Size);
     }
     let (demuxer, image, voice) =
-        allowed_mode(mode, &body).ok_or(if mode.starts_with("image:") {
+        allowed_mode(mode, body.len()).ok_or(if mode.starts_with("image:") {
             PreparationError::Image
         } else {
             PreparationError::Video
@@ -268,7 +154,6 @@ pub(super) async fn prepare(
     if cancelled.try_recv().is_ok() {
         return Err(PreparationError::Cancelled);
     }
-    static SLOTS: OnceLock<Semaphore> = OnceLock::new();
     let _slot = SLOTS
         .get_or_init(|| Semaphore::new(2))
         .try_acquire()
@@ -300,9 +185,9 @@ pub(super) async fn prepare(
     }
     cmd.arg("-i").arg(directory.path().join("source"));
     if image {
+        // Automatic selection assembles HEIC tile grids. Mapping 0:v:0
+        // selects the first tile and silently crops the image.
         cmd.args([
-            "-map",
-            "0:v:0",
             "-map_metadata",
             "-1",
             "-frames:v",
@@ -367,33 +252,20 @@ pub(super) async fn prepare(
         "SystemRoot",
         std::env::var_os("SystemRoot").unwrap_or_default(),
     );
+    #[cfg(windows)]
+    cmd.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
     cmd.kill_on_drop(true);
-    let mut child = cmd.spawn().map_err(|err| {
-        if err.kind() == std::io::ErrorKind::NotFound {
-            PreparationError::Ffmpeg
-        } else {
-            PreparationError::Io
-        }
-    })?;
-    let deadline = tokio::time::sleep(Duration::from_secs(if image { 60 } else { 600 }));
-    tokio::pin!(deadline);
-    let mut monitor = tokio::time::interval(Duration::from_millis(250));
+    let child = spawn_conversion(&mut cmd)?;
     let limit = if image { MAX_IMAGE } else { MAX_VIDEO };
-    let status = loop {
-        tokio::select! {
-            status = child.wait() => break status.map_err(|_| PreparationError::Io),
-            _ = &mut *cancelled => { child.kill().await.ok(); return Err(PreparationError::Cancelled); },
-            _ = &mut deadline => { child.kill().await.ok(); return Err(if image { PreparationError::Image } else { PreparationError::Video }); },
-            _ = monitor.tick() => if output_size(&output, limit).is_err() { child.kill().await.ok(); return Err(PreparationError::Size); },
-        }
-    }?;
-    if !status.success() {
-        return Err(if image {
-            PreparationError::Image
-        } else {
-            PreparationError::Video
-        });
-    }
+    wait_for_conversion(
+        child,
+        &output,
+        image,
+        cancelled,
+        Duration::from_secs(if image { 60 } else { 600 }),
+        limit,
+    )
+    .await?;
     let size = output.metadata().map_err(|_| PreparationError::Io)?.len();
     if size == 0 || size > limit {
         return Err(PreparationError::Size);
@@ -414,6 +286,7 @@ pub(super) async fn prepare(
 #[cfg(test)]
 mod tests {
     use super::*;
+    static CONVERSIONS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     #[cfg(unix)]
     #[test]
@@ -435,7 +308,9 @@ mod tests {
         assert!(source.exists());
     }
     #[tokio::test]
+    #[cfg_attr(windows, ignore = "requires ffmpeg; Windows CI does not provision it")]
     async fn converts_video_with_fixed_demuxer_and_strips_input_metadata() {
+        let _guard = CONVERSIONS.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let input = dir.path().join("sample.avi");
         let generated = std::process::Command::new("ffmpeg")
@@ -457,10 +332,9 @@ mod tests {
             ])
             .arg(&input)
             .status();
-        match generated {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-            other => assert!(other.unwrap().success()),
-        }
+        assert!(generated
+            .expect("conversion tests require ffmpeg on PATH")
+            .success());
         let bytes = std::fs::read(input).unwrap();
         let (_sender, mut cancelled) = oneshot::channel();
         let (prepared, mime) = prepare(bytes, "video:avi", &mut cancelled).await.unwrap();
@@ -470,7 +344,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(windows, ignore = "requires ffmpeg; Windows CI does not provision it")]
     async fn converts_legacy_mov_with_leading_free_box() {
+        let _guard = CONVERSIONS.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let input = dir.path().join("sample.mov");
         let generated = std::process::Command::new(crate::host_command::resolve_program(
@@ -493,10 +369,9 @@ mod tests {
         ])
         .arg(&input)
         .status();
-        match generated {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-            other => assert!(other.unwrap().success()),
-        }
+        assert!(generated
+            .expect("conversion tests require ffmpeg on PATH")
+            .success());
         let mut bytes = std::fs::read(input).unwrap();
         assert_eq!(&bytes[4..8], b"ftyp");
         bytes[4..8].copy_from_slice(b"free");
@@ -506,54 +381,151 @@ mod tests {
         assert!(prepared.windows(4).any(|chunk| chunk == b"ftyp"));
     }
 
-    #[test]
-    fn native_container_rules_match_the_webview_recognizers() {
-        fn box_bytes(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
-            let mut result = ((payload.len() + 8) as u32).to_be_bytes().to_vec();
-            result.extend_from_slice(kind);
-            result.extend_from_slice(payload);
-            result
-        }
-        for prefix in [b"free", b"wide", b"skip"] {
-            let mut input = box_bytes(prefix, &[]);
-            input.extend(box_bytes(b"ftyp", b"qt  \0\0\0\0"));
-            assert_eq!(
-                allowed_mode("video:mov", &input),
-                Some(("mov", false, false))
-            );
-        }
-        for box_kind in [b"moov", b"mdat"] {
-            assert_eq!(
-                allowed_mode("video:mov", &box_bytes(box_kind, &[0; 4])),
-                Some(("mov", false, false))
-            );
-        }
-        for brand in [b"M4VH", b"M4VP", b"NDSS", b"NSDC"] {
-            assert_eq!(
-                allowed_mode("video:mov", &box_bytes(b"ftyp", brand)),
-                Some(("mov", false, false))
-            );
-        }
+    #[tokio::test]
+    #[cfg_attr(windows, ignore = "requires ffmpeg; Windows CI does not provision it")]
+    async fn converts_tiled_heic_without_cropping() {
+        let _guard = CONVERSIONS.lock().await;
+        let bytes = include_bytes!("../../../tests/fixtures/media/tiled.heic").to_vec();
+        let (_sender, mut cancelled) = oneshot::channel();
+        let (prepared, mime) = prepare(bytes, "image:mov", &mut cancelled).await.unwrap();
+        assert_eq!(mime, "image/jpeg");
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("prepared.jpg");
+        std::fs::write(&output, prepared).unwrap();
+        let dimensions = std::process::Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(output)
+            .output()
+            .expect("conversion tests require ffprobe");
+        assert!(dimensions.status.success());
         assert_eq!(
-            allowed_mode("voice:mp3", b"\xff\xfb\x90\x64"),
-            Some(("mp3", false, true))
+            String::from_utf8(dimensions.stdout).unwrap().trim(),
+            "1536,1024"
         );
-        assert!(allowed_mode("voice:aac", b"\xff\xfb\x90\x64").is_none());
-        assert!(allowed_mode("video:mov", &box_bytes(b"ftyp", b"avif")).is_none());
-        assert!(allowed_mode("image:mov", &box_bytes(b"ftyp", b"zzzz")).is_none());
-        assert_eq!(PreparationError::Io.code(), "io");
-        assert_eq!(PreparationError::Image.status(), 400);
-        assert_eq!(PreparationError::Cancelled.code(), "cancelled");
+    }
+
+    #[tokio::test]
+    async fn cancelled_input_never_starts_conversion() {
+        let (sender, mut cancelled) = oneshot::channel();
+        sender.send(()).unwrap();
+        assert_eq!(
+            prepare(vec![1], "video:avi", &mut cancelled).await,
+            Err(PreparationError::Cancelled)
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn running_conversion_is_killed_on_cancel_deadline_and_size() {
+        for expected in [
+            PreparationError::Cancelled,
+            PreparationError::Video,
+            PreparationError::Size,
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let output = directory.path().join("prepared.mp4");
+            std::fs::write(&output, [0; 2]).unwrap();
+            // exec leaves one child, not a shell-owned descendant. Sleep is the
+            // stalled workload, not synchronization or a test timing assertion.
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", "exec sleep 60"]).kill_on_drop(true);
+            let child = command.spawn().unwrap();
+            let pid = child.id().unwrap();
+            let (sender, mut cancelled) = oneshot::channel();
+            let timeout = if expected == PreparationError::Video {
+                Duration::ZERO
+            } else {
+                Duration::from_secs(60)
+            };
+            let limit = if expected == PreparationError::Size {
+                1
+            } else {
+                10
+            };
+            if expected == PreparationError::Cancelled {
+                sender.send(()).unwrap();
+            }
+            assert_eq!(
+                wait_for_conversion(child, &output, false, &mut cancelled, timeout, limit).await,
+                Err(expected)
+            );
+            assert!(!std::process::Command::new("/bin/kill")
+                .args(["-0", &pid.to_string()])
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .success());
+        }
+    }
+
+    #[tokio::test]
+    async fn two_slots_reject_excess_work_and_release_on_drop() {
+        let _guard = CONVERSIONS.lock().await;
+        let slots = SLOTS.get_or_init(|| Semaphore::new(2));
+        let first = slots.try_acquire().unwrap();
+        let second = slots.try_acquire().unwrap();
+        let (_sender, mut cancelled) = oneshot::channel();
+        assert_eq!(
+            prepare(vec![1], "video:avi", &mut cancelled).await,
+            Err(PreparationError::Capacity)
+        );
+        drop(first);
+        assert!(slots.try_acquire().is_ok());
+        drop(second);
+        assert_eq!(slots.available_permits(), 2);
     }
 
     #[test]
-    fn modes_reject_arbitrary_ffmpeg_input_and_cross_type_claims() {
-        assert!(allowed_mode("image:mov", b"unrecognized").is_none());
-        assert!(allowed_mode("video:concat", b"ftyp").is_none());
-        assert!(allowed_mode("video:mov", b"\0\0\0\x18ftypheic").is_none());
-        assert_eq!(
-            allowed_mode("image:mov", b"\0\0\0\x18ftypheic"),
-            Some(("mov", true, false))
-        );
+    fn missing_ffmpeg_reports_service_unavailable() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut cmd = Command::new(directory.path().join("missing-ffmpeg"));
+        let error = spawn_conversion(&mut cmd).unwrap_err();
+        assert_eq!(error, PreparationError::Ffmpeg);
+        assert_eq!(error.status(), 503);
+    }
+
+    #[test]
+    fn modes_allow_only_fixed_demuxers_and_bound_voice_input() {
+        for demuxer in [
+            "mov",
+            "avi",
+            "matroska",
+            "flv",
+            "asf",
+            "mpeg",
+            "m4v",
+            "mpegvideo",
+        ] {
+            assert_eq!(
+                allowed_mode(&format!("video:{demuxer}"), 1),
+                Some((demuxer, false, false))
+            );
+        }
+        for demuxer in ["mov", "wav", "flac", "ogg", "aiff", "mp3", "aac", "amr"] {
+            assert_eq!(
+                allowed_mode(&format!("voice:{demuxer}"), 128 * 1024 * 1024),
+                Some((demuxer, false, true))
+            );
+            assert!(allowed_mode(&format!("voice:{demuxer}"), 128 * 1024 * 1024 + 1).is_none());
+        }
+        assert_eq!(allowed_mode("image:mov", 1), Some(("mov", true, false)));
+        for mode in [
+            "image:concat",
+            "video:concat",
+            "voice:concat",
+            "video:http",
+            "image:avi",
+            "mov",
+        ] {
+            assert!(allowed_mode(mode, 1).is_none());
+        }
+        assert_eq!(PreparationError::Ffmpeg.status(), 503);
     }
 }

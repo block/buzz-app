@@ -315,6 +315,32 @@ test("scrolling dismisses a hovered identity preview and keeps the wheel", async
 
   await name(3).hover();
   await opened(card(3));
+  // The document capture listener must ignore scrolling outside the trigger's
+  // ancestry. Wait for the real scroll event and its rendering update first.
+  await page.evaluate(async () => {
+    const unrelated = document.createElement("div");
+    unrelated.style.cssText =
+      "position:fixed;top:0;left:0;width:1px;height:1px;overflow:auto;pointer-events:none";
+    const content = document.createElement("div");
+    content.style.height = "2px";
+    unrelated.append(content);
+    document.body.append(unrelated);
+    try {
+      await new Promise((resolve) => {
+        unrelated.addEventListener(
+          "scroll",
+          () => requestAnimationFrame(resolve),
+          {
+            once: true,
+          },
+        );
+        unrelated.scrollTop = 1;
+      });
+    } finally {
+      unrelated.remove();
+    }
+  });
+  await expect(card(3)).toHaveAttribute("data-open", "");
   // The pointer stays on the same row, so only the scroll can dismiss. While
   // it exits, the preview still follows its row and must not be hit tested.
   const nudge = 4;

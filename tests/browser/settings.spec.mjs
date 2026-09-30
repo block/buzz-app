@@ -238,6 +238,10 @@ confirmedPresence(
       name: "Settings",
       exact: true,
     });
+    const viewProfile = account.getByRole("menuitem", {
+      name: "View your profile",
+      exact: true,
+    });
     const statusEntry = account.getByRole("menuitem", {
       name: "Set a status",
       exact: true,
@@ -294,17 +298,19 @@ confirmedPresence(
       await expect(account).toBeHidden();
       await avatar.focus();
       await page.keyboard.press("Enter");
-      await expect(availability).toBeFocused();
+      await expect(viewProfile).toBeFocused();
       await page.keyboard.press("End");
       await expect(settings).toBeFocused();
       await page.keyboard.press("Home");
+      await expect(viewProfile).toBeFocused();
+      await page.keyboard.press("ArrowDown");
       await expect(statusEntry).toBeFocused();
       await page.keyboard.press("ArrowDown");
       await expect(feedback).toBeFocused();
       await page.keyboard.press("ArrowDown");
       await expect(settings).toBeFocused();
       await page.keyboard.press("Home");
-      await expect(statusEntry).toBeFocused();
+      await expect(viewProfile).toBeFocused();
       await tab(true);
       await expect(account).toBeHidden();
       await expect(avatar).toBeFocused();
@@ -314,7 +320,7 @@ confirmedPresence(
     await page.setViewportSize({ width: 1280, height: 844 });
     await avatar.focus();
     await page.keyboard.press("Enter");
-    await expect(availability).toBeFocused();
+    await expect(viewProfile).toBeFocused();
     await page.keyboard.press("End");
     await expect(settings).toBeFocused();
     await page.keyboard.press("Enter");
@@ -390,8 +396,8 @@ confirmedPresence(
     await profile.click();
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
-      if (await button(page, "Show navigation").isVisible())
-        await button(page, "Show navigation").click();
+      // The narrow toggle appears only after the resize's media-query change renders.
+      if (width === 390) await button(page, "Show navigation").click();
       await expect(settingsSidebar).toBeVisible();
       await profile.focus();
       await tab();

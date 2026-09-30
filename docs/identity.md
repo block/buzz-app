@@ -32,10 +32,9 @@ isolation from other programs running as the same OS user.
 There is no file/environment fallback, automatic legacy migration, human key
 replacement or human delete command. The existing **explicit agent import** may
 read only the selected old Buzz service/account and copy the selected agent key
-into this app's separate agent namespace; it never writes the old blob. The
-Windows/Linux agent adapters are backend groundwork: normal agent import/create
-UI remains macOS-only (see [local agent controls](agent-control.md)). This storage
-change does not enable those actions or Windows agent execution.
+into this app's separate agent namespace; it never writes the old blob. Agent
+import remains macOS-only; Create also saves new agent keys through the
+Windows/Linux adapters (see [local agent controls](agent-control.md)).
 No user key belongs in release configuration.
 
 A shared credential blob can reduce repeated OS prompts by caching many credentials
@@ -74,13 +73,18 @@ space stays disconnected. Discovery failure leaves the community retryable.
 Native sessions do **not** fall through to the dev broker signer.
 
 The native identity owner signs event templates and authenticates HTTP with
-NIP-98, including the exact request URL, method, body hash and a fresh nonce for
-each attempt. Native networking permits only the discovery, join-policy, invite
-acceptance/claim, query and event routes on HTTPS origins, with bounded bodies,
-timeouts and no redirects. JavaScript never obtains the private key for transport.
+NIP-98, including the exact request URL, method, a body hash on POST and a fresh nonce
+for each attempt. Native networking permits only the discovery, join-policy, invite
+acceptance/claim, query, event and bounded workflow run-history routes on HTTPS
+origins, with bounded bodies, timeouts and no redirects. JavaScript never obtains the private key for transport.
 NIP-11 `self` establishes relay authority; the operator-contact `pubkey` is not
 a substitute. The existing live owner handles WSS/NIP-42 authentication and
 signature verification. IPC permissions remain limited to the main WebView.
+
+Channel lifecycle/details and identity archive commands, channel recipe preparation/decoding,
+and opening direct messages use purpose-bound native commands. Creation kind 9007 is
+advertised only when NIP-11 reports NIP-29 support. NIP-44 stays in the native
+identity owner; recipe plaintext is never returned by a generic decrypt command.
 
 Community admission, kind-0 profile reads/publication and the adapter's advertised
 message/event writes use this identity. [Join recovery](communities.md#packaged-admission-and-recovery)
@@ -91,7 +95,7 @@ being republished or silently re-dated. Missing/failed readback retains uncertai
 the user must inspect the conversation before explicitly sending a new message.
 
 Optional capabilities are absent until implemented: protected media/upload,
-workflow commands/history, repository HTTP, lifecycle and other broker-only
+repository HTTP and other broker-only
 helpers are not claimed by this adapter. Public HTTPS avatars/icons can display;
 protected media does not gain access from the image CSP allowance. NIP-FI assertion
 acquisition is not implemented, so deployments enforcing it are outside acceptance.

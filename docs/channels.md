@@ -90,13 +90,14 @@ preferences, not channel access grants: sidebar sections still intersect the
 authorized roster. Local-first launch also restores a display-only copy from the
 existing account/relay-scoped device store; this does not add automatic cross-device sync.
 
-The browser/development host exposes one narrow **Mute/Unmute** command. It
+The development broker and packaged native host expose narrow **Mute/Unmute** commands. Each
 re-reads the viewer's signed encrypted `channel-mutes` coordinate, changes only the
 requested entry, publishes through existing relay admission, and confirms via
-readback. Publication uses the existing authenticated live socket, scoped to the
-requesting session/community; a missing or disconnected owner fails without HTTP
-fallback or automatic replay. Unrelated fields and explicit unmute tombstones
-survive. Invalid, unreadable, or over-budget heads fail closed; only a successful absent-head read
+readback. The development broker publishes through its existing authenticated live
+socket, scoped to the requesting session/community; a missing or disconnected owner
+fails without HTTP fallback or automatic replay. Packaged native uses the signed
+`POST /events` writer and never automatically replays an unconfirmed write.
+Unrelated fields and explicit unmute tombstones survive. Invalid, unreadable, or over-budget heads fail closed; only a successful absent-head read
 can seed a record. Same-host writes serialize per relay. This is confirmed
 whole-record replacement, not atomic cross-device merging or a durable outbox;
 simultaneous writers on different hosts can still race. Failure requires explicit
@@ -122,7 +123,9 @@ without fetching history or inventing exact counts. Read errors remain in-menu
 for explicit retry. Focus resolves the current row by identity even if saved
 preferences relocated it during the transaction. Read actions require
 `frontier-sync`; hosts lacking mute writes keep read-only preference projection.
-Packaged hosts gain no speculative native preference writer.
+The packaged host decodes verified self-encrypted sidebar records and signs
+only validated sidebar coordinates; it uses its signed HTTP writer and confirms
+via readback.
 
 Move channel, Create new, exclusive Starred placement and startup presentation also
 belong to this persistent sidebar. The session serializes placement, sort and mute
@@ -182,7 +185,7 @@ conversation content and unmount when leaving Messages.
 ## Sidebar sort persistence
 
 Each sidebar section can independently select **A–Z** (the default) or **Recent**.
-The development broker saves these choices in the desktop-compatible encrypted
+The development broker and packaged native host save these choices in the desktop-compatible encrypted
 kind-30078 `channel-sort` record: `{ version: 1, groups: { ... } }`. A–Z removes
 that group's override. Saving preserves unrelated fields and choices present in
 the record read before publication.
@@ -363,8 +366,7 @@ profile eligibility before signing and again before publication, validates
 the returned command, and confirms relay-owned state before removing a row. Archive retains membership;
 confirmed Delete/Leave use the existing access-loss purge. Commands use narrow
 development-broker routes, never the message outbox or automatic replay. Hosts
-without this capability display an unavailable notice; native/direct-signer parity
-is deferred.
+without this capability display an unavailable notice; packaged native transport supports these dedicated commands.
 
 Main’s DM × remains local removal, including restoration on new message evidence.
 The separate, confirmed Hide conversation action publishes `41012`, not Leave or Delete. The separate relay-authored `30622`
@@ -458,7 +460,7 @@ admission are unchanged. Publishing reuses the same community's authenticated li
 socket; no HTTP fallback or new connection is added. Restart an already-running
 dev broker to load these routes. `just web` supports this complete browser flow;
 `just desktop` is not required. Hosts without the dedicated capability stay
-read-only; packaged/native adapter parity is not implemented here.
+read-only; packaged/native uses dedicated purpose-bound commands for these edits.
 
 Behavior matrices live in `channel-details.test.ts`,
 `ChannelDetailsEditor.test.tsx`, `store.test.ts` and `relay-broker-api.test.mjs`.

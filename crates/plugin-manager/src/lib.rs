@@ -805,6 +805,7 @@ impl Release {
         if is_bundled(&artifact.manifest.id) || artifact.code.trim().is_empty() {
             return Err("Invalid plugin artifact".into());
         }
+        // IMPORTANT: We allow unsigned plugins currently. Before release, we should add UI to restrict the public keys we trust; and also allowlist Block plugins.
         if let Some(signature) = &self.signature {
             if serde_json::to_vec(signature).map_err(err)?.len() > 64 * 1024 {
                 return Err("Plugin release signature exceeds 64 KiB".into());

@@ -17,6 +17,15 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
 }, testInfo) => {
   await page.addInitScript(() => {
     localStorage.setItem("buzz-appearance.v1", "dark");
+    // This journey exercises sidebar intent, not reading Alpha. Keep startup
+    // and reload focus outside its composer before automatic dwell can begin.
+    document.addEventListener("focusin", ({ target }) => {
+      if (
+        target instanceof Element &&
+        target.matches('[role="textbox"][aria-label="Message #Alpha"]')
+      )
+        document.querySelector('button[data-channel-id="alpha"]')?.focus();
+    });
   });
   await open(page, app);
   // Context menus make the rest of the page aria-hidden while open.

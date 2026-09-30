@@ -48,6 +48,17 @@ test("thread buttons show observed unread independently, clear only after readin
   // Reading needs a 300ms dwell (use-reading.ts). The clock runs that deadline
   // exactly where the test proves that something is not reading.
   await page.clock.install();
+  // Keep setup out of the reading surface, including the composer's mount-time
+  // focus. Later thread/composer focus remains real and earns its own dwell.
+  await page.addInitScript(() => {
+    document.addEventListener("focusin", ({ target }) => {
+      if (
+        target instanceof Element &&
+        target.matches('[role="textbox"][aria-label="Message #Alpha"]')
+      )
+        document.querySelector('button[data-channel-id="alpha"]')?.focus();
+    });
+  });
   await open(page, app);
   const roots = app.histories
     .get("primary/alpha")

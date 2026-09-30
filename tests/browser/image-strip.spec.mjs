@@ -102,12 +102,30 @@ test("posted image strips keep counts visible and every image reachable beside d
             : "Tab",
         );
       await expect(links.last()).toBeFocused();
+      // Neither engine scrolls horizontally on focus for a tile that is
+      // already partly visible, so the last tile must be inside the strip's
+      // scroll-padding box, not merely its border box: a reveal that stops
+      // short of the strip's end lands the far edge in the padding where the
+      // focus ring is clipped. A strip too narrow to hold a tile plus both
+      // paddings (390px once a scrollbar gutter is reserved) can only honour
+      // the far edge, which then has to sit exactly on the scroll-padding end.
       await expect
         .poll(() =>
           links.last().evaluate((el) => {
+            const strip = el.parentElement;
+            const style = getComputedStyle(strip);
             const a = el.getBoundingClientRect(),
-              b = el.parentElement.getBoundingClientRect();
-            return a.left >= b.left && a.right <= b.right;
+              b = strip.getBoundingClientRect();
+            const start =
+              b.left +
+              strip.clientLeft +
+              (Number.parseFloat(style.scrollPaddingInlineStart) || 0);
+            const end =
+              b.left +
+              strip.clientLeft +
+              strip.clientWidth -
+              (Number.parseFloat(style.scrollPaddingInlineEnd) || 0);
+            return a.right <= end && a.left >= Math.min(start, end - a.width);
           }),
         )
         .toBe(true);

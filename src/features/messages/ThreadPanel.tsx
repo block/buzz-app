@@ -29,7 +29,7 @@ import { continuesMessageGroup } from "./message-grouping";
 import { MessageComposer } from "./MessageComposer";
 import styles from "./Messages.module.css";
 import { rejectUnhandledFileDrop } from "./use-file-drop";
-import { useReading } from "./use-reading";
+import { Reading, readingPositioned } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
@@ -61,12 +61,19 @@ export type ThreadPanelProps = {
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
   const { close } = props;
+  const viewKey = messageViewKey(
+    props.session,
+    props.scope,
+    props.channelId,
+    props.messageId,
+  );
   return (
     <aside
       className={
         close ? styles.thread : `${styles.thread} ${styles.embeddedThread}`
       }
       data-attachment-drop-zone=""
+      data-reading-surface=""
       onDragOver={rejectUnhandledFileDrop}
       onDrop={rejectUnhandledFileDrop}
       aria-label="Thread"
@@ -77,16 +84,8 @@ export function ThreadPanel(props: ThreadPanelProps) {
         }
       }}
     >
-      {close && <ThreadHeader close={close} />}
-      <OwnedThreadPanel
-        key={messageViewKey(
-          props.session,
-          props.scope,
-          props.channelId,
-          props.messageId,
-        )}
-        {...props}
-      />
+      {close && <ThreadHeader key={`header:${viewKey}`} close={close} />}
+      <OwnedThreadPanel key={viewKey} {...props} />
     </aside>
   );
 }
@@ -415,7 +414,6 @@ function ThreadMessages({
     else if (snapshot.targetStatus === "error")
       navigation.complete({ status: "failed", reason: "unavailable" });
   }, [navigation, rootTarget, snapshot.status, snapshot.targetStatus]);
-  useReading({ session, channelId, scroller, settled: positioned });
   const [sent, setSent] = useState<string>();
   const [replyFocus, setReplyFocus] = useState(0);
   const focusReply = useCallback(() => {
@@ -570,6 +568,7 @@ function ThreadMessages({
     // subsequent live changes follow only while the reader is at the bottom.
     if (follow.current) element.scrollTop = element.scrollHeight;
     positioned.current = true;
+    readingPositioned(element);
     if (jumpingToLatest.current) {
       setShowJumpToLatest(false);
     } else {
@@ -778,6 +777,20 @@ function ThreadMessages({
   };
   return (
     <MessageEditScope>
+      <Reading
+        session={session}
+        channelId={channelId}
+        scroller={scroller}
+        settled={positioned}
+        rootId={snapshot.root?.id}
+        latestMessageId={
+          snapshot.replies.reduce<ChannelMessage | undefined>(
+            (latest, row) =>
+              !latest || row.createdAt > latest.createdAt ? row : latest,
+            undefined,
+          )?.id
+        }
+      />
       <section
         ref={scroller}
         data-message-scroller

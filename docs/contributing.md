@@ -344,7 +344,9 @@ the complete suite still runs with `pnpm test` / `just scan`:
   version; setup verifies the installed package against image metadata and launches
   the selected engine (both engines for measurements) before tests. No missing
   image or library silently falls back to downloading or skipping an engine.
-  Hermit still pins Node/pnpm. Functional jobs install `build-essential` for the
+  Hermit still pins Node/pnpm; setup invokes repository entry points explicitly.
+  Browser containers use a consistent root home and trust only their exact
+  checked-out workspace. Functional jobs install `gcc` and `libc6-dev` for the
   native fixture and use a commit-pinned Rust installer with the repository's
   `bin/.rust-*.pkg` version. `HERMIT_PREPEND_PATH` keeps the minimal compiler/Cargo
   toolchain selected through nested commands. Each runner builds the native

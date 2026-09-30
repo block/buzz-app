@@ -303,7 +303,7 @@ fn real_listeners_protect_future_run_controls_and_recover_worker_crashes() {
     }
     controller
         .store
-        .write(&controller.store.read().unwrap())
+        .enabled(&agents[0].id, agents[0].enabled)
         .unwrap();
     run_a.process.stop().unwrap();
     assert!(!control_a.exists() && !scratch_a.exists());

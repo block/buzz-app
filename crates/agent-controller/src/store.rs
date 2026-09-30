@@ -2,7 +2,7 @@ use crate::agent_defaults::AgentDefaults;
 use crate::config::{Agent, AgentEdit, MAX_AGENTS, MAX_BYTES};
 use crate::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -14,15 +14,52 @@ use std::sync::{
 
 const MAX_DEFAULTS_BYTES: usize = 1024 * 1024;
 
+pub(crate) const PROTECTION_KEY: &str = "launchProtection";
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Binding {
+    pub provider: String,
+    pub policy: Value,
+}
+impl Binding {
+    pub(crate) fn valid_provider(id: &str) -> bool {
+        !id.is_empty()
+            && id.len() <= 128
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b".-_".contains(&b))
+    }
+    fn validate(&self) -> Result<()> {
+        if !Self::valid_provider(&self.provider)
+            || !self.policy.is_object()
+            || serde_json::to_vec(&self.policy)
+                .map_err(|_| "Invalid protection policy")?
+                .len()
+                > 32 * 1024
+        {
+            return Err("Invalid or oversized protection policy".into());
+        }
+        Ok(())
+    }
+    pub(crate) fn decode(value: Option<&Value>) -> Result<Option<Self>> {
+        let binding: Option<Self> = serde_json::from_value(value.cloned().unwrap_or(Value::Null))
+            .map_err(|_| "Saved protection is malformed; launch refused")?;
+        if let Some(binding) = &binding {
+            binding.validate()?;
+        }
+        Ok(binding)
+    }
+}
+
 #[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct Document {
+struct Document {
     version: u32,
-    pub(crate) agents: Vec<Agent>,
+    agents: Vec<Agent>,
     #[serde(default)]
     parked: BTreeMap<String, ParkedIdentity>,
     #[serde(flatten)]
-    pub(crate) extra: BTreeMap<String, Value>,
+    extra: BTreeMap<String, Value>,
 }
 /// Keyless inventory. Provenance is not proof of present key custody or membership.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,7 +151,7 @@ impl Store {
     fn path(&self) -> PathBuf {
         self.root.join("agents.json")
     }
-    pub(crate) fn read(&self) -> Result<Document> {
+    fn read(&self) -> Result<Document> {
         let path = self.path();
         match fs::symlink_metadata(&path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -151,7 +188,7 @@ impl Store {
         validate(&doc)?;
         Ok(doc)
     }
-    pub(crate) fn write(&self, doc: &Document) -> Result<()> {
+    fn write(&self, doc: &Document) -> Result<()> {
         self.write_with_backup(doc, true)
     }
     fn write_with_backup(&self, doc: &Document, backup: bool) -> Result<()> {
@@ -375,6 +412,46 @@ impl Store {
         }
         agent.apply(edit)?;
         self.write(&doc)
+    }
+    pub(crate) fn set_launch_protection(
+        &mut self,
+        id: &str,
+        revision: u64,
+        binding: Option<Binding>,
+    ) -> Result<()> {
+        if let Some(binding) = &binding {
+            binding.validate()?;
+        }
+        let mut doc = self.read()?;
+        let agent = doc
+            .agents
+            .iter_mut()
+            .find(|a| a.id == id)
+            .ok_or("Agent no longer exists")?;
+        if agent.revision != revision {
+            return Err("Agent changed; reload before saving protection".into());
+        }
+        agent.revision = agent
+            .revision
+            .checked_add(1)
+            .filter(|n| *n <= 9_007_199_254_740_991)
+            .ok_or("Agent revision exhausted")?;
+        agent.extra.insert(
+            PROTECTION_KEY.into(),
+            serde_json::to_value(binding).map_err(|_| "Invalid protection")?,
+        );
+        self.write(&doc)
+    }
+    pub(crate) fn launch_protection_snapshot(&self) -> Result<Value> {
+        let doc = self.read()?;
+        let agents = doc
+            .agents
+            .iter()
+            .map(|a| {
+                Ok(json!({"id": a.id, "binding": Binding::decode(a.extra.get(PROTECTION_KEY))?}))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(json!({"agents": agents}))
     }
     pub(crate) fn remove(&mut self, id: &str, revision: u64) -> Result<()> {
         let mut doc = self.read()?;

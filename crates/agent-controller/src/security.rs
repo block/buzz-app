@@ -1,6 +1,7 @@
 //! Generic, native-owned launch protection. Provider code and policy schemas are external.
-use crate::{config::Agent, runtime::Controller, Result};
-use serde::{Deserialize, Serialize};
+pub use crate::store::Binding;
+use crate::{config::Agent, runtime::Controller, store::PROTECTION_KEY as KEY, Result};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -8,13 +9,6 @@ use std::{
     process::Command,
 };
 
-const KEY: &str = "launchProtection";
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Binding {
-    pub provider: String,
-    pub policy: Value,
-}
 #[derive(Clone)]
 pub(crate) struct Provider {
     executable: PathBuf,
@@ -38,33 +32,6 @@ pub enum Request {
         revision: u64,
         binding: Option<Binding>,
     },
-}
-fn valid_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 128
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b".-_".contains(&b))
-}
-fn validate(binding: &Option<Binding>) -> Result<()> {
-    if let Some(b) = binding {
-        if !valid_id(&b.provider)
-            || !b.policy.is_object()
-            || serde_json::to_vec(&b.policy)
-                .map_err(|_| "Invalid protection policy")?
-                .len()
-                > 32 * 1024
-        {
-            return Err("Invalid or oversized protection policy".into());
-        }
-    }
-    Ok(())
-}
-fn decode(value: Option<&Value>) -> Result<Option<Binding>> {
-    let binding = serde_json::from_value(value.cloned().unwrap_or(Value::Null))
-        .map_err(|_| "Saved protection is malformed; launch refused")?;
-    validate(&binding)?;
-    Ok(binding)
 }
 fn executable_bytes(path: &Path) -> Result<Vec<u8>> {
     if !path.is_absolute() {
@@ -115,7 +82,7 @@ impl Controller {
                 provider,
                 executable,
             } => {
-                if !valid_id(&provider) {
+                if !Binding::valid_provider(&provider) {
                     return Err("Invalid protection provider".into());
                 }
                 let digest = Sha256::digest(executable_bytes(&executable)?).to_vec();
@@ -147,23 +114,8 @@ impl Controller {
                 revision: expected,
                 binding,
             } => {
-                validate(&binding)?;
                 self.require_provider(&binding)?;
-                let mut doc = self.store.read()?;
-                let agent = doc
-                    .agents
-                    .iter_mut()
-                    .find(|a| a.id == id)
-                    .ok_or("Agent no longer exists")?;
-                if agent.revision != expected {
-                    return Err("Agent changed; reload before saving protection".into());
-                }
-                agent.extra.insert(
-                    KEY.into(),
-                    serde_json::to_value(binding).map_err(|_| "Invalid protection")?,
-                );
-                agent.revision = agent.revision.checked_add(1).ok_or("Revision exhausted")?;
-                self.store.write(&doc)?;
+                self.store.set_launch_protection(&id, expected, binding)?;
                 self.security_snapshot()
             }
         }
@@ -178,14 +130,9 @@ impl Controller {
         Ok(())
     }
     fn security_snapshot(&self) -> Result<Value> {
-        let doc = self.store.read()?;
-        let agents = doc
-            .agents
-            .iter()
-            .map(|a| Ok(json!({"id": a.id, "binding": decode(a.extra.get(KEY))?})))
-            .collect::<Result<Vec<_>>>()?;
-        Ok(json!({"agents": agents,
-            "availableProviders": self.security_providers.keys().collect::<Vec<_>>() }))
+        let mut snapshot = self.store.launch_protection_snapshot()?;
+        snapshot["availableProviders"] = json!(self.security_providers.keys().collect::<Vec<_>>());
+        Ok(snapshot)
     }
     pub fn security_restore_ids(&mut self, provider: &str) -> Result<Vec<String>> {
         let running: Vec<_> = self
@@ -201,7 +148,7 @@ impl Controller {
             .iter()
             .filter(|a| a.starts_on_launch() && !running.contains(&a.id))
             .filter_map(|a| {
-                decode(a.extra.get(KEY))
+                Binding::decode(a.extra.get(KEY))
                     .ok()
                     .flatten()
                     .filter(|b| b.provider == provider)
@@ -214,7 +161,7 @@ impl Controller {
         agent: &Agent,
         command: &mut Command,
     ) -> Result<Option<tempfile::TempDir>> {
-        let Some(binding) = decode(agent.extra.get(KEY))? else {
+        let Some(binding) = Binding::decode(agent.extra.get(KEY))? else {
             return Ok(None);
         };
         let provider = self

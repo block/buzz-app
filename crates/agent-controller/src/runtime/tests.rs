@@ -2676,6 +2676,44 @@ fn use_here_exhausted_revision_preserves_the_saved_import() {
     assert!(!store.snapshot().unwrap().agents[0].configured);
 }
 
+#[test]
+fn protection_revision_limit_preserves_saved_agent() {
+    use crate::security::Request;
+    let root = tempfile::tempdir().unwrap();
+    let mut saved = agent(root.path());
+    saved.revision = 9_007_199_254_740_990;
+    let mut store = Store::open(root.path().join("config")).unwrap();
+    store.insert(vec![saved.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("No fixture runtime".into()),
+        root.path().join("ownership"),
+    );
+    controller
+        .security(Request::Agent {
+            id: saved.id.clone(),
+            revision: saved.revision,
+            binding: None,
+        })
+        .unwrap();
+    let saved = controller.store.agents().unwrap().remove(0);
+    assert_eq!(saved.revision, 9_007_199_254_740_991);
+    let path = root.path().join("config/agents.json");
+    let before = fs::read(&path).unwrap();
+    assert_eq!(
+        controller
+            .security(Request::Agent {
+                id: saved.id,
+                revision: saved.revision,
+                binding: None,
+            })
+            .unwrap_err(),
+        "Agent revision exhausted"
+    );
+    assert_eq!(fs::read(path).unwrap(), before);
+}
+
 #[cfg(unix)]
 struct ProtectionWorkerFixture {
     executable: &'static str,
@@ -2747,14 +2785,16 @@ fn protected_worker_lifecycle(worker: &ProtectionWorkerFixture) {
         (s.lines().count() == 10).then_some(())
     });
     controller.action(&saved.id, Action::Stop).unwrap();
-    let provider = dir.path().join("provider");
+    let provider_dir = dir.path().join("provider");
+    fs::create_dir(&provider_dir).unwrap();
+    let provider = provider_dir.join("launcher");
     // Exercise the real launch boundary without requiring a plugin:
     // check the --launch protocol, record each context, and stay alive for restart/stop.
     fs::write(
         &provider,
         r#"#!/bin/sh
 [ "$1" = --launch ] || exit 2
-/usr/bin/env python3 -c 'import json,sys; c=json.load(open(sys.argv[2])); c.update(worker=sys.argv[4], args=sys.argv[5:]); print(json.dumps(c))' "$@" >> launches
+/usr/bin/env python3 -c 'import json,os,sys; c=json.load(open(sys.argv[2])); c.update(worker=sys.argv[4], args=sys.argv[5:], tmpdir=os.environ["TMPDIR"]); print(json.dumps(c))' "$@" >> launches
 trap 'exit 0' TERM INT
 while :; do /bin/sleep 0.1; done
 "#,
@@ -2832,6 +2872,20 @@ while :; do /bin/sleep 0.1; done
             &tools.path().to_path_buf(),
         ] {
             assert!(paths.contains(&json!(path)), "{paths:?}");
+        }
+        for writable in [
+            dir.path().join("config/buzz-agent/oauth"),
+            PathBuf::from(context["tmpdir"].as_str().unwrap()),
+        ] {
+            for protected in paths {
+                let protected = std::path::Path::new(protected.as_str().unwrap());
+                assert!(
+                    !writable.starts_with(protected),
+                    "writable path {} is covered by protected path {}",
+                    writable.display(),
+                    protected.display(),
+                );
+            }
         }
     }
     controller.action(&saved.id, Action::Stop).unwrap();

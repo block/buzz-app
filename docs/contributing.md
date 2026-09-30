@@ -60,6 +60,14 @@ need their own validation.
   sessions short. Press Ctrl+C to finalize the capture; the command prints the
   `.profiles/...-web` output directory. Load `.cpuprofile` and trace files in
   Chromium DevTools (**Performance** > **Load profile**).
+  Use `just web profile --scenario channels` for an unattended capture. It waits
+  for live coverage, opens the first five sidebar channels twice (cold, then
+  warm), saves the app's [client metrics](client-metrics.md) export as
+  `client-metrics.json`, and exits without Ctrl+C. A step that does not finish
+  within 60 seconds fails the run, which then saves no client metrics. The
+  scenario only selects sidebar channels, but it still runs as your real account
+  with normal session traffic and presence. `manifest.json` records the scenario
+  and the `BUZZ_RELAY_URL` environment value.
 - `just desktop [args...]`: install locked dependencies and forward arguments to
   Tauri, e.g. `just desktop --port 1431 --no-watch`. Before launching, the adapter
   builds the pinned agent runtime when missing/outdated, or verifies and reuses it.

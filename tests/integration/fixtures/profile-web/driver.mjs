@@ -10,13 +10,15 @@ console.log = (...args) => {
   if (args[0]?.startsWith("\nProfiling http"))
     process.send({ type: "capturing" });
 };
+const fixture = JSON.parse(process.env.BUZZ_TEST_SCENARIO);
 try {
   await profileWeb({
     directory: `${process.cwd()}/profiles`,
     profileArgs: [],
     args: [],
     network: true,
-    trace: JSON.parse(process.env.BUZZ_TEST_SCENARIO).trace === true,
+    trace: fixture.trace === true,
+    scenario: fixture.scenario,
   });
   process.send({ type: "settled" });
 } catch (error) {

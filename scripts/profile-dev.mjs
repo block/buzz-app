@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
+import { setTimeout as pause } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
@@ -501,12 +502,118 @@ export function networkRecorder(session, directory) {
   };
 }
 
+const SCENARIO_CHANNELS = 5;
+const SCENARIO_STEP_TIMEOUT_MS = 60_000;
+const SCENARIO_PAUSE_MS = 1_000;
+const CHANNEL_ROWS =
+  'nav[aria-label="Subscribed channels"] button[data-channel-id]';
+
+// Scenarios must stay read-only: they run as the developer's real account.
+// Each returns the app's own client-metrics export (docs/client-metrics.md).
+export const scenarios = {
+  // Opens the first sidebar channels twice: a cold pass, then a warm pass.
+  // Focus stays on the sidebar, so the reading policy marks nothing read.
+  async channels(page, signal) {
+    const waitForMetrics = (description, predicate, argument) =>
+      page
+        .waitForFunction(predicate, argument, {
+          timeout: SCENARIO_STEP_TIMEOUT_MS,
+          polling: 100,
+        })
+        .catch((cause) => {
+          throw new Error(`Scenario stopped waiting for ${description}.`, {
+            cause,
+          });
+        });
+    // Opens during startup catch-up would measure live setup, not the open.
+    await waitForMetrics(
+      "live coverage to settle",
+      () =>
+        globalThis.__buzzClientMetrics?.summary().phases[0].coverageMs !==
+        undefined,
+    );
+    const options = { timeout: SCENARIO_STEP_TIMEOUT_MS };
+    const rows = page.locator(CHANNEL_ROWS);
+    await rows.first().waitFor(options);
+    const ids = await rows.evaluateAll(
+      (buttons, limit) =>
+        buttons.slice(0, limit).map((button) => button.dataset.channelId),
+      SCENARIO_CHANNELS,
+    );
+    // The app finishes an open by timing it or counting it as not timed.
+    const finishedOpens = () =>
+      page.evaluate(() => {
+        const { n, skipped } = globalThis.__buzzClientMetrics.summary().opens;
+        return n + skipped;
+      });
+    for (const id of [...ids, ...ids]) {
+      const row = page
+        .locator(`${CHANNEL_ROWS}[data-channel-id=${JSON.stringify(id)}]`)
+        .first();
+      // Reselecting the channel on screen opens nothing.
+      if ((await row.getAttribute("aria-current", options)) === "page")
+        continue;
+      const before = await finishedOpens();
+      await row.click(options);
+      await waitForMetrics(
+        `channel ${id.slice(0, 8)} to open`,
+        (count) => {
+          const { n, skipped } = globalThis.__buzzClientMetrics.summary().opens;
+          return n + skipped > count;
+        },
+        before,
+      );
+      // Let trailing work finish so it is not charged to the next open.
+      await pause(SCENARIO_PAUSE_MS, undefined, { signal });
+    }
+    return await page.evaluate(() =>
+      globalThis.__buzzClientMetrics.export("channels"),
+    );
+  },
+};
+
+export function takeScenario(values) {
+  const args = [];
+  let scenario;
+  for (let index = 0; index < values.length; index++) {
+    const value = values[index];
+    if (value !== "--scenario" && !value.startsWith("--scenario=")) {
+      args.push(value);
+      continue;
+    }
+    if (scenario !== undefined)
+      throw new Error("Profiling accepts only one --scenario option.");
+    scenario = value === "--scenario" ? values[++index] : value.slice(11);
+    if (!Object.hasOwn(scenarios, scenario))
+      throw new Error(
+        `--scenario must be one of: ${Object.keys(scenarios).join(", ")}.`,
+      );
+  }
+  return { scenario, args };
+}
+
+async function runScenario(name, page, directory, signal) {
+  try {
+    const metrics = await scenarios[name](page, signal);
+    // An interrupted capture must not report a complete scenario.
+    signal.throwIfAborted();
+    await writeFile(
+      `${directory}/client-metrics.json`,
+      `${JSON.stringify(metrics, null, 2)}\n`,
+    );
+    return { reason: "scenario", code: 0 };
+  } catch (error) {
+    return { reason: "scenario", code: 1, error };
+  }
+}
+
 export async function profileWeb({
   directory,
   profileArgs,
   args,
   network,
   trace = false,
+  scenario,
 }) {
   const vite = normalizeWebViteArgs(args);
   await recordManifest(directory, "web", profileArgs, {
@@ -514,8 +621,11 @@ export async function profileWeb({
       trace ? "chromium-trace" : "chromium-renderer",
       "vite-broker",
       ...(network ? ["chromium-network"] : []),
+      ...(scenario ? ["client-metrics"] : []),
     ],
     network,
+    scenario: scenario ?? null,
+    relay: process.env.BUZZ_RELAY_URL ?? null,
   });
 
   const control = stopController();
@@ -618,9 +728,20 @@ export async function profileWeb({
     control.abort.signal.throwIfAborted();
     captureStarted = true;
     console.log(
-      `\nProfiling ${url}. Press Ctrl-C to stop and save the profile.`,
+      `\nProfiling ${url}. ${
+        scenario
+          ? `Running scenario ${scenario}; the capture stops when it ends.`
+          : "Press Ctrl-C to stop and save the profile."
+      }`,
     );
-    outcome = await Promise.race([control.requested, viteExit]);
+    outcome = await Promise.race([
+      control.requested,
+      viteExit,
+      ...(scenario
+        ? [runScenario(scenario, page, directory, control.abort.signal)]
+        : []),
+    ]);
+    if (outcome.error) failures.push(outcome.error);
   } catch (error) {
     if (!control.abort.signal.aborted) failures.push(error);
     outcome ??= { reason: "startup", code: 1 };
@@ -777,8 +898,10 @@ async function main() {
   const profileArgs = process.argv.slice(3);
   const network = target === "web" && profileArgs.includes("--network");
   const trace = target === "web" && profileArgs.includes("--trace");
-  const args = profileArgs.filter(
-    (argument) => argument !== "--network" && argument !== "--trace",
+  const { scenario, args } = takeScenario(
+    profileArgs.filter(
+      (argument) => argument !== "--network" && argument !== "--trace",
+    ),
   );
   if (target !== "web" && target !== "desktop") {
     console.error(
@@ -787,6 +910,8 @@ async function main() {
     process.exitCode = 1;
     return;
   }
+  if (scenario !== undefined && target !== "web")
+    throw new Error("--scenario is supported for web profiling only.");
   if (process.platform !== "darwin") {
     console.error("Development profiling currently supports macOS only.");
     process.exitCode = 1;
@@ -799,7 +924,14 @@ async function main() {
   const directory = `${root}.profiles/${stamp}-${target}`;
   await mkdir(directory, { recursive: true });
   if (target === "web")
-    await profileWeb({ directory, profileArgs, args, network, trace });
+    await profileWeb({
+      directory,
+      profileArgs,
+      args,
+      network,
+      trace,
+      scenario,
+    });
   else await profileDesktop({ directory, profileArgs, args });
 }
 

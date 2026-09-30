@@ -17,6 +17,7 @@ import {
   inspectorClient,
   normalizeWebViteArgs,
   safeUrl,
+  takeScenario,
   viteListenerUrl,
   viteReadyToken,
 } from "../../scripts/profile-dev.mjs";
@@ -48,6 +49,27 @@ test("web profiling canonicalizes its Vite port and strict-port contract", () =>
   assert.throws(
     () => normalizeWebViteArgs(["--no-strictPort"]),
     /requires --strictPort/,
+  );
+});
+
+test("profiling takes one known scenario and leaves the other arguments", () => {
+  for (const values of [
+    ["--port", "1431", "--scenario", "channels"],
+    ["--scenario=channels", "--port", "1431"],
+  ])
+    assert.deepEqual(takeScenario(values), {
+      scenario: "channels",
+      args: ["--port", "1431"],
+    });
+  assert.deepEqual(takeScenario(["--port", "1431"]), {
+    scenario: undefined,
+    args: ["--port", "1431"],
+  });
+  for (const values of [["--scenario"], ["--scenario=toString"]])
+    assert.throws(() => takeScenario(values), /must be one of: channels/);
+  assert.throws(
+    () => takeScenario(["--scenario", "channels", "--scenario=channels"]),
+    /only one --scenario/,
   );
 });
 
@@ -165,6 +187,7 @@ async function webFixture(t, scenario) {
     cwd: directory,
     env: {
       PATH: process.env.PATH,
+      BUZZ_RELAY_URL: "wss://relay.example",
       BUZZ_TEST_SCENARIO: JSON.stringify(scenario),
     },
     stdio: ["ignore", "pipe", "pipe", "ipc"],
@@ -355,5 +378,76 @@ test("traced web capture replaces the renderer profile with a DevTools trace", a
       ),
     ).coverage,
     ["chromium-trace", "vite-broker", "chromium-network"],
+  );
+});
+
+const profileFiles = async (fixture) =>
+  (await readdir(path.join(fixture.directory, "profiles"))).sort();
+
+test("a scenario ends its own capture and saves the app's client metrics", async (t) => {
+  const fixture = await webFixture(t, { scenario: "channels" });
+  assert.equal((await fixture.wait("settled")).error, undefined);
+  await fixture.wait("browserClosed");
+  fixture.child.send("finish");
+  assert.deepEqual(await fixture.exited, [0, null], fixture.log());
+  const calls = fixture.messages
+    .filter(({ type }) => type === "call")
+    .map(({ name }) => name);
+  // The opened channel is current on the second pass and is not reselected.
+  assert.equal(calls.filter((name) => name === "click").length, 1);
+  assert.ok(calls.indexOf("Profiler.stop") > calls.lastIndexOf("evaluate"));
+  assert.deepEqual(await profileFiles(fixture), [
+    "chromium-renderer.cpuprofile",
+    "client-metrics.json",
+    "manifest.json",
+    "network.json",
+    "vite-broker.cpuprofile",
+  ]);
+  const manifest = JSON.parse(
+    await readFile(
+      path.join(fixture.directory, "profiles/manifest.json"),
+      "utf8",
+    ),
+  );
+  assert.equal(manifest.scenario, "channels");
+  assert.equal(manifest.relay, "wss://relay.example");
+  assert.ok(manifest.coverage.includes("client-metrics"));
+});
+
+test("a failed scenario step finalizes the capture without client metrics", async (t) => {
+  const fixture = await webFixture(t, {
+    scenario: "channels",
+    reject: "click",
+  });
+  assert.match((await fixture.wait("settled")).error, /fixture rejection/);
+  await fixture.wait("browserClosed");
+  fixture.child.send("finish");
+  assert.deepEqual(await fixture.exited, [1, null], fixture.log());
+  assert.deepEqual(await profileFiles(fixture), [
+    "chromium-renderer.cpuprofile",
+    "manifest.json",
+    "network.json",
+    "vite-broker.cpuprofile",
+  ]);
+});
+
+test("Ctrl-C during a scenario saves the capture without client metrics", async (t) => {
+  const fixture = await webFixture(t, {
+    scenario: "channels",
+    held: "click",
+    late: "resolve",
+  });
+  await fixture.wait("held");
+  fixture.child.kill("SIGINT");
+  assert.equal((await fixture.wait("settled")).error, undefined);
+  await fixture.wait("browserClosed");
+  // The interrupted scenario may still finish; it must not report completion.
+  fixture.child.send("release");
+  await fixture.wait("released");
+  fixture.child.send("finish");
+  assert.deepEqual(await fixture.exited, [0, null], fixture.log());
+  assert.equal(
+    (await profileFiles(fixture)).includes("client-metrics.json"),
+    false,
   );
 });

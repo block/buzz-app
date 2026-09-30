@@ -170,6 +170,31 @@ export function createSidebarJournal(
   changed: () => void,
 ) {
   let current = empty();
+  // Only uncommitted manual edits live here. The durable journal remains the
+  // sole stored set; queued edits paint in invocation order before IndexedDB.
+  const manualEdits = new Map<
+    symbol,
+    {
+      apply: (targets: SidebarManualTarget[]) => SidebarManualTarget[];
+      valid: () => boolean;
+    }
+  >();
+  async function presentManual<T>(
+    apply: (targets: SidebarManualTarget[]) => SidebarManualTarget[],
+    valid: () => boolean,
+    save: () => Promise<T>,
+  ): Promise<T> {
+    if (closed || !valid()) throw new Error("Reading context changed");
+    const token = Symbol();
+    manualEdits.set(token, { apply, valid });
+    changed();
+    try {
+      return await save();
+    } finally {
+      manualEdits.delete(token);
+      if (!closed) changed();
+    }
+  }
   let closed = false;
   let serial: Promise<unknown> = Promise.resolve();
   function update(change: (journal: SidebarJournal) => SidebarJournal) {
@@ -191,27 +216,31 @@ export function createSidebarJournal(
   return {
     snapshot: () => current,
     reload: () => update((j) => j),
-    manual: (target: SidebarManualTarget) =>
-      current.manual.some(
+    manual: (target: SidebarManualTarget) => {
+      let targets = current.manual;
+      for (const edit of manualEdits.values())
+        if (edit.valid()) targets = edit.apply(targets);
+      return targets.some(
         (t) => unreadTargetKey(t) === unreadTargetKey(target),
-      ),
+      );
+    },
     async markUnread(
       target: SidebarManualTarget,
       valid: () => boolean,
     ): Promise<ReadMutationResult> {
       const operationId = crypto.randomUUID();
-      await update((j) => {
-        if (!valid()) throw new Error("Reading context changed");
-        return {
-          ...j,
-          manual: [
-            ...j.manual.filter(
-              (t) => unreadTargetKey(t) !== unreadTargetKey(target),
-            ),
-            target,
-          ],
-        };
-      });
+      const apply = (targets: SidebarManualTarget[]) => [
+        ...targets.filter(
+          (t) => unreadTargetKey(t) !== unreadTargetKey(target),
+        ),
+        target,
+      ];
+      await presentManual(apply, valid, () =>
+        update((j) => {
+          if (!valid()) throw new Error("Reading context changed");
+          return { ...j, manual: apply(j.manual) };
+        }),
+      );
       return { operationId, durability: "saved", sync: "local-only" };
     },
     async enqueue(
@@ -224,16 +253,21 @@ export function createSidebarJournal(
         id: crypto.randomUUID(),
       }));
       const operationId = pending[0]?.id ?? crypto.randomUUID();
-      await update((j) => {
-        if (!valid()) throw new Error("Reading context changed");
-        return {
-          pending: pending.reduce((all, next) => {
-            if (all.some((p) => dominates(p, next))) return all;
-            return [...all.filter((p) => !dominates(next, p)), next];
-          }, j.pending),
-          manual: j.manual.filter((t) => !clear(t)),
-        };
-      });
+      await presentManual(
+        (targets) => targets.filter((t) => !clear(t)),
+        valid,
+        () =>
+          update((j) => {
+            if (!valid()) throw new Error("Reading context changed");
+            return {
+              pending: pending.reduce((all, next) => {
+                if (all.some((p) => dominates(p, next))) return all;
+                return [...all.filter((p) => !dominates(next, p)), next];
+              }, j.pending),
+              manual: j.manual.filter((t) => !clear(t)),
+            };
+          }),
+      );
       return {
         operationId,
         durability: "saved",
@@ -255,6 +289,7 @@ export function createSidebarJournal(
     },
     dispose() {
       closed = true;
+      manualEdits.clear();
       storage.close();
     },
   };

@@ -510,3 +510,130 @@ it("reconciles saturated applied surfaces before retry without losing the thread
     screen.getByRole("button", { name: "View thread: 2 replies" }),
   ).toBeVisible();
 });
+
+// Real session subscriptions and journal transactions; only the persistence
+// boundary is gated so the pending paint cannot be explained by fast storage.
+it.each([
+  { first: "mark", failNewer: false },
+  { first: "mark", failNewer: true },
+  { first: "clear", failNewer: false },
+  { first: "clear", failNewer: true },
+] as const)(
+  "manual badge invocation order and rollback: %j",
+  async ({ first, failNewer }) => {
+    const bff = sidebarFixture(),
+      viewer = keypair(),
+      relay = keypair();
+    const target = { kind: "channel", channelId: channel } as const;
+    bff.rows.set(
+      channel,
+      sidebarRow(channel, {
+        unread: { status: "exact", value: 0 },
+        attention: { status: "exact", value: 0 },
+      }),
+    );
+    let gate: ReturnType<typeof deferredSidebar<void>> | undefined;
+    let started: ReturnType<typeof deferredSidebar<void>> | undefined;
+    let saves = 0;
+    const storage = {
+      ...bff.storage,
+      async update(change: Parameters<typeof bff.storage.update>[0]) {
+        if (gate) {
+          started?.resolve();
+          await gate.promise;
+          if (++saves === 2 && failNewer) throw new Error("manual save failed");
+        }
+        return bff.storage.update(change);
+      },
+    };
+    function session() {
+      let live!: LiveCallbacks;
+      const owner = createRelaySession(
+        {
+          viewer: viewer.pubkey,
+          relayAuthor: relay.pubkey,
+          sidebarApi: bff.api,
+          query: async () => [],
+          media: () => undefined,
+          subscribe(callbacks) {
+            live = callbacks;
+            return { update() {}, retry() {}, dispose() {} };
+          },
+        },
+        { sidebarStorage: storage },
+      );
+      owners.push(owner);
+      live.receive([
+        roster(relay, channel, [viewer.pubkey], 1),
+        metadata(relay, channel, "Room", 1),
+      ]);
+      return owner;
+    }
+    const owner = session();
+    await owner.session.unread.ensure();
+    if (first === "clear") await owner.session.unread.markUnreadLocal(target);
+    const mounted = render(
+      <UnreadBadge session={owner.session} channelId={channel} label="Room" />,
+    );
+    const painted = () =>
+      screen.queryByRole("img", {
+        name: "Marked unread on this device only",
+      }) !== null;
+    expect(painted()).toBe(first === "clear");
+    const initial = structuredClone(bff.journal().manual);
+    gate = deferredSidebar<void>();
+    started = deferredSidebar<void>();
+    let older!: Promise<unknown>, newer!: Promise<unknown>;
+    try {
+      await act(async () => {
+        older =
+          first === "mark"
+            ? owner.session.unread.markUnreadLocal(target)
+            : owner.session.unread.clearUnreadLocal(target);
+        await started?.promise;
+      });
+      expect(painted()).toBe(first === "mark");
+      await act(async () => {
+        newer =
+          first === "mark"
+            ? owner.session.unread.clearUnreadLocal(target)
+            : owner.session.unread.markUnreadLocal(target);
+      });
+      expect(painted()).toBe(first === "clear");
+      expect(bff.journal().manual).toEqual(initial);
+      expect(bff.api.write).not.toHaveBeenCalled();
+      await act(async () => {
+        const settled = failNewer
+          ? expect(newer).rejects.toThrow("manual save failed")
+          : newer;
+        gate?.resolve();
+        await older;
+        await settled;
+      });
+      const expected = failNewer ? first === "mark" : first === "clear";
+      expect(painted()).toBe(expected);
+      expect(bff.journal().manual).toEqual(expected ? [target] : []);
+      expect(owner.session.unread.snapshot(target).unread).toEqual({
+        status: "exact",
+        value: 0,
+      });
+      // A new owner restores only the committed set, not transient edits.
+      gate = undefined;
+      mounted.unmount();
+      owner.dispose();
+      const restored = session();
+      await restored.session.unread.ensure();
+      render(
+        <UnreadBadge
+          session={restored.session}
+          channelId={channel}
+          label="Room"
+        />,
+      );
+      expect(painted()).toBe(expected);
+    } finally {
+      gate?.resolve();
+      await Promise.allSettled([older, newer]);
+    }
+  },
+);

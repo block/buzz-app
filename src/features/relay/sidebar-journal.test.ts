@@ -156,3 +156,39 @@ it("coalesces monotone same-context and whole-channel cuts, preserving independe
   expect(s.read().pending).toHaveLength(2); // a channel prefix cannot replace a whole-channel cut
   expect(s.read().pending.at(-1)?.createdAt).toBe(1009);
 });
+
+it("paints manual edits in invocation order before storage and rolls back a failed newer clear", async () => {
+  const s = storage();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let calls = 0;
+  const journal = createSidebarJournal(
+    {
+      ...s.storage,
+      async update(change) {
+        await held;
+        if (++calls === 2) throw new Error("clear failed");
+        return s.storage.update(change);
+      },
+    },
+    () => {},
+  );
+  const mark = journal.markUnread(target, () => true);
+  expect(journal.manual(target)).toBe(true);
+  expect(s.read().manual).toEqual([]);
+  const clear = journal.enqueue(
+    [],
+    () => true,
+    () => true,
+  );
+  expect(journal.manual(target)).toBe(false);
+  const rejected = expect(clear).rejects.toThrow("clear failed");
+  release();
+  await mark;
+  await rejected;
+  expect(journal.manual(target)).toBe(true);
+  expect(s.read().manual).toEqual([target]);
+  journal.dispose();
+});

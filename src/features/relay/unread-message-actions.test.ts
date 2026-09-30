@@ -217,3 +217,30 @@ it.each(["channel", "thread", "message"] as const)(
     expect(h.journal().manual).toEqual([selected]);
   },
 );
+
+it.each(["revoke", "clear", "dispose"] as const)(
+  "rejects a held manual mark after %s without saving it",
+  async (action) => {
+    const h = setup();
+    await h.unread.ensure();
+    const held = h.hold();
+    const mark = h.unread.markUnreadLocal(target);
+    const rejected = expect(mark).rejects.toThrow();
+    try {
+      await held.started;
+      expect(h.unread.snapshot(target).manual).toBe("local-only");
+      if (action === "revoke") h.revoke();
+      if (action === "clear") h.owner.clear();
+      if (action === "dispose") h.owner.dispose();
+      expect(h.unread.snapshot(target).manual).toBe("none");
+    } finally {
+      // Invalidate even if an earlier paint assertion failed, so cleanup
+      // cannot replace that assertion with a resolved-promise rejection error.
+      h.owner.dispose();
+      held.release();
+      await rejected;
+    }
+    expect(h.journal().manual).toEqual([]);
+    expect(h.api.write).not.toHaveBeenCalled();
+  },
+);

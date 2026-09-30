@@ -145,25 +145,6 @@ export function createUnread({
   >();
   const handles = new Set<() => void>();
   const manualRevision = new Map<string, number>();
-  const mutations = new Map<string, Promise<unknown>>();
-  function serialize<T>(
-    channelId: string,
-    operation: () => Promise<T>,
-  ): Promise<T> {
-    const next = (mutations.get(channelId) ?? Promise.resolve()).then(
-      operation,
-      operation,
-    );
-    const settled = next.then(
-      () => undefined,
-      () => undefined,
-    );
-    mutations.set(channelId, settled);
-    void settled.then(() => {
-      if (mutations.get(channelId) === settled) mutations.delete(channelId);
-    });
-    return next;
-  }
   const lifetime = new AbortController();
   const event = (id: string) => {
     const value = find(id) ?? previews.get(id);
@@ -579,33 +560,29 @@ export function createUnread({
         contextKey(resolved) !== contextKey(expected)
       )
         throw new Error("Message does not belong to the read target");
-      return serialize(target.channelId, () =>
-        state.enqueue(
-          [
-            {
-              intent: {
-                type: "mark_through",
-                target: expected,
-                message_id: messageId,
-              },
-              createdAt: message.created_at,
+      return state.enqueue(
+        [
+          {
+            intent: {
+              type: "mark_through",
+              target: expected,
+              message_id: messageId,
             },
-          ],
-          (t) => unreadTargetKey(t) === unreadTargetKey(target),
-          () => !closed && epoch === generation && allowed(target.channelId),
-        ),
+            createdAt: message.created_at,
+          },
+        ],
+        (t) => unreadTargetKey(t) === unreadTargetKey(target),
+        () => !closed && epoch === generation && allowed(target.channelId),
       );
     },
     async clearUnreadLocal(target) {
       const generation = epoch;
       if (!allowed(target.channelId))
         throw new Error("Read target unavailable");
-      return serialize(target.channelId, () =>
-        state.journal.enqueue(
-          [],
-          (t) => unreadTargetKey(t) === unreadTargetKey(target),
-          () => !closed && generation === epoch && allowed(target.channelId),
-        ),
+      return state.journal.enqueue(
+        [],
+        (t) => unreadTargetKey(t) === unreadTargetKey(target),
+        () => !closed && generation === epoch && allowed(target.channelId),
       );
     },
     async markChannelRead(channelId) {
@@ -618,25 +595,22 @@ export function createUnread({
         throw new Error("Latest message timestamp unavailable");
       if (!row.latest_message_id && !row.latest_message_complete)
         throw new Error("Latest message unknown; refresh before marking read");
-      return serialize(channelId, async () => {
-        const result = await state.enqueue(
-          row.latest_message_id
-            ? [
-                {
-                  intent: {
-                    type: "mark_channel_read",
-                    channel_id: channelId,
-                    message_id: row.latest_message_id,
-                  },
-                  createdAt: row.latest_message_at ?? 0,
+      return state.enqueue(
+        row.latest_message_id
+          ? [
+              {
+                intent: {
+                  type: "mark_channel_read",
+                  channel_id: channelId,
+                  message_id: row.latest_message_id,
                 },
-              ]
-            : [],
-          (t) => t.channelId === channelId,
-          valid,
-        );
-        return result;
-      });
+                createdAt: row.latest_message_at ?? 0,
+              },
+            ]
+          : [],
+        (t) => t.channelId === channelId,
+        valid,
+      );
     },
     async markUnreadLocal(target) {
       const generation = epoch;
@@ -646,11 +620,9 @@ export function createUnread({
         target.channelId,
         (manualRevision.get(target.channelId) ?? 0) + 1,
       );
-      return serialize(target.channelId, () =>
-        state.journal.markUnread(
-          target,
-          () => !closed && epoch === generation && allowed(target.channelId),
-        ),
+      return state.journal.markUnread(
+        target,
+        () => !closed && epoch === generation && allowed(target.channelId),
       );
     },
   });

@@ -157,6 +157,13 @@ export class ConversationService extends Service implements Conversation {
         typeof value.create.component !== "function")
     )
       throw new Error("A channel draft needs a title and component");
+    if (value.sidebar !== undefined && typeof value.sidebar !== "function")
+      throw new Error("A channel sidebar contribution needs a component");
+    if (
+      value.threadAccessory !== undefined &&
+      typeof value.threadAccessory !== "function"
+    )
+      throw new Error("A channel thread accessory needs a component");
     this.directoryEntries.register(this.ctx, value);
   }
   registerAccessory(value: ComposerAccessory) {

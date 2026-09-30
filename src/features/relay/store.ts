@@ -10,8 +10,10 @@ import type {
   ChannelQueries,
   PublicChannelSearch,
   ChannelWindow,
+  RetainedChannelEvidence,
 } from "./contracts";
 import { DiscoveryState, metadataName, openMetadata } from "./discovery";
+import { retainedChannel, retainedMessages } from "./retained";
 import { foldMessages } from "./fold";
 import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
 import type { RelayReader, ReadOptions, Priority } from "./reader";
@@ -196,7 +198,97 @@ export function createChannelStore(
       listeners.delete(callback);
     };
   }
+  const retainedListeners = new Set<Listener>();
+  let retainedSnapshot: RetainedChannelEvidence = Object.freeze([]);
+  let retainedDirty = true;
+  let retainedQueued = false;
+  function invalidateRetained(reset = false) {
+    if (reset) retainedSnapshot = Object.freeze([]);
+    // Synchronous reads must never see a cached pre-clear/pre-revoke snapshot.
+    retainedDirty = true;
+    if (retainedQueued || disposed || !retainedListeners.size) return;
+    retainedQueued = true;
+    // Publish after the logical synchronous mutation, never before a commit or
+    // between windows. No continuation can reinsert data after this callback.
+    queueMicrotask(() => {
+      retainedQueued = false;
+      if (!disposed) notify(retainedListeners);
+    });
+  }
+  function retained(): RetainedChannelEvidence {
+    if (!retainedDirty) return retainedSnapshot;
+    retainedDirty = false;
+    const rows: RetainedChannelEvidence[number][] = [];
+    if (!disposed && transport) {
+      const operations = local?.snapshot() ?? [];
+      // Include accepted local roots even when no timeline/head was opened.
+      // local is the existing completed + pending owner, not the public outbox.
+      const byChannel = new Map<string, import("./events").EventData[]>();
+      for (const item of operations) {
+        const id = retainedChannel(item.event);
+        if (!id || (item.delivery !== "accepted" && item.delivery !== "seen"))
+          continue;
+        const entries = byChannel.get(id) ?? [];
+        entries.push(item.event);
+        byChannel.set(id, entries);
+      }
+      const ids = new Set([
+        ...heads.keys(),
+        ...windows.keys(),
+        ...tails.keys(),
+        ...byChannel.keys(),
+      ]);
+      for (const channelId of ids) {
+        if (!authorized(channelId)) continue;
+        const state = windows.get(channelId);
+        const events = new Map(
+          [
+            ...(heads.peek(channelId)?.events ?? []),
+            ...(state?.events ?? []),
+            ...(state?.traffic.values() ?? []),
+            ...(tails.peek(channelId)?.events ?? []),
+          ].map((event) => [event.id, event as import("./events").EventData]),
+        );
+        for (const event of byChannel.get(channelId) ?? []) {
+          // Verified remote proof wins, regardless of stale local delivery status.
+          if (!events.has(event.id)) events.set(event.id, event);
+        }
+        rows.push(
+          ...retainedMessages(
+            channelId,
+            transport.relayAuthor,
+            events.values(),
+          ),
+        );
+      }
+    }
+    rows.sort(
+      (a, b) =>
+        a.channelId.localeCompare(b.channelId) || a.id.localeCompare(b.id),
+    );
+    // Reactions, read/freshness state and metadata do not change this projection.
+    if (
+      rows.length !== retainedSnapshot.length ||
+      rows.some((row, i) => {
+        const old = retainedSnapshot[i];
+        return (
+          !old ||
+          Object.entries(row).some(([key, value]) => {
+            const previous = old[key as keyof typeof old];
+            return Array.isArray(value)
+              ? !Array.isArray(previous) ||
+                  value.length !== previous.length ||
+                  value.some((item, j) => item !== previous[j])
+              : value !== previous;
+          })
+        );
+      })
+    )
+      retainedSnapshot = Object.freeze(rows);
+    return retainedSnapshot;
+  }
   function setList(next: ChannelList, discoveryChanged = false) {
+    invalidateRetained();
     const previous = new Map(
       list.channels.map((channel) => [channel.id, channel]),
     );
@@ -249,6 +341,7 @@ export function createChannelStore(
     notify(listListeners);
   }
   function setWindow(state: WindowState, patch: Partial<ChannelWindow>) {
+    invalidateRetained();
     let rows = patch.rows ?? state.snapshot.rows;
     if (authorized(state.channelId) && transport) {
       const combined = new Map(
@@ -335,6 +428,7 @@ export function createChannelStore(
     state.controller?.abort();
     state.events = [];
     state.snapshot = idleWindow(state.channelId);
+    invalidateRetained();
     notify(windowListeners.get(state.channelId));
   }
   function trim() {
@@ -459,6 +553,7 @@ export function createChannelStore(
   function denyChannel(channelId: string, error: unknown) {
     accessVersions.set(channelId, (accessVersions.get(channelId) ?? 0) + 1);
     discovery?.deny(channelId);
+    invalidateRetained(true);
     allowed?.delete(channelId);
     transport?.revokeAccess(() => {
       heads.delete(channelId);
@@ -576,6 +671,7 @@ export function createChannelStore(
       channelId.slice(0, 8),
       `${head.rows.length} rows ${now() - startedAt}ms ${priority}`,
     );
+    invalidateRetained();
     heads.set(channelId, head);
     setList(list);
     // Durable message warmth must not wait behind optional name enrichment.
@@ -782,6 +878,7 @@ export function createChannelStore(
         // Evidence subscribers can synchronously revoke access or clear caches too.
         if (disposed || generation !== epoch || !authorized(record.channelId))
           return;
+        invalidateRetained();
         heads.set(record.channelId, head);
         const state = windows.get(record.channelId);
         if (
@@ -892,6 +989,7 @@ export function createChannelStore(
   ) {
     if (disposed || !transport || !discovery) return;
     if (!cached) discoveryObserved = true;
+    invalidateRetained();
     started ??= discovery.rosterVersions();
     const accessRevision = discovery.accessRevision;
     const overflowRevision = discovery.overflowRevision;
@@ -956,9 +1054,10 @@ export function createChannelStore(
     };
     // Commit the final channel list before any projection subscriber runs.
     // A session-only generic view can retain channels unknown to this store.
-    if (discovery.accessRevision !== accessRevision)
+    if (discovery.accessRevision !== accessRevision) {
+      invalidateRetained(true);
       transport.revokeAccess(commit);
-    else commit();
+    } else commit();
     // Discovery authorizes disk reuse, not speculative reads of the roster.
     // Network heads belong to explicit demand/intent and retained live catch-up.
     if (prepared && !hydration) {
@@ -1199,6 +1298,7 @@ export function createChannelStore(
         listRetryAt = performance.now() + error.retryAfterMs;
       if (denyAllOnFailure && readErrorKind(error) === "denied") {
         discovery.denyAll();
+        invalidateRetained(true);
         transport.revokeAccess(() => {
           for (const id of allowed ?? [])
             accessVersions.set(id, (accessVersions.get(id) ?? 0) + 1);
@@ -1574,12 +1674,15 @@ export function createChannelStore(
     warmCandidates.clear();
     warmEligible.clear();
     warmPreferred = [];
+    const previousWindows = [...windows.values()];
+    windows.clear();
+    heads.clear();
+    tails.clear();
+    invalidateRetained(true);
     media.dispose();
     media = createMediaPreparation();
     for (const controller of controllers) controller.abort();
-    for (const state of [...windows.values()]) evict(state);
-    heads.clear();
-    tails.clear();
+    for (const state of previousWindows) evict(state);
     if (discovery) setList({ ...list, channels: discovery.channels() });
     await persistence?.clear().catch(() => {});
   }
@@ -1634,6 +1737,10 @@ export function createChannelStore(
     return startup;
   }
   const queries: ChannelQueries = Object.freeze({
+    retained,
+    retainedEpoch: () => epoch,
+    subscribeRetained: (listener: Listener) =>
+      subscribe(retainedListeners, listener),
     list: () => list,
     get: (id: string) => discovery?.get(id),
     resolve,
@@ -1836,6 +1943,7 @@ export function createChannelStore(
       if (!next.has(id)) changed.push(item);
     previousLocal = next;
     if (!changed.length) return;
+    invalidateRetained();
     const channelIds = new Set(
       changed.flatMap((item) =>
         item.event.tags.flatMap(([name, value]) =>
@@ -1880,6 +1988,7 @@ export function createChannelStore(
   /** Verified traffic shares the same fold as reads and local intent. Window bounds remain read-owned. */
   function accept(events: readonly RelayEvent[]) {
     if (disposed || !transport) return;
+    invalidateRetained();
     const generation = epoch;
     const changedChannels = new Set(
       events.flatMap((event) =>
@@ -2002,6 +2111,7 @@ export function createChannelStore(
   function purgeAccess(
     visible: (events: readonly RelayEvent[]) => readonly RelayEvent[],
   ) {
+    invalidateRetained(true);
     const hadHydration = hydration !== undefined;
     epoch++;
     hydration = undefined;
@@ -2091,6 +2201,9 @@ export function createChannelStore(
     windows.clear();
     heads.clear();
     tails.clear();
+    invalidateRetained(true);
+    retainedSnapshot = Object.freeze([]);
+    retainedListeners.clear();
     persistence?.close();
   }
   return {

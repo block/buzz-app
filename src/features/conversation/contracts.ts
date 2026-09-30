@@ -104,15 +104,33 @@ export type ChannelThreadDirectoryProps = Readonly<{
    * with the exact registration, destination, connection and access lifetime. */
   openThread(rootId: string): boolean;
 }>;
+export type ChannelThreadSidebarProps = ChannelThreadDirectoryProps &
+  Readonly<{
+    /** Host presentation selection, never read/unread or activity evidence. */
+    selectedRootId?: string | undefined;
+    directorySelected: boolean;
+    openDirectory(): boolean;
+  }>;
 export type ChannelThreadDraftProps = ChannelThreadDirectoryProps &
   Readonly<{
     /** Return to this directory; false after this exact draft lifetime retires. */
     back(): boolean;
   }>;
+/** Passive Session detail, using the host's already-loaded canonical root/replies. */
+export type ChannelThreadAccessoryProps = Readonly<{
+  session: RelaySession;
+  scope: string;
+  channelId: string;
+  threadRootId: string;
+  messages: readonly ChannelMessage[];
+}>;
 export type ChannelThreadDirectory = Readonly<{
   id: string;
   title: string;
   component: ComponentType<ChannelThreadDirectoryProps>;
+  /** Passive child rows; must not allocate readers or fetch optional metadata. */
+  sidebar?: ComponentType<ChannelThreadSidebarProps>;
+  threadAccessory?: ComponentType<ChannelThreadAccessoryProps>;
   create?: Readonly<{
     title: string;
     component: ComponentType<ChannelThreadDraftProps>;

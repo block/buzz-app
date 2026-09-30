@@ -1185,10 +1185,11 @@ function ChannelWorkspace({
         ? undefined
         : (handle.error ?? "The channel draft is unavailable.");
     },
-    renderThread: (rootId, closeDirectoryThread, share) => (
+    renderThread: (rootId, closeDirectoryThread, share, accessory) => (
       <ThreadPanel
         presentation="session"
         shareInChannel={share}
+        renderThreadAccessory={accessory}
         extensions={extensions}
         session={queries}
         scope={scope}

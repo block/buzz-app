@@ -13,7 +13,10 @@ export function clampChannelSidebarWidth(width: number) {
 }
 
 type SidebarView = {
+  search: string;
   collapsed: string[];
+  // Only session children opt in to expansion. Optional for pre-HMR state.
+  expanded?: string[];
   scrollTop: number;
   width: number;
   /** The destination whose sidebar entry the saved position shows. */
@@ -22,14 +25,25 @@ type SidebarView = {
 
 // Preserve explicit resize intent across route remounts when storage is unavailable.
 const widths = new Map<string, number>();
+const isSessionGroup = (key: string) => /^session-children:[^\s]+$/.test(key);
+const collapsedIn = (view: SidebarView, key: string) =>
+  view.collapsed.includes(key) ||
+  (isSessionGroup(key) && !view.expanded?.includes(key));
 
 function restore(scope: string): SidebarView {
   const raw = readView<unknown>(scope, "channel-sidebar", null);
   const saved =
     raw && typeof raw === "object" ? (raw as Partial<SidebarView>) : {};
   return {
+    search: typeof saved.search === "string" ? saved.search : "",
     collapsed: Array.isArray(saved.collapsed)
       ? saved.collapsed.filter((key): key is string => typeof key === "string")
+      : [],
+    expanded: Array.isArray(saved.expanded)
+      ? saved.expanded.filter(
+          (key): key is string =>
+            typeof key === "string" && isSessionGroup(key),
+        )
       : [],
     scrollTop:
       typeof saved.scrollTop === "number" &&
@@ -201,21 +215,31 @@ export function useSidebarView(
   const toggle = useCallback(
     (key: string, open: boolean) => {
       const collapsed = intent.current.collapsed;
-      if (collapsed.includes(key) === !open) return;
+      if (collapsedIn(intent.current, key) === !open) return;
+      const expanded = (intent.current.expanded ?? []).filter(
+        (id) => id !== key,
+      );
       pending.current = false;
       update({
         ...intent.current,
+        expanded: open && isSessionGroup(key) ? [...expanded, key] : expanded,
         collapsed: open
           ? collapsed.filter((id) => id !== key)
-          : [...collapsed, key],
+          : [...collapsed.filter((id) => id !== key), key],
       });
     },
     [update],
   );
   return {
     list,
+    search: view.search,
     collapsed: view.collapsed,
     width: view.width,
+    isCollapsed: (key: string) => !view.search && collapsedIn(view, key),
+    setSearch: (search: string) => {
+      pending.current = false;
+      update({ ...intent.current, search });
+    },
     toggle,
     setWidth: (width: number) => {
       const next = clampChannelSidebarWidth(width);

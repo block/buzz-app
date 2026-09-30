@@ -8,6 +8,7 @@ import {
 import type { ReactNode } from "react";
 import type { Contribution } from "../../plugins/contributions";
 import type {
+  ChannelThreadAccessoryProps,
   ChannelThreadDirectory,
   ChannelThreadDirectoryProps,
   ChannelThreadDraftProps,
@@ -22,13 +23,15 @@ import type { RelaySession } from "../../features/relay/session";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Button } from "../../shared/design-system/ui/Button";
 import styles from "./ChannelDirectories.module.css";
+import { messageViewKey } from "../../features/messages/view-key";
+import type { SidebarIntent } from "./DirectorySidebar";
 
 const empty: readonly Contribution<ChannelThreadDirectory>[] = [];
 const absent: ContributionReader<ChannelThreadDirectory> = {
   snapshot: () => empty,
   subscribe: () => () => {},
 };
-type Destination = {
+export type Destination = {
   session: RelaySession;
   scope: string;
   channelId: string;
@@ -42,10 +45,12 @@ type Opening = {
   generation: number;
   access: string;
   connection: string;
+  retainedEpoch?: number | undefined;
   rootId?: string;
   draft?: true;
   unavailable?: true;
   focusId?: string;
+  focusTarget?: HTMLElement | undefined;
 };
 
 /** Local presentation only. No directory discovery, thread readers or route writes. */
@@ -57,6 +62,7 @@ export function useChannelDirectories({
   renderThread,
   onSelect,
   shareReference,
+  sidebarIntent,
 }: {
   registry?: ContributionReader<ChannelThreadDirectory> | undefined;
   relay: RelayData;
@@ -66,9 +72,11 @@ export function useChannelDirectories({
     rootId: string,
     close: () => void,
     share: (title: string) => string | undefined,
+    accessory?: (props: ChannelThreadAccessoryProps) => ReactNode,
   ): ReactNode;
   shareReference?(rootId: string, title: string): string | undefined;
   onSelect(): void;
+  sidebarIntent?: SidebarIntent | undefined;
 }) {
   const entries = useSyncExternalStore(
     registry.subscribe,
@@ -81,6 +89,7 @@ export function useChannelDirectories({
   const container = useRef<HTMLDivElement>(null);
   const tabs = useRef<HTMLDivElement>(null);
   const restore = useRef<string>(undefined);
+  const restoreTarget = useRef<HTMLElement>(undefined);
   const commandEpoch = useRef(0);
   const update = useCallback((next: Opening | undefined) => {
     commandEpoch.current += 1;
@@ -124,6 +133,9 @@ export function useChannelDirectories({
         connection.scope === value.destination.scope &&
         connection.generation === value.generation &&
         access(value.destination) === value.access &&
+        (value.retainedEpoch === undefined ||
+          value.destination.session.channels.retainedEpoch?.() ===
+            value.retainedEpoch) &&
         value.destination.session.live.snapshot().status === value.connection
       );
     },
@@ -144,6 +156,8 @@ export function useChannelDirectories({
             relay.subscribe(check),
             destination.session.channels.subscribeList(check),
             destination.session.live.subscribe(check),
+            destination.session.channels.subscribeRetained?.(check) ??
+              (() => {}),
           ]
         : [];
     destination?.signal?.addEventListener("abort", check);
@@ -155,6 +169,29 @@ export function useChannelDirectories({
     };
     // Destination identity changes only at a host navigation/session boundary.
   }, [destination, registry, relay, valid, update]);
+  useLayoutEffect(() => {
+    if (!sidebarIntent || !destination || !sidebarIntent.matches(destination))
+      return;
+    if (sidebarIntent.valid()) {
+      onSelect();
+      const connection = relay.snapshot();
+      update({
+        entry: sidebarIntent.entry,
+        destination,
+        generation: connection.generation,
+        access: access(destination),
+        connection: destination.session.live.snapshot().status,
+        retainedEpoch: destination.session.channels.retainedEpoch?.(),
+        ...(sidebarIntent.rootId
+          ? {
+              rootId: sidebarIntent.rootId,
+              focusTarget: sidebarIntent.focusTarget,
+            }
+          : {}),
+      });
+    }
+    sidebarIntent.dispose();
+  }, [sidebarIntent, destination, relay, access, update, onSelect]);
   const restoreFocus = () => {
     if (
       restore.current === undefined ||
@@ -165,7 +202,10 @@ export function useChannelDirectories({
       return;
     const control = document.getElementById(restore.current);
     restore.current = undefined;
-    if (control && container.current?.contains(control)) control.focus();
+    const origin = restoreTarget.current;
+    restoreTarget.current = undefined;
+    if (origin?.isConnected && !origin.closest("[hidden]")) origin.focus();
+    else if (control && container.current?.contains(control)) control.focus();
     else
       tabs.current
         ?.querySelector<HTMLElement>("[aria-selected='true']")
@@ -251,6 +291,9 @@ export function useChannelDirectories({
     return true;
   }, [selected, valid, update]);
   return {
+    entries,
+    selectedEntry: selected?.entry,
+    selectedRootId: selected?.rootId,
     /** Capture the exact registration/destination even when no tab was selected.
      * Any subsequent tab/navigation/access/connection transition retires it. */
     commandLease() {
@@ -366,6 +409,7 @@ export function useChannelDirectories({
                   () => {
                     if (!valid(selected)) return;
                     restore.current = selected.focusId ?? "";
+                    restoreTarget.current = selected.focusTarget;
                     const {
                       rootId: _root,
                       draft: _draft,
@@ -381,6 +425,30 @@ export function useChannelDirectories({
                     update(undefined);
                     return undefined;
                   },
+                  selected.entry.threadAccessory
+                    ? (props) => {
+                        if (
+                          !valid(selected) ||
+                          props.session !== selected.destination.session ||
+                          props.scope !== selected.destination.scope ||
+                          props.channelId !== selected.destination.channelId ||
+                          props.threadRootId !== selected.rootId
+                        )
+                          return null;
+                        const Accessory = selected.entry.threadAccessory;
+                        if (!Accessory) return null;
+                        return (
+                          <ContributionBoundary
+                            key={`${contributionKey(selected.entry)}:${messageViewKey(props.session, props.scope, props.channelId, props.threadRootId)}`}
+                            fallback={
+                              <p role="status">Agent activity unavailable</p>
+                            }
+                          >
+                            <Accessory {...props} />
+                          </ContributionBoundary>
+                        );
+                      }
+                    : undefined,
                 )
               : destination && (
                   <OwnedDirectory

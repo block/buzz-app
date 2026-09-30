@@ -161,9 +161,32 @@ export type PublicChannelSearch = Readonly<{
   /** The relay returned a full metadata page, so some channels were not checked. */
   partial: boolean;
 }>;
+/** Passive, incomplete evidence from the store's existing byte/row-bounded heads,
+ * windows and traffic. Replies are folded too; absence is never negative evidence.
+ * No window is pinned and no read, profile fetch or acknowledgement is initiated. */
+export type RetainedChannelMessage = Readonly<{
+  id: string;
+  channelId: string;
+  authorId: string;
+  createdAt: number;
+  excerpt: string;
+  threadRootId: string | undefined;
+  edited: boolean;
+  quietSession: boolean;
+  chipSession: boolean;
+  /** Positive exact-key evidence, each list capped at 256. */
+  mentions: readonly string[];
+  participants: readonly string[];
+}>;
+export type RetainedChannelEvidence = readonly RetainedChannelMessage[];
 /** Reads are side-effect-free; snapshots retain identity until their value changes.
  * Commands are idempotent requests; the store decides whether network work is needed. */
 export interface ChannelQueries {
+  /** Optional for hosts without this passive capability; absence is unsupported. */
+  retained?(): RetainedChannelEvidence;
+  /** Synchronous reset fence for commands derived from passive evidence. */
+  retainedEpoch?(): number;
+  subscribeRetained?(listener: () => void): () => void;
   list(): ChannelList;
   /** Bounded discovery lookup; never inserts public previews into list(). */
   get?(channelId: string): ChannelSummary | undefined;

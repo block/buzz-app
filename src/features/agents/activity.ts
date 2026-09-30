@@ -17,6 +17,8 @@ export const ACTIVITY_BYTE_LIMIT = 2 * 1024 * 1024;
 export const ACTIVITY_TURN_LIMIT = 512;
 export const MANAGEMENT_REQUEST_LIMIT = 200;
 export const ACTIVITY_FRESH_MS = 30_000;
+// Correlation is optional and bounded independently of raw envelope retention.
+export const ACTIVITY_TRIGGER_LIMIT = 64;
 type RawRecord = ObserverFrame &
   Readonly<{
     receivedAt: number;
@@ -31,6 +33,7 @@ export type ActivityTurn = Readonly<{
   channelId: string | null;
   timestamp: number;
   state: "working" | "unknown" | "ended";
+  triggeringEventIds?: readonly string[] | undefined;
 }>;
 type Typing = Readonly<{
   agent: string;
@@ -61,13 +64,28 @@ type Snapshot = Readonly<{
   historyAgents: readonly string[];
   capture: "unknown" | "saving" | "off" | "error";
 }>;
-type Turn = Omit<ActivityTurn, "state"> & { ended: boolean; epoch: number };
+type Turn = Omit<ActivityTurn, "state"> & {
+  ended: boolean;
+  epoch: number;
+  correlationInvalid: boolean;
+};
 const object = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
 const text = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= 256;
+function triggeringEvents(payload: unknown): readonly string[] | undefined {
+  const ids = object(payload)?.triggeringEventIds;
+  if (
+    !Array.isArray(ids) ||
+    !ids.length ||
+    ids.length > ACTIVITY_TRIGGER_LIMIT ||
+    !ids.every((id) => typeof id === "string" && /^[0-9a-f]{64}$/.test(id))
+  )
+    return undefined;
+  return Object.freeze([...new Set(ids)].sort());
+}
 const starts = new Set([
   "turn_started",
   "turn_liveness",
@@ -172,6 +190,7 @@ export function createAgentActivity(
           turnId: turn.turnId,
           channelId: turn.channelId,
           timestamp: turn.timestamp,
+          triggeringEventIds: turn.triggeringEventIds,
           state: turn.ended
             ? "ended"
             : status === "listening" &&
@@ -199,6 +218,10 @@ export function createAgentActivity(
     );
     const workingChanged = nextWorking !== workingChannels;
     if (workingChanged) workingChannels = nextWorking;
+    const sameTurns =
+      JSON.stringify(snapshot.turns) === JSON.stringify(visible);
+    const sameTyping =
+      JSON.stringify(snapshot.typing) === JSON.stringify(typers);
     if (
       !workingChanged &&
       snapshot.status === status &&
@@ -210,15 +233,15 @@ export function createAgentActivity(
       snapshot.historySkipped === (historyPage?.skipped ?? 0) &&
       snapshot.historyAgents === historyAgents &&
       snapshot.capture === captureStatus &&
-      JSON.stringify(snapshot.turns) === JSON.stringify(visible) &&
-      JSON.stringify(snapshot.typing) === JSON.stringify(typers)
+      sameTurns &&
+      sameTyping
     )
       return;
     snapshot = Object.freeze({
       status,
       records: Object.freeze(records),
-      turns: Object.freeze(visible),
-      typing: Object.freeze(typers),
+      turns: sameTurns ? snapshot.turns : Object.freeze(visible),
+      typing: sameTyping ? snapshot.typing : Object.freeze(typers),
       trimmed,
       history: historyStatus,
       hasOlder,
@@ -276,6 +299,27 @@ export function createAgentActivity(
     if (!Number.isFinite(timestamp) || timestamp > Date.now() + 5000) return;
     const key = `${agent}:${item.turnId}`;
     const previous = turns.get(key);
+    let triggeringEventIds = previous?.triggeringEventIds;
+    let correlationInvalid =
+      previous?.correlationInvalid === true ||
+      (!!previous && previous.channelId !== item.channelId);
+    if (item.kind === "turn_started") {
+      const ids = triggeringEvents(item.payload);
+      if (
+        previous?.ended ||
+        !ids ||
+        (triggeringEventIds &&
+          JSON.stringify(ids) !== JSON.stringify(triggeringEventIds))
+      )
+        correlationInvalid = true;
+      else if (!previous?.ended) triggeringEventIds = ids;
+    }
+    if (correlationInvalid) triggeringEventIds = undefined;
+    // A post-terminal start might reuse the tuple, even with identical IDs.
+    // Invalidate before terminal/time fences; never guess between lifecycles.
+    if (previous) {
+      turns.set(key, { ...previous, triggeringEventIds, correlationInvalid });
+    }
     // Terminal evidence wins even when a delayed earlier heartbeat arrives later.
     if (
       previous?.ended ||
@@ -291,6 +335,8 @@ export function createAgentActivity(
       // the highest observed time so eventual eviction cannot weaken the fence.
       timestamp: Math.max(timestamp, previous?.timestamp ?? timestamp),
       ended: ends.has(item.kind),
+      triggeringEventIds,
+      correlationInvalid,
       epoch,
     });
     if (turns.size > ACTIVITY_TURN_LIMIT) {

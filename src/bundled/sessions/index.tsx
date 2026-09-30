@@ -1,3 +1,6 @@
+import { createRetainedSessions } from "./retained-sessions";
+import { SessionActivityDetail } from "./SessionActivityDetail";
+import { PersonalSessions } from "./PersonalSessions";
 import type { PluginModule } from "../../plugins/api";
 import { NewChannelSession } from "./NewChannelSession";
 import { RecentChannelThreads } from "./RecentChannelThreads";
@@ -8,10 +11,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const relay = ctx.relay;
   const extensions = ctx.conversation;
   const navigator = ctx.navigation;
+  const retained = createRetainedSessions();
+  ctx.effect(() => () => retained.dispose());
   extensions.registerChannelDirectory({
     id: "sessions",
     title: "Sessions",
-    component: RecentChannelThreads,
+    component: (props) => <RecentChannelThreads {...props} owner={retained} />,
+    threadAccessory: SessionActivityDetail,
+    sidebar: (props) => <PersonalSessions {...props} owner={retained} />,
     create: {
       title: "New session",
       component: (props) => (

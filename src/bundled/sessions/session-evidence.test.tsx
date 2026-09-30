@@ -10,6 +10,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ChannelMessage, Profile } from "../../features/relay/contracts";
+import type { UnreadSnapshot } from "../../features/relay/unread";
 import type { VisibleEvent } from "../../features/relay/projection";
 import type {
   EventViewSnapshot,
@@ -116,7 +117,19 @@ function harness(
     return view;
   });
   const libraryRefresh = vi.fn();
+  const unknownUnread: UnreadSnapshot = {
+    target: { kind: "channel", channelId: "channel" },
+    observedCount: null,
+    attentionCount: null,
+    coverage: "unknown",
+    freshness: "unknown",
+    manual: "none",
+  };
   const session = {
+    unread: {
+      snapshot: () => unknownUnread,
+      subscribe: () => () => {},
+    },
     channels: {
       window: () => window,
       ensure: vi.fn(),

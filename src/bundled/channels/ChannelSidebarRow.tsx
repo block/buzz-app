@@ -17,6 +17,7 @@ export function ChannelSidebarRow({
   badge,
   childContent,
   dmVisualSpacing = false,
+  extraChildren,
   wrapSelect,
   selected,
   presenceDescription,
@@ -34,6 +35,7 @@ export function ChannelSidebarRow({
   icon: ReactNode;
   nameAccessory?: ReactNode;
   badge?: ReactNode;
+  extraChildren?: ReactNode;
   childContent?: ((channel: ChannelSummary) => ReactNode) | undefined;
   dmVisualSpacing?: boolean;
   wrapSelect?: ((trigger: ReactElement) => ReactNode) | undefined;
@@ -51,7 +53,7 @@ export function ChannelSidebarRow({
 }) {
   const childrenId = useId();
   const presenceId = `${childrenId}-presence`;
-  const hasChildren = draft || sessions.length > 0;
+  const hasChildren = draft || sessions.length > 0 || !!extraChildren;
   const Chevron = collapsed ? CaretRightIcon : CaretDownIcon;
   const selectButton = (
     <NavigationItem
@@ -160,6 +162,7 @@ export function ChannelSidebarRow({
         )}
       </div>
       <div className={styles.sessions} id={childrenId} hidden={collapsed}>
+        {extraChildren}
         {draft && (
           <NavigationItem
             icon={<span className={styles.iconSpace} aria-hidden="true" />}

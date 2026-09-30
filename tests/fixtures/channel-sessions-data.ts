@@ -1,5 +1,6 @@
 // Synthetic signed events and isolated RAM transport only. No broker or disk.
 import { matchesEvent } from "../../src/features/relay/projection";
+import type { LiveCallbacks } from "../../src/features/relay/live";
 import type { ThreadView } from "../../src/features/relay/threads";
 import { createRelaySession } from "../../src/features/relay/session";
 import {
@@ -20,15 +21,19 @@ import type {
 } from "../../src/features/relay/service";
 
 export function sessionsData({
+  agentActivity = false,
   channelType = "stream",
   canonicalScope = false,
   rowCount = 2,
+  firstThreadReplies = 1,
   identities,
   outboxStorage = { load: () => [], save() {} },
 }: {
+  agentActivity?: boolean;
   channelType?: "stream" | "forum" | "dm" | "session";
   canonicalScope?: boolean;
   rowCount?: number;
+  firstThreadReplies?: number;
   identities?: readonly [Key, Key, Key, Key];
   outboxStorage?: OutboxStorage;
 } = {}) {
@@ -48,6 +53,7 @@ export function sessionsData({
     readers: 0,
     activeReaders: 0,
     readingLeases: 0,
+    observerControls: [] as (number | null)[],
   };
   const rows: { rootId: string }[] = [];
   const summaries: RelayEvent[] = [];
@@ -75,6 +81,18 @@ export function sessionsData({
       [["e", root.id, "", "reply"], ...(i === 1 ? [["p", member.pubkey]] : [])],
     );
     events.push(root, reply);
+    // Opt-in only for native inline-activity scroll anchoring, not normal startup.
+    if (i === 0)
+      for (let n = 1; n < firstThreadReplies; n++)
+        events.push(
+          message(
+            human,
+            "general",
+            `Reading anchor reply ${n}. The thread remains readable while activity changes above it.`,
+            at + n,
+            [["e", root.id, "", "reply"]],
+          ),
+        );
     rows.push({ rootId: root.id });
     summaries.push(
       summary(authority, "general", root.id, {
@@ -109,6 +127,9 @@ export function sessionsData({
     [["p", member.pubkey]],
   );
   events.push(unanswered);
+  let live: LiveCallbacks | undefined;
+  let observerGeneration: number | null = null;
+  let frameId = 0;
   let receive = (_events: readonly RelayEvent[]) => {};
   let failThread = false;
   let threadGate: ReturnType<typeof deferred> | undefined;
@@ -167,14 +188,31 @@ export function sessionsData({
     ]);
   const owner = createRelaySession(
     {
+      agentActivity,
       viewer: viewer.pubkey,
       relayAuthor: authority.pubkey,
       scope,
       media: () => undefined,
       subscribe(callbacks) {
+        live = callbacks;
         receive = callbacks.receive;
         callbacks.state({ status: "connected", routes: [] });
-        return { update() {}, retry() {}, dispose() {} };
+        return {
+          update() {},
+          retry() {},
+          dispose() {},
+          observe(generation) {
+            report.observerControls.push(generation);
+            observerGeneration = generation;
+            callbacks.state({
+              status: "connected",
+              routes:
+                generation === null
+                  ? []
+                  : [{ id: "observer", status: "live", replay: "unknown" }],
+            });
+          },
+        };
       },
       async query(filters) {
         report.queries = [...report.queries, filters];
@@ -346,6 +384,28 @@ export function sessionsData({
   };
   return {
     owner,
+    telemetry(
+      kind: string,
+      triggeringEventIds: readonly string[] = [],
+      turnId = "fixture-turn",
+      payload?: unknown,
+    ) {
+      live?.observer?.(
+        {
+          id: (++frameId).toString(16).padStart(64, "0"),
+          agent: member.pubkey,
+          createdAt: Math.floor(Date.now() / 1000),
+          plaintext: JSON.stringify({
+            kind,
+            channelId: "general",
+            turnId,
+            timestamp: new Date().toISOString(),
+            payload: payload ?? { triggeringEventIds },
+          }),
+        },
+        observerGeneration ?? -1,
+      );
+    },
     viewer: viewer.pubkey,
     ingest(incoming: readonly RelayEvent[]) {
       events.push(...incoming);

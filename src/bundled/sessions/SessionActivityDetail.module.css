@@ -1,0 +1,87 @@
+.activity {
+  min-width: 0;
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+  font-weight: var(--type-weight-normal);
+  margin: var(--space-2) var(--space-4);
+  padding-left: var(--space-6);
+}
+.activity [data-variant="activity"] button {
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+  font-weight: var(--type-weight-normal);
+}
+.content {
+  padding-left: var(--space-4);
+}
+.notice {
+  color: var(--text-secondary);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+  font-weight: var(--type-weight-normal);
+  margin: 0 0 var(--space-2);
+}
+.observations {
+  max-height: 20rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.agent + .agent {
+  margin-top: var(--space-4);
+}
+.identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-2) 0;
+  color: var(--text-primary);
+  font-size: var(--text-label-sm);
+  line-height: var(--text-label-sm--line-height);
+  letter-spacing: var(--text-label-sm--letter-spacing);
+  font-weight: var(--type-weight-medium);
+}
+.key {
+  color: var(--text-secondary);
+}
+.entries {
+  list-style: none;
+  padding: 0 0 0 var(--space-4);
+  margin: 0;
+}
+.entries > li + li {
+  margin-top: var(--space-3);
+}
+.kind {
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+  font-weight: var(--type-weight-normal);
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+.raw {
+  max-height: 12rem;
+  max-width: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-sm);
+  line-height: var(--text-mono-sm--line-height);
+  letter-spacing: var(--text-mono-sm--letter-spacing);
+  font-weight: var(--type-weight-normal);
+}
+@media (max-width: 600px) {
+  .activity {
+    padding-left: 0;
+  }
+}

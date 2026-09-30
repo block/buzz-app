@@ -10,23 +10,33 @@ import { PanelsService } from "../../src/features/panels/service";
 import { ChannelsPage } from "../../src/bundled/channels/ChannelsPage";
 import * as linksPlugin from "../../src/bundled/links/index";
 import * as mentionsPlugin from "../../src/bundled/mentions/index";
+import * as activityPlugin from "../../src/bundled/agent-activity/index";
 import * as sessionsPlugin from "../../src/bundled/sessions/index";
 import { PagesService } from "../../src/features/pages/service";
 import { provideNavigation } from "../../src/features/navigation/service";
 import { sessionsData } from "./channel-sessions-data";
 import "../../src/shared/styles/globals.css";
 
-const seeds = (window as unknown as { fixtureSeeds?: number[][] }).fixtureSeeds;
+const { fixtureSeeds: seeds, fixtureRowCount } = window as unknown as {
+  fixtureSeeds?: number[][];
+  fixtureRowCount?: number;
+};
 const identities = seeds?.map((seed) => {
   const secret = Uint8Array.from(seed);
   return { secret, pubkey: getPublicKey(secret) };
 }) as [Key, Key, Key, Key] | undefined;
 const data = sessionsData({
-  rowCount: new URL(location.href).searchParams.has("share")
-    ? 2
-    : seeds
-      ? 0
-      : 18,
+  agentActivity: true,
+  firstThreadReplies: new URL(location.href).searchParams.has("inline")
+    ? 18
+    : 1,
+  rowCount:
+    new URL(location.href).searchParams.has("share") ||
+    new URL(location.href).searchParams.has("inline")
+      ? 2
+      : seeds
+        ? (fixtureRowCount ?? 0)
+        : 18,
   canonicalScope: true,
   ...(identities ? { identities } : {}),
 });
@@ -36,7 +46,9 @@ const runtime = new PluginRuntime(ctx, async (plugin) =>
     ? linksPlugin
     : plugin.manifest.id === "buzz.mentions"
       ? mentionsPlugin
-      : sessionsPlugin,
+      : plugin.manifest.id === "buzz.agent-activity"
+        ? activityPlugin
+        : sessionsPlugin,
 );
 const pages = new PagesService(ctx);
 const navigationHost = provideNavigation(ctx, undefined);
@@ -63,10 +75,23 @@ const links = {
   ...plugin,
   manifest: { ...plugin.manifest, id: "buzz.links", name: "Links" },
 };
+const activity = {
+  ...plugin,
+  manifest: {
+    ...plugin.manifest,
+    id: "buzz.agent-activity",
+    name: "Agent Activity",
+  },
+};
 runtime.reconcile([plugin, mentions, links]);
 Object.assign(window, {
   sessionsFixture: {
     report: data.report,
+    telemetry: data.telemetry,
+    activityState: data.session.agentActivity.snapshot,
+    enableActivity: () =>
+      runtime.reconcile([plugin, mentions, links, activity]),
+    disableActivity: () => runtime.reconcile([plugin, mentions, links]),
     scope: data.scope,
     viewer: data.viewer,
     holdPublication: data.holdPublication,

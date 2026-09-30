@@ -370,6 +370,32 @@ it("owns channel directories through exact Cordis activation, removal and replac
   );
   expect(h.service.channelDirectories.snapshot()[0]).not.toBe(first);
 });
+it("validates optional passive sidebar components without requiring older contributions to implement them", async () => {
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      expect(() =>
+        ctx.conversation.registerChannelDirectory({
+          id: "bad",
+          title: "Bad",
+          component: Component,
+          sidebar: "not a component" as unknown as typeof Component,
+        }),
+      ).toThrow("sidebar");
+      ctx.conversation.registerChannelDirectory({
+        id: "good",
+        title: "Good",
+        component: Component,
+        sidebar: Component,
+      });
+    },
+  });
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.channelDirectories.snapshot()).toHaveLength(1),
+  );
+  expect(h.service.channelDirectories.snapshot()[0]?.sidebar).toBe(Component);
+});
 it("does not expose a channel directory from a failed activation", async () => {
   const h = harness({
     inject: ["conversation"],
@@ -421,4 +447,33 @@ it("ignores host-only composer properties supplied by untyped plugins", () => {
     suspended: undefined,
     channelId: "general",
   });
+});
+
+it("validates optional thread accessories without requiring older directories to implement them", async () => {
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      expect(() =>
+        ctx.conversation.registerChannelDirectory({
+          id: "bad",
+          title: "Bad",
+          component: Component,
+          threadAccessory: "invalid" as unknown as typeof Component,
+        }),
+      ).toThrow("thread accessory");
+      ctx.conversation.registerChannelDirectory({
+        id: "detail",
+        title: "Detail",
+        component: Component,
+        threadAccessory: Component,
+      });
+    },
+  });
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.channelDirectories.snapshot()).toHaveLength(1),
+  );
+  expect(h.service.channelDirectories.snapshot()[0]?.threadAccessory).toBe(
+    Component,
+  );
 });

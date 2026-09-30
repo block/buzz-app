@@ -4,17 +4,112 @@ import { test, expect } from "./source-fixture.mjs";
 // tab/row focus, full-width geometry and independent scroll in both engines.
 test("shared preview coexists with private Sessions, opens the existing full-width thread and restores keyboard focus", async ({
   page,
+  context,
 }) => {
+  // Reload must keep the same fixture viewer/scope. Seeds otherwise create the
+  // empty creation fixture, so explicitly retain this journey's bounded history.
+  await context.addInitScript(() => {
+    window.fixtureSeeds = Array.from({ length: 4 }, (_, index) =>
+      Array(32).fill(index + 1),
+    );
+    window.fixtureRowCount = 18;
+  });
   await page.clock.setFixedTime(new Date("2026-09-21T14:00:00Z"));
   await page.goto("/tests/fixtures/channel-sessions.html");
   await expect(
     page.getByRole("textbox", { name: "Message #General" }),
   ).toBeVisible();
+  // Native sidebar focus/disclosure and cross-channel destination ownership.
+  const sidebar = page.getByRole("complementary", { name: "Channel sidebar" });
+  const personal = sidebar.getByRole("region", {
+    name: "Your sessions in General",
+    exact: true,
+  });
+  const personalRoot = personal.getByRole("button", {
+    name: /^Review the release checklist/,
+  });
+  const disclosure = sidebar.getByRole("button", {
+    name: /^(Expand|Collapse) sessions in General$/,
+  });
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await expect(personalRoot).toBeHidden();
+  await disclosure.focus();
+  await page.keyboard.press("Enter");
+  await expect(personalRoot).toBeVisible();
+  await expect(personal.getByRole("button")).toHaveCount(6);
+  await expect(
+    personal.getByRole("button", { name: "View all sessions" }),
+  ).toHaveAccessibleDescription("From loaded history · may be incomplete");
+  await page.keyboard.press("Enter");
+  await expect(personalRoot).toBeHidden();
+  await sidebar.locator('[data-channel-id="general"]').click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #General" }),
+  ).toBeVisible();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await page.evaluate(() =>
+    window.sessionsFixture.renameChannel("General renamed"),
+  );
+  await expect(
+    sidebar.getByRole("button", {
+      name: "Expand sessions in General renamed",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-expanded", "false");
+  await page.evaluate(() => window.sessionsFixture.renameChannel("General"));
+  await disclosure.focus();
+  await page.keyboard.press("Enter");
+  await expect(personalRoot).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByRole("textbox", { name: "Message #General" }),
+  ).toBeVisible();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  await expect(personalRoot).toBeVisible();
+  await page
+    .getByRole("button", { name: "Private Sessions fixture", exact: true })
+    .click();
+  await expect(sidebar).toBeHidden();
+  await page
+    .getByRole("button", { name: "Messages fixture", exact: true })
+    .click();
+  await expect(personalRoot).toBeVisible();
+  await disclosure.focus();
+  await page.keyboard.press("Enter");
+  await expect(personalRoot).toBeHidden();
+  await page.reload();
+  await expect(
+    page.getByRole("textbox", { name: "Message #General" }),
+  ).toBeVisible();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await disclosure.focus();
+  await page.keyboard.press("Enter");
+  await expect(personalRoot).toBeVisible();
+  await sidebar.getByRole("button", { name: "Other", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Other" }),
+  ).toBeVisible();
+  await personalRoot.focus();
+  await page.keyboard.press("Enter");
+  const sidebarDetail = page.getByRole("complementary", {
+    name: "Session",
+    exact: true,
+  });
+  await expect(sidebarDetail).toBeVisible();
+  await expect(personalRoot).toHaveAttribute("aria-current", "page");
+  await sidebarDetail.getByRole("button", { name: "Back to Sessions" }).click();
+  await expect(personalRoot).toBeFocused();
+  await sidebar.getByRole("button", { name: "Other", exact: true }).click();
+  await personal.getByRole("button", { name: "View all sessions" }).click();
+  await expect(
+    page.getByRole("tab", { name: "Sessions", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   const sessions = page.getByRole("tab", { name: "Sessions", exact: true });
   await sessions.focus();
   await page.keyboard.press("Enter");
   const directory = page.getByRole("region", {
     name: "Sessions",
+    exact: true,
   });
   await expect(directory).toBeVisible();
   await expect(
@@ -35,6 +130,88 @@ test("shared preview coexists with private Sessions, opens the existing full-wid
   expect(
     await page.evaluate(() => window.sessionsFixture.report.activeReaders),
   ).toBe(0);
+  // Browser wiring proof: actual plugin-owned observer -> retained turn -> both
+  // row renderers. Pure correlation permutations remain in Vitest.
+  expect(
+    await page.evaluate(() => window.sessionsFixture.report.observerControls),
+  ).toEqual([]);
+  await page.evaluate(() => window.sessionsFixture.enableActivity());
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.sessionsFixture.activityState().status),
+    )
+    .toBe("listening");
+  const activityReads = await page.evaluate(
+    () => window.sessionsFixture.report.queries.length,
+  );
+  const activityOrder = await directory
+    .locator("li button")
+    .evaluateAll((rows) => rows.map((row) => row.id));
+  const activityRow = directory.getByRole("button", {
+    name: /Review the release checklist/,
+  });
+  await activityRow.focus();
+  await page.evaluate(() =>
+    window.sessionsFixture.telemetry("turn_started", [
+      window.sessionsFixture.rows[0].rootId,
+    ]),
+  );
+  const working = "Owner-visible agent activity: working";
+  await expect(
+    activityRow.getByRole("img", { name: working, exact: true }),
+  ).toBeVisible();
+  await expect(
+    personalRoot.getByRole("img", { name: working, exact: true }),
+  ).toBeVisible();
+  await expect(
+    activityRow.getByRole("img", { name: /Observed unread/ }),
+  ).toBeVisible();
+  await expect(
+    directory
+      .getByRole("button", { name: /Explore the onboarding flow/ })
+      .locator("[data-session-activity]"),
+  ).toHaveCount(0);
+  await expect(activityRow).toBeFocused();
+  await disclosure.click();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await page.clock.setFixedTime(new Date("2026-09-21T14:00:31Z"));
+  await page.evaluate(() => window.sessionsFixture.telemetry("diagnostic"));
+  await expect(
+    activityRow.getByRole("img", {
+      name: "Owner-visible agent activity: status unknown",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await expect(personalRoot).toBeHidden();
+  await disclosure.click();
+  await expect(
+    personalRoot.getByRole("img", {
+      name: "Owner-visible agent activity: status unknown",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.evaluate(() => window.sessionsFixture.telemetry("turn_completed"));
+  await expect(activityRow.locator("[data-session-activity]")).toHaveCount(0);
+  await expect(personalRoot.locator("[data-session-activity]")).toHaveCount(0);
+  expect(
+    await directory
+      .locator("li button")
+      .evaluateAll((rows) => rows.map((row) => row.id)),
+  ).toEqual(activityOrder);
+  expect(
+    await page.evaluate(() => window.sessionsFixture.report.queries.length),
+  ).toBe(activityReads);
+  await page.evaluate(() => window.sessionsFixture.disableActivity());
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.sessionsFixture.activityState().status),
+    )
+    .toBe("disabled");
+  expect(
+    await page.evaluate(() => window.sessionsFixture.report.observerControls),
+  ).toHaveLength(2);
+  await page.clock.setFixedTime(new Date("2026-09-21T14:00:00Z"));
   // Existing live receive path: crossing day groups must preserve native focus,
   // row identity and compact layout, without issuing another directory query.
   const older = directory.getByRole("button", { name: /Investigate task 4/ });
@@ -114,7 +291,9 @@ test("shared preview coexists with private Sessions, opens the existing full-wid
       "Fixture reply for task 1. The conversation stays in its original thread.",
     ),
   ).toBeVisible();
-  await expect(page.getByRole("region", { name: "Sessions" })).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Sessions", exact: true }),
+  ).toHaveCount(0);
   await expect
     .poll(() =>
       page.evaluate(() => window.sessionsFixture.report.activeReaders),
@@ -223,7 +402,19 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
   await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   const directory = page.getByRole("region", {
     name: "Sessions",
+    exact: true,
   });
+  await page.evaluate(() => window.sessionsFixture.enableActivity());
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.sessionsFixture.activityState().status),
+    )
+    .toBe("listening");
+  await page.evaluate(() =>
+    window.sessionsFixture.telemetry("turn_started", [
+      window.sessionsFixture.rows[0].rootId,
+    ]),
+  );
   for (const width of [390, 740, 1280, 1512]) {
     await page.setViewportSize({ width, height: width === 1512 ? 982 : 850 });
     for (const mode of ["light", "dark"]) {
@@ -244,6 +435,24 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
       await expect(
         directory.getByRole("heading", { name: "Today", exact: true }).first(),
       ).toBeVisible();
+      // Existing sampled replies supply real unread evidence without adding history.
+      const unreadRow = directory.getByRole("button", {
+        name: /Review the release checklist/,
+      });
+      const dot = unreadRow.getByRole("img", {
+        name: /Observed unread messages/,
+      });
+      await expect(dot).toBeVisible();
+      const activity = unreadRow.getByRole("img", {
+        name: "Owner-visible agent activity: working",
+        exact: true,
+      });
+      await expect(activity).toBeVisible();
+      const activityBox = await activity.boundingBox();
+      const unreadBox = await dot.boundingBox();
+      expect(activityBox.x + activityBox.width).toBeLessThanOrEqual(
+        unreadBox.x,
+      );
       // Resizing and tab selection animate the real Base UI indicator. Observe
       // its settled geometry rather than capturing an in-flight underline.
       await expect
@@ -281,6 +490,99 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
             }),
         )
         .toBe(true);
+      const sidebar = page.getByRole("complementary", {
+        name: "Channel sidebar",
+      });
+      const toggle = sidebar.getByRole("button", {
+        name: "Expand sessions in General",
+        exact: true,
+      });
+      await expect(toggle).toHaveAttribute("aria-expanded", "false");
+      await expect(
+        sidebar.getByRole("region", {
+          name: "Your sessions in General",
+          exact: true,
+        }),
+      ).toBeHidden();
+      await page.screenshot({
+        path: testInfo.outputPath(`sessions-collapsed-${width}-${mode}.png`),
+      });
+      await toggle.focus();
+      await page.keyboard.press("Enter");
+      const child = sidebar
+        .getByRole("region", { name: "Your sessions in General", exact: true })
+        .getByRole("button")
+        .first();
+      const personalUnread = sidebar
+        .getByRole("region", { name: "Your sessions in General", exact: true })
+        .getByRole("button", { name: /Review the release checklist/ })
+        .getByRole("img", { name: /Observed unread messages/ });
+      await expect(personalUnread).toBeVisible();
+      const dotBox = await personalUnread.boundingBox();
+      const titleBox = await personalUnread
+        .locator("..")
+        .locator("span")
+        .nth(1)
+        .boundingBox();
+      const unreadButtonBox = await personalUnread.locator("..").boundingBox();
+      expect(titleBox.x + titleBox.width).toBeLessThanOrEqual(dotBox.x);
+      expect(dotBox.width).toBe(6);
+      expect(dotBox.x + dotBox.width).toBeLessThanOrEqual(
+        unreadButtonBox.x + unreadButtonBox.width,
+      );
+      const parent = sidebar.locator('[data-channel-id="general"]');
+      const childBox = await child.boundingBox();
+      const parentBox = await parent.locator("..").boundingBox();
+      const childText = await child.locator("span").nth(1).boundingBox();
+      const parentText = await parent.locator("span").nth(1).boundingBox();
+      expect(childBox.x + childBox.width).toBeLessThanOrEqual(
+        parentBox.x + parentBox.width + 1,
+      );
+      expect(childText.x).toBeGreaterThan(parentText.x);
+      expect(
+        await child
+          .locator("span")
+          .nth(1)
+          .evaluate((el) => getComputedStyle(el).textOverflow),
+      ).toBe("ellipsis");
+      const all = sidebar
+        .getByRole("region", { name: "Your sessions in General", exact: true })
+        .getByRole("button", { name: "View all sessions" });
+      await expect(all.getByRole("img")).toHaveCount(0);
+      await expect(all).toHaveAttribute("aria-current", "page");
+      const allBox = await all.boundingBox();
+      expect(Math.abs(allBox.x - childText.x)).toBeLessThan(1);
+      expect(allBox.width).toBeLessThan(childBox.width - 20);
+      await expect(all).toHaveAccessibleDescription(
+        "From loaded history · may be incomplete",
+      );
+      await expect(all).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(all).toHaveCSS("font-size", "14px");
+      await expect(all).toHaveCSS("font-weight", "400");
+      const colors = await all.evaluate(() => {
+        const probe = document.createElement("span");
+        document.body.append(probe);
+        probe.style.color = "var(--text-primary)";
+        const primary = getComputedStyle(probe).color;
+        probe.style.color = "var(--text-secondary)";
+        const secondary = getComputedStyle(probe).color;
+        probe.remove();
+        return { primary, secondary };
+      });
+      await expect(all).toHaveCSS("color", colors.primary);
+      await all.focus();
+      await expect(all).toBeFocused();
+      await expect
+        .poll(() => all.evaluate((el) => getComputedStyle(el).outlineStyle))
+        .toBe("solid");
+      await expect(all).toHaveCSS("color", colors.primary);
+      await all.hover();
+      await expect(all).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await directory
+        .getByRole("heading", { name: "Sessions", exact: true })
+        .click();
+      await page.mouse.move(0, 0);
+      await expect(all).toHaveCSS("color", colors.primary);
       const firstRow = await directory
         .locator("li button")
         .first()
@@ -312,6 +614,32 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
           page.evaluate(() => window.sessionsFixture.threadSnapshot()?.status),
         )
         .toBe("ready");
+      await expect(all).not.toHaveAttribute("aria-current");
+      await expect(all).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(all).toHaveCSS("font-weight", "400");
+      await expect(all).toHaveCSS("color", colors.secondary);
+      await all.focus();
+      await page.keyboard.press("ArrowLeft");
+      await expect(all).toBeFocused();
+      await expect(all).toHaveCSS("outline-style", "solid");
+      await expect(all).toHaveCSS("color", colors.primary);
+      await detail
+        .getByRole("heading", {
+          name: "Review the release checklist",
+          exact: true,
+        })
+        .click();
+      await all.hover();
+      await expect(all).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(all).toHaveCSS("color", colors.primary);
+      await detail
+        .getByRole("heading", {
+          name: "Review the release checklist",
+          exact: true,
+        })
+        .click();
+      await page.mouse.move(0, 0);
+      await expect(all).toHaveCSS("color", colors.secondary);
       await expect(detail.getByText(/repl(?:y|ies) shown/)).toHaveCount(0);
       const inset = width > 1000 ? 32 : width > 650 ? 24 : 16;
       expect(
@@ -321,15 +649,38 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
           shadow: getComputedStyle(element).boxShadow,
         })),
       ).toEqual({ border: "0px", radius: "0px", shadow: "none" });
+      // With inline activity the narrow history is taller than the viewport.
+      // Initial bottom-follow remains ThreadPanel's contract; geometry below
+      // measures the root after an explicit return to the start of history.
+      const detailHistory = detail.getByRole("region", {
+        name: "Session messages",
+      });
+      await expect
+        .poll(() =>
+          detailHistory.evaluate(
+            (element) =>
+              element.scrollHeight - element.clientHeight - element.scrollTop,
+          ),
+        )
+        .toBeLessThan(2);
+      await detailHistory.evaluate(async (element) => {
+        if (!element.scrollTop) return;
+        await new Promise((resolve) => {
+          element.addEventListener("scroll", resolve, { once: true });
+          element.scrollTop = 0;
+        });
+      });
       const box = await detail.boundingBox();
       const composer = await detail.locator("form").boundingBox();
       const root = await detail
         .locator("[data-message-id]")
         .first()
         .boundingBox();
-      const title = await detail.getByRole("heading").boundingBox();
+      const title = await detail
+        .getByRole("heading", { level: 2 })
+        .boundingBox();
       expect(
-        await detail.getByRole("heading").evaluate((element) => ({
+        await detail.getByRole("heading", { level: 2 }).evaluate((element) => ({
           size: getComputedStyle(element).fontSize,
           leading: getComputedStyle(element).lineHeight,
         })),
@@ -380,6 +731,12 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
         path: testInfo.outputPath(`session-detail-${width}-${mode}.png`),
       });
       await detail.getByRole("button", { name: "Back to Sessions" }).click();
+      await sidebar
+        .getByRole("button", {
+          name: "Collapse sessions in General",
+          exact: true,
+        })
+        .click();
     }
   }
 });
@@ -481,7 +838,7 @@ test("header New session selects an agent explicitly, opens the shared thread an
   await thread.getByRole("button", { name: "Back to Sessions" }).click();
   await expect(
     page
-      .getByRole("region", { name: "Sessions" })
+      .getByRole("region", { name: "Sessions", exact: true })
       .getByRole("button", { name: /Quiet shared investigation/ }),
   ).toBeVisible();
   await page.getByRole("tab", { name: "Channel", exact: true }).click();
@@ -732,8 +1089,8 @@ test("two windows share one creation claim and recover the same accepted root", 
       .flat()
       .map((event) => event.id),
   ).toEqual([root.id]);
-  // Reopen both editors for a second legitimate draft. Queue acceptance cleanup
-  // before the stale claimant so its acquisition sees an absent creation record.
+  // Reopen both editors for a second legitimate draft. This phase tests an
+  // already-cleaned-up claim; the first phase covers native lock contention.
   for (const p of [page, other]) {
     await p
       .getByRole("complementary", { name: "Session", exact: true })
@@ -768,55 +1125,30 @@ test("two windows share one creation claim and recover the same accepted root", 
   await expect
     .poll(() => page.evaluate(() => window.sessionsFixture.saved()?.messageId))
     .toBeTruthy();
-  await lockPage.evaluate(async (name) => {
-    let entered;
-    const started = new Promise((resolve) => {
-      entered = resolve;
-    });
-    window.claimLock = navigator.locks.request(name, async () => {
-      entered();
-      await new Promise((resolve) => {
-        window.releaseClaim = resolve;
-      });
-    });
-    await started;
-  }, lockName);
+  const staleEditor = other.getByRole("textbox", {
+    name: "Message this session",
+  });
+  const unchangedPrompt = await staleEditor.textContent();
+  expect(unchangedPrompt).toContain("Cleanup before stale claim");
+  // Web Locks order callbacks, but a pending-count snapshot is not evidence
+  // that another page has observed localStorage cleanup. WebKit can still read
+  // the saved record after the winner's cleanup callback returned true. Wait
+  // for the actual cross-window storage boundary before testing absent-record
+  // generation rejection; do not turn a valid recovery response into a flake.
   try {
     await page.evaluate(() => window.publicationGate.release());
-    await expect
-      .poll(() =>
-        lockPage.evaluate(
-          async (name) =>
-            (await navigator.locks.query()).pending.filter(
-              (lock) => lock.name === name,
-            ).length,
-          lockName,
-        ),
-      )
-      .toBeGreaterThan(0);
-    const queued = await lockPage.evaluate(
-      async (name) =>
-        (await navigator.locks.query()).pending.filter(
-          (lock) => lock.name === name,
-        ).length,
-      lockName,
-    );
+    await expect(
+      page.getByRole("complementary", { name: "Session", exact: true }),
+    ).toBeVisible();
+    for (const p of [page, other])
+      await expect
+        .poll(() => p.evaluate(() => window.sessionsFixture.saved()))
+        .toBeUndefined();
+    await expect(staleEditor).toHaveText(unchangedPrompt);
     await other
       .getByRole("button", { name: "Send message", exact: true })
       .click();
-    await expect
-      .poll(() =>
-        lockPage.evaluate(
-          async (name) =>
-            (await navigator.locks.query()).pending.filter(
-              (lock) => lock.name === name,
-            ).length,
-          lockName,
-        ),
-      )
-      .toBe(queued + 1);
   } finally {
-    await lockPage.evaluate(() => window.releaseClaim());
     await page.evaluate(() => window.publicationGate.release());
   }
   await expect(other.getByRole("alert")).toContainText("editor is stale");
@@ -864,7 +1196,7 @@ test("Share in channel keeps the draft and exact recipients, edits one canonical
   await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await expect(input).toHaveCount(0);
   await page
-    .getByRole("region", { name: "Sessions" })
+    .getByRole("region", { name: "Sessions", exact: true })
     .getByRole("button", { name: /Review the release checklist/ })
     .click();
   const detail = page.getByRole("complementary", {
@@ -1077,7 +1409,7 @@ test("sharing does not overwrite a channel draft changed in another window", asy
     await local.fill("Local context");
     await page.getByRole("tab", { name: "Sessions", exact: true }).click();
     await page
-      .getByRole("region", { name: "Sessions" })
+      .getByRole("region", { name: "Sessions", exact: true })
       .getByRole("button", { name: /Review the release checklist/ })
       .click();
     await expect(
@@ -1142,7 +1474,7 @@ test("sharing does not overwrite a channel draft changed in another window", asy
     await expect(local).toHaveJSProperty("value", "Other window context");
     await page.getByRole("tab", { name: "Sessions", exact: true }).click();
     await page
-      .getByRole("region", { name: "Sessions" })
+      .getByRole("region", { name: "Sessions", exact: true })
       .getByRole("button", { name: /Review the release checklist/ })
       .click();
     await page.getByRole("button", { name: "Share in channel" }).click();
@@ -1320,4 +1652,187 @@ test("channel /session publishes one actual chip root, opens Sessions, and the r
     ),
   ).toBe(true);
   expect(errors).toEqual([]);
+});
+
+// Browser-only boundary: real plugin/reader wiring, animated Base UI keyboard
+// disclosure and native scrolling while owner telemetry resizes above a reader.
+test("inline owner activity preserves the native reading anchor and lazy keyboard disclosure", async ({
+  page,
+}, testInfo) => {
+  await page.clock.setFixedTime(new Date("2026-09-21T14:00:00Z"));
+  await page.goto("/tests/fixtures/channel-sessions.html?inline");
+  await expect(
+    page.getByRole("textbox", { name: "Message #General" }),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
+  const directory = page.getByRole("region", { name: "Sessions", exact: true });
+  await expect(directory.getByText("Checking threads for agents…")).toHaveCount(
+    0,
+  );
+  await directory
+    .getByRole("button", { name: /Review the release checklist/ })
+    .click();
+  const history = page.getByRole("region", { name: "Session messages" });
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const s = window.sessionsFixture.threadSnapshot();
+        return s?.status === "ready" && !s.canLoadMore;
+      }),
+    )
+    .toBe(true);
+  await expect(history.locator("[data-message-id]")).toHaveCount(19);
+  await page.evaluate(() => window.sessionsFixture.enableActivity());
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.sessionsFixture.activityState().status),
+    )
+    .toBe("listening");
+  const baseline = await page.evaluate(() => {
+    const r = window.sessionsFixture.report;
+    return {
+      queries: r.queries.length,
+      readers: r.readers,
+      active: r.activeReaders,
+      published: r.published.length,
+      controls: r.observerControls.length,
+    };
+  });
+  await page.evaluate(() => {
+    const f = window.sessionsFixture;
+    f.telemetry("turn_started", [f.rows[1].rootId], "other");
+    f.telemetry("turn_started", [f.rows[0].rootId]);
+    f.telemetry("acp_read", [], "fixture-turn", {
+      text: "<img src=x onerror=alert(1)>",
+    });
+  });
+  const activity = history.getByRole("region", {
+    name: "Session agent activity",
+  });
+  const toggle = activity.getByRole("button", {
+    name: "Agent activity",
+    exact: true,
+  });
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(activity.locator("pre")).toHaveCount(0);
+  await history.evaluate(async (element) => {
+    await new Promise((resolve) => {
+      element.addEventListener("scroll", resolve, { once: true });
+      element.scrollTop = 0;
+    });
+  });
+  await toggle.focus();
+  await page.keyboard.press("Enter");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(activity.getByText("turn_started", { exact: true })).toHaveCount(
+    1,
+  );
+  const details = activity
+    .getByRole("button", { name: "Details", exact: true })
+    .nth(1);
+  await details.focus();
+  await page.keyboard.press("Enter");
+  await expect(activity.locator("pre")).toContainText(
+    "<img src=x onerror=alert(1)>",
+  );
+  await expect(
+    activity.locator("img, script, [data-message-id], time"),
+  ).toHaveCount(0);
+  // Settle the actual transitions, without disabling animation or a fixed sleep.
+  const settle = () =>
+    activity.evaluate(async (element) => {
+      await new Promise(requestAnimationFrame);
+      await Promise.all(
+        element
+          .getAnimations({ subtree: true })
+          .map((animation) => animation.finished),
+      );
+      await new Promise(requestAnimationFrame);
+    });
+  await settle();
+  const box = await activity.boundingBox();
+  const root = await history.locator("[data-message-id]").first().boundingBox();
+  const reply = await history.locator("[data-message-id]").nth(1).boundingBox();
+  expect(box.y).toBeGreaterThanOrEqual(root.y + root.height);
+  expect(box.y + box.height).toBeLessThanOrEqual(reply.y);
+  await page.screenshot({ path: testInfo.outputPath("inline-wide-light.png") });
+  // Mid-history (not following bottom): changing the accessory above the
+  // viewport must preserve an actual visible reply, not merely scrollTop.
+  const anchor = history.locator("[data-message-id]").nth(8);
+  await anchor.evaluate(async (row) => {
+    const element = row.closest('[aria-label="Session messages"]');
+    await new Promise((resolve) => {
+      element.addEventListener("scroll", resolve, { once: true });
+      element.scrollTop +=
+        row.getBoundingClientRect().top - element.getBoundingClientRect().top;
+    });
+  });
+  const before = await anchor.boundingBox();
+  const scrollBefore = await history.evaluate((element) => ({
+    top: element.scrollTop,
+    height: element.scrollHeight,
+    client: element.clientHeight,
+  }));
+  expect(
+    scrollBefore.height - scrollBefore.client - scrollBefore.top,
+  ).toBeGreaterThan(80);
+  await page.evaluate(() =>
+    window.sessionsFixture.telemetry("batch", [], "fixture-turn", {
+      events: Array.from({ length: 4 }, () => ({
+        kind: "acp_write",
+        turnId: "fixture-turn",
+        channelId: "general",
+        payload: "Reading remains anchored",
+      })),
+    }),
+  );
+  await expect(activity.getByText("acp_write", { exact: true })).toHaveCount(4);
+  await settle();
+  await expect
+    .poll(async () => Math.abs((await anchor.boundingBox()).y - before.y))
+    .toBeLessThan(2);
+  expect(
+    await page.evaluate(() => {
+      const r = window.sessionsFixture.report;
+      return {
+        queries: r.queries.length,
+        readers: r.readers,
+        active: r.activeReaders,
+        published: r.published.length,
+        controls: r.observerControls.length,
+      };
+    }),
+  ).toEqual(baseline);
+  await page.evaluate(() => window.sessionsFixture.disableActivity());
+  await expect(activity).toHaveCount(0);
+  await expect
+    .poll(async () => Math.abs((await anchor.boundingBox()).y - before.y))
+    .toBeLessThan(2);
+  await page.evaluate(() => window.sessionsFixture.enableActivity());
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.sessionsFixture.activityState().status),
+    )
+    .toBe("listening");
+  await page.evaluate(() =>
+    window.sessionsFixture.telemetry("turn_started", [
+      window.sessionsFixture.rows[0].rootId,
+    ]),
+  );
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() =>
+    document.documentElement.setAttribute("data-color-mode", "dark"),
+  );
+  await toggle.focus();
+  await page.keyboard.press("Enter");
+  await settle();
+  await page.screenshot({
+    path: testInfo.outputPath("inline-narrow-dark.png"),
+  });
+  expect(
+    await history.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth,
+    ),
+  ).toBe(true);
 });

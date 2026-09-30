@@ -16,12 +16,14 @@ export function SessionsDirectory({
   now,
   controls,
   showEmpty = true,
+  renderStatus,
 }: {
   openThread(rootId: string): boolean;
   rows: readonly ThreadPreviewRow[];
   now: number;
   controls?: ReactNode;
   showEmpty?: boolean;
+  renderStatus?: (rootId: string) => ReactNode;
 }) {
   const today = new Date(now * 1000);
   today.setHours(0, 0, 0, 0);
@@ -99,6 +101,7 @@ export function SessionsDirectory({
                     {row.replyCount === 1 ? "reply" : "replies"}
                   </span>
                 </span>
+                {renderStatus?.(row.rootId)}
                 <time
                   dateTime={new Date(row.lastMessageAt * 1000).toISOString()}
                   title={`Last observed message ${new Date(row.lastMessageAt * 1000).toLocaleString()}`}

@@ -200,3 +200,77 @@ it("shares only an available exact root and retries source failure without creat
   expect(h.report.activeReaders).toBe(1);
   expect(h.report.published).toEqual([]);
 });
+
+it.each(["thread", "session"] as const)(
+  "%s invokes accessory only after the host's canonical root is loaded",
+  async (presentation) => {
+    const { h, props } = await setup();
+    // Evict the cached root: the gate below must hold actual root loading.
+    await h.owner.clearCache();
+    h.session.channels.ensureList();
+    await waitFor(() => expect(h.session.channels.list().status).toBe("ready"));
+    const accessory = vi.fn(
+      (
+        _props: import("../conversation/contracts").ChannelThreadAccessoryProps,
+      ) => <div>Passive accessory</div>,
+    );
+    const gate = h.holdThread();
+    render(
+      <ThreadPanel
+        {...props}
+        presentation={presentation}
+        renderThreadAccessory={accessory}
+      />,
+      { reactStrictMode: true },
+    );
+    try {
+      await act(async () => {
+        await gate.started;
+      });
+      expect(accessory).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => gate.release());
+    }
+    await waitFor(() => expect(h.threadSnapshot()?.status).toBe("ready"));
+    if (presentation === "session") {
+      expect(accessory).toHaveBeenCalled();
+      const value = accessory.mock.calls.at(-1)?.[0];
+      expect(value).toMatchObject({
+        session: h.session,
+        scope: props.scope,
+        channelId: "general",
+        threadRootId: props.messageId,
+      });
+      expect(value?.messages[0]?.id).toBe(props.messageId);
+      const root = screen
+        .getByRole("region", { name: "Session messages" })
+        .querySelector("[data-message-id]");
+      expect(
+        root?.compareDocumentPosition(screen.getByText("Passive accessory")),
+      ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    } else expect(accessory).not.toHaveBeenCalled();
+    expect(h.report.activeReaders).toBe(1);
+  },
+);
+
+it("failed root loading never invokes the passive accessory and retry restores it", async () => {
+  const { h, props } = await setup();
+  await h.owner.clearCache();
+  h.session.channels.ensureList();
+  await waitFor(() => expect(h.session.channels.list().status).toBe("ready"));
+  const accessory = vi.fn(() => <div>Recovered accessory</div>);
+  h.failThread(true);
+  render(
+    <ThreadPanel
+      {...props}
+      presentation="session"
+      renderThreadAccessory={accessory}
+    />,
+  );
+  await screen.findByRole("button", { name: /Retry/ });
+  expect(accessory).not.toHaveBeenCalled();
+  h.failThread(false);
+  fireEvent.click(screen.getByRole("button", { name: /Retry/ }));
+  await screen.findByText("Recovered accessory");
+  expect(h.report.activeReaders).toBe(1);
+});

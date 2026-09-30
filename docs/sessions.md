@@ -1297,3 +1297,259 @@ The user reported the `/session` flow and feedback working in the running native
 app: “it works!” This is user feedback acceptance, not an independently captured
 ACP/text-reply trace or CI validation. Button/title UI polish remains deferred
 and unchanged.
+
+### Retained personal sidebar — ready to try (2026-09-22, task 33)
+
+Ordinary channel rows now offer up to five positively known sessions the viewer
+started or participated in, followed by **View all sessions**. Participation is
+root/reply authorship or a validated relay summary participant, never a received
+mention or a read. Agent eligibility uses exact keys from already-loaded profiles
+and the local library. Ordering follows the latest retained conversational root
+or reply, not a summary timestamp, edit, reaction or telemetry. Edited ordinary
+roots keep the existing conservative mention rule; quiet/chip roots preserve
+explicit original recipients.
+
+This is intentionally **partial loaded-history evidence**, not an account-wide
+index. The sidebar starts no channel window, observer, profile/library read,
+subscription route or acknowledgement. Its plugin-owned shared projection uses
+the existing retained heads, history, traffic and accepted/seen local evidence.
+The store's optional passive API emits compact immutable rows (160-character
+excerpts, capped positive identity lists), with strict single-channel partitioning
+before overlays and exact relay-author/singleton `h`/`e`/`d` summary validation.
+Verified remote proof wins over stale local failure state. Clear/access/disposal
+fences are synchronous; passive publication is coalesced after mutations rather
+than reentering an unfinished commit. Existing byte/row owners remain the bounds.
+
+The approved optional conversation-sidebar contribution owns presentation only.
+Channels owns cross-channel destination intent and revocable root/directory
+commands, including exact registration, session/generation, scope, navigation,
+access, connection and retained-cache lifetime. Existing private Session children,
+drafts and the channel menu's private **New session** remain separate. View all
+opens the existing bounded Sessions tab, not a promise of complete history.
+No `session.ts`, backend, global navigation target, signer or persistence format
+change was made.
+
+Evidence on the uncommitted tree based on `e3bf091`:
+
+- TypeScript and changed-file Biome pass; 295 focused Vitest checks across 23 files
+  pass (store/prepared/revocation/live/traffic, Channels, Sessions, command/private
+  coexistence and conversation registration). Tests include strict mixed summary
+  evidence, cross-channel edits/deletes, remote/local precedence, unmounted local
+  roots/hydration, silent head/tail/window eviction, reentrant clear/revoke,
+  bounded DTOs, passive source work and stale callback rejection.
+- All 14 Chromium/WebKit session browser checks pass. The existing file is
+  extended, not multiplied: native keyboard
+  collapse/expand, cross-channel root/View all navigation, selected state and
+  sidebar focus restoration. Its existing light/dark 390/740/1280/1512px matrix
+  also checks child indentation, containment and truncation. Broad selectors were
+  scoped to the exact directory after sidebar titles made them ambiguous. A new
+  geometry assertion caught insufficient child indentation in both engines; the
+  child inset was fixed rather than relaxing the assertion. Final wide/light and
+  narrow/dark screenshots were inspected.
+- Serial Chromium/WebKit opening checks pass with optional profile work held and
+  no new warm head read. Local Apple Silicon warm samples were 40.2–43.8ms and
+  40–43ms respectively, under the unchanged 100ms budget. Cold visibility upper
+  bounds were 41.3ms/53ms (including Playwright assertion roundtrip). The modeled
+  cold head read had 0ms reader queue, 0.03/0.04ms broker admission, 2.98/3.05ms
+  upstream, 0.7/1ms verification and 11.5/13ms total fetch; these stages overlap
+  the visibility interval and are not additive. This is fixture evidence, not a
+  live-network SLA.
+
+Eugene's independent review (task 36) and final synchronous follow-up both
+**PASS** for the retained projection's strict boundary, reentrant reset and compact
+`byChannel` shape. A separate final synchronous review **PASS** covers exact
+cross-channel destination intent. These were read-only source reviews; no tests
+were run by the reviewers. The coder's 295 checks / 23 files, 14 browser checks
+and two opening checks above remain the test evidence for this snapshot.
+
+The parent inspected the final 1512px light Chromium and 390px dark WebKit
+screenshots against the Figma reference. The sidebar retains the maximum of five
+sessions and the partial-history note, with no fake badges. The parent also
+verified native PID 70281 running and HTTP 200 from the development server; this
+is process/server health, not human sidebar acceptance.
+
+No live write, native restart/build, commit, push or full scan was performed.
+Human native sidebar feedback, hosted CI and broader integration remain pending.
+Title/button polish remains a separate agreed feedback item.
+
+### Sidebar quieting feedback — 2026-09-22, 11:34
+
+Session children now default **collapsed**, including existing private children;
+Channels/Starred category disclosure defaults are unchanged. New explicit
+expansions are recorded in the existing scoped sidebar view preference, surviving
+channel/page navigation and reload. Legacy explicit collapses remain closed;
+legacy absence never recorded whether a group had been deliberately expanded, so
+that unrecoverable distinction is treated as unknown/closed. This adds no store
+migration. Optional expansion state tolerates existing HMR memory. Search expands
+matching parents temporarily without changing the choice; private **New session**
+still explicitly opens its parent and draft. Traffic and label changes do not
+expand groups or change the passive retained-evidence owner.
+
+**View all sessions** remains available whenever the children are expanded, even
+with zero known personal sessions. It is now an unfilled, fit-content 14/20
+body-small control in normal weight, aligned with child text, without a branch
+or selected-row pill. Current/hover/keyboard-focus states use primary text only
+(with the focus ring retained), and the native hover title repeats the truthful
+loaded-history or unavailable description. The repeated sidebar coverage paragraph is
+visually hidden and attached with `aria-describedby`, including the truthful
+unsupported-capability description. The directory's visible partial-history copy
+is unchanged. No opacity-based text color, global font/button tuning or new icon
+was added.
+
+Reference: read-only `block/berd` at
+`00ad86965c32297c54abad94669fd7ceb55977e2`, `SidebarProjectList.tsx`
+(`expandedProjects[id] ?? false`), `SidebarProjectSection.tsx`
+(`PROJECT_CHAT_DISCLOSURE_CLASS`, disclosures below children), and
+`disclosure-button.tsx` (ghost/flush/sidebar concept). Buzz uses its own authored
+text tokens rather than Berd's opacity recipe. Expanded indentation was compared
+with Figma directory frame `1357:15191`; the user's collapsed-default instruction
+supersedes that older expanded example.
+
+Evidence on the uncommitted `e3bf091`-based tree: TypeScript, focused Biome,
+`design:check` (including contrast), and 43 tests across the complete sidebar-view,
+sidebar-row, directory-sidebar, Channels-directory integration and PersonalSessions
+files pass (5.13s wall / 3.71s summed test time; slowest file 3.126s). The existing
+browser file passes all 14 Chromium/WebKit cases (28.5s wall / 50.5s summed displayed
+durations; slowest layout case 7.1s). No browser cases were added or removed: the
+existing journey now covers native keyboard/reload/page-navigation behavior, and
+its 390/740/1280/1512 light/dark matrix checks collapsed/expanded geometry, unfilled
+current/hover states, text alignment and keyboard focus. Reload first exposed the
+fixture's regenerated viewer/scope, corrected with fixed synthetic seeds and an
+explicit row-count option—not a product storage workaround. The design guard
+caught a literal inset, replaced with the equivalent spacing token. Final wide
+light and narrow dark screenshots were inspected.
+
+Logs: `/tmp/session-sidebar-polish-{typecheck,biome,vitest,browser,design}.log`.
+Screenshots: `/tmp/session-sidebar-polish-browser-artifacts/channel-sessions-fixture-l-c98f8-row-intermediate-wide-views-{chromium,webkit}/sessions-{collapsed-,}{390,740,1280,1512}-{light,dark}.png`.
+Ready for HMR feedback and independent parent review, not broad/native acceptance.
+No live write, native restart/build, commit, push, store-suite rerun, opening
+measurement or full scan; backend/passive data ownership is unchanged. General
+button and long-session-title polish remain deferred.
+
+### Personal observed unread — ready to try (2026-09-22, 12:08 relay freeze)
+
+The user's relay/backend freeze defers shared rename: its shared persistence
+contract is unresolved; no local-only rename substitutes for it. This increment
+adds personal unread dots, not activity or public ownership signals, to the
+bounded shared directory (200 roots) and retained sidebar (five per channel).
+Existing `unread.snapshot/subscribe` combines positive root-message and reply-only
+thread evidence without summing a total. Unknown/zero omit the dot, never claim
+all-read; manual device-only intent and observed/stale evidence remain labelled.
+No fetch, read acknowledgement, order/date change, auto-expansion or View all
+badge is added. Existing full Session visible-message reading remains the owner.
+At the preceding task 47 checkpoint on the dirty `e3bf091` feedback tree:
+typecheck, targeted Biome, design checks, 259 focused Vitest checks / 20 files
+(nine new), and all 14 changed-file browser
+checks passed in Chromium/WebKit. The existing layout journey now checks real
+unread dots; no browser cases added/removed. Wide/light and narrow/dark screenshots
+were inspected. These synthetic checks are not live/native acceptance.
+
+Per the parent report, Eugene's task 49 read-only source review identified one
+blocker: irrelevant stale zero/unknown snapshots qualified fresh positive unread
+evidence. Task 50 limits the observed stale warning to positive observed
+snapshots; manual wording is unchanged and does not claim freshness. Three
+separate-root/thread RTL cases cover fresh positive + stale zero/unknown and
+stale positive + fresh zero. The first two failed before the fix; the complete
+`SessionUnread.test.tsx` now passes all 12 tests, including the existing actual
+service/caller checks. Targeted Biome and diff checks pass. The preceding
+259-test/browser/design/typecheck checkpoint was not rerun; no new independent
+review, visual or native acceptance is claimed for this copy-only correction.
+Native PID 70281 was left unchanged. Ready for parent review and HMR feedback.
+
+Activity, shared rename, button/title polish, hosted CI and broader integration
+remain deferred. No live write, native restart/build, commit, push or full scan.
+
+### Owner-visible session-row activity — ready to try (2026-09-22)
+
+The 12:08 relay/backend freeze remains: shared rename, broad button/title polish
+and inline agent-reply activity timelines are separate, deferred slices.
+Rows now passively join existing owner-visible turns to retained same-channel
+messages. Only `turn_started.payload.triggeringEventIds` supplies correlation:
+all IDs must be lowercase hex, at most 64, and all must resolve to one retained
+root within 32 parent steps. Missing, conflicting or multiple-root evidence is
+omitted. IDs survive raw-record eviction within the existing 512-turn RAM bound;
+conflicting starts invalidate correlation until eviction/reset. Raw frames stay exact.
+Working/unknown uses existing freshness; ended turns disappear. Absent is not idle,
+process state, ownership proof, an ACP transcript or a late-attachment guarantee.
+The existing Agent Activity plugin alone activates capture. Sessions adds no query,
+profile lookup, timer, invocation change, read acknowledgement, date/order update,
+participation inference or auto-expansion. Neutral status is separate from unread.
+On the dirty `e3bf091` feedback tree: typecheck, changed-path Biome, design guards,
+211 focused Vitest checks/19 files passed (5.55s wall, 12.06s summed execution);
+two additional lifecycle cases then passed with their full four files (45 checks).
+The existing browser file passed 14 Chromium/WebKit cases (29.6s wall); no cases
+added/removed. Its actual-plugin journey and layout matrix now cover activity,
+unread coexistence, focus/order stability and collapsed state; wide/light and
+narrow/dark screenshots were inspected. Per the parent report, task 53's independent
+read-only source review passed; that review ran no new tests. Live/native/packaged
+acceptance and broad gates remain deferred; no restart, live write, commit or push.
+
+Task 54 resolved the earlier WebKit two-window test failure without production
+changes. Test-only native-lock tracing reproduced 13 pass / 1 fail: the acceptance
+cleanup callback returned true, but the other page still read the saved creation
+record and correctly requested recovery. A queued native lock count did not prove
+cross-window localStorage visibility. The existing case now keeps real competing
+claims in its first phase, then waits for accepted navigation and absent creation
+records in **both** pages before submitting the still-mounted, unchanged second
+editor. The exact stale-error and single-root assertions remain; no retries,
+timeouts, tolerances, error allowlists or browser cases were added/removed. The
+existing colocated accepted-cleanup-before-queued-claim and same-text ABA checks
+remain in `NewChannelSession.test.tsx` (all 28 checks pass, 4.94s wall / 3.46s
+execution). Browser-native contention and cross-page storage remain browser checks.
+
+On the same dirty `e3bf091` feedback tree plus this test-only correction, the full
+browser file passed all 14 checks in Chromium/WebKit twice (30.6s and 29.8s wall;
+54.9s and 54.5s summed displayed test durations; slowest layout cases 8.4s and
+8.6s). Before correction, the instrumented reproduction took 41.2s wall / 64.8s
+summed execution, with the failing WebKit case at 13.8s. These are local Apple
+Silicon fixture measurements, not hosted CI or proof that all flakes are gone.
+Targeted Biome and diff checks pass. Logs/artifacts:
+`/tmp/session-activity-staleclaim-*`, including `diagnostic-full.log`,
+`lock-evidence.json`, `browser.log`, `confirm.log` and `vitest.log`. Temporary lock
+instrumentation was removed; no fixture, production, backend, relay or native
+code was changed by this correction. Broader type/design/source evidence remains
+the preceding checkpoint, not a new full scan.
+
+### Inline owner activity — ready for review/try (2026-09-22)
+
+The optional directory `threadAccessory` reuses ThreadPanel's loaded canonical
+root/replies, after the root and before replies; its isolated failure does not
+remove the transcript. Sessions passively joins retained exact agent/turn/channel
+correlation. Missing, ambiguous or poisoned evidence is omitted, never rebuilt
+from raw trigger payloads. Any post-terminal start poisons correlation, including
+identical IDs, until reset/eviction; an ended turn never resumes working.
+Batch children require their own explicit scope; nested batches are omitted.
+The 100-record / 256-KiB display cap does not mutate the original raw panel.
+Details mount escaped plaintext only after disclosure; projected children are
+labeled reserialized JSON. Loaded names/key fragments group observations, not
+chat attribution. No timestamp ordering, guessed “Thinking”, avatar or fake reply.
+The quiet 14px activity Accordion follows the reference hierarchy, deliberately
+at turn level because telemetry has no reliable reply-event mapping. Title/button
+polish remains deferred, including the existing narrow heading wrap.
+No activation, query, profile fetch, clock, signing or backend change is added.
+The existing activity plugin owns capture; disable/cache/access resets clear it.
+ThreadPanel observes only accessory size and preserves message reading anchors,
+including native clamping before ResizeObserver when expanded activity disappears.
+On dirty `e3bf091`: typecheck, 21-path Biome and design guards pass; 138 focused
+Vitest checks/13 files pass (4.57s wall, 8.39s execution), including the full
+22-check host file and its new retarget/lifecycle case (2.99s tests).
+The full browser file passes 16 Chromium/WebKit checks (32.7s wall, 58.1s summed,
+slowest 8.7s). One case added, none removed: actual animated keyboard disclosure
+and native scroll anchoring require browsers. Correlation/nested-batch and scroll
+regressions failed before fixes.
+Logs: `/tmp/inline-*`; screenshots: `test-results/browser/channel-sessions-inline-*`.
+
+Per the parent report, Eugene's task 63 read-only final source review **PASS**
+covers privacy, post-terminal same-ID correlation poisoning and explicit nested
+scope handling. The parent's independent final scroll source review **PASS**
+covers `ThreadPanel.tsx:389–471`, including layout-effect refs and the `onScroll`
+height guard. These were source reviews, not test runs; the preceding 138 focused
+checks / 13 files and 16 Chromium/WebKit browser checks remain the test evidence.
+
+The parent inspected the wide/light Chromium and narrow/dark WebKit screenshots.
+The existing poor long-title wrap remains observed and user-deferred to the
+separate button/title polish pass; it was not fixed in this handoff. The parent
+also verified native PID 70281 and HMR, not live/native acceptance. Live/native/
+package acceptance, hosted CI and broader integration remain pending. No new test
+execution, live protocol write, native restart/build, commit, push or full scan
+was performed for this documentation handoff.

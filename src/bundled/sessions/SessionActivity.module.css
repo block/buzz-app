@@ -1,0 +1,20 @@
+.activity {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: var(--type-weight-normal);
+}
+
+.activity[data-compact] .caption {
+  display: none;
+}
+@media (max-width: 650px) {
+  .caption {
+    display: none;
+  }
+}

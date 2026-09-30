@@ -3,6 +3,7 @@ import {
   ACTIVITY_BYTE_LIMIT,
   ACTIVITY_RECORD_LIMIT,
   ACTIVITY_TURN_LIMIT,
+  ACTIVITY_TRIGGER_LIMIT,
   createAgentActivity,
 } from "./activity";
 import { parseAgentManagementRequest } from "./management-request";
@@ -607,5 +608,198 @@ it("bounds retained management request IDs", () => {
   send("request-0");
 
   expect(receive).toHaveBeenCalledTimes(202);
+  f.activity.dispose();
+});
+
+it("retains bounded start correlation through liveness, raw eviction, completion and clock rollback", () => {
+  const f = fixture();
+  const ids = ["b".repeat(64), "a".repeat(64)];
+  const started = f.make(
+    f.item("turn_started", "one", {
+      payload: { triggeringEventIds: [...ids, ids[0]] },
+    }),
+  );
+  f.activity.receive(started, f.generation());
+  expect(f.snapshot().records[0]?.plaintext).toBe(started.plaintext);
+  const retained = f.snapshot().turns[0]?.triggeringEventIds;
+  expect(retained).toEqual([...ids].sort());
+  expect(Object.isFrozen(retained)).toBe(true);
+  for (const kind of [
+    "turn_liveness",
+    "session_resolved",
+    "acp_read",
+    "acp_write",
+  ])
+    f.send(
+      f.item(kind, "one", {
+        payload: { triggeringEventIds: ["c".repeat(64)] },
+      }),
+    );
+  for (let i = 0; i <= ACTIVITY_RECORD_LIMIT; i++)
+    f.send(f.item("diagnostic", String(i)));
+  expect(f.snapshot().records.some((record) => record.id === started.id)).toBe(
+    false,
+  );
+  expect(f.snapshot().turns[0]?.triggeringEventIds).toBe(retained);
+  vi.setSystemTime(Date.now() - 2000);
+  f.send(f.item("turn_completed"));
+  expect(f.snapshot().turns[0]).toMatchObject({
+    state: "ended",
+    triggeringEventIds: retained,
+  });
+  for (let i = 0; i <= ACTIVITY_RECORD_LIMIT; i++)
+    f.send(f.item("diagnostic", String(i)));
+  f.send(
+    f.item("turn_started", "one", { payload: { triggeringEventIds: ids } }),
+  );
+  // Same IDs cannot distinguish a replay from reuse after terminal evidence.
+  expect(f.snapshot().turns[0]).toMatchObject({
+    state: "ended",
+    triggeringEventIds: undefined,
+  });
+  f.activity.clear();
+  expect(f.snapshot().turns).toEqual([]);
+  f.activity.dispose();
+});
+
+it.each([
+  undefined,
+  [],
+  "a".repeat(64),
+  ["A".repeat(64)],
+  ["a".repeat(64), `event:${"b".repeat(64)}`],
+  ["a".repeat(64), null],
+  Array(ACTIVITY_TRIGGER_LIMIT + 1).fill("a".repeat(64)),
+])(
+  "omits all malformed/oversized trigger evidence and cannot repair an ambiguous start: %j",
+  (ids) => {
+    const f = fixture();
+    f.send(
+      f.item("turn_started", "one", { payload: { triggeringEventIds: ids } }),
+    );
+    expect(f.snapshot().turns[0]?.triggeringEventIds).toBeUndefined();
+    f.send(
+      f.item("turn_started", "one", {
+        payload: { triggeringEventIds: ["a".repeat(64)] },
+      }),
+    );
+    expect(f.snapshot().turns[0]?.triggeringEventIds).toBeUndefined();
+    expect(f.snapshot().turns[0]?.state).toBe("working");
+    f.activity.dispose();
+  },
+);
+
+it.each(["ids", "channel", "malformed"])(
+  "invalidates conflicting %s starts behind time fences without reviving ended turns",
+  (conflict) => {
+    const f = fixture();
+    const payload = { triggeringEventIds: ["a".repeat(64)] };
+    f.send(f.item("turn_started", "one", { payload }));
+    f.send(f.item("turn_liveness", "one"));
+    f.send(
+      f.item("turn_started", "one", {
+        timestamp: new Date(Date.now() - 1000).toISOString(),
+        channelId: conflict.includes("channel") ? "b" : "a",
+        payload:
+          conflict === "ids"
+            ? { triggeringEventIds: ["b".repeat(64)] }
+            : conflict === "malformed"
+              ? {}
+              : payload,
+      }),
+    );
+    expect(f.snapshot().turns[0]?.triggeringEventIds).toBeUndefined();
+    f.send(f.item("turn_started", "one", { payload }));
+    expect(f.snapshot().turns[0]?.triggeringEventIds).toBeUndefined();
+    f.send(f.item("turn_completed"));
+    f.send(f.item("turn_started", "one", { payload }));
+    expect(f.snapshot().turns[0]?.state).toBe("ended");
+    expect(f.snapshot().turns[0]?.triggeringEventIds).toBeUndefined();
+    f.activity.dispose();
+  },
+);
+
+it("late liveness alone cannot invent triggers; a valid delayed start can supply them without changing time", () => {
+  const f = fixture();
+  const payload = {
+    triggeringEventIds: Array.from({ length: ACTIVITY_TRIGGER_LIMIT }, (_, i) =>
+      i.toString(16).padStart(64, "0"),
+    ),
+  };
+  f.send(f.item("turn_liveness", "one", { payload }));
+  const timestamp = f.snapshot().turns[0]?.timestamp;
+  expect(f.snapshot().turns[0]?.triggeringEventIds).toBeUndefined();
+  f.send(
+    f.item("turn_started", "one", {
+      payload,
+      timestamp: new Date(Date.now() - 2000).toISOString(),
+    }),
+  );
+  expect(f.snapshot().turns[0]?.triggeringEventIds).toEqual(
+    payload.triggeringEventIds,
+  );
+  expect(f.snapshot().turns[0]?.timestamp).toBe(timestamp);
+  f.send(f.item("turn_liveness", "one", { channelId: "b" }));
+  expect(f.snapshot().turns[0]?.triggeringEventIds).toBeUndefined();
+  f.activity.dispose();
+});
+
+it("keeps correlation snapshots stable for raw-only frames and preserves per-agent isolation", () => {
+  const f = fixture();
+  const payload = { triggeringEventIds: ["a".repeat(64)] };
+  f.send(f.item("turn_started", "one", { payload }));
+  const turns = f.snapshot().turns;
+  f.send(f.item("diagnostic"));
+  expect(f.snapshot().turns).toBe(turns);
+  f.activity.receive(
+    {
+      ...f.make(
+        f.item("turn_started", "one", {
+          payload: { triggeringEventIds: ["b".repeat(64)] },
+        }),
+      ),
+      agent: "b".repeat(64),
+    },
+    f.generation(),
+  );
+  expect(f.snapshot().turns.map((t) => t.triggeringEventIds)).toEqual([
+    ["a".repeat(64)],
+    ["b".repeat(64)],
+  ]);
+  f.send(f.item("turn_completed"));
+  f.send(
+    f.item("turn_started", "one", {
+      payload: { triggeringEventIds: ["c".repeat(64)] },
+    }),
+  );
+  expect(f.snapshot().turns[0]).toMatchObject({
+    state: "ended",
+    triggeringEventIds: undefined,
+  });
+  f.activity.dispose();
+});
+
+it("keeps correlated unknown evidence through disconnect, but turn eviction and lease reset drop it", () => {
+  const f = fixture();
+  const payload = { triggeringEventIds: ["a".repeat(64)] };
+  f.send(f.item("turn_started", "old", { payload }));
+  f.activity.state({ status: "retrying", routes: [] });
+  expect(f.snapshot().turns[0]).toMatchObject({
+    state: "unknown",
+    triggeringEventIds: payload.triggeringEventIds,
+  });
+  f.activity.state(connected);
+  expect(f.snapshot().turns[0]?.state).toBe("unknown");
+  f.send(f.item("turn_liveness", "old"));
+  expect(f.snapshot().turns[0]?.state).toBe("working");
+  vi.setSystemTime(Date.now() + 1);
+  for (let i = 0; i < ACTIVITY_TURN_LIMIT; i++)
+    f.send(f.item("turn_liveness", String(i)));
+  expect(f.snapshot().turns.some((turn) => turn.turnId === "old")).toBe(false);
+  expect(
+    f.snapshot().turns.every((turn) => turn.triggeringEventIds === undefined),
+  ).toBe(true);
+  f.release();
+  expect(f.snapshot().turns).toEqual([]);
   f.activity.dispose();
 });

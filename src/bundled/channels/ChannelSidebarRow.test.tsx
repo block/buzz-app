@@ -42,12 +42,12 @@ function unreadSession(observedCount = 1) {
     },
   } as unknown as RelaySession;
 }
-function mount(selected = "child") {
+function mount(selected = "child", initiallyCollapsed = false) {
   const onSelect = vi.fn(),
     onNewSession = vi.fn();
   const session = unreadSession();
   function Row() {
-    const [collapsed, setCollapsed] = useState(false);
+    const [collapsed, setCollapsed] = useState(initiallyCollapsed);
     return (
       <ChannelSidebarRow
         channel={parent}
@@ -55,6 +55,7 @@ function mount(selected = "child") {
         onToggle={(open) => setCollapsed(!open)}
         icon={<svg data-testid="channel-icon" />}
         badge={<span>3</span>}
+        extraChildren={<button type="button">Shared thread</button>}
         childContent={(channel) => (
           <UnreadBadge
             session={session}
@@ -195,10 +196,37 @@ it("collapses child sessions and drafts without navigating and expands with the 
   expect(
     screen.queryByRole("button", { name: "New session draft in Engineering" }),
   ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Shared thread" }),
+  ).not.toBeInTheDocument();
   expect(callbacks.onSelect).not.toHaveBeenCalled();
   expect(callbacks.onNewSession).not.toHaveBeenCalled();
   await user.keyboard("{Enter}");
   expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByRole("button", { name: "Shared thread" })).toBeVisible();
+  expect(
+    screen.getByRole("button", {
+      name: "Plan the release, session in Engineering",
+    }),
+  ).toHaveAttribute("aria-current", "page");
+});
+
+it("keeps the current child hidden until explicit expansion, not parent selection", async () => {
+  const user = userEvent.setup();
+  const callbacks = mount("child", true);
+  const toggle = screen.getByRole("button", {
+    name: "Expand sessions in Engineering",
+  });
+  const children = document.getElementById(
+    toggle.getAttribute("aria-controls") ?? "",
+  );
+  expect(children).toHaveAttribute("hidden");
+  await user.click(screen.getByRole("button", { name: "Engineering3" }));
+  expect(callbacks.onSelect).toHaveBeenCalledWith("parent");
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  toggle.focus();
+  await user.keyboard("{Enter}");
+  expect(children).not.toHaveAttribute("hidden");
   expect(
     screen.getByRole("button", {
       name: "Plan the release, session in Engineering",

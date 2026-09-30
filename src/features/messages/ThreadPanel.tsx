@@ -20,7 +20,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import { XIcon } from "../../shared/design-system/icons/index";
-import type { ConversationExtensions } from "../conversation/contracts";
+import type {
+  ChannelThreadAccessoryProps,
+  ConversationExtensions,
+} from "../conversation/contracts";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
@@ -48,6 +51,9 @@ export type ThreadPanelProps = {
   channelId: string;
   sessionConversation?: boolean | undefined;
   presentation?: "thread" | "session" | undefined;
+  renderThreadAccessory?:
+    | ((props: ChannelThreadAccessoryProps) => ReactNode)
+    | undefined;
   messageId: string;
   replyRequest?: number | undefined;
   /** Inline Inbox visit retains and reveals its exact selected message. */
@@ -161,6 +167,7 @@ function OwnedThreadPanel({
   requireReadyRoot,
   onDraftSaved,
   shareInChannel,
+  renderThreadAccessory,
   close,
 }: ThreadPanelProps) {
   const [title, setTitle] = useState("Session");
@@ -235,7 +242,10 @@ function OwnedThreadPanel({
       {error ? (
         <div className={styles.empty} role="alert">
           <p>{error}</p>
-          <Button type="button" onClick={() => setAttempt((value) => value + 1)}>
+          <Button
+            type="button"
+            onClick={() => setAttempt((value) => value + 1)}
+          >
             {presentation === "session" ? "Retry session" : "Retry thread"}
           </Button>
         </div>
@@ -244,6 +254,7 @@ function OwnedThreadPanel({
           sessionConversation={sessionConversation}
           presentation={presentation}
           onTitle={setTitle}
+          renderThreadAccessory={renderThreadAccessory}
           extensions={extensions}
           session={session}
           scope={scope}
@@ -289,9 +300,11 @@ function ThreadMessages({
   revealSelected,
   requireReadyRoot,
   onDraftSaved,
+  renderThreadAccessory,
 }: {
   sessionConversation?: boolean | undefined;
   presentation?: ThreadPanelProps["presentation"];
+  renderThreadAccessory?: ThreadPanelProps["renderThreadAccessory"];
   onTitle(title: string): void;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
@@ -390,6 +403,8 @@ function ThreadMessages({
   const profiles = useRowProfiles(session.profiles, rows);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
+  const accessoryElement = useRef<HTMLDivElement>(null);
+  const accessoryHeight = useRef(0);
   const positioned = useRef(false);
   const readingSettled = useRef(false);
   const [initialPositioned, setInitialPositioned] = useState(false);
@@ -804,6 +819,52 @@ function ThreadMessages({
       jumpingToLatest.current = false;
     }, 1000);
   };
+
+  // The history owner, not the plugin, preserves native message reading position.
+  // Only the accessory is observed: no second message reader or global scroll owner.
+  const accessoryAnchor = useRef<
+    { element: HTMLElement; top: number } | undefined
+  >(undefined);
+  const rememberAccessoryAnchor = useCallback(() => {
+    const element = scroller.current;
+    if (!element || !accessoryElement.current) return;
+    const top = element.getBoundingClientRect().top;
+    const row = [
+      ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
+    ].find((row) => row.getBoundingClientRect().bottom > top);
+    accessoryAnchor.current = row
+      ? { element: row, top: row.getBoundingClientRect().top }
+      : undefined;
+  }, []);
+  const hasAccessory =
+    presentation === "session" &&
+    snapshot.root?.id === messageId &&
+    snapshot.root.channelId === channelId &&
+    snapshot.root.threadRootId === undefined &&
+    snapshot.status !== "error" &&
+    !!renderThreadAccessory;
+  useLayoutEffect(() => {
+    const element = scroller.current,
+      accessory = accessoryElement.current;
+    if (!hasAccessory || !element || !accessory) return;
+    rememberAccessoryAnchor();
+    accessoryHeight.current = accessory.getBoundingClientRect().height;
+    const observer = new ResizeObserver(() => {
+      const next = accessory.getBoundingClientRect().height;
+      if (next === accessoryHeight.current) return;
+      accessoryHeight.current = next;
+      if (positioned.current) {
+        const anchor = accessoryAnchor.current;
+        if (follow.current) element.scrollTop = element.scrollHeight;
+        else if (anchor?.element.isConnected)
+          element.scrollTop +=
+            anchor.element.getBoundingClientRect().top - anchor.top;
+      }
+      rememberAccessoryAnchor();
+    });
+    observer.observe(accessory);
+    return () => observer.disconnect();
+  }, [hasAccessory, rememberAccessoryAnchor]);
   const keepReadingPosition = () => {
     jumpingToLatest.current = false;
     if (jumpTimer.current !== undefined) {
@@ -981,8 +1042,17 @@ function ThreadMessages({
         aria-label={presentation === "session" ? "Session messages" : "Thread messages"}
         aria-busy={positioning}
         data-positioning={positioning || undefined}
+        style={hasAccessory ? { overflowAnchor: "none" } : undefined}
         onScroll={(event) => {
           if (!positioned.current) return;
+          // Shrinking content can clamp native scrollTop before ResizeObserver
+          // runs. Preserve pre-resize intent/anchor until that owner compensates.
+          const accessory = accessoryElement.current;
+          if (
+            accessory &&
+            accessory.getBoundingClientRect().height !== accessoryHeight.current
+          )
+            return;
           const element = event.currentTarget;
           if (olderAnchor.current) {
             const anchor = olderAnchor.current;
@@ -998,6 +1068,7 @@ function ThreadMessages({
           follow.current = bottom;
           setShowJumpToLatest(!bottom);
           if (bottom) setNewMessageCount(0);
+          rememberAccessoryAnchor();
           loadOlder();
         }}
         onWheel={(event) => {
@@ -1067,6 +1138,23 @@ function ThreadMessages({
           ) : snapshot.status !== "loading" ? (
             <p className={styles.empty}>Original message unavailable.</p>
           ) : null}
+        {hasAccessory && snapshot.root && renderThreadAccessory && (
+          <div ref={accessoryElement}>
+            {renderThreadAccessory({
+              session,
+              scope,
+              channelId,
+              threadRootId: snapshot.root.id,
+              messages: rows,
+            })}
+          </div>
+        )}
+        {presentation !== "session" && (
+          <div className={styles.threadDivider}>
+            {snapshot.replies.length}{" "}
+            {snapshot.replies.length === 1 ? "reply shown" : "replies shown"}
+          </div>
+        )}
           <ol>
             {showOlderPageStatus && snapshot.error && (
               <li className={styles.threadHistoryPageStatus}>

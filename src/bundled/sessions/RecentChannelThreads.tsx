@@ -1,8 +1,11 @@
+import type { createRetainedSessions } from "./retained-sessions";
+import { SessionActivity } from "./SessionActivity";
 import { useMemo } from "react";
 import type { ChannelThreadDirectoryProps } from "../../features/conversation/contracts";
 import { useChannelWindow } from "../../features/relay/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { SessionsDirectory, type ThreadPreviewRow } from "./SessionsDirectory";
+import { SessionUnread } from "./SessionUnread";
 import styles from "./SessionsDirectory.module.css";
 
 import {
@@ -16,7 +19,10 @@ export function RecentChannelThreads({
   session,
   channelId,
   openThread,
-}: ChannelThreadDirectoryProps) {
+  owner,
+}: ChannelThreadDirectoryProps & {
+  owner?: ReturnType<typeof createRetainedSessions>;
+}) {
   const window = useChannelWindow(session.channels, channelId);
   const candidates = useMemo(
     () => sessionRoots(window.rows, channelId),
@@ -41,6 +47,22 @@ export function RecentChannelThreads({
       rows={rows}
       now={Date.now() / 1000}
       openThread={openThread}
+      renderStatus={(rootId) => (
+        <>
+          {owner && (
+            <SessionActivity
+              evidence={owner.forSession(session)}
+              channelId={channelId}
+              rootId={rootId}
+            />
+          )}
+          <SessionUnread
+            unread={session.unread}
+            channelId={channelId}
+            rootId={rootId}
+          />
+        </>
+      )}
       showEmpty={
         !loading && !window.error && !evidence.loading && !evidence.partial
       }

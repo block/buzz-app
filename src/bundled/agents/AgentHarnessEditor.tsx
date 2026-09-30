@@ -75,14 +75,23 @@ export function AgentHarnessEditor({
           label: available === false ? `${label} (install first)` : label,
           disabled: available === false,
         }))}
-        onChange={(command, pickedOption) => {
+        onChange={(command, pickedOption, customCommitted) => {
           const option = options.find((item) => item.command === command);
           const enteringExternal =
             option?.label === "Goose" || option?.label === "Pi";
           const enteringCodex = option?.id === "codex";
+          const executable = command.replaceAll("\\", "/").split("/").at(-1);
+          const leavingManagedConfiguration =
+            customCommitted &&
+            draft.configuration !== undefined &&
+            executable !== "buzz-agent" &&
+            executable !== "codex-acp";
           onChange({
             command,
             ...(command !== draft.command ? leaveOpenAI : {}),
+            ...(leavingManagedConfiguration
+              ? { model: "", configuration: undefined }
+              : {}),
             ...(pickedOption && enteringCodex
               ? {
                   args: JSON.stringify(option.defaultArgs ?? []),
@@ -219,7 +228,11 @@ function ConfigChoice({
   value: string;
   options: { value: string; label: string; disabled?: boolean }[];
   disabled?: boolean;
-  onChange(value: string, pickedOption: boolean): void;
+  onChange(
+    value: string,
+    pickedOption: boolean,
+    customCommitted: boolean,
+  ): void;
 }) {
   // Custom is an editing mode, not a saved value. Entering it never erases data.
   const [custom, setCustom] = useState(false);
@@ -249,7 +262,7 @@ function ConfigChoice({
           setCustom(selected === "custom");
           if (selected !== "custom") {
             const option = options[Number(selected)];
-            if (option) onChange(option.value, true);
+            if (option) onChange(option.value, true, false);
           }
         }}
       />
@@ -259,7 +272,11 @@ function ConfigChoice({
             disabled={disabled}
             value={value}
             spellCheck={false}
-            onChange={(event) => onChange(event.target.value, false)}
+            onChange={(event) => onChange(event.target.value, false, false)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") onChange(value, false, true);
+            }}
+            onBlur={(event) => onChange(event.target.value, false, true)}
           />
         </Field>
       )}

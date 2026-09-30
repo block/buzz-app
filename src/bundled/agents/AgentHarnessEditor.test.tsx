@@ -67,6 +67,84 @@ it("keeps custom mode separate from saved values and supports an unset provider"
   );
 });
 
+it.each([
+  {
+    path: "/custom/agent",
+    commit: "blur",
+    model: "",
+    configuration: undefined,
+  },
+  {
+    path: "/custom/agent",
+    commit: "enter",
+    model: "",
+    configuration: undefined,
+  },
+  {
+    path: "/custom/codex-acp",
+    commit: "blur",
+    model: "codex-model",
+    configuration: {
+      mode: "advanced",
+      effort: { kind: "value", value: "high" },
+    },
+  },
+])(
+  "retires managed Codex settings on $commit only when custom path $path changes harness families",
+  async ({ path, commit, model, configuration }) => {
+    const f = controlFixture();
+    const user = userEvent.setup();
+    const initial: AgentDraft = {
+      ...agentDraft(f.agent),
+      command: "/tools/codex-acp",
+      provider: "",
+      model: "codex-model",
+      configuration: {
+        mode: "advanced",
+        effort: { kind: "value", value: "high" },
+      },
+    };
+    function Example() {
+      const [draft, setDraft] = useState(initial);
+      return (
+        <>
+          <AgentHarnessEditor
+            draft={draft}
+            options={[
+              {
+                id: "codex",
+                command: "/tools/codex-acp",
+                label: "Codex",
+                providers: [],
+              },
+            ]}
+            onChange={(patch) =>
+              setDraft((current) => ({ ...current, ...patch }))
+            }
+          />
+          <output>{JSON.stringify(draft)}</output>
+        </>
+      );
+    }
+    render(<Example />);
+    await user.click(screen.getByRole("combobox", { name: "Harness" }));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Custom executable / current value",
+      }),
+    );
+    const executable = screen.getByRole("textbox", { name: "Executable" });
+    await user.clear(executable);
+    await user.type(executable, path);
+    if (commit === "enter") await user.type(executable, "{Enter}");
+    else await user.tab();
+
+    const saved = JSON.parse(screen.getByRole("status").textContent ?? "");
+    expect(saved.model).toBe(model);
+    expect(saved.configuration).toEqual(configuration);
+  },
+);
+
 it.each(["/opt/homebrew/bin/goose", "C:\\tools\\goose"])(
   "preserves Goose settings while editing custom executable %s",
   async (path) => {

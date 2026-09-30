@@ -622,7 +622,9 @@ export function createUnread({
         .map((channel) => channel.id)
         .filter((channelId) => {
           const current = snapshot({ kind: "channel", channelId });
-          return current.unreadVisible || current.manual !== "none";
+          return (
+            current.unreadVisible || state.journal.hasManualInChannel(channelId)
+          );
         });
       const results: ReadMutationResult[] = [];
       let failure: unknown;

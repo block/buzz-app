@@ -225,14 +225,19 @@ export function createSidebarJournal(
     serial = work.catch(() => {});
     return work;
   }
+  function manualTargets() {
+    let targets = current.manual;
+    for (const edit of manualEdits.values())
+      if (edit.valid()) targets = edit.apply(targets);
+    return targets;
+  }
   return {
     snapshot: () => current,
     reload: () => update((j) => j),
+    hasManualInChannel: (channelId: string) =>
+      manualTargets().some((target) => target.channelId === channelId),
     manual: (target: SidebarManualTarget) => {
-      let targets = current.manual;
-      for (const edit of manualEdits.values())
-        if (edit.valid()) targets = edit.apply(targets);
-      return targets.some(
+      return manualTargets().some(
         (t) => unreadTargetKey(t) === unreadTargetKey(target),
       );
     },

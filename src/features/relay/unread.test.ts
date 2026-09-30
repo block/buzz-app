@@ -565,3 +565,62 @@ it("community sweep sends fixed cuts only for relay unread evidence and leaves u
     { type: "mark_channel_read", channel_id: channel, message_id: anchor },
   ]);
 });
+
+it.each([
+  { kind: "message", held: false },
+  { kind: "thread", held: false },
+  { kind: "message", held: true },
+  { kind: "thread", held: true },
+] as const)(
+  "community sweep includes exact-zero channels with only a local target: %j",
+  async ({ kind, held }) => {
+    const h = setup();
+    const root = message(h.peer, channel, "root", 11);
+    h.emit([root]);
+    h.bff.rows.set(channel, sidebarRow(channel));
+    await h.unread.ensure();
+    const selected =
+      kind === "message"
+        ? { kind, channelId: channel, messageId: root.id }
+        : { kind, channelId: channel, rootId: root.id };
+    const gate = deferredSidebar<void>(),
+      started = deferredSidebar<void>();
+    if (held) {
+      const update = h.bff.storage.update;
+      vi.spyOn(h.bff.storage, "update").mockImplementationOnce(
+        async (change) => {
+          started.resolve();
+          await gate.promise;
+          return update(change);
+        },
+      );
+    }
+    const mark = h.unread.markUnreadLocal(selected);
+    let sweep: ReturnType<typeof h.unread.markAllChannelsRead> | undefined;
+    try {
+      if (held) await started.promise;
+      else await mark;
+      expect(h.snapshot()).toMatchObject({
+        unread: { status: "exact", value: 0 },
+        manual: "none",
+      });
+      expect(h.unread.snapshot(selected).manual).toBe("local-only");
+      if (kind === "message")
+        expect(h.unread.attention(channel, root.id).forced).toBe(true);
+      sweep = h.unread.markAllChannelsRead();
+      // Selection must see transient marks, without waiting for the older save.
+      expect(h.unread.snapshot(selected).manual).toBe("none");
+      gate.resolve();
+      await mark;
+      expect(await sweep).toHaveLength(1);
+      expect(h.bff.journal().manual).toEqual([]);
+      expect(h.unread.snapshot(selected).manual).toBe("none");
+      if (kind === "message")
+        expect(h.unread.attention(channel, root.id).forced).toBe(false);
+      expect(h.bff.api.write).not.toHaveBeenCalled();
+    } finally {
+      gate.resolve();
+      await Promise.allSettled([mark, sweep]);
+    }
+  },
+);

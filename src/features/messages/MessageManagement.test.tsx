@@ -762,6 +762,12 @@ it("keeps one unread visit until the last channel or thread view closes", async 
   );
   await act(async () => {});
   expect(enterChannel).toHaveBeenCalledExactlyOnceWith("room");
+  channel.rerender(
+    <MessageManagement session={session} channelId="room" active={false}>
+      Channel
+    </MessageManagement>,
+  );
+  expect(leaveChannel).not.toHaveBeenCalled();
   channel.unmount();
   expect(leaveChannel).not.toHaveBeenCalled();
   thread.unmount();

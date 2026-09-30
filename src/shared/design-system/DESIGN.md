@@ -499,7 +499,6 @@ should remain legible without a state background to explain it.
 
 - **Design default, hover, pressed, focus, selected, disabled and loading states where they apply.** Pressed changes fill without moving the control. Loading keeps the label footprint and prevents repeated activation; CSS alone cannot enforce it.
 - **Hover means one step more contrast, in whichever direction that surface needs.** A light row darkens, a dark chip lightens. Direction lives in the value.
-- **Neutral buttons, icon controls and navigation rows share the tab’s quiet hover fill** through `affordance-subtle-hover` (neutral 2 light / neutral 5 dark). Primary, destructive and tinted actions retain their semantic hover colors; media and glass retain their material treatments.
 - **Selected is a persistent statement, not a stronger hover.** It should be legible without a cursor present.
 - **A selected item in a toggle group is not interactive.** Clicking it does nothing, so it gets no hover.
 - **Disabled communicates unavailability, not quietness.** It is not a fourth level of the emphasis ramp.

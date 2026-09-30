@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open, end, settle } from "./timeline.mjs";
+import { open, end, settle, wheel } from "./timeline.mjs";
 
 test.use({
   pluginFixtures: true,
@@ -223,7 +223,7 @@ test("loaded virtual rows reveal per attempt without thread reads or live-update
   // Successful exact navigation retains its target ID. Detach after reveal;
   // live arrivals must count without treating that retained ID as pending.
   await history.hover();
-  await page.mouse.wheel(0, -500);
+  await wheel(page, -500, history);
   await expect
     .poll(() =>
       history.evaluate(
@@ -240,8 +240,16 @@ test("loaded virtual rows reveal per attempt without thread reads or live-update
   await expect(
     history.locator(`[data-message-id="${first.id}"]`),
   ).toBeInViewport();
+  await settle(page, history);
+  await expect
+    .poll(() =>
+      history.evaluate(
+        (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+      ),
+    )
+    .toBeLessThan(4);
   await history.hover();
-  await page.mouse.wheel(0, -500);
+  await wheel(page, -500, history);
   await expect
     .poll(() =>
       history.evaluate(

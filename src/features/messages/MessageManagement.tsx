@@ -84,10 +84,12 @@ export function useMessageDeletion() {
 export function MessageManagement({
   session,
   channelId,
+  active = true,
   children,
 }: {
   session: RelaySession;
   channelId?: string | undefined;
+  active?: boolean | undefined;
   children: ReactNode;
 }) {
   const [selection, setSelection] = useState<Deletion>();
@@ -111,6 +113,7 @@ export function MessageManagement({
   }, [available]);
   const visitChannelId = channels.channels.find(
     (channel) =>
+      active &&
       channel.id === channelId &&
       !channel.cached &&
       !!session.viewer &&

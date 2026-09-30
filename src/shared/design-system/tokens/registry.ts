@@ -551,8 +551,8 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-subtle-hover",
         variable: "--affordance-subtle-hover",
-        pointsAt: "affordance-subtle (neutral-2 light / neutral-5 dark)",
-        use: "Shared quiet hover for neutral buttons, icon controls, navigation rows and tabs. Persistent selection and semantic action colors remain separate.",
+        pointsAt: "neutral-quiet-hover (#efeff0) light / neutral-6 dark",
+        use: "A secondary action under a pointer.",
         status: "core",
       },
       {

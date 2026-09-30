@@ -20,6 +20,7 @@ import styles from "./ChannelTabs.module.css";
 /** Each secondary conversation has its own editing, deletion and media-review scope. */
 export function ConversationTab({
   tab,
+  active,
   channel,
   session,
   scope,
@@ -30,6 +31,7 @@ export function ConversationTab({
   close,
 }: {
   tab: Exclude<Tab, { kind: "new" }>;
+  active: boolean;
   channel: ChannelSummary;
   session: RelaySession;
   scope: string;
@@ -60,7 +62,7 @@ export function ConversationTab({
     setMedia({ messageId, attachment, seconds, hasComments });
   };
   return (
-    <MessageManagement session={session} channelId={channel.id}>
+    <MessageManagement session={session} channelId={channel.id} active={active}>
       <section
         data-attachment-drop-zone=""
         onDragOver={rejectUnhandledFileDrop}
@@ -71,6 +73,7 @@ export function ConversationTab({
         <MessageManagementStatus />
         {tab.kind === "thread" ? (
           <ThreadPanel
+            active={active}
             session={session}
             scope={scope}
             channelId={channel.id}

@@ -1678,6 +1678,9 @@ function ChannelWorkspace({
                               />
                             ) : usable ? (
                               <ConversationTab
+                                active={
+                                  tabState.paneOpen && selectedTab === tab.id
+                                }
                                 tab={tab}
                                 channel={target}
                                 session={queries}

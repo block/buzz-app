@@ -23,18 +23,18 @@ for (const mode of ["light", "dark"]) {
             row: "rgb(89, 89, 89)",
             border: "rgb(128, 128, 128)",
             inset: "rgb(16, 16, 16)",
-            ordinaryHover: "rgb(51, 51, 51)",
+            ordinaryHover: "rgb(64, 64, 64)",
           }
         : {
             panel: "rgb(245, 245, 246)",
             fill: "rgb(245, 245, 246)",
-            hover: "rgb(245, 245, 246)",
+            hover: "rgb(239, 239, 240)",
             pressed: "rgb(218, 218, 218)",
             selected: "rgb(218, 218, 218)",
             row: "rgb(232, 232, 232)",
             border: "rgb(128, 128, 128)",
             inset: "rgb(245, 245, 246)",
-            ordinaryHover: "rgb(245, 245, 246)",
+            ordinaryHover: "rgb(239, 239, 240)",
           };
     const panel = page.getByRole("region", {
       name: "Interaction panel",

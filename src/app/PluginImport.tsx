@@ -213,6 +213,7 @@ export function PluginImport({
                     description={
                       <span className="break-all">
                         {item.path} · {item.manifest.id}
+                        {` · Publisher: ${item.publisher ?? "unsigned"}`}
                       </span>
                     }
                   />
@@ -259,6 +260,14 @@ export function PluginImport({
                   </p>
                 )}
             </section>
+          )}
+          {candidate && (
+            <p className="m-0 break-all text-body-sm">
+              Publisher: {candidate.publisher ?? "unsigned"}
+              {existing?.publisher && existing.publisher !== candidate.publisher
+                ? " · Remove the installed plugin before changing publisher."
+                : ""}
+            </p>
           )}
           {candidate && (
             <p className="m-0 text-body-sm">

@@ -1,7 +1,8 @@
 //! Read-only acquisition. Preview owns immutable artifacts; installation never rereads a source.
 use crate::{
-    artifact_from_text, err, hash, Catalog, Manager, Manifest, ReloadSource, Result, LIMIT,
+    artifact_from_text, err, hash, Catalog, Manager, Manifest, Release, ReloadSource, Result, LIMIT,
 };
+use nostr::event::Event;
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
@@ -24,6 +25,7 @@ pub struct Candidate {
     pub path: String,
     pub manifest: Manifest,
     pub revision: String,
+    pub publisher: Option<String>,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,7 +40,7 @@ pub struct Preview {
 pub struct PreparedImport {
     pub preview: Preview,
     folder_root: Option<PathBuf>,
-    artifacts: BTreeMap<String, Vec<u8>>,
+    artifacts: BTreeMap<String, Release>,
 }
 impl PreparedImport {
     fn new(source: String, commit: Option<String>, folder_root: Option<PathBuf>) -> Result<Self> {
@@ -56,25 +58,30 @@ impl PreparedImport {
             artifacts: BTreeMap::new(),
         })
     }
-    fn add(&mut self, path: String, artifact: Result<Vec<u8>>) -> Result<()> {
-        match artifact {
-            Ok(bytes) => {
+    fn add(&mut self, path: String, artifact: Result<Release>) -> Result<()> {
+        match artifact.and_then(|release| release.validate().map(|manifest| (release, manifest))) {
+            Ok((release, manifest)) => {
                 if self.artifacts.contains_key(&path) {
                     return Err("Duplicate plugin folder identity".into());
                 }
                 if self.artifacts.len() >= MAX_PLUGINS
-                    || self.artifacts.values().map(Vec::len).sum::<usize>() + bytes.len()
+                    || self
+                        .artifacts
+                        .values()
+                        .map(|item| item.bytes.len())
+                        .sum::<usize>()
+                        + release.bytes.len()
                         > MAX_PREVIEW_BYTES
                 {
                     return Err("Too many plugin artifacts; choose a smaller folder or repository (32 plugins / 32 MiB maximum)".into());
                 }
-                let artifact: crate::Artifact = serde_json::from_slice(&bytes).map_err(err)?;
                 self.preview.candidates.push(Candidate {
                     path: path.clone(),
-                    manifest: artifact.manifest,
-                    revision: hash(&bytes),
+                    manifest,
+                    revision: hash(&release.bytes),
+                    publisher: release.publisher(),
                 });
-                self.artifacts.insert(path, bytes);
+                self.artifacts.insert(path, release);
             }
             Err(reason) => {
                 if self.preview.warnings.len() < MAX_PLUGINS {
@@ -88,7 +95,7 @@ impl PreparedImport {
         if token != self.preview.token {
             return Err("This import preview expired. Choose the source again.".into());
         }
-        let bytes = self
+        let release = self
             .artifacts
             .get(path)
             .ok_or("Choose a listed plugin folder")?;
@@ -97,7 +104,7 @@ impl PreparedImport {
             .clone()
             .map(|root| ReloadSource::folder(root, path.to_owned()))
             .transpose()?;
-        manager.install_artifact(bytes, source)
+        manager.install_artifact(release, source)
     }
 }
 
@@ -124,6 +131,7 @@ pub fn prepare_folder(directory: &Path) -> Result<PreparedImport> {
             return Err("Folder nesting exceeds 32 levels; choose a smaller folder".into());
         }
         let mut has_manifest = false;
+        let mut has_release = false;
         for entry in directory
             .read_dir(if relative.as_os_str().is_empty() {
                 Path::new(".")
@@ -142,6 +150,9 @@ pub fn prepare_folder(directory: &Path) -> Result<PreparedImport> {
             if name == "manifest.json" {
                 has_manifest = true;
             }
+            if name == "plugin.artifact.json" || name == "plugin.signature.json" {
+                has_release = true;
+            }
             // Hidden folders hold VCS and tool state, including other checkouts such as
             // .claude/worktrees; choose one of those folders directly to import from it.
             if kind.is_dir()
@@ -152,13 +163,15 @@ pub fn prepare_folder(directory: &Path) -> Result<PreparedImport> {
                 pending.push((relative.join(name), depth + 1));
             }
         }
-        if has_manifest {
+        if has_manifest || has_release {
             let path = candidate_path(&relative)?;
-            let artifact = (|| {
-                let manifest = read_source_file(&directory, &relative.join("manifest.json"))?;
-                let code = read_source_file(&directory, &relative.join("plugin.js"))?;
-                artifact_from_text(&manifest, code)
-            })();
+            let artifact = read_package(&directory, &relative).and_then(|release| {
+                if has_release && release.signature.is_none() {
+                    Err("Signed plugin release disappeared during folder scan".into())
+                } else {
+                    Ok(release)
+                }
+            });
             prepared.add(path, artifact)?;
         }
     }
@@ -167,6 +180,37 @@ pub fn prepare_folder(directory: &Path) -> Result<PreparedImport> {
         .candidates
         .sort_by(|a, b| a.path.cmp(&b.path));
     Ok(prepared)
+}
+
+pub(crate) fn read_package(directory: &cap_std::fs::Dir, relative: &Path) -> Result<Release> {
+    let artifact_path = relative.join("plugin.artifact.json");
+    let signature_path = relative.join("plugin.signature.json");
+    let present = |path| match directory.symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(err(error)),
+    };
+    let has_artifact = present(&artifact_path)?;
+    let has_signature = present(&signature_path)?;
+    if has_artifact || has_signature {
+        if !has_artifact || !has_signature {
+            return Err("Incomplete signed plugin release pair".into());
+        }
+        return Ok(Release {
+            bytes: read_source_file(directory, &artifact_path)?.into_bytes(),
+            signature: Some(
+                serde_json::from_str(&read_source_file(directory, &signature_path)?)
+                    .map_err(err)?,
+            ),
+        });
+    }
+    Ok(Release {
+        bytes: artifact_from_text(
+            &read_source_file(directory, &relative.join("manifest.json"))?,
+            read_source_file(directory, &relative.join("plugin.js"))?,
+        )?,
+        signature: None,
+    })
 }
 
 fn candidate_path(relative: &Path) -> Result<String> {
@@ -391,21 +435,54 @@ impl Git {
             }
         }
         let mut prepared = PreparedImport::new(source, Some(commit), None)?;
-        for (path, manifest_oid) in &blobs {
-            if path != "manifest.json" && !path.ends_with("/manifest.json") {
-                continue;
-            }
-            if path
+        let parents: std::collections::BTreeSet<&str> = blobs
+            .keys()
+            .filter_map(|path| {
+                [
+                    "manifest.json",
+                    "plugin.artifact.json",
+                    "plugin.signature.json",
+                ]
+                .iter()
+                .find_map(|name| {
+                    path.strip_suffix(name)
+                        .filter(|parent| parent.is_empty() || parent.ends_with('/'))
+                })
+            })
+            .collect();
+        for parent in parents {
+            if parent
                 .split('/')
                 .any(|s| s == "node_modules" || s == "target")
             {
                 continue;
             }
-            let parent = path.strip_suffix("manifest.json").unwrap();
             let display = if parent.is_empty() {
                 "."
             } else {
                 parent.trim_end_matches('/')
+            };
+            let artifact_oid = blobs.get(&format!("{parent}plugin.artifact.json"));
+            let signature_oid = blobs.get(&format!("{parent}plugin.signature.json"));
+            if artifact_oid.is_some() || signature_oid.is_some() {
+                let release = (|| {
+                    let (Some(artifact_oid), Some(signature_oid)) = (artifact_oid, signature_oid)
+                    else {
+                        return Err("Incomplete signed plugin release pair".into());
+                    };
+                    let bytes = self.read_blob(artifact_oid)?;
+                    let signature: Event =
+                        serde_json::from_slice(&self.read_blob(signature_oid)?).map_err(err)?;
+                    Ok(Release {
+                        bytes,
+                        signature: Some(signature),
+                    })
+                })();
+                prepared.add(display.into(), release)?;
+                continue;
+            }
+            let Some(manifest_oid) = blobs.get(&format!("{parent}manifest.json")) else {
+                continue;
             };
             let Some(code_oid) = blobs.get(&format!("{parent}plugin.js")) else {
                 prepared.add(
@@ -432,11 +509,23 @@ impl Git {
                 Err("File exceeds 8 MiB".into())
             } else {
                 let code = contents.pop().unwrap();
-                artifact_from_text(&contents[0], code)
+                artifact_from_text(&contents[0], code).map(|bytes| Release {
+                    bytes,
+                    signature: None,
+                })
             };
             prepared.add(display.into(), artifact)?;
         }
         Ok(prepared)
+    }
+
+    fn read_blob(&self, oid: &str) -> Result<Vec<u8>> {
+        let size = String::from_utf8(self.run(&["-C", "repository", "cat-file", "-s", oid], 1024)?)
+            .map_err(err)?;
+        if size.trim().parse::<u64>().map_err(err)? > LIMIT {
+            return Err("File exceeds 8 MiB".into());
+        }
+        self.run(&["-C", "repository", "cat-file", "blob", oid], LIMIT)
     }
 }
 
@@ -724,7 +813,15 @@ mod tests {
         git.run(&["init", "--template=", "repository"], LIMIT)
             .unwrap();
         let repo = git.scratch.path().join("repository");
-        plugin(&repo, "plugins/one/dist", "example.one");
+        let signed = plugin(&repo, "plugins/one/dist", "example.one");
+        crate::sign_release(
+            &signed,
+            &nostr::key::SecretKey::generate().to_secret_hex(),
+            "https://example.test/plugin.artifact.json",
+        )
+        .unwrap();
+        fs::remove_file(signed.join("manifest.json")).unwrap();
+        fs::remove_file(signed.join("plugin.js")).unwrap();
         plugin(&repo, "plugins/two", "example.two");
         fs::write(
             repo.join("package.json"),
@@ -759,10 +856,183 @@ mod tests {
         .unwrap();
         let prepared = git.read_plugins("fixture".into()).unwrap();
         assert_eq!(prepared.preview.candidates.len(), 2);
+        assert!(prepared
+            .preview
+            .candidates
+            .iter()
+            .find(|candidate| candidate.path == "plugins/one/dist")
+            .unwrap()
+            .publisher
+            .is_some());
         assert_eq!(prepared.preview.commit.as_ref().unwrap().len(), 40);
-        let text = String::from_utf8(prepared.artifacts["plugins/one/dist"].clone()).unwrap();
+        let text = String::from_utf8(prepared.artifacts["plugins/one/dist"].bytes.clone()).unwrap();
         assert!(text.contains("first"));
         assert!(!text.contains("uncommitted"));
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        let catalog = prepared
+            .install(&manager, &prepared.preview.token, "plugins/one/dist")
+            .unwrap();
+        let installed = catalog
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.one")
+            .unwrap();
+        manager.change("enable", "example.one").unwrap();
+        assert!(manager
+            .module("example.one", &installed.revision)
+            .unwrap()
+            .contains("first"));
+    }
+    #[test]
+    fn signed_folder_import_load_reload_and_publisher_continuity() {
+        let root = tempfile::tempdir().unwrap();
+        let source = plugin(root.path(), "dist", "example.signed");
+        let url = "https://example.test/plugin.artifact.json";
+        let first_key = nostr::key::SecretKey::generate().to_secret_hex();
+        let publisher = crate::sign_release(&source, &first_key, url).unwrap();
+        let pair_only = tempfile::tempdir().unwrap();
+        for name in ["plugin.artifact.json", "plugin.signature.json"] {
+            fs::copy(source.join(name), pair_only.path().join(name)).unwrap();
+        }
+        assert_eq!(
+            prepare_folder(pair_only.path())
+                .unwrap()
+                .preview
+                .candidates
+                .len(),
+            1
+        );
+        let prepared = prepare_folder(root.path()).unwrap();
+        assert_eq!(
+            prepared.preview.candidates[0].publisher.as_deref(),
+            Some(publisher.as_str())
+        );
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        let installed = prepared
+            .install(&manager, &prepared.preview.token, "dist")
+            .unwrap();
+        let first = installed
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.signed")
+            .unwrap();
+        assert_eq!(first.publisher.as_deref(), Some(publisher.as_str()));
+        let first_revision = first.revision.clone();
+        manager.change("enable", "example.signed").unwrap();
+        assert!(manager
+            .module("example.signed", &first_revision)
+            .unwrap()
+            .contains("first"));
+        let stored = manager.artifact_path("example.signed", &first_revision);
+        let original = fs::read(&stored).unwrap();
+        fs::write(&stored, b"{}").unwrap();
+        assert!(manager.module("example.signed", &first_revision).is_err());
+        fs::write(&stored, original).unwrap();
+        manager.change("disable", "example.signed").unwrap();
+        fs::write(source.join("plugin.js"), "export const changed = true;").unwrap();
+        crate::sign_release(&source, &first_key, url).unwrap();
+        let second = manager.reload("example.signed").unwrap();
+        let second = second
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.signed")
+            .unwrap();
+        assert_eq!(second.publisher.as_deref(), Some(publisher.as_str()));
+        manager.change("enable", "example.signed").unwrap();
+        assert!(manager
+            .module("example.signed", &second.revision)
+            .unwrap()
+            .contains("changed"));
+        manager.change("disable", "example.signed").unwrap();
+        manager.change("rollback", "example.signed").unwrap();
+        assert_eq!(
+            manager
+                .catalog()
+                .unwrap()
+                .plugins
+                .iter()
+                .find(|p| p.manifest.id == "example.signed")
+                .unwrap()
+                .publisher
+                .as_deref(),
+            Some(publisher.as_str())
+        );
+        manager.change("enable", "example.signed").unwrap();
+        assert!(manager
+            .module("example.signed", &first_revision)
+            .unwrap()
+            .contains("first"));
+        manager.change("disable", "example.signed").unwrap();
+        crate::sign_release(
+            &source,
+            &nostr::key::SecretKey::generate().to_secret_hex(),
+            url,
+        )
+        .unwrap();
+        let different = prepare_folder(root.path()).unwrap();
+        assert!(different
+            .install(&manager, &different.preview.token, "dist")
+            .err()
+            .unwrap()
+            .contains("Publisher changed"));
+        assert!(manager
+            .reload("example.signed")
+            .err()
+            .unwrap()
+            .contains("Publisher changed"));
+        fs::remove_file(source.join("plugin.artifact.json")).unwrap();
+        fs::remove_file(source.join("plugin.signature.json")).unwrap();
+        assert!(manager
+            .install(&source)
+            .err()
+            .unwrap()
+            .contains("Publisher changed"));
+        manager.change("remove", "example.signed").unwrap();
+        assert!(manager.install(&source).is_ok());
+    }
+    #[test]
+    fn signed_pair_never_falls_back_to_unsigned_files() {
+        let root = tempfile::tempdir().unwrap();
+        let source = plugin(root.path(), "dist", "example.signed");
+        crate::sign_release(
+            &source,
+            &nostr::key::SecretKey::generate().to_secret_hex(),
+            "https://example.test/plugin.artifact.json",
+        )
+        .unwrap();
+        fs::remove_file(source.join("plugin.signature.json")).unwrap();
+        let preview = prepare_folder(root.path()).unwrap();
+        assert!(preview.preview.candidates.is_empty());
+        assert!(preview.preview.warnings[0].contains("Incomplete signed"));
+        fs::write(source.join("plugin.signature.json"), "{}").unwrap();
+        assert!(prepare_folder(root.path())
+            .unwrap()
+            .preview
+            .candidates
+            .is_empty());
+    }
+    #[test]
+    fn signed_update_cannot_roll_back_to_unsigned_revision() {
+        let root = tempfile::tempdir().unwrap();
+        let source = plugin(root.path(), "dist", "example.signed");
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        manager.install(&source).unwrap();
+        fs::write(source.join("plugin.js"), "export const signed = true;").unwrap();
+        crate::sign_release(
+            &source,
+            &nostr::key::SecretKey::generate().to_secret_hex(),
+            "https://example.test/plugin.artifact.json",
+        )
+        .unwrap();
+        manager.install(&source).unwrap();
+        assert!(manager
+            .change("rollback", "example.signed")
+            .err()
+            .unwrap()
+            .contains("unsigned"));
     }
     #[test]
     fn git_deadline_and_output_limits_fail() {

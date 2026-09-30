@@ -351,6 +351,22 @@ isolate a malicious plugin. Load only trusted plugin code.
 
 ### Loading from folders and repositories
 
+Authors can publish a signed API v1 build with `buzzodz plugin sign DIST_DIRECTORY
+KEY_FILE ARTIFACT_URL` after `buzzodz plugin build`. `KEY_FILE` contains a Nostr
+secret key (hex or nsec); keep it outside the plugin and Git repository, with
+private file permissions. The command never takes the secret on the command line.
+It writes `plugin.artifact.json` (the exact self-contained module and manifest
+snapshot) and `plugin.signature.json` (a signed [NIP-94](https://github.com/nostr-protocol/nips/blob/master/94.md)
+kind 1063 event). The event signs the artifact SHA-256 in `x`, `application/json`
+in `m`, `buzz-plugin-release-v1` in `t`, and the download location in `url`.
+The URL is a source hint; the verified event pubkey is the publisher. Include
+both files in the folder or Git repository users import. Buzz checks the event
+ID, signature and exact artifact bytes before install and each load. Unsigned
+`manifest.json` and `plugin.js` builds remain available for local development.
+A signed installation can only update from the same publisher; remove and
+reinstall to choose a different publisher. Signing identifies an author, but
+does not sandbox plugin code or make a publisher trustworthy.
+
 Desktop Settings → Plugins loads a folder with the native folder picker, or an
 HTTPS/SSH Git repository (including GitHub `owner/repository`). An optional branch
 or tag is separate from the repository URL; GitHub `tree` URLs are rejected with

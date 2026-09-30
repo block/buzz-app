@@ -232,7 +232,6 @@
     min-width: 0;
     flex: none;
     width: max-content;
-    max-width: max(220px, calc(100% - 336px));
     overflow: visible;
     clip-path: none;
     /* Release resize help only after expansion; contain content while moving. */
@@ -254,6 +253,7 @@
   }
   .shell-content {
     @apply relative flex h-full min-h-0 min-w-0;
+    container-type: inline-size;
   }
   .shell-sidebar,
   .shell-sidebar-default {
@@ -271,22 +271,11 @@
     > .shell-navigation-content
     > :is(.shell-sidebar, .shell-sidebar-default) {
     flex: none;
-    max-width: 100%;
-    /* Hold the sidebar at its own width while the track moves; reflowing it
-       every frame re-measures every row. The clamp returns once expanded. */
-    transition: max-width var(--duration-settle) step-end allow-discrete;
-  }
-  .shell-navigation[data-sidebar-collapsible][aria-hidden="true"]
-    > .shell-navigation-content
-    > :is(.shell-sidebar, .shell-sidebar-default) {
-    max-width: none;
-    transition-timing-function: step-start;
+    /* Clamp against the stable shell, not the animated navigation track. */
+    max-width: max(220px, calc(100cqi - 336px));
   }
   @media (prefers-reduced-motion: reduce) {
-    .shell-navigation[data-sidebar-collapsible],
-    .shell-navigation[data-sidebar-collapsible]
-      > .shell-navigation-content
-      > :is(.shell-sidebar, .shell-sidebar-default) {
+    .shell-navigation[data-sidebar-collapsible] {
       transition: none;
     }
   }

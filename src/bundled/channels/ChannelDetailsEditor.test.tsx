@@ -19,7 +19,10 @@ import type {
 } from "../../features/relay/channel-details";
 import type { ChannelDetails } from "../../features/relay/channel-details-protocol";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 const channel = {
   id: "alpha",
   name: "Alpha",
@@ -480,7 +483,12 @@ it.each(["save", "check"] as const)(
         document.querySelector(".buzz-dialog-backdrop") as Element,
       );
       await user.keyboard("{Escape}");
-      expect(screen.getByRole("dialog")).toBeVisible();
+      await user.click(
+        document.querySelector(".buzz-dialog-backdrop") as Element,
+      );
+      expect(screen.getByRole("dialog")).toHaveAccessibleName(
+        "Edit channel details",
+      );
       expect(close).not.toHaveBeenCalled();
     } finally {
       await act(async () => gate.resolve());
@@ -990,8 +998,9 @@ it.each(["public", "private"] as const)(
       String(initialPrivate),
     );
     expect(h.save).not.toHaveBeenCalled();
-    // Escape in the form (rather than confirmation) discards the entire draft.
+    // Escape in the form asks before discarding the entire draft.
     await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
     await user.click(screen.getByRole("button", { name: "Edit details" }));
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Alpha");
     expect(screen.getByRole("radio", { name: "Ongoing" })).toBeChecked();
@@ -1173,4 +1182,130 @@ it("locks duration adjustment for uncertain saves", async () => {
     ).toBeVisible(),
   );
   expect(h.save).not.toHaveBeenCalled();
+});
+
+it.each(["backdrop", "Escape", "Close"])(
+  "guards dirty Edit dismissal via %s and returns intact from confirmation",
+  async (dismissal) => {
+    // jsdom does not read focus options. Base UI feature-detects preventScroll
+    // after outside presses and otherwise suppresses eventual focus return.
+    const focus = HTMLElement.prototype.focus;
+    vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (
+      this: HTMLElement,
+      options?: FocusOptions,
+    ) {
+      void options?.preventScroll;
+      focus.call(this, options);
+    });
+    const h = harness();
+    const user = userEvent.setup();
+    render(
+      <ChannelDetailsEditor capability={h.capability} channel={channel} />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Edit details" }),
+    );
+    const dismiss = async () => {
+      if (dismissal === "backdrop")
+        await user.click(
+          document.querySelector(".buzz-dialog-backdrop") as Element,
+        );
+      else if (dismissal === "Escape") await user.keyboard("{Escape}");
+      else
+        await user.click(
+          screen.getByRole("button", {
+            name: "Close edit channel details",
+          }),
+        );
+    };
+    await dismiss();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Edit details" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Description" }),
+      " draft",
+    );
+    const dialog = screen.getByRole("dialog");
+    for (const back of ["Keep editing", "Escape", "backdrop", "Close"]) {
+      await dismiss();
+      expect(screen.getAllByRole("dialog")).toEqual([dialog]);
+      expect(dialog).toHaveAccessibleName("Discard changes?");
+      expect(
+        screen.getByRole("button", { name: "Keep editing" }),
+      ).toHaveFocus();
+      if (back === "Escape") await user.keyboard("{Escape}");
+      else if (back === "backdrop")
+        await user.click(
+          document.querySelector(".buzz-dialog-backdrop") as Element,
+        );
+      else
+        await user.click(
+          screen.getByRole("button", {
+            name: back === "Close" ? "Back to edit channel details" : back,
+          }),
+        );
+      expect(dialog).toHaveAccessibleName("Edit channel details");
+      expect(screen.getByRole("textbox", { name: "Name" })).toHaveFocus();
+      expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue(
+        `${base.description} draft`,
+      );
+      expect(h.save).not.toHaveBeenCalled();
+    }
+    await dismiss();
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Edit details" }),
+      ).toHaveFocus(),
+    );
+    await user.click(screen.getByRole("button", { name: "Edit details" }));
+    expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue(
+      base.description,
+    );
+  },
+);
+
+it("closes reverted edits without confirmation, but guards raw text even when Save is a no-op", async () => {
+  const h = harness();
+  const user = userEvent.setup();
+  render(<ChannelDetailsEditor capability={h.capability} channel={channel} />);
+  await user.click(await screen.findByRole("button", { name: "Edit details" }));
+  await user.type(screen.getByRole("textbox", { name: "Name" }), " draft");
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+    target: { value: base.name },
+  });
+  await user.click(screen.getByRole("radio", { name: "Temporary" }));
+  await user.click(screen.getByRole("radio", { name: "Ongoing" }));
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Edit details" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+    target: { value: " ## Alpha " },
+  });
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("dialog")).toHaveAccessibleName("Discard changes?");
+});
+
+it("protects retained text after a failed authority reload", async () => {
+  const h = harness();
+  const user = userEvent.setup();
+  h.save.mockRejectedValueOnce(new Error("Conflict"));
+  render(<ChannelDetailsEditor capability={h.capability} channel={channel} />);
+  await user.click(await screen.findByRole("button", { name: "Edit details" }));
+  await user.type(screen.getByRole("textbox", { name: "Name" }), " draft");
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await screen.findByRole("alert");
+  h.load.mockRejectedValueOnce(new Error("Offline"));
+  await user.click(screen.getByRole("button", { name: "Reload details" }));
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("Offline"),
+  );
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("dialog")).toHaveAccessibleName("Discard changes?");
+  await user.click(screen.getByRole("button", { name: "Keep editing" }));
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+    "Alpha draft",
+  );
 });

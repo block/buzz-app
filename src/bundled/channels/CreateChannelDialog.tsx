@@ -49,6 +49,17 @@ type Props = {
   initialGroup: string;
   groupsReady: boolean;
 };
+// Error/loading messages are not user edits; only accepted setup belongs to the draft.
+function setupKey(draft: TemplateDraft | undefined) {
+  return JSON.stringify([
+    draft?.templateId ?? "",
+    draft?.lineup.teamIds ?? [],
+    draft?.lineup.agents ?? [],
+    draft?.lineup.canvas ?? "",
+    draft?.agents ?? [],
+  ]);
+}
+
 export function CreateChannelDialog(props: Props) {
   // Each opening owns its callbacks. Closing/reopening cannot revive an old editor.
   return props.open ? <OpenCreateChannelDialog {...props} /> : null;
@@ -90,7 +101,16 @@ function OpenCreateChannelDialog({
         }
       : undefined,
   );
+  const initialSetup = useRef(setupKey(draft));
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const keepEditing = useRef<HTMLButtonElement>(null);
+  const previousDiscard = useRef(confirmDiscard);
   const input = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    if (confirmDiscard !== previousDiscard.current)
+      (confirmDiscard ? keepEditing.current : input.current)?.focus();
+    previousDiscard.current = confirmDiscard;
+  }, [confirmDiscard]);
   const privateControlId = useId();
   const privateSwitch = useRef<HTMLSpanElement>(null);
   const privacyCancel = useRef<HTMLButtonElement>(null);
@@ -121,7 +141,7 @@ function OpenCreateChannelDialog({
     ? undefined
     : groups?.groups.find((g) => g.id === groupId);
   const editing = useRef(false);
-  editing.current = !pending && !busy && !privacyChoice;
+  editing.current = !pending && !busy && !privacyChoice && !confirmDiscard;
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -143,6 +163,7 @@ function OpenCreateChannelDialog({
     );
     setPrivateChannel(pending?.visibility === "private");
     setPrivacyChoice(undefined);
+    setConfirmDiscard(false);
     setError("");
     setGroupId(pending ? (pending.setup?.groupId ?? "") : initialGroup);
   }, [open, pending, initialGroup]);
@@ -156,8 +177,23 @@ function OpenCreateChannelDialog({
   // Recovery must retain the original frozen request, not reinterpret its fields.
   const invalid = !pending && Object.values(errors).some(Boolean);
 
+  const dirty =
+    !pending &&
+    (name !== "" ||
+      description !== "" ||
+      privateChannel ||
+      lifetime !== "ongoing" ||
+      setupKey(draft) !== initialSetup.current);
+  const requestClose = () => {
+    if (busy) return;
+    if (privacyChoice) setPrivacyChoice(undefined);
+    else if (confirmDiscard) setConfirmDiscard(false);
+    else if (dirty) setConfirmDiscard(true);
+    else onOpenChange(false);
+  };
+
   const submit = async () => {
-    if (invalid || busy || privacyChoice) return;
+    if (invalid || busy || privacyChoice || confirmDiscard) return;
     editing.current = false;
     setBusy(true);
     setError("");
@@ -241,21 +277,24 @@ function OpenCreateChannelDialog({
 
   return (
     <Dialog
-      dismissOnOutsideClick
       open={open}
       onOpenChange={(next) => {
-        if (!next && privacyChoice) setPrivacyChoice(undefined);
-        else onOpenChange(next);
+        if (!next) requestClose();
       }}
+      dismissOnOutsideClick
       step={
-        privacyChoice
-          ? { key: "privacy", scale: 0.95 }
-          : { key: "details", scale: 1.05 }
+        confirmDiscard
+          ? { key: "discard", scale: 0.95 }
+          : privacyChoice
+            ? { key: "privacy", scale: 0.95 }
+            : { key: "details", scale: 1.05 }
       }
       headerGap="compact"
       preventClose={busy}
       title={
-        privacyChoice ? (
+        confirmDiscard ? (
+          "Discard changes?"
+        ) : privacyChoice ? (
           privacyChoice === "private" ? (
             "Make channel private?"
           ) : (
@@ -282,19 +321,37 @@ function OpenCreateChannelDialog({
         )
       }
       description={
-        privacyChoice
-          ? privacyChoice === "private"
-            ? "Only channel members will have access."
-            : "Everyone in this community will be able to view this channel’s full history."
-          : undefined
+        confirmDiscard
+          ? "Your channel draft has unsaved changes."
+          : privacyChoice
+            ? privacyChoice === "private"
+              ? "Only channel members will have access."
+              : "Everyone in this community will be able to view this channel’s full history."
+            : undefined
       }
       closeLabel={
-        privacyChoice ? "Back to channel creation" : "Close channel creation"
+        confirmDiscard || privacyChoice
+          ? "Back to channel creation"
+          : "Close channel creation"
       }
       initialFocus={input}
       finalFocus={finalFocus}
       actions={
-        privacyChoice ? (
+        confirmDiscard ? (
+          <>
+            <Button ref={keepEditing} onClick={() => setConfirmDiscard(false)}>
+              Keep editing
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (!busy && !pending) onOpenChange(false);
+              }}
+            >
+              Discard changes
+            </Button>
+          </>
+        ) : privacyChoice ? (
           <>
             <Button
               ref={privacyCancel}
@@ -348,7 +405,7 @@ function OpenCreateChannelDialog({
         )
       }
     >
-      {privacyChoice ? (
+      {confirmDiscard ? null : privacyChoice ? (
         <p>This choice takes effect when you create the channel.</p>
       ) : (
         <form
@@ -444,14 +501,24 @@ function OpenCreateChannelDialog({
                               !/^[a-zA-Z0-9_-]{1,128}$/.test(value.templateId))
                           )
                             throw new Error("Invalid template selection");
-                          setDraft({
+                          const next = {
                             templateId: value.templateId,
                             lineup,
                             agents: resolved.agents,
                             problem: value.problem
                               ? String(value.problem)
                               : undefined,
-                          });
+                          };
+                          // Loading the opening group's default is initialization,
+                          // not a user edit. Later selections compare with it.
+                          if (
+                            draft?.problem ===
+                              "Group default is awaiting selection." &&
+                            value.templateId === initialDefault &&
+                            editorGeneration === 0
+                          )
+                            initialSetup.current = setupKey(next);
+                          setDraft(next);
                         } catch (reason) {
                           setError(String(reason));
                         }

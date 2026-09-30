@@ -7,6 +7,9 @@ import {
   waitFor,
   fireEvent,
 } from "@testing-library/react";
+import { useEffect } from "react";
+import type { TemplateEditorProps } from "../../features/channel-templates/provider";
+import { emptyLineup } from "../../features/channel-templates/model";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
@@ -209,10 +212,14 @@ it("blocks edits during creation without applying disabled control styles", asyn
   expect(privateSwitch).not.toBeChecked();
   expect(screen.getByRole("dialog")).toHaveAccessibleName("Create a channel");
   try {
+    await user.keyboard("{Escape}");
     await user.click(
       document.querySelector(".buzz-dialog-backdrop") as Element,
     );
-    await user.keyboard("{Escape}");
+    expect(
+      screen.getByRole("button", { name: "Close channel creation" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("Create a channel");
     expect(onOpenChange).not.toHaveBeenCalled();
   } finally {
     finishCreation();
@@ -785,3 +792,201 @@ it("does not relabel an ungrouped frozen retry with the group used to reopen it"
   await user.click(screen.getByRole("button", { name: "Retry channel" }));
   expect(onCreate).toHaveBeenCalledExactlyOnceWith(pending);
 });
+
+it.each(["backdrop", "Escape", "Close"])(
+  "guards dirty Create dismissal via %s and only discards explicitly",
+  async (dismissal) => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    const onCreate = vi.fn(async () => {});
+    render(
+      <CreateChannelDialog
+        {...setupProps()}
+        open
+        onOpenChange={onOpenChange}
+        onCreate={onCreate}
+      />,
+    );
+    const dismiss = async () => {
+      if (dismissal === "backdrop")
+        await user.click(
+          document.querySelector(".buzz-dialog-backdrop") as Element,
+        );
+      else if (dismissal === "Escape") await user.keyboard("{Escape}");
+      else
+        await user.click(
+          screen.getByRole("button", { name: "Close channel creation" }),
+        );
+    };
+    await dismiss();
+    expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
+    onOpenChange.mockClear();
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "Draft");
+    const dialog = screen.getByRole("dialog");
+    for (const back of ["Keep editing", "Escape", "backdrop", "Close"]) {
+      await dismiss();
+      expect(onOpenChange).not.toHaveBeenCalled();
+      expect(screen.getAllByRole("dialog")).toEqual([dialog]);
+      expect(dialog).toHaveAccessibleName("Discard changes?");
+      expect(
+        screen.getByRole("button", { name: "Keep editing" }),
+      ).toHaveFocus();
+      if (back === "Escape") await user.keyboard("{Escape}");
+      else if (back === "backdrop")
+        await user.click(
+          document.querySelector(".buzz-dialog-backdrop") as Element,
+        );
+      else
+        await user.click(
+          screen.getByRole("button", {
+            name: back === "Close" ? "Back to channel creation" : back,
+          }),
+        );
+      expect(dialog).toHaveAccessibleName("Create a channel");
+      expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+        "Draft",
+      );
+      expect(screen.getByRole("textbox", { name: "Name" })).toHaveFocus();
+      expect(onOpenChange).not.toHaveBeenCalled();
+    }
+    await dismiss();
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
+    expect(onCreate).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["Name", "Description", "Private", "Temporary"])(
+  "protects Create edits to %s and closes a reverted draft without confirmation",
+  async (field) => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    render(
+      <CreateChannelDialog
+        {...setupProps()}
+        open
+        onOpenChange={onOpenChange}
+        onCreate={async () => {}}
+      />,
+    );
+    if (field === "Name" || field === "Description")
+      await user.type(screen.getByRole("textbox", { name: field }), "draft");
+    else if (field === "Temporary")
+      await user.click(screen.getByRole("radio", { name: field }));
+    else {
+      await user.click(screen.getByRole("switch", { name: "Private" }));
+      await user.click(screen.getByRole("button", { name: "Continue" }));
+    }
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("Discard changes?");
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    if (field === "Name" || field === "Description")
+      await user.clear(screen.getByRole("textbox", { name: field }));
+    else if (field === "Temporary")
+      await user.click(screen.getByRole("radio", { name: "Ongoing" }));
+    else {
+      await user.click(screen.getByRole("switch", { name: "Private" }));
+      await user.click(screen.getByRole("button", { name: "Continue" }));
+    }
+    await user.keyboard("{Escape}");
+    expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
+  },
+);
+
+it("does not offer to discard frozen recovery when it arrives during confirmation", async () => {
+  const user = userEvent.setup();
+  const props = {
+    ...setupProps(),
+    open: true,
+    onOpenChange: vi.fn(),
+    onCreate: vi.fn(async () => {}),
+  };
+  const view = render(<CreateChannelDialog {...props} />);
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Draft");
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("dialog")).toHaveAccessibleName("Discard changes?");
+  const pending = { name: "Frozen", visibility: "open" as const };
+  view.rerender(<CreateChannelDialog {...props} pending={pending} />);
+  expect(screen.getByRole("dialog")).toHaveAccessibleName("Create a channel");
+  await user.click(document.querySelector(".buzz-dialog-backdrop") as Element);
+  expect(props.onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
+  expect(props.onCreate).not.toHaveBeenCalled();
+});
+
+it.each([false, true])(
+  "protects template-only edits without treating group defaults as edits (default: %s)",
+  async (hasDefault) => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    function Editor({ value, initialDefault, onChange }: TemplateEditorProps) {
+      useEffect(() => {
+        if (
+          initialDefault &&
+          value?.problem === "Group default is awaiting selection."
+        )
+          onChange({
+            templateId: initialDefault,
+            lineup: { ...emptyLineup(), canvas: "Saved plan" },
+            agents: [],
+          });
+      });
+      return (
+        <button
+          type="button"
+          onClick={() =>
+            onChange({
+              templateId: "custom",
+              lineup: { ...emptyLineup(), canvas: "My plan" },
+              agents: [],
+            })
+          }
+        >
+          Customize setup
+        </button>
+      );
+    }
+    const entries = [
+      {
+        key: "test/templates",
+        id: "templates",
+        pluginId: "test",
+        revision: "1",
+        title: "Templates",
+        editor: Editor,
+        groupDefault: () => null,
+        saveAs: () => null,
+      },
+    ];
+    render(
+      <CreateChannelDialog
+        {...setupProps()}
+        open
+        onOpenChange={onOpenChange}
+        onCreate={async () => {}}
+        providers={{ ...providers, snapshot: () => entries }}
+        groups={
+          hasDefault
+            ? {
+                type: "groups",
+                id: "personal",
+                groups: [
+                  { id: "work", name: "Work", defaultTemplateId: "saved" },
+                ],
+                assignments: {},
+              }
+            : undefined
+        }
+        initialGroup={hasDefault ? "work" : ""}
+      />,
+    );
+    await user.click(
+      document.querySelector(".buzz-dialog-backdrop") as Element,
+    );
+    expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
+    onOpenChange.mockClear();
+    await user.click(screen.getByRole("button", { name: "Customize setup" }));
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("Discard changes?");
+    expect(onOpenChange).not.toHaveBeenCalled();
+  },
+);

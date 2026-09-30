@@ -365,10 +365,23 @@ sessionSidebar(
       .click();
     await expect(dialog.getByRole("switch", { name: "Private" })).toBeChecked();
     await expect(dialog.getByRole("button", { name: "Cancel" })).toHaveCount(0);
+    await page
+      .locator(".buzz-dialog-backdrop")
+      .click({ position: { x: 8, y: 8 } });
+    const discard = page.getByRole("dialog", { name: "Discard changes?" });
+    await expect(
+      discard.getByRole("button", { name: "Keep editing" }),
+    ).toBeFocused();
+    await discard.getByRole("button", { name: "Keep editing" }).click();
+    await expect(dialog.getByRole("switch", { name: "Private" })).toBeChecked();
+    await expect(
+      dialog.getByRole("radio", { name: /Temporary/ }),
+    ).toBeChecked();
     await dialog
       .getByRole("button", { name: "Close channel creation" })
       .click();
-    await expect(dialog).toHaveCount(0);
+    await discard.getByRole("button", { name: "Discard changes" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(create).toBeFocused();
     await expect(
       page.getByRole("heading", { name: "Projects", exact: true }),

@@ -40,6 +40,7 @@ export function ChannelDetailsEditor({
     id,
     loading: true,
     editing: false,
+    confirmDiscard: false,
     pending: false,
     temporaryTtl: undefined as number | undefined,
     privacyChoice: undefined as ChannelDetailsDraft["visibility"] | undefined,
@@ -56,6 +57,14 @@ export function ChannelDetailsEditor({
   const busy = useRef(false);
   const nameInput = useRef<HTMLInputElement>(null);
   const privacyCancel = useRef<HTMLButtonElement>(null);
+  const keepEditing = useRef<HTMLButtonElement>(null);
+  const confirmDiscard = view.confirmDiscard && !attempt;
+  const previousDiscard = useRef(confirmDiscard);
+  useLayoutEffect(() => {
+    if (view.editing && confirmDiscard !== previousDiscard.current)
+      (confirmDiscard ? keepEditing.current : nameInput.current)?.focus();
+    previousDiscard.current = confirmDiscard;
+  }, [view.editing, confirmDiscard]);
   const previousPrivacyChoice = useRef(view.privacyChoice);
   const privateSwitch = useRef<HTMLSpanElement>(null);
   const editButton = useRef<HTMLButtonElement>(null);
@@ -154,6 +163,7 @@ export function ChannelDetailsEditor({
   const canSave =
     view.editing &&
     !view.privacyChoice &&
+    !confirmDiscard &&
     !locked &&
     canEdit &&
     dirty &&
@@ -162,6 +172,7 @@ export function ChannelDetailsEditor({
     if (attempt || (!view.loading && canEdit))
       patch({
         editing: true,
+        confirmDiscard: false,
         draft: attempt?.draft ?? view.base,
         temporaryTtl: undefined,
         error: "",
@@ -169,7 +180,29 @@ export function ChannelDetailsEditor({
   };
   const close = () => {
     if (!pending && !busy.current)
-      patch({ editing: false, error: "", privacyChoice: undefined });
+      patch({
+        editing: false,
+        error: "",
+        privacyChoice: undefined,
+        confirmDiscard: false,
+      });
+  };
+  // Protect the actual text, even when normalization would make Save a no-op.
+  // A failed authority reload must not make the retained draft disposable.
+  const unsaved =
+    !attempt &&
+    !!draft &&
+    (!view.base ||
+      draft.name !== view.base.name ||
+      draft.description !== view.base.description ||
+      draft.visibility !== view.base.visibility ||
+      draft.ttlSeconds !== view.base.ttlSeconds);
+  const requestClose = () => {
+    if (pending || busy.current) return;
+    if (view.privacyChoice) patch({ privacyChoice: undefined });
+    else if (confirmDiscard) patch({ confirmDiscard: false });
+    else if (unsaved) patch({ confirmDiscard: true });
+    else close();
   };
   async function save() {
     const controller = lifetime.current;
@@ -259,36 +292,39 @@ export function ChannelDetailsEditor({
       )}
       {!view.editing && status}
       <Dialog
-        dismissOnOutsideClick
         open={view.editing}
         headerGap="compact"
         step={
-          view.privacyChoice
-            ? { key: "privacy", scale: 0.95 }
-            : { key: "details", scale: 1.05 }
+          confirmDiscard
+            ? { key: "discard", scale: 0.95 }
+            : view.privacyChoice
+              ? { key: "privacy", scale: 0.95 }
+              : { key: "details", scale: 1.05 }
         }
         onOpenChange={(open) => {
-          if (!open) {
-            if (view.privacyChoice) patch({ privacyChoice: undefined });
-            else close();
-          }
+          if (!open) requestClose();
         }}
+        dismissOnOutsideClick
         title={
-          view.privacyChoice
-            ? view.privacyChoice === "private"
-              ? "Make channel private?"
-              : "Make channel public?"
-            : "Edit channel details"
+          confirmDiscard
+            ? "Discard changes?"
+            : view.privacyChoice
+              ? view.privacyChoice === "private"
+                ? "Make channel private?"
+                : "Make channel public?"
+              : "Edit channel details"
         }
         description={
-          view.privacyChoice
-            ? view.privacyChoice === "private"
-              ? "Only channel members will have access."
-              : "Everyone in this community will be able to view this channel’s full history."
-            : undefined
+          confirmDiscard
+            ? "Your channel details have unsaved changes."
+            : view.privacyChoice
+              ? view.privacyChoice === "private"
+                ? "Only channel members will have access."
+                : "Everyone in this community will be able to view this channel’s full history."
+              : undefined
         }
         closeLabel={
-          view.privacyChoice
+          confirmDiscard || view.privacyChoice
             ? "Back to edit channel details"
             : "Close edit channel details"
         }
@@ -296,7 +332,19 @@ export function ChannelDetailsEditor({
         initialFocus={attempt ? undefined : nameInput}
         finalFocus={editButton}
         actions={
-          view.privacyChoice ? (
+          confirmDiscard ? (
+            <>
+              <Button
+                ref={keepEditing}
+                onClick={() => patch({ confirmDiscard: false })}
+              >
+                Keep editing
+              </Button>
+              <Button variant="destructive" onClick={close}>
+                Discard changes
+              </Button>
+            </>
+          ) : view.privacyChoice ? (
             <>
               <Button
                 ref={privacyCancel}
@@ -366,7 +414,7 @@ export function ChannelDetailsEditor({
           )
         }
       >
-        {view.privacyChoice ? (
+        {confirmDiscard ? null : view.privacyChoice ? (
           <p>This change takes effect when you save channel details.</p>
         ) : (
           <form

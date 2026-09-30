@@ -424,9 +424,14 @@ ordinary channels; missing visibility stays **Not available**, not implicitly
 Public. **Edit details** opens the shared Dialog with one Name/Description/Duration/Private
 draft. Duration uses Create's Ongoing/Temporary cards, and Private uses the same
 switch in the action row. These controls stage changes; neither publishes immediately.
-**Save changes** submits the draft together and is enabled only for valid, changed values. **Cancel**, Close and
-Escape discard unsaved edits and return focus to Edit details without closing
-Settings. Pending saves and status checks block dialog dismissal and show a
+**Save changes** submits the draft together and is enabled only for valid, changed values.
+**Cancel** explicitly discards edits and closes without confirmation. Close, Escape
+and backdrop clicks close untouched forms immediately; changed drafts first show
+**Discard changes?** with **Keep editing** initially focused. Keep editing, Escape,
+Close or a backdrop click in that confirmation returns to the intact form.
+**Discard changes** drops the draft and returns focus to Edit details without
+closing Settings, as does the form’s explicit **Cancel**. Pending saves and status
+checks block dialog dismissal and show a
 loading spinner on the disabled **Edit details** button without changing its label.
 Saving and permission loading do not add text status rows or reserve empty space;
 actionable errors, permission denials and uncertain-save warnings remain visible.
@@ -472,6 +477,14 @@ template setup plus frozen creation retry; Edit shows the
 saved description, retains custom durations, and owns authority/conflict checks,
 Save/Cancel and check-only uncertainty recovery. Create still trims optional
 Description on submission; Edit preserves its exact text and can explicitly clear it.
+
+Both dialogs opt into backdrop dismissal and guard Close, Escape and backdrop
+dismissal with an in-dialog discard confirmation when the draft differs. Comparison covers raw
+text, staged privacy and effective duration; Create also compares accepted template
+setup, treating the opening group's automatic default as initial data. Reverting
+all fields removes the warning. Pending operations still block dismissal, and
+frozen/uncertain requests remain owned by recovery rather than being offered for
+discard. Returning from a discard confirmation focuses Name and retains the draft.
 
 Create has no destination picker. Opening from a saved group's sidebar + fixes
 that destination for the draft and titles the modal **Create a channel in [icon]

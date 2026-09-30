@@ -118,7 +118,8 @@ export function createSidebarState({
   const dirty = new Set<string>();
   const listeners = new Set<() => void>();
   let traversal: Promise<void> | undefined, flushing: Promise<void> | undefined;
-  let traversalDirty = false;
+  let traversalDirty = false,
+    draining = false;
   let active = new AbortController();
   let debounce: ReturnType<typeof setTimeout> | undefined,
     periodic: ReturnType<typeof setTimeout> | undefined;
@@ -499,15 +500,26 @@ export function createSidebarState({
       return;
     }
     dirty.add(channelId);
-    if (debounce || !visible()) return;
+    drain();
+  }
+  // One targeted read at a time: channels invalidated while it is in flight
+  // share the next one instead of queueing a read per window.
+  function drain() {
+    if (closed || debounce || draining || !dirty.size || !visible()) return;
     debounce = setTimeout(() => {
       debounce = undefined;
       const ids = [...dirty];
       dirty.clear();
+      draining = true;
       void (async () => {
         await refreshTargets(ids);
         await refreshContexts(new Set(ids));
-      })().catch(fail);
+      })()
+        .catch(fail)
+        .finally(() => {
+          draining = false;
+          drain();
+        });
     }, 250);
   }
   function arm() {

@@ -179,6 +179,80 @@ it.each([
     expect(calls[refused].mock.calls.length).toBeGreaterThan(before + 1);
   },
 );
+it("coalesces expired invalidation windows behind one in-flight targeted read", async () => {
+  vi.useFakeTimers();
+  const h = harness();
+  await h.owner.ensure();
+  const held = deferredSidebar<SidebarPage>();
+  const followup = deferredSidebar<void>();
+  let targeted = 0;
+  const updated = { ...row(other), latest_message_id: "b".repeat(64) };
+  h.api.sidebar.mockClear();
+  h.api.sidebar.mockImplementation(async (query) => {
+    if (!("channel_ids" in query))
+      return page([row(), h.owner.row(other) ?? row(other)]);
+    targeted++;
+    if (targeted === 1) return held.promise;
+    followup.resolve();
+    return page([row(), updated]);
+  });
+  h.owner.invalidate(channel);
+  await vi.advanceTimersByTimeAsync(250);
+  try {
+    expect(targeted).toBe(1);
+    for (let i = 0; i < 4; i++) {
+      h.owner.invalidate(channel);
+      h.owner.invalidate(other);
+      await vi.advanceTimersByTimeAsync(250);
+    }
+    expect(targeted).toBe(1);
+  } finally {
+    held.resolve(page());
+  }
+  // A traversal queued behind the held request is a barrier: a read queued per
+  // window would have run by now. The one follow-up waits for its own window.
+  await h.owner.refresh();
+  expect(targeted).toBe(1);
+  await vi.advanceTimersByTimeAsync(250);
+  await followup.promise;
+  await h.owner.refresh();
+  expect(
+    h.api.sidebar.mock.calls.flatMap(([query]) =>
+      "channel_ids" in query ? [query.channel_ids] : [],
+    ),
+  ).toEqual([[channel], [channel, other]]);
+  expect(h.owner.row(other)?.latest_message_id).toBe(updated.latest_message_id);
+});
+it.each(["dispose", "clear", "purge"] as const)(
+  "does not continue a held targeted drain after %s",
+  async (action) => {
+    vi.useFakeTimers();
+    const h = harness();
+    await h.owner.ensure();
+    const held = deferredSidebar<SidebarPage>();
+    h.api.sidebar.mockClear();
+    h.api.sidebar.mockImplementation(() => held.promise);
+    h.owner.invalidate(channel);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(h.api.sidebar).toHaveBeenCalledTimes(1);
+    h.owner.invalidate(other);
+    await vi.advanceTimersByTimeAsync(250);
+    if (action === "purge") h.deny();
+    h.owner[action]();
+    const seen: unknown[] = [];
+    const stop = h.owner.subscribe(() => seen.push(h.owner.row(other)));
+    try {
+      held.resolve(page([row(other)]));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.api.sidebar).toHaveBeenCalledTimes(1);
+      expect(h.owner.row(other)).toBeUndefined();
+      expect(seen.every((value) => value === undefined)).toBe(true);
+    } finally {
+      stop();
+      held.resolve(page([]));
+    }
+  },
+);
 it("fences a late fetch after clear and hides revoked state before notifying", async () => {
   const h = harness();
   let resolve: ((value: SidebarPage) => void) | undefined;

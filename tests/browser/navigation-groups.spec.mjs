@@ -320,6 +320,69 @@ test("dragging a channel between a group and Channels saves, reloads, and rolls 
   await expect(beta).toHaveCount(0);
 });
 
+// Sessions sit outside their channel's drag surface, as they sit outside its menu.
+const sessionParent = "11111111-1111-4111-8111-111111111111";
+const sessionSidebar = test.extend({
+  sessionChannels: ["alpha"],
+  sessionParents: { alpha: sessionParent },
+});
+sessionSidebar(
+  "dragging a session or a session draft leaves its channel in place, while the channel still moves",
+  async ({ page, app }) => {
+    await page.goto(app.origin);
+    await openPage(page, "Messages");
+    const parentIn = (section) =>
+      page.locator(
+        `[data-sidebar-section="${section}"] [data-channel-id="${sessionParent}"]`,
+      );
+    const parent = parentIn("channels");
+    const child = sidebar(page).locator('[data-channel-id="alpha"]');
+    await expect(parent).toBeVisible();
+    await expect(child).toBeVisible();
+    await expect(
+      page.getByRole("complementary", { name: "Channel sidebar" }),
+    ).not.toHaveAttribute("aria-busy");
+    async function pullsNothing(row) {
+      await pull(page, row, "group:work");
+      await expect(page.locator("[data-channel-dragging]")).toHaveCount(0);
+      await expect(page.locator("[data-drop-target]")).toHaveCount(0);
+      await page.mouse.up();
+      await expect(parent).toBeVisible();
+      await expect(parentIn("group:work")).toHaveCount(0);
+    }
+
+    await pullsNothing(child);
+    await parent.click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "New session", exact: true })
+      .click();
+    const draft = sidebar(page).getByRole("button", {
+      name: /New session draft in/,
+    });
+    await expect(draft).toBeVisible();
+    await pullsNothing(draft);
+    expect(app.report.sidebarPublications ?? []).toHaveLength(0);
+
+    await pull(page, parent, "group:work");
+    await expect(
+      page.locator('[data-sidebar-section="group:work"][data-drop-target]'),
+    ).toBeVisible();
+    await page.mouse.up();
+    await expect(parentIn("group:work")).toBeVisible();
+    await expect(parent).toHaveCount(0);
+    await expect(
+      page.locator(
+        '[data-sidebar-section="group:work"] [data-channel-id="alpha"]',
+      ),
+    ).toBeVisible();
+    await saved(page, app, 1);
+    expect(app.report.sidebarPublications[0].blob.assignments).toEqual({
+      beta: "work",
+      [sessionParent]: "work",
+    });
+  },
+);
+
 test("optimistic Star moves close the menu before the write, roll back with visible retry, and remove to Channels after reload", async ({
   page,
   app,

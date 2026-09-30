@@ -134,6 +134,8 @@ Move channel, Create new, exclusive Starred placement and startup presentation a
 belong to this persistent sidebar. Rows in saved groups and **Channels** can also be
 dragged with a pointer onto another saved group or **Channels**; the drop is the same
 Move intent, with the same gate, optimistic placement, rollback notice and Retry.
+Only a channel's select surface starts a drag, the surface its row menu wraps; its
+sessions and session draft do not.
 Starred, Forums and Direct messages take no part in dragging, and the row menu
 remains the keyboard path. The session serializes placement, sort and mute
 writes through one queue, retaining one confirmed preferences snapshot beneath

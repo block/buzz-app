@@ -1089,7 +1089,7 @@ function ReadySidebar({
                         menuEnabled &&
                         rowMenu?.channelId === channel.id &&
                         rowMenu.sectionKey === section.key;
-                      const item = (
+                      return (
                         <ChannelSidebarItem
                           profile={
                             channel.channelType === "dm" &&
@@ -1116,6 +1116,12 @@ function ReadySidebar({
                           onOpenAgentActivity={openAgentActivity}
                           menuEnabled={menuEnabled}
                           sectionKey={section.key}
+                          selectFrame={
+                            placementWritable &&
+                            isChannelSectionKey(section.key)
+                              ? DraggableChannel
+                              : undefined
+                          }
                           onOpenMenu={openRowMenu}
                           menuOpen={menuOpen}
                           menuAnchor={menuOpen ? rowMenu.anchor : undefined}
@@ -1136,18 +1142,6 @@ function ReadySidebar({
                           onMenuClosed={rowMenuClosed}
                           menuFinalFocus={rowMenuFinalFocus}
                         />
-                      );
-                      return isChannelSectionKey(section.key) ? (
-                        <DraggableChannel
-                          key={channel.id}
-                          channelId={channel.id}
-                          sectionKey={section.key}
-                          disabled={!placementWritable}
-                        >
-                          {item}
-                        </DraggableChannel>
-                      ) : (
-                        item
                       );
                     })}
                   </DroppableSidebarSection>

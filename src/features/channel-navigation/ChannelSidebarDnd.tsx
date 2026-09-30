@@ -57,21 +57,19 @@ export function ChannelSidebarDnd({
   );
 }
 
+/** Frames only a channel's select surface, so its sessions never start a move. */
 export function DraggableChannel({
   channelId,
   sectionKey,
-  disabled,
   children,
 }: {
   channelId: string;
   sectionKey: string;
-  disabled: boolean;
   children: ReactNode;
 }) {
   const { setNodeRef, listeners, isDragging } = useDraggable({
     id: channelId,
     data: { sectionKey },
-    disabled,
   });
   return (
     <div

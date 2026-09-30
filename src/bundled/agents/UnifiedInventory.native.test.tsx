@@ -22,10 +22,13 @@ import { UnifiedInventory } from "./UnifiedInventory";
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   isTauri: () => true,
+  convertFileSrc: (url: string, protocol: string) =>
+    `${protocol}://localhost/${encodeURIComponent(url)}`,
 }));
 const owner = keypair();
 const agent = keypair();
 const joined = "https://joined.example.test";
+const picture = `${joined}/media/${"ab".repeat(32)}.png`;
 const requests: { community: string; path: string; body: unknown }[] = [];
 let unavailable = true;
 beforeEach(() => {
@@ -57,7 +60,7 @@ beforeEach(() => {
           signed(agent, {
             kind: 0,
             tags: [],
-            content: JSON.stringify({ name: "Native scout" }),
+            content: JSON.stringify({ name: "Native scout", picture }),
           }),
         ]
       : [
@@ -121,9 +124,16 @@ it("discovers and retries an unselected joined community through native reads", 
     await screen.findByText(/could not be checked for https:\/\/joined/);
     unavailable = false;
     fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+    const card = await screen.findByRole("article", {
+      name: "Agent Native scout",
+    });
+    expect(card).toBeVisible();
+    // The source community's picture uses the native media adapter, not the broker.
+    const image = card.querySelector("img");
+    expect(image?.getAttribute("src")).toMatch(/^buzz-media:\/\/localhost\//);
     expect(
-      await screen.findByRole("article", { name: "Agent Native scout" }),
-    ).toBeVisible();
+      decodeURIComponent(image?.getAttribute("src")?.split("/").pop() ?? ""),
+    ).toMatch(new RegExp(`^${joined}/media/[0-9a-f]{64}`));
     await waitFor(() =>
       expect(screen.queryByText(/could not be checked/)).toBeNull(),
     );

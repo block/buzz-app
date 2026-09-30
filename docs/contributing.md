@@ -338,11 +338,13 @@ the complete suite still runs with `pnpm test` / `just scan`:
 - **Browser journeys:** twelve runners (Chromium and WebKit, six file-level shards
   per engine), each with two workers. They start alongside measurements on separate
   runners; `CI required` still requires both lanes. Browser jobs use the official
-  Playwright Ubuntu 24.04 image pinned by version and digest. It contains browser
-  binaries and OS libraries, avoiding their repeated apt downloads inside each
-  job deadline. Update both workflow image pins with the package's Playwright
-  version; setup verifies the installed package against image metadata and launches
-  the selected engine (both engines for measurements) before tests. No missing
+  Playwright Ubuntu 24.04 image pinned by version and digest, following the
+  [Playwright container guidance](https://playwright.dev/docs/ci#via-containers).
+  It contains browser binaries and OS libraries, avoiding their repeated apt
+  downloads inside each job deadline. Update both workflow image pins with the
+  package's Playwright version; setup verifies the installed package against image
+  metadata and launches the selected engine (both engines for measurements) before
+  tests. No missing
   image or library silently falls back to downloading or skipping an engine.
   Hermit still pins Node/pnpm; setup invokes repository entry points explicitly.
   Browser containers use a consistent root home and trust only their exact

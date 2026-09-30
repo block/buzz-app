@@ -98,6 +98,7 @@ test("one same-run native artifact preserves the executable, revision and test-o
     "./bin/cargo build --locked -p buzzodz-plugins --example fixture-bridge --target-dir target/browser-fixture",
   );
   assert.equal(compile.if, undefined);
+  assert.equal(compile["continue-on-error"], undefined);
   const upload = build.steps.find((step) =>
     step.uses?.startsWith("actions/upload-artifact@"),
   );
@@ -411,6 +412,10 @@ test("browser jobs use one immutable image matching the package pin, without per
   const image = `mcr.microsoft.com/playwright:v${version}-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27`;
   for (const name of ["measurements", "browser"]) {
     const job = jobs[name];
+    assert.doesNotMatch(
+      job.steps.map((step) => step.run ?? "").join("\n"),
+      /apt-get|playwright install|(?:^|\n)(?:\.\/bin\/)?cargo/,
+    );
     assert.equal(job.container.image, image);
     assert.equal(job.container.options, "--init --ipc=host");
     assert.equal(job.defaults.run.shell, "bash");

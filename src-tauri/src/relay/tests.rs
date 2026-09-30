@@ -125,10 +125,11 @@ async fn native_http_signs_exact_bytes_and_never_follows_redirects() {
 
 #[tokio::test]
 async fn memory_response_limit_rejects_before_generic_transport_budget() {
+    // The advertised size alone must be rejected. A multi-megabyte server write
+    // blocks the fixture thread after the client closes on this header.
     let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        2 * 1024 * 1024 + 1,
-        "x".repeat(2 * 1024 * 1024 + 1)
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        2 * 1024 * 1024 + 1
     );
     let (url, task) = fixture_server(response);
     let result = send(
@@ -250,15 +251,15 @@ fn isolated_agent_ipc_probe() {
     .unwrap();
     assert_eq!(event["pubkey"], public);
     verify(&event);
-    let target = serde_json::json!({"owner": public, "pubkey": "02".repeat(32)});
-    let authorized = invoke(
+    // The old direct attestation IPC must be absent, not merely unused by the UI.
+    assert!(invoke(
         "relay_agent_authorize",
         serde_json::json!({
-            "community": "https://relay.test", "target": target
+            "community": "https://relay.test",
+            "target": {"owner": public, "pubkey": "02".repeat(32)}
         }),
     )
-    .unwrap();
-    assert_eq!(authorized["auth"][0], "auth");
+    .is_err());
     let resolved = invoke("relay_agent_resolve", serde_json::json!({
         "community": "https://relay.test", "target": {"owner": public, "pubkey": "02".repeat(32), "confirmed": true}
     })).unwrap();

@@ -129,11 +129,8 @@ fn native_command_permissions_allow_only_main_webview() {
         "browser_action",
         "browser_status",
     ];
-    let local_origin = if cfg!(windows) {
-        "http://tauri.localhost"
-    } else {
-        "tauri://localhost"
-    };
+    // The removed owner attestation cannot acquire a main-webview grant.
+    assert!(invoke(&main, "relay_agent_authorize", local_origin).is_err());
     for command in application_commands {
         assert!(invoke(&main, command, local_origin).is_ok(), "{command}");
         for origin in [local_origin, "https://example.org", "http://localhost:1430"] {

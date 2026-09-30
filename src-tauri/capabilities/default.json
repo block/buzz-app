@@ -18,8 +18,6 @@
     "allow-relay-direct-message",
     "allow-relay-decode-sidebar",
     "allow-relay-sign-sidebar",
-
-    "allow-relay-agent-authorize",
     "allow-relay-agent-resolve",
     "allow-relay-agent-log-proof",
     "allow-relay-agent-observer",

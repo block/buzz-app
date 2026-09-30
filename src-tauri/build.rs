@@ -40,7 +40,6 @@ fn main() {
             "relay_direct_message",
             "relay_decode_sidebar",
             "relay_sign_sidebar",
-            "relay_agent_authorize",
             "relay_agent_resolve",
             "relay_agent_log_proof",
             "relay_agent_observer",

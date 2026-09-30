@@ -12,15 +12,12 @@ import type { RelayWriter } from "./transport";
 import { validateLifecycleTemplate } from "./channel-lifecycle-protocol";
 import { validateDetailsTemplate } from "./channel-details-protocol";
 import { validateArchiveRequestTemplate } from "./identity-archive-protocol";
-import { communityDestination, relayOrigin } from "../communities/destination";
-import { eventDto } from "./events";
 import { workflowHost, workflowRunsPath } from "../workflows/http";
 import { WORKFLOW_KINDS } from "../workflows/protocol";
 
 import { PublishRejected } from "./outbox";
 
 import {
-  acceptPublish,
   memoryAgent,
   memoryListing,
   type MemoryListing,
@@ -28,6 +25,7 @@ import {
 import type { AgentLibrary } from "../agents/library";
 import { observerFrame } from "../agents/observer";
 import {
+  acceptPublish,
   connectSignedTransport,
   admittedSignedWorkflowRead,
   type ReadTransport,

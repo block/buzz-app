@@ -3,9 +3,8 @@ use super::{origin, send, Result};
 use crate::identity::IdentityHost;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use hmac::{Hmac, Mac};
+use nostr::key::{PublicKey as NostrPublicKey, SecretKey as NostrSecretKey};
 use nostr::nips::nip44::{self, v2::ConversationKey};
-use nostr::secp256k1::rand::{CryptoRng, RngCore};
-use nostr::{PublicKey as NostrPublicKey, SecretKey as NostrSecretKey};
 use secp256k1::{schnorr::Signature, Keypair, Secp256k1, XOnlyPublicKey};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -42,26 +41,6 @@ pub(crate) struct AgentTarget {
     pubkey: String,
     owner: String,
     confirmed: Option<bool>,
-}
-#[tauri::command]
-pub(crate) async fn relay_agent_authorize(
-    host: tauri::State<'_, IdentityHost>,
-    community: String,
-    target: AgentTarget,
-) -> Result<Value> {
-    origin(&community)?;
-    host.with_key(move |secret, viewer| {
-        if target.owner != viewer
-            || !key(&target.pubkey)
-            || target.pubkey == viewer
-            || target.confirmed.is_some()
-        {
-            return Err("Invalid agent owner authorization".into());
-        }
-        let proof = signature(secret, &format!("nostr:agent-auth:{}:", target.pubkey))?;
-        Ok(json!({"auth": ["auth", viewer, "", proof]}))
-    })
-    .await
 }
 #[tauri::command]
 pub(crate) async fn relay_agent_resolve(
@@ -307,29 +286,6 @@ fn unique_json(text: &str) -> Result<Value> {
         .map_err(|_| "Invalid memory body".into())
 }
 
-// Reuse the protocol codec with the authenticated envelope's nonce. This
-// rejects noncanonical padding without exposing a general encrypt operation.
-struct Nonce([u8; 32]);
-impl RngCore for Nonce {
-    fn next_u32(&mut self) -> u32 {
-        u32::from_le_bytes(self.0[..4].try_into().unwrap())
-    }
-    fn next_u64(&mut self) -> u64 {
-        u64::from_le_bytes(self.0[..8].try_into().unwrap())
-    }
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        dest.copy_from_slice(&self.0[..dest.len()]);
-    }
-    fn try_fill_bytes(
-        &mut self,
-        dest: &mut [u8],
-    ) -> std::result::Result<(), nostr::secp256k1::rand::Error> {
-        self.fill_bytes(dest);
-        Ok(())
-    }
-}
-impl CryptoRng for Nonce {}
-
 fn slug(s: &str) -> bool {
     if s == "core" {
         return true;
@@ -452,14 +408,12 @@ fn decode_memories_with_key(
                 return Err("Invalid memory envelope".into());
             }
             if STANDARD.encode(&payload) != event.content
-                || nip44::v2::encrypt_to_bytes_with_rng(
-                    &mut Nonce(
-                        payload[1..33]
-                            .try_into()
-                            .map_err(|_| "Invalid memory envelope")?,
-                    ),
+                || nip44::v2::encrypt_to_bytes_with_nonce(
                     &conversation,
                     text.as_bytes(),
+                    payload[1..33]
+                        .try_into()
+                        .map_err(|_| "Invalid memory envelope")?,
                 )
                 .map_err(|_| "Invalid memory envelope")?
                     != payload
@@ -745,12 +699,8 @@ mod tests {
                 .unwrap();
         let encrypt = |text: &str| {
             STANDARD.encode(
-                nip44::v2::encrypt_to_bytes_with_rng(
-                    &mut Nonce([7; 32]),
-                    &conversation,
-                    text.as_bytes(),
-                )
-                .unwrap(),
+                nip44::v2::encrypt_to_bytes_with_nonce(&conversation, text.as_bytes(), [7; 32])
+                    .unwrap(),
             )
         };
         let address = |name: &str| {

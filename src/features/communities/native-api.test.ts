@@ -219,14 +219,6 @@ it("routes exact owner setup confirmation through native commands, not the broke
   const owner = key.pubkey;
   const pubkey = "ab".repeat(32);
   vi.mocked(invoke).mockImplementationOnce(async (command, args) => {
-    expect(command).toBe("relay_agent_authorize");
-    expect(args).toEqual({ community, target: { pubkey, owner } });
-    return { auth: ["auth", owner, "", "proof"] };
-  });
-  expect(
-    await communityRequest(community, "authorize-agent", { pubkey, owner }),
-  ).toEqual({ auth: ["auth", owner, "", "proof"] });
-  vi.mocked(invoke).mockImplementationOnce(async (command, args) => {
     expect(command).toBe("relay_agent_resolve");
     expect(args).toEqual({
       community,

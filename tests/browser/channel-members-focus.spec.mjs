@@ -113,6 +113,13 @@ test("identity copy preserves modal focus and addition returns focus only to its
       await page.clock.pauseAt(new Date("2026-01-01T00:00:01Z"));
       try {
         await page.keyboard.press("Tab");
+        await expect(
+          dialog.getByRole("button", {
+            name: "Clear search people and agents",
+          }),
+        ).toBeFocused();
+        await page.keyboard.press("Tab");
+        await expect(identity).toBeFocused();
         await page.keyboard.press("Tab");
         await expect(copy).toBeFocused();
       } finally {
@@ -416,78 +423,48 @@ test("inline member identity geometry and separate addition focus", async ({
     const dialog = page.getByRole("dialog", { name: "Channel members" });
     const search = dialog.getByRole("searchbox");
     const memberRow = dialog.getByRole("listitem").first();
-    await expect(memberRow).toHaveCSS("min-height", "52px");
-    expect((await memberRow.boundingBox()).height).toBe(52);
-    // Browser-only: badge/key layers overlap during the fade, not a blank
-    // second line or a moving identity. Pause CSS time for a deterministic midpoint.
-    const pill = memberRow.getByText("Role unverified", { exact: true });
-    const badges = pill.locator("..");
+    await expect(memberRow).toHaveCSS("min-height", "48px");
+    expect((await memberRow.boundingBox()).height).toBe(48);
+    // All identities center at rest and reveal the key beneath the name.
+    // Browser layout/focus—not jsdom—owns these geometry assertions.
     const memberKey = memberRow.locator('[aria-hidden="true"].text-mono');
     const memberName = memberRow.getByText("Carl (you)", { exact: true });
-    await expect(pill).toBeVisible();
-    // The first role response expands metadata; do not measure mid-expansion.
-    await expect(memberKey.locator("../..")).toHaveAttribute(
-      "style",
-      /height: auto/,
-    );
-    const nameBoundsBeforeFade = await memberName.boundingBox();
-    const rowBoundsBeforeFade = await memberRow.boundingBox();
-    if (!moved) {
-      await memberRow.evaluate((node) => {
-        window.memberCrossfade = new Promise((resolve) => {
-          let started = 0;
-          const hold = (event) => {
-            if (event.propertyName !== "opacity") return;
-            const animation = event.target
-              .getAnimations()
-              .find((item) => item.transitionProperty === "opacity");
-            animation.pause();
-            animation.currentTime = 70;
-            if (++started === 2) {
-              node.removeEventListener("transitionrun", hold);
-              resolve();
-            }
-          };
-          node.addEventListener("transitionrun", hold);
-        });
-      });
-    }
-    await memberRow.hover();
-    if (!moved) {
-      await page.evaluate(() => window.memberCrossfade);
-      const opacity = async (locator) =>
-        locator.evaluate((node) => Number(getComputedStyle(node).opacity));
-      const pillOpacity = await opacity(badges);
-      const keyOpacity = await opacity(memberKey);
-      expect(pillOpacity).toBeGreaterThan(0);
-      expect(pillOpacity).toBeLessThan(1);
-      expect(keyOpacity).toBeGreaterThan(0);
-      expect(keyOpacity).toBeLessThan(1);
-      expect(pillOpacity + keyOpacity).toBeCloseTo(1, 4);
-      await expect(pill).toBeVisible();
-      await expect(memberKey).toBeVisible();
-      expect(await memberName.boundingBox()).toEqual(nameBoundsBeforeFade);
-      expect(await memberRow.boundingBox()).toEqual(rowBoundsBeforeFade);
-      await memberRow.evaluate((node) => {
-        for (const animation of node.getAnimations({ subtree: true }))
-          animation.play();
-      });
-    } else {
-      await expect(badges).toHaveCSS("transition-duration", "0s");
-      await expect(memberKey).toHaveCSS("transition-duration", "0s");
-    }
-    await expect(badges).toHaveCSS("opacity", "0");
-    await expect(memberKey).toHaveCSS("opacity", "1");
+    const memberAvatar = memberRow.locator("[data-avatar-shape]");
+    const memberMetadata = memberKey.locator("../..");
     await search.hover();
-    await expect(badges).toHaveCSS("opacity", "1");
     await expect(memberKey).toBeHidden();
+    await expect(memberMetadata).toHaveCSS("height", "0px");
+    const nameBoundsBeforeReveal = await memberName.boundingBox();
+    const rowBoundsBeforeReveal = await memberRow.boundingBox();
+    const avatarBoundsBeforeReveal = await memberAvatar.boundingBox();
+    expect(
+      nameBoundsBeforeReveal.y + nameBoundsBeforeReveal.height / 2,
+    ).toBeCloseTo(
+      avatarBoundsBeforeReveal.y + avatarBoundsBeforeReveal.height / 2,
+      0,
+    );
+    await memberRow.hover();
+    await expect(memberKey).toBeVisible();
+    await expect(memberMetadata).toHaveAttribute("style", /height: auto/);
+    await expect(memberMetadata).toHaveCSS("margin-top", "2px");
+    expect((await memberName.boundingBox()).y).toBeLessThan(
+      nameBoundsBeforeReveal.y,
+    );
+    expect(await memberRow.boundingBox()).toEqual(rowBoundsBeforeReveal);
+    expect(await memberAvatar.boundingBox()).toEqual(avatarBoundsBeforeReveal);
+    // The retained preview can overlap Search. Leave its hover region rather
+    // than forcing a pointer through the card, then return to the field.
+    await page.mouse.move(0, 0);
+    await expect(
+      page.getByRole("dialog", { name: "Carl (you) identity" }),
+    ).not.toBeVisible();
+    await search.hover();
+    await expect(memberMetadata).toHaveCSS("height", "0px");
     await memberRow
       .getByRole("button", { name: /Open profile for Carl/ })
       .focus();
-    await expect(badges).toHaveCSS("transition-duration", "0s");
-    await expect(memberKey).toHaveCSS("opacity", "1");
-    expect(await memberName.boundingBox()).toEqual(nameBoundsBeforeFade);
-    expect(await memberRow.boundingBox()).toEqual(rowBoundsBeforeFade);
+    await expect(memberKey).toBeVisible();
+    expect(await memberRow.boundingBox()).toEqual(rowBoundsBeforeReveal);
     await search.fill("Morgan");
     const add = dialog.getByRole("button", { name: /Add Morgan/ });
     await expect(add).toBeEnabled();
@@ -508,10 +485,7 @@ test("inline member identity geometry and separate addition focus", async ({
       name: "Member list",
       exact: true,
     });
-    await expect(members.getByRole("heading").locator("..")).toHaveCSS(
-      "position",
-      "sticky",
-    );
+    await expect(members.getByRole("heading")).toHaveCSS("position", "sticky");
     await expect(others.getByRole("heading")).toHaveCSS("position", "sticky");
     // Browser-only: empty/short roster search results follow the group with
     // just the shared gap, not after all remaining dialog height.
@@ -530,8 +504,8 @@ test("inline member identity geometry and separate addition focus", async ({
     await search.hover();
     await expect(key).toBeHidden();
     const rowBounds = await row.boundingBox();
-    await expect(row).toHaveCSS("min-height", "52px");
-    expect(rowBounds.height).toBe(52);
+    await expect(row).toHaveCSS("min-height", "48px");
+    expect(rowBounds.height).toBe(48);
     const avatar = row.locator("[data-avatar-shape]");
     const avatarBounds = await avatar.boundingBox();
     expect(avatarBounds.width).toBe(32);

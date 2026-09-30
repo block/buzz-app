@@ -471,26 +471,28 @@ native acceptance.
 ## Member administration
 
 The existing **Channel members** dialog keeps ordinary invitations and adds
-verified roles plus per-member administration. Members sort by verified role:
-Owners first, then Admins, then everyone else, alphabetically by displayed name
-within each group (public key breaks ties). Before roles resolve, rows remain
-alphabetical; refresh preserves the last verified role order on failure. Search
-filters that order without changing it; non-member search ranking is unchanged.
-Current-member avatars and rows
-open the existing Profiles panel when its contribution is enabled; the Members
-dialog closes and closing the profile returns focus to the Channel members button.
-The two-line row keeps the identity and a smaller, muted inline **managed by**
-hint above verified role and archive badges. The hint follows the name, not a
-separate right-aligned column; its owner link opens Profiles with the same focus
-handoff. Row-profile and owner-profile controls are siblings, never nested.
-Hover cross-fades the second-line pills and disambiguated short npub in 140ms,
-keeping the name and owner link fixed; keyboard focus and reduced motion switch
-immediately. The profile exposes the full key.
-Rows without badges (including invitations and members awaiting their first role
-read) center the identity at rest, revealing the key beneath it on hover/focus.
-The existing Motion dependency animates the metadata height/opacity in 140ms;
-reduced motion and focus entry are immediate. The avatar and action stay centered,
-and badge-bearing members keep their name/owner position fixed. Every current member has a separate
+verified roles plus per-member administration. Current members appear in separate
+**Owners**, **Admins** and **Members** groups with sticky headings and counts.
+Verified authority alone places someone in Owners or Admins; everyone else stays
+in Members without asserting a default protocol role. Each group is alphabetical
+by displayed name (public key breaks ties). Before roles resolve, the roster stays
+in Members; refresh preserves the last verified groups on failure. Search filters
+each group, omits empty elevated groups, and preserves full group counts.
+Non-member search ranking is unchanged.
+Current-member avatars and rows open the existing Profiles panel when its contribution
+is enabled; the Members dialog closes and closing the profile returns focus to the
+Channel members button. Names and smaller, muted inline **managed by** hints sit
+centered at rest with no pills. Hover reveals a disambiguated short npub underneath
+using the existing 140ms height/opacity transition, just like invitation rows;
+keyboard focus and reduced motion reveal it immediately. The avatar and actions
+stay centered. These rows retain the shared identity preview on hover/focus,
+including **Copy npub** and agent manager details. The preview anchors to the
+profile identity, not the separate Add or actions button. Tab visits its copy
+action before continuing to the next row control; Escape dismisses the preview
+before closing Members. Its keyboard description composes with available presence
+status. The full key remains available in Profiles. The manager link opens
+Profiles with the same focus handoff; row-profile and owner-profile controls are
+siblings, never nested. Every current member has a separate
 ellipsis button (not nested inside profile navigation), with **View profile** first
 and only permitted administration actions below it. Owner/self protection, missing
 writer support and pending/uncertain writes suppress mutations, not the profile
@@ -504,17 +506,20 @@ managed-by hint and public-key hover/focus presentation, without a channel-role
 badge. Their avatars and identity rows open Profiles just like current members;
 only the separate, extra-small prominent **Add / Adding…** button invites someone.
 People and agent avatars both use the shared 32px default size. Both row types
-share a 52px minimum height, growing with their content rather than
+share a 48px minimum height, growing with their content rather than
 clipping it; profile targets fill the row height, with identity and actions centered.
 Profile navigation stays available during an invitation; missing Profiles support
 leaves the identity static without disabling the separate Add button.
 The dialog retains its shared surface. A quiet `border-standard` outline frames
-one scrolling viewport, with Members and Not in this channel separated inside it
-without extra boxes or fills. Both group headings stick to the top of this viewport
-while scrolling within their own section, with an opaque matching surface so rows
-do not show through. The Members refresh control stays with its heading.
-A compact ghost refresh icon sits beside **Members · #**;
-its tooltip and accessible name are **Refresh member data**. It is the single retry
+one scrolling viewport, with Owners, Admins, Members and Not in this channel
+separated inside it without extra boxes or fills. Every group heading sticks to the
+top of this viewport while scrolling within its own section, with an opaque matching
+surface so rows do not show through. There is no outer top padding to scroll away:
+when a group starts the list, its heading is pinned from the first scroll pixel;
+the heading itself owns the text's top inset. A compact ghost refresh button sits in the
+fixed dialog header immediately left of Close, matching its button and 16px icon size;
+its tooltip and accessible name are **Refresh member data**. It refreshes this
+dialog's member-related data, not the whole application. It is the single retry
 control for roster, verified roles, missing member names, shared agent choices,
 archive visibility, agent ownership/manager names and the active directory search. Errors stay near their data,
 without separate fetch-retry buttons. The current search text is retained; directory
@@ -534,8 +539,8 @@ The title, channel name and search stay fixed.
 The search composition reduces the shared header-to-body gap by `--space-2`
 (16px normally, 8px at the compact breakpoint) without affecting other dialogs.
 The member-list area flexes into the remaining dialog height and owns the only
-scrollbar, including search results and recovery messages. Members and Not in this
-channel flow naturally one after the other; only the bordered viewport fills spare
+scrollbar, including search results and recovery messages. The role groups and
+Not in this channel flow naturally one after the other; only the bordered viewport fills spare
 height, never a group inside it. The shared Dialog's opt-in flex body
 keeps the outer body non-scrolling; other dialogs are unchanged.
 Agent runtime/access management is not added to the member menu.
@@ -550,17 +555,22 @@ unavailable owner name falls back to their public key. Verified public evidence
 can remain during a failed background read. No private/runtime authority is granted.
 
 Agent avatar shapes describe identity type, not the channel's protocol role.
-A verified Bot role for an agent identity is presented as **Member**, including
-the accessible name; a Bot without an agent hint still displays Bot. Other verified role badges, including
-Member/Admin/Owner/Guest, retain their labels.
-This is presentation only: stored Bot roles, invitation defaults and administration
-permissions are unchanged. Before the first role read finishes,
-the role pill and its accessible label are absent; verified pills appear when ready.
-Refresh retains previously verified roles. An open dialog reloads idle role data
-when session access invalidation clears it, but only for a current, non-cached
-channel. Failed reads still require explicit refresh; recovery never replays writes.
-Missing or unfamiliar role hints after
-a completed read remain unverified/unknown rather than defaulting to Member.
+Human and agent avatars reuse the shared online/away/offline presence badge from
+message bylines, including its lower-right cutout and accessible status description.
+Only mounted rows demand presence from the existing bounded session directory;
+filtering or closing releases their demand. Unavailable, stale or failed evidence
+leaves the avatar unbadged, never falsely Offline. No presence reader or timer is
+added. This is community session status, not agent process state.
+
+Role and archive pills are omitted. Verified roles and archive state remain in
+profile-link accessible names and the existing profile surface. A verified Bot
+role for an agent identity is still called Member in the accessible name; underlying
+Bot roles, invitation defaults and administration permissions are unchanged.
+Before the first role read finishes no role is asserted. Missing or unfamiliar
+roles after a completed read remain unverified/unknown rather than defaulting to
+Member. An open dialog reloads idle role data when session access invalidation
+clears it, but only for a current, non-cached channel. Failed reads require explicit
+refresh; recovery never replays writes.
 
 `features/channel-members/administration.ts` owns this session-scoped capability;
 `session.ts` only composes its reader, narrow writer, access guard, discovery
@@ -581,7 +591,7 @@ another non-owner member:
 The menu deliberately omits **Make guest** while Guest's permission contract is
 unsettled: the inspected relay message path does not enforce the role's documented
 read-only meaning, while Git push policy does distinguish Guest from Member.
-Existing Guest roles remain visible and can be deliberately changed to Member or
+Existing Guest roles remain available to the permission/confirmation flow and can be deliberately changed to Member or
 Admin, or removed; they are never automatically converted. This is a menu-only
 restriction, not a change to relay semantics or the broker's supported commands.
 

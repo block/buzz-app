@@ -16,15 +16,16 @@
   gap: var(--space-4);
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-control);
-  /* Keep the native scrollbar and row focus rings inside the fixed border. */
-  padding: var(--space-2) var(--space-1);
+  /* Keep the native scrollbar and row focus rings inside the fixed border.
+     The heading owns its top inset so there is no padding to scroll away. */
+  padding: 0 var(--space-1) var(--space-2);
 }
 .memberList > * {
   flex-shrink: 0;
 }
 .groupHeading {
   position: sticky;
-  top: calc(-1 * var(--space-2));
+  top: 0;
   z-index: 1;
   padding-block-start: var(--space-2);
   background: var(--surface-popover);
@@ -34,7 +35,7 @@
   padding-top: var(--space-2);
 }
 .member {
-  --size-row: var(--size-control-lg);
+  --size-row: calc(var(--size-control-lg) - var(--space-1));
   display: flex;
   align-items: center;
   min-width: 0;
@@ -72,7 +73,7 @@
   align-items: center;
   min-height: var(--size-row);
   gap: var(--space-row-gap);
-  padding: var(--space-1) var(--space-control-inset);
+  padding: var(--space-half) var(--space-control-inset);
 }
 .staticProfile[data-profile-link] {
   /* Reserve the default avatar, owned by the sibling navigation target. */
@@ -132,32 +133,6 @@
   position: relative;
   display: block;
   min-height: calc(var(--text-body-sm) * var(--text-body-sm--line-height));
-}
-.badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-}
-.badge {
-  padding: 0 var(--space-2);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-pill);
-  color: var(--text-subtle);
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .member:not(:focus-within) .badges,
-  .member:not(:focus-within) .badges + .publicKey {
-    transition:
-      opacity 140ms cubic-bezier(0.23, 1, 0.32, 1),
-      visibility 140ms;
-  }
-}
-.member:is(:hover, :focus-within) .badges {
-  opacity: 0;
-  visibility: hidden;
 }
 .member:is(:hover, :focus-within) .publicKey {
   opacity: 1;

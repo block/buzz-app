@@ -559,28 +559,30 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
       await expect(group).toHaveCSS("overflow-y", "visible");
       const member = group.getByRole("listitem").first();
       await expect(member).toHaveCSS("padding-inline-end", "0px");
-      const refresh = group.getByRole("button", {
+      const header = dialog.locator(".buzz-dialog-header");
+      const refresh = header.getByRole("button", {
         name: "Refresh member data",
       });
+      const close = header.getByRole("button", {
+        name: "Close channel members",
+      });
       await expect(refresh).toHaveAttribute("data-variant", "ghost");
-      await expect(refresh).toHaveAttribute("data-icon-size", "xs");
-      const countBounds = await group.getByRole("heading").boundingBox();
+      await expect(refresh).toHaveAttribute("data-icon-size", "compact");
       const refreshBounds = await refresh.boundingBox();
-      expect(refreshBounds.x).toBeGreaterThan(
-        countBounds.x + countBounds.width,
+      const closeBounds = await close.boundingBox();
+      expect(refreshBounds.x + refreshBounds.width).toBeLessThanOrEqual(
+        closeBounds.x,
       );
-      expect(
-        Math.abs(
-          refreshBounds.y +
-            refreshBounds.height / 2 -
-            countBounds.y -
-            countBounds.height / 2,
-        ),
-      ).toBeLessThan(1);
+      expect(refreshBounds.y).toBe(closeBounds.y);
+      expect(refreshBounds.width).toBe(closeBounds.width);
+      expect(refreshBounds.height).toBe(closeBounds.height);
+      for (const button of [refresh, close]) {
+        await expect(button.locator("svg")).toHaveCSS("width", "16px");
+        await expect(button.locator("svg")).toHaveCSS("height", "16px");
+      }
       expect(await body.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
         false,
       );
-      const header = dialog.locator(".buzz-dialog-header");
       const headerBounds = await header.boundingBox();
       const searchBounds = await search.boundingBox();
       const listBounds = await list.boundingBox();
@@ -596,6 +598,23 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
       expect(await list.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
         false,
       );
+      // This read-only fixture has a notice before the first group. Once that
+      // content scrolls out, the heading pins without an extra padding slide.
+      await expect(list).toHaveCSS("padding-top", "0px");
+      const firstHeading = list.getByRole("heading").first();
+      const headingBounds = await firstHeading.boundingBox();
+      const leadingContent = headingBounds.y - listBounds.y - 1;
+      for (const scrollTop of [0, 1, 8, 16]) {
+        await list.evaluate((el, top) => {
+          el.scrollTop = top;
+        }, leadingContent + scrollTop);
+        await expect
+          .poll(() => list.evaluate((el) => el.scrollTop))
+          .toBe(leadingContent + scrollTop);
+        await expect
+          .poll(async () => (await firstHeading.boundingBox()).y)
+          .toBe(listBounds.y + 1);
+      }
       await list.evaluate((el) => {
         el.scrollTop = el.scrollHeight;
       });
@@ -639,13 +658,23 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
     name: /^Open profile for Viewer/,
     includeHidden: true,
   });
-  const name = row.getByText("Viewer (you)", { exact: true });
+  const memberRow = row.locator("xpath=ancestor::li");
+  const name = memberRow.getByText("Viewer (you)", { exact: true });
   await expect(name).toBeVisible();
-  const npub = row.locator('[aria-hidden="true"]').filter({ hasText: /^npub/ });
+  const npub = memberRow.locator('[aria-hidden="true"].text-mono');
+  const metadata = npub.locator("../..");
+  await search.hover();
+  await expect(metadata).toHaveCSS("height", "0px");
   await expect(npub).toBeHidden();
+  const nameAtRest = await name.boundingBox();
+  const rowAtRest = await row.boundingBox();
   await row.hover();
   await expect(npub).toBeVisible();
-  await expect(name.locator("..")).toHaveCSS("opacity", "0");
+  await expect(metadata).toHaveAttribute("style", /height: auto/);
+  await expect(name).toBeVisible();
+  await expect(name.locator("..")).toHaveCSS("opacity", "1");
+  expect((await name.boundingBox()).y).toBeLessThan(nameAtRest.y);
+  expect(await row.boundingBox()).toEqual(rowAtRest);
   await row.locator("[data-avatar-shape]").click();
   const panel = page.getByRole("complementary", {
     name: "Profile",
@@ -673,7 +702,6 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   // Every row, including the viewer and protected identities, has one action
   // slot. Hover/focus only changes visibility, never row or profile geometry.
   await members.click();
-  const memberRow = row.locator("xpath=ancestor::li");
   const actions = memberRow.getByRole("button", {
     name: "Actions for Viewer",
     includeHidden: true,
@@ -699,7 +727,15 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   await row.focus();
   await expect(actionSlot).toHaveCSS("opacity", "1");
   await page.keyboard.press("Tab");
+  const identityPreview = page.getByRole("dialog", {
+    name: "Viewer (you) identity",
+  });
+  await expect(
+    identityPreview.getByRole("button", { name: "Copy npub" }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
   await expect(actions).toBeFocused();
+  await expect(identityPreview).not.toBeVisible();
 
   // Browser-only: portal menus inside a modal must hand focus to the profile
   // panel, or restore the correct row control on Escape, without closing both.
@@ -731,12 +767,10 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
     dialog.getByRole("button", { name: /^Open profile for/ }),
   ).toHaveCount(0);
   await expect(dialog.getByText("Viewer (you)", { exact: true })).toBeVisible();
-  const staticMember = dialog
-    .getByRole("listitem")
-    .filter({ hasText: "Viewer (you)" });
-  const staticActions = staticMember.getByRole("button", {
+  const staticActions = dialog.getByRole("button", {
     name: "Actions for Viewer",
   });
+  const staticMember = staticActions.locator("xpath=ancestor::li");
   await staticMember.hover();
   await staticActions.click();
   await expect(

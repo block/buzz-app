@@ -478,7 +478,13 @@ it("finishes confirmed local-agent startup after closing and reopening during pu
   t.hold();
   await t.user.click(await t.search());
   await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
-  const preview = screen.getByRole("dialog", {
+  expect(
+    screen.queryByRole("dialog", { name: "Fixture agent identity" }),
+  ).not.toBeInTheDocument();
+  await t.user.click(
+    screen.getByRole("button", { name: "Preview Fixture agent identity" }),
+  );
+  const preview = await screen.findByRole("dialog", {
     name: "Fixture agent identity",
   });
   await t.user.keyboard("{Escape}");
@@ -510,7 +516,13 @@ it("keeps closed-dialog startup failures recoverable without another membership 
   t.hold();
   await t.user.click(await t.search());
   await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
-  const preview = screen.getByRole("dialog", {
+  expect(
+    screen.queryByRole("dialog", { name: "Fixture agent identity" }),
+  ).not.toBeInTheDocument();
+  await t.user.click(
+    screen.getByRole("button", { name: "Preview Fixture agent identity" }),
+  );
+  const preview = await screen.findByRole("dialog", {
     name: "Fixture agent identity",
   });
   await t.user.keyboard("{Escape}");
@@ -615,10 +627,20 @@ it("keeps known members quiet while rechecking membership without enabling unver
   );
   expect(await t.search()).toBeEnabled();
   await t.user.keyboard("{Escape}");
+  // Roster availability and role verification are independent reads: missing
+  // role metadata must not block ordinary invitations or hide cached members.
   const rosterReads = () =>
-    t.query.mock.calls.filter(([filters]) =>
-      filters.some((filter) => filter.kinds?.includes(39002)),
+    t.query.mock.calls.filter(
+      ([filters]) =>
+        filters.length === 1 &&
+        filters[0]?.kinds?.length === 1 &&
+        filters[0].kinds[0] === 39002,
     ).length;
+  const authorityReads = () =>
+    t.query.mock.calls.filter(([filters]) =>
+      filters.some((filter) => filter.kinds?.includes(39001)),
+    ).length;
+  const beforeAuthority = authorityReads();
   const before = rosterReads();
   let release!: () => void;
   t.holdRoster(
@@ -629,6 +651,7 @@ it("keeps known members quiet while rechecking membership without enabling unver
   try {
     await t.user.click(screen.getByRole("button", { name: "Channel members" }));
     await vi.waitFor(() => expect(rosterReads()).toBe(before + 1));
+    expect(authorityReads()).toBe(beforeAuthority + 1);
     expect(screen.getByText("Carl (you)")).toBeVisible();
     expect(screen.queryByText("Loading members…")).not.toBeInTheDocument();
     const add = await t.search();
@@ -640,9 +663,14 @@ it("keeps known members quiet while rechecking membership without enabling unver
       name: "Refresh member data",
     });
     expect(add).toBeDisabled();
+    await vi.waitFor(() => expect(retry).toHaveAttribute("aria-busy", "false"));
     t.holdRoster(undefined);
     await t.user.click(retry);
-    await vi.waitFor(() => expect(add).toBeEnabled());
+    // Shared refresh replaces directory results; assert on the current control,
+    // not the detached Add button from the failed read.
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: /Add Morgan/ })).toBeEnabled(),
+    );
     expect(t.publish).not.toHaveBeenCalled();
   } finally {
     await act(async () => release());
@@ -698,7 +726,17 @@ it("keeps Members open when the profile dispatcher declines the target", async (
   await t.user.click(
     screen.getByRole("button", { name: /Open profile for Carl/ }),
   );
+  expect(onOpenLink).toHaveBeenCalledOnce();
   expect(screen.getByRole("dialog", { name: "Channel members" })).toBeVisible();
+  const preview = await screen.findByRole("dialog", {
+    name: "Carl (you) identity",
+  });
+  await t.user.keyboard("{Escape}");
+  await vi.waitFor(() => expect(preview).not.toBeInTheDocument());
+  expect(screen.getByRole("dialog", { name: "Channel members" })).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: /Open profile for Carl/ }),
+  ).toHaveFocus();
   await t.user.keyboard("{Escape}");
   await vi.waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),

@@ -4,6 +4,7 @@ import referenceStyles from "../../shared/InlineReference.module.css";
 import { npubEncode } from "nostr-tools/nip19";
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -13,6 +14,7 @@ import type { RelaySession } from "../../features/relay/session";
 import type { AgentControl } from "../../features/agents/control";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
+import { usePresenceStatus } from "../../features/presence/react";
 import { profileTarget } from "../../features/profiles/target";
 import styles from "./ChannelMembersDialog.module.css";
 import { canAddMembers } from "../../features/channel-members/members";
@@ -41,6 +43,40 @@ import {
 } from "./MemberAdministration";
 import { useMemberSearch } from "./useMemberSearch";
 import { useMemberOwners } from "./useMemberOwners";
+
+/** Mounted rows share the same bounded presence owner as message bylines. */
+function MemberAvatar({
+  session,
+  pubkey,
+  name,
+  picture,
+  agent,
+  descriptionId,
+}: {
+  session: RelaySession;
+  pubkey: string;
+  name: string;
+  picture: string | undefined;
+  agent: boolean;
+  descriptionId: string;
+}) {
+  const presence = usePresenceStatus(session.presence, pubkey);
+  return (
+    <>
+      <Avatar
+        alt=""
+        fallback={name}
+        src={picture ? session.media(picture, "small") : undefined}
+        size="default"
+        shape={agent ? "squircle" : "circle"}
+        statusBadge={presence === "unknown" ? undefined : presence}
+      />
+      <span className="sr-only" id={descriptionId}>
+        {presence === "unknown" ? "" : `Presence: ${presence}`}
+      </span>
+    </>
+  );
+}
 
 type ProfileNavigation = {
   canOpenLink?: ((target: string) => boolean) | undefined;
@@ -106,6 +142,7 @@ export function ChannelMembersDialog({
   trigger: React.RefObject<HTMLButtonElement | null>;
 } & ProfileNavigation) {
   const reducedMotion = useReducedMotion();
+  const presenceId = useId();
   const openingProfile = useRef(false);
   const input = useRef<HTMLElement>(null);
   const focusedAdd = useRef<{ key: string; button: HTMLButtonElement } | null>(
@@ -246,18 +283,22 @@ export function ChannelMembersDialog({
     `${name} ${key} ${npubEncode(key)}`
       .toLowerCase()
       .includes(query.trim().toLowerCase());
-  const rolePriority = (key: string) => {
-    const role = administration.authority.roles[key];
-    return role === "owner" ? 0 : role === "admin" ? 1 : 2;
-  };
-  const currentMembers = [...members]
-    .filter((key) => matches(key, label(key)))
-    .sort(
-      (a, b) =>
-        rolePriority(a) - rolePriority(b) ||
-        label(a).localeCompare(label(b)) ||
-        a.localeCompare(b),
-    );
+  const currentMembers = [...members].sort(
+    (a, b) => label(a).localeCompare(label(b)) || a.localeCompare(b),
+  );
+  const groups = ["Owners", "Admins", "Members"].map((name) => {
+    const keys = currentMembers.filter((key) => {
+      const role = administration.authority.roles[key];
+      const group =
+        role === "owner" ? "Owners" : role === "admin" ? "Admins" : "Members";
+      return group === name;
+    });
+    return {
+      name,
+      count: keys.length,
+      keys: keys.filter((key) => matches(key, label(key))),
+    };
+  });
   const candidates = new Map(
     search.people.map((person) => [person.pubkey, person]),
   );
@@ -276,7 +317,9 @@ export function ChannelMembersDialog({
   const agentKeys = [
     ...new Set([
       ...currentMembers.filter(
-        (key) => known.has(key) || profiles.get(key)?.isAgent,
+        (key) =>
+          matches(key, label(key)) &&
+          (known.has(key) || profiles.get(key)?.isAgent),
       ),
       ...available
         .filter(
@@ -362,19 +405,19 @@ export function ChannelMembersDialog({
           administration.status === "loading"
             ? undefined
             : "Role unverified"));
-    const hasBadges = !adding && !!(roleLabel || archived.has(key));
     const expanded = {
       height: "auto",
-      marginTop: "var(--space-1)",
+      marginTop: "var(--space-half)",
       opacity: 1,
     };
     const avatar = (
-      <Avatar
-        alt=""
-        fallback={name}
-        src={artwork ? session.media(artwork, "small") : undefined}
-        size="default"
-        shape={isAgent ? "squircle" : "circle"}
+      <MemberAvatar
+        session={session}
+        pubkey={key}
+        name={name}
+        picture={artwork}
+        agent={!!isAgent}
+        descriptionId={`${presenceId}-${key}`}
       />
     );
     const openProfile = (destination: string | undefined) => {
@@ -404,6 +447,7 @@ export function ChannelMembersDialog({
               icon={avatar}
               aria-label={`Open profile for ${name} (${keys.get(key)})${isAgent ? ", agent" : ""}${adding ? ", not in this channel" : roleLabel ? `, ${roleLabel}` : ""}${!adding && archived.has(key) ? ", archived" : ""}`}
               title={npubEncode(key)}
+              aria-describedby={`${previewProps["aria-describedby"]} ${presenceId}-${key}`}
               onClick={viewProfile}
             />
           </div>
@@ -442,9 +486,7 @@ export function ChannelMembersDialog({
             <motion.span
               className={styles.metadata}
               variants={{
-                rest: hasBadges
-                  ? expanded
-                  : { height: 0, marginTop: 0, opacity: 0 },
+                rest: { height: 0, marginTop: 0, opacity: 0 },
                 revealed: expanded,
                 focused: { ...expanded, transition: { duration: 0 } },
               }}
@@ -454,16 +496,6 @@ export function ChannelMembersDialog({
               }}
             >
               <span className={styles.metadataContent}>
-                {hasBadges && (
-                  <span className={styles.badges}>
-                    {roleLabel && (
-                      <span className={styles.badge}>{roleLabel}</span>
-                    )}
-                    {archived.has(key) && (
-                      <span className={styles.badge}>Archived</span>
-                    )}
-                  </span>
-                )}
                 <span
                   className={`${styles.publicKey} text-mono text-body-sm text-subtle`}
                   aria-hidden="true"
@@ -543,6 +575,25 @@ export function ChannelMembersDialog({
       bodyLayout="flex"
       description={channel?.name}
       closeLabel="Close channel members"
+      headerActions={
+        <IconButton
+          variant="ghost"
+          size="compact"
+          aria-label="Refresh member data"
+          title="Refresh member data"
+          aria-busy={refreshing}
+          disabled={refreshing || mutationPending}
+          focusableWhenDisabled
+          onClick={refreshMembers}
+          icon={
+            <ArrowsClockwiseIcon
+              size={16}
+              aria-hidden="true"
+              className={refreshing ? "motion-safe:animate-spin" : undefined}
+            />
+          }
+        />
+      }
       initialFocus={input}
       finalFocus={() => (openingProfile.current ? false : trigger.current)}
     >
@@ -575,42 +626,27 @@ export function ChannelMembersDialog({
             </p>
           )}
           <MemberAdministrationStatus session={session} channelId={channelId} />
-          <section aria-label="Members">
-            <div
-              className={`${styles.groupHeading} flex items-center justify-between gap-2 px-control-inset pb-2`}
-            >
-              <h3 className="text-caption text-subtle">
-                Members · {members.size}
-              </h3>
-              <IconButton
-                variant="ghost"
-                size="xs"
-                aria-label="Refresh member data"
-                title="Refresh member data"
-                aria-busy={refreshing}
-                disabled={refreshing || mutationPending}
-                focusableWhenDisabled
-                onClick={refreshMembers}
-                icon={
-                  <ArrowsClockwiseIcon
-                    size={16}
-                    aria-hidden="true"
-                    className={
-                      refreshing ? "motion-safe:animate-spin" : undefined
-                    }
-                  />
-                }
-              />
-            </div>
-            <ul>{currentMembers.map((key) => row(key, label(key), false))}</ul>
-            {!currentMembers.length && !rosterBusy && (
-              <p className="px-control-inset text-body-sm text-subtle">
-                {query
-                  ? "No members match your search."
-                  : "No members to show."}
-              </p>
-            )}
-          </section>
+          {groups
+            .filter((group) => group.keys.length || group.name === "Members")
+            .map((group) => (
+              <section key={group.name} aria-label={group.name}>
+                <h3
+                  className={`${styles.groupHeading} px-control-inset pb-2 text-caption text-subtle`}
+                >
+                  {group.name} · {group.count}
+                </h3>
+                <ul>{group.keys.map((key) => row(key, label(key), false))}</ul>
+                {group.name === "Members" &&
+                  !groups.some((item) => item.keys.length) &&
+                  !rosterBusy && (
+                    <p className="px-control-inset text-body-sm text-subtle">
+                      {query
+                        ? "No members match your search."
+                        : "No members to show."}
+                    </p>
+                  )}
+              </section>
+            ))}
           {canAdd && query.trim() && (
             <section
               className={styles.memberGroup}

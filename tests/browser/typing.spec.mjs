@@ -83,17 +83,31 @@ for (const scope of ["channel", "thread"]) {
       .find((e) => e.content === "Thread root 0");
     if (scope === "thread") {
       // Seed enough signed upstream replies to exercise a genuinely scrolling thread.
-      for (let i = 0; i < 30; i++) app.reply(root.id);
+      for (let i = 0; i < 30; i++) app.reply(root.id, false, false);
       await page
         .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
         .getByRole("button", { name: /^View thread:/ })
         .click();
-      // One nested descendant is collapsed; the root plus 32 direct replies mount.
+      const threadHistory = page.getByRole("region", {
+        name: "Thread messages",
+        exact: true,
+      });
       await expect(
-        page
-          .getByRole("region", { name: "Thread messages", exact: true })
-          .locator("[data-message-id]"),
-      ).toHaveCount(33);
+        threadHistory.getByText("New peer reply", { exact: true }),
+      ).toHaveCount(10);
+      // Opening reads only the newest window. Demand older replies before
+      // measuring typing geometry; do not rely on live seeding or eager traversal.
+      await threadHistory.evaluate((element) => {
+        element.scrollTop = 0;
+        element.dispatchEvent(new Event("scroll"));
+      });
+      await threadHistory.hover();
+      await page.mouse.wheel(0, -300);
+      await expect(
+        threadHistory.getByText("Unread reply 0", { exact: true }),
+      ).toBeAttached();
+      // One nested descendant stays collapsed: root plus 32 direct replies.
+      await expect(threadHistory.locator("[data-message-id]")).toHaveCount(33);
     } else {
       await end(page);
     }
@@ -111,7 +125,7 @@ for (const scope of ["channel", "thread"]) {
         (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
       );
     if (scope === "thread") {
-      // Opening can race the final signed fixture replies under parallel load.
+      // Scrollback deliberately moved away from the tail.
       // Establish the bottom-reading precondition with real browser input before
       // capturing geometry; the assertions below verify typing keeps it there.
       await history.hover();

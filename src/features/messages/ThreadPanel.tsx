@@ -48,7 +48,8 @@ export type ThreadPanelProps = {
   replyRequest?: number | undefined;
   active?: boolean | undefined;
   navigation?: PageNavigation | undefined;
-  close(): void;
+  /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
+  close?: (() => void) | undefined;
   onOpenLink(url: string): boolean;
   onOpenMediaReview?(
     messageId: string,
@@ -62,21 +63,24 @@ export type ThreadPanelProps = {
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
   const tabbed = !!usePanelTabHost();
+  const { close } = props;
   return (
     <aside
-      className={styles.thread}
+      className={
+        close ? styles.thread : `${styles.thread} ${styles.embeddedThread}`
+      }
       data-attachment-drop-zone=""
       onDragOver={rejectUnhandledFileDrop}
       onDrop={rejectUnhandledFileDrop}
       aria-label="Thread"
       onKeyDown={(event) => {
-        if (event.key === "Escape" && !tabbed) {
+        if (event.key === "Escape" && !tabbed && close) {
           event.stopPropagation();
-          props.close();
+          close();
         }
       }}
     >
-      {!tabbed && <ThreadHeader close={props.close} />}
+      {!tabbed && close && <ThreadHeader close={close} />}
       <OwnedThreadPanel
         key={messageViewKey(
           props.session,
@@ -89,7 +93,7 @@ export function ThreadPanel(props: ThreadPanelProps) {
     </aside>
   );
 }
-function ThreadHeader({ close }: Pick<ThreadPanelProps, "close">) {
+function ThreadHeader({ close }: { close(): void }) {
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     closeButton.current?.focus();

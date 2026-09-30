@@ -126,6 +126,8 @@ export async function threadSample(
   corrupt = false,
 ) {
   const requests: Request[] = [];
+  const lookup = (filters: readonly ReadFilter[]) =>
+    filters.every((filter) => !filter["#h"] && (filter.ids || filter["#e"]));
   let fixtureError: unknown;
   const server = createServer(async (request, response) => {
     try {
@@ -171,6 +173,12 @@ export async function threadSample(
         events = [...data.profiles, data.headProfile].filter((p) =>
           first.authors?.includes(p.pubkey),
         );
+      } else if (lookup(filters)) {
+        // Unread conversation membership: the viewer authored nothing here.
+        for (const filter of filters)
+          if (filter.authors)
+            assert.deepEqual(filter.authors, [data.viewer.pubkey]);
+        events = [];
       } else {
         assert.deepEqual(first, { ids: [data.root.id], "#h": ["a"], limit: 1 });
         assert.ok(filters.length === 1 || filters.length === 2);
@@ -365,14 +373,23 @@ export async function threadSample(
           "pending/failed engine work invalidates sample",
         );
         const trace = requests.splice(0);
+        // Opening the thread renders unread replies whose conversation is
+        // undecided; unread asks once per parent, so only the cold open pays.
         assert.equal(
-          trace.filter((r) => r.filters.length === 2).length,
+          trace.filter((r) => lookup(r.filters)).length,
+          mode === "cold" ? 1 : 0,
+        );
+        assert.equal(
+          trace.filter((r) => r.filters.length === 2 && !lookup(r.filters))
+            .length,
           4,
           "three data pages plus empty continuation",
         );
         assert.equal(
-          trace.filter((r) => r.filters.length === 1 && r.filters[0]?.ids)
-            .length,
+          trace.filter(
+            (r) =>
+              r.filters.length === 1 && r.filters[0]?.ids && !lookup(r.filters),
+          ).length,
           mode === "cold" ? 1 : 0,
         );
         assert.equal(

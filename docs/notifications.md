@@ -41,7 +41,8 @@ checks, not that an OS banner was displayed or read.
 
 ## Running-app behavior
 
-- Built-in mentions, DMs and participating-thread replies consume the selected
+- Built-in mentions, DMs and conversation replies
+  ([relevant replies](unread.md#relevant-replies)) consume the selected
   community's verified live kind-9 and kind-40002 traffic and existing
   unread/visibility facts. Structured kind-40002 bodies use the same decoded text
   as message rows. No new socket, unread engine or background-community

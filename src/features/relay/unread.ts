@@ -247,18 +247,31 @@ export function createUnread({
     event: RelayEvent;
     channelId: string;
     rootId: string | undefined;
+    /** Direct parent of a reply; undefined for top-level messages. */
+    parentId: string | undefined;
     mentioned: boolean;
+    broadcast: boolean;
   };
   let indexed = false;
   const byChannel = new Map<string, Evidence[]>();
   const tombstones = new Set<string>();
-  const participants = new Set<string>();
+  // Conversation membership: the viewer's own messages, and the parents the
+  // viewer has replied to. A conversation is the set of replies to one parent.
+  const own = new Set<string>();
+  const joined = new Set<string>();
+  // Parents already looked up, parents still to look up, and fetched parents
+  // kept only as context.
+  const asked = new Set<string>();
+  const wanted = new Set<string>();
+  let scheduled = false;
+  const context = new Set<string>();
   function indexEvidence() {
     if (indexed) return;
     indexed = true;
     byChannel.clear();
     tombstones.clear();
-    participants.clear();
+    own.clear();
+    joined.clear();
     for (const event of events.values()) {
       if (event.kind !== 5 && event.kind !== 9005) continue;
       for (const [name, id] of event.tags)
@@ -270,14 +283,22 @@ export function createUnread({
       const channel = channelOf(event);
       if (!channel) continue;
       const rootId = root(event);
-      if (event.pubkey === viewer && rootId) participants.add(rootId);
+      const parentId = threadReference(event)?.parentId;
+      if (event.pubkey === viewer) {
+        own.add(event.id);
+        if (parentId) joined.add(parentId);
+      }
       const rows = byChannel.get(channel) ?? [];
       rows.push({
         event,
         channelId: channel,
-        rootId: threadReference(event) ? rootId : undefined,
+        rootId: parentId ? rootId : undefined,
+        parentId,
         mentioned: event.tags.some(
           ([name, value]) => name === "p" && value === viewer,
+        ),
+        broadcast: event.tags.some(
+          ([name, value]) => name === "broadcast" && value === "1",
         ),
       });
       byChannel.set(channel, rows);
@@ -296,9 +317,57 @@ export function createUnread({
       (target.kind === "thread" && rootId === target.rootId)
     );
   }
+  const isDm = (channelId: string) =>
+    channels.list().channels.find((channel) => channel.id === channelId)
+      ?.channelType === "dm";
+  /** The reply is in a conversation the viewer is part of: it answers the
+   * viewer's message, or the viewer also replied to the same parent. */
+  const conversation = ({ parentId }: Evidence) =>
+    !!parentId && (own.has(parentId) || joined.has(parentId));
+  /** Top-level posts always count. A reply counts only in the viewer's own
+   * conversations, or when it is a DM, mentions the viewer, or is broadcast. */
+  const relevant = (entry: Evidence, dm: boolean) =>
+    !entry.parentId ||
+    dm ||
+    entry.mentioned ||
+    entry.broadcast ||
+    conversation(entry);
   function isUnread(entry: Evidence, state: ReadState, dm: boolean) {
-    const { event, channelId, rootId } = entry;
+    const { event, channelId } = entry;
     if (event.pubkey === viewer) return false;
+    // Explicit per-message unread intent wins; otherwise replies outside the
+    // viewer's conversations are not unread.
+    if (
+      forcedMessages.get(channelId)?.has(event.id) ||
+      reads.localUnread(`msg:${event.id}`)
+    )
+      return true;
+    if (relevant(entry, dm)) return afterFrontier(entry, state, dm);
+    // An otherwise-unread reply whose conversation is undecided asks the relay
+    // once; it stays quiet until membership evidence arrives.
+    const { parentId } = entry;
+    if (
+      parentId &&
+      !dm &&
+      !asked.has(parentId) &&
+      !context.has(event.id) &&
+      !deleted(event) &&
+      afterFrontier(entry, state, dm)
+    ) {
+      wanted.add(parentId);
+      if (!scheduled) {
+        scheduled = true;
+        queueMicrotask(() => {
+          scheduled = false;
+          resolveConversations();
+        });
+      }
+    }
+    return false;
+  }
+  /** The read-state half of unread, before conversation relevance. */
+  function afterFrontier(entry: Evidence, state: ReadState, dm: boolean) {
+    const { event, channelId, rootId } = entry;
     const frontier = effectiveFrontier(
       state,
       `msg:${event.id}`,
@@ -327,34 +396,25 @@ export function createUnread({
       ? state.frontiers[`thread-activity:${rootId}`]
       : undefined;
     const caughtUp = Math.max(frontier ?? -1, ordinary ?? -1, thread ?? -1);
-    return (
-      forcedMessages.get(channelId)?.has(event.id) ||
-      !!reads.localUnread(`msg:${event.id}`) ||
-      event.created_at > caughtUp ||
-      !!forced
-    );
+    return event.created_at > caughtUp || !!forced;
   }
   function category(
-    { rootId, mentioned }: Evidence,
+    entry: Evidence,
     dm: boolean,
   ): MessageAttention["category"] {
+    const { rootId, mentioned } = entry;
     // DM events p-tag the recipient, so a mention check would classify every
     // direct message as a mention. Direct wins inside DM channels.
     return dm
       ? "direct"
       : mentioned
         ? "mention"
-        : rootId && participants.has(rootId)
+        : rootId && conversation(entry)
           ? "thread"
           : undefined;
   }
   function priority(entry: Evidence, dm: boolean) {
-    return (
-      !!category(entry, dm) ||
-      entry.event.tags.some(
-        ([name, value]) => name === "broadcast" && value === "1",
-      )
-    );
+    return !!category(entry, dm) || entry.broadcast;
   }
   function attention(channelId: string, messageId: string): MessageAttention {
     const unknown = Object.freeze({
@@ -378,9 +438,7 @@ export function createUnread({
         forced: forcedMessages.get(channelId)?.has(messageId) ?? false,
         viewing: false,
       });
-    const dm =
-      channels.list().channels.find((channel) => channel.id === channelId)
-        ?.channelType === "dm";
+    const dm = isDm(channelId);
     const kind = category(entry, dm);
     const viewing = [...views.values()].some(
       (view) => view.ids.has(messageId) && view.visible(),
@@ -427,11 +485,7 @@ export function createUnread({
     const state = reads.state();
     let count = 0,
       attention = 0;
-    const dm =
-      channels
-        .list()
-        .channels.find((channel) => channel.id === target.channelId)
-        ?.channelType === "dm";
+    const dm = isDm(target.channelId);
     indexEvidence();
     let latest: RelayEvent | undefined;
     for (const entry of byChannel.get(target.channelId) ?? []) {
@@ -444,36 +498,6 @@ export function createUnread({
       )
         latest = event;
       if (!inTarget(entry, target) || !isUnread(entry, state, dm)) continue;
-      // Quiet ordinary sidebar activity at the channel bottom without reading
-      // the replies themselves. Late participation can still promote their dot.
-      if (
-        target.kind === "channel" &&
-        entry.rootId &&
-        !priority(entry, dm) &&
-        !forcedMessages.get(target.channelId)?.has(event.id) &&
-        !reads.localUnread(`msg:${event.id}`) &&
-        !reads.localUnread(`thread:${entry.rootId}`) &&
-        !overrideActive(
-          state.overrides[`msg:${event.id}`],
-          effectiveFrontier(
-            state,
-            `msg:${event.id}`,
-            target.channelId,
-            entry.rootId,
-          ),
-        ) &&
-        !overrideActive(
-          state.overrides[`thread:${entry.rootId}`],
-          effectiveFrontier(state, `thread:${entry.rootId}`, target.channelId),
-        ) &&
-        !overrideActive(
-          state.overrides[target.channelId],
-          effectiveFrontier(state, target.channelId),
-        ) &&
-        event.created_at <=
-          (state.frontiers[`activity:${target.channelId}`] ?? -1)
-      )
-        continue;
       count++;
       if (priority(entry, dm)) attention++;
     }
@@ -522,20 +546,15 @@ export function createUnread({
       });
     indexEvidence();
     const state = reads.state();
-    const dm =
-      channels.list().channels.find((channel) => channel.id === channelId)
-        ?.channelType === "dm";
+    const dm = isDm(channelId);
     const grouped = new Map<string, ThreadActivityItem>();
     // Only unread thread activity is presented; most publishes have none.
     let presented: Map<string, string> | undefined;
     for (const evidence of byChannel.get(channelId) ?? []) {
-      const { event, rootId, mentioned } = evidence;
-      const broadcast = event.tags.some(
-        ([name, value]) => name === "broadcast" && value === "1",
-      );
+      const { event, rootId, mentioned, broadcast } = evidence;
       if (
         !rootId ||
-        (!mentioned && !broadcast && !participants.has(rootId)) ||
+        (!mentioned && !broadcast && !conversation(evidence)) ||
         !isUnread(evidence, state, dm)
       )
         continue;
@@ -692,6 +711,9 @@ export function createUnread({
     epoch++;
     for (const channelId of channelReadGenerations.keys())
       if (!allowed(channelId)) channelReadGenerations.delete(channelId);
+    asked.clear();
+    context.clear();
+    wanted.clear();
     const denied = new Set(
       [...known, ...forcedMessages.keys()].filter(
         (channel) => !allowed(channel),
@@ -765,6 +787,75 @@ export function createUnread({
       }
     }
   });
+  // Conversation membership for unread replies whose parent conversation is
+  // not decided by retained evidence: the parent may be the viewer's own older
+  // message, or the viewer may have replied to it outside the sampled window.
+  // Ask the relay once per parent, and only for replies that are otherwise
+  // unread. Fetched parents are context: they never start another lookup.
+  let resolving: Promise<void> | undefined;
+  let resolveAgain = false;
+  function resolveConversations() {
+    if (closed || !wanted.size) return;
+    if (resolving) {
+      resolveAgain = true;
+      return;
+    }
+    resolveAgain = false;
+    const generation = epoch;
+    resolving = (async () => {
+      const parents = [...wanted];
+      wanted.clear();
+      for (let offset = 0; offset < parents.length; offset += 50) {
+        const chunk = parents.slice(offset, offset + 50);
+        for (const id of chunk) asked.add(id);
+        const missing = chunk.filter((id) => !events.has(id));
+        try {
+          const result = await reader.read(
+            [
+              ...(missing.length
+                ? [
+                    {
+                      kinds: [9, 40002, 40008],
+                      ids: missing,
+                      limit: missing.length,
+                    },
+                  ]
+                : []),
+              {
+                kinds: [9, 40002, 40008],
+                authors: [viewer],
+                "#e": chunk,
+                limit: 500,
+              },
+            ],
+            {
+              signal: AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(10000),
+              ]),
+              priority: "background",
+            },
+          );
+          if (closed || generation !== epoch) {
+            for (const id of chunk) asked.delete(id);
+            return;
+          }
+          for (const event of result)
+            if (event.pubkey !== viewer && !events.has(event.id))
+              context.add(event.id);
+          if (!accept(result)) return;
+        } catch {
+          // Undecided replies stay quiet until the next accepted evidence or
+          // completed repair retries them.
+          for (const id of chunk) asked.delete(id);
+          return;
+        }
+      }
+    })().finally(() => {
+      resolving = undefined;
+      if (!closed && resolveAgain) resolveConversations();
+    });
+  }
   async function repair(priority: Priority = "foreground") {
     requested = true;
     if (closed) return;
@@ -1325,6 +1416,9 @@ export function createUnread({
     clear() {
       epoch++;
       channelReadGenerations.clear();
+      asked.clear();
+      context.clear();
+      wanted.clear();
       repairAgain = false;
       indexed = false;
       events.clear();

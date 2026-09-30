@@ -36,6 +36,7 @@ export const test = base.extend({
   threadUnread: [false, { option: true }],
   presenceThreadAuthors: [0, { option: true }],
   threadUnreadMentions: [false, { option: true }],
+  threadUnreadJoined: [false, { option: true }],
   exactMessages: [false, { option: true }],
   openSearch: [false, { option: true }],
   sessionChannels: [[], { option: true }],
@@ -79,6 +80,7 @@ export const test = base.extend({
       threadUnread,
       presenceThreadAuthors,
       threadUnreadMentions,
+      threadUnreadJoined,
       exactMessages,
       openSearch,
       sessionChannels,
@@ -487,7 +489,11 @@ export const test = base.extend({
           9,
           [["h", "alpha"]],
           `Thread root ${index}`,
-          peerKey,
+          // The viewer owns the first thread, so its direct replies are the
+          // viewer's conversation. The second is a peer thread: it counts only
+          // when a mention names the viewer, or the viewer joined it with an
+          // older reply that only the membership lookup returns.
+          index === 0 ? userKey : peerKey,
           event.created_at,
         );
         history[history.length - 2 + index] = root;
@@ -503,6 +509,20 @@ export const test = base.extend({
             peerKey,
             root.created_at + 10,
           ),
+          ...(threadUnreadJoined && index === 1
+            ? [
+                sign(
+                  9,
+                  [
+                    ["h", "alpha"],
+                    ["e", root.id.toUpperCase(), "", "reply"],
+                  ],
+                  "Viewer reply",
+                  userKey,
+                  root.created_at + 5,
+                ),
+              ]
+            : []),
         ];
         threadReplies.set(root.id, replies);
         threadSummaries.push(
@@ -545,6 +565,8 @@ export const test = base.extend({
             ["h", "alpha"],
             ["e", root.id.toUpperCase(), "", "root"],
             ["e", broadcast.id.toUpperCase(), "", "reply"],
+            // Nested under the peer's reply, so only the mention makes it count.
+            ["p", viewer],
           ],
           "Broadcast descendant",
           peerKey,
@@ -1073,6 +1095,35 @@ export const test = base.extend({
             }
         return [...rows, ...aux];
       }
+      // Unread conversation lookup: the viewer's replies to undecided parents.
+      if (
+        filter.kinds?.includes(9) &&
+        !filter["#h"] &&
+        filter["#e"] &&
+        filter.authors?.length === 1 &&
+        filter.authors[0] === viewer
+      )
+        return [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .concat(
+            threadUnread && community === "primary"
+              ? [...threadReplies.values()].flat()
+              : [],
+          )
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.pubkey === viewer &&
+              event.tags.some(
+                ([key, value]) =>
+                  key === "e" && filter["#e"].includes(value?.toLowerCase()),
+              ),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
       // Unread evidence is not a top-level window, even for a one-ID final batch.
       if (
         filter.kinds?.includes(9) &&

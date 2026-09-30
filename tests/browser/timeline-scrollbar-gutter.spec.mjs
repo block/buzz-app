@@ -10,18 +10,18 @@ import { open, upper } from "./timeline.mjs";
 // Chromium never runs interruptMomentum (its MacIntel/Apple vendor predicate is
 // false there), so this spec does not exercise the loop. It proves the CSS
 // invariant the fix depends on by replaying the patch's exact inline toggle and
-// restore. Headless Chromium hides scrollbars by default, so drop that flag to
-// get platform scrollbars that take space. Playwright's WebKit uses overlay
-// scrollbars on macOS; the width case skips there and WebKit only runs the
-// toHaveCSS guard. The native manual check on a legacy-scrollbar Mac remains
-// the definitive one for the loop itself.
-test.use({
-  historyCounts: { alpha: 640, beta: 20 },
-  // A plain object here would replace the config's launchOptions; merge them.
-  launchOptions: async ({ launchOptions }, use) => {
-    await use({ ...launchOptions, ignoreDefaultArgs: ["--hide-scrollbars"] });
-  },
-});
+// restore. That proof needs a scrollbar that takes space, so the width case is
+// tagged @classic-scrollbars and runs only in the chromium-classic-scrollbars
+// project, which launches Chromium without its default --hide-scrollbars.
+// Linux Chromium always draws classic scrollbars, so there the case requires a
+// nonzero scrollbar width and CI runs it on the measurements runner. Chromium
+// on macOS follows the system "Show scroll bars" setting, so the case is opt-in
+// there: set BUZZ_CLASSIC_SCROLLBARS=1 on a Mac that resolves to classic
+// scrollbars, otherwise it skips and says why. The chromium and webkit projects
+// exclude the tag and run only the toHaveCSS guard (Playwright's WebKit uses
+// overlay scrollbars on macOS). The native manual check on a legacy-scrollbar
+// Mac remains the definitive one for the loop itself.
+test.use({ historyCounts: { alpha: 640, beta: 20 } });
 const history = (page) =>
   page.getByRole("region", { name: "Channel message history" });
 
@@ -30,17 +30,24 @@ test("feed reserves a stable scrollbar gutter", async ({ page, app }) => {
   await expect(history(page)).toHaveCSS("scrollbar-gutter", "stable");
 });
 
-test("feed width survives the Virtua overflow toggle", async ({
-  page,
-  app,
-}) => {
+test("feed width survives the Virtua overflow toggle", {
+  tag: "@classic-scrollbars",
+}, async ({ page, app }) => {
+  test.skip(
+    process.platform !== "linux" && !process.env.BUZZ_CLASSIC_SCROLLBARS,
+    "Only Linux guarantees classic scrollbars; set BUZZ_CLASSIC_SCROLLBARS=1 on a Mac whose scrollbars take space",
+  );
   await open(page, app);
-  // 640 rows already overflow at the bottom, so decide the skip before paying
-  // for the wheel-gesture detach.
+  // 640 rows already overflow at the bottom, so check the premise before
+  // paying for the wheel-gesture detach.
   const space = await history(page).evaluate(
     (element) => element.offsetWidth - element.clientWidth,
   );
-  test.skip(space === 0, "scrollbar takes no space here (overlay scrollbars)");
+  app.report.measurements.push({ scenario: "scrollbar-space", space });
+  expect(
+    space,
+    "the feed scrollbar must take space: this project launches Chromium without --hide-scrollbars and expects classic, not overlay, scrollbars",
+  ).toBeGreaterThan(0);
   await upper(page);
   const readings = await history(page).evaluate((element) => {
     // Pick the measured paragraph once so all three reads compare the same

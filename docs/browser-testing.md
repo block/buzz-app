@@ -120,6 +120,20 @@ check's shell against failed, skipped, cancelled and missing lane results.
 These safeguards must change with the matrix; do not maintain feature allowlists
 or move existing required cases out of CI to reduce its duration.
 
+Cases tagged `@classic-scrollbars` need a scrollbar that takes space. They run
+only in the `chromium-classic-scrollbars` project, which keeps Chromium's
+platform scrollbars visible, and the engine projects exclude them. CI runs that
+project as a second step of the measurements job, so `CI required` blocks on it;
+the integration gate checks that the step exists and that the tagged cases are
+selected there and nowhere else. Linux always draws classic scrollbars, so the
+cases fail there if the scrollbar takes no space. On macOS Chromium follows the
+system "Show scroll bars" setting, so they skip unless `BUZZ_CLASSIC_SCROLLBARS=1`
+is set on a Mac whose scrollbars take space:
+
+```sh
+BUZZ_CLASSIC_SCROLLBARS=1 bin/pnpm test:browser --project chromium-classic-scrollbars --no-deps
+```
+
 The following **three WebKit cases are local-only**, not passing CI coverage:
 
 | Case | Reason and coverage gap |

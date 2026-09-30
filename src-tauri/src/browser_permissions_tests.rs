@@ -65,7 +65,27 @@ fn native_command_permissions_allow_only_main_webview() {
         "identity_create",
         "identity_export",
         "relay_sign",
+        "relay_decode_read_state",
+        "relay_sign_read_state",
+        "relay_publish_read_state",
         "relay_http",
+        "relay_workflow_runs",
+        "relay_channel_sign",
+        "relay_channel_publish",
+        "relay_kit_sign",
+        "relay_kit_prepare",
+        "relay_kit_decode",
+        "relay_direct_message",
+        "relay_decode_sidebar",
+        "relay_sign_sidebar",
+        "relay_agent_resolve",
+        "relay_agent_log_proof",
+        "relay_agent_observer",
+        "relay_agent_memories_read",
+        "relay_agent_library",
+        "relay_upload",
+        "relay_upload_cancel",
+        "media_download",
         "get_os_idle_seconds",
         "plugin_import_folder",
         "plugin_import_git",
@@ -79,6 +99,7 @@ fn native_command_permissions_allow_only_main_webview() {
         "plugin_host_run_command",
         "plugin_host_request",
         "agent_control_create_prepare",
+        "agent_control_create_authorize",
         "agent_control_create_commit",
         "agent_control_creation_profile",
         "agent_control_snapshot",
@@ -93,6 +114,7 @@ fn native_command_permissions_allow_only_main_webview() {
         "agent_control_action",
         "agent_control_import_preview",
         "agent_control_import_commit",
+        "agent_control_local_clone_settings",
         "agent_control_clone_settings",
         "agent_control_use_here",
         "agent_models_begin",
@@ -124,6 +146,8 @@ fn native_command_permissions_allow_only_main_webview() {
     } else {
         "tauri://localhost"
     };
+    // The removed owner attestation cannot acquire a main-webview grant.
+    assert!(invoke(&main, "relay_agent_authorize", local_origin).is_err());
     for command in application_commands {
         assert!(invoke(&main, command, local_origin).is_ok(), "{command}");
         for origin in [local_origin, "https://example.org", "http://localhost:1430"] {

@@ -2,30 +2,25 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { useState } from "react";
 import type { PluginModule } from "../../plugins/api";
-import { targetLink } from "../../features/navigation/targets";
 import { InlineLink, linkKind } from "../links/InlineLink";
 import styles from "./LinkLab.module.css";
 
 export const inject = ["pages"];
 export const apply: PluginModule["apply"] = (ctx) => {
-  ctx.pages.register({ id: "link-lab", title: "Link Lab", component: LinkLab });
+  ctx.pages.register({
+    id: "link-lab",
+    title: "Link Lab",
+    primary: true,
+    component: LinkLab,
+  });
 };
 
-const buzz = targetLink({ version: 1, kind: "home" });
-const legacyChannel = "buzz://channel/c89a3185-29c5-40db-8284-054536d98b09";
-const legacyMessage =
+// The Buzz link forms: a channel, a message, and a reply inside a thread.
+const general = "buzz://channel/general";
+const thread = `buzz://message?channel=general&id=${"2".repeat(64)}&thread=${"2".repeat(64)}`;
+const uuidChannel = "buzz://channel/c89a3185-29c5-40db-8284-054536d98b09";
+const uuidMessage =
   "buzz://message?channel=c89a3185-29c5-40db-8284-054536d98b09&id=9a77911a6e94147b1ce2cdb3c4e87046c67a29f29f3dd25626134621a5f6924b";
-const thread = targetLink({
-  version: 1,
-  kind: "conversation",
-  scope: {
-    viewer: "1".repeat(64),
-    communityOrigin: "wss://buzz.block.builderlab.xyz",
-  },
-  channelId: "general",
-  messageId: "2".repeat(64),
-  threadRootId: "2".repeat(64),
-});
 
 const serviceSamples = [
   ["Figma", "https://www.figma.com/design/example"],
@@ -123,13 +118,13 @@ function LinkLab() {
             Buzz channels, messages and threads
           </span>
           <p>
-            Head back to {preview(buzz, "Buzz")} or pick up{" "}
+            Head back to {preview(general, "#general")} or pick up{" "}
             {preview(thread, "the design discussion")}.
           </p>
           <p>
-            Older shared links work too: {preview(legacyChannel)},{" "}
-            {preview(legacyMessage)}, and{" "}
-            {preview(`${legacyMessage}&thread=${"2".repeat(64)}`)}.
+            Bare links show their kind: {preview(uuidChannel)},{" "}
+            {preview(uuidMessage)}, and{" "}
+            {preview(`${uuidMessage}&thread=${"2".repeat(64)}`)}.
           </p>
         </section>
         <section>

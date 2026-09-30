@@ -1215,8 +1215,9 @@ it.each([
                 },
               }}
               sessionsEnabled
-              agentsEnabled
-            />
+            >
+              {null}
+            </ChannelSidebar>
           </ChannelNavigationProvider>
         </ToastProvider>,
       );
@@ -1674,3 +1675,13 @@ it.each([
     }
   },
 );
+
+beforeEach(() => {
+  // jsdom hides [popover] but has no native top layer. Browser tests own paint.
+  HTMLElement.prototype.showPopover = function () {
+    this.style.display = "block";
+  };
+});
+afterEach(() => {
+  Reflect.deleteProperty(HTMLElement.prototype, "showPopover");
+});

@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core";
+import { communityDestination } from "./destination";
 import { avatarPictureError } from "../profiles/avatar-upload";
 import {
   connectNativeTransport,
@@ -5,6 +7,7 @@ import {
   nativeRelayRequest,
   nativeRelaySigner,
 } from "../relay/native";
+import { leaveRefusal, leaveRequestTemplate } from "./leave-protocol";
 import type { PersonalProfile } from "./service";
 
 export async function nativeCommunityRequest(
@@ -95,6 +98,55 @@ export async function nativeCommunityRequest(
       throw new Error("Policy acceptance was not confirmed");
     return result;
   }
+  if (route === "resolve-agent-community") {
+    const target = body as
+      | { owner?: unknown; pubkey?: unknown; confirmed?: unknown }
+      | undefined;
+    if (
+      !target ||
+      typeof target.owner !== "string" ||
+      typeof target.pubkey !== "string" ||
+      !/^[0-9a-f]{64}$/.test(target.owner) ||
+      !/^[0-9a-f]{64}$/.test(target.pubkey) ||
+      target.owner === target.pubkey ||
+      Object.keys(target).length !== 3 ||
+      target.confirmed !== true
+    )
+      throw new Error("Explicit owner community resolution required");
+    signal.throwIfAborted();
+    return invoke("relay_agent_resolve", {
+      community: communityDestination(community).url,
+      target,
+    });
+  }
+  if (route === "invite") {
+    const input = body as
+      | { ttl_secs?: unknown; max_uses?: unknown }
+      | undefined;
+    const ttl = input?.ttl_secs;
+    const uses = input?.max_uses ?? null;
+    if (
+      !Number.isSafeInteger(ttl) ||
+      (ttl as number) < 60 ||
+      (ttl as number) > 2_592_000
+    )
+      throw new Error("Invalid invite expiry");
+    if (
+      uses !== null &&
+      (!Number.isSafeInteger(uses) ||
+        (uses as number) < 1 ||
+        (uses as number) > 10_000)
+    )
+      throw new Error("Invalid invite use limit");
+    return readResponse(
+      await nativeRelayRequest(
+        community,
+        "/api/invites",
+        { ttl_secs: ttl, max_uses: uses },
+        signal,
+      ),
+    );
+  }
   if (route === "profile") {
     const profile = body as PersonalProfile & {
       existing?: Record<string, unknown>;
@@ -137,23 +189,56 @@ export async function nativeCommunityRequest(
       throw new Error("Profile publication was not confirmed");
     return result;
   }
+  if (route === "authorize-agent") {
+    // Native signs only the key it generated for the pending create request.
+    const input = body as { pubkey?: unknown; owner?: unknown } | undefined;
+    if (typeof input?.pubkey !== "string" || typeof input.owner !== "string")
+      throw new Error("Invalid agent owner authorization");
+    const auth = await invoke<string[]>("agent_control_create_authorize", {
+      destination: community,
+      owner: input.owner,
+      pubkey: input.pubkey,
+    });
+    return { auth };
+  }
+  if (route === "leave") {
+    // The membership refusals come back verbatim so the caller can tell an
+    // already-absent membership from a failed request.
+    const event = await nativeRelaySigner(community).signEvent(
+      leaveRequestTemplate(),
+    );
+    const result = await readResponse(
+      await nativeRelayRequest(community, "/events", event, signal),
+      leaveRefusal,
+    );
+    if (result.event_id !== event.id || result.accepted !== true)
+      throw new Error("The leave request was not confirmed");
+    return result;
+  }
   throw new Error("This operation is unavailable on the packaged connection");
+}
+
+/** Exact invite admission refusal codes (buzz-relay api/invites.rs). */
+function admissionRefusal(result: unknown) {
+  const body = result as { error?: unknown; reason?: unknown } | null;
+  return [
+    "invite_expired",
+    "invite_exhausted",
+    "invite_invalid",
+    "join_policy_required",
+    "join_policy_not_accepted",
+  ].find((value) => body?.error === value || body?.reason === value);
 }
 
 async function readResponse(
   response: Response,
+  refusal: (result: unknown) => string | undefined = admissionRefusal,
 ): Promise<Record<string, unknown>> {
   const result = await response.json();
-  if (!response.ok) {
-    const refusal = [
-      "invite_expired",
-      "invite_exhausted",
-      "invite_invalid",
-      "join_policy_required",
-      "join_policy_not_accepted",
-    ].find((value) => result?.error === value || result?.reason === value);
-    throw new Error(refusal ?? `Community request failed (${response.status})`);
-  }
+  if (!response.ok)
+    throw new Error(
+      refusal(result) ?? `Community request failed (${response.status})`,
+    );
   if (!result || typeof result !== "object" || Array.isArray(result))
     throw new Error("Invalid community response");
   return result;

@@ -34,6 +34,9 @@ jobs:
       # check already ran TypeScript; do not repeat pnpm build's typecheck.
       - name: Frontend build
         run: pnpm exec vite build
+      # Hermit downloads packages lazily. Provision outside conversion deadlines.
+      - name: Provision media tools
+        run: ffmpeg -version && ffprobe -version
       - name: All Vitest tests
         env:
           # Bound contention between suites that sign and verify large fixtures.
@@ -69,6 +72,8 @@ jobs:
         run: cargo fmt --all --check
       - name: Rust lint
         run: cargo clippy --workspace --locked --all-targets -- -D warnings
+      - name: Provision media tools
+        run: ffmpeg -version && ffprobe -version
       # --workspace includes Tauri, unlike the default Cargo member selection.
       - name: All Rust tests and doctests
         run: cargo test --workspace --locked

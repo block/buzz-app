@@ -246,3 +246,29 @@ test("old ffmpeg fails closed before HEIC conversion or delivery", async () => {
   expect(launches).toEqual([["-version"]]);
   expect(deliver).not.toHaveBeenCalled();
 });
+
+test("release n-prefix versions permit HEIC conversion", async () => {
+  processFixture.launch = (_command, args, _options, callback) => {
+    const child = new EventEmitter();
+    void (async () => {
+      await Promise.resolve(); // execFile cannot close before its listeners exist.
+      if (args[0] === "-version")
+        callback(null, "ffmpeg version n9.0.2 Copyright");
+      else {
+        const file = await open(args.at(-1), "w");
+        await file.write("jpeg");
+        await file.close();
+        callback(null);
+      }
+      child.emit("close", 0);
+    })();
+    return child;
+  };
+  const deliver = vi.fn();
+  await prepareMedia(
+    request("photo.heic"),
+    new AbortController().signal,
+    deliver,
+  );
+  expect(deliver).toHaveBeenCalledOnce();
+});

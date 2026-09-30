@@ -78,9 +78,9 @@ fn allowed_mode(mode: &str, size: usize) -> Option<(&'static str, bool, bool)> {
     Some(result)
 }
 
-fn ffmpeg_command() -> Command {
+fn ffmpeg_command(program: &Path) -> Command {
     let path = crate::host_command::effective_path();
-    let mut cmd = Command::new(crate::host_command::resolve_program("ffmpeg", &path));
+    let mut cmd = Command::new(program);
     cmd.env_clear().env("PATH", path).env("LANG", "C");
     #[cfg(windows)]
     {
@@ -100,7 +100,7 @@ fn supports_heic_grids(version: &[u8]) -> bool {
     std::str::from_utf8(version)
         .ok()
         .and_then(|text| text.strip_prefix("ffmpeg version "))
-        .and_then(|text| text.split('.').next())
+        .and_then(|text| text.strip_prefix('n').unwrap_or(text).split('.').next())
         .and_then(|major| major.parse::<u32>().ok())
         .is_some_and(|major| major >= 8)
 }
@@ -189,7 +189,9 @@ fn output_size(path: &Path, limit: u64) -> Result<(), &'static str> {
 }
 
 fn private_tempdir_in(parent: &Path) -> std::io::Result<tempfile::TempDir> {
-    let mut builder = tempfile::Builder::new();
+    let builder = tempfile::Builder::new();
+    #[cfg(unix)]
+    let mut builder = builder;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -204,6 +206,17 @@ pub(super) async fn prepare(
     body: Vec<u8>,
     mode: &str,
     cancelled: &mut oneshot::Receiver<()>,
+) -> Result<(Vec<u8>, &'static str), PreparationError> {
+    let path = crate::host_command::effective_path();
+    let program = crate::host_command::resolve_program("ffmpeg", &path);
+    prepare_with_program(body, mode, cancelled, &program).await
+}
+
+async fn prepare_with_program(
+    body: Vec<u8>,
+    mode: &str,
+    cancelled: &mut oneshot::Receiver<()>,
+    program: &Path,
 ) -> Result<(Vec<u8>, &'static str), PreparationError> {
     if body.is_empty() || body.len() > MAX_INPUT {
         return Err(PreparationError::Size);
@@ -237,9 +250,9 @@ pub(super) async fn prepare(
         return Err(PreparationError::Cancelled);
     }
     if image {
-        require_heic_grid_support(&mut ffmpeg_command(), cancelled).await?;
+        require_heic_grid_support(&mut ffmpeg_command(program), cancelled).await?;
     }
-    let mut cmd = ffmpeg_command();
+    let mut cmd = ffmpeg_command(program);
     cmd.args(["-y", "-nostdin", "-loglevel", "error"]);
     if voice {
         cmd.args(["-f", "lavfi", "-i", "color=c=black:s=16x16:r=1"]);
@@ -556,6 +569,8 @@ mod tests {
             "ffmpeg version 8.0 Copyright",
             "ffmpeg version 8.1.2-Jellyfin Copyright",
             "ffmpeg version 9.0.1 Copyright",
+            "ffmpeg version n9.0.2 Copyright",
+            "ffmpeg version n8.0 Copyright",
         ] {
             assert!(supports_heic_grids(version.as_bytes()), "{version}");
         }
@@ -564,13 +579,17 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn old_ffmpeg_is_rejected_before_image_conversion() {
-        let mut command = Command::new("/bin/sh");
-        command
-            .args(["-c", "printf 'ffmpeg version 7.1.4 Copyright'"])
-            .kill_on_drop(true);
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = CONVERSIONS.lock().await;
+        let directory = tempfile::tempdir().unwrap();
+        let program = directory.path().join("ffmpeg");
+        // Any invocation beyond the version probe is a test failure.
+        std::fs::write(&program, "#!/bin/sh\nif [ \"$1\" = -version ]; then printf 'ffmpeg version 7.1.4 Copyright'; else exit 99; fi\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
         let (_sender, mut cancelled) = oneshot::channel();
+        let bytes = include_bytes!("../../../tests/fixtures/media/tiled.heic").to_vec();
         assert_eq!(
-            require_heic_grid_support(&mut command, &mut cancelled).await,
+            prepare_with_program(bytes, "image:mov", &mut cancelled, &program).await,
             Err(PreparationError::Ffmpeg)
         );
     }

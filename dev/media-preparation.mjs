@@ -108,7 +108,7 @@ export async function prepareMedia(req, callerSignal, deliver) {
     try {
       if (heic) {
         const version = await run(["-version"], bounded, 5_000);
-        const major = /^ffmpeg version (\d+)\./.exec(version ?? "")?.[1];
+        const major = /^ffmpeg version n?(\d+)\./.exec(version ?? "")?.[1];
         if (!major || Number(major) < 8) throw new UploadError("ffmpeg", 503);
       }
       await run(

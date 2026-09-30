@@ -78,7 +78,7 @@
   /* Reserve the default avatar, owned by the sibling navigation target. */
   padding-inline-start: calc(
     var(--space-control-inset) +
-    2rem +
+    var(--size-control-sm) +
     var(--space-row-gap)
   );
 }

@@ -22,18 +22,25 @@
   padding: 0 var(--space-panel-inset);
   /* Keep fractional last rows reachable despite integer scroll extents. */
   padding-bottom: var(--space-half);
+  /* The vendored Virtua patch (interruptMomentum in patches/virtua@0.51.0.patch)
+     flips this scroller to overflow-y: hidden !important on every nonzero size
+     correction on Mac WebKit. With classic, space-taking scrollbars that frame
+     removes the scrollbar, widens the content box, re-wraps rows above the
+     viewport, and their new heights feed the next correction. A stable gutter
+     keeps the inline size constant across the toggle. It reserves the thin
+     native width only while scrollbar-width/scrollbar-color stay on this rule;
+     ::-webkit-scrollbar styling is ignored alongside them and would make the
+     gutter reserve the classic width instead, so .feed must not use it. */
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--text) 20%, transparent) transparent;
 }
-.feed::-webkit-scrollbar,
 .threadHistory::-webkit-scrollbar {
   width: 8px;
 }
-.feed::-webkit-scrollbar-track,
 .threadHistory::-webkit-scrollbar-track {
   background: transparent;
 }
-.feed::-webkit-scrollbar-thumb,
 .threadHistory::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: var(--radius-pill);

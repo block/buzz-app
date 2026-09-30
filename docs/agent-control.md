@@ -77,8 +77,10 @@ Older hosts retain the separate installation browser as a compatibility path.
 **Use here** is recovery for older incomplete local imports, not a normal next
 step after Import. It retains the identity/key, requires owner-authorized community
 confirmation, and leaves the recovered setup stopped with app-launch start off.
-Only the development broker serves that confirmation today, so packaged
-connections disable **Use here** and explain why; **Clone** is unaffected. Native code refuses a new
+The development broker and the packaged desktop app both provide that
+confirmation; the desktop app signs it natively (`relay_agent_resolve`). A host
+without local inventory actions hides **Use here** and asks the user to update
+the desktop app; **Clone** is unaffected. Native code refuses a new
 community when that identity already has a configured setup elsewhere. A retry
 for the already recovered destination is harmless. Existing historical setups
 remain visible and controllable; this rule does not move or delete them.

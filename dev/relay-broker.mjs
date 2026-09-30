@@ -2478,7 +2478,11 @@ export function relayBrokerPlugin({
               log.warn(
                 `${publication} stage=socket sent=${failure ? failure.sent : "unknown"} reason=${failure?.message ?? "unclassified failure"}${failure?.refusal ? ` refusal=${failure.refusal}` : ""}`,
               );
-              return json(res, 503, {
+              // Match the relay's HTTP status for a proven CAS refusal.
+              const conflict =
+                failure?.sent === false &&
+                failure.refusal?.startsWith("conflict:");
+              return json(res, conflict ? 409 : 503, {
                 error:
                   failure?.sent === false &&
                   failure.refusal?.startsWith("rate-limited:")

@@ -320,7 +320,7 @@ test("scrolling dismisses a hovered identity preview and keeps the wheel", async
   await page.evaluate(async () => {
     const unrelated = document.createElement("div");
     unrelated.style.cssText =
-      "position:fixed;top:0;left:0;width:1px;height:1px;overflow:auto;pointer-events:none";
+      "position:fixed;top:0;left:0;width:1px;height:1px;overflow:auto;scrollbar-width:none;pointer-events:none";
     const content = document.createElement("div");
     content.style.height = "2px";
     unrelated.append(content);

@@ -4,7 +4,8 @@ import { Panel } from "../shared/design-system/ui/Panel";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { NavigationSection } from "../shared/design-system/ui/NavigationSection";
 import { Button } from "../shared/design-system/ui/Button";
-import { Switch } from "../shared/design-system/ui/Switch";
+import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
+import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { RecoveryScreen } from "./RecoveryScreen";
 import styles from "./Settings.module.css";
@@ -15,6 +16,7 @@ import {
   BellIcon,
   RobotIcon,
   ChatCircleIcon,
+  UsersIcon,
   KeyboardIcon,
   WrenchIcon,
 } from "../shared/design-system/icons/index";
@@ -37,12 +39,16 @@ import type { AgentControl } from "../features/agents/control";
 import type { SettingsCards } from "../features/settings/service";
 import { OwnedContribution } from "../plugins/OwnedContribution";
 
-type Section = { id: string; label: string; icon: typeof UserIcon };
+export type SettingsSection = {
+  id: string;
+  label: string;
+  icon: typeof UserIcon;
+};
 
-const personalProfile: readonly Section[] = [
+const personalProfile: readonly SettingsSection[] = [
   { id: "profile", label: "Profile", icon: UserIcon },
 ];
-const appSections: readonly Section[] = [
+export const appSettingsSections: readonly SettingsSection[] = [
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
   { id: "notifications", label: "Notifications", icon: BellIcon },
   { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
@@ -67,6 +73,7 @@ export function Settings({
   agentControl,
   navigation,
   onSection,
+  navigationPane = false,
 }: {
   cards: SettingsCards;
   agentControl: AgentControl;
@@ -81,7 +88,9 @@ export function Settings({
     | import("../features/navigation/service").PageNavigation
     | undefined;
   onSection?: (section: string) => void;
+  navigationPane?: boolean;
 }) {
+  useEffect(() => cards.retainVisibility(), [cards]);
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
   const client = useSyncExternalStore(
     communities.subscribe,
@@ -91,7 +100,11 @@ export function Settings({
     (membership) => membership.id === client.selected,
   );
   const communityCards = useMemo(
-    () => contributed.filter((card) => !card.group),
+    () => contributed.filter((card) => !card.group && !card.section),
+    [contributed],
+  );
+  const administrationCards = useMemo(
+    () => contributed.filter((card) => card.section === "administration"),
     [contributed],
   );
   const contributedGroups = useMemo(
@@ -104,7 +117,7 @@ export function Settings({
       ),
     [contributed],
   );
-  const communitySections: readonly Section[] = useMemo(
+  const communitySections: readonly SettingsSection[] = useMemo(
     () =>
       selectedCommunity
         ? [
@@ -121,6 +134,13 @@ export function Settings({
   const visibleSections = useMemo(
     () => [
       ...communitySections,
+      ...(selectedCommunity
+        ? administrationCards.map((card) => ({
+            id: card.key,
+            label: card.title,
+            icon: UsersIcon,
+          }))
+        : []),
       ...(!selectedCommunity ? personalProfile : []),
       ...contributedGroups.flatMap((group) =>
         group.cards.map((card) => ({
@@ -129,12 +149,17 @@ export function Settings({
           icon: ChatCircleIcon,
         })),
       ),
-      ...appSections,
+      ...appSettingsSections,
       ...(developerMode
         ? [{ id: "developer", label: "Developer", icon: WrenchIcon }]
         : []),
     ],
-    [communitySections, contributedGroups, selectedCommunity],
+    [
+      administrationCards,
+      communitySections,
+      contributedGroups,
+      selectedCommunity,
+    ],
   );
   const defaultSection = selectedCommunity ? "profile" : "appearance";
   const [selected, setSelected] = useState(defaultSection);
@@ -163,8 +188,13 @@ export function Settings({
   const catalog = ready?.catalog;
   const externalPluginsPaused = ready?.externalPluginsPaused;
   return (
-    <div className={styles.root}>
-      <Panel aria-labelledby="settings-title">
+    <div
+      className={`${styles.root} ${navigationPane ? styles.navigationPane : ""}`}
+    >
+      <Panel
+        aria-label={navigationPane ? "Settings" : undefined}
+        aria-labelledby={navigationPane ? undefined : "settings-title"}
+      >
         <div className={styles.layout}>
           <aside className={styles.sidebar}>
             <div className={styles.sidebarHeader}>
@@ -192,6 +222,25 @@ export function Settings({
                   ))}
                 </NavigationSection>
               )}
+              {selectedCommunity && administrationCards.length > 0 && (
+                <NavigationSection label="Administration">
+                  {administrationCards.map((card) => (
+                    <NavigationItem
+                      label={card.title}
+                      icon={<UsersIcon aria-hidden="true" size={18} />}
+                      selected={selected === card.key}
+                      type="button"
+                      key={card.key}
+                      aria-current={selected === card.key ? "page" : undefined}
+                      onClick={(event) => {
+                        event.currentTarget.focus();
+                        if (onSection) onSection(card.key);
+                        else setSelected(card.key);
+                      }}
+                    />
+                  ))}
+                </NavigationSection>
+              )}
               {contributedGroups.map((group) => (
                 <NavigationSection key={group.label} label={group.label}>
                   {group.cards.map((card) => (
@@ -213,7 +262,7 @@ export function Settings({
               <NavigationSection label="App">
                 {[
                   ...(!selectedCommunity ? personalProfile : []),
-                  ...appSections,
+                  ...appSettingsSections,
                 ].map(({ id, label, icon: Icon }) => (
                   <NavigationItem
                     label={label}
@@ -249,6 +298,7 @@ export function Settings({
             </nav>
           </aside>
           <div className={styles.detail}>
+            {navigationPane && <h1 className="sr-only">Settings</h1>}
             <div hidden={selected !== "notifications"}>
               <NotificationSettings
                 notifications={notifications}
@@ -280,12 +330,41 @@ export function Settings({
                   <OwnedContribution entry={card} registry={cards}>
                     {(entry, active) => {
                       const Card = entry.component;
-                      return <Card active={active} />;
+                      return (
+                        <Card
+                          active={active}
+                          {...(selectedCommunity
+                            ? { community: selectedCommunity }
+                            : {})}
+                        />
+                      );
                     }}
                   </OwnedContribution>
                 )}
               </div>
             ))}
+            {administrationCards.map(
+              (card) =>
+                selected === card.key && (
+                  <OwnedContribution
+                    key={card.key}
+                    entry={card}
+                    registry={cards}
+                  >
+                    {(entry, active) => {
+                      const Card = entry.component;
+                      return (
+                        <Card
+                          active={active}
+                          {...(selectedCommunity
+                            ? { community: selectedCommunity }
+                            : {})}
+                        />
+                      );
+                    }}
+                  </OwnedContribution>
+                ),
+            )}
             {contributedGroups.flatMap((group) =>
               group.cards.map(
                 (card) =>
@@ -376,43 +455,42 @@ export function Settings({
                           ? running.error
                           : null);
                       return (
-                        <article
-                          className="flex flex-wrap items-center justify-between gap-3 px-1 py-3"
-                          key={id}
-                        >
-                          <div className="flex min-w-0 flex-1 items-center gap-3">
-                            <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-soft text-muted">
-                              <SquaresFourIcon aria-hidden="true" size={17} />
-                            </span>
-                            <div className="min-w-0">
-                              <h3 className="m-0 text-label font-medium">
-                                {plugin.manifest.name}
-                              </h3>
-                              {failure && (
-                                <p role="alert" className="error">
-                                  {failure}
-                                </p>
-                              )}
-                            </div>
-                          </div>
+                        <article className="py-1" key={id}>
+                          {/* Channels is required and has no enable/disable control. */}
+                          {id === "buzz.channels" ? (
+                            <PreferenceRow
+                              icon={<SquaresFourIcon size={20} />}
+                              title={plugin.manifest.name}
+                              trailing={
+                                <span className="text-body-sm text-subtle">
+                                  Required
+                                </span>
+                              }
+                            />
+                          ) : (
+                            <SwitchPreferenceRow
+                              icon={<SquaresFourIcon size={20} />}
+                              label={plugin.manifest.name}
+                              aria-label={`Enable ${plugin.manifest.name}`}
+                              checked={plugin.enabled}
+                              readOnly={busy}
+                              aria-disabled={busy}
+                              onClick={(event) => event.currentTarget.focus()}
+                              onCheckedChange={() => {
+                                if (busy) return;
+                                void plugins.change(
+                                  plugin.enabled ? "disable" : "enable",
+                                  id,
+                                );
+                              }}
+                            />
+                          )}
+                          {failure && (
+                            <p role="alert" className="error text-body-sm">
+                              {failure}
+                            </p>
+                          )}
                           <div className="actions items-center">
-                            {/* Channels is required and has no enable/disable control. */}
-                            {id !== "buzz.channels" && (
-                              <Switch
-                                aria-label={`Enable ${plugin.manifest.name}`}
-                                checked={plugin.enabled}
-                                readOnly={busy}
-                                aria-disabled={busy}
-                                onClick={(event) => event.currentTarget.focus()}
-                                onCheckedChange={() => {
-                                  if (busy) return;
-                                  void plugins.change(
-                                    plugin.enabled ? "disable" : "enable",
-                                    id,
-                                  );
-                                }}
-                              />
-                            )}
                             {plugin.previous && (
                               <Button
                                 type="button"

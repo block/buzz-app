@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
+stubAvatarBrowserApis();
 import {
   act,
   cleanup,
@@ -16,6 +18,8 @@ import type { PresenceStatus } from "../../features/presence/presence";
 import { ChannelSidebarItem } from "./ChannelSidebarItem";
 
 afterEach(cleanup);
+
+const noTyping = Object.freeze([]);
 
 function owner(profiles = new Map<string, Profile>()) {
   const listeners = new Set<() => void>();
@@ -39,6 +43,7 @@ function owner(profiles = new Map<string, Profile>()) {
       snapshot: () => profiles,
       subscribe: () => () => {},
     },
+    typing: { snapshot: () => noTyping, subscribe: () => () => {} },
     unread: {
       snapshot: () => snapshot,
       subscribe: (_target: unknown, listener: () => void) => {

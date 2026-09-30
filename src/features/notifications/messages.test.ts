@@ -89,6 +89,8 @@ async function setup(
   });
   bff.api.write.mockImplementation(async (intents) => {
     for (const intent of intents) {
+      if (intent.type === "mark_messages_read")
+        throw new Error("Unexpected exact read in notification fixture");
       const event = observed.get(intent.message_id);
       if (event) frontier = Math.max(frontier ?? -1, event.created_at);
     }
@@ -661,6 +663,31 @@ it.each([
     });
   },
 );
+
+it("classifies p-tagged DM messages as direct, not mention", async () => {
+  const h = await setup();
+  h.emit([profile(h.peer, { name: "Pinky" })]);
+  const now = Math.floor(Date.now() / 1000);
+  h.emit([
+    signed(h.relay, {
+      kind: 39000,
+      content: JSON.stringify({ name: "internal-dm-id", channel_type: "dm" }),
+      tags: [
+        ["d", "01234567-89ab-cdef-0123-456789abcdef"],
+        ["name", "internal-dm-id"],
+        ["t", "dm"],
+      ],
+      created_at: now,
+    }),
+  ]);
+  // Agent and CLI DM traffic p-tags the recipient; that must not reroute the
+  // message to the mention category (label, sound, and preference toggle).
+  h.emit([h.make("hello")], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+  expect(h.show.mock.calls[0]?.[0].title).toBe(
+    "Pinky sent you a direct message",
+  );
+});
 
 function deferred() {
   let release = () => {};

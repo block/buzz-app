@@ -15,7 +15,7 @@ test("Messages receives scoped typing through authenticated live traffic and exp
   await expect
     .poll(() =>
       app.report.liveRequests.some((r) =>
-        r.filter?.["#h"]?.includes(ids.alpha),
+        r.filters.some((filter) => filter["#h"]?.includes(ids.alpha)),
       ),
     )
     .toBe(true);
@@ -74,7 +74,7 @@ for (const scope of ["channel", "thread"]) {
     await expect
       .poll(() =>
         app.report.liveRequests.some((r) =>
-          r.filter?.["#h"]?.includes(ids.alpha),
+          r.filters.some((filter) => filter["#h"]?.includes(ids.alpha)),
         ),
       )
       .toBe(true);
@@ -83,17 +83,17 @@ for (const scope of ["channel", "thread"]) {
       .find((e) => e.content === "Thread root 0");
     if (scope === "thread") {
       // Seed enough signed upstream replies to exercise a genuinely scrolling thread.
-      for (let i = 0; i < 25; i++) app.reply(root.id);
+      for (let i = 0; i < 30; i++) app.reply(root.id);
       await page
         .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
         .getByRole("button", { name: /^View thread:/ })
         .click();
-      // One nested descendant is collapsed; the root plus 27 direct replies mount.
+      // One nested descendant is collapsed; the root plus 32 direct replies mount.
       await expect(
         page
           .getByRole("region", { name: "Thread messages", exact: true })
           .locator("[data-message-id]"),
-      ).toHaveCount(28);
+      ).toHaveCount(33);
     } else {
       await end(page);
     }

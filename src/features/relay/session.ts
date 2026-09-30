@@ -19,6 +19,7 @@ import type { PresenceActivity } from "../presence/activity";
 import { bindNames, type IdentityNames } from "../identity-names/service";
 import { sessionMetadata } from "../sessions/metadata";
 import { createChannelLifecycle } from "./channel-lifecycle";
+import { createChannelDetails } from "./channel-details";
 import { createWorkflows } from "../workflows/capability";
 import { isWorkflowOperation } from "../workflows/protocol";
 import {
@@ -51,6 +52,7 @@ import {
   readActiveSidebarGroups,
 } from "./sidebar-personal-groups";
 import { createEmojiDirectory } from "./emoji-directory";
+import { EMOJI_SET_KIND } from "./emoji";
 import { createProfileDirectory } from "./profile-directory";
 import { createChannelStore, type ChannelStoreOptions } from "./store";
 import { MessageClock } from "./message-order";
@@ -330,6 +332,7 @@ export function createRelaySession(
       accessEpoch++;
       cancelUploads();
       lifecycle.cancel();
+      details.cancel();
       typing.clear();
       // Saved owner inventory does not depend on channel access. Preserve only
       // that narrow read; broad, mixed, ID and channel reads must still retire.
@@ -545,7 +548,32 @@ export function createRelaySession(
     notify,
   );
   const profiles = createProfileDirectory(verified, localViews, notify);
-  const emoji = createEmojiDirectory(verified, notify);
+  const emoji = createEmojiDirectory(
+    verified,
+    notify,
+    transport?.viewer,
+    transport &&
+      writer &&
+      uploadAttachment &&
+      (!writer.kinds || writer.kinds.includes(EMOJI_SET_KIND))
+      ? {
+          writer,
+          async upload(file, signal) {
+            const combined = AbortSignal.any([
+              signal,
+              lifetime.signal,
+              uploadLifetime.signal,
+            ]);
+            combined.throwIfAborted();
+            if (closed) throw new UploadError("denied");
+            const result = await uploadAttachment(file, combined);
+            combined.throwIfAborted();
+            if (closed) throw new UploadError("denied");
+            return result;
+          },
+        }
+      : undefined,
+  );
   const statuses = createUserStatuses(
     verified,
     transport?.viewer,
@@ -626,6 +654,14 @@ export function createRelaySession(
     // NIP-34/NIP-MP metadata is global; channel tags are associations, not ACLs.
     return events;
   });
+  const details = createChannelDetails({
+    reader: transport && !options.cachedOnly ? requests.reader : undefined,
+    writer: transport?.channelDetails,
+    viewer: transport?.viewer ?? "",
+    relayAuthor: transport?.relayAuthor ?? "",
+    canAccess: (id) => !closed && channels.canParticipate(id),
+    acceptDiscovery: (events) => channels.acceptDiscovery(events),
+  });
   const lifecycle = createChannelLifecycle({
     reader: transport && !options.cachedOnly ? requests.reader : undefined,
     writer: transport?.channelLifecycle,
@@ -655,6 +691,19 @@ export function createRelaySession(
     reader: requests.reader,
     viewer: transport?.viewer ?? "",
     find: (id) => recent.peek(id)?.event ?? retainedEvent(id),
+    // Enumerate current loaded conversation owners, not incidental LRU/history caches.
+    loaded: (channelId) => {
+      const rows = new Map(
+        channels.queries.window(channelId).rows.map((row) => [row.id, row]),
+      );
+      for (const thread of threads) {
+        if (thread.channelId !== channelId || !canAccess(channelId)) continue;
+        const snapshot = thread.view.snapshot();
+        for (const row of [snapshot.root, ...snapshot.replies, snapshot.target])
+          if (row) rows.set(row.id, row);
+      }
+      return [...rows.values()];
+    },
     notify,
   });
   const activityStatus = (): NonNullable<ChannelList["activityStatus"]> => {
@@ -1372,6 +1421,7 @@ export function createRelaySession(
     memberAdditions,
     presence,
     viewer: transport?.viewer,
+    relayAuthor: transport?.relayAuthor,
     authorizeAgentLog: transport?.authorizeAgentLog,
     scope: readScope,
     /** Verified new live-route messages, after reconciliation. Never history or local intent. */
@@ -1611,6 +1661,7 @@ export function createRelaySession(
         }
       : undefined,
     channelLifecycle: lifecycle.capability,
+    channelDetails: details.capability,
     agentActivity: activity.queries,
     agentMemories: memories.capability,
     archives: archives.queries,
@@ -1779,12 +1830,13 @@ export function createRelaySession(
   }
   const updateInterests = () => {
     if (closed) return;
+    const joined = channels.queries
+      .list()
+      .channels.filter((channel) => !channel.cached)
+      .map((channel) => channel.id);
     const ids = [
       ...new Set([
-        ...channels.queries
-          .list()
-          .channels.filter((channel) => !channel.cached)
-          .map((channel) => channel.id),
+        ...joined,
         ...channels
           .demandedChannels()
           .filter(
@@ -1797,7 +1849,7 @@ export function createRelaySession(
     for (const id of catchups.keys()) if (!wanted.has(id)) catchups.delete(id);
     try {
       traffic?.prioritize?.(channels.demandedChannels());
-      traffic?.update(ids);
+      traffic?.update(ids, joined);
     } catch (error) {
       liveSnapshot = { ...liveSnapshot, status: "error", error: String(error) };
     }
@@ -2081,21 +2133,29 @@ export function createRelaySession(
         }
         return;
       }
-      if (!channels.canAccess(channelId)) return;
-      for (const thread of threads)
-        if (thread.channelId === channelId) void thread.view.refresh();
-      const job = {
-        generation: liveGeneration,
-        state: "pending" as "pending" | "verified" | "deferred" | "error",
-        error: undefined as string | undefined,
-      };
-      channels.staleHead(channelId);
-      catchups.set(channelId, job);
-      if (channels.retainedChannels().includes(channelId))
-        catchupQueue.add(channelId);
-      else job.state = "deferred";
+      for (const id of typeof channelId === "string"
+        ? [channelId]
+        : channelId) {
+        if (!channels.canAccess(id)) continue;
+        for (const thread of threads)
+          if (thread.channelId === id) void thread.view.refresh();
+        const job = {
+          generation: liveGeneration,
+          state: "pending" as "pending" | "verified" | "deferred" | "error",
+          error: undefined as string | undefined,
+        };
+        channels.staleHead(id);
+        catchups.set(id, job);
+        if (channels.retainedChannels().includes(id)) catchupQueue.add(id);
+        else job.state = "deferred";
+      }
       publishLive();
       queueMicrotask(() => void catchUpNext());
+    },
+    recover() {
+      if (closed) return;
+      refreshRoster();
+      unread.reconnect();
     },
     denied(channelId, reason) {
       if (!closed) channels.denyChannel(channelId, new Error(reason));
@@ -2123,6 +2183,7 @@ export function createRelaySession(
         sidebarPreferences.clear();
         channelKit.clear();
         lifecycle.clear();
+        details.clear();
         // New windows must not yield to or receive errors from retired owners.
         catchups.clear();
         catchupQueue.clear();
@@ -2152,6 +2213,7 @@ export function createRelaySession(
       presence.dispose();
       sidebarPreferences.dispose();
       lifecycle.dispose();
+      details.dispose();
       stopInterests();
       stopWarmPreferences();
       traffic?.dispose();

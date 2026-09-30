@@ -98,9 +98,14 @@ test("reload restores the selected conversation/groups before handshake and upda
     await expect(
       page.getByText("Loading your sidebar…", { exact: true }),
     ).toHaveCount(0);
-    await expect(page.getByText("Reconnecting…")).toBeVisible();
+    await expect(page.getByText("Reconnecting…")).toHaveCount(0);
     await expect(composer).toBeDisabled();
     await expect(composer).toHaveText("Keep this draft");
+    await expect(
+      page
+        .getByRole("alert")
+        .filter({ hasText: "Unread channel visit expired" }),
+    ).toHaveCount(0);
     const placeholder = history.locator(
       '[class*="attachmentImage"][aria-hidden="true"]',
     );
@@ -581,13 +586,19 @@ test.describe("pending startup navigation", () => {
         }),
     );
     const gate = held();
+    let requested = false;
     await page.route("**/api/relay/*/session", async (route) => {
+      requested = true;
       await gate.promise;
       await route.fallback();
     });
     try {
       await page.reload({ waitUntil: "domcontentloaded" });
-      await expect(page.getByText("Reconnecting…")).toBeVisible();
+      await expect.poll(() => requested).toBe(true);
+      await expect(
+        page.getByRole("button", { name: "Alpha", exact: true }),
+      ).toBeVisible();
+      await expect(page.getByText("Reconnecting…")).toHaveCount(0);
       await page.evaluate((viewer) => {
         window.startupNavigation = undefined;
         void window.fixtureNavigation

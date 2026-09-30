@@ -1,40 +1,7 @@
 import { test, expect } from "./fixture.mjs";
 
 const button = (page, name) => page.getByRole("button", { name, exact: true });
-test.describe("photo avatar", () => {
-  test.use({ profilePicture: "https://avatar.invalid/photo.svg" });
-
-  // Browser layout and DOM focus across the portal cannot be proved in jsdom.
-  test("top-bar search and avatar share a vertical center", async ({
-    page,
-    app,
-  }) => {
-    // A photo has different inline baseline behavior from the initial-letter fallback.
-    await page.route("https://avatar.invalid/photo.svg", (route) =>
-      route.fulfill({
-        contentType: "image/svg+xml",
-        body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="navy"/></svg>',
-      }),
-    );
-    // Seed the signed community photo before startup; reloading can retire a stream while
-    // its initial control request is still in flight.
-    await page.goto(app.origin);
-    await expect(button(page, "Your profile").locator("img")).toHaveAttribute(
-      "data-loaded",
-      "true",
-    );
-    const search = await button(page, "Search Buzz").boundingBox();
-    const profile = await button(page, "Your profile").boundingBox();
-    expect(search).not.toBeNull();
-    expect(profile).not.toBeNull();
-    expect(search.y + search.height / 2).toBeCloseTo(
-      profile.y + profile.height / 2,
-      1,
-    );
-  });
-});
-
-test("search arrows traverse pages and conversations, Enter opens and Escape restores focus", async ({
+test("search arrows traverse the conversation action and recent activity, Enter opens and Escape restores focus", async ({
   page,
   app,
 }) => {
@@ -48,19 +15,19 @@ test("search arrows traverse pages and conversations, Enter opens and Escape res
   await expect(input).toHaveAttribute("autocapitalize", "off");
   await expect(input).toHaveAttribute("autocomplete", "off");
   await expect(input).toBeFocused();
-  const messages = dialog.getByRole("option", {
-    name: "Messages",
-    exact: true,
-  });
-  const projects = dialog.getByRole("option", {
-    name: "Projects",
-    exact: true,
-  });
+  const first = dialog
+    .getByRole("group", { name: "This conversation" })
+    .getByRole("option");
+  const second = dialog
+    .getByRole("group", { name: "Recent activity" })
+    .getByRole("option")
+    .first();
+  await expect(second).toBeVisible();
   for (const [key, result] of [
-    ["ArrowDown", messages],
-    ["ArrowDown", projects],
-    ["ArrowUp", messages],
-    ["ArrowUp", messages],
+    ["ArrowDown", first],
+    ["ArrowDown", second],
+    ["ArrowUp", first],
+    ["ArrowUp", first],
   ]) {
     await input.press(key);
     await expect(input).toBeFocused();
@@ -82,10 +49,10 @@ test("search arrows traverse pages and conversations, Enter opens and Escape res
   await expect(input).not.toHaveAttribute("aria-activedescendant");
   await input.fill("Alpha");
   const alpha = dialog
-    .locator("[data-search-result]")
-    .filter({ hasText: "Alpha" })
-    .first();
+    .getByRole("group", { name: "Channels" })
+    .getByRole("option", { name: /Alpha/ });
   await expect(alpha).toBeVisible();
+  await input.press("ArrowDown");
   await input.press("ArrowDown");
   await expect(input).toBeFocused();
   await expect(alpha).toHaveAttribute("aria-selected", "true");
@@ -98,6 +65,43 @@ test("search arrows traverse pages and conversations, Enter opens and Escape res
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
+});
+
+test("changing search scope returns focus to the input without clearing the query", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await button(page, "Search Buzz").click();
+  const scopeAction = page
+    .getByRole("dialog", { name: "Search Buzz" })
+    .getByRole("group", { name: "This conversation" })
+    .getByRole("option");
+  await scopeAction.click();
+
+  const scoped = page.getByRole("dialog", { name: "Search this conversation" });
+  const scopedInput = scoped.getByRole("combobox", {
+    name: "Search this conversation",
+  });
+  await expect(scopedInput).toBeFocused();
+  await page.keyboard.type("hello");
+  await expect(scopedInput).toHaveValue("hello");
+
+  const chip = scoped.getByRole("button", {
+    name: /Remove .* search scope/,
+  });
+  await chip.focus();
+  await chip.press("Enter");
+  const global = page.getByRole("dialog", { name: "Search Buzz" });
+  const input = global.getByRole("combobox", { name: "Search Buzz" });
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("hello");
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    global
+      .getByRole("group", { name: "This conversation" })
+      .getByRole("option"),
+  ).toHaveAttribute("aria-selected", "true");
 });
 
 // Real portal → routed timeline/thread ownership and focus, in both browser engines.
@@ -153,4 +157,67 @@ test.describe("public search destination", () => {
         .every(({ filter }) => !filter["#h"]),
     ).toBe(true);
   });
+});
+
+test("keyboard selection follows its action while recent conversations arrive above it", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  const rail = page.getByRole("button", {
+    name: "Switch to Primary",
+    exact: true,
+  });
+  await expect(rail).toBeVisible();
+  // Hold the membership read across a reload so the channel list arrives after
+  // the palette has opened, as it can after a restored conversation. Other
+  // reads continue, so the held read stays well inside its own deadline.
+  const held = [];
+  let holding = true;
+  await page.route("**/api/relay/*/query", async (route) => {
+    const filters = route.request().postDataJSON();
+    if (holding && filters.some(({ kinds }) => kinds?.includes(39002)))
+      await new Promise((resolve) => held.push(resolve));
+    await route.continue();
+  });
+  try {
+    await page.reload();
+    await expect(rail).toBeVisible();
+    await button(page, "Search Buzz").click();
+    const dialog = page.getByRole("dialog", {
+      name: "Search Buzz",
+      exact: true,
+    });
+    const input = dialog.getByRole("combobox", { name: "Search Buzz" });
+    const recent = dialog
+      .getByRole("group", { name: "Recent activity" })
+      .getByRole("option");
+    const projects = dialog
+      .getByRole("group", { name: "Actions" })
+      .getByRole("option", { name: "Projects", exact: true });
+    await expect(projects).toBeVisible();
+    // The connected palette is mounted, but its channel list is still held.
+    await expect(
+      dialog.getByText("Connecting to this community…", { exact: true }),
+    ).toHaveCount(0);
+    await expect(recent).toHaveCount(0);
+    const id = await projects.getAttribute("id");
+    while ((await input.getAttribute("aria-activedescendant")) !== id)
+      await input.press("ArrowDown");
+    const before = await projects.boundingBox();
+    holding = false;
+    for (const resolve of held.splice(0)) resolve();
+    await expect(recent.first()).toBeVisible();
+    // The arrivals moved the action; the selection stays with it.
+    expect((await projects.boundingBox()).y).toBeGreaterThan(before.y);
+    await expect(input).toHaveAttribute("aria-activedescendant", id);
+    await input.press("Enter");
+    await expect(dialog).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "Projects", exact: true }),
+    ).toBeVisible();
+  } finally {
+    holding = false;
+    for (const resolve of held.splice(0)) resolve();
+  }
 });

@@ -121,6 +121,10 @@ impl RuntimeBundle {
             .env("BUZZ_ACP_IDLE_POOL_SLEEP", "900")
             .env("BUZZ_ACP_SUBSCRIBE", "mentions")
             .env("BUZZ_ACP_RESPOND_TO", respond_to)
+            .env(
+                "BUZZ_ACP_SESSION_POLICY",
+                agent.session_policy.unwrap_or_default().as_str(),
+            )
             .env("BUZZ_ACP_DEDUP", "queue")
             .env("BUZZ_ACP_MULTIPLE_EVENT_HANDLING", "steer")
             .env("BUZZ_ACP_MCP_COMMAND", self.executable("buzz-dev-mcp")?)
@@ -180,7 +184,7 @@ impl RuntimeBundle {
                 command.env(env, n.to_string());
             }
         }
-        if let Some(effort) = record["effort_level"].as_str() {
+        if let Some(effort) = crate::agent_defaults::effort(agent) {
             command.env("BUZZ_ACP_EFFORT_LEVEL", effort);
         }
         Ok(command)
@@ -230,6 +234,26 @@ fn databricks_with_defaults(
     settings.validate()?;
     Ok(Some(settings))
 }
+/// App-owned npm shims and the pinned Node binary are separate from user-global tools.
+/// `app_data` is Tauri's resolved app-data directory, never browser input.
+pub fn managed_tool(app_data: &Path, name: &str) -> Option<PathBuf> {
+    let path = match name {
+        "pi" | "buzz-pi-acp" => app_data.join("node-tools/bin").join(name),
+        "node" => app_data.join("runtimes/node/v24.18.0").join(
+            match (std::env::consts::OS, std::env::consts::ARCH) {
+                ("macos", "aarch64") => "darwin-arm64/bin/node",
+                ("macos", "x86_64") => "darwin-x64/bin/node",
+                ("linux", "aarch64") => "linux-arm64/bin/node",
+                ("linux", "x86_64") => "linux-x64/bin/node",
+                _ => return None,
+            },
+        ),
+        _ => return None,
+    };
+    executable(&path).ok()?;
+    Some(path)
+}
+
 pub fn installed(name: &str) -> Option<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
@@ -298,10 +322,12 @@ pub struct ModelContext {
     pub filter: Option<String>,
     pub model_overridden: bool,
 }
-/// Native-only Goose catalog context; environment values never enter a snapshot.
+/// Native-only Goose model context; environment values never enter a snapshot.
 pub struct GooseModelContext {
     pub command: PathBuf,
+    pub workspace: PathBuf,
     pub provider_id: String,
+    pub model_id: String,
     pub environment: BTreeMap<String, String>,
     pub model_overridden: bool,
 }
@@ -330,16 +356,19 @@ impl Controller {
         }
     }
     pub fn snapshot(&mut self) -> Result<ControlSnapshot> {
-        let saved = self.store.agents()?;
+        let (saved, parked) = self.store.inventory()?;
+        let defaults = self.store.defaults()?;
         let command = |name| {
-            let path = self.bundle.as_ref().ok()?.executable(name).ok()?;
+            let path = self.bundle.as_ref().ok()?.display_path(name)?;
             Some(path.to_string_lossy().into_owned())
         };
         let (acp_command, mcp_command) = (command("buzz-acp"), command("buzz-dev-mcp"));
         let mut snapshot = ControlSnapshot {
-            agents: saved.iter().map(Agent::view).collect(),
+            agents: saved.iter().map(|a| a.view(&defaults)).collect(),
+            parked,
             runtime_available: self.bundle.is_ok(),
             runtime_message: self.bundle.as_ref().err().cloned(),
+            default_settings: defaults.view(),
         };
         for (saved, agent) in saved.iter().zip(&mut snapshot.agents) {
             agent.acp_command.clone_from(&acp_command);
@@ -349,9 +378,12 @@ impl Controller {
                     Ok(true) => {
                         agent.status = ProcessStatus::Running;
                         agent.running_revision = Some(run.revision);
+                        // Effective settings, so inherited default changes count.
                         agent.restart_diff = crate::restart::diff(
                             &run.spawned,
-                            &crate::restart::spawn_config(saved),
+                            &crate::restart::spawn_config(&crate::agent_defaults::effective(
+                                saved, &defaults,
+                            )),
                         );
                     }
                     Ok(false) => {
@@ -393,7 +425,10 @@ impl Controller {
             );
         }
         agent.apply(edit)?;
-        Ok(agent)
+        Ok(crate::agent_defaults::effective(
+            &agent,
+            &self.store.defaults()?,
+        ))
     }
     pub fn model_context(&self, id: &str, revision: u64, edit: AgentEdit) -> Result<ModelContext> {
         let agent = self.edited_agent(id, revision, edit)?;
@@ -406,7 +441,7 @@ impl Controller {
         edit: AgentEdit,
     ) -> Result<GooseModelContext> {
         let agent = self.edited_agent(id, revision, edit)?;
-        goose_model_context(&agent.harness, &agent.environment)
+        goose_model_context(&agent.harness, &agent.workspace, &agent.environment)
     }
     pub fn pi_model_context(
         &self,
@@ -417,6 +452,20 @@ impl Controller {
         let agent = self.edited_agent(id, revision, edit)?;
         crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment)
     }
+    /// Resolve unsaved Create drafts against the same native defaults as a saved start.
+    pub fn effective_draft(&self, mut edit: AgentEdit) -> Result<AgentEdit> {
+        let mut environment = draft_environment(edit.environment);
+        crate::agent_defaults::effective_settings(
+            &mut edit.harness,
+            &mut environment,
+            &self.store.defaults()?,
+        );
+        edit.environment = environment
+            .into_iter()
+            .map(|(key, value)| (key, Some(value)))
+            .collect();
+        Ok(edit)
+    }
     pub fn draft_pi_model_context(edit: AgentEdit) -> Result<crate::pi::PiContext> {
         crate::pi::PiContext::new(
             &edit.harness,
@@ -426,7 +475,7 @@ impl Controller {
     }
     pub fn draft_goose_model_context(edit: AgentEdit) -> Result<GooseModelContext> {
         let environment = draft_environment(edit.environment);
-        goose_model_context(&edit.harness, &environment)
+        goose_model_context(&edit.harness, &edit.workspace, &environment)
     }
     pub fn draft_model_context(edit: AgentEdit) -> Result<ModelContext> {
         let environment = draft_environment(edit.environment);
@@ -443,6 +492,14 @@ impl Controller {
             agent.extra.get("nativeCreated") != Some(&serde_json::Value::Bool(true))
                 || !agent.imported.is_null(),
         )
+    }
+    pub fn use_here(
+        &mut self,
+        id: &str,
+        resolution: crate::CommunityResolution,
+    ) -> Result<ControlSnapshot> {
+        self.store.use_here(id, resolution)?;
+        self.snapshot()
     }
     pub fn prepare_import(
         &self,
@@ -503,13 +560,57 @@ impl Controller {
         self.store.save(id, revision, edit)?;
         self.snapshot()
     }
-    pub fn delete(&mut self, id: &str, revision: u64) -> Result<ControlSnapshot> {
-        let agent = self
+    /// Native-only Agent defaults `DATABRICKS_HOST`, for Disconnect recovery of
+    /// an inherited workspace the renderer never sees. Never serialized.
+    pub fn inherited_workspace(&self) -> Result<Option<String>> {
+        Ok(self
+            .store
+            .defaults()?
+            .environment
+            .get("DATABRICKS_HOST")
+            .cloned())
+    }
+    pub fn save_defaults(&mut self, edit: crate::AgentDefaultsEdit) -> Result<ControlSnapshot> {
+        let mut defaults = self.store.defaults()?;
+        defaults.apply(edit)?;
+        self.store.save_defaults(&defaults)?;
+        self.snapshot()
+    }
+    /// Effective launch settings of each live agent, for restart-on-save. Values
+    /// stay native; callers compare before/after a save.
+    pub fn running_settings(&mut self) -> Result<BTreeMap<String, serde_json::Value>> {
+        let defaults = self.store.defaults()?;
+        let live: Vec<_> = self
+            .snapshot()?
+            .agents
+            .into_iter()
+            .filter(|a| a.enabled && a.status == ProcessStatus::Running)
+            .map(|a| a.id)
+            .collect();
+        Ok(self
             .store
             .agents()?
-            .into_iter()
+            .iter()
+            .filter(|a| live.contains(&a.id))
+            .map(|a| {
+                let effective = crate::agent_defaults::effective(a, &defaults);
+                (a.id.clone(), crate::restart::spawn_config(&effective))
+            })
+            .collect())
+    }
+    pub fn delete(&mut self, id: &str, revision: u64) -> Result<ControlSnapshot> {
+        let agents = self.store.agents()?;
+        let agent = agents
+            .iter()
             .find(|agent| agent.id == id)
+            .cloned()
             .ok_or("Agent no longer exists")?;
+        // Use here setups of one identity share its key; keep it for the others.
+        let shared = agents.iter().any(|other| {
+            other.id != agent.id
+                && other.credential_id == agent.credential_id
+                && other.pubkey == agent.pubkey
+        });
         if agent.revision != revision {
             return Err("Agent settings changed. Reload before deleting".into());
         }
@@ -521,8 +622,10 @@ impl Controller {
         self.store.enabled(id, false)?;
         // A failed settings write leaves the card available for an explicit retry.
         // Credential deletion is idempotent, so that retry can finish cleanup.
-        self.credentials
-            .delete(&agent.credential_id, &agent.pubkey)?;
+        if !shared {
+            self.credentials
+                .delete(&agent.credential_id, &agent.pubkey)?;
+        }
         self.store.remove(id, revision)?;
         self.errors.remove(id);
         self.snapshot()
@@ -572,7 +675,7 @@ impl Controller {
             .store
             .agents()?
             .into_iter()
-            .filter(Agent::starts_on_launch)
+            .filter(|a| a.starts_on_launch() && a.configured())
         {
             // Like the host restore, a launch preference is a Start: it enables.
             if let Err(error) = self
@@ -592,10 +695,15 @@ impl Controller {
             .into_iter()
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
+        let agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);
+        if !agent.configured() {
+            return Err("Choose Use here before opening this identity’s credentials".into());
+        }
         let workspace = effective_databricks(&agent)?.map(|s| s.host);
         self.bundle.as_ref().map_err(Clone::clone)?;
         Ok((agent.credential_id, agent.pubkey, agent.revision, workspace))
     }
+    /// Record the action outcome; the native host projects one final snapshot.
     pub fn action_with_key(
         &mut self,
         id: &str,
@@ -603,7 +711,7 @@ impl Controller {
         revision: u64,
         key: &crate::Secret,
         replay_floor: Option<u64>,
-    ) -> Result<ControlSnapshot> {
+    ) -> Result<()> {
         if self.credential_request(id)?.2 != revision {
             return Err("Saved settings changed while opening credentials; retry Start".into());
         }
@@ -611,7 +719,7 @@ impl Controller {
         if matches!(action, Action::Restart) {
             if let Err(error) = self.stop(id) {
                 self.errors.insert(id.into(), error);
-                return self.snapshot();
+                return Ok(());
             }
         }
         match self.start_with_key(id, Some(key), replay_floor) {
@@ -622,7 +730,7 @@ impl Controller {
                 self.errors.insert(id.into(), error);
             }
         }
-        self.snapshot()
+        Ok(())
     }
     pub fn record_error(&mut self, id: &str, error: String) {
         self.errors.insert(id.into(), error);
@@ -632,7 +740,7 @@ impl Controller {
             .store
             .agents()?
             .into_iter()
-            .filter(Agent::starts_on_launch)
+            .filter(|a| a.starts_on_launch() && a.configured())
             .map(|a| a.id)
             .collect())
     }
@@ -657,9 +765,14 @@ impl Controller {
             .into_iter()
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
+        if !agent.configured() {
+            return Err("Choose Use here before starting this imported identity".into());
+        }
         if !agent.enabled {
             return Err("Agent is disabled".into());
         }
+        // Blank fields inherit agent defaults at each start; never saved back.
+        let agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);
         let bundle = self.bundle.as_ref().map_err(Clone::clone)?;
         #[cfg(not(unix))]
         let ownership = crate::ownership::Ownership::acquire(&self.ownership_root, &agent.id)?;
@@ -841,6 +954,7 @@ fn model_context_with_defaults(
 
 fn goose_model_context(
     harness: &crate::HarnessEdit,
+    workspace: &str,
     environment: &BTreeMap<String, String>,
 ) -> Result<GooseModelContext> {
     crate::config::validate_environment(environment)?;
@@ -858,7 +972,12 @@ fn goose_model_context(
     }
     Ok(GooseModelContext {
         command,
+        workspace: workspace.into(),
         provider_id: provider.clone(),
+        model_id: environment
+            .get("GOOSE_MODEL")
+            .unwrap_or(&harness.model)
+            .clone(),
         environment: environment.clone(),
         model_overridden: environment.contains_key("GOOSE_MODEL"),
     })

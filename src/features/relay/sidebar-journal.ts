@@ -8,13 +8,16 @@ export type UnreadTarget =
   | { kind: "channel"; channelId: string }
   | { kind: "thread"; channelId: string; rootId: string }
   | { kind: "message"; channelId: string; messageId: string };
-export const unreadTargetKey = (target: UnreadTarget) =>
+export type SidebarManualTarget =
+  | UnreadTarget
+  | { kind: "message-force"; channelId: string };
+export const unreadTargetKey = (target: SidebarManualTarget) =>
   `${target.channelId}:${target.kind}:${target.kind === "thread" ? target.rootId : target.kind === "message" ? target.messageId : ""}`;
 export type AnchoredRead = { intent: ReadIntent; createdAt: number };
 export type PendingRead = AnchoredRead & { id: string };
 export type SidebarJournal = {
   pending: PendingRead[];
-  manual: UnreadTarget[];
+  manual: SidebarManualTarget[];
 };
 export interface SidebarStorage {
   /** Strict, cross-window atomic transaction. No remote side effects inside change. */
@@ -55,7 +58,10 @@ function validate(value: SidebarJournal): SidebarJournal {
     sidebarOperation({ type: "write", intents: [p.intent] });
   }
   for (const t of value.manual) {
-    if (!t || !["channel", "thread", "message"].includes(t.kind))
+    if (
+      !t ||
+      !["channel", "thread", "message", "message-force"].includes(t.kind)
+    )
       throw new Error("Invalid manual unread");
     sidebarOperation({
       type: "contexts",
@@ -80,6 +86,9 @@ function validate(value: SidebarJournal): SidebarJournal {
 function dominates(a: AnchoredRead, b: AnchoredRead) {
   const x = a.intent,
     y = b.intent;
+  // A discrete snapshot is never a context prefix, in either direction.
+  if (x.type === "mark_messages_read" || y.type === "mark_messages_read")
+    return false;
   const channel = (i: ReadIntent) =>
     i.type === "mark_through" ? i.target.channel_id : i.channel_id;
   return (
@@ -190,12 +199,12 @@ export function createSidebarJournal(
   return {
     snapshot: () => current,
     reload: () => update((j) => j),
-    manual: (target: UnreadTarget) =>
+    manual: (target: SidebarManualTarget) =>
       current.manual.some(
         (t) => unreadTargetKey(t) === unreadTargetKey(target),
       ),
     async markUnread(
-      target: UnreadTarget,
+      target: SidebarManualTarget,
       valid: () => boolean,
     ): Promise<ReadMutationResult> {
       const operationId = crypto.randomUUID();
@@ -215,7 +224,7 @@ export function createSidebarJournal(
     },
     async enqueue(
       intents: AnchoredRead[],
-      clear: (target: UnreadTarget) => boolean,
+      clear: (target: SidebarManualTarget) => boolean,
       valid: () => boolean,
     ): Promise<ReadMutationResult> {
       const pending = intents.map((anchor) => ({

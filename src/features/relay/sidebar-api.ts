@@ -6,7 +6,9 @@ export type ReadCount =
 export type ReadTarget = { channel_id: string; root_id?: string };
 export type ReadIntent =
   | { type: "mark_through"; target: ReadTarget; message_id: string }
-  | { type: "mark_channel_read"; channel_id: string; message_id: string };
+  | { type: "mark_channel_read"; channel_id: string; message_id: string }
+  | { type: "mark_messages_read"; channel_id: string; message_ids: string[] };
+export const MAX_MESSAGE_READS = 2000;
 export type ContextQuery = { target: ReadTarget; message_ids: string[] };
 export type ReadAccount = {
   retention_seconds: number;
@@ -198,17 +200,32 @@ export function sidebarOperation(value: unknown): {
       100,
       (v) =>
         record(v) &&
-        id(v.message_id) &&
-        (v.type === "mark_through"
-          ? keys(v, ["type", "target", "message_id"]) && target(v.target)
-          : v.type === "mark_channel_read" &&
-            keys(v, ["type", "channel_id", "message_id"]) &&
-            uuid(v.channel_id)),
+        (v.type === "mark_messages_read"
+          ? keys(v, ["type", "channel_id", "message_ids"]) &&
+            uuid(v.channel_id) &&
+            array(v.message_ids, MAX_MESSAGE_READS, id) &&
+            v.message_ids.length > 0 &&
+            unique(v.message_ids)
+          : id(v.message_id) &&
+            (v.type === "mark_through"
+              ? keys(v, ["type", "target", "message_id"]) && target(v.target)
+              : v.type === "mark_channel_read" &&
+                keys(v, ["type", "channel_id", "message_id"]) &&
+                uuid(v.channel_id))),
     ) &&
     value.intents.length
   ) {
     const body = JSON.stringify({ intents: value.intents });
-    if (new TextEncoder().encode(body).length <= 65536)
+    const messageReads = (value.intents as ReadIntent[]).reduce(
+      (n, intent) =>
+        n +
+        (intent.type === "mark_messages_read" ? intent.message_ids.length : 0),
+      0,
+    );
+    if (
+      messageReads <= MAX_MESSAGE_READS &&
+      new TextEncoder().encode(body).length <= 256 * 1024
+    )
       return { path: "/buzz/v1/me/read-state", method: "POST", body };
   }
   throw new Error("Invalid sidebar operation");
@@ -224,7 +241,8 @@ export function supportsSidebarApi(v: unknown): boolean {
     v.max_intents === 100 &&
     v.max_contexts === 20 &&
     v.max_context_messages === 100 &&
-    v.max_thread_summaries === 5
+    v.max_thread_summaries === 5 &&
+    v.max_message_reads === MAX_MESSAGE_READS
   );
 }
 

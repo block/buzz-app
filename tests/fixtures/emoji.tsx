@@ -1,3 +1,4 @@
+import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 // No broker, credentials or remote writes: real UI/session, ephemeral signed fixture events.
 import { Context } from "@deepseek-ai/cordis";
 import { createPluginManager } from "../../src/plugins/manager";
@@ -81,6 +82,7 @@ const sessions = ["a", "b"].map((community) => {
                     ["emoji", "nosource", `${origin}/media/no-source.png`],
                     ["emoji", "broken", `${origin}/media/broken.png`],
                     ["emoji", "grinning", `${origin}/media/grinning.png`],
+                    ["emoji", "enjoy", `${origin}/media/enjoy.png`],
                     ["emoji", "party-parrot", `${origin}/media/parrot.png`],
                     ["emoji", "party-parrot-wave", `${origin}/media/wave.png`],
                     [
@@ -398,4 +400,8 @@ function Fixture() {
 }
 const container = document.getElementById("root");
 if (!container) throw new Error("Missing fixture root");
-createRoot(container).render(<Fixture />);
+createRoot(container).render(
+  <ToastProvider>
+    <Fixture />
+  </ToastProvider>,
+);

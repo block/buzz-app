@@ -46,6 +46,36 @@ const EXCEPTIONS = new Map([
   ],
 ]);
 
+// Explicitly approved Blue 11 design tradeoff; see DESIGN.md § Link contrast.
+// Pin mode, both roles and both resolved colors. A different low-contrast color
+// must fail again; every unlisted role/surface keeps its normal target.
+const ACCEPTED_LINK_PAIRS = new Set([
+  "light --text-link #0d74ce on --affordance-selected #e8e8e8",
+  "light --text-link #0d74ce on --neutral-4 #dadada",
+  "dark --text-link #70b8ff on --surface-panel #1a1a1a",
+  "dark --text-link #70b8ff on --surface-popover #333333",
+  "dark --text-link #70b8ff on --affordance-subtle #333333",
+  "dark --text-link #70b8ff on --affordance-selected #333333",
+  "dark --text-link #70b8ff on --neutral-4 #232323",
+  "dark --text-link #70b8ff on --affordance-link-hover #0d2847",
+]);
+const acceptedLinkMeasurements = new Map();
+
+// Designer-approved removal of the Away outline; see DESIGN.md § Identity shapes.
+// Bind each exception to the exact mode, role, fill and surface color.
+const ACCEPTED_AWAY_PAIRS = new Set([
+  "light --status-away #ffba18 on --surface-base #f5f5f6",
+  "light --status-away #ffba18 on --surface-panel #ffffff",
+  "light --status-away #ffba18 on --surface-inset #f5f5f6",
+  "light --status-away #ffba18 on --surface-popover #ffffff",
+  "light --status-away #ffba18 on --affordance-selected #e8e8e8",
+  "light --status-away #ffba18 on --affordance-panel-hover #f5f5f6",
+  "light --status-away #ffba18 on --affordance-subtle-hover #efeff0",
+  "light --status-away #ffba18 on --affordance-floating-hover #e8e8e8",
+  "light --status-away #ffba18 on --neutral-4 #dadada",
+]);
+const acceptedAwayMeasurements = new Map();
+
 /** Roles measured at the meta target rather than the body target. */
 const META_ROLES = new Set(["--text-tertiary", "--text-metadata"]);
 
@@ -151,6 +181,8 @@ const BOUNDARY_ROLES = [
   "--border-danger",
   "--border-warning",
   "--status-online",
+  // Online retains its outline; Away now exposes the step-10 fill directly.
+  "--status-avatar-online-border",
   "--status-away",
   "--status-offline",
 ];
@@ -229,6 +261,14 @@ for (const [mode, map] of Object.entries(modes)) {
     const lc = Math.abs(apcaContrast(text, surface));
     const target = META_ROLES.has(textRole) ? TARGET_META : TARGET_BODY;
     if (lc >= target) return;
+    const linkPair = `${mode} ${textRole} ${text} on ${surfaceRole} ${surface}`;
+    if (ACCEPTED_LINK_PAIRS.has(linkPair)) {
+      acceptedLinkMeasurements.set(linkPair, {
+        lc,
+        wcag: wcagRatio(text, surface),
+      });
+      return;
+    }
     // Role-wide first, then the narrow `role on surface` form.
     if (EXCEPTIONS.has(textRole)) return;
     if (EXCEPTIONS.has(`${textRole} on ${surfaceRole}`)) {
@@ -253,17 +293,34 @@ for (const [mode, map] of Object.entries(modes)) {
   for (const [role, fill] of PAIRS) check(role, fill);
   for (const [text, tint] of TINT_PAIRS) check(text, tint);
   for (const role of BOUNDARY_ROLES) {
-    for (const surface of BOUNDARY_SURFACES) {
+    const surfaces =
+      role.startsWith("--status-avatar-") || role === "--status-away"
+        ? [
+            ...BOUNDARY_SURFACES,
+            "--affordance-selected",
+            "--affordance-panel-hover",
+            "--affordance-subtle-hover",
+            "--affordance-floating-hover",
+            "--neutral-4",
+          ]
+        : BOUNDARY_SURFACES;
+    for (const surface of surfaces) {
       const borderColor = resolve(map, role);
       const surfaceColor = resolve(map, surface);
       const ratio =
         borderColor && surfaceColor
           ? wcagRatio(borderColor, surfaceColor)
           : null;
-      if (ratio === null || ratio < 3)
+      const pair = `${mode} ${role} ${borderColor} on ${surface} ${surfaceColor}`;
+      if (ratio !== null && ratio < 3 && ACCEPTED_AWAY_PAIRS.has(pair)) {
+        acceptedAwayMeasurements.set(pair, ratio);
+        continue;
+      }
+      if (ratio === null || ratio < 3) {
         boundaryFailures.push(
           `${mode}: ${role} on ${surface} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
         );
+      }
     }
   }
 }
@@ -287,6 +344,32 @@ for (const [text, bg, expected] of REFERENCE) {
 if (skipped.length > 0) {
   console.log(`ℹ ${skipped.length} pairing(s) not measurable as flat colour:`);
   for (const s of skipped) console.log(`    ${s}`);
+}
+
+for (const [pair, { lc, wcag }] of acceptedLinkMeasurements) {
+  console.log(
+    `  (accepted link contrast) ${pair}: Lc ${lc.toFixed(3)} < ${TARGET_BODY}; WCAG ${wcag.toFixed(3)}:1 — approved Blue 11 tradeoff, not a contrast pass`,
+  );
+}
+const staleLinkPairs = [...ACCEPTED_LINK_PAIRS].filter(
+  (pair) => !acceptedLinkMeasurements.has(pair),
+);
+if (staleLinkPairs.length) {
+  console.log("ℹ Accepted link pairs no longer used — review and remove:");
+  for (const pair of staleLinkPairs) console.log(`  ${pair}`);
+}
+
+for (const [pair, ratio] of acceptedAwayMeasurements) {
+  console.log(
+    `  (accepted Away contrast) ${pair}: ${ratio.toFixed(3)}:1 < 3:1 — approved unoutlined badge, not a contrast pass`,
+  );
+}
+const staleAwayPairs = [...ACCEPTED_AWAY_PAIRS].filter(
+  (pair) => !acceptedAwayMeasurements.has(pair),
+);
+if (staleAwayPairs.length) {
+  console.log("ℹ Accepted Away pairs no longer used — review and remove:");
+  for (const pair of staleAwayPairs) console.log(`  ${pair}`);
 }
 
 if (boundaryFailures.length > 0) {
@@ -315,7 +398,7 @@ if (failures.length > 0) {
 
 if (boundaryFailures.length > 0) process.exit(1);
 console.log(
-  "✓ Contrast: text and control/state boundaries clear their targets in both modes",
+  "✓ Contrast: checked text and control/state boundaries in both modes; accepted exceptions are listed explicitly",
 );
 for (const [role, why] of EXCEPTIONS) {
   console.log(`  (exception) ${role} — ${why.split(";")[0]}`);

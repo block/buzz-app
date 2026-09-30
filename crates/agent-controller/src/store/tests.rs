@@ -12,7 +12,10 @@ pub(crate) fn fixture() -> Agent {
         relay_url,
         name: "Test Brain".into(),
         system_prompt: "Take over the test world".into(),
-        workspace: "/tmp".into(),
+        session_policy: None,
+        session_policy_inherit: false,
+        // Only validated/serialized here; never used to launch a harness.
+        workspace: std::env::current_dir().unwrap().to_str().unwrap().into(),
         harness: HarnessEdit {
             databricks: None,
             command: "buzz-agent".into(),
@@ -35,7 +38,9 @@ fn edit() -> AgentEdit {
         picture: None,
         name: "Edited Brain".into(),
         system_prompt: "New prompt".into(),
-        workspace: "/tmp".into(),
+        session_policy: Some(None),
+        // Only validated/serialized here; never used to launch a harness.
+        workspace: std::env::current_dir().unwrap().to_str().unwrap().into(),
         harness: fixture().harness,
         environment: BTreeMap::new(),
     }
@@ -145,7 +150,9 @@ fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
     let mut store = Store::open(dir.path().to_owned()).unwrap();
     let agent = fixture();
     store.insert(vec![agent.clone()]).unwrap();
-    store.save(&agent.id, 1, edit()).unwrap();
+    let mut update = edit();
+    update.session_policy = Some(Some(crate::config::SessionPolicy::Thread));
+    store.save(&agent.id, 1, update).unwrap();
     let stale = store.save(&agent.id, 1, edit()).unwrap_err();
     assert!(stale.contains("Reload"));
     let view = serde_json::to_string(&store.snapshot().unwrap()).unwrap();
@@ -160,6 +167,7 @@ fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
     }
     assert!(view.contains("TEST_TOKEN"));
     assert!(view.contains("Edited Brain"));
+    assert!(view.contains("\"sessionPolicy\":\"thread\""));
     assert_eq!(store.agents().unwrap()[0].revision, 2);
     let before = fs::read(store.path()).unwrap();
     assert!(Store::open(dir.path().to_owned()).is_err());
@@ -172,6 +180,10 @@ fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
     assert_eq!(saved.extra, agent.extra);
     assert_eq!(saved.auth_tag, agent.auth_tag);
     assert_eq!(saved.credential_id, agent.credential_id);
+    assert_eq!(
+        saved.session_policy,
+        Some(crate::config::SessionPolicy::Thread)
+    );
     let backup: Value =
         serde_json::from_slice(&fs::read(dir.path().join("agents.previous.json")).unwrap())
             .unwrap();
@@ -185,6 +197,56 @@ fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
         );
     }
 }
+#[test]
+fn explicitly_inheriting_context_can_replace_an_imported_policy() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let mut agent = fixture();
+    agent.imported = json!({"record": {"session_policy": "thread"}});
+    store.insert(vec![agent.clone()]).unwrap();
+    assert_eq!(
+        store.snapshot().unwrap().agents[0].session_policy,
+        Some(crate::config::SessionPolicy::Thread)
+    );
+    store.save(&agent.id, agent.revision, edit()).unwrap();
+    assert_eq!(store.snapshot().unwrap().agents[0].session_policy, None);
+    drop(store);
+    let saved = Store::open(dir.path().to_owned())
+        .unwrap()
+        .agents()
+        .unwrap()
+        .remove(0);
+    assert!(saved.session_policy_inherit);
+    assert_eq!(saved.selected_session_policy(), None);
+    assert_eq!(saved.imported, agent.imported);
+}
+
+#[test]
+fn an_omitted_ipc_policy_preserves_the_imported_choice_but_null_inherits() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let mut agent = fixture();
+    agent.imported = json!({"record": {"session_policy": "thread"}});
+    store.insert(vec![agent.clone()]).unwrap();
+    let mut payload = json!({
+        "name": "Renamed Brain",
+        "systemPrompt": agent.system_prompt,
+        "workspace": agent.workspace,
+        "harness": agent.harness,
+        "environment": {}
+    });
+    let omitted: AgentEdit = serde_json::from_value(payload.clone()).unwrap();
+    store.save(&agent.id, agent.revision, omitted).unwrap();
+    assert_eq!(
+        store.snapshot().unwrap().agents[0].session_policy,
+        Some(crate::config::SessionPolicy::Thread)
+    );
+    payload["sessionPolicy"] = Value::Null;
+    let inherit: AgentEdit = serde_json::from_value(payload).unwrap();
+    store.save(&agent.id, agent.revision + 1, inherit).unwrap();
+    assert_eq!(store.snapshot().unwrap().agents[0].session_policy, None);
+}
+
 #[test]
 fn remove_requires_current_revision_and_persists_absence() {
     let dir = tempfile::tempdir().unwrap();
@@ -391,4 +453,64 @@ fn invalid_avatar_and_stale_save_leave_persistent_bytes_unchanged() {
     update.picture = Some("https://images.example/new.png".into());
     assert!(store.save(&a.id, 0, update).is_err());
     assert_eq!(fs::read(store.path()).unwrap(), before);
+}
+
+#[test]
+fn agent_defaults_persist_owner_only_and_never_project_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("agent-controller");
+    let store = Store::open(root.clone()).unwrap();
+    assert_eq!(store.defaults().unwrap().harness, "buzz-agent");
+    let mut defaults = store.defaults().unwrap();
+    defaults.harness = "goose".into();
+    defaults.model = "global-model".into();
+    defaults.session_policy = crate::config::SessionPolicy::Thread;
+    defaults
+        .environment
+        .insert("API_TOKEN".into(), "secret-env-value".into());
+    store.save_defaults(&defaults).unwrap();
+    drop(store);
+    let store = Store::open(root.clone()).unwrap();
+    assert!(store.defaults().unwrap() == defaults);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(root.join("defaults.json"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    let snapshot = serde_json::to_string(&store.snapshot().unwrap()).unwrap();
+    assert!(snapshot.contains("\"sessionPolicy\":\"thread\""));
+    assert!(snapshot.contains("\"environmentKeys\":[\"API_TOKEN\"]"));
+    assert!(!snapshot.contains("secret-env-value"));
+    fs::write(root.join("defaults.json"), b"{not json").unwrap();
+    assert!(store.defaults().is_err());
+}
+
+#[test]
+fn oversized_defaults_are_rejected_before_replacing_the_usable_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().to_owned()).unwrap();
+    let mut defaults = store.defaults().unwrap();
+    defaults.model = "working-model".into();
+    store.save_defaults(&defaults).unwrap();
+    let original = fs::read(dir.path().join("defaults.json")).unwrap();
+
+    // Individual values are valid, but their combined JSON exceeds the read limit.
+    for index in 0..40 {
+        defaults
+            .environment
+            .insert(format!("TOKEN_{index}"), "x".repeat(32 * 1024));
+    }
+    assert_eq!(
+        store.save_defaults(&defaults).unwrap_err(),
+        "Agent defaults exceed the size limit"
+    );
+    assert_eq!(
+        fs::read(dir.path().join("defaults.json")).unwrap(),
+        original
+    );
+    assert_eq!(store.defaults().unwrap().model, "working-model");
 }

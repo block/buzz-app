@@ -69,7 +69,9 @@ need their own validation.
   Tauri's own `--port` is for its static-file server, not Vite. Without this flag,
   the adapter derives a stable port from the worktree path (the same derivation
   `just web` uses) and prints the chosen URL. Different paths can still collide.
-  All desktop builds use the `buzz` URL scheme. See [OS deep links](deep-links.md).
+  Ordinary desktop development runs do not claim the OS `buzz` URL scheme or the
+  packaged single-instance lock, so multiple worktrees can run at once. Packaged
+  and debug bundles still use `buzz`. See [OS deep links](deep-links.md).
   Desktop requires the exact port to be free; an occupied port fails rather than
   opening another copy's server. Other arguments, including runner/application arguments after `--`, pass
   through unchanged. Port configuration is prepended so Tauri parses it even with
@@ -123,8 +125,12 @@ isolated test buses, never use the desktop session bus or display real banners. 
 
 Installs run on every invocation to account for branch and lockfile changes.
 pnpm reuses its shared package cache; no node_modules directory needs to be copied
-into a new worktree. Native dependencies are fetched by Cargo as needed. Initial
-downloads and native compilation can take time. Parallel worktrees normally need
+into a new worktree. Native dependencies are fetched by Cargo as needed into the
+shared `~/.cargo`. Each worktree compiles into its own `target/`, overriding any
+user-level `target-dir`, so its app and bundled resources always match its sources;
+remove stale worktrees (or run `bin/cargo clean` in them) to reclaim that space.
+The pinned agent runtime is built once per clone and reused by worktrees with the
+same pin and toolchain. Native compilation still takes time in each new worktree. Parallel worktrees normally need
 no port flags: each derives a stable default from its path. Pass `--port` if paths
 collide, the default is occupied, or you run a second instance from one checkout;
 ports must be integers from 1 to 65535. Browser dev
@@ -320,11 +326,16 @@ the complete suite still runs with `pnpm test` / `just scan`:
   tests build Rust and install scaffold dependencies; they are intentionally CI-only
   rather than part of pre-push.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
-- **Browser journeys:** six runners (Chromium and WebKit, three file-level shards
+- **Browser journeys:** twelve runners (Chromium and WebKit, six file-level shards
   per engine), each with two workers. They start alongside measurements on separate
   runners; `CI required` still requires both lanes. Each runner builds the native
   plugin-manager fixture in a separately logged setup step before starting
-  Playwright. Its Rust cache is optional: a cache miss still builds the fixture,
+  Playwright. Browser jobs install the existing `bin/.rust-*.pkg` pin through
+  the runner's rustup with the minimal compiler/Cargo/standard-library profile,
+  avoiding Hermit's full Rust archive on cold runners. `HERMIT_PREPEND_PATH`
+  keeps that toolchain selected inside Hermit-launched pnpm/Node subprocesses;
+  native jobs retain Hermit's Rust, rustfmt and Clippy. The fixture's Rust cache
+  is optional: a cache miss still builds it,
   outside the browser subprocess timeout. No measurement is repeated on shards,
   and no retry hides a failure. Functional jobs also run when measurements fail:
   this spends more runner minutes for faster, independent feedback.
@@ -349,7 +360,8 @@ gh workflow run ci.yml --ref <branch>
 ```
 
 A manual dispatch runs only **Windows native validation**: the same pinned Rust,
-Clippy and complete Tauri-package tests, without repeating Linux/browser jobs.
+Clippy and complete Tauri, agent-controller and credential-store package tests,
+without repeating Linux/browser jobs.
 Windows failures do not block the automatic `CI required` check; a Linux pass
 is not Windows validation. The job does not exercise OS banner interaction or
 packaged-app acceptance.

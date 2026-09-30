@@ -42,6 +42,7 @@ import { createMessages } from "../../features/relay/messages";
 import type { Outbox } from "../../features/relay/outbox";
 import { MessageMarkdown } from "../../features/messages/MessageMarkdown";
 import { profileTarget } from "../../features/profiles/target";
+import { npubEncode } from "nostr-tools/nip19";
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -110,6 +111,7 @@ function setup(parent: boolean | null = true, archived = false) {
       subscribe: () => () => {},
       snapshot: () => 0,
       resolve: (_key: string, fallback: string) => fallback,
+      scope: () => () => undefined,
     },
     agentLibrary: library.queries,
     agentChoices: createAgentChoices({
@@ -245,7 +247,7 @@ it("focuses search on open and supports clear, Escape, and outside dismissal", a
   const search = screen.getByRole("searchbox", {
     name: "Search community people and agents",
   });
-  expect(search).toHaveFocus();
+  await waitFor(() => expect(search).toHaveFocus());
   await user.type(search, "no matching name");
   expect(screen.getByText("No matching channel members.")).toBeVisible();
   await user.click(
@@ -461,6 +463,70 @@ it.each([true, false, null])(
     await waitFor(() => expect(result?.items).toHaveLength(0));
     view.unmount();
     test.library.dispose();
+  },
+);
+
+it.each([
+  "Member prose",
+  "Member](nostr:npub1d6t84ajeg9skp2609l2k6axgcme8x7g7u7luj352r03hcwreg7lqnxcsex) whats your name",
+])(
+  "hides recovery UI for completed mention query %s while keeping valid-query recovery",
+  async (staleQuery) => {
+    const test = setup();
+    const choices = {
+      ...test.session.agentChoices.snapshot(),
+      status: "error" as const,
+      error: "Agent directory unavailable",
+      pending: false,
+    };
+    const session = {
+      ...test.session,
+      agentChoices: {
+        ...test.session.agentChoices,
+        snapshot: () => choices,
+      },
+    };
+    let result: CompletionResult | undefined;
+    const props = {
+      session,
+      scope: "test",
+      channelId: "parent",
+      observation: {
+        revision: 1,
+        text: `@${staleQuery}`,
+        start: staleQuery.length + 1,
+        end: staleQuery.length + 1,
+      },
+      query: { start: 0, end: staleQuery.length + 1, query: staleQuery },
+      publish: (next: CompletionResult) => {
+        result = next;
+        return () => {};
+      },
+    };
+    const view = render(<MentionCompletion {...props} />);
+    try {
+      // Community lookup now owns an asynchronous loading state. Only its
+      // completed empty result can refute prose and retire unrelated recovery.
+      await waitFor(() => expect(result?.status).toBeUndefined());
+      expect(result?.items).toHaveLength(0);
+      expect(result?.retry).toBeUndefined();
+
+      view.rerender(
+        <MentionCompletion
+          {...props}
+          observation={{ revision: 2, text: "@Mem", start: 4, end: 4 }}
+          query={{ start: 0, end: 4, query: "Mem" }}
+        />,
+      );
+      await waitFor(() =>
+        expect(result?.status).toBe("Could not load agents. Retry to refresh."),
+      );
+      expect(result?.items).toHaveLength(1);
+      expect(result?.retry).toEqual(expect.any(Function));
+    } finally {
+      view.unmount();
+      test.library.dispose();
+    }
   },
 );
 
@@ -1632,6 +1698,10 @@ it("uses base matches and visible lexical ties for Fizz in both chooser surfaces
     names: {
       ...names,
       resolve: (key: string) => rows.find((row) => row.key === key)?.label,
+      scope: () => (key: string) => {
+        const name = rows.find((row) => row.key === key)?.label;
+        return name ? { name, source: "agent-directory" as const } : undefined;
+      },
     },
   } satisfies RelaySession;
   const expected = [rows[5], rows[4], rows[1], rows[2], rows[3], rows[0]].map(
@@ -1887,3 +1957,155 @@ it("the persistent toolbar picker reads an empty search again after close and re
   );
   t.library.dispose();
 });
+
+it("names the choice set only while the picker is shown, and qualifies namesakes in both menus", async () => {
+  const t = setup();
+  const member = "a".repeat(64),
+    namesake = "c".repeat(64);
+  const profiles = new Map([
+    [member, { name: "Larry" }],
+    [namesake, { name: "Larry" }],
+  ]);
+  const list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "parent",
+        name: "Parent",
+        channelType: "stream" as const,
+        members: [member, namesake],
+      },
+    ],
+  };
+  const session = {
+    ...t.session,
+    profiles: { ...t.session.profiles, snapshot: () => profiles },
+    channels: { ...t.session.channels, list: () => list },
+  };
+  const names = bindNames(
+    { profiles: session.profiles, agentLibrary: t.library.queries },
+    { snapshot: () => [createAgentDirectory()], subscribe: () => () => {} },
+  );
+  const scope = vi.spyOn(names, "scope");
+  const labels = [member, namesake].map(
+    (key) => `Larry · ${npubEncode(key).slice(-4)}`,
+  );
+  const picker = (disabled: boolean) => (
+    <MentionPicker
+      scope="test"
+      session={{ ...session, names }}
+      channelId="parent"
+      disabled={disabled}
+      select={() => true}
+    />
+  );
+  const view = render(picker(false));
+  view.rerender(picker(false));
+  expect(scope).not.toHaveBeenCalled();
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Mention a member" }));
+  for (const [index, key] of [member, namesake].entries())
+    expect(
+      await screen.findByRole("button", { name: `${labels[index]} ${key}` }),
+    ).toBeInTheDocument();
+  view.rerender(picker(true));
+  scope.mockClear();
+  view.rerender(picker(true));
+  expect(scope).not.toHaveBeenCalled();
+  view.unmount();
+  const publish = vi.fn();
+  render(
+    <MentionCompletion
+      session={{ ...session, names }}
+      scope="test"
+      channelId="parent"
+      observation={{ revision: 1, text: "@Larry", start: 6, end: 6 }}
+      query={{ start: 0, end: 6, query: "Larry" }}
+      publish={publish}
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items
+        .map((item) => item.label)
+        .sort(),
+    ).toEqual([...labels].sort()),
+  );
+  names.dispose();
+  t.library.dispose();
+});
+
+it.each([false, true])(
+  "shows agent loading only without retained mention choices (warm=%s)",
+  async (warm) => {
+    const test = setup();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let held = !warm;
+    const read = vi.fn(async () => {
+      if (held) await gate;
+      return {
+        definitions: [],
+        identities: [{ pubkey: test.key, name: "Outside agent" }],
+      };
+    });
+    const library = createAgentLibrary(read);
+    if (warm) await library.queries.refresh();
+    const session = {
+      ...test.session,
+      agentChoices: createAgentChoices({
+        scope: "test",
+        library: library.queries,
+        signal: new AbortController().signal,
+      }),
+    };
+    const view = render(
+      <MentionPicker
+        session={session}
+        scope="test"
+        channelId="parent"
+        disabled={false}
+        inviteAgents
+        select={() => true}
+      />,
+    );
+    try {
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: "Mention a member" }));
+      if (warm) {
+        await screen.findByRole("button", {
+          name: `Outside agent ${test.key}`,
+        });
+        held = true;
+        act(() => {
+          void session.agentChoices.refresh();
+        });
+      }
+      await waitFor(() => expect(read).toHaveBeenCalledTimes(warm ? 2 : 1));
+      expect(session.agentChoices.snapshot().status).toBe("loading");
+      if (warm) {
+        expect(
+          screen.getByRole("button", { name: `Member ${test.member}` }),
+        ).toBeVisible();
+        expect(screen.queryByText("Loading agents…")).not.toBeInTheDocument();
+      } else expect(screen.getByText("Loading agents…")).toBeVisible();
+      await act(async () => release());
+      await waitFor(() =>
+        expect(session.agentChoices.snapshot().status).toBe("ready"),
+      );
+      expect(
+        screen.getByRole("button", { name: `Outside agent ${test.key}` }),
+      ).toBeEnabled();
+      expect(screen.queryByText("Loading agents…")).not.toBeInTheDocument();
+    } finally {
+      await act(async () => release());
+      view.unmount();
+      library.dispose();
+      test.library.dispose();
+    }
+  },
+);

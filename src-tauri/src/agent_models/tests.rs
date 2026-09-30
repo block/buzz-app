@@ -135,6 +135,59 @@ fn goose_databricks_models_load_through_native_ipc_for_an_unsaved_agent() {
     assert_eq!(result["models"][0]["id"], "catalog.schema.goose-glm-5-3");
     assert_eq!(result["host"], "");
 }
+
+#[test]
+#[cfg(unix)]
+fn goose_connection_test_uses_the_draft_model_and_environment() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, _, _app, view) = fixture();
+    let goose = dir.path().join("goose");
+    let script = r#"#!/bin/sh
+[ "$1 $2 $3" = 'run --text Reply OK.' ] || exit 1
+[ "$4 $5 $6 $7 $8 $9" = '--no-session --no-profile --max-turns 1 --quiet --output-format' ] || exit 1
+[ "${10}" = 'json' ] || exit 1
+[ "$GOOSE_PROVIDER" = 'openai' ] || exit 1
+[ "$GOOSE_MODEL" = 'effective-model' ] || exit 1
+[ "$GOOSE_MAX_TOKENS" = '10' ] || exit 1
+[ "$GOOSE_THINKING_EFFORT" = 'off' ] || exit 1
+[ "$(pwd)" = '__WORKSPACE__' ] || exit 1
+if [ "$OPENAI_API_KEY" = 'draft-key' ]; then
+  printf '%s\n' '{"metadata":{"status":"completed"},"messages":[{"role":"assistant","content":[{"type":"text","text":"OK"}]}]}'
+else
+  printf '%s\n' '{"metadata":{"status":"completed"},"messages":[{"role":"assistant","content":[{"type":"error","error":"authentication failed"}]}]}'
+fi
+"#
+    .replace(
+        "__WORKSPACE__",
+        &dir.path().canonicalize().unwrap().display().to_string(),
+    );
+    std::fs::write(&goose, script).unwrap();
+    std::fs::set_permissions(&goose, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let edit = json!({"name":"Goose","systemPrompt":"","workspace":dir.path(),
+        "harness":{"command":goose,"args":["acp"],"provider":"openai","model":"visible-model"},
+        "environment":{"GOOSE_MODEL":"effective-model","OPENAI_API_KEY":"draft-key"}});
+    let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    let result = invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":ticket,"request":{
+            "host":"","filter":"","action":"test","edit":edit
+        }}),
+    );
+    assert_eq!(result.unwrap()["models"], json!([]));
+    let mut bad = edit;
+    bad["environment"]["OPENAI_API_KEY"] = json!("bad-key");
+    let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    let error = invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":ticket,"request":{
+            "host":"","filter":"","action":"test","edit":bad
+        }}),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("could not complete a request"));
+}
 #[test]
 fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     let fake = Arc::new(Fake::default());
@@ -257,6 +310,140 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     .is_err());
 }
 #[test]
+fn browse_uses_write_only_agent_defaults_workspace_and_filter_through_ipc() {
+    let fake = Arc::new(Fake::default());
+    let (dir, _, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
+        let host = ModelHost::new(Ok(dir.join("store")));
+        ModelHost {
+            state: host.state,
+            factory: Arc::new(fake.clone()),
+        }
+    });
+    let id = seed(dir.path());
+    invoke(
+        &view,
+        "agent_control_save_defaults",
+        json!({"edit":{"harness":"buzz-agent","provider":"databricks_v2","model":"","effort":"",
+            "environment":{"DATABRICKS_HOST":"https://inherited.example.com",
+                "DATABRICKS_MODEL_FILTER":"endpoint-*"}}}),
+    )
+    .unwrap();
+    let call = |req: Value| {
+        let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+        invoke(
+            &view,
+            "agent_models_run",
+            json!({"ticket":ticket,"request":req}),
+        )
+    };
+    // The UI cannot see write-only defaults, so it sends blanks and native
+    // supplies the inherited workspace and filter.
+    let mut req = request(dir.path(), &id, "refresh");
+    req["host"] = json!("");
+    req["inheritWorkspace"] = json!(true);
+    req["edit"]["harness"]["provider"] = json!("");
+    req["edit"]["harness"]
+        .as_object_mut()
+        .unwrap()
+        .remove("databricks");
+    let result = call(req.clone()).unwrap();
+    assert_eq!(
+        result["models"],
+        json!([{"id":"endpoint-two","name":"Endpoint Two"}])
+    );
+    assert_eq!(result["host"], ""); // The write-only inherited URL stays native.
+    assert!(!result.to_string().contains("https://inherited.example.com"));
+    assert!(!result.to_string().contains("endpoint-*"));
+    assert_eq!(
+        fake.opened.lock().unwrap().last().unwrap().0,
+        "https://inherited.example.com"
+    );
+    // An explicit, different workspace still conflicts instead of silently
+    // browsing a workspace the launch would not use.
+    req["host"] = json!("https://other.example.com");
+    assert!(call(req.clone()).is_err());
+    req["host"] = json!("");
+    req["filter"] = json!("other-*");
+    assert!(call(req.clone()).is_err());
+    // Without the flag a blank is explicit and still conflicts with the
+    // inherited workspace, as before.
+    req["filter"] = json!("");
+    req["inheritWorkspace"] = json!(false);
+    assert!(call(req.clone()).is_err());
+
+    // An explicit per-agent workspace cannot be bypassed by a caller that
+    // manually sets inheritWorkspace, even while global env defaults exist.
+    req["edit"]["harness"]["databricks"] = json!({
+        "host":"https://agent.example.com", "filter":"agent-*"
+    });
+    req["inheritWorkspace"] = json!(true);
+    assert!(call(req.clone()).is_err());
+    req["inheritWorkspace"] = json!(false);
+    req["host"] = json!("https://agent.example.com");
+    req["filter"] = json!("agent-*");
+    let result = call(req).unwrap();
+    assert_eq!(result["host"], "https://agent.example.com");
+    assert_eq!(
+        fake.opened.lock().unwrap().last().unwrap().0,
+        "https://agent.example.com"
+    );
+}
+
+#[test]
+fn disconnect_recovers_an_inherited_workspace_without_revealing_it() {
+    let fake = Arc::new(Fake::default());
+    let (dir, _, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
+        let host = ModelHost::new(Ok(dir.join("store")));
+        ModelHost {
+            state: host.state,
+            factory: Arc::new(fake.clone()),
+        }
+    });
+    let id = seed(dir.path());
+    invoke(
+        &view,
+        "agent_control_save_defaults",
+        json!({"edit":{"harness":"buzz-agent","provider":"databricks_v2","model":"","effort":"",
+            "environment":{"DATABRICKS_HOST":"https://inherited.example.com"}}}),
+    )
+    .unwrap();
+    let call = |req: Value| {
+        let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+        invoke(
+            &view,
+            "agent_models_run",
+            json!({"ticket":ticket,"request":req}),
+        )
+    };
+    // Browse signs in against the inherited workspace.
+    let mut browse = request(dir.path(), &id, "refresh");
+    browse["host"] = json!("");
+    browse["inheritWorkspace"] = json!(true);
+    browse["edit"]["harness"]
+        .as_object_mut()
+        .unwrap()
+        .remove("databricks");
+    call(browse).unwrap();
+    let cache = dir.path().join("store/buzz-agent/oauth/databricks");
+    std::fs::create_dir_all(&cache).unwrap();
+    let key = "https://inherited.example.com/oidc/.well-known/oauth-authorization-server|databricks-cli|all-apis,offline_access";
+    use sha2::{Digest, Sha256};
+    let cached = cache.join(format!("{:x}.json", Sha256::digest(key.as_bytes())));
+    std::fs::write(&cached, "SYNTHETIC").unwrap();
+    // Disconnect carries no draft and a blank host, like the picker sends.
+    let disconnect = json!({"host":"","filter":"","action":"disconnect","inheritWorkspace":true});
+    let result = call(disconnect.clone()).unwrap();
+    assert_eq!(result["disconnected"], true);
+    assert_eq!(result["host"], "");
+    assert!(!result.to_string().contains("inherited.example.com"));
+    assert!(!cached.exists());
+    // Without the flag, a blank host is still refused.
+    let mut unflagged = disconnect;
+    unflagged["inheritWorkspace"] = json!(false);
+    assert!(call(unflagged).is_err());
+}
+
+#[test]
 fn native_discovery_preserves_absolute_harness_and_saved_or_draft_provider_overrides() {
     let fake = Arc::new(Fake::default());
     let (dir, _, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
@@ -320,11 +507,11 @@ fn runtime_factory_no_ambient_auth_on_construction_or_empty_headless_refresh() {
             .await
             .unwrap();
         assert!(result.is_err());
-        // Actual production connect forwarding cannot silently become a no-op:
-        // a closed loopback endpoint must fail, never report authenticated.
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        // Actual production connect forwarding cannot silently become a no-op.
+        // Own the listener until it observes a TLS attempt, then close it rather
+        // than depending on platform-specific refused-connection retry timing.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        drop(listener);
         let connection = RuntimeFactory
             .open(
                 &format!("https://127.0.0.1:{port}"),
@@ -332,12 +519,16 @@ fn runtime_factory_no_ambient_auth_on_construction_or_empty_headless_refresh() {
                 Arc::new(NoBrowser),
             )
             .unwrap();
-        assert!(
-            tokio::time::timeout(Duration::from_secs(2), connection.connect())
-                .await
-                .unwrap()
-                .is_err()
-        );
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::join!(connection.connect(), async move {
+                let (peer, _) = listener.accept().await.unwrap();
+                let mut hello = [0u8; 1];
+                assert_eq!(peer.peek(&mut hello).await.unwrap(), 1);
+            })
+        })
+        .await
+        .unwrap();
+        assert!(result.is_err());
     });
     assert!(RuntimeFactory
         .open(

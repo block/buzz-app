@@ -26,9 +26,11 @@ it("all command names and camelCase payloads match the native contract", async (
     "nonce-fixture",
   );
   await host.installGoose?.();
+  await host.installPi?.();
   const edit = {
     name: "Agent",
     systemPrompt: "Prompt",
+    sessionPolicy: null,
     workspace: "/fixture",
     harness: { command: "acp", args: [""], model: "", provider: "" },
     environment: { KEY: null },
@@ -60,6 +62,7 @@ it("all command names and camelCase payloads match the native contract", async (
       },
     ],
     ["goose_install"],
+    ["pi_install"],
     ["agent_control_save", { id: "exact-id", expectedRevision: 3, edit }],
     ["agent_control_delete", { id: "exact-id", expectedRevision: 3 }],
     ["agent_control_action", { id: "exact-id", action: "stop" }],
@@ -93,6 +96,7 @@ it("model operations use explicit ticket commands and no construction-time invoc
         provider: "databricks_v2",
       },
       environment: {},
+      sessionPolicy: null,
     },
     host: "https://example.com",
     filter: "",
@@ -119,53 +123,7 @@ it("mention replay floor is transient IPC input on the existing Start command", 
   });
 });
 
-it("retries only transient host contention for the same one-use log proof", async () => {
-  vi.useFakeTimers();
-  vi.mocked(isTauri).mockReturnValue(true);
-  const commands: string[] = [];
-  let challenges = 0;
-  let reads = 0;
-  vi.mocked(invoke).mockImplementation(async (name) => {
-    commands.push(name);
-    if (name === "agent_control_log_challenge") {
-      if (++challenges < 3)
-        throw "Another native agent operation is in progress";
-      return "nonce-fixture" as never;
-    }
-    if (name === "agent_control_read_log") {
-      if (++reads < 2) throw "Another native agent operation is in progress";
-      return "retained output" as never;
-    }
-    throw new Error(`Unexpected ${name}`);
-  });
-  const authorize = vi.fn(async () => "signature-fixture");
-  const host = nativeAgentControlHost();
-  if (!host?.readLog) throw new Error("Missing fixture host");
-  try {
-    const read = host.readLog({
-      id: "exact-id",
-      pubkey: "a".repeat(64),
-      relayUrl: "wss://relay.example",
-      authorize,
-    });
-    await vi.advanceTimersByTimeAsync(750);
-    expect(await read).toBe("retained output");
-    expect(challenges).toBe(3);
-    expect(reads).toBe(2);
-    expect(authorize).toHaveBeenCalledTimes(1);
-    expect(commands).toEqual([
-      "agent_control_log_challenge",
-      "agent_control_log_challenge",
-      "agent_control_log_challenge",
-      "agent_control_read_log",
-      "agent_control_read_log",
-    ]);
-  } finally {
-    vi.useRealTimers();
-  }
-});
-
-it("does not retry failed authorization or non-contention native errors", async () => {
+it("does not retry failed authorization or native log errors", async () => {
   vi.mocked(isTauri).mockReturnValue(true);
   vi.mocked(invoke).mockReset();
   vi.mocked(invoke).mockRejectedValueOnce("Owner authorization is unavailable");
@@ -193,32 +151,32 @@ it("does not retry failed authorization or non-contention native errors", async 
   expect(authorize).toHaveBeenCalledTimes(1);
 });
 
-it("bounds lock-contention retries and never requests a signer when challenge stays busy", async () => {
-  vi.useFakeTimers();
+it("pending mentions annotate the existing native launch without another Start", async () => {
+  vi.mocked(invoke).mockClear();
   vi.mocked(isTauri).mockReturnValue(true);
-  vi.mocked(invoke).mockReset();
-  vi.mocked(invoke).mockRejectedValue(
-    "Another native agent operation is in progress",
-  );
-  const host = nativeAgentControlHost();
-  if (!host?.readLog) throw new Error("Missing fixture host");
-  const authorize = vi.fn(async () => "signature-fixture");
-  try {
-    const read = host.readLog({
+  await nativeAgentControlHost()?.attachMention?.("exact-id", 3, 1234567890);
+  expect(invoke).toHaveBeenCalledExactlyOnceWith(
+    "agent_control_attach_mention",
+    {
       id: "exact-id",
-      pubkey: "a".repeat(64),
-      relayUrl: "wss://relay.example",
-      authorize,
-    });
-    // Attach the rejection observer before the fake clock can settle the read.
-    const outcome = expect(read).rejects.toBe(
-      "Another native agent operation is in progress",
-    );
-    await vi.advanceTimersByTimeAsync(5_000);
-    await outcome;
-    expect(invoke).toHaveBeenCalledTimes(21);
-    expect(authorize).not.toHaveBeenCalled();
-  } finally {
-    vi.useRealTimers();
-  }
+      expectedRevision: 3,
+      replayFloor: 1234567890,
+    },
+  );
+});
+
+it("retained inventory actions use native custody commands", async () => {
+  vi.mocked(invoke).mockReset();
+  vi.mocked(isTauri).mockReturnValue(true);
+  const host = nativeAgentControlHost();
+  const resolution = {
+    pubkey: "ab".repeat(32),
+    relayUrl: "wss://relay.example",
+    owner: "cd".repeat(32),
+    signature: "signed",
+  };
+  await host?.configureHere?.("retained", resolution);
+  expect(vi.mocked(invoke).mock.calls).toEqual([
+    ["agent_control_use_here", { id: "retained", resolution }],
+  ]);
 });

@@ -54,7 +54,21 @@ async function options(page) {
   });
   const opening = (await trigger.getAttribute("aria-expanded")) === "false";
   await trigger.click();
-  if (opening) await page.getByText("Diagnostics", { exact: true }).click();
+  if (opening) {
+    // The details and lifecycle readers finish independently. Observe both before
+    // checking diagnostics so a late details alert cannot escape the assertion.
+    await expect(
+      page
+        .getByRole("region", { name: "Edit channel details", exact: true })
+        .getByText(
+          "Only current channel owners and admins can edit these details.",
+        ),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Leave channel", exact: true }),
+    ).toBeVisible();
+    await page.getByText("Diagnostics", { exact: true }).click();
+  }
 }
 
 // The real startup composition must order optional catalog reads after channel
@@ -202,14 +216,14 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
   await expect
     .poll(() =>
       page.evaluate(
-        (visibleIds) =>
+        ({ visibleIds, channelId }) =>
           visibleIds.every(
             (id) =>
               window.fixtureRelay
                 .snapshot()
-                .session.unread.attention(ids.alpha, id).viewing,
+                .session.unread.attention(channelId, id).viewing,
           ),
-        visibleIds,
+        { visibleIds, channelId: ids.alpha },
       ),
     )
     .toBe(true);
@@ -276,7 +290,7 @@ test("a surviving window delivers a closed window's saved read intent", async ({
   await open(page, app);
   await composer(page).focus();
   const survivor = await context.newPage();
-  survivor.on("pageerror", (error) => app.report.errors.push(error.message));
+  app.watchPageErrors(survivor);
   survivor.on("console", (message) => {
     if (message.type() === "error")
       app.report.consoleErrors.push(message.text());

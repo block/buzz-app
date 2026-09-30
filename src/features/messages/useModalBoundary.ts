@@ -32,8 +32,16 @@ export function useModalBoundary(
       element.inert = true;
       element.setAttribute("aria-hidden", "true");
     }
-    initialFocus.current?.focus();
+    initialFocus.current?.focus({ preventScroll: true });
     const keydown = (event: KeyboardEvent) => {
+      // Portalled confirmations own their keyboard handling through Base UI.
+      const modal =
+        event.target instanceof Element
+          ? event.target.closest(
+              '[role="alertdialog"][aria-modal="true"], [role="dialog"][aria-modal="true"]',
+            )
+          : null;
+      if (modal && !container.contains(modal)) return;
       if (event.key === "Escape") {
         event.preventDefault();
         closeRef.current();
@@ -43,18 +51,27 @@ export function useModalBoundary(
       const focusable = [
         ...container.querySelectorAll<HTMLElement>(FOCUSABLE),
       ].filter(
-        (element) => !element.hidden && element.getClientRects().length > 0,
+        (element) =>
+          !element.hidden &&
+          !element.closest("[inert]") &&
+          element.getClientRects().length > 0,
       );
       if (!focusable.length) {
         event.preventDefault();
-        initialFocus.current?.focus();
+        initialFocus.current?.focus({ preventScroll: true });
         return;
       }
       const first = focusable[0];
       const last = focusable.at(-1);
+      const active = document.activeElement;
+      const outsideTabStops =
+        !container.contains(active) ||
+        (active === initialFocus.current &&
+          !focusable.some((element) => element === active));
       if (
-        (event.shiftKey && document.activeElement === first) ||
-        (!event.shiftKey && document.activeElement === last)
+        outsideTabStops ||
+        (event.shiftKey && active === first) ||
+        (!event.shiftKey && active === last)
       ) {
         event.preventDefault();
         (event.shiftKey ? last : first)?.focus();
@@ -70,7 +87,8 @@ export function useModalBoundary(
         else state.element.setAttribute("aria-hidden", state.ariaHidden);
       }
       const target = restoreFocus?.current ?? opener;
-      if (target?.isConnected) requestAnimationFrame(() => target.focus());
+      if (target?.isConnected)
+        requestAnimationFrame(() => target.focus({ preventScroll: true }));
     };
   }, [backdrop, initialFocus, restoreFocus]);
 }

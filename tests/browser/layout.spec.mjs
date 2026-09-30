@@ -1,4 +1,9 @@
-import { openPage, pageChoices } from "./navigation.mjs";
+import {
+  openPage,
+  pageChoices,
+  selectPage,
+  selectSettingsSection,
+} from "./navigation.mjs";
 import { test, expect, ids } from "./fixture.mjs";
 import { wheel, anchor, settle, upper, expectAnchor } from "./timeline.mjs";
 
@@ -80,10 +85,20 @@ async function shellFits(page, width) {
   const disclosure = button(page, "Show navigation");
   const collapsed = await disclosure.isVisible();
   if (collapsed) await disclosure.click();
-  const destinations = sidebarDestinations(page);
-  await expect(destinations).toHaveText(destinationTitles);
+  const inSettings = await page
+    .getByRole("region", { name: "Settings", exact: true })
+    .isVisible();
+  const destinations = inSettings
+    ? page
+        .getByRole("navigation", { name: "Settings sections" })
+        .getByRole("button")
+    : sidebarDestinations(page);
+  if (inSettings) await expect(destinations.first()).toBeVisible();
+  else await expect(destinations).toHaveText(destinationTitles);
   const sidebar = await box(
-    page.getByRole("complementary", { name: "Channel sidebar" }),
+    page.getByRole("complementary", {
+      name: inSettings ? "Settings sidebar" : "Channel sidebar",
+    }),
   );
   const first = await box(destinations.first());
   const last = await box(destinations.last());
@@ -280,7 +295,7 @@ test("bento surfaces, sidebar pages, real link panel and compact community navig
     await button(page, "Your profile").click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: "Settings", exact: true }),
+      page.getByRole("region", { name: "Settings", exact: true }),
     ).toBeVisible();
     if (width <= 650) await button(page, "Show navigation").click();
     await openPage(page, "Messages");
@@ -313,7 +328,7 @@ test("bento surfaces, sidebar pages, real link panel and compact community navig
     page.getByRole("textbox", { name: "Display name", exact: true }),
   ).toHaveValue("Fixture Reader");
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await button(page, "Plugins").click();
+  await selectSettingsSection(page, "Plugins");
   // Channels has no off switch; use another page to exercise UI activation.
   const projects = page.getByRole("switch", {
     name: "Enable Projects",
@@ -417,7 +432,11 @@ readingTest(
     await expectBottom();
     // Reopen by keyboard without browser click-to-scroll changing the saved position.
     const target = "https://github.com/block/buzz/pull/4";
-    const saved = await upper(page);
+    // Keep the offscreen opener within the virtualizer's mounted buffer after
+    // focus moves to the panel; this tests restoration to a mounted trigger.
+    await history.hover();
+    await wheel(page, -200);
+    const saved = await anchor(page);
     await expectNonPaging(page, app);
     await page
       .getByRole("link", { name: target, exact: true })
@@ -440,6 +459,9 @@ readingTest(
         };
       });
     await button(page, "Close channel panel").focus();
+    await expect(
+      page.getByRole("link", { name: target, exact: true }),
+    ).not.toBeInViewport();
     await button(page, "Close channel panel").click();
     const trigger = page.getByRole("link", { name: target, exact: true });
     await settle(page);
@@ -534,7 +556,7 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await launch.click();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await selectSettingsSection(page, "Plugins");
   await expect(bestie).toHaveCount(1);
   const enabled = page.getByRole("switch", {
     name: "Enable Bestie",
@@ -610,7 +632,7 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await expect(bestie).toHaveCount(1);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await selectSettingsSection(page, "Plugins");
   await expect(bestie).toHaveCount(1);
   for (const [width, height] of [
     [800, 600],
@@ -629,7 +651,7 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
 
   // Plugin catalogs can outgrow the viewport. Closing restores the launcher,
   // not a Settings row: reach the toggle with real input, not scrollIntoView.
-  // Narrow Settings scrolls navigation and details together inside the container.
+  // Settings details own scrolling independently of the sidebar.
   const settingsPage = page
     .getByRole("region", { name: "Settings", exact: true })
     .locator(":scope > div");
@@ -683,7 +705,7 @@ todosOverlapTest(
     await open(page, app);
     await button(page, "Your profile").click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await button(page, "Plugins").click();
+    await selectSettingsSection(page, "Plugins");
     await page
       .getByRole("switch", { name: "Enable Todos", exact: true })
       .click();
@@ -885,9 +907,8 @@ test("Projects directory fits the workspace and page navigation survives plugin 
     await page.keyboard.press("Escape");
     await expect(search).toHaveCount(0);
   };
-  await (await expectPageOrder(titles))
-    .getByRole("option", { name: "Projects", exact: true })
-    .click();
+  await expectPageOrder(titles);
+  await selectPage(page, "Projects");
   const surface = page.getByRole("region", { name: "Projects", exact: true });
   const title = surface.getByRole("heading", {
     name: "Projects",
@@ -939,7 +960,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   }
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await selectSettingsSection(page, "Plugins");
   const projects = page.getByRole("switch", {
     name: "Enable Projects",
     exact: true,
@@ -951,9 +972,8 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "true");
   // Re-enabled Projects registered last; navigation surfaces must still sort it.
-  await (await expectPageOrder(titles))
-    .getByRole("option", { name: "Projects", exact: true })
-    .click();
+  await expectPageOrder(titles);
+  await selectPage(page, "Projects");
   await expect(title).toBeVisible();
 });
 

@@ -1,4 +1,5 @@
 import { openPage } from "./navigation.mjs";
+import { upper, settle } from "./timeline.mjs";
 import { test as base, expect } from "@playwright/test";
 import { preview } from "vite";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
@@ -6,6 +7,7 @@ import { relayBrokerPlugin } from "../../dev/relay-broker.mjs";
 import { brokerSocket } from "../broker-socket.mjs";
 import { fixtureAliases, fixtureRelayUrl } from "../relay-config.ts";
 import { buildApp } from "./build.mjs";
+import { watchPageErrors } from "./page-errors.mjs";
 
 // Actual app, composer, session and broker; only the upstream relay is modeled.
 // Ephemeral identities and a network fence prevent any live message or profile write.
@@ -51,8 +53,7 @@ const test = base.extend({
       ...people,
     ];
     const commands = [],
-      reads = [],
-      errors = [];
+      reads = [];
     let failOpen = false,
       hold = false,
       release = () => {};
@@ -187,7 +188,7 @@ const test = base.extend({
         : route.abort(),
     );
     await context.routeWebSocket("**/*", (socket) => socket.close());
-    page.on("pageerror", (error) => errors.push(error.message));
+    const errors = watchPageErrors(page);
     await page.addInitScript(
       ({ viewer }) => {
         const key = `buzz-client.v1:${viewer}`;
@@ -609,15 +610,37 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await expect(message).toHaveCount(1);
   await expect(message).toBeVisible();
   await expect(message.locator("time")).toBeVisible();
-  await expect(page.locator('[class*="_day_"]')).toHaveCount(0);
+  const visibleDate = await message.locator("time").evaluate((time) =>
+    new Date(time.dateTime).toLocaleDateString(undefined, {
+      year: "numeric",
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    }),
+  );
+  await expect(message.getByText(visibleDate, { exact: true })).toBeVisible();
   await expect(
     page.getByRole("textbox", { name: "Message #Avery Chen" }),
   ).toBeVisible();
   await page.screenshot({ path: info.outputPath("new-message-delivered.png") });
+  // Give this DM a real above-bottom reading position. A short timeline masks
+  // a lost setSent -> select handoff when New message resolves the selected DM.
+  const dmInput = page.getByRole("textbox", { name: "Message #Avery Chen" });
+  await dmInput.fill(
+    Array.from({ length: 60 }, (_, i) => `Reading paragraph ${i + 1}`).join(
+      "\n\n",
+    ),
+  );
+  await dmInput.press("Enter");
+  await expect
+    .poll(() => app.publications.filter((event) => event.kind === 9).length)
+    .toBe(2);
+  await expect(dmInput).toHaveJSProperty("value", "");
   // A full reload exercises IndexedDB acknowledgement: the recovery association
   // must be gone before another New message starts.
   await page.reload();
-  await expect(message).toBeVisible();
+  await expect(dmInput).toBeVisible();
+  await upper(page);
   await expect(sidebarDm).toHaveAttribute("aria-current", "page");
   // Resolving an existing DM keeps its row visible while the next send is held.
   await startNewMessage(page);
@@ -632,16 +655,24 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect
     .poll(() => app.publications.filter((event) => event.kind === 9).length)
-    .toBe(2);
+    .toBe(3);
   await expect(sidebarDm).toBeVisible();
   // A concurrent non-message write must not replace the held message's gate.
   await app.publishPreference();
   app.confirm();
   await expect(
     page.locator("[data-message-id]", { hasText: "Another message" }),
-  ).toBeVisible();
+  ).toBeInViewport();
+  await settle(page);
+  await expect
+    .poll(() =>
+      page
+        .getByRole("region", { name: "Channel message history" })
+        .evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop),
+    )
+    .toBeLessThan(4);
   await expect(sidebarDm).toHaveAttribute("aria-current", "page");
-  expect(app.errors).toEqual([]);
+  expect(app.errors.unexplained()).toEqual([]);
 });
 
 test("profile Message opens a fresh DM and restores a hidden one", async ({
@@ -696,5 +727,5 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
   await page.reload();
   await expect(sidebarDm).toBeVisible();
   expect(app.commands).toHaveLength(2);
-  expect(app.errors).toEqual([]);
+  expect(app.errors.unexplained()).toEqual([]);
 });

@@ -378,3 +378,28 @@ it("bounds bulk demand, preserves strict admission errors and recycles released 
   expect(next?.status === "available" && next.messages.length).toBe(100);
   reclaimed.dispose();
 });
+
+it("flushes whole message snapshots within the aggregate POST budget without splitting a click", async () => {
+  const h = harness();
+  const intents = [0, 1, 2].map((n) => ({
+    createdAt: n,
+    intent: {
+      type: "mark_messages_read" as const,
+      channel_id: channel,
+      message_ids: Array.from({ length: n === 0 ? 2000 : 1000 }, (_, i) =>
+        (n * 2000 + i).toString(16).padStart(64, "0"),
+      ),
+    },
+  }));
+  await h.owner.journal.enqueue(
+    intents,
+    () => false,
+    () => true,
+  );
+  await h.owner.retry();
+  expect(h.api.write.mock.calls.map(([batch]) => batch)).toEqual([
+    [intents[0]?.intent],
+    [intents[1]?.intent, intents[2]?.intent],
+  ]);
+  expect(h.journal().pending).toEqual([]);
+});

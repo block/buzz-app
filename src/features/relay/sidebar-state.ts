@@ -1,14 +1,15 @@
-import type {
-  SidebarApi,
-  ChannelReadSummary,
-  ContextQuery,
-  ContextState,
+import {
+  MAX_MESSAGE_READS,
+  type SidebarApi,
+  type ChannelReadSummary,
+  type ContextQuery,
+  type ContextState,
 } from "./sidebar-api";
 import {
   createSidebarJournal,
   type SidebarStorage,
   type AnchoredRead,
-  type UnreadTarget,
+  type SidebarManualTarget,
 } from "./sidebar-journal";
 
 const MAX_CHANNELS = 1000;
@@ -305,8 +306,19 @@ export function createSidebarState({
       await journal.reload();
       // A finite captured batch; new local work schedules another pass.
       const pending = journal.snapshot().pending;
-      for (let offset = 0; offset < pending.length; offset += 100) {
-        const batch = pending.slice(offset, offset + 100);
+      for (let offset = 0; offset < pending.length; ) {
+        const batch: typeof pending = [];
+        let messageReads = 0;
+        for (const item of pending.slice(offset, offset + 100)) {
+          const count =
+            item.intent.type === "mark_messages_read"
+              ? item.intent.message_ids.length
+              : 0;
+          if (messageReads + count > MAX_MESSAGE_READS) break;
+          messageReads += count;
+          batch.push(item);
+        }
+        offset += batch.length;
         const outcomes = await schedule(async (signal, generation) => {
           const result = await api.write(
             batch.map((p) => p.intent),
@@ -471,7 +483,7 @@ export function createSidebarState({
     },
     async enqueue(
       intents: AnchoredRead[],
-      clear: (target: UnreadTarget) => boolean,
+      clear: (target: SidebarManualTarget) => boolean,
       valid: () => boolean,
     ) {
       if (!api) throw new Error("Sidebar API unsupported");

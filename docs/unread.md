@@ -40,7 +40,7 @@ visible rows, and 750 ms dwell. Scroll/content/focus changes cancel/restart dwel
 Mounted virtualizer overscan, preload, selection, and composer focus are not
 reading. After dwell, each context (channel timeline or thread) sends one
 `mark_through` anchored on its **newest dwelled message**: the relay stores
-frontiers, not per-message receipts, so earlier messages in that context read
+a frontier for dwell rather than individual receipts, so earlier messages in that context read
 too. Oversized rows that never fit fully are not auto-read.
 
 - `unread` and `attention` are relay `ReadCount`s: `exact`, `at_least` (a lower
@@ -68,6 +68,18 @@ too. Oversized rows that never fit fully are not auto-read.
 - `markUnreadLocal(target)` is durable **on this browser profile/device only**.
   Automatic reading does not clear it. An explicit mark-through clears that
   target's local mark. `syncedManualUnread` is `false`.
+- `markMessageRead(channelId, messageId)` captures the selected loaded message and
+  loaded descendants synchronously and sends `mark_messages_read`. Enumeration
+  belongs to session-owned channel windows and active thread snapshots, not the
+  recent-event cache. No fetch expands the click snapshot; later replies remain
+  unread and no frontier moves. At most 2,000 loaded rows are accepted before
+  persistence, with own rows removed from relay operands. Revalidation checks
+  access, visit, raw identity and current presentation before saving.
+- `markMessageUnread` forces that loaded subtree locally for the current channel
+  visit (including own messages, which never become notification-eligible). A
+  durable message-force sidebar hint survives leaving; reopening reconciles it.
+  Exact reads clear only their subtree forces and message-local marks, never
+  independent channel manual-unread. Local force does not alter relay counts.
 - `refresh()` re-reads the sidebar; `retrySync()` flushes pending writes, then
   refreshes. `ReadMutationResult.durability === "saved"` means the local journal
   transaction committed, not that the relay accepted it. Relay-derived unread
@@ -128,6 +140,8 @@ opening. References alone do not grant access or trigger a read.
 | `markThrough(target, messageId)` | `mark_through` that target through the message | That target |
 | `markChannelRead(channelId)` | `mark_channel_read` through the row's latest message | Channel |
 | Channel read with no messages | None | Channel |
+| Loaded message/subtree read | `mark_messages_read`, foreign IDs only | Captured message marks and exhausted visit force |
+| Loaded message/subtree unread | None | None (adds visit force) |
 | Mute/Unmute | None | None |
 
 Every write anchors on a message ID; the relay derives the timestamp and rejects
@@ -142,8 +156,8 @@ The journal lives in IndexedDB `buzz-sidebar-v1`, store `partitions`, one
 `{pending, manual}` record per relay/community scope and viewer, separate from
 disposable message caches. Strict read/write transactions merge concurrent windows.
 Intent is saved before sending; each flush sends captured batches of at most 100
-intents and removes exactly the acknowledged operations. Writes are idempotent
-frontier advances, so no publisher lock is needed: any window's flush (on
+intents and 2,000 explicit IDs and removes exactly the acknowledged operations. Writes are idempotent
+frontier advances or exact sets, so no publisher lock is needed: any window's flush (on
 enqueue, focus/visibility or the periodic refresh) delivers every pending intent,
 including one saved by a window that closed before sending. An `unknown` outcome
 keeps the intent for retry. The journal holds at most 1,000 pending and 1,000
@@ -175,13 +189,14 @@ unknown candidate. This is not a guarantee of native OS banner delivery.
 The journal coalesces dominated pending prefixes before sending. If a newer anchor
 covers an older pending prefix but the relay subsequently blocks the newer anchor
 (for example, unresolved ancestry), the older intent is no longer available as a
-fallback. The blocked action surfaces an error and requires refresh/retry with a
+fallback. Exact snapshots never coalesce with prefixes in either direction. The blocked action surfaces an error and requires refresh/retry with a
 valid anchor; the client does not manufacture progress from it.
 
 Deployment requires the compatible `/buzz/v1` extension, including five-thread
-summaries and fixed-anchor whole-channel reads. An older or absent descriptor
+summaries, fixed-anchor whole-channel reads and `max_message_reads: 2000`. An older or absent descriptor
 leaves relay counts unknown; there is no legacy counting fallback. Deploy the
-compatible relay before enabling this client contract.
+compatible relay before enabling this client contract. The write body cap is
+256 KiB, route-local; context GETs retain their existing selector bounds.
 
 ## Verification
 
@@ -190,7 +205,7 @@ compatible relay before enabling this client contract.
   journal storage ownership.
 - `dev/sidebar-api-broker.test.mjs`: real local HTTP broker, NIP-11 discovery,
   NIP-98 signing and operation validation.
-- `unread.test.ts`, `unread-startup.test.ts`, `unread-invalidation.test.ts`: real
+- `unread.test.ts`, `unread-message-actions.test.ts`, `unread-startup.test.ts`, `unread-invalidation.test.ts`: real
   session lifecycle, access, reading leases, startup and live invalidation.
 - `use-reading.test.ts`, timeline/thread tests: dwell/geometry and owner wiring.
 - `dev/sidebar-api-live.test.mjs` (opt-in): production broker, transport and

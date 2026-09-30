@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { DiscoveryState } from "./discovery";
@@ -143,6 +143,207 @@ function setup(
   };
 }
 describe("device-local startup", () => {
+  let pagedRosters: RelayEvent[];
+  let capacityRosters: readonly RelayEvent[];
+  beforeAll(() => {
+    // Alpha is confirmed on page one; the 501st membership requires a continuation.
+    pagedRosters = [
+      roster(
+        relay,
+        "01234567-89ab-cdef-0123-456789abcdef",
+        [viewer.pubkey],
+        1_700_000_001,
+      ),
+      ...Array.from({ length: 500 }, (_, index) =>
+        roster(relay, `channel-${index}`, [viewer.pubkey]),
+      ).sort((a, b) => a.id.localeCompare(b.id)),
+    ];
+    // Cached alpha plus these rosters exceeds the 1,024-entry retention cap.
+    capacityRosters = Array.from({ length: 1024 }, (_, i) =>
+      roster(relay, `other-${i}`, [viewer.pubkey]),
+    ).sort((a, b) => a.id.localeCompare(b.id));
+  });
+
+  it.each(["roster failure", "roster cancellation", "metadata failure"])(
+    "retries restored metadata after %s clears cached membership",
+    async (failure) => {
+      const { owner, channels, query } = setup();
+      const interruption = deferred<RelayEvent[]>();
+      const names = deferred<RelayEvent[]>();
+      const fresh = metadata(
+        relay,
+        "01234567-89ab-cdef-0123-456789abcdef",
+        "Renamed Alpha",
+        1_700_000_002,
+        [["archived", "true"]],
+      );
+      let retry = false;
+      query.mockImplementation(async (filters) => {
+        const filter = filters[0];
+        if (filter?.kinds?.includes(39002)) {
+          if (!filter.before_id) return pagedRosters.slice(0, 500);
+          if (!retry && failure !== "metadata failure")
+            return interruption.promise;
+          return pagedRosters.slice(500);
+        }
+        if (filter?.kinds?.includes(39000)) {
+          if (!retry) return interruption.promise;
+          return filter["#d"]?.includes("01234567-89ab-cdef-0123-456789abcdef")
+            ? names.promise
+            : [];
+        }
+        return [];
+      });
+      await owner.restore();
+      expect(
+        channels.get?.("01234567-89ab-cdef-0123-456789abcdef"),
+      ).toMatchObject({
+        name: "Alpha",
+        cached: true,
+      });
+      channels.ensureList();
+      try {
+        await vi.waitFor(() =>
+          expect(query).toHaveBeenCalledTimes(
+            failure === "metadata failure" ? 3 : 2,
+          ),
+        );
+        expect(
+          channels.get?.("01234567-89ab-cdef-0123-456789abcdef")?.cached,
+        ).toBeUndefined();
+        expect(
+          channels.get?.("01234567-89ab-cdef-0123-456789abcdef")?.name,
+        ).toBe("Alpha");
+        expect(owner.session.live.snapshot().roster.state).toBe("pending");
+      } finally {
+        interruption.reject(
+          failure === "roster cancellation"
+            ? new DOMException("Cancelled", "AbortError")
+            : new ReadError("unavailable", "Offline"),
+        );
+      }
+      await vi.waitFor(() =>
+        expect(owner.session.live.snapshot().roster.state).toBe(
+          failure === "roster cancellation" ? "deferred" : "error",
+        ),
+      );
+      retry = true;
+      query.mockClear();
+      channels.ensureList();
+      try {
+        await vi.waitFor(() =>
+          expect(
+            query.mock.calls
+              .flatMap(([filters]) => filters)
+              .filter((filter) => filter.kinds?.includes(39000))
+              .flatMap((filter) => filter["#d"] ?? []),
+          ).toContain("01234567-89ab-cdef-0123-456789abcdef"),
+        );
+        expect(owner.session.live.snapshot().roster.state).toBe("pending");
+        expect(
+          channels.get?.("01234567-89ab-cdef-0123-456789abcdef")?.name,
+        ).toBe("Alpha");
+        expect(
+          channels.get?.("01234567-89ab-cdef-0123-456789abcdef")?.archived,
+        ).toBeUndefined();
+      } finally {
+        names.resolve([fresh]);
+      }
+      await vi.waitFor(() =>
+        expect(owner.session.live.snapshot().roster.state).toBe("verified"),
+      );
+      expect(channels.list().channels).toHaveLength(501);
+      expect(channels.list().coverage).toBeUndefined();
+      expect(
+        channels.get?.("01234567-89ab-cdef-0123-456789abcdef"),
+      ).toMatchObject({
+        name: "Renamed Alpha",
+        archived: true,
+      });
+      expect(
+        channels.get?.("01234567-89ab-cdef-0123-456789abcdef")?.cached,
+      ).toBeUndefined();
+    },
+  );
+
+  it.each([false, true])(
+    "refreshes restored channel metadata with metadata included in the roster response=%s",
+    async (included) => {
+      const { owner, channels, membership, query } = setup();
+      const fresh = metadata(
+        relay,
+        "01234567-89ab-cdef-0123-456789abcdef",
+        "Renamed Alpha",
+        1_700_000_001,
+        [["archived", "true"]],
+      );
+      const names = deferred<RelayEvent[]>();
+      query.mockImplementation(async (filters) => {
+        if (filters.some((filter) => filter.kinds?.includes(39002)))
+          return membership.promise;
+        if (filters.some((filter) => filter.kinds?.includes(39000)))
+          return names.promise;
+        return [];
+      });
+      await owner.restore();
+      expect(
+        channels.get?.("01234567-89ab-cdef-0123-456789abcdef"),
+      ).toMatchObject({
+        name: "Alpha",
+        cached: true,
+      });
+      expect(
+        channels.get?.("01234567-89ab-cdef-0123-456789abcdef")?.archived,
+      ).toBeUndefined();
+      channels.ensureList();
+      await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1));
+      try {
+        membership.resolve([
+          roster(relay, "01234567-89ab-cdef-0123-456789abcdef", [
+            viewer.pubkey,
+          ]),
+          ...(included ? [fresh] : []),
+        ]);
+        if (!included) {
+          await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2));
+          expect(
+            channels.get?.("01234567-89ab-cdef-0123-456789abcdef")?.cached,
+          ).toBeUndefined();
+          expect(owner.session.live.snapshot().roster.state).toBe("pending");
+        }
+      } finally {
+        names.resolve([fresh]);
+      }
+      await vi.waitFor(() =>
+        expect(owner.session.live.snapshot().roster.state).toBe("verified"),
+      );
+      expect(
+        channels.get?.("01234567-89ab-cdef-0123-456789abcdef"),
+      ).toMatchObject({
+        name: "Renamed Alpha",
+        archived: true,
+      });
+      expect(
+        channels.get?.("01234567-89ab-cdef-0123-456789abcdef")?.cached,
+      ).toBeUndefined();
+      expect(
+        query.mock.calls
+          .flatMap(([filters]) => filters)
+          .filter((filter) => filter.kinds?.includes(39000)),
+      ).toEqual(
+        included
+          ? []
+          : [
+              {
+                kinds: [39000],
+                "#d": ["01234567-89ab-cdef-0123-456789abcdef"],
+                limit: 500,
+              },
+            ],
+      );
+    },
+  );
+
   it.each([false, true])(
     "keeps saved names on unchanged confirmation but purges them on omission=%s",
     async (omitted) => {
@@ -328,6 +529,95 @@ describe("device-local startup", () => {
         ),
     ).toBe(true);
   });
+  it("confirms restored membership that moved ahead of the cursor before purging saved history", async () => {
+    const { owner, channels, query, storage } = setup();
+    const exact = deferred<RelayEvent[]>();
+    const others = Array.from({ length: 500 }, (_, index) =>
+      roster(relay, `other-${index}`, [viewer.pubkey]),
+    ).sort((a, b) => a.id.localeCompare(b.id));
+    const fresh = roster(
+      relay,
+      "01234567-89ab-cdef-0123-456789abcdef",
+      [viewer.pubkey],
+      1_700_000_002,
+    );
+    query.mockImplementation(async (filters) => {
+      const rosterFilter = filters.find((f) => f.kinds?.includes(39002));
+      if (
+        rosterFilter?.["#d"]?.includes("01234567-89ab-cdef-0123-456789abcdef")
+      )
+        return exact.promise;
+      if (rosterFilter) return rosterFilter.before_id ? [] : others;
+      const metadataFilter = filters.find((f) => f.kinds?.includes(39000));
+      if (metadataFilter)
+        return (metadataFilter["#d"] ?? []).includes(
+          "01234567-89ab-cdef-0123-456789abcdef",
+        )
+          ? [
+              metadata(
+                relay,
+                "01234567-89ab-cdef-0123-456789abcdef",
+                "Renamed Alpha",
+                1_700_000_003,
+              ),
+            ]
+          : [];
+      if (
+        filters.some((f) =>
+          f["#h"]?.includes("01234567-89ab-cdef-0123-456789abcdef"),
+        )
+      )
+        return head("fresh");
+      return [];
+    });
+    await owner.restore();
+    channels.ensure("01234567-89ab-cdef-0123-456789abcdef");
+    channels.ensureList();
+    await vi.waitFor(() =>
+      expect(
+        query.mock.calls
+          .flatMap(([filters]) => filters)
+          .some((filter) =>
+            filter["#d"]?.includes("01234567-89ab-cdef-0123-456789abcdef"),
+          ),
+      ).toBe(true),
+    );
+    expect(
+      channels.get?.("01234567-89ab-cdef-0123-456789abcdef"),
+    ).toMatchObject({
+      name: "Alpha",
+      cached: true,
+    });
+    expect(
+      channels.window("01234567-89ab-cdef-0123-456789abcdef").rows[0]?.content,
+    ).toBe("saved");
+    exact.resolve([fresh]);
+    await vi.waitFor(() =>
+      expect(owner.session.live.snapshot().roster.state).toBe("verified"),
+    );
+    expect(
+      channels.get?.("01234567-89ab-cdef-0123-456789abcdef"),
+    ).toMatchObject({
+      name: "Renamed Alpha",
+    });
+    expect(
+      channels.get?.("01234567-89ab-cdef-0123-456789abcdef")?.cached,
+    ).toBeUndefined();
+    await vi.waitFor(() =>
+      expect(
+        channels.window("01234567-89ab-cdef-0123-456789abcdef").rows[0]
+          ?.content,
+      ).toBe("fresh"),
+    );
+    expect(
+      (await storage.readStartup?.())?.discovery?.events.some((event) =>
+        (event as RelayEvent).tags.some(
+          ([name, value]) =>
+            name === "d" && value === "01234567-89ab-cdef-0123-456789abcdef",
+        ),
+      ),
+    ).toBe(true);
+  });
   it.each(["confirm", "omit", "deny"])(
     "fresh exact and ID-only reads respect held cached authority: %s",
     async (outcome) => {
@@ -436,7 +726,7 @@ describe("device-local startup", () => {
     ).toEqual([]);
   });
   it.each(["confirm", "omit", "deny"])(
-    "revalidates demanded cached membership omitted by capped discovery: %s",
+    "revalidates demanded cached membership omitted by capacity-limited discovery: %s",
     async (outcome) => {
       const { owner, channels, query, membership, storage } = setup();
       await owner.restore();
@@ -452,8 +742,14 @@ describe("device-local startup", () => {
           )
         )
           return exact.promise;
-        if (filters.some((f) => f.kinds?.includes(39002)))
-          return membership.promise;
+        const rosterFilter = filters.find((f) => f.kinds?.includes(39002));
+        if (rosterFilter)
+          return capacityRosters
+            .filter(
+              (event) =>
+                !rosterFilter.before_id || event.id > rosterFilter.before_id,
+            )
+            .slice(0, rosterFilter.limit);
         if (
           filters.some((f) =>
             f["#h"]?.includes("01234567-89ab-cdef-0123-456789abcdef"),
@@ -462,14 +758,11 @@ describe("device-local startup", () => {
           return head("fresh");
         return [];
       });
-      membership.resolve(
-        Array.from({ length: 500 }, (_, i) =>
-          roster(relay, `other-${i}`, [viewer.pubkey]),
-        ),
-      );
+      membership.resolve(capacityRosters.slice(0, 500));
       await vi.waitFor(() =>
         expect(owner.session.live.snapshot().roster.state).toBe("verified"),
       );
+      expect(channels.list().coverage).toBe("partial");
       expect(
         channels.get?.("01234567-89ab-cdef-0123-456789abcdef")?.cached,
       ).toBe(true);

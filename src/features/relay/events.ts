@@ -20,6 +20,8 @@ export type ReadFilter = Readonly<{
   [tag: `#${string}`]: readonly string[] | undefined;
   limit: number;
   authors?: readonly string[];
+  /** Read from the writer when resolving uncertain publication or admission. */
+  consistency?: "strong";
   until?: number;
   since?: number;
   "#h"?: readonly string[];
@@ -35,6 +37,7 @@ export type ReadFilter = Readonly<{
   search_mode?: "prefix" | "fulltext";
   page?: number;
   feed_types?: readonly string[];
+  thread_window?: boolean;
   depth_limit?: number;
   thread_cursor?: number;
   thread_cursor_id?: string;

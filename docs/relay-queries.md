@@ -77,6 +77,18 @@ for shortcode conflicts. The directory retains at most 500 member sets / 2 MiB;
 read caps and overflow expose errors rather than silently evicting replacements.
 An explicit retry after overflow starts a fresh bounded catalog read.
 
+`snapshot().mine` lists the viewer's own set. When the session has an attachment
+uploader and its writer admits kind 30030, the directory also exposes `upload()`
+(the session uploader, fenced by session lifetime) and `add(name, url)`. `add`
+normalizes the shortcode, freshly reads the viewer's own set, replaces that
+shortcode, and republishes the whole set with a strictly newer `created_at`.
+Adds within a session run one at a time, so a stale read cannot drop an earlier
+add. The signed echo must match the template before publishing, the accepted set
+joins the palette immediately, and failures surface as the reference
+`Failed to add emoji.` / `Timed out while adding emoji.` copy. The development
+broker admits kind 30030 only for the canonical own-set template
+(`validEmojiSetTemplate`).
+
 Live kind-30030 updates share the existing profile route, not another socket or
 subscription slot. Global establishment repairs an already requested catalog;
 cache/access clearing and disposal cancel its reads and fence stale results.
@@ -118,14 +130,38 @@ belong to the session.
 
 The owner resolves marked NIP-10 ancestry to the actual root, fetches that root by
 ID, and traverses with explicit content kinds, `#h`, one root `#e`, depth 100 and
-`include_aux`. Pages advance with both `thread_cursor` and `thread_cursor_id` in
-ascending time/ID order. The cursor comes only from exact verified finite traversal
-rows, excluding appended auxiliary events—not the public read's live/local union.
-There is no fabricated thread `39006` or authoritative exhaustion claim.
+`include_aux`. Canonical UUID channels probe `thread_window: true` separately from
+the root lookup. Strict windows request kinds 9 and 40002 only: the relay's
+window row allowlist rejects legacy diff kind 40008, so strict threads omit diff
+replies until the relay accepts that kind; legacy traversal still includes it. The existing verified reader validates exactly one kind-39007
+bounds event, relay signer, exact tags, version/direction and full host/viewer/request
+binding before any page enters session reconciliation. The destination's authority,
+not the local broker host, supplies the binding. Both shipped transports provide
+this authority through `ReadTransport.scope`; its absence is a configuration error,
+not evidence of an old relay, and does not permit legacy fallback. Strict
+continuation echoes signed `until`/`before_id`; only bounds establish exhaustion,
+including empty pages whose raw scan cursor does not occur among delivered events.
 
-Each page requests 50 traversal rows, with at most ten pages per repair/load range.
-The shared panel automatically loads this range with no explicit pagination button.
-It remains oldest-first: a capped thread cannot promise its newest tail.
+Strict root admission/validation runs once before each load or refresh traversal,
+not between the pages of a retained-range repair: repairing N pages uses one root
+read plus N independently verified window reads. Each separate scrollback load
+still reads the root. Root deletion observed live and access revocation retain their
+existing session paths; a later refresh/load revalidates the root. Neither the root
+lookup nor the page sequence provides an atomic snapshot.
+
+A first probe returning verified replies but no bounds is discarded and restarted
+with clean legacy `thread_cursor`/`thread_cursor_id` state. Empty unsigned responses
+cannot distinguish old empty history from denied access, so remain unavailable.
+Other failures, invalid bounds and missing bounds after a strict page never trigger
+fallback. Non-UUID channels retain the legacy path. No capability cache persists
+across owners or connections.
+
+Each strict thread starts with 10 traversal rows plus their auxiliary events; later pages
+request 50 traversal rows, with at most ten pages per repair/load range. Legacy
+mode still requests 50 rows per page. The shared panel positions after the first
+strict page and demand-loads older pages on scrollback. Legacy mode still
+automatically walks its bounded oldest-first range and cannot promise the newest
+tail. Media review retains eager bounded traversal.
 Refresh re-reads the retained page range from the beginning while preserving known
 rows/edits/deletes: omitted events are not retractions. Live channel traffic feeds
 this same view without another subscription. Channel establishment triggers repair
@@ -589,16 +625,52 @@ for outstanding work. These manual fixtures are not part of `pnpm test`; see
 
 The session's `live` capability exposes connection/route state independently from
 finite-read readiness. A connected socket is not proof that every route is live.
-Global profile and self-scoped membership-hint routes are separate from explicit
-channel subscriptions. One socket supports at most 1,022 channels plus those two
-globals; omitted routes and partial roster coverage remain visible.
+Global profile and self-scoped membership-hint routes are separate from channel
+traffic. The logical interest capacity remains 1,022 channels plus those two globals
+(one fewer channel while agent observation is enabled); omitted routes and partial
+roster coverage remain visible. Joined background channels share stable wires of
+at most 10 channels. Initial replay uses singleton channel filters, matching the
+relay's per-REQ filter cap; live-only replacements use one equivalent filter.
+Public previews and foreground interests admitted as singletons remain separate;
+navigation prioritizes pending work without rebuilding healthy wires. Joined
+versus preview classification travels atomically with interests.
 
+Initial replay is opportunistic and capped at 500 events **per channel filter**,
+preserving the previous singleton replay allowance. A busy channel cannot consume
+another channel's sample. This reduces REQ frames and route-state publications,
+not historical database queries. Aggregate replay status stays conservative:
+500 received events can mark a batch limited but never prove any channel complete.
 EOSE establishes streaming, **not complete historical replay**. Retained channel
 windows get finite, signed-bounds head catch-up after establishment/reconnect;
 unopened channels defer it until demand. `live.snapshot().heads` distinguishes
 pending, verified, deferred and failed obligations. Verification covers the
 bounded current head, not all history or every event missed while disconnected.
 Catch-up merges into paged readers without resetting older pages or their cursor.
+
+Removing a batch member rebuilds only that batch's survivor scope. One established
+source overlaps its zero-replay replacement until EOSE; another removal supersedes
+the pending replacement, not that established source. Removed IDs are fenced
+immediately, including after re-addition. Original source scopes stay immutable;
+ambiguous auxiliary events never gain invented alert attribution. Replacements
+use fresh wire IDs, preserve `since`, and request `limit: 0`, so their events are
+live even before EOSE. Pending setup alone does not prove continuity. Narrowed-scope
+failure, denial, invalid traffic and disposal release both sources. For an
+unchanged scope, a renewal timeout or transient relay error retires only the
+replacement and retains the established source, with the error visible until
+fresh EOSE. The existing minute timer retries that renewal; quota failures retain
+the same source but obey the existing cooldown and three-retry limit. Exhausted
+or unsupported quota retries require manual Retry, not a reset each minute.
+
+One 60-second recovery timer renews established joined batches and hints the
+existing roster and unread owners to repair finite evidence. It does not renew
+singleton previews, add per-channel background history reads or reset the socket.
+This repairs silent pruning and missed hints; 60 seconds is an interval, not a
+convergence deadline under throttling, suspension or failure. Each live-only
+replacement consolidates its unchanged kinds, `since` and channel scope into one
+`limit: 0` filter: no historical sample is shared, and live matching is equivalent.
+The relay still executes one historical query per renewed wire; this reduces
+filter-query invocations, not REQs, HTTP repair or local SSE state publications.
+Finite repairs stay quiet and do not generate retrospective incoming alerts.
 
 `live.snapshot().roster` reports the finite channel-list refresh obligation,
 including failures when no channel is selected. The store owns that obligation,
@@ -622,7 +694,7 @@ its slot). The broker's existing six-request guard additionally covers response
 bodies. Available slots start immediately; completion frees capacity without a timer. These concurrency bounds do not
 reserve relay quota: large startup bursts can still receive quota refusals.
 Explicit server cooldowns, reconnect backoff and operation deadlines remain;
-there is no proactive rate timer or token bucket. Browser POST replacement does
+there is no proactive admission pacing or token bucket. Browser POST replacement does
 not reset learned pauses; signed
 requests enter HTTP admission after asynchronous authentication, at actual fetch
 dispatch. Read/write priority and cancellation cross the reader/transport boundary.
@@ -635,10 +707,10 @@ The browser broker streams SSE over POST with bounded interests and owner-scoped
 retry/priority/interest controls. Retry and interest changes preserve the upstream
 socket and healthy unchanged routes, so they do not interrupt pending publications.
 Interest updates coalesce through `/stream-interests`; origin, community, owner and
-body limits apply (1,024 IDs each for final interests and pending removals, 300 KB
-combined control body). Pending removals preserve retirement of old wires even
-when coalescing hides an intermediate empty interest set. Local interest revisions
-fence delayed channel events, denials
+body limits apply (1,024 IDs each for final interests, joined scope and pending
+removals, 450 KB combined control body). Pending removals preserve retirement of
+old wires even when coalescing hides an intermediate empty interest set. Local
+interest revisions fence delayed channel events, denials
 and establishment across remove/re-add, including changes during stream startup.
 This is local IPC metadata, not a new Nostr extension. An uncertain control outcome
 uses bounded reconnect with current interests; publications are not replayed.

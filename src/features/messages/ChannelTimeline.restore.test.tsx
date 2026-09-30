@@ -296,6 +296,24 @@ it.each([false, true])(
   },
 );
 
+it.each([false, true])(
+  "a completed reveal is not rescheduled by a later older-history prepend, bottom=%s",
+  async (bottom) => {
+    const h = mount(bottom);
+    await frame();
+    h.reveal();
+    await frame();
+    expect(scroll.toIndex).toHaveBeenLastCalledWith(1, { align: "end" });
+    scroll.toIndex.mockClear();
+    // The reveal is recorded only once its scroll runs. A page landing after
+    // that must find it complete, not reschedule it at the sent row's new index.
+    h.prependOlder();
+    await frame();
+    await frame();
+    expect(scroll.toIndex).not.toHaveBeenCalled();
+  },
+);
+
 it("waits for a sent row to arrive without restoring over its reveal", async () => {
   const h = mount();
   await frame();

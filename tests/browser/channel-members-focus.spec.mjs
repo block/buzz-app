@@ -28,6 +28,7 @@ test.beforeAll(async () => {
       },
       outDir: join(directory, "dist"),
       emptyOutDir: true,
+      target: "esnext",
     },
   };
   await build(config);
@@ -790,5 +791,68 @@ test("portaled menu focus does not leave an empty second identity line", async (
     await expect(key).toBeHidden();
     await expect(metadata).toHaveCSS("height", "0px");
   }
+  expect(errors).toEqual([]);
+});
+
+// Explicit 60-agent workload: owner verification is real CPU work that does not
+// appear in small, unsigned profile fixtures. This does not measure live relay latency.
+test("member search reuses unchanged owner attestations", async ({
+  page,
+}, testInfo) => {
+  const { errors } = watchPageErrors(page);
+  await page.goto(`${url}?search-scale`);
+  await page.evaluate(() => {
+    window.ownerChecks = 0;
+    const digest = crypto.subtle.digest.bind(crypto.subtle);
+    crypto.subtle.digest = (algorithm, data) => {
+      if (new TextDecoder().decode(data).startsWith("nostr:agent-auth:"))
+        window.ownerChecks++;
+      return digest(algorithm, data);
+    };
+  });
+  await page.getByRole("button", { name: "Channel members" }).click();
+  const dialog = page.getByRole("dialog", { name: "Channel members" });
+  const search = dialog.getByRole("searchbox");
+  const refresh = dialog.getByRole("button", { name: "Refresh member data" });
+  await expect(
+    dialog.getByRole("button", { name: /^Open owner profile:/ }),
+  ).toHaveCount(60);
+  await expect(refresh).toHaveAttribute("aria-busy", "false");
+  const before = await page.evaluate(() => window.ownerChecks);
+  await page.evaluate(() => {
+    window.searchFrames = [];
+    window.searchSample = true;
+    let previous = performance.now();
+    const frame = (now) => {
+      window.searchFrames.push(now - previous);
+      previous = now;
+      if (window.searchSample) requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  });
+  for (const query of ["Agent", "Agent 1", "Agent", "Agent 2", ""]) {
+    await search.fill(query);
+    await expect(refresh).toHaveAttribute("aria-busy", "false");
+    await expect(
+      dialog.getByRole("button", { name: /^Open owner profile:/ }),
+    ).toHaveCount(query === "Agent 1" || query === "Agent 2" ? 11 : 60);
+  }
+  const sample = await page.evaluate(() => {
+    window.searchSample = false;
+    return {
+      ownerChecks: window.ownerChecks,
+      maxFrame: Math.max(...window.searchFrames),
+      longFrames: window.searchFrames.filter((ms) => ms > 50).length,
+    };
+  });
+  await testInfo.attach("search-work.json", {
+    body: JSON.stringify({ before, ...sample }),
+    contentType: "application/json",
+  });
+  console.log("MEMBER_SEARCH_WORK", testInfo.project.name, {
+    before,
+    ...sample,
+  });
+  expect(sample.ownerChecks).toBe(before);
   expect(errors).toEqual([]);
 });

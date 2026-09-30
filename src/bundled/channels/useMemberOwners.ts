@@ -83,20 +83,31 @@ export function useMemberOwners(
   const [verified, setVerified] = useState(
     new Map<string, { id: string; owner: string | undefined }>(),
   );
+  // Filtering changes the observed set, not the signed evidence. Retain one
+  // verification per identity/head for this dialog; refresh/session changes retry.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: session and attempt bound the verification lifetime.
+  const checks = useMemo(
+    () => new Map<string, { id: string; owner: Promise<string | undefined> }>(),
+    [session, attempt],
+  );
   useEffect(() => {
     let active = true;
     void Promise.all(
-      [...latest].map(
-        async ([key, event]) =>
-          [key, { id: event.id, owner: await attestedOwner(event) }] as const,
-      ),
+      [...latest].map(async ([key, event]) => {
+        let check = checks.get(key);
+        if (check?.id !== event.id) {
+          check = { id: event.id, owner: attestedOwner(event) };
+          checks.set(key, check);
+        }
+        return [key, { id: event.id, owner: await check.owner }] as const;
+      }),
     ).then((next) => {
       if (active) setVerified(new Map(next));
     });
     return () => {
       active = false;
     };
-  }, [latest]);
+  }, [latest, checks]);
   const owners = new Map<string, string>();
   for (const [key, event] of latest) {
     const evidence = verified.get(key);

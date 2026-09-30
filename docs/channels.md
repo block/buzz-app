@@ -575,7 +575,9 @@ Agent runtime/access management is not added to the member menu.
 Manager attribution uses the existing NIP-OA verifier on each agent's winning
 signed kind-0 head, combining one dialog-owned live observation with retained
 profile-directory evidence. Verification is event-bound: newer invalid or missing
-auth removes the claim; older reads cannot restore it. Identity hints, local agent
+auth removes the claim; older reads cannot restore it. The dialog reuses verification
+for the same identity and signed head while filtering; a changed head is verified
+again, and explicit refresh or session changes reset that reuse. Identity hints, local agent
 inventory and channel roles never establish ownership. Missing/invalid evidence
 shows no manager hint. Read/admission/name failures join the shared refresh; an
 unavailable owner name falls back to their public key. Verified public evidence

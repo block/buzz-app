@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import { AgentSelection } from "../../src/bundled/channel-templates/TemplateFields";
 import { Dialog } from "../../src/shared/design-system/ui/Dialog";
 import { Button } from "../../src/shared/design-system/ui/Button";
@@ -42,7 +44,39 @@ const scrollMembers = new URLSearchParams(location.search).has("scroll")
       name: `Member ${index + 1}`,
     }))
   : [];
-const members = [viewer.pubkey, ...scrollMembers.map(({ key }) => key.pubkey)];
+// Real owner signatures for the opt-in search workload, not a mocked verifier.
+const searchScale = new URLSearchParams(location.search).has("search-scale");
+const managed = searchScale
+  ? Array.from({ length: 60 }, (_, index) => ({
+      key: keypair(),
+      name: `Agent ${index + 1}`,
+    }))
+  : [];
+const managedProfiles = await Promise.all(
+  managed.map(async ({ key, name }) => {
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(`nostr:agent-auth:${key.pubkey}:`),
+    );
+    return signed(key, {
+      kind: 0,
+      content: JSON.stringify({ name, is_agent: true }),
+      tags: [
+        [
+          "auth",
+          viewer.pubkey,
+          "",
+          bytesToHex(schnorr.sign(new Uint8Array(digest), viewer.secret)),
+        ],
+      ],
+    });
+  }),
+);
+const members = [
+  viewer.pubkey,
+  ...scrollMembers.map(({ key }) => key.pubkey),
+  ...managed.map(({ key }) => key.pubkey),
+];
 const scrollProfiles = scrollMembers.map(({ key, name }) =>
   profile(key, { name }),
 );
@@ -83,6 +117,7 @@ const { session } = createRelaySession(
         profile(viewer, { name: "Carl" }),
         ...candidateProfiles,
         ...scrollProfiles,
+        ...managedProfiles,
       ].filter((event) =>
         filters.some((filter) => matchesEvent(event, filter)),
       );

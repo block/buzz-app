@@ -10,7 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { StrictMode } from "react";
+import { StrictMode, useState } from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import { HostedCommunities } from "./HostedCommunities";
 import { DELETION_PENDING_KEY } from "./api";
@@ -68,6 +68,83 @@ const renderCard = () =>
       <HostedCommunities active={() => true} />
     </StrictMode>,
   );
+
+function RerenderingParent() {
+  const [, rerender] = useState(0);
+  return (
+    <>
+      <button type="button" onClick={() => rerender((count) => count + 1)}>
+        Parent update
+      </button>
+      <HostedCommunities active={() => true} />
+    </>
+  );
+}
+
+it("does not reload identity and list when the parent supplies new active closures", async () => {
+  render(<RerenderingParent />);
+  await screen.findByText(npubEncode(local));
+  const identityReads = calls.filter(
+    ([url]) => url === "/api/builderlab/identity",
+  ).length;
+  const listReads = calls.filter(
+    ([url]) => url === "/api/builderlab/list",
+  ).length;
+  fireEvent.click(screen.getByRole("button", { name: "Parent update" }));
+  fireEvent.click(screen.getByRole("button", { name: "Parent update" }));
+  await act(async () => {});
+  expect(
+    calls.filter(([url]) => url === "/api/builderlab/identity"),
+  ).toHaveLength(identityReads);
+  expect(calls.filter(([url]) => url === "/api/builderlab/list")).toHaveLength(
+    listReads,
+  );
+});
+
+it("accepts a held deletion across parent rerenders and releases the busy state", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  const admission = hold();
+  routes["/api/builderlab/delete"] = admission.answer as Handler;
+  render(<RerenderingParent />);
+  await confirmDeletion();
+  await waitFor(() => expect(deletionPosts()).toHaveLength(1));
+  const pending = deletionPosts()[0]?.[1];
+  if (!pending) throw new Error("Expected the held deletion request");
+  fireEvent.click(screen.getByRole("button", { name: "Parent update" }));
+  fireEvent.click(screen.getByRole("button", { name: "Parent update" }));
+  await act(async () =>
+    admission.release(Response.json(accepted(pending), { status: 202 })),
+  );
+  expect(await screen.findByText("Deletion started")).toBeVisible();
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
+  expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+});
+
+it("does not abort a held sign-in on a parent rerender", async () => {
+  routes["/api/builderlab/auth"] = () => ({ auth: null });
+  const signIn = hold();
+  routes["/api/builderlab/login"] = signIn.answer as Handler;
+  const abort = vi.spyOn(AbortController.prototype, "abort");
+  render(<RerenderingParent />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Sign in with Builderlab/ }),
+  );
+  await waitFor(() =>
+    expect(calls.map(([url]) => url)).toContain("/api/builderlab/login"),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Parent update" }));
+  expect(abort).not.toHaveBeenCalled();
+  await act(async () =>
+    signIn.release({
+      auth: {
+        expiresAt: "2030",
+        capabilities: { can_delete_buzz_communities: true },
+      },
+    }),
+  );
+  await screen.findByText(npubEncode(local));
+  expect(abort).not.toHaveBeenCalled();
+});
 
 it("offers browser sign-in when no Builderlab session exists", async () => {
   routes["/api/builderlab/auth"] = () => ({ auth: null });
@@ -245,8 +322,29 @@ it("archives and transfers after confirmation, surfacing friendly errors", async
   });
   fireEvent.click(screen.getByRole("button", { name: "Transfer ownership" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "You've reached your community limit.",
+    "The recipient has reached their community limit.",
   );
+});
+
+it("attributes transfer limit_reached to the recipient, not this owner's quota", async () => {
+  routes["/api/builderlab/list"] = () => ({
+    communities: [{ ...archived, archived_at: null }],
+    quota_used: 1,
+    quota_limit: 7,
+    can_create: true,
+  });
+  routes["/api/builderlab/transfer"] = () =>
+    Response.json({ error: { code: "limit_reached" } }, { status: 409 });
+  renderCard();
+  fireEvent.click(await screen.findByRole("button", { name: "Transfer" }));
+  fireEvent.change(screen.getByPlaceholderText("npub1…"), {
+    target: { value: npubEncode(other) },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Transfer ownership" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The recipient has reached their community limit.",
+  );
+  expect(screen.getByRole("alert")).not.toHaveTextContent("your limit of 7");
 });
 
 it("shows the zero-limit copy without guessing a reason from usage", async () => {
@@ -1015,7 +1113,9 @@ it.each(["setup-needed", "unauthorized"])(
       await screen.findByRole("button", { name: "Connect Buzz identity" });
     else {
       expect(await screen.findByRole("alert")).toHaveTextContent(
-        "Could not load the connected Buzz identity.",
+        failure === "unauthorized"
+          ? "Your Builderlab session ended. Sign out, then sign in again."
+          : "Could not load the connected Buzz identity.",
       );
       expect(
         screen.queryByRole("button", { name: "Connect Buzz identity" }),
@@ -1057,7 +1157,7 @@ it("does not offer Connect or stale owner actions on an initial unauthorized loa
   routes["/api/builderlab/list"] = () => ({ error: { code: "unauthorized" } });
   renderCard();
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Could not load the connected Buzz identity.",
+    "Your Builderlab session ended. Sign out, then sign in again.",
   );
   expect(
     screen.queryByRole("button", { name: "Connect Buzz identity" }),
@@ -1067,6 +1167,41 @@ it("does not offer Connect or stale owner actions on an initial unauthorized loa
   ).not.toBeInTheDocument();
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(bytes);
   expect(deletionPosts()).toHaveLength(0);
+});
+
+it("clears stale blocked-owner and deletion notices on unauthorized Refresh", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/delete"] = (request) =>
+    Response.json(accepted(request), { status: 202 });
+  renderCard();
+  await confirmDeletion();
+  await screen.findByText("Deletion started");
+  localStorage.setItem(
+    DELETION_PENDING_KEY,
+    JSON.stringify({
+      version: 1,
+      owner_pubkey: other,
+      backend_origin: window.location.origin,
+      request: {
+        community_id: archived.id,
+        host: archived.normalized_host,
+        request_id: "77777777-7777-4777-8777-777777777777",
+        acknowledgement_version: 1,
+      },
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByText(/A deletion request from/);
+  routes["/api/builderlab/list"] = () => ({ error: { code: "unauthorized" } });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Your Builderlab session ended. Sign out, then sign in again.",
+  );
+  expect(screen.queryByText("Deletion started")).not.toBeInTheDocument();
+  expect(screen.queryByText(/A deletion request from/)).not.toBeInTheDocument();
+  expect(
+    JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? "").owner_pubkey,
+  ).toBe(other);
 });
 
 it("retains the uncertain UUID through Switch back to its owner", async () => {
@@ -1115,7 +1250,9 @@ it("restores an accepted archived row only after its bound abort on Refresh", as
     screen.getByText(/North\.communities\.buzz\.xyz · Archived/),
   ).toBeVisible();
   expect(
-    screen.getByText("Deletion stopped. This community is not being deleted."),
+    screen.getByText(
+      `Deletion of ${archived.normalized_host} stopped. This community is not being deleted.`,
+    ),
   ).toBeVisible();
   expect(screen.queryByText("Deletion started")).not.toBeInTheDocument();
 });
@@ -1287,7 +1424,7 @@ it("replays an aborted 202 with the stored UUID and restores the archived row", 
     screen.getByRole("button", { name: "Check deletion status" }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Deletion stopped. This community is not being deleted.",
+    `Deletion of ${archived.normalized_host} stopped. This community is not being deleted.`,
   );
   expect(calls.filter(([url]) => url === "/api/builderlab/delete")).toEqual([
     ["/api/builderlab/delete", request],
@@ -1507,9 +1644,87 @@ it("rejects a newly occupied slot at final confirmation without claiming a stora
   );
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
   expect(deletionPosts()).toHaveLength(0);
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    `Deletion was not sent. A deletion request from ${npubEncode(other)} is already pending on this device.`,
+  );
   expect(
     screen.queryByText(/recovery record could not be saved/),
   ).not.toBeInTheDocument();
+});
+
+it("explains a same-owner slot occupied at final confirmation", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  renderCard();
+  const dialog = await openDeletion();
+  fireEvent.change(within(dialog).getByLabelText("Type the exact host"), {
+    target: { value: archived.normalized_host },
+  });
+  fireEvent.click(
+    within(dialog).getByRole("checkbox", {
+      name: /I understand this cannot be canceled/,
+    }),
+  );
+  const bytes = JSON.stringify({
+    version: 1,
+    owner_pubkey: local,
+    backend_origin: window.location.origin,
+    request: {
+      community_id: archived.id,
+      host: archived.normalized_host,
+      request_id: "33333333-3333-4333-8333-333333333333",
+      acknowledgement_version: 1,
+    },
+  });
+  localStorage.setItem(DELETION_PENDING_KEY, bytes);
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Start deletion" }),
+  );
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "Deletion was not sent. This identity already has a pending deletion request. Use Check deletion status.",
+  );
+  expect(deletionPosts()).toHaveLength(0);
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(bytes);
+});
+
+it("explains when another context cleared the blocked slot before final confirmation", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  renderCard();
+  const dialog = await openDeletion();
+  fireEvent.change(within(dialog).getByLabelText("Type the exact host"), {
+    target: { value: archived.normalized_host },
+  });
+  fireEvent.click(
+    within(dialog).getByRole("checkbox", {
+      name: /I understand this cannot be canceled/,
+    }),
+  );
+  const bytes = JSON.stringify({
+    version: 1,
+    owner_pubkey: other,
+    backend_origin: window.location.origin,
+    request: {
+      community_id: archived.id,
+      host: archived.normalized_host,
+      request_id: "33333333-3333-4333-8333-333333333333",
+      acknowledgement_version: 1,
+    },
+  });
+  localStorage.setItem(DELETION_PENDING_KEY, bytes);
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Start deletion" }),
+  );
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    `A deletion request from ${npubEncode(other)}`,
+  );
+  localStorage.removeItem(DELETION_PENDING_KEY);
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Start deletion" }),
+  );
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "Refresh and try again.",
+  );
+  expect(deletionPosts()).toHaveLength(0);
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
 });
 
 it("keeps and retries the same UUID after a wrong-status pre-admission rejection", async () => {
@@ -1635,7 +1850,7 @@ it("terminates pending recovery on a bound aborted 202", async () => {
     screen.getByRole("button", { name: "Check deletion status" }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Deletion stopped. This community is not being deleted. Correlation ID: corr-aborted",
+    `Deletion of ${archived.normalized_host} stopped. This community is not being deleted. Correlation ID: corr-aborted`,
   );
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
   expect(
@@ -1964,6 +2179,37 @@ it("stops accepted-row replay when the card retires mid-Refresh", async () => {
     screen.queryByRole("button", { name: "Delete" }),
   ).not.toBeInTheDocument();
   expect(screen.getByText("Deletion started")).toBeVisible();
+  expect(
+    screen.queryByText(
+      `Deletion of ${archived.normalized_host} stopped. This community is not being deleted.`,
+    ),
+  ).not.toBeInTheDocument();
+});
+
+it("shows a Refresh replay error without uncovering an accepted row", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/delete"] = (body) =>
+    Response.json(accepted(body), { status: 202 });
+  renderCard();
+  await confirmDeletion();
+  await screen.findByText("Deletion started");
+  const replay = hold();
+  routes["/api/builderlab/delete"] = replay.answer as Handler;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(deletionPosts()).toHaveLength(2));
+  await act(async () =>
+    replay.release(
+      Response.json({ error: { code: "relay_unavailable" } }, { status: 503 }),
+    ),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn't check deletion status.",
+  );
+  expect(screen.getByText("Deletion started")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Delete" }),
+  ).not.toBeInTheDocument();
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
 });
 
 it.each(["accepted", "bound abort", "definitive rejection"])(

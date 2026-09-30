@@ -64,6 +64,7 @@ const messages: Record<string, string> = {
   invalid_name: "Use lowercase letters, numbers, and hyphens.",
   taken: "That Buzz address is already taken.",
   limit_reached: "You've reached your community limit.",
+  unauthorized: "Your Builderlab session ended. Sign out, then sign in again.",
   relay_unavailable: "Community provisioning is temporarily unavailable.",
   identity_already_bound:
     "This Builderlab account is connected to another Buzz identity.",
@@ -80,7 +81,6 @@ const messages: Record<string, string> = {
     "This deletion conflicts with another community lifecycle change.",
   unsupported_acknowledgement_version:
     "This deletion confirmation version is not supported.",
-  deletion_aborted: "Deletion stopped. This community is not being deleted.",
   acceptance_unknown:
     "Deletion status is unknown. Keep this request and check its status; do not start a new deletion.",
   unknown:
@@ -400,7 +400,7 @@ function deletionResult(
   )
     throw new ApiFailure(
       "deletion_aborted",
-      messages.deletion_aborted as string,
+      `Deletion of ${request.host} stopped. This community is not being deleted.`,
       value.correlation_id,
     );
   throw new ApiFailure(

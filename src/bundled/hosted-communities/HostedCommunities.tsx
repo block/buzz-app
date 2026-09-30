@@ -66,6 +66,8 @@ type Confirm = {
 };
 
 export function HostedCommunities({ active }: { active(): boolean }) {
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const [auth, setAuth] = useState<Account | null>();
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [identityLoadFailed, setIdentityLoadFailed] = useState(false);
@@ -92,109 +94,109 @@ export function HostedCommunities({ active }: { active(): boolean }) {
   const loginAbort = useRef<AbortController | null>(null);
   // Bumped by every operation and unmount; a read applies only if none happened since it began.
   const generation = useRef(0);
+  const actionOwner = useRef(0);
   const acceptedDeletions = useRef(new Map<string, PendingDeletion>());
   const loadedOwner = useRef<string | null | undefined>(undefined);
 
-  const load = useCallback(
-    async (reconcileAccepted = false) => {
-      const at = generation.current;
-      const [current, list] = await Promise.all([
-        call("identity"),
-        call("list"),
-      ]);
-      if (at !== generation.current) return null;
-      // A setup-needed mapping is the connect state. An upstream unauthorized
-      // response may also be an expired session (dev/builderlab.mjs forwards it).
-      if (
-        current.error?.code === "unauthorized" ||
-        list.error?.code === "unauthorized"
-      ) {
-        setIdentityLoadFailed(true);
-        setIdentity(null);
-        setCommunities([]);
-        setQuotaState(null);
-        setPendingDeletion(null);
-      }
-      if (!current.error?.setup_needed)
-        check(current, "Could not load the connected Buzz identity.");
-      if (!list.error?.setup_needed) check(list, "Could not load communities.");
-      setIdentityLoadFailed(false);
-      const nextIdentity = current.identity ?? null;
-      const nextOwner = boundKey(nextIdentity);
-      if (
-        loadedOwner.current !== undefined &&
-        loadedOwner.current !== nextOwner
-      ) {
-        acceptedDeletions.current.clear();
-        setDeletionNotice("");
-      }
-      loadedOwner.current = nextOwner;
-      const stored = readPendingDeletion();
-      setBlockedOwner(
-        stored &&
-          (stored.owner_pubkey !== nextOwner ||
-            stored.backend_origin !== window.location.origin)
-          ? stored.owner_pubkey
-          : null,
-      );
-      setPendingDeletion(
-        stored?.owner_pubkey === nextOwner &&
-          stored.backend_origin === window.location.origin
-          ? stored
-          : null,
-      );
-      const listed = list.communities ?? [];
-      if (
-        reconcileAccepted &&
-        nextOwner &&
-        listed.some((community) =>
-          acceptedDeletions.current.has(community.id ?? ""),
-        )
-      ) {
-        const currentAuth = await getAuth().catch(() => null);
-        if (at !== generation.current || !active()) return null;
-        if (currentAuth?.capabilities?.can_delete_buzz_communities === true)
-          for (const community of listed) {
-            if (at !== generation.current || !active()) return null;
-            const accepted = acceptedDeletions.current.get(community.id ?? "");
-            if (!accepted || accepted.owner_pubkey !== nextOwner) continue;
-            try {
-              await admitDeletion(accepted.request, "recovery");
-            } catch (reason) {
+  const load = useCallback(async (reconcileAccepted = false) => {
+    const at = generation.current;
+    const [current, list] = await Promise.all([call("identity"), call("list")]);
+    if (at !== generation.current) return null;
+    // A setup-needed mapping is the connect state. An upstream unauthorized
+    // response may also be an expired session (dev/builderlab.mjs forwards it).
+    if (
+      current.error?.code === "unauthorized" ||
+      list.error?.code === "unauthorized"
+    ) {
+      setIdentityLoadFailed(true);
+      setIdentity(null);
+      setCommunities([]);
+      setQuotaState(null);
+      setPendingDeletion(null);
+      setBlockedOwner(null);
+      setDeletionNotice("");
+    }
+    if (!current.error?.setup_needed)
+      check(current, "Could not load the connected Buzz identity.");
+    if (!list.error?.setup_needed) check(list, "Could not load communities.");
+    setIdentityLoadFailed(false);
+    const nextIdentity = current.identity ?? null;
+    const nextOwner = boundKey(nextIdentity);
+    if (
+      loadedOwner.current !== undefined &&
+      loadedOwner.current !== nextOwner
+    ) {
+      acceptedDeletions.current.clear();
+      setDeletionNotice("");
+    }
+    loadedOwner.current = nextOwner;
+    const stored = readPendingDeletion();
+    setBlockedOwner(
+      stored &&
+        (stored.owner_pubkey !== nextOwner ||
+          stored.backend_origin !== window.location.origin)
+        ? stored.owner_pubkey
+        : null,
+    );
+    setPendingDeletion(
+      stored?.owner_pubkey === nextOwner &&
+        stored.backend_origin === window.location.origin
+        ? stored
+        : null,
+    );
+    const listed = list.communities ?? [];
+    if (
+      reconcileAccepted &&
+      nextOwner &&
+      listed.some((community) =>
+        acceptedDeletions.current.has(community.id ?? ""),
+      )
+    ) {
+      const currentAuth = await getAuth().catch(() => null);
+      if (at !== generation.current || !activeRef.current()) return null;
+      if (currentAuth?.capabilities?.can_delete_buzz_communities === true)
+        for (const community of listed) {
+          if (at !== generation.current || !activeRef.current()) return null;
+          const accepted = acceptedDeletions.current.get(community.id ?? "");
+          if (!accepted || accepted.owner_pubkey !== nextOwner) continue;
+          try {
+            await admitDeletion(accepted.request, "recovery");
+          } catch (reason) {
+            if (
+              at === generation.current &&
+              activeRef.current() &&
+              acceptedDeletions.current.get(accepted.request.community_id) ===
+                accepted
+            ) {
               if (
-                at === generation.current &&
-                active() &&
-                acceptedDeletions.current.get(accepted.request.community_id) ===
-                  accepted &&
                 reason instanceof ApiFailure &&
                 reason.code === "deletion_aborted"
               ) {
                 acceptedDeletions.current.delete(accepted.request.community_id);
                 if (acceptedDeletions.current.size === 0) setDeletionNotice("");
                 setError(
-                  "Deletion stopped. This community is not being deleted.",
+                  `Deletion of ${accepted.request.host} stopped. This community is not being deleted.`,
                 );
-              }
+              } else setError("Couldn't check deletion status.");
             }
-            if (at !== generation.current || !active()) return null;
           }
-      }
-      const nextCommunities = listed.filter(
-        (community) =>
-          !community.id || !acceptedDeletions.current.has(community.id),
-      );
-      const nextQuota = quota(list);
-      setIdentity(nextIdentity);
-      setCommunities(nextCommunities);
-      setQuotaState(nextQuota);
-      return { identity: nextIdentity, communities: nextCommunities };
-    },
-    [active],
-  );
+          if (at !== generation.current || !activeRef.current()) return null;
+        }
+    }
+    const nextCommunities = listed.filter(
+      (community) =>
+        !community.id || !acceptedDeletions.current.has(community.id),
+    );
+    const nextQuota = quota(list);
+    setIdentity(nextIdentity);
+    setCommunities(nextCommunities);
+    setQuotaState(nextQuota);
+    return { identity: nextIdentity, communities: nextCommunities };
+  }, []);
 
   const markDeletionAccepted = useCallback(
     (pending: PendingDeletion, at: number) => {
-      if (at !== generation.current || !active()) return false;
+      if (at !== generation.current || !activeRef.current()) return false;
       clearPendingDeletion(pending);
       acceptedDeletions.current.set(pending.request.community_id, pending);
       setPendingDeletion(null);
@@ -205,7 +207,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
       setError("");
       return true;
     },
-    [active],
+    [],
   );
 
   const localRead = useRef(0);
@@ -248,8 +250,9 @@ export function HostedCommunities({ active }: { active(): boolean }) {
 
   /** Runs one account operation at a time; resolves whether it succeeded. */
   async function run(label: string, operation: () => Promise<unknown>) {
-    if (!active()) return false;
+    if (!activeRef.current()) return false;
     const at = ++generation.current;
+    const owner = ++actionOwner.current;
     setAction(label);
     setError("");
     try {
@@ -259,12 +262,12 @@ export function HostedCommunities({ active }: { active(): boolean }) {
       if (at === generation.current) setError(message(reason));
       return false;
     } finally {
-      if (at === generation.current) setAction(null);
+      if (owner === actionOwner.current) setAction(null);
     }
   }
   const copy = async (url: string) => {
     // A retired card must not start a clipboard write.
-    if (!active()) return;
+    if (!activeRef.current()) return;
     const at = handoffOwner.current;
     const copied = await Promise.resolve()
       .then(() => navigator.clipboard.writeText(url))
@@ -296,7 +299,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
       await settle();
       return true;
     } catch (reason) {
-      if (at !== generation.current || !active()) return false;
+      if (at !== generation.current || !activeRef.current()) return false;
       if (
         (reason instanceof ApiFailure && reason.code === "deletion_aborted") ||
         isDefinitiveDeletionRejection(reason)
@@ -313,9 +316,9 @@ export function HostedCommunities({ active }: { active(): boolean }) {
     run("delete", async () => {
       const at = generation.current;
       const snapshot = await load();
-      if (at !== generation.current || !active()) return;
+      if (at !== generation.current || !activeRef.current()) return;
       const currentAuth = await getAuth();
-      if (at !== generation.current || !active()) return;
+      if (at !== generation.current || !activeRef.current()) return;
       const stored = readPendingDeletion();
       if (
         !snapshot ||
@@ -556,7 +559,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
                     setPendingDeletion(null);
                     // Unbound is a valid resting state; Connect recovers it.
                     setIdentity(null);
-                    if (active()) await bind();
+                    if (activeRef.current()) await bind();
                   })
                 }
               >
@@ -851,13 +854,26 @@ export function HostedCommunities({ active }: { active(): boolean }) {
           close={() => setDeleteTarget(null)}
           onDelete={() => {
             const occupied = readPendingDeletion();
+            if (blockedOwner && !occupied) {
+              setBlockedOwner(null);
+              setError("Refresh and try again.");
+              return;
+            }
             if (blockedOwner || occupied) {
               if (
                 occupied?.owner_pubkey === bound &&
                 occupied.backend_origin === window.location.origin
-              )
+              ) {
                 setPendingDeletion(occupied);
-              else if (occupied) setBlockedOwner(occupied.owner_pubkey);
+                setError(
+                  "Deletion was not sent. This identity already has a pending deletion request. Use Check deletion status.",
+                );
+              } else if (occupied) {
+                setBlockedOwner(occupied.owner_pubkey);
+                setError(
+                  `Deletion was not sent. A deletion request from ${npub(occupied.owner_pubkey)} is already pending on this device.`,
+                );
+              }
               return;
             }
             let pending: PendingDeletion;
@@ -922,14 +938,17 @@ export function HostedCommunities({ active }: { active(): boolean }) {
           close={() => setTransfer(null)}
           onTransfer={(recipient) =>
             run("transfer", async () => {
-              check(
-                await call("transfer", {
-                  communityId: transfer.id ?? "",
-                  transfereeNpub: recipient,
-                }),
-                "Could not transfer ownership.",
-                quotaState?.limit,
-              );
+              const reply = await call("transfer", {
+                communityId: transfer.id ?? "",
+                transfereeNpub: recipient,
+              });
+              if (reply.error?.code === "limit_reached")
+                throw new ApiFailure(
+                  "limit_reached",
+                  "The recipient has reached their community limit.",
+                  reply.correlation_id,
+                );
+              check(reply, "Could not transfer ownership.");
               // The community is no longer owned; drop it before refreshing.
               setCommunities((list) =>
                 list.filter((item) => item.id !== transfer.id),

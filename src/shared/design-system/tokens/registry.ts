@@ -592,6 +592,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "bg-affordance-popover-selected",
+        variable: "--affordance-popover-selected",
+        pointsAt: "neutral-2 light / neutral-6 dark",
+        use: "Selection within anchored popups, including mention and emoji suggestions. Remains distinct from the raised dark popup surface independently of neutral button hover.",
+        status: "core",
+      },
+      {
         token: "bg-affordance-selected",
         variable: "--affordance-selected",
         pointsAt: "neutral-3 light / neutral-5 dark",

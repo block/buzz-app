@@ -26,6 +26,11 @@ Panel navigation uses `affordance-panel-hover` for its quiet hover and the share
 `affordance-selected` for persistent selection. In dark mode, the unfilled panel
 row needs a quieter hover than a filled subtle control; these are distinct roles.
 
+Anchored popup selection uses `affordance-popover-selected` (neutral 2 light /
+neutral 6 dark). It stays visible on `surface-popover` independently of the quiet
+neutral button and tab hover fill; mention and emoji suggestions inherit this
+role through `popover-surface`.
+
 ## Foundations
 
 The interface uses shared color, type, spacing and shape roles. Primary actions

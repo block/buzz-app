@@ -534,6 +534,7 @@
   --affordance-navigation-quiet: var(--neutral-navigation-quiet);
   --affordance-panel-hover: var(--neutral-2);
   --affordance-floating-hover: var(--neutral-3);
+  --affordance-popover-selected: var(--neutral-2);
   --affordance-selected: var(--neutral-3);
   --affordance-disabled: var(--neutral-3);
   --affordance-danger: var(--red-3);
@@ -588,6 +589,7 @@
   --affordance-subtle-pressed: var(--neutral-7);
   --affordance-panel-hover: var(--neutral-4);
   --affordance-floating-hover: var(--neutral-7);
+  --affordance-popover-selected: var(--neutral-6);
   --affordance-selected: var(--neutral-5);
   --affordance-disabled: var(--neutral-3);
   --affordance-danger: var(--red-3);
@@ -809,6 +811,7 @@
   --color-affordance-navigation-quiet: var(--affordance-navigation-quiet);
   --color-affordance-panel-hover: var(--affordance-panel-hover);
   --color-affordance-floating-hover: var(--affordance-floating-hover);
+  --color-affordance-popover-selected: var(--affordance-popover-selected);
   --color-affordance-selected: var(--affordance-selected);
   --color-affordance-disabled: var(--affordance-disabled);
   --color-affordance-danger: var(--affordance-danger);

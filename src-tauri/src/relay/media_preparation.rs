@@ -3,6 +3,7 @@
 use std::sync::OnceLock;
 use std::{path::Path, process::Stdio, time::Duration};
 use tokio::{
+    io::AsyncReadExt,
     process::Command,
     sync::{oneshot, Semaphore},
 };
@@ -75,6 +76,68 @@ fn allowed_mode(mode: &str, size: usize) -> Option<(&'static str, bool, bool)> {
         return None;
     }
     Some(result)
+}
+
+fn ffmpeg_command() -> Command {
+    let path = crate::host_command::effective_path();
+    let mut cmd = Command::new(crate::host_command::resolve_program("ffmpeg", &path));
+    cmd.env_clear().env("PATH", path).env("LANG", "C");
+    #[cfg(windows)]
+    {
+        cmd.env(
+            "SystemRoot",
+            std::env::var_os("SystemRoot").unwrap_or_default(),
+        );
+        cmd.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+    }
+    cmd.stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    cmd
+}
+
+fn supports_heic_grids(version: &[u8]) -> bool {
+    std::str::from_utf8(version)
+        .ok()
+        .and_then(|text| text.strip_prefix("ffmpeg version "))
+        .and_then(|text| text.split('.').next())
+        .and_then(|major| major.parse::<u32>().ok())
+        .is_some_and(|major| major >= 8)
+}
+
+async fn require_heic_grid_support(
+    cmd: &mut Command,
+    cancelled: &mut oneshot::Receiver<()>,
+) -> Result<(), PreparationError> {
+    cmd.arg("-version").stdout(Stdio::piped());
+    let mut child = spawn_conversion(cmd)?;
+    let stdout = child.stdout.take().ok_or(PreparationError::Ffmpeg)?;
+    let probe = async {
+        let mut version = Vec::new();
+        stdout
+            .take(4097)
+            .read_to_end(&mut version)
+            .await
+            .map_err(|_| PreparationError::Ffmpeg)?;
+        if version.len() > 4096 {
+            return Err(PreparationError::Ffmpeg);
+        }
+        let status = child.wait().await.map_err(|_| PreparationError::Ffmpeg)?;
+        if status.success() && supports_heic_grids(&version) {
+            Ok(())
+        } else {
+            Err(PreparationError::Ffmpeg)
+        }
+    };
+    let result = tokio::select! {
+        result = probe => result,
+        _ = &mut *cancelled => Err(PreparationError::Cancelled),
+        _ = tokio::time::sleep(Duration::from_secs(5)) => Err(PreparationError::Ffmpeg),
+    };
+    if result.is_err() {
+        child.kill().await.ok();
+    }
+    result
 }
 
 fn spawn_conversion(cmd: &mut Command) -> Result<tokio::process::Child, PreparationError> {
@@ -173,8 +236,10 @@ pub(super) async fn prepare(
     if cancelled.try_recv().is_ok() {
         return Err(PreparationError::Cancelled);
     }
-    let path = crate::host_command::effective_path();
-    let mut cmd = Command::new(crate::host_command::resolve_program("ffmpeg", &path));
+    if image {
+        require_heic_grid_support(&mut ffmpeg_command(), cancelled).await?;
+    }
+    let mut cmd = ffmpeg_command();
     cmd.args(["-y", "-nostdin", "-loglevel", "error"]);
     if voice {
         cmd.args(["-f", "lavfi", "-i", "color=c=black:s=16x16:r=1"]);
@@ -246,15 +311,6 @@ pub(super) async fn prepare(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    cmd.env_clear().env("PATH", path).env("LANG", "C");
-    #[cfg(windows)]
-    cmd.env(
-        "SystemRoot",
-        std::env::var_os("SystemRoot").unwrap_or_default(),
-    );
-    #[cfg(windows)]
-    cmd.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
-    cmd.kill_on_drop(true);
     let child = spawn_conversion(&mut cmd)?;
     let limit = if image { MAX_IMAGE } else { MAX_VIDEO };
     wait_for_conversion(
@@ -313,25 +369,28 @@ mod tests {
         let _guard = CONVERSIONS.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let input = dir.path().join("sample.avi");
-        let generated = std::process::Command::new("ffmpeg")
-            .args([
-                "-y",
-                "-nostdin",
-                "-loglevel",
-                "error",
-                "-f",
-                "lavfi",
-                "-i",
-                "color=c=blue:s=16x16:r=1",
-                "-t",
-                "1",
-                "-metadata",
-                "comment=private",
-                "-c:v",
-                "mpeg4",
-            ])
-            .arg(&input)
-            .status();
+        let generated = std::process::Command::new(crate::host_command::resolve_program(
+            "ffmpeg",
+            &crate::host_command::effective_path(),
+        ))
+        .args([
+            "-y",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=16x16:r=1",
+            "-t",
+            "1",
+            "-metadata",
+            "comment=private",
+            "-c:v",
+            "mpeg4",
+        ])
+        .arg(&input)
+        .status();
         assert!(generated
             .expect("conversion tests require ffmpeg on PATH")
             .success());
@@ -480,6 +539,70 @@ mod tests {
         assert!(slots.try_acquire().is_ok());
         drop(second);
         assert_eq!(slots.available_permits(), 2);
+    }
+
+    #[test]
+    fn image_conversion_requires_a_known_grid_capable_ffmpeg() {
+        for version in [
+            "ffmpeg version 6.0.1",
+            "ffmpeg version 7.1.4",
+            "ffmpeg version N-123",
+            "ffmpeg version bad",
+            "other version 8.0",
+        ] {
+            assert!(!supports_heic_grids(version.as_bytes()), "{version}");
+        }
+        for version in [
+            "ffmpeg version 8.0 Copyright",
+            "ffmpeg version 8.1.2-Jellyfin Copyright",
+            "ffmpeg version 9.0.1 Copyright",
+        ] {
+            assert!(supports_heic_grids(version.as_bytes()), "{version}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn old_ffmpeg_is_rejected_before_image_conversion() {
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "printf 'ffmpeg version 7.1.4 Copyright'"])
+            .kill_on_drop(true);
+        let (_sender, mut cancelled) = oneshot::channel();
+        assert_eq!(
+            require_heic_grid_support(&mut command, &mut cancelled).await,
+            Err(PreparationError::Ffmpeg)
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn version_probe_is_bounded_and_cancellable() {
+        for oversized in [false, true] {
+            let mut command = Command::new("/bin/sh");
+            command
+                .args([
+                    "-c",
+                    if oversized {
+                        "exec yes x"
+                    } else {
+                        "exec sleep 60"
+                    },
+                ])
+                .kill_on_drop(true);
+            let (sender, mut cancelled) = oneshot::channel();
+            if !oversized {
+                sender.send(()).unwrap();
+            }
+            assert_eq!(
+                require_heic_grid_support(&mut command, &mut cancelled).await,
+                Err(if oversized {
+                    PreparationError::Ffmpeg
+                } else {
+                    PreparationError::Cancelled
+                })
+            );
+        }
     }
 
     #[test]

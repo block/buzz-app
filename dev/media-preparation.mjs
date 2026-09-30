@@ -16,6 +16,7 @@ import { UploadError, UPLOAD_MAX_BYTES } from "./attachment-upload.mjs";
 function run(args, signal, timeout = VIDEO_PREPARATION_MS) {
   return new Promise((resolve, reject) => {
     let failure;
+    let stdout;
     const child = execFile(
       "ffmpeg",
       args,
@@ -33,7 +34,8 @@ function run(args, signal, timeout = VIDEO_PREPARATION_MS) {
             : {}),
         },
       },
-      (error) => {
+      (error, output) => {
+        stdout = output;
         failure ??= error;
       },
     );
@@ -44,7 +46,7 @@ function run(args, signal, timeout = VIDEO_PREPARATION_MS) {
       if (signal.aborted) reject(signal.reason);
       else if (failure || code !== 0)
         reject(failure ?? new Error("Conversion failed"));
-      else resolve();
+      else resolve(stdout);
     });
   });
 }
@@ -104,6 +106,11 @@ export async function prepareMedia(req, callerSignal, deliver) {
         .catch(() => {}); // Output need not exist yet; process completion is authoritative.
     }, 250);
     try {
+      if (heic) {
+        const version = await run(["-version"], bounded, 5_000);
+        const major = /^ffmpeg version (\d+)\./.exec(version ?? "")?.[1];
+        if (!major || Number(major) < 8) throw new UploadError("ffmpeg", 503);
+      }
       await run(
         [
           "-y",
@@ -177,6 +184,7 @@ export async function prepareMedia(req, callerSignal, deliver) {
     } catch (error) {
       signal.throwIfAborted();
       if (outputLimitExceeded) throw new UploadError("size", 413);
+      if (error instanceof UploadError) throw error;
       throw new UploadError(
         error.code === "ENOENT" ? "ffmpeg" : heic ? "image" : "video",
         error.code === "ENOENT" ? 503 : 400,

@@ -28,7 +28,7 @@ export const UPLOAD_FAILURES = {
   size: "File exceeds the supported limit: images 50 MiB, GIFs 10 MiB, documents 100 MiB, videos 500 MiB. The relay may enforce a lower limit.",
   image: "Image conversion failed. This HEIC/HEIF photo could not be prepared.",
   ffmpeg:
-    "Media conversion requires ffmpeg on this computer. Install it, then restart the app.",
+    "Media conversion requires ffmpeg on this computer (version 8 or newer for HEIC images). Install or update it, then restart the app.",
   io: "Media preparation could not access temporary storage. Check available disk space and retry.",
   video:
     "Video preparation failed. This recording could not be converted to MP4.",

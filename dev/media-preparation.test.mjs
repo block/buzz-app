@@ -227,3 +227,22 @@ test("the production broker deadline destroys an undrained response, cleans its 
     });
   }
 });
+
+test("old ffmpeg fails closed before HEIC conversion or delivery", async () => {
+  const launches = [];
+  processFixture.launch = (_command, args, _options, callback) => {
+    launches.push(args);
+    const child = new EventEmitter();
+    queueMicrotask(() => {
+      callback(null, "ffmpeg version 7.1.4 Copyright");
+      child.emit("close", 0);
+    });
+    return child;
+  };
+  const deliver = vi.fn();
+  await expect(
+    prepareMedia(request("photo.heic"), new AbortController().signal, deliver),
+  ).rejects.toMatchObject({ code: "ffmpeg", status: 503 });
+  expect(launches).toEqual([["-version"]]);
+  expect(deliver).not.toHaveBeenCalled();
+});

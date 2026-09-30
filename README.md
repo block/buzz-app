@@ -122,7 +122,8 @@ fixture tests still work.
 Media attachments in live development need `ffmpeg` on the server’s PATH for
 video, HEIC/HEIF, and the existing `voice-note-*.wav` exception. The repository
 pins ffmpeg and ffprobe for development and CI through Hermit; HEIC tile grids
-require ffmpeg 8 or newer. Packaged apps use the host's installed ffmpeg. The broker
+require ffmpeg 8 or newer. Packaged apps use the host's installed ffmpeg and reject HEIC preparation if its
+version is older than 8 or cannot be determined. The broker
 prepares canonical H.264/AAC MP4 or single-frame JPEG before upload hashes/signs
 those exact bytes. Missing tools and unsupported codecs fail visibly. No generic
 audio conversion or recording UI is added.

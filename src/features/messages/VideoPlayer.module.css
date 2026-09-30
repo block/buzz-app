@@ -263,6 +263,13 @@
   }
 }
 @container video-player (max-width: 25rem) {
+  .controls:not([data-inline]) {
+    flex-wrap: wrap;
+  }
+  .controls:not([data-inline]) .timeline {
+    order: 1;
+    flex-basis: 100%;
+  }
   .controls:not([data-inline]) .volume input {
     width: 2.5rem;
   }

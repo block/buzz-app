@@ -345,6 +345,7 @@ function AvatarEmojiPicker({
   const [error, setError] = useState(false);
   const [scale, setScale] = useState(rootScale);
   const search = useRef("");
+  const focusPicker = useRef(true);
   const searchSelection = useRef<EmojiSearchSelection | undefined>(undefined);
   useEffect(() => {
     const observer = new MutationObserver(() => setScale(rootScale()));
@@ -365,6 +366,7 @@ function AvatarEmojiPicker({
         dispose = mountEmojiMart({
           host: element,
           scope: "avatar",
+          autoFocus: focusPicker.current,
           perLine: 6,
           emojiSize: 28 * scale,
           emojiButtonSize: 36 * scale,
@@ -384,6 +386,12 @@ function AvatarEmojiPicker({
       });
     return () => {
       retired = true;
+      // Shadow focus is retargeted to the picker host. Geometry changes must
+      // not reclaim focus from the manual emoji field or another avatar control.
+      if (dispose)
+        focusPicker.current = element.contains(
+          element.ownerDocument.activeElement,
+        );
       dispose?.();
     };
   }, [scale]);

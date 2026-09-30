@@ -37,6 +37,7 @@ export type EmojiSearchSelection = {
 export function mountEmojiMart({
   host,
   colorMode,
+  autoFocus = true,
   scope,
   perLine,
   emojiSize,
@@ -51,6 +52,7 @@ export function mountEmojiMart({
 }: {
   host: HTMLDivElement;
   colorMode?: "light" | "dark" | undefined;
+  autoFocus?: boolean;
   scope: string;
   perLine: number;
   emojiSize: number;
@@ -502,7 +504,7 @@ export function mountEmojiMart({
       input.dispatchEvent(new Event("input", { bubbles: true }));
       restoringQuery = false;
     }
-    input.focus();
+    if (autoFocus) input.focus();
   };
   const observer = new MutationObserver(focusSearch);
   if (root)

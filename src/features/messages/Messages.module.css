@@ -995,6 +995,7 @@ button.mediaPreview {
 }
 
 .mediaReviewBackdrop {
+  container: media-review / inline-size;
   position: fixed;
   inset: 0;
   z-index: 100;
@@ -2067,16 +2068,28 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   min-height: 1.5rem;
   font-size: var(--text-caption);
 }
-@media (max-width: 56.25rem) {
+@container media-review (max-width: 51.25rem) {
   .mediaReviewViewer[data-color-mode="dark"] {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(10rem, 1fr) minmax(0, min(44vh, 22rem));
+    grid-template-rows: auto minmax(10rem, 1fr) minmax(18rem, min(44vh, 22rem));
+    overflow-y: auto;
   }
   .mediaReviewViewer[data-color-mode="dark"][data-comments-hidden] {
     grid-template-rows: auto minmax(10rem, 1fr) minmax(0, 0px);
   }
   .mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversation {
     max-height: none;
+  }
+  .mediaReviewViewer[data-video] {
+    grid-template-rows: auto minmax(14rem, 1fr) minmax(18rem, min(44vh, 22rem));
+  }
+  .mediaReviewViewer[data-video][data-comments-hidden] {
+    grid-template-rows: auto minmax(14rem, 1fr) minmax(0, 0px);
+  }
+  .mediaReviewHeading {
+    position: sticky;
+    top: 0;
+    z-index: 5;
   }
 }
 
@@ -2129,10 +2142,10 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
     opacity 160ms ease-out,
     scale 100ms ease-out;
 }
-@media (max-width: 56.25rem) {
+@container media-review (max-width: 51.25rem) {
   .mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversation {
     width: 100%;
-    height: min(44vh, 22rem);
+    height: clamp(18rem, 44vh, 22rem);
     align-self: end;
   }
   .mediaReviewViewer[data-comments-hidden] .mediaReviewConversation {
@@ -2140,7 +2153,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   }
   .mediaReviewViewer[data-color-mode="dark"] .mediaReviewConversationContent {
     width: 100%;
-    height: min(44vh, 22rem);
+    height: clamp(18rem, 44vh, 22rem);
     flex: none;
   }
 }

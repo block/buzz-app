@@ -1208,7 +1208,16 @@ it.each(
     await h.unread.ensure();
     const preview = () => h.unread.activity(channel).items?.[0]?.preview;
     expect(preview()).toBe(live ? unloaded : "Open thread to read");
-    const stored =
+    // The relay answers only what the read asks for.
+    const open = (stored: readonly RelayEvent[]) => {
+      h.query.mockImplementationOnce(async (filters) =>
+        stored.filter((event) =>
+          filters.some((filter) => matchesEvent(event, filter)),
+        ),
+      );
+      return h.unread.loadActivity(channel);
+    };
+    await open(
       presented === "edited"
         ? [
             // Newest, but not the author's: never the presentation.
@@ -1217,14 +1226,11 @@ it.each(
             edit(h.peer, "superseded", 12),
             reply,
           ]
-        : [reply];
-    // The relay answers only what the read asks for.
-    h.query.mockImplementationOnce(async (filters) =>
-      stored.filter((event) =>
-        filters.some((filter) => matchesEvent(event, filter)),
-      ),
+        : [reply],
     );
-    await h.unread.loadActivity(channel);
     expect(preview()).toBe(presented);
+    // The relay stops returning a deleted edit, so the next open drops it.
+    await open([reply]);
+    expect(preview()).toBe(unloaded);
   },
 );

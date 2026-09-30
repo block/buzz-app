@@ -95,10 +95,11 @@ threads, dropping only those with exact-zero attention (unknown attention stays,
 possible attention), and opens the existing thread panel, so overlapping priority
 and thread activity never produce duplicate dots. Each preview is the thread's
 newest unread reply, not its newest attention reply, with agent envelopes unwrapped
-and the author's edits applied as read when the popover opens. That read is bounded,
-so a preview can differ from the timeline: it takes the newest 500 edits across the
-listed replies, so a reply can show an older edit or its original text, and it does
-not read deletions, so a deleted edit still shows. The relay caps the list before
+and the author's edits applied as the relay returns them when the popover opens.
+That read is neither live nor unbounded, so a preview can differ from the timeline:
+an edit made or deleted while the popover is open shows on the next open, and the
+read takes the newest 500 edits across the listed replies, so a reply can show an
+older edit or its original text. The relay caps the list before
 the client filters it, so an older attention thread can be omitted; an incomplete
 list stays marked incomplete. Merely revealing the popover does not acknowledge a
 reply.

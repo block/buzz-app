@@ -2693,6 +2693,43 @@ fn start_rejects_model_less_harness_defaults_without_losing_saved_agents() {
 
 #[test]
 #[cfg(unix)]
+fn start_preserves_legacy_provider_specific_model_fallbacks() {
+    for (provider, model_key, credential_key) in [
+        ("openai", "OPENAI_COMPAT_MODEL", "OPENAI_COMPAT_API_KEY"),
+        ("anthropic", "ANTHROPIC_MODEL", "ANTHROPIC_API_KEY"),
+        ("openrouter", "OPENROUTER_MODEL", "OPENROUTER_API_KEY"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = tempfile::tempdir().unwrap();
+        let mut a = agent(dir.path());
+        a.harness.provider = provider.into();
+        a.harness.model.clear();
+        a.enabled = true;
+        a.environment
+            .insert(model_key.into(), "legacy-model".into());
+        a.environment
+            .insert(credential_key.into(), "legacy-credential".into());
+        let mut store = Store::open(dir.path().join("config")).unwrap();
+        store.insert(vec![a.clone()]).unwrap();
+        let mut controller = Controller::new(
+            store,
+            Arc::new(Memory),
+            Ok(bundle(tools.path())),
+            dir.path().join("ownership"),
+        );
+
+        let started = controller.action(&a.id, Action::Start).unwrap();
+        assert!(
+            matches!(started.agents[0].status, ProcessStatus::Running),
+            "{provider}: {:?}",
+            started.agents[0].error
+        );
+        controller.action(&a.id, Action::Stop).unwrap();
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn managed_openai_default_key_stays_with_its_provider() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();

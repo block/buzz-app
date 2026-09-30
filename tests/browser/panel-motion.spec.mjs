@@ -325,7 +325,7 @@ for (const destination of ["Messages", "Projects"]) {
       await release();
       await expect(dock).toHaveCSS("transform", "none");
       const split = await dock.evaluate((el) => ({
-        width: el.getBoundingClientRect().width,
+        width: getComputedStyle(el).width,
         columns: getComputedStyle(el.parentElement).gridTemplateColumns,
       }));
       await close.click();
@@ -334,7 +334,7 @@ for (const destination of ["Messages", "Projects"]) {
       await expect(dock).toHaveCSS("transition-duration", "0.12s");
       expect(
         await dock.evaluate((el) => ({
-          width: el.getBoundingClientRect().width,
+          width: getComputedStyle(el).width,
           columns: getComputedStyle(el.parentElement).gridTemplateColumns,
         })),
       ).toEqual(split);

@@ -142,6 +142,9 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   const broadcastRow = page.locator(
     `[data-channel-timeline] [data-message-id="${broadcast.id}"]`,
   );
+  // Closing retains the split until its transition finishes. Establish the
+  // final row geometry before placing the pointer over the next message.
+  await expect(page.locator("[data-panel-dock][data-closing]")).toHaveCount(0);
   await broadcastRow.hover();
   await broadcastRow
     .getByRole("button", { name: "Reply", exact: true })

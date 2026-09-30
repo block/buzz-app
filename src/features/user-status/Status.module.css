@@ -108,7 +108,7 @@
 
 /* biome-ignore lint/correctness/noUnknownPseudoClass: Status-owned popup portals keep their own scoped geometry. */
 :global(.buzz-menu-popup[data-status-menu]) {
-  --interaction-row-hover: var(--affordance-subtle);
+  --interaction-row-hover: var(--affordance-subtle-hover);
   border-radius: var(--radius-profile-popover);
   padding: var(--space-2);
 }

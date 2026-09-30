@@ -115,3 +115,82 @@ test("profile avatar cutout shows the shell through hover, press and open menu",
     await expect(control).toHaveCSS("outline-style", "none");
   }
 });
+
+// Portaled menu paint and keyboard highlights require real browser styles.
+test("profile menu highlights stay distinct in both themes", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  const profile = page.getByRole("button", {
+    name: "Your profile",
+    exact: true,
+  });
+  await expect(profile.locator(".buzz-avatar-status")).toHaveAttribute(
+    "data-status",
+    "online",
+  );
+  const highlighted = async (menu) => {
+    await menu.evaluate(async (el) => {
+      await Promise.allSettled(el.getAnimations().map((a) => a.finished));
+    });
+    await page.keyboard.press("ArrowDown");
+    await expect(menu.locator(".buzz-menu-item[data-highlighted]")).toHaveCount(
+      1,
+    );
+    const background = await menu.evaluate(
+      (el) => getComputedStyle(el).backgroundColor,
+    );
+    await expect(
+      menu.locator(".buzz-menu-item[data-highlighted]"),
+    ).not.toHaveCSS("background-color", background);
+    await page.keyboard.press("ArrowDown");
+    await expect(
+      menu.locator(".buzz-menu-item[data-highlighted]"),
+    ).not.toHaveCSS("background-color", background);
+  };
+  for (const mode of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: mode });
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+    await profile.press("Enter");
+    const menu = page.locator("[data-profile-menu]");
+    await highlighted(
+      menu,
+      menu.getByRole("menuitem", { name: "Send feedback", exact: true }),
+    );
+    await page
+      .getByRole("button", { name: "Availability: Online", exact: true })
+      .press("Enter");
+    const availability = page.locator("[data-profile-submenu]");
+    await highlighted(
+      availability,
+      availability.getByRole("menuitemradio", { name: "Online", exact: true }),
+    );
+    await page.keyboard.press("Escape");
+    await menu
+      .getByRole("menuitem", { name: "Set a status", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", {
+      name: "Set a status",
+      exact: true,
+    });
+    await dialog.getByRole("button", { name: /^Duration:/ }).press("Enter");
+    const duration = page.locator("[data-status-menu][data-open]");
+    await highlighted(
+      duration,
+      duration.getByRole("menuitemradio", { name: "1 hour", exact: true }),
+    );
+    await duration
+      .getByRole("menuitemradio", { name: "Custom", exact: true })
+      .click();
+    await dialog
+      .getByRole("button", { name: "Status expiration time", exact: true })
+      .press("Enter");
+    const time = page.locator("[data-status-menu][data-open]");
+    await highlighted(time, time.getByRole("menuitemradio").first());
+    await page.keyboard.press("Escape");
+    await dialog
+      .getByRole("button", { name: "Close status editor", exact: true })
+      .click();
+  }
+});

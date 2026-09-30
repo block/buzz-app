@@ -507,7 +507,7 @@ Only direct channel owners/admins may edit ordinary stream/forum channels. Cache
 read-only, archived, DM and work-session views do not offer this editor. A local
 key, delegated agent role or community-admin status does not imply channel authority.
 Public ↔ private is supported as a draft choice, never an immediate mutation.
-In both Create and Edit, every Private toggle replaces the form with a confirmation
+In both Create and Edit, a Private toggle normally replaces the form with a confirmation
 step in the same modal. The whole surface crossfades using `motion/react`: the form scales from
 1 to 1.05 and blurs while confirmation sharpens from 0.95 to 1. Returning reverses
 the transition; reduced motion and keyboard navigation swap immediately. Outgoing
@@ -519,10 +519,15 @@ this community can view the channel's full history. Continue
 only stages the choice; Create channel or Save changes still performs the write. Cancel/Escape or
 the confirmation's Close control leaves the switch unchanged and returns to the
 intact form with focus on the switch. All other draft fields—including Create's
-selected destination and accepted template setup—survive either path. Create's
-confirmation explains that the choice applies when creating the channel, rather
-than claiming an existing channel has changed. Busy/frozen creation cannot open
-confirmation, and restoring a frozen attempt dismisses an open confirmation.
+selected destination and accepted template setup—survive either path. The consequence
+is shown once in the confirmation body, connected as the dialog's accessible description.
+**Don’t show me this again** is saved only on **Continue**, separately for public and
+private warnings. It is a device-local preference shared by Create and Edit for the
+same community/viewer scope, using the existing view-state storage. Cancel, Escape,
+Close and backdrop dismissal do not remember it. If storage is unavailable or invalid,
+the warning remains enabled. Skipping the warning still only stages the choice:
+Create/Save, authorization and discard protection are unchanged. Busy/frozen creation
+cannot open confirmation, and restoring a frozen attempt dismisses an open confirmation.
 In Edit, visibility is sent only when changed (`private` or `open`);
 text-only edits omit it so they do not reopen the channel in the remaining write race.
 The relay remains the final authority.

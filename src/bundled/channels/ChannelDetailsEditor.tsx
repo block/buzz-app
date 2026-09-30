@@ -17,6 +17,11 @@ import {
 } from "../../features/relay/channel-details-protocol";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import {
+  ChannelPrivacyConfirmation,
+  skipPrivacyConfirmation,
+  rememberPrivacyConfirmation,
+} from "./ChannelPrivacyConfirmation";
 import { ChannelDurationField } from "./ChannelDurationField";
 import { ChannelTextField } from "./ChannelTextField";
 import { Switch } from "../../shared/design-system/ui/Switch";
@@ -27,7 +32,9 @@ import styles from "./Channels.module.css";
 export function ChannelDetailsEditor({
   capability,
   channel,
+  scope,
 }: {
+  scope: string;
   capability: ChannelDetailsCapability;
   channel: ChannelSummary;
 }) {
@@ -38,6 +45,8 @@ export function ChannelDetailsEditor({
   const initial = () => ({
     capability,
     id,
+    scope,
+    skipWarning: false,
     loading: true,
     editing: false,
     confirmDiscard: false,
@@ -50,7 +59,8 @@ export function ChannelDetailsEditor({
   });
   const [state, setState] = useState(initial);
   // Discard drafts during render, not a frame after retargeting to another identity.
-  const matches = state.capability === capability && state.id === id;
+  const matches =
+    state.capability === capability && state.id === id && state.scope === scope;
   if (!matches) setState(initial());
   const view = matches ? state : initial();
   const lifetime = useRef<AbortController | undefined>(undefined);
@@ -87,11 +97,11 @@ export function ChannelDetailsEditor({
         | ((old: typeof state) => Partial<typeof state>),
     ) =>
       setState((old) =>
-        old.capability === capability && old.id === id
+        old.capability === capability && old.id === id && old.scope === scope
           ? { ...old, ...(typeof next === "function" ? next(old) : next) }
           : old,
       ),
-    [capability, id],
+    [capability, id, scope],
   );
   const load = useCallback(
     async (signal: AbortSignal) => {
@@ -317,11 +327,7 @@ export function ChannelDetailsEditor({
         description={
           confirmDiscard
             ? "Your channel details have unsaved changes."
-            : view.privacyChoice
-              ? view.privacyChoice === "private"
-                ? "Only channel members will have access."
-                : "Everyone in this community will be able to view this channel’s full history."
-              : undefined
+            : undefined
         }
         closeLabel={
           confirmDiscard || view.privacyChoice
@@ -356,11 +362,14 @@ export function ChannelDetailsEditor({
                 variant="prominent"
                 disabled={locked || !canEdit}
                 onClick={() => {
-                  if (draft && view.privacyChoice && !locked && canEdit)
+                  if (draft && view.privacyChoice && !locked && canEdit) {
+                    if (view.skipWarning)
+                      rememberPrivacyConfirmation(scope, view.privacyChoice);
                     patch({
                       draft: { ...draft, visibility: view.privacyChoice },
                       privacyChoice: undefined,
                     });
+                  }
                 }}
               >
                 Continue
@@ -376,11 +385,17 @@ export function ChannelDetailsEditor({
                     aria-label="Private"
                     checked={draft.visibility === "private"}
                     disabled={locked || !canEdit}
-                    onCheckedChange={(checked) =>
-                      patch({
-                        privacyChoice: checked ? "private" : "public",
-                      })
-                    }
+                    onCheckedChange={(checked) => {
+                      if (locked || !canEdit) return;
+                      const visibility = checked ? "private" : "public";
+                      if (skipPrivacyConfirmation(scope, visibility))
+                        patch({ draft: { ...draft, visibility } });
+                      else
+                        patch({
+                          privacyChoice: visibility,
+                          skipWarning: false,
+                        });
+                    }}
                   />
                   <label className="text-label-sm" htmlFor={privateControlId}>
                     Private
@@ -415,7 +430,11 @@ export function ChannelDetailsEditor({
         }
       >
         {confirmDiscard ? null : view.privacyChoice ? (
-          <p>This change takes effect when you save channel details.</p>
+          <ChannelPrivacyConfirmation
+            visibility={view.privacyChoice}
+            checked={view.skipWarning}
+            onCheckedChange={(skipWarning) => patch({ skipWarning })}
+          />
         ) : (
           <form
             id={formId}

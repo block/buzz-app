@@ -31,6 +31,8 @@ const setupProps = () => ({
 });
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
+  localStorage.clear();
   store.dispose();
   store = createRelaySession(null);
 });
@@ -580,18 +582,29 @@ it("confirms both privacy directions in the same modal and preserves the entire 
       expect(dialog).toHaveAccessibleName(
         initialPrivate ? "Make channel public?" : "Make channel private?",
       );
-      expect(dialog).toHaveAccessibleDescription(
-        initialPrivate
-          ? "Everyone in this community will be able to view this channel’s full history."
-          : "Only channel members will have access.",
-      );
+      const consequence = initialPrivate
+        ? "Everyone in this community will be able to view this channel’s full history."
+        : "Only channel members will have access.";
+      expect(dialog).toHaveAccessibleDescription(consequence);
+      expect(screen.getByText(consequence)).toBeVisible();
+      expect(
+        screen.getByText(consequence).closest(".buzz-dialog-body"),
+      ).not.toBeNull();
+      expect(
+        screen.queryByText(/This choice takes effect/),
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+      const remember = screen.getByRole("checkbox", {
+        name: "Don’t show me this again",
+      });
+      expect(remember).not.toBeChecked();
+      await user.click(remember);
       expect(
         screen.queryByRole("textbox", { name: "Name" }),
       ).not.toBeInTheDocument();
       expect(
         screen.queryByRole("button", { name: "Create channel" }),
       ).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
       if (dismissal === "Escape") await user.keyboard("{Escape}");
       else
         await user.click(

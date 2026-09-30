@@ -22,6 +22,11 @@ import {
 } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import {
+  ChannelPrivacyConfirmation,
+  skipPrivacyConfirmation,
+  rememberPrivacyConfirmation,
+} from "./ChannelPrivacyConfirmation";
 import { ChannelDurationField } from "./ChannelDurationField";
 import { ChannelTextField } from "./ChannelTextField";
 import { SidebarGroupIcon } from "./SidebarGroupIcon";
@@ -115,6 +120,7 @@ function OpenCreateChannelDialog({
   const privateSwitch = useRef<HTMLSpanElement>(null);
   const privacyCancel = useRef<HTMLButtonElement>(null);
   const [privacyChoice, setPrivacyChoice] = useState<"private" | "public">();
+  const [skipWarning, setSkipWarning] = useState(false);
   const previousPrivacyChoice = useRef(privacyChoice);
   useLayoutEffect(() => {
     if (privacyChoice !== previousPrivacyChoice.current)
@@ -321,13 +327,7 @@ function OpenCreateChannelDialog({
         )
       }
       description={
-        confirmDiscard
-          ? "Your channel draft has unsaved changes."
-          : privacyChoice
-            ? privacyChoice === "private"
-              ? "Only channel members will have access."
-              : "Everyone in this community will be able to view this channel’s full history."
-            : undefined
+        confirmDiscard ? "Your channel draft has unsaved changes." : undefined
       }
       closeLabel={
         confirmDiscard || privacyChoice
@@ -364,6 +364,8 @@ function OpenCreateChannelDialog({
               disabled={busy || !!pending}
               onClick={() => {
                 if (busy || pending) return;
+                if (skipWarning)
+                  rememberPrivacyConfirmation(session.scope, privacyChoice);
                 setPrivateChannel(privacyChoice === "private");
                 setPrivacyChoice(undefined);
                 setError("");
@@ -385,7 +387,14 @@ function OpenCreateChannelDialog({
                 aria-disabled={busy || !!pending || undefined}
                 onCheckedChange={(checked) => {
                   if (!editing.current) return;
-                  setPrivacyChoice(checked ? "private" : "public");
+                  const choice = checked ? "private" : "public";
+                  if (skipPrivacyConfirmation(session.scope, choice)) {
+                    setPrivateChannel(checked);
+                    setError("");
+                  } else {
+                    setSkipWarning(false);
+                    setPrivacyChoice(choice);
+                  }
                 }}
               />
               <label className="text-label-sm" htmlFor={privateControlId}>
@@ -406,7 +415,11 @@ function OpenCreateChannelDialog({
       }
     >
       {confirmDiscard ? null : privacyChoice ? (
-        <p>This choice takes effect when you create the channel.</p>
+        <ChannelPrivacyConfirmation
+          visibility={privacyChoice}
+          checked={skipWarning}
+          onCheckedChange={setSkipWarning}
+        />
       ) : (
         <form
           id="create-channel-form"

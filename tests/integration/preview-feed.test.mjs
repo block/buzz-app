@@ -198,4 +198,24 @@ test("successful preview publication promotes automatically; manual recovery byp
     promotionStep.run.indexOf("scripts/preview-feed.mjs verify") <
       promotionStep.run.indexOf("gh release upload preview-feed"),
   );
+  const cleanupStep = promotion.steps.at(-1);
+  assert.equal(
+    cleanupStep.run,
+    "node scripts/prune-preview-releases.mjs --apply",
+  );
+  assert.equal(cleanupStep.if, "success()");
+  assert.equal(cleanupStep.env.GH_REPO, `\${{ github.repository }}`);
+  assert.equal(cleanupStep.env.GH_TOKEN, `\${{ github.token }}`);
+  assert.ok(
+    promotion.steps.indexOf(promotionStep) < promotion.steps.length - 1,
+  );
+  assert.match(
+    promotionStep.run,
+    /cmp "\$RUNNER_TEMP\/candidate\/latest.json" "\$RUNNER_TEMP\/served\/latest.json"/,
+  );
+  assert.equal(workflow.concurrency["cancel-in-progress"], false);
+  assert.equal(
+    workflow.concurrency.group,
+    `desktop-preview-\${{ inputs.candidates && github.ref || 'macos-prerelease' }}`,
+  );
 });

@@ -52,6 +52,24 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .fill("Keep my draft");
+  // An access update renews the activity observer at once, but presence
+  // re-observes only after its read gate. Count from that post-update route.
+  const newest = (kind) =>
+    app.relay.requests.findLastIndex(({ filters }) =>
+      filters.some((filter) => filter.kinds.includes(kind)),
+    );
+  await expect
+    .poll(() => {
+      const presence = newest(20001);
+      return (
+        presence > newest(24200) &&
+        app.report.wireFrames.some(
+          (frame) =>
+            frame[0] === "EOSE" && frame[1] === app.relay.requests[presence].id,
+        )
+      );
+    })
+    .toBe(true);
   const socketCount = app.relay.sockets.length;
   const globalRequests = app.relay.requests.filter(({ filters }) =>
     filters.every((filter) => !filter["#h"]),

@@ -346,6 +346,104 @@ export function composerCodeFence(
   return tr.setStoredMarks([]);
 }
 
+/** The typed character that completes a list or quote prefix. */
+export const composerPrefixDelimiters: ReadonlySet<string> = new Set([" "]);
+// A block prefix filling the caret's line up to the typed space, as CommonMark
+// reads it: a bullet marker, one to nine digits with a dot or parenthesis, or a
+// quote marker. Every form the timeline renders as a list converts, so `* `,
+// `+ ` and `1) ` open blocks although the serializer writes each bullet as `- `
+// and each number with a dot; the sent text renders the same either way.
+const PREFIX = /^(?:([-*+])|(\d{1,9})[.)]|>) $/;
+// Positions to read before the caret: the widest prefix and its space, plus the
+// character before them, so the cheap check sees whether the line starts there.
+const PREFIX_WINDOW = 12;
+
+/** Typing the space after a lone `- `, `1. ` or `> ` marker turns the caret's
+ * line into a list item or quoted paragraph at once, producing the node the
+ * toolbar toggle would: prose after the caret on that line becomes the block's
+ * content, and the paragraph's other lines stay where they are. A marker typed
+ * after prose, inside a code block, inside pasted fenced source, or on a line
+ * holding a token or code/link/literal text stays literal. The caller closes
+ * history around the transaction, so one undo restores the typed prefix. */
+export function composerBlockPrefix(
+  state: EditorState,
+  typed: string,
+): Transaction | undefined {
+  const { $from, empty } = state.selection;
+  if (!composerPrefixDelimiters.has(typed) || !empty) return;
+  if ($from.parent.type !== schema.nodes.paragraph) return;
+  // Space is typed constantly; read only the caret's line before projecting.
+  const offset = $from.parentOffset;
+  const window = $from.parent.textBetween(
+    Math.max(0, offset - PREFIX_WINDOW),
+    offset,
+  );
+  const newline = window.lastIndexOf("\n");
+  if (newline < 0 && offset > PREFIX_WINDOW) return;
+  const match = PREFIX.exec(window.slice(newline + 1));
+  if (!match) return;
+  const kind = match[1]
+    ? "bullet_list"
+    : match[2]
+      ? "ordered_list"
+      : "blockquote";
+  // Nesting follows the toolbar. A list may open inside a quote, which the
+  // toolbar produces by toggling a list on quoted prose. Inside a list item
+  // the toolbar switches or lifts the item and Tab nests it, so a marker typed
+  // there stays literal; the toolbar never nests quotes, so a quote marker
+  // inside a quote stays literal too.
+  for (let depth = $from.depth - 1; depth > 0; depth--) {
+    const name = $from.node(depth).type.name;
+    if (name === "list_item") return;
+    if (name === "blockquote" && kind === "blockquote") return;
+  }
+  const source = projectComposerDocument(state.doc);
+  const text = source.draft.text;
+  const caret = source.source($from.pos);
+  const block = source.blocks.find(
+    (block) => $from.pos >= block.from && $from.pos <= block.to,
+  );
+  if (!block) return;
+  const start = Math.max(block.start, text.lastIndexOf("\n", caret - 1) + 1);
+  if (text.slice(start, caret) !== match[0]) return;
+  // A marker inside authored fenced source is a code line on the timeline.
+  if (insideFence(text.slice(block.start, start).split("\n"))) return;
+  const from = source.position(start),
+    to = $from.pos;
+  if (source.source(from) !== start) return;
+  const lineBreak = text.indexOf("\n", caret);
+  const lineEnd =
+    lineBreak < 0
+      ? block.to
+      : Math.min(block.to, source.position(lineBreak, -1));
+  let plain = true;
+  state.doc.nodesBetween(from, lineEnd, (node) => {
+    if (!node.isInline) return;
+    if (
+      !node.isText ||
+      (["code", "link", "literal"] as const).some((name) =>
+        schema.marks[name].isInSet(node.marks),
+      )
+    )
+      plain = false;
+  });
+  if (!plain) return;
+  const marks = $from.marks();
+  const tr = state.tr.delete(from, to);
+  isolate(tr);
+  const command =
+    kind === "blockquote"
+      ? wrapIn(schema.nodes.blockquote)
+      : wrapInList(
+          schema.nodes[kind],
+          kind === "ordered_list" ? { order: Number(match[2]) } : null,
+        );
+  if (!apply(tr, command)) return;
+  // The marker's own marks (an explicit Bold typing mode) continue into the
+  // block, as the typed prose already carried them.
+  return marks.length ? tr.setStoredMarks(marks) : tr;
+}
+
 /** Shift+Enter continues the block; an empty last line exits it. Plain Enter
  * remains the host's existing send/completion policy. */
 export function composerBlockLineBreak(

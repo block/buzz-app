@@ -49,8 +49,10 @@ import {
   activeBlockFormats,
   toggleComposerBlock,
   composerBlockLineBreak,
+  composerBlockPrefix,
   composerCodeFence,
   composerFenceDelimiters,
+  composerPrefixDelimiters,
 } from "./composer-blocks";
 import { composerLinkLabel } from "./composer-link-label";
 import {
@@ -551,8 +553,7 @@ export function EditableInput({
       const source = projection();
       const { from, to } = editor.state.selection;
       // Existing Markdown code stays literal for other formats. Explicit inline
-      // code treats the selected characters literally; a typed fence line only
-      // becomes a block through the Enter/Shift+Enter rule.
+      // code treats the selected characters literally.
       if (
         format !== "code" &&
         markdownRanges(
@@ -986,22 +987,28 @@ export function EditableInput({
           const previous = editor.state;
           editor.dispatch(tr.scrollIntoView());
           // A typed delimiter converts in a second transaction: the third
-          // character of a lone ``` or ~~~ line opens a code block at once, and
-          // a closing delimiter converts its inline span. One undo restores the
+          // character of a lone ``` or ~~~ line opens a code block at once, the
+          // space after a lone list or quote marker opens that block, and a
+          // closing delimiter converts its inline span. One undo restores the
           // typed source, that character included, and the next keystroke never
           // merges into the conversion. Near maxLength the typed character
-          // itself can be filtered out; then nothing converts.
+          // itself can be filtered out; then nothing converts. Completions
+          // claim Space on keydown when a result has a spaceId, so that Space
+          // never reaches this rule; a marker line has no completion trigger.
           if (
             from === to &&
             (composerFenceDelimiters.has(text) ||
+              composerPrefixDelimiters.has(text) ||
               composerInlineDelimiters.has(text)) &&
             !composing.current &&
             !editor.composing &&
             editor.state !== previous
           ) {
-            const fence = composerCodeFence(editor.state, text);
-            const conversion = fence ?? editor.state.tr;
-            if (fence || applyComposerInlineInput(conversion, text)) {
+            const block =
+              composerCodeFence(editor.state, text) ??
+              composerBlockPrefix(editor.state, text);
+            const conversion = block ?? editor.state.tr;
+            if (block || applyComposerInlineInput(conversion, text)) {
               const unconverted = editor.state;
               editor.dispatch(closeHistory(conversion).scrollIntoView());
               // Generated delimiters or escapes in the serialized form can

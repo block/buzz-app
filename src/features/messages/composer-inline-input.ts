@@ -27,10 +27,13 @@ const INLINE_MARKS = {
 type InlineType = keyof typeof INLINE_MARKS;
 const isInline = (type: string): type is InlineType => type in INLINE_MARKS;
 
-// No input rules inside links, images, HTML, or fenced/indented code.
+// No input rules inside links, images, HTML, or fenced/indented code. The
+// schema has no heading node, so a `# Title` line stays a paragraph, but the
+// timeline renders it as a heading with its spans styled; those spans convert.
 const CONTAINERS = new Set([
   "root",
   "paragraph",
+  "heading",
   "strong",
   "emphasis",
   "delete",

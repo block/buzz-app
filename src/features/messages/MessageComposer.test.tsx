@@ -731,6 +731,23 @@ it("opens a code block as ``` is typed without waiting for Enter, then sends the
   expect(h.input().querySelector("pre")).toBeNull();
 });
 
+it("opens a bullet as `- ` is typed, continues it with Shift+Enter and sends the list on Enter", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "- first");
+  expect(h.input().querySelector("ul > li")).toHaveTextContent("first");
+  expect(h.input()).toHaveValue("first");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}second{Enter}");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "- first\n- second",
+    [],
+    [],
+  );
+  expect(h.input()).toHaveValue("");
+  expect(h.input().querySelector("ul")).toBeNull();
+});
+
 it("sends a pasted fenced block verbatim on Enter instead of opening a block from its closing fence", async () => {
   const h = mount();
   act(() => {

@@ -288,6 +288,22 @@ it("follows the parser for intraword delimiters: snake_case stays literal, 5*3*2
   });
 });
 
+it("converts a span typed on a heading line, which the timeline renders as a heading", async () => {
+  const h = mount();
+  await h.user.keyboard("# Title **bold**");
+  expect(h.input.querySelector("strong")).toHaveTextContent("bold");
+  expect(h.input).toHaveValue("# Title bold");
+  expect(h.markdown()).toBe("# Title **bold**");
+  expect(fromMarkdown(h.markdown()).children[0]).toMatchObject({
+    type: "heading",
+    depth: 1,
+    children: [
+      { type: "text", value: "Title " },
+      { type: "strong", children: [{ type: "text", value: "bold" }] },
+    ],
+  });
+});
+
 it("leaves delimiters typed inside inline code or a code block literal", async () => {
   const h = mount();
   act(() => h.input.toggleFormat("code"));
@@ -629,6 +645,165 @@ it("keeps a typed opening fence literal when a later line already closes it", as
   expect(h.input.querySelector("pre")).toBeNull();
   expect(h.input).toHaveValue("```\ncode\n```");
   expect(h.markdown()).toBe("```\ncode\n```");
+});
+
+it.each([
+  ["- ", "ul", "- "],
+  ["* ", "ul", "- "],
+  ["+ ", "ul", "- "],
+  ["1. ", "ol", "1. "],
+  ["1) ", "ol", "1. "],
+  ["> ", "blockquote", "> "],
+] as const)(
+  "opens a block as the space of %j is typed, with one undo restoring the prefix",
+  async (prefix, tag, wire) => {
+    const h = mount();
+    await h.user.keyboard(prefix.slice(0, -1));
+    expect(h.input.querySelector(tag)).toBeNull();
+    expect(h.input).toHaveValue(prefix.slice(0, -1));
+    await h.user.keyboard(" ");
+    expect(h.input.querySelector(`:scope > ${tag}`)).not.toBeNull();
+    expect(h.input).toHaveValue("");
+    act(() => h.input.undo(false));
+    expect(h.input.querySelector(tag)).toBeNull();
+    expect(h.input).toHaveValue(prefix);
+    act(() => h.input.undo(true));
+    expect(h.input.querySelector(`:scope > ${tag}`)).not.toBeNull();
+    await h.user.keyboard("item");
+    expect(h.input).toHaveValue("item");
+    expect(h.markdown()).toBe(`${wire}item`);
+    // The typed text is its own undo step; it never merges into the conversion.
+    act(() => h.input.undo(false));
+    expect(h.input.querySelector(`:scope > ${tag}`)).not.toBeNull();
+    expect(h.input).toHaveValue("");
+    act(() => h.input.undo(true));
+    expect(h.markdown()).toBe(`${wire}item`);
+    const saved = JSON.parse(JSON.stringify(h.draft()));
+    act(() => h.input.reset(saved));
+    expect(h.input.querySelector(`:scope > ${tag}`)).not.toBeNull();
+    expect(h.markdown()).toBe(`${wire}item`);
+  },
+);
+
+it("starts an ordered list at the typed number and continues it with Shift+Enter", async () => {
+  const h = mount();
+  await h.user.keyboard("3. third{Shift>}{Enter}{/Shift}fourth");
+  expect(h.input.querySelector(":scope > ol")).toHaveAttribute("start", "3");
+  expect(h.input.querySelectorAll("ol > li")).toHaveLength(2);
+  expect(h.input).toHaveValue("third\nfourth");
+  expect(h.markdown()).toBe("3. third\n4. fourth");
+  await h.user.keyboard("{Tab}");
+  expect(h.input.querySelector("ol ol > li")).toHaveTextContent("fourth");
+  await h.user.keyboard("{Shift>}{Tab}{Enter}{Enter}{/Shift}outside");
+  expect(h.input.querySelector(":scope > p")).toHaveTextContent("outside");
+  expect(h.markdown()).toBe("3. third\n4. fourth\n\noutside");
+  const saved = JSON.parse(JSON.stringify(h.draft()));
+  act(() => h.input.reset(saved));
+  expect(h.input.querySelector(":scope > ol")).toHaveAttribute("start", "3");
+  expect(h.markdown()).toBe("3. third\n4. fourth\n\noutside");
+});
+
+it("opens a list from a marker typed on the second line, after the first line's paragraph", async () => {
+  const h = mount("intro");
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}- item");
+  expect(h.input.querySelector(":scope > p")).toHaveTextContent("intro");
+  expect(h.input.querySelector(":scope > ul > li")).toHaveTextContent("item");
+  expect(h.input).toHaveValue("intro\nitem");
+  expect(h.markdown()).toBe("intro\n\n- item");
+});
+
+it("quotes the rest of the line when the marker is typed before existing prose", async () => {
+  const h = mount("quoted\nplain");
+  act(() => h.input.setSelectionRange(0, 0));
+  await h.user.keyboard("> ");
+  expect(h.input.querySelector(":scope > blockquote > p")).toHaveTextContent(
+    "quoted",
+  );
+  expect(h.input.querySelector(":scope > p")).toHaveTextContent("plain");
+  expect(h.input).toHaveValue("quoted\nplain");
+  expect(h.markdown()).toBe("> quoted\n\nplain");
+});
+
+it("opens a list inside a quote but keeps markers typed inside a list item or a second quote literal", async () => {
+  const h = mount();
+  await h.user.keyboard("> quote{Shift>}{Enter}{/Shift}- item");
+  expect(
+    h.input.querySelector(":scope > blockquote > ul > li"),
+  ).toHaveTextContent("item");
+  expect(h.markdown()).toBe("> quote\n>\n> - item");
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}> not nested");
+  expect(h.input.querySelectorAll("blockquote")).toHaveLength(1);
+  expect(h.input.querySelectorAll("ul > li")).toHaveLength(2);
+  expect(h.markdown()).toBe("> quote\n>\n> - item\n> - > not nested");
+  const quote = mount();
+  await quote.user.keyboard("> outer{Shift>}{Enter}{/Shift}> inner");
+  expect(quote.input.querySelectorAll("blockquote")).toHaveLength(1);
+  expect(quote.input).toHaveValue("outer\n> inner");
+  expect(quote.markdown()).toBe("> outer\n> > inner");
+});
+
+it("leaves a marker typed after prose, and ordinary spaces, as paragraph text", async () => {
+  const h = mount();
+  await h.user.keyboard("note - one 1. two > three");
+  expect(h.input.querySelector("ul, ol, blockquote")).toBeNull();
+  expect(h.input).toHaveValue("note - one 1. two > three");
+  expect(h.markdown()).toBe("note - one 1. two > three");
+});
+
+it.each([" - ", "a- ", "1.5 ", "1234567890. ", "-> ", ">> "])(
+  "leaves typed %j as paragraph text",
+  async (line) => {
+    const h = mount();
+    await h.user.keyboard(line);
+    expect(h.input.querySelector("ul, ol, blockquote")).toBeNull();
+    expect(h.input).toHaveValue(line);
+  },
+);
+
+it("keeps a marker typed inside a code block or inline code literal", async () => {
+  const h = mount();
+  act(() => h.input.toggleFormat("code_block"));
+  await h.user.keyboard("- item");
+  expect(h.input.querySelector("ul")).toBeNull();
+  expect(h.input.querySelector("pre > code")).toHaveTextContent("- item");
+  expect(h.markdown()).toBe("```\n- item\n```");
+  const inline = mount();
+  act(() => inline.input.toggleFormat("code"));
+  await inline.user.keyboard("> quote");
+  expect(inline.input.querySelector("blockquote")).toBeNull();
+  expect(inline.input.querySelector("code")).toHaveTextContent("> quote");
+  expect(inline.markdown()).toBe("`> quote`");
+});
+
+it("does not convert an inserted or pasted marker, or one typed inside pasted fenced source", async () => {
+  const h = mount();
+  act(() => h.input.insertText("- item"));
+  expect(h.input.querySelector("ul")).toBeNull();
+  expect(h.markdown()).toBe("- item");
+  paste(h.input, "\n> quote");
+  expect(h.input.querySelector("blockquote")).toBeNull();
+  expect(h.markdown()).toBe("- item\n> quote");
+  const fenced = mount();
+  paste(fenced.input, "```\ncode\n```");
+  act(() => fenced.input.setSelectionRange(4, 4));
+  await fenced.user.keyboard("- ");
+  expect(fenced.input.querySelector("ul, pre")).toBeNull();
+  expect(fenced.input).toHaveValue("```\n- code\n```");
+  expect(fenced.markdown()).toBe("```\n- code\n```");
+});
+
+it("keeps a marker literal on a line holding a mention chip", async () => {
+  const h = mount();
+  const honey = { pubkey: "a".repeat(64), name: "Honey" };
+  act(() => h.input.insertText("", honey));
+  expect(h.input).toHaveValue("@Honey ");
+  act(() => h.input.setSelectionRange(0, 0));
+  await h.user.keyboard("- ");
+  expect(h.input.querySelector("ul")).toBeNull();
+  expect(h.input).toHaveValue("- @Honey ");
+  expect(h.input.querySelector('[data-source="@Honey"]')).not.toBeNull();
+  expect(h.draft().recipients).toEqual([{ ...honey, start: 2, end: 8 }]);
+  expect(h.markdown()).toBe("- @Honey ");
 });
 
 it("switches a nested bullet to its ordered ancestor's type without outdenting", async () => {

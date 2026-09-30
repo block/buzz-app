@@ -57,9 +57,14 @@ it("browses an own Databricks workspace before global defaults, and inherits whe
       1,
       1,
       expect.objectContaining({
-        host: "https://agent.example.com",
-        filter: "agent-*",
         action: "connect",
+        integration: {
+          kind: "databricks",
+          settings: {
+            host: "https://agent.example.com",
+            filter: "agent-*",
+          },
+        },
       }),
     );
     expect(run).not.toHaveBeenCalledWith(
@@ -78,10 +83,12 @@ it("browses an own Databricks workspace before global defaults, and inherits whe
       2,
       1,
       expect.objectContaining({
-        host: "",
-        filter: "",
         inheritWorkspace: true,
         action: "connect",
+        integration: {
+          kind: "databricks",
+          settings: { host: "", filter: "" },
+        },
       }),
     );
   } finally {

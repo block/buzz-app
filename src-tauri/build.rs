@@ -1,3 +1,5 @@
+mod build_resources;
+
 fn main() {
     // Release builds enable the updater only when both values are supplied; its
     // `plugins.updater` config comes from the same values via `tauri build --config`.
@@ -108,5 +110,11 @@ fn main() {
             "browser_status",
         ])),
     )
-    .expect("Could not build Tauri resources")
+    .expect("Could not build Tauri resources");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+        let profile = output.ancestors().nth(3).expect("Cargo profile directory");
+        build_resources::refresh_runtime_inodes(&profile.join("agent-runtime"))
+            .expect("Could not publish fresh agent runtime resources");
+    }
 }

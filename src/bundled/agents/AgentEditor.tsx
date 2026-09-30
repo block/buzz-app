@@ -1,3 +1,5 @@
+import type { RelaySession } from "../../features/relay/session";
+import { AgentSessionSettings } from "./AgentSessionSettings";
 import { npubEncode } from "nostr-tools/nip19";
 import { AvatarEditor } from "../../features/profiles/AvatarEditor";
 import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
@@ -27,6 +29,7 @@ import {
 
 export function AgentEditor({
   agent,
+  session,
   displayName = agent.name,
   control,
   state,
@@ -35,6 +38,7 @@ export function AgentEditor({
   onOpenHarnesses,
 }: {
   agent: AgentView;
+  session?: RelaySession | undefined;
   onOpenHarnesses?: (() => void) | undefined;
   displayName?: string;
   control: AgentControl;
@@ -192,6 +196,13 @@ export function AgentEditor({
                 onOpenHarnesses={onOpenHarnesses}
                 discardEdits={dirty}
               />
+              {session &&
+                agent.harness.command
+                  .replaceAll("\\", "/")
+                  .split("/")
+                  .at(-1) === "codex-acp" && (
+                  <AgentSessionSettings agent={agent} session={session} />
+                )}
               <div className="-mx-2">
                 <Accordion
                   variant="form"

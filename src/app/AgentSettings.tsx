@@ -14,10 +14,11 @@ import { AgentDefaultsCard } from "./AgentDefaultsCard";
 import styles from "./AgentSettings.module.css";
 
 const acpHint =
-  "Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose supports it natively. Pi needs a small adapter, `buzz-pi-acp`. Your existing CLI setup and sign-in are left untouched.";
+  "Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose supports it natively. Pi and Codex need adapters. Your existing CLI setup and sign-in are left untouched.";
 const piCommand = "npm install -g @earendil-works/pi-coding-agent";
 const adapterCommand =
   "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#86b201e'";
+const codexCommand = "npm install -g @agentclientprotocol/codex-acp@1.3.0";
 const labels = {
   ready: "Ready",
   "cli-needed": "CLI needed",
@@ -55,12 +56,14 @@ export function AgentSettings({
     if (active) void control.refresh();
   }, [active, control]);
   const options = state.data?.harnessOptions;
-  const harnesses = (["Buzz Agent", "Goose", "Pi"] as const).map((name) =>
-    options?.find((option) => option.label === name),
-  );
-  const available = harnesses.every((option) => !!option?.status);
+  const harnesses = (["Buzz Agent", "Goose", "Pi", "Codex"] as const)
+    .map((name) => options?.find((option) => option.label === name))
+    .filter((option) => option !== undefined);
+  const available =
+    harnesses.length >= 3 && harnesses.every((option) => !!option.status);
   const goose = harnesses[1];
   const pi = harnesses[2];
+  const codex = options?.find((option) => option.label === "Codex");
   const change = (enabled: boolean) =>
     setError(setRememberAgentsPreference(enabled));
   const copy = async (name: string, command: string) => {
@@ -278,12 +281,35 @@ export function AgentSettings({
                     </Button>
                   </div>
                 ))}
-                {copyMessage && (
-                  <p role="status" className="m-0">
-                    {copyMessage}
-                  </p>
-                )}
               </div>
+            )}
+            {codex && codex.status !== "ready" && (
+              <div className="space-y-3 text-body-sm">
+                <p className="m-0 text-secondary">
+                  Install the supported Codex ACP adapter, then run its Codex
+                  login command in a terminal. Click Check again after
+                  installing. Buzz does not modify your shared Codex account.
+                </p>
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <code
+                    className={`${styles.command} min-w-0 flex-1 text-mono`}
+                  >
+                    {codexCommand}
+                  </code>
+                  <Button
+                    size="sm"
+                    type="button"
+                    onClick={() => void copy("Codex", codexCommand)}
+                  >
+                    Copy Codex command
+                  </Button>
+                </div>
+              </div>
+            )}
+            {copyMessage && (
+              <p role="status" className="m-0">
+                {copyMessage}
+              </p>
             )}
           </>
         )}

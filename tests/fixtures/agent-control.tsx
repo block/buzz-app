@@ -146,6 +146,8 @@ fixture.host.models = {
     releaseModels?.();
   },
   run: async (_ticket, request) => {
+    if (request.integration?.kind !== "databricks")
+      throw new Error("Fixture supports Databricks only");
     modelCalls.push(request.action);
     if (modelMode === "wait")
       await new Promise<void>((resolve) => {
@@ -153,17 +155,37 @@ fixture.host.models = {
       });
     if (modelMode === "error") throw "Synthetic connection failure.";
     return {
-      host: request.host,
+      integration: {
+        kind: "databricks",
+        host: request.integration.settings.host,
+      },
+      discovery:
+        request.action === "disconnect"
+          ? null
+          : {
+              source: "databricksCatalog",
+              authentication: "authenticated",
+              catalog: "remote",
+            },
       models:
         modelMode === "empty" || request.action === "disconnect"
           ? []
           : [
-              { id: "catalog.schema.real-model", name: "Friendly Model" },
-              { id: "endpoint-two", name: "Other Model" },
+              {
+                id: "catalog.schema.real-model",
+                name: "Friendly Model",
+                effort: { status: "unsupported" },
+              },
+              {
+                id: "endpoint-two",
+                name: "Other Model",
+                effort: { status: "unsupported" },
+              },
               ...(modelMode === "many"
                 ? Array.from({ length: 18 }, (_, index) => ({
                     id: `endpoint-${index + 3}`,
                     name: `Catalog Model ${index + 3}`,
+                    effort: { status: "unsupported" as const },
                   }))
                 : []),
             ],

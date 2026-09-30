@@ -17,6 +17,7 @@ pub(crate) struct Snapshot {
     inventory_warnings: Vec<String>,
     import_available: bool,
     create_available: bool,
+    configuration_available: bool,
     avatar_editing_available: bool,
     local_inventory_actions: bool,
     default_workspace: String,
@@ -47,6 +48,7 @@ impl Snapshot {
                 target_os = "windows",
                 target_os = "linux"
             )),
+            configuration_available: true,
             avatar_editing_available: true,
             local_inventory_actions: true,
             default_workspace: workspace.to_string_lossy().into_owned(),
@@ -63,6 +65,8 @@ impl Snapshot {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HarnessOption {
+    id: &'static str,
+    capabilities: HarnessCapabilities,
     command: String,
     label: &'static str,
     available: bool,
@@ -71,6 +75,12 @@ struct HarnessOption {
     install_supported: Option<bool>,
     default_args: &'static [&'static str],
     providers: &'static [ProviderOption],
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HarnessCapabilities {
+    model_discovery: Option<&'static str>,
+    openai: bool,
 }
 #[derive(Serialize)]
 struct ProviderOption {
@@ -189,8 +199,14 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             node: buzz_agent_controller::managed_tool(app_data, "node"),
         },
     );
+    let codex = buzz_agent_controller::codex::installed_adapter();
     vec![
         HarnessOption {
+            id: "buzz-agent",
+            capabilities: HarnessCapabilities {
+                model_discovery: Some("databricks"),
+                openai: true,
+            },
             command: "buzz-agent".into(),
             label: "Buzz Agent",
             available: true,
@@ -210,6 +226,11 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             ][usize::from(cfg!(windows))..],
         },
         HarnessOption {
+            id: "goose",
+            capabilities: HarnessCapabilities {
+                model_discovery: Some("goose"),
+                openai: false,
+            },
             command: goose.as_ref().map_or_else(
                 || "goose".into(),
                 |path| path.to_string_lossy().into_owned(),
@@ -226,6 +247,11 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             providers: GOOSE_PROVIDERS,
         },
         HarnessOption {
+            id: "pi",
+            capabilities: HarnessCapabilities {
+                model_discovery: Some("pi"),
+                openai: false,
+            },
             command: pi.map_or_else(
                 || "buzz-pi-acp".into(),
                 |p| p.to_string_lossy().into_owned(),
@@ -239,6 +265,27 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             ))),
             default_args: &[],
             // Pi reports signed-in providers through its model catalog.
+            providers: &[],
+        },
+        HarnessOption {
+            id: "codex",
+            capabilities: HarnessCapabilities {
+                model_discovery: Some("codex"),
+                openai: false,
+            },
+            command: codex.as_ref().map_or_else(
+                || "codex-acp".into(),
+                |path| path.to_string_lossy().into_owned(),
+            ),
+            label: "Codex",
+            available: codex.is_some(),
+            status: if codex.is_some() {
+                "ready"
+            } else {
+                "adapter-needed"
+            },
+            install_supported: None,
+            default_args: &[],
             providers: &[],
         },
     ]
@@ -268,6 +315,24 @@ struct MentionReplay {
     floor: u64,
 }
 
+struct PreparedCreation {
+    request_id: String,
+    agent: Arc<NewAgent>,
+    edit: AgentEdit,
+    effective_edit: AgentEdit,
+}
+
+impl PreparedCreation {
+    fn validate_draft(&self, controller: &Controller, edit: &AgentEdit) -> Result<(), String> {
+        if &self.edit != edit || controller.effective_draft(edit.clone())? != self.effective_edit {
+            return Err(
+                "Agent settings or defaults changed; retry Create to validate them again".into(),
+            );
+        }
+        Ok(())
+    }
+}
+
 struct Host {
     inventory_warnings: Vec<String>,
     controller: Controller,
@@ -284,7 +349,7 @@ struct Host {
     acted: BTreeSet<String>,
     profiles: BTreeMap<String, Arc<tokio::sync::Mutex<()>>>,
     log_challenges: BTreeMap<String, LogChallenge>,
-    creating: Option<(String, Arc<NewAgent>)>,
+    creating: Option<Arc<PreparedCreation>>,
     legacy_check: fn() -> Result<(), String>,
 }
 impl Host {
@@ -1173,27 +1238,53 @@ pub(crate) async fn agent_control_import_commit(
 #[tauri::command]
 pub(crate) async fn agent_control_create_prepare(
     state: tauri::State<'_, AgentHost>,
+    models: tauri::State<'_, crate::agent_models::ModelHost>,
     request_id: String,
     destination: String,
     owner: String,
-) -> Result<serde_json::Value, String> {
+    edit: AgentEdit,
+) -> Result<serde_json::Value, crate::agent_models::ModelError> {
+    let submitted = edit.clone();
+    let effective_edit = run(state.inner().clone(), move |host| {
+        host.controller.effective_draft(submitted)
+    })
+    .await?;
+    models.validate_creation(&effective_edit).await?;
     run(state.inner().clone(), move |host| {
         if uuid::Uuid::parse_str(&request_id).is_err() {
             return Err("Invalid create request".into());
         }
-        if host.creating.as_ref().map(|(id, _)| id) != Some(&request_id) {
-            host.creating = Some((
+        if host.controller.effective_draft(edit.clone())? != effective_edit {
+            return Err("Agent defaults changed during validation; retry Create".into());
+        }
+        let existing = host
+            .creating
+            .as_ref()
+            .filter(|pending| pending.request_id == request_id);
+        let agent = if let Some(pending) = existing {
+            if !pending.agent.matches(&destination, &owner)? {
+                return Err("Create destination or owner changed".into());
+            }
+            pending.agent.clone()
+        } else {
+            Arc::new(NewAgent::prepare(&destination, &owner)?)
+        };
+        let result = serde_json::json!({"id": agent.id, "pubkey": agent.key.pubkey()});
+        // Unchanged retries retain both the identity and the in-flight commit fence.
+        if existing.map_or(true, |pending| {
+            pending.edit != edit || pending.effective_edit != effective_edit
+        }) {
+            host.creating = Some(Arc::new(PreparedCreation {
                 request_id,
-                Arc::new(NewAgent::prepare(&destination, &owner)?),
-            ));
+                agent,
+                edit,
+                effective_edit,
+            }));
         }
-        let agent = &host.creating.as_ref().ok_or("Create request expired")?.1;
-        if !agent.matches(&destination, &owner)? {
-            return Err("Create destination or owner changed".into());
-        }
-        Ok(serde_json::json!({"id": agent.id, "pubkey": agent.key.pubkey()}))
+        Ok(result)
     })
     .await
+    .map_err(crate::agent_models::ModelError::from)
 }
 /// Owner attestation for the pending create's generated key only. The
 /// identity may read OS credentials, so the agent host stays unlocked.
@@ -1226,34 +1317,34 @@ pub(crate) async fn agent_control_create_commit(
     auth: String,
 ) -> Result<Snapshot, String> {
     let owner = state.inner().clone();
-    let (prepared, credentials, request_id, edit, auth) = run(owner.clone(), move |host| {
-        let (_, prepared) = host
+    let (prepared, credentials, edit, auth) = run(owner.clone(), move |host| {
+        let prepared = host
             .creating
             .as_ref()
-            .filter(|(id, _)| id == &request_id)
+            .filter(|pending| pending.request_id == request_id)
             .ok_or("Create request expired; reopen Add agent")?;
-        prepared.validate(edit.clone(), &auth)?;
-        Ok((
-            prepared.clone(),
-            host.credentials.clone(),
-            request_id,
-            edit,
-            auth,
-        ))
+        prepared.validate_draft(&host.controller, &edit)?;
+        prepared.agent.validate(edit.clone(), &auth)?;
+        Ok((prepared.clone(), host.credentials.clone(), edit, auth))
     })
     .await?;
     let saved = prepared.clone();
     tauri::async_runtime::spawn_blocking(move || {
         credentials.retry();
-        saved.save_key(credentials.as_ref())
+        saved.agent.save_key(credentials.as_ref())
     })
     .await
     .map_err(|_| "Native credential operation failed")??;
     run(owner, move |host| {
-        if host.creating.as_ref().map(|(id, _)| id) != Some(&request_id) {
+        if !host
+            .creating
+            .as_ref()
+            .is_some_and(|pending| Arc::ptr_eq(pending, &prepared))
+        {
             return Err("Create request was replaced".into());
         }
-        host.controller.create(&prepared, edit, &auth)?;
+        prepared.validate_draft(&host.controller, &edit)?;
+        host.controller.create(&prepared.agent, edit, &auth)?;
         host.snapshot()
     })
     .await
@@ -1319,6 +1410,8 @@ async fn publish_acquired(
 
 mod profile_http;
 
+#[cfg(test)]
+mod creation_tests;
 #[cfg(test)]
 pub(crate) mod tests;
 

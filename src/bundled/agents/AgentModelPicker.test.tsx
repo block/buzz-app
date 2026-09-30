@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { StrictMode, useState } from "react";
+import { StrictMode, useState, type FormEvent } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -8,252 +8,9 @@ import { AgentModelPicker } from "./AgentModelPicker";
 import { agentDraft } from "./agent-edit";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
-import type { ModelCatalog } from "../../features/agents/models";
+import type { ModelCatalog, ModelRequest } from "../../features/agents/models";
 
 afterEach(cleanup);
-
-it("Goose Databricks v2 browses live IDs and flags an unlisted short name", async () => {
-  const f = controlFixture();
-  const run = vi.fn(async () => ({
-    host: "",
-    models: [
-      {
-        id: "data_workflow_tools.goose.goose-glm-5-3",
-        name: "data_workflow_tools.goose.goose-glm-5-3",
-      },
-    ],
-    modelOverridden: false,
-    disconnected: false,
-  }));
-  f.host.models = {
-    begin: async () => 1,
-    run,
-    cancel: async () => {},
-  };
-  const control = createAgentControl(f.host);
-  const user = userEvent.setup();
-  function Editor() {
-    const [draft, setDraft] = useState({
-      ...agentDraft(f.agent),
-      command: "/usr/local/bin/goose",
-      provider: "databricks_v2",
-      model: "goose-glm-5-3",
-    });
-    return (
-      <AgentModelPicker
-        draft={draft}
-        control={control}
-        defaults={{ host: "", filter: "" }}
-        onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
-      />
-    );
-  }
-  const view = render(<Editor />);
-  try {
-    await user.click(screen.getByRole("button", { name: "Browse models" }));
-    await screen.findByText(/not in Goose’s current provider list/);
-    expect(run).toHaveBeenCalledWith(
-      1,
-      expect.objectContaining({
-        host: "",
-        filter: "",
-        action: "connect",
-      }),
-    );
-    await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
-        "aria-expanded",
-        "true",
-      ),
-    );
-    await user.click(
-      screen.getByRole("option", {
-        name: /data_workflow_tools\.goose\.goose-glm-5-3/,
-      }),
-    );
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue(
-      "data_workflow_tools.goose.goose-glm-5-3",
-    );
-    expect(
-      screen.queryByText(/not in Goose’s current provider list/),
-    ).not.toBeInTheDocument();
-  } finally {
-    view.unmount();
-    control.dispose();
-  }
-});
-
-it("shows ten Goose models at a time and searches the full provider catalog", async () => {
-  const f = controlFixture();
-  const run = vi.fn(async () => ({
-    host: "",
-    models: Array.from({ length: 30 }, (_, index) => ({
-      id: `model-${String(index).padStart(2, "0")}`,
-      name: `model-${String(index).padStart(2, "0")}`,
-    })),
-    modelOverridden: false,
-    disconnected: false,
-  }));
-  f.host.models = { begin: async () => 1, run, cancel: async () => {} };
-  const control = createAgentControl(f.host);
-  const user = userEvent.setup();
-  function Editor() {
-    const [draft, setDraft] = useState({
-      ...agentDraft(f.agent),
-      command: "/usr/local/bin/goose",
-      provider: "anthropic",
-      model: "",
-    });
-    return (
-      <AgentModelPicker
-        draft={draft}
-        control={control}
-        defaults={{ host: "", filter: "" }}
-        onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
-      />
-    );
-  }
-  const view = render(<Editor />);
-  try {
-    await user.click(screen.getByRole("button", { name: "Browse models" }));
-    await screen.findByText("Showing up to 10 models. Type to search all 30.");
-    expect(run).toHaveBeenCalledWith(
-      1,
-      expect.objectContaining({
-        action: "connect",
-        edit: expect.objectContaining({
-          harness: expect.objectContaining({ provider: "anthropic" }),
-        }),
-      }),
-    );
-    const input = screen.getByRole("combobox", { name: "Model" });
-    await waitFor(() => expect(input).toHaveAttribute("aria-expanded", "true"));
-    expect(screen.getAllByRole("option")).toHaveLength(10);
-    expect(screen.getByRole("option", { name: /^model-00$/ })).toBeVisible();
-    expect(screen.queryByRole("option", { name: /model-25/ })).toBeNull();
-    await user.type(input, "model-25");
-    await user.click(await screen.findByRole("option", { name: /model-25/ }));
-    expect(input).toHaveValue("model-25");
-  } finally {
-    view.unmount();
-    control.dispose();
-  }
-});
-
-it("shows a loading row while Goose fetches models for the selected provider", async () => {
-  const f = controlFixture();
-  let finish: (catalog: ModelCatalog) => void = () => {};
-  const run = vi.fn(
-    () =>
-      new Promise<ModelCatalog>((resolve) => {
-        finish = resolve;
-      }),
-  );
-  f.host.models = { begin: async () => 1, run, cancel: async () => {} };
-  const control = createAgentControl(f.host);
-  const draft = {
-    ...agentDraft(f.agent),
-    command: "/usr/local/bin/goose",
-    provider: "anthropic",
-    model: "previous-model",
-  };
-  const view = render(
-    <AgentModelPicker
-      draft={draft}
-      control={control}
-      defaults={{ host: "", filter: "" }}
-      onChange={() => {}}
-    />,
-  );
-  try {
-    await userEvent.click(
-      screen.getByRole("button", { name: "Browse models" }),
-    );
-    await waitFor(() => expect(run).toHaveBeenCalledOnce());
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
-      "aria-busy",
-      "true",
-    );
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue(
-      "previous-model",
-    );
-    expect(screen.getByText("Loading Goose models…")).toBeVisible();
-    expect(screen.queryByRole("option", { name: /previous-model/ })).toBeNull();
-    finish({
-      host: "",
-      models: [{ id: "claude-model", name: "claude-model" }],
-      modelOverridden: false,
-      disconnected: false,
-    });
-    expect(
-      await screen.findByRole("option", { name: /^claude-model$/ }),
-    ).toBeVisible();
-    await waitFor(() =>
-      expect(
-        screen.getByRole("combobox", { name: "Model" }),
-      ).not.toHaveAttribute("aria-busy"),
-    );
-  } finally {
-    finish({
-      host: "",
-      models: [],
-      modelOverridden: false,
-      disconnected: false,
-    });
-    view.unmount();
-    control.dispose();
-  }
-});
-
-it("shows Goose authentication errors while keeping manual model entry available", async () => {
-  const f = controlFixture();
-  f.host.models = {
-    begin: async () => 1,
-    run: async () => {
-      throw "Goose needs authentication for this provider. Enter its API key in Buzz if it uses one, then retry";
-    },
-    cancel: async () => {},
-  };
-  const control = createAgentControl(f.host);
-  const draft = {
-    ...agentDraft(f.agent),
-    command: "/usr/local/bin/goose",
-    provider: "openai",
-  };
-  const view = render(
-    <AgentModelPicker
-      draft={draft}
-      control={control}
-      defaults={{ host: "", filter: "" }}
-      onChange={() => {}}
-    />,
-  );
-  try {
-    await userEvent.click(
-      screen.getByRole("button", { name: "Browse models" }),
-    );
-    expect(await screen.findByText(/Goose needs authentication/)).toBeVisible();
-    const input = screen.getByRole("combobox", { name: "Model" });
-    await waitFor(() => expect(input).not.toHaveAttribute("aria-busy"));
-    // Authentication can finish before Base UI's next-frame trigger opens the
-    // popup. Escape must follow that opening, not just the request completion.
-    await waitFor(() => expect(input).toHaveAttribute("aria-expanded", "true"));
-    await userEvent.keyboard("{Escape}");
-    await waitFor(() =>
-      expect(input).toHaveAttribute("aria-expanded", "false"),
-    );
-    expect(
-      await screen.findByRole("button", { name: "Retry models" }),
-    ).toBeVisible();
-    await userEvent.clear(input);
-    await userEvent.type(input, "custom-model");
-    expect(input).toHaveValue("custom-model");
-  } finally {
-    view.unmount();
-    control.dispose();
-  }
-});
-
 for (const opening of ["typing", "ArrowDown", "closed"] as const) {
   it(`${opening}: only explicit Browse or Retry may connect the actual combobox`, async () => {
     const f = controlFixture();
@@ -269,6 +26,7 @@ for (const opening of ["typing", "ArrowDown", "closed"] as const) {
       const [draft, setDraft] = useState(agentDraft(f.agent));
       return (
         <AgentModelPicker
+          capabilities={{ modelDiscovery: "databricks" }}
           draft={draft}
           control={control}
           defaults={{ host: "https://workspace.example.com", filter: "" }}
@@ -330,94 +88,202 @@ for (const opening of ["typing", "ArrowDown", "closed"] as const) {
   });
 }
 
-it("Pi discovers extension providers before start and selects the exact provider/model pair with one Browse", async () => {
+it("missing host metadata preserves custom entry without issuing incompatible IPC", async () => {
   const f = controlFixture();
-  let release!: (value: {
-    host: string;
-    models: { id: string; name: string }[];
-    modelOverridden: boolean;
-    disconnected: boolean;
-  }) => void;
-  const run = vi.fn(
-    () =>
-      new Promise<Parameters<typeof release>[0]>((resolve) => {
-        release = resolve;
-      }),
-  );
-  f.host.models = { begin: async () => 1, run, cancel: async () => {} };
+  const begin = vi.fn(async () => 1);
+  f.host.models = { begin, run: vi.fn(), cancel: vi.fn() };
   const control = createAgentControl(f.host);
-  const providers = vi.fn();
+  const onChange = vi.fn();
   const user = userEvent.setup();
-  let current = {
-    ...agentDraft(f.agent),
-    command: "/local/buzz-pi-acp",
-    args: "[]",
-    provider: "",
-    model: "saved-custom",
-  };
-  function Editor() {
-    const [draft, setDraft] = useState(current);
-    current = draft;
-    return (
-      <AgentModelPicker
-        draft={draft}
-        control={control}
-        defaults={undefined}
-        onPiProviders={providers}
-        onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
-      />
-    );
+  const view = render(
+    <AgentModelPicker
+      draft={agentDraft(f.agent)}
+      control={control}
+      defaults={undefined}
+      onChange={onChange}
+    />,
+  );
+  try {
+    expect(screen.getByText(/Model browsing is unavailable/)).toBeVisible();
+    const input = screen.getByRole("combobox", { name: "Model" });
+    await user.click(screen.getByRole("button", { name: "Browse models" }));
+    await user.clear(input);
+    await user.type(input, "retained.custom");
+    await user.keyboard("{Enter}");
+    expect(onChange).toHaveBeenCalledWith({ model: "retained.custom" });
+    expect(begin).not.toHaveBeenCalled();
+  } finally {
+    view.unmount();
+    control.dispose();
   }
-  const view = render(<Editor />);
+});
+
+it("does not warn when Advanced owns a hidden model override", async () => {
+  const f = controlFixture();
+  f.agent.harness.command = "buzz-agent";
+  f.agent.harness.provider = "databricks_v2";
+  f.agent.harness.environmentKeys = ["BUZZ_AGENT_MODEL"];
+  const run = vi.fn(async () => ({
+    integration: {
+      kind: "databricks" as const,
+      host: "https://workspace.example.com",
+    },
+    models: [
+      {
+        id: "selected-model",
+        name: "Selected model",
+        effort: { status: "unsupported" as const },
+      },
+    ],
+    discovery: {
+      source: "databricksCatalog" as const,
+      authentication: "authenticated" as const,
+      catalog: "remote" as const,
+    },
+    modelOverridden: false,
+    disconnected: false,
+  }));
+  f.host.models = { begin: async () => 1, run, cancel: vi.fn(async () => {}) };
+  const control = createAgentControl(f.host);
+  const draft = {
+    ...agentDraft(f.agent),
+    model: "selected-model",
+    configuration: {
+      mode: "advanced" as const,
+      effort: { kind: "unsupported" as const },
+    },
+  };
+  const onValidated = vi.fn();
+  const user = userEvent.setup();
+  const view = render(
+    <AgentModelPicker
+      draft={draft}
+      control={control}
+      defaults={{ host: "https://workspace.example.com", filter: "" }}
+      capabilities={{ modelDiscovery: "databricks" }}
+      onChange={vi.fn()}
+      onValidated={onValidated}
+    />,
+  );
+  try {
+    await user.click(screen.getByRole("button", { name: "Refresh models" }));
+    await waitFor(() => expect(onValidated).toHaveBeenLastCalledWith(draft));
+    expect(
+      screen.queryByText(/saved BUZZ_AGENT_MODEL override/),
+    ).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("context change cancels a pending catalog and rejects its late result", async () => {
+  const f = controlFixture();
+  let release!: (
+    value: import("../../features/agents/models").ModelCatalog,
+  ) => void;
+  const pending = new Promise<
+    import("../../features/agents/models").ModelCatalog
+  >((resolve) => {
+    release = resolve;
+  });
+  const run = vi.fn(() => pending);
+  const cancel = vi.fn(async () => {});
+  f.host.models = { begin: async () => 7, run, cancel };
+  const control = createAgentControl(f.host);
+  const user = userEvent.setup();
+  const draft = agentDraft(f.agent);
+  const props = {
+    control,
+    defaults: { host: "https://workspace.example.com", filter: "" },
+    capabilities: { modelDiscovery: "databricks" as const },
+    onChange: vi.fn(),
+  };
+  const view = render(<AgentModelPicker {...props} draft={draft} />);
   try {
     await user.click(screen.getByRole("button", { name: "Browse models" }));
     await waitFor(() => expect(run).toHaveBeenCalledOnce());
-    expect(
-      await screen.findByRole("status", { name: "Model lookup" }),
-    ).toHaveTextContent("Loading Pi models…");
-    // The open popup marks outside content aria-hidden on its own schedule,
-    // which removes the button's accessible name. Cancel stays visible.
-    expect(
-      screen.getByText("Cancel model lookup").closest("button"),
-    ).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
-      "aria-busy",
-      "true",
+    view.rerender(
+      <AgentModelPicker
+        {...props}
+        draft={{ ...draft, command: "/changed/agent" }}
+      />,
     );
-    await act(async () =>
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith(7));
+    await act(async () => {
       release({
-        host: "",
-        models: [
-          {
-            id: "extension/namespace/model.v1",
-            name: "extension/namespace/model.v1",
-          },
-        ],
-        modelOverridden: false,
+        integration: { kind: "databricks", host: props.defaults.host },
+        models: [{ id: "stale", name: "Stale result" }],
+        modelOverridden: true,
         disconnected: false,
-      }),
-    );
-    await user.click(
-      await screen.findByRole("option", {
-        name: /extension\/namespace\/model.v1/,
-      }),
-    );
+      });
+      await pending;
+    });
+    await user.click(await screen.findByRole("combobox", { name: "Model" }));
+    await user.keyboard("{ArrowDown}");
+    expect(screen.queryByText("Stale result")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("status", { name: "Model lookup" }),
+      screen.queryByText(/saved BUZZ_AGENT_MODEL override/),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveAttribute(
-      "aria-busy",
-    );
-    expect(current.provider).toBe("extension");
-    expect(current.model).toBe("namespace/model.v1");
-    expect(providers).toHaveBeenCalledWith(["extension"]);
-    await user.click(screen.getByRole("button", { name: "Browse models" }));
-    expect(
-      await screen.findByRole("option", {
-        name: /extension\/namespace\/model.v1/,
-      }),
-    ).toBeVisible();
+    expect(props.onChange).not.toHaveBeenCalled();
     expect(run).toHaveBeenCalledOnce();
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("checks a replacement OpenAI key on Enter without submitting the editor form", async () => {
+  const f = controlFixture();
+  const run = vi.fn(async () => ({
+    integration: { kind: "openai" as const },
+    models: [{ id: "gpt-5", name: "gpt-5" }],
+    modelOverridden: false,
+    disconnected: false,
+  }));
+  f.host.models = { begin: async () => 1, run, cancel: async () => {} };
+  const control = createAgentControl(f.host);
+  const submitted = vi.fn((event: FormEvent) => event.preventDefault());
+  const onChange = vi.fn();
+  const user = userEvent.setup();
+  const view = render(
+    <form onSubmit={submitted}>
+      <AgentModelPicker
+        capabilities={{ modelDiscovery: "databricks", openai: true }}
+        draft={{
+          ...agentDraft(f.agent),
+          command: "buzz-agent",
+          provider: "openai",
+          environment: { OPENAI_COMPAT_API_KEY: "saved-key" },
+        }}
+        control={control}
+        defaults={undefined}
+        onChange={onChange}
+      />
+      <button type="submit">Save changes</button>
+    </form>,
+  );
+  try {
+    const input = screen.getByLabelText("Open AI API Key");
+    await user.type(input, "replacement-key");
+    await user.keyboard("{Enter}");
+
+    expect(input).toHaveValue("");
+    expect(submitted).not.toHaveBeenCalled();
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        action: "connect",
+        integration: {
+          kind: "openai",
+          settings: { apiKey: "replacement-key" },
+        },
+      }),
+    );
+    expect(onChange).toHaveBeenCalledWith({
+      environment: { OPENAI_COMPAT_API_KEY: "replacement-key" },
+    });
   } finally {
     view.unmount();
     control.dispose();
@@ -580,230 +446,634 @@ it("explains an empty Pi provider in the open model list without discarding othe
   }
 });
 
-it("Pi cancellation and workspace changes reject late catalogs; explicit retry recovers", async () => {
+it("Disconnect remains recovery when the edited harness has no discovery capability", async () => {
   const f = controlFixture();
-  let release!: (value: {
-    host: string;
-    models: { id: string; name: string }[];
-    modelOverridden: boolean;
-    disconnected: boolean;
-  }) => void;
-  const run = vi.fn(
-    () =>
-      new Promise<Parameters<typeof release>[0]>((resolve) => {
-        release = resolve;
-      }),
-  );
-  const cancel = vi.fn(async () => {});
-  f.host.models = { begin: async () => 1, run, cancel };
+  const run = vi.fn(async () => ({
+    integration: {
+      kind: "databricks" as const,
+      host: "https://workspace.example.com",
+    },
+    models: [],
+    modelOverridden: false,
+    disconnected: true,
+  }));
+  f.host.models = { begin: async () => 8, run, cancel: vi.fn(async () => {}) };
   const control = createAgentControl(f.host);
   const user = userEvent.setup();
-  let draft = {
+  const view = render(
+    <AgentModelPicker
+      draft={agentDraft(f.agent)}
+      control={control}
+      capabilities={{ modelDiscovery: null }}
+      recoveryAvailable
+      defaults={{ host: "https://workspace.example.com", filter: "" }}
+      onChange={vi.fn()}
+    />,
+  );
+  try {
+    await user.click(screen.getByRole("button", { name: "Model" }));
+    expect(
+      screen.queryByRole("button", { name: "Refresh models" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Disconnect" }));
+    await screen.findByText("Disconnected from this workspace in Foundation.");
+    expect(run).toHaveBeenCalledExactlyOnceWith(
+      8,
+      expect.objectContaining({
+        action: "disconnect",
+        edit: undefined,
+        integration: {
+          kind: "databricks",
+          settings: { host: "https://workspace.example.com", filter: "" },
+        },
+      }),
+    );
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+for (const change of [
+  "unchanged",
+  "model",
+  "effort",
+  "cached",
+  "fallback",
+  "unknown",
+] as const) {
+  it(`Advanced refresh preserves the draft and validates ${change} catalog evidence`, async () => {
+    const f = controlFixture();
+    const catalog: import("../../features/agents/models").ModelCatalog = {
+      integration: {
+        kind: "databricks",
+        host: "https://workspace.example.com",
+      },
+      models: [
+        {
+          id: "chosen",
+          name: "Chosen model",
+          effort: {
+            status: "supported",
+            options: [{ value: "high", name: "High" }],
+          },
+        },
+      ],
+      discovery: {
+        source: "databricksCatalog",
+        authentication: "authenticated",
+        catalog: "remote",
+      },
+      disconnected: false,
+      modelOverridden: false,
+    };
+    let next = catalog;
+    const run = vi.fn(async () => next);
+    f.host.models = {
+      begin: async () => 1,
+      run,
+      cancel: vi.fn(async () => {}),
+    };
+    const control = createAgentControl(f.host);
+    const draft = {
+      ...agentDraft(f.agent),
+      model: "chosen",
+      configuration: {
+        mode: "advanced" as const,
+        effort: { kind: "value" as const, value: "high" },
+      },
+    };
+    const onChange = vi.fn();
+    const onValidated = vi.fn();
+    const user = userEvent.setup();
+    const view = render(
+      <AgentModelPicker
+        draft={draft}
+        control={control}
+        defaults={{ host: "https://workspace.example.com", filter: "" }}
+        capabilities={{ modelDiscovery: "databricks" }}
+        onChange={onChange}
+        onValidated={onValidated}
+      />,
+    );
+    try {
+      await user.click(screen.getByRole("button", { name: "Refresh models" }));
+      await waitFor(() => expect(onValidated).toHaveBeenLastCalledWith(draft));
+      expect(run).toHaveBeenLastCalledWith(
+        1,
+        expect.objectContaining({ action: "refresh" }),
+      );
+      next =
+        change === "model"
+          ? { ...catalog, models: [] }
+          : change === "effort"
+            ? {
+                ...catalog,
+                models: [
+                  {
+                    id: "chosen",
+                    name: "Chosen model",
+                    effort: {
+                      status: "supported",
+                      options: [{ value: "low", name: "Low" }],
+                    },
+                  },
+                ],
+              }
+            : change === "unchanged"
+              ? catalog
+              : {
+                  ...catalog,
+                  discovery: {
+                    source: "databricksCatalog",
+                    authentication: "authenticated",
+                    catalog: change,
+                  },
+                };
+      await user.click(screen.getByRole("button", { name: "Refresh models" }));
+      await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Refresh models" }),
+        ).toBeEnabled(),
+      );
+      expect(onValidated).toHaveBeenLastCalledWith(
+        change === "unchanged" ? draft : null,
+      );
+      expect(onChange).not.toHaveBeenCalled();
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue(
+        change === "model" ||
+          change === "cached" ||
+          change === "fallback" ||
+          change === "unknown"
+          ? "chosen"
+          : "Chosen model",
+      );
+    } finally {
+      view.unmount();
+      control.dispose();
+    }
+  });
+}
+
+it("Advanced refresh auth failure requires an explicit Connect account action", async () => {
+  const { ModelError } = await import("../../features/agents/models");
+  const f = controlFixture();
+  const run = vi.fn(async () => {
+    throw new ModelError("authentication", "Sign in to this account.");
+  });
+  f.host.models = { begin: async () => 1, run, cancel: vi.fn(async () => {}) };
+  const control = createAgentControl(f.host);
+  const onChange = vi.fn();
+  const onValidated = vi.fn();
+  const draft = {
     ...agentDraft(f.agent),
-    command: "/local/buzz-pi-acp",
-    args: "[]",
-    provider: "custom",
-    model: "kept",
+    configuration: {
+      mode: "advanced" as const,
+      effort: { kind: "unsupported" as const },
+    },
   };
-  const renderPicker = () => (
+  const user = userEvent.setup();
+  const view = render(
     <AgentModelPicker
       draft={draft}
       control={control}
-      defaults={undefined}
-      onChange={() => {}}
-    />
+      defaults={{ host: "https://workspace.example.com", filter: "" }}
+      capabilities={{ modelDiscovery: "databricks" }}
+      onChange={onChange}
+      onValidated={onValidated}
+    />,
   );
-  const view = render(renderPicker());
-  const result = {
-    host: "",
-    models: [{ id: "custom/new", name: "custom/new" }],
-    modelOverridden: false,
-    disconnected: false,
-  };
   try {
-    await user.click(screen.getByRole("button", { name: "Browse models" }));
-    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-    await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
-        "aria-expanded",
-        "true",
-      ),
+    await user.click(screen.getByRole("button", { name: "Refresh models" }));
+    await screen.findByText("Sign in to this account.");
+    expect(run).toHaveBeenCalledExactlyOnceWith(
+      1,
+      expect.objectContaining({ action: "refresh" }),
     );
-    await user.keyboard("{Escape}");
-    await user.click(
-      screen.getByRole("button", { name: "Cancel model lookup" }),
-    );
-    await act(async () => release(result));
-    expect(cancel).toHaveBeenCalled();
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue("kept");
-    await user.click(screen.getByRole("button", { name: "Retry models" }));
+    expect(onValidated).toHaveBeenLastCalledWith(null);
+    expect(
+      screen.queryByRole("button", { name: "Retry models" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Connect account" }));
     await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-    draft = { ...draft, workspace: "/different/workspace" };
-    view.rerender(renderPicker());
-    await act(async () => release(result));
-    expect(
-      screen.queryByRole("option", { name: /custom\/new/ }),
-    ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Browse models" }));
-    await waitFor(() => expect(run).toHaveBeenCalledTimes(3));
-    await act(async () => release(result));
-    expect(
-      await screen.findByRole("option", { name: /custom\/new/ }),
-    ).toBeVisible();
+    expect(run).toHaveBeenLastCalledWith(
+      1,
+      expect.objectContaining({ action: "connect" }),
+    );
+    expect(onChange).not.toHaveBeenCalled();
   } finally {
     view.unmount();
     control.dispose();
   }
 });
 
-it("reopened Pi editor accepts a pasted qualified ID without doubling its provider", async () => {
-  const control = createAgentControl(controlFixture().host);
-  const user = userEvent.setup();
-  let current = {
-    ...agentDraft(controlFixture().agent),
-    command: "/local/buzz-pi-acp",
-    args: "[]",
-    provider: "custom",
-    model: "old",
-  };
-  function Editor() {
-    const [draft, setDraft] = useState(current);
-    current = draft;
-    return (
-      <AgentModelPicker
-        draft={draft}
-        control={control}
-        defaults={undefined}
-        onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
-      />
-    );
-  }
-  const view = render(<Editor />);
-  try {
-    const input = screen.getByRole("combobox", { name: "Model" });
-    await user.clear(input);
-    await user.type(input, "custom/namespace/model.v1");
-    await user.tab();
-    expect(current.model).toBe("namespace/model.v1");
-    await user.clear(input);
-    await user.type(input, "namespace/other.v2");
-    await user.tab();
-    expect(current.model).toBe("namespace/other.v2");
-  } finally {
-    view.unmount();
-    control.dispose();
-  }
-});
-
-it("Pi warns about incomplete or unlisted selections and preserves literal Advanced IDs", async () => {
-  const f = controlFixture();
-  f.host.models = {
-    begin: async () => 1,
-    cancel: async () => {},
-    run: async () => ({
-      host: "",
-      models: [{ id: "custom/listed", name: "custom/listed" }],
-      modelOverridden: false,
-      disconnected: false,
-    }),
-  };
-  const control = createAgentControl(f.host);
-  const user = userEvent.setup();
-  let current = {
-    ...agentDraft(f.agent),
-    command: "/local/buzz-pi-acp",
-    provider: "custom",
-    model: "",
-    args: "[]",
-  };
-  function Editor() {
-    const [draft, setDraft] = useState(current);
-    current = draft;
-    return (
-      <AgentModelPicker
-        draft={draft}
-        control={control}
-        defaults={undefined}
-        onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
-      />
-    );
-  }
-  const view = render(<Editor />);
-  try {
-    expect(
-      screen.getByText(/Choose a model for this provider before starting/),
-    ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Model" }));
-    const literal = screen.getByLabelText("Model ID (custom or blank)");
-    await user.type(literal, "custom/");
-    expect(literal).toHaveValue("custom/");
-    await user.type(literal, "real-model");
-    await user.tab();
-    expect(current.model).toBe("custom/real-model");
-    await user.click(screen.getByRole("button", { name: "Browse models" }));
-    await screen.findByText(/This model ID is not in Pi’s available catalog/);
-    expect(current.model).toBe("custom/real-model");
-    await user.click(
-      await screen.findByRole("option", { name: /custom\/listed/ }),
-    );
-    expect(current.model).toBe("listed");
-    expect(
-      screen.queryByText(/This model ID is not in Pi’s available catalog/),
-    ).not.toBeInTheDocument();
-  } finally {
-    view.unmount();
-    control.dispose();
-  }
-});
-
-it("Pi clears discovered providers when catalog context changes or the picker unmounts", async () => {
+it("Codex trusts adapter choices, exposes only model-specific effort, and sends headless requests", async () => {
   const f = controlFixture();
   const run = vi.fn(async () => ({
-    host: "",
-    models: [{ id: "extension/exact", name: "extension/exact" }],
+    integration: { kind: "codex" as const },
+    discovery: {
+      source: "codexAcp" as const,
+      authentication: "authenticated" as const,
+      catalog: "adapter" as const,
+    },
+    models: [
+      {
+        id: "second",
+        name: "Second",
+        effort: {
+          status: "supported" as const,
+          options: [{ value: "high", name: "High" }],
+        },
+      },
+    ],
     modelOverridden: false,
     disconnected: false,
   }));
-  f.host.models = { begin: async () => 1, cancel: async () => {}, run };
-  const control = createAgentControl(f.host),
-    providers = vi.fn();
+  f.host.models = { begin: async () => 1, run, cancel: vi.fn(async () => {}) };
+  const control = createAgentControl(f.host);
+  const onValidated = vi.fn();
   const user = userEvent.setup();
-  let draft = {
+  function Editor() {
+    const [draft, setDraft] = useState({
+      ...agentDraft(f.agent),
+      command: "codex-acp",
+      provider: "",
+      model: "second",
+      configuration: {
+        mode: "advanced" as const,
+        effort: { kind: "unsupported" as const },
+      },
+    } as import("./agent-edit").AgentDraft);
+    return (
+      <AgentModelPicker
+        draft={draft}
+        control={control}
+        defaults={undefined}
+        capabilities={{ modelDiscovery: "codex" }}
+        recoveryAvailable
+        onChange={(patch) => setDraft((old) => ({ ...old, ...patch }))}
+        onValidated={onValidated}
+      />
+    );
+  }
+  const view = render(<Editor />);
+  try {
+    const effort = await screen.findByRole("combobox", { name: "Effort" });
+    expect(onValidated).toHaveBeenLastCalledWith(null);
+    await user.click(effort);
+    await user.click(await screen.findByRole("option", { name: "High" }));
+    await waitFor(() =>
+      expect(onValidated).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          configuration: {
+            mode: "advanced",
+            effort: { kind: "value", value: "high" },
+          },
+        }),
+      ),
+    );
+    expect(run).toHaveBeenCalledExactlyOnceWith(
+      1,
+      expect.objectContaining({
+        integration: { kind: "codex" },
+        action: "refresh",
+      }),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Connect account" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Disconnect" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/may be cached/)).toBeVisible();
+    run.mockRejectedValueOnce("Discovery temporarily unavailable");
+    await user.click(screen.getByRole("button", { name: "Refresh models" }));
+    await screen.findByText("Discovery temporarily unavailable");
+    expect(onValidated).toHaveBeenLastCalledWith(null);
+    expect(screen.getByRole("button", { name: "Retry models" })).toBeEnabled();
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("loads Codex defaults in the background, reuses cached settings on remount, and fences a changed context", async () => {
+  const f = controlFixture();
+  const data = {
+    integration: { kind: "codex" as const },
+    discovery: {
+      source: "codexAcp" as const,
+      authentication: "authenticated" as const,
+      catalog: "adapter" as const,
+    },
+    defaults: { model: "fixture-default", effort: "medium" },
+    models: [{ id: "fixture-default", name: "Fixture model" }],
+    modelOverridden: false,
+    disconnected: false,
+  };
+  let release!: (value: typeof data) => void;
+  const run = vi
+    .fn()
+    .mockResolvedValueOnce(data)
+    .mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+  f.host.models = { begin: async () => 1, run, cancel: vi.fn(async () => {}) };
+  const control = createAgentControl(f.host);
+  const draft = {
     ...agentDraft(f.agent),
-    command: "/local/buzz-pi-acp",
+    command: "codex-acp",
     provider: "",
     model: "",
-    args: "[]",
+    configuration: { mode: "default" as const },
   };
-  const picker = () => (
-    <AgentModelPicker
-      draft={draft}
-      control={control}
-      defaults={undefined}
-      onPiProviders={providers}
-      onChange={() => {}}
-    />
+  const onChange = vi.fn();
+  const props = {
+    control,
+    defaults: undefined,
+    capabilities: { modelDiscovery: "codex" as const },
+    onChange,
+  };
+  const view = render(
+    <StrictMode>
+      <AgentModelPicker {...props} draft={draft} />
+    </StrictMode>,
   );
-  const view = render(picker());
   try {
-    for (const patch of [
-      { workspace: "/new/workspace" },
-      { environment: { PI_CODING_AGENT_DIR: "/new/config" } },
-      { command: "buzz-agent" },
-    ]) {
-      await user.click(screen.getByRole("button", { name: "Browse models" }));
-      await waitFor(() =>
-        expect(providers).toHaveBeenLastCalledWith(["extension"]),
-      );
-      await screen.findByRole("option", { name: /extension\/exact/ });
-      await user.keyboard("{Escape}");
-      draft = { ...draft, ...patch };
-      view.rerender(picker());
-      await waitFor(() => expect(providers).toHaveBeenLastCalledWith([]));
-    }
+    await screen.findByText(/Default model: fixture-default · Effort: medium/);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        edit: expect.objectContaining({
+          harness: expect.objectContaining({
+            configuration: { mode: "default" },
+          }),
+        }),
+      }),
+    );
+    expect(screen.queryByRole("button", { name: /^Model$/ })).toBeNull();
+    expect(onChange).not.toHaveBeenCalled(); // defaults remain delegated, not saved overrides
     view.unmount();
-    expect(providers).toHaveBeenLastCalledWith([]);
+    const reopened = render(
+      <StrictMode>
+        <AgentModelPicker {...props} draft={draft} />
+      </StrictMode>,
+    );
+    await screen.findByText(/Default model: fixture-default.*cached/);
+    expect(run).toHaveBeenCalledTimes(1);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Refresh models" }));
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    const oldRelease = release;
+    reopened.rerender(
+      <StrictMode>
+        <AgentModelPicker
+          {...props}
+          draft={{ ...draft, workspace: "/other" }}
+        />
+      </StrictMode>,
+    );
+    // Native admits one discovery at a time. The new context waits for the
+    // cancelled request to retire, then starts its own probe.
+    await act(async () => oldRelease(data));
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+    expect(screen.queryByText(/Default model: fixture-default/)).toBeNull();
+    await act(async () =>
+      release({ ...data, defaults: { model: "other-default", effort: "low" } }),
+    );
+    expect(
+      screen.getByText(/Default model: other-default · Effort: low/),
+    ).toBeVisible();
+    reopened.unmount();
   } finally {
+    control.dispose();
+  }
+});
+
+it("uses the complete Codex cache for model and mode changes without another probe", async () => {
+  const f = controlFixture();
+  const data = {
+    integration: { kind: "codex" as const },
+    discovery: {
+      source: "codexAcp" as const,
+      authentication: "authenticated" as const,
+      catalog: "adapter" as const,
+    },
+    models: [
+      {
+        id: "first",
+        name: "First",
+        effort: {
+          status: "supported" as const,
+          options: [{ value: "low", name: "Low" }],
+        },
+      },
+      {
+        id: "second",
+        name: "Second",
+        effort: {
+          status: "supported" as const,
+          options: [{ value: "high", name: "High" }],
+        },
+      },
+    ],
+    modelOverridden: false,
+    disconnected: false,
+  };
+  const run = vi.fn(async () => data);
+  f.host.models = { begin: async () => 1, run, cancel: vi.fn(async () => {}) };
+  const control = createAgentControl(f.host);
+  const onValidated = vi.fn();
+  const props = {
+    control,
+    defaults: undefined,
+    capabilities: { modelDiscovery: "codex" as const },
+    onValidated,
+    onChange: vi.fn(),
+  };
+  const draft = {
+    ...agentDraft(f.agent),
+    command: "codex-acp",
+    provider: "",
+    model: "first",
+    configuration: {
+      mode: "advanced" as const,
+      effort: { kind: "value" as const, value: "low" },
+    },
+  };
+  const view = render(<AgentModelPicker {...props} draft={draft} />);
+  try {
+    await waitFor(() => expect(onValidated).toHaveBeenLastCalledWith(draft));
+    const second = { ...draft, model: "second" };
+    view.rerender(<AgentModelPicker {...props} draft={second} />);
+    await waitFor(() => expect(onValidated).toHaveBeenLastCalledWith(null));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("combobox", { name: "Effort" }));
+    expect(await screen.findByRole("option", { name: "High" })).toBeVisible();
+    expect(screen.queryByRole("option", { name: "Low" })).toBeNull();
+    await user.keyboard("{Escape}");
+    const selected = {
+      ...second,
+      configuration: {
+        mode: "advanced" as const,
+        effort: { kind: "value" as const, value: "high" },
+      },
+    };
+    view.rerender(<AgentModelPicker {...props} draft={selected} />);
+    await waitFor(() => expect(onValidated).toHaveBeenLastCalledWith(selected));
+    view.rerender(
+      <AgentModelPicker
+        {...props}
+        draft={{ ...draft, model: "", configuration: { mode: "default" } }}
+      />,
+    );
+    await screen.findByText(/Default model:/);
+    view.rerender(<AgentModelPicker {...props} draft={selected} />);
+    await waitFor(() => expect(onValidated).toHaveBeenLastCalledWith(selected));
+    view.rerender(
+      <AgentModelPicker
+        {...props}
+        draft={{ ...selected, model: "second[high]" }}
+      />,
+    );
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue(
+      "Second",
+    );
+    await user.click(screen.getByRole("button", { name: "Browse models" }));
+    expect(
+      await screen.findByRole("option", { name: /^Second/ }),
+    ).toBeVisible();
+    expect(screen.getAllByRole("option")).toHaveLength(2);
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("combobox", { name: "Effort" }));
+    await user.click(await screen.findByRole("option", { name: "High" }));
+    expect(props.onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        model: "second",
+        configuration: {
+          mode: "advanced",
+          effort: { kind: "value", value: "high" },
+        },
+      }),
+    );
+    expect(run).toHaveBeenCalledTimes(1);
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("refreshes when Default needs a full Codex catalog and fences stale mode results", async () => {
+  const f = controlFixture();
+  const advancedData: ModelCatalog = {
+    integration: { kind: "codex" },
+    discovery: {
+      source: "codexAcp",
+      authentication: "authenticated",
+      catalog: "adapter",
+    },
+    defaults: { model: "old-default", effort: "high" },
+    models: [
+      {
+        id: "advanced-model",
+        name: "Advanced model",
+        effort: {
+          status: "supported",
+          options: [{ value: "high", name: "High" }],
+        },
+      },
+    ],
+    modelOverridden: false,
+    disconnected: false,
+  };
+  const defaultData: ModelCatalog = {
+    ...advancedData,
+    defaults: { model: "new-default", effort: "low" },
+    models: [],
+  };
+  let releaseAdvanced!: (value: ModelCatalog) => void;
+  let releaseDefault!: (value: ModelCatalog) => void;
+  const run = vi.fn(async (_ticket: number, request: ModelRequest) => {
+    if (request.edit?.harness.configuration?.mode === "advanced") {
+      return new Promise<ModelCatalog>((resolve) => {
+        releaseAdvanced = resolve;
+      });
+    }
+    return new Promise<ModelCatalog>((resolve) => {
+      releaseDefault = resolve;
+    });
+  });
+  f.host.models = { begin: async () => 1, run, cancel: vi.fn(async () => {}) };
+  const control = createAgentControl(f.host);
+  const props = {
+    control,
+    defaults: undefined,
+    capabilities: { modelDiscovery: "codex" as const },
+    onChange: vi.fn(),
+  };
+  const advancedDraft = {
+    ...agentDraft(f.agent),
+    command: "codex-acp",
+    provider: "",
+    model: "advanced-model",
+    configuration: {
+      mode: "advanced" as const,
+      effort: { kind: "value" as const, value: "high" },
+    },
+  };
+  const view = render(<AgentModelPicker {...props} draft={advancedDraft} />);
+  try {
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    const defaultDraft = {
+      ...advancedDraft,
+      model: "",
+      configuration: { mode: "default" as const },
+    };
+    view.rerender(<AgentModelPicker {...props} draft={defaultDraft} />);
+    await act(async () => releaseAdvanced(advancedData));
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(run).toHaveBeenNthCalledWith(
+      2,
+      1,
+      expect.objectContaining({
+        edit: expect.objectContaining({
+          harness: expect.objectContaining({
+            configuration: { mode: "default" },
+          }),
+        }),
+      }),
+    );
+    expect(screen.queryByText(/Default model: old-default/)).toBeNull();
+    await act(async () => releaseDefault(defaultData));
+    await screen.findByText(/Default model: new-default · Effort: low/);
+    view.rerender(<AgentModelPicker {...props} draft={advancedDraft} />);
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+    await act(async () => releaseAdvanced(advancedData));
+    await screen.findByRole("combobox", { name: "Effort" });
+    expect(
+      screen.getByText(
+        "Model and effort are advertised in the refreshed catalog.",
+      ),
+    ).toBeVisible();
+    expect(run).toHaveBeenLastCalledWith(
+      1,
+      expect.objectContaining({
+        edit: expect.objectContaining({
+          harness: expect.objectContaining({
+            configuration: expect.objectContaining({ mode: "advanced" }),
+          }),
+        }),
+      }),
+    );
+  } finally {
+    releaseAdvanced?.(advancedData);
+    releaseDefault?.(defaultData);
     view.unmount();
     control.dispose();
   }
@@ -970,10 +1240,12 @@ it("browses an inherited Agent defaults workspace without repeating it in the fo
       expect(run).toHaveBeenCalledWith(
         1,
         expect.objectContaining({
-          host: "",
-          filter: "",
           action: "connect",
           inheritWorkspace: true,
+          integration: {
+            kind: "databricks",
+            settings: { host: "", filter: "" },
+          },
         }),
       ),
     );
@@ -993,10 +1265,13 @@ it("browses an inherited Agent defaults workspace without repeating it in the fo
       expect(run).toHaveBeenLastCalledWith(
         1,
         expect.objectContaining({
-          host: "",
           action: "disconnect",
           inheritWorkspace: true,
           edit: undefined,
+          integration: {
+            kind: "databricks",
+            settings: { host: "", filter: "" },
+          },
         }),
       ),
     );

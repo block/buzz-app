@@ -231,6 +231,7 @@ export function ProfileRuntime({
       {editing && (
         <AgentEditor
           agent={agent}
+          session={session}
           control={control}
           state={state}
           onClose={() => setEditing(false)}

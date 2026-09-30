@@ -102,6 +102,7 @@ export function AgentsPage({
               {control ? (
                 <AgentControlPanel
                   control={control}
+                  session={connection.session}
                   editTarget={editTarget}
                   onOpenHarnesses={
                     open

@@ -75,3 +75,63 @@ fn diff_itemizes_changes_and_redacts_arguments_prompt_and_environment() {
     );
     assert!(wire.contains(r#""kind":"text","beforeChars""#), "{wire}");
 }
+
+#[test]
+fn explicit_codex_effort_change_requires_a_running_agent_restart() {
+    let mut running = fixture();
+    running.harness.command = "codex-acp".into();
+    running.harness.provider.clear();
+    running.harness.model = "model-a".into();
+    running.harness.configuration = Some(crate::AiConfiguration::Advanced {
+        effort: crate::EffortSelection::Value {
+            value: "low".into(),
+        },
+    });
+    let spawned = spawn_config(&running);
+
+    // This is the before/after comparison used by Save's restart selection.
+    // Changing only the saved effort must remain observable as a restart.
+    let mut saved = running;
+    saved.harness.configuration = Some(crate::AiConfiguration::Advanced {
+        effort: crate::EffortSelection::Value {
+            value: "high".into(),
+        },
+    });
+    let entries = diff(&spawned, &spawn_config(&saved));
+
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| entry.field.as_str())
+            .collect::<Vec<_>>(),
+        ["effort"]
+    );
+    assert_eq!(
+        entries[0].change,
+        RestartChange::Value {
+            before: "low".into(),
+            after: "high".into(),
+        }
+    );
+}
+
+#[test]
+fn explicit_codex_configuration_uses_its_model_and_does_not_inherit_effort() {
+    let mut agent = fixture();
+    agent.harness.command = "codex-acp".into();
+    agent.harness.provider.clear();
+    agent.harness.model = "explicit-model".into();
+    agent.imported["record"] = serde_json::json!({"effort_level": "legacy-effort"});
+    agent.harness.configuration = Some(crate::AiConfiguration::Advanced {
+        effort: crate::EffortSelection::Default,
+    });
+
+    let advanced = spawn_config(&agent);
+    assert_eq!(advanced["model"], "explicit-model");
+    assert!(advanced["effort"].is_null());
+
+    agent.harness.configuration = Some(crate::AiConfiguration::Default);
+    let defaults = spawn_config(&agent);
+    assert!(defaults["model"].is_null());
+    assert!(defaults["effort"].is_null());
+}

@@ -9,6 +9,7 @@ import {
 } from "../../features/agents/control";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentSettingsFields } from "./AgentSettingsFields";
+import { ModelError } from "../../features/agents/models";
 import {
   agentDraft,
   agentEdit,
@@ -25,6 +26,9 @@ function newAgentDraft(state: AgentControlState): AgentDraft {
       harnessKind(option.command) === (defaults?.harness ?? "buzz-agent"),
   );
   const command = chosen?.command ?? "buzz-agent";
+  const executable = command.replaceAll("\\", "/").split("/").at(-1);
+  const configurable =
+    executable === "buzz-agent" || executable === "codex-acp";
   const inherits = defaults?.harness === "buzz-agent" && !!defaults.provider;
   return {
     revision: 0,
@@ -35,6 +39,7 @@ function newAgentDraft(state: AgentControlState): AgentDraft {
     command,
     args: JSON.stringify(chosen?.defaultArgs ?? []),
     model: "",
+    ...(configurable ? { configuration: { mode: "default" as const } } : {}),
     provider:
       command !== "buzz-agent" ||
       inherits ||
@@ -79,6 +84,8 @@ export function AgentCreateDialog({
           systemPrompt: initialSettings?.systemPrompt ?? "",
         },
   );
+  const [validatedDraft, setValidatedDraft] = useState<AgentDraft | null>(null);
+  const [validationVersion, setValidationVersion] = useState(0);
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState<AgentView | null>(null);
   const [nextStep, setNextStep] = useState<"start" | "profile">("start");
@@ -95,15 +102,21 @@ export function AgentCreateDialog({
     destination &&
     owner &&
     state.data?.createAvailable &&
+    state.data?.configurationAvailable &&
     control.create
   );
   const runtimeBlocked =
     !state.data?.runtimeAvailable && (!saved || nextStep === "start");
   const busy = phase !== null;
   const blocked = busy || state.busy || state.status !== "ready";
+  const modelBlocked =
+    draft.configuration?.mode === "advanced" &&
+    validatedDraft !== draft &&
+    !saved;
   const create = async () => {
     if (
       blocked ||
+      modelBlocked ||
       runtimeBlocked ||
       (!saved && (!available || !control.create))
     )
@@ -169,6 +182,14 @@ export function AgentCreateDialog({
         else onClose();
       }
     } catch (problem) {
+      if (problem instanceof ModelError) {
+        if (mounted.current) {
+          setValidatedDraft(null);
+          setValidationVersion((version) => version + 1);
+          setError(problem.message);
+        }
+        return;
+      }
       if (mounted.current) setPhase("checking");
       await control.refresh();
       if (!mounted.current) return;
@@ -257,6 +278,8 @@ export function AgentCreateDialog({
               disabled={blocked || !!saved}
               onOpenHarnesses={onOpenHarnesses}
               discardEdits={dirty}
+              onValidated={setValidatedDraft}
+              validationVersion={validationVersion}
               onChange={(patch) => {
                 setDraft({ ...draft, ...patch });
                 setDirty(true);
@@ -313,7 +336,12 @@ export function AgentCreateDialog({
               <Button
                 type="submit"
                 variant="primary"
-                disabled={blocked || runtimeBlocked || (!saved && !available)}
+                disabled={
+                  blocked ||
+                  modelBlocked ||
+                  runtimeBlocked ||
+                  (!saved && !available)
+                }
               >
                 {busy
                   ? phase === "starting"

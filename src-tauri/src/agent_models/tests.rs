@@ -76,7 +76,7 @@ impl Connection for Arc<Fake> {
                 ("endpoint-two", "Endpoint Two"),
             ]
             .into_iter()
-            .filter(|(id, _)| filter.as_ref().is_none_or(|f| f.matches(id)))
+            .filter(|(id, _)| filter.as_ref().map_or(true, |f| f.matches(id)))
             .map(|(id, name)| buzz_agent::catalog::ModelEntry {
                 id: id.into(),
                 name: name.into(),
@@ -196,6 +196,7 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
         ModelHost {
             state: host.state,
             factory: Arc::new(fake.clone()),
+            openai_endpoint: host.openai_endpoint,
         }
     });
     let id = seed(dir.path());
@@ -223,7 +224,7 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     let filtered_result = call(filtered).unwrap();
     assert_eq!(
         filtered_result["models"],
-        json!([{"id":"endpoint-two","name":"Endpoint Two"}])
+        json!([{"id":"endpoint-two","name":"Endpoint Two","effort":{"status":"unsupported"}}])
     );
     let first_cache = fake.opened.lock().unwrap()[0].1.clone();
     assert_eq!(first_cache, dir.path().join("store/buzz-agent/oauth"));
@@ -317,6 +318,7 @@ fn browse_uses_write_only_agent_defaults_workspace_and_filter_through_ipc() {
         ModelHost {
             state: host.state,
             factory: Arc::new(fake.clone()),
+            openai_endpoint: host.openai_endpoint,
         }
     });
     let id = seed(dir.path());
@@ -349,7 +351,7 @@ fn browse_uses_write_only_agent_defaults_workspace_and_filter_through_ipc() {
     let result = call(req.clone()).unwrap();
     assert_eq!(
         result["models"],
-        json!([{"id":"endpoint-two","name":"Endpoint Two"}])
+        json!([{"id":"endpoint-two","name":"Endpoint Two","effort":{"status":"unsupported"}}])
     );
     assert_eq!(result["host"], ""); // The write-only inherited URL stays native.
     assert!(!result.to_string().contains("https://inherited.example.com"));
@@ -397,6 +399,7 @@ fn disconnect_recovers_an_inherited_workspace_without_revealing_it() {
         ModelHost {
             state: host.state,
             factory: Arc::new(fake.clone()),
+            openai_endpoint: host.openai_endpoint,
         }
     });
     let id = seed(dir.path());
@@ -451,6 +454,7 @@ fn native_discovery_preserves_absolute_harness_and_saved_or_draft_provider_overr
         ModelHost {
             state: host.state,
             factory: Arc::new(fake.clone()),
+            openai_endpoint: host.openai_endpoint,
         }
     });
     let id = seed(dir.path());
@@ -664,6 +668,7 @@ fn real_ipc_refuses_linked_helper_namespace_before_opening_connection() {
         ModelHost {
             state: host.state,
             factory: Arc::new(fake.clone()),
+            openai_endpoint: host.openai_endpoint,
         }
     });
     let id = seed(dir.path());
@@ -739,10 +744,55 @@ printf '%s\n' '{"id":"catalog","type":"response","command":"get_available_models
     }})).unwrap();
     assert_eq!(
         result["models"],
-        json!([{"id":"extension/namespace/model.v1","name":"extension/namespace/model.v1"}])
+        json!([{"id":"extension/namespace/model.v1","name":"extension/namespace/model.v1","effort":{"status":"unknown"}}])
     );
     assert_eq!(
         invoke(&view, "agent_control_snapshot", json!({})).unwrap()["agents"],
         json!([])
     );
+}
+
+#[test]
+fn creation_preflight_resolves_inherited_workspace_and_explicit_overrides() {
+    let fake = Arc::new(Fake::default());
+    let (dir, host, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
+        let mut models = ModelHost::new(Ok(dir.join("store")));
+        models.factory = Arc::new(fake.clone());
+        models
+    });
+    invoke(&view, "agent_control_save_defaults", json!({"edit":{
+        "harness":"buzz-agent","provider":"databricks_v2","model":"","effort":"",
+        "environment":{"DATABRICKS_HOST":"https://inherited.example","DATABRICKS_MODEL_FILTER":"endpoint-*"}
+    }})).unwrap();
+    let mut edit = json!({"name":"Test","systemPrompt":"","workspace":dir.path(),"environment":{},
+        "harness":{"command":"buzz-agent","args":[],"provider":"","model":"endpoint-two",
+        "configuration":{"mode":"advanced","effort":{"kind":"unsupported"}}}});
+    for expected in ["https://inherited.example", "https://explicit.example"] {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let prepared = invoke(
+            &view,
+            "agent_control_create_prepare",
+            json!({"requestId":request_id,
+            "destination":"wss://relay.example","owner":"ab".repeat(32),"edit":edit}),
+        )
+        .unwrap();
+        assert!(prepared["pubkey"].is_string());
+        assert_eq!(fake.opened.lock().unwrap().last().unwrap().0, expected);
+        assert!(!dir.path().join("store/agents.json").exists());
+        edit["harness"]["provider"] = json!("databricks_v2");
+        edit["harness"]["databricks"] =
+            json!({"host":"https://explicit.example","filter":"endpoint-*"});
+    }
+    assert!(crate::agents::tests::has_prepared_identity(&host));
+    edit["harness"]["model"] = json!("catalog.schema.model-service");
+    let error = invoke(
+        &view,
+        "agent_control_create_prepare",
+        json!({"requestId":uuid::Uuid::new_v4().to_string(),
+        "destination":"wss://relay.example","owner":"ab".repeat(32),"edit":edit}),
+    )
+    .unwrap_err();
+    assert_eq!(error["code"], "model");
+    assert_eq!(fake.connects.load(Ordering::SeqCst), 0);
+    assert!(!dir.path().join("store/agents.json").exists());
 }

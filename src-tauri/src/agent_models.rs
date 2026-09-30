@@ -15,6 +15,12 @@ use std::{
 };
 use tauri_plugin_opener::OpenerExt;
 
+mod codex;
+mod contracts;
+mod openai;
+pub(crate) use contracts::ModelError;
+use contracts::{Discovery, EffortOptions};
+
 const CANCELLED: &str = "Connection request cancelled or expired";
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,12 +36,36 @@ pub(crate) fn defaults() -> Defaults {
     }
 }
 #[derive(Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "settings",
+    rename_all = "lowercase",
+    deny_unknown_fields
+)]
+enum Integration {
+    Openai(openai::Settings),
+    Databricks(DatabricksSettings),
+    Codex,
+    Goose,
+    Pi,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DatabricksSettings {
+    host: String,
+    filter: String,
+}
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Request {
     id: Option<String>,
     expected_revision: Option<u64>,
     edit: Option<AgentEdit>,
+    #[serde(default)]
+    integration: Option<Integration>,
+    #[serde(default)]
     host: String,
+    #[serde(default)]
     filter: String,
     action: Operation,
     /// Blank host/filter are inherited from write-only Agent defaults the UI
@@ -55,15 +85,38 @@ enum Operation {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Catalog {
-    host: String,
+    integration: CatalogIntegration,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host: Option<String>,
     models: Vec<Model>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    defaults: Option<ResolvedDefaults>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    discovery: Option<Discovery>,
     model_overridden: bool,
     disconnected: bool,
+}
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum CatalogIntegration {
+    Openai,
+    Databricks { host: String },
+    Codex,
+    Goose,
+    Pi,
+}
+#[derive(Serialize)]
+struct ResolvedDefaults {
+    model: Option<String>,
+    effort: Option<String>,
 }
 #[derive(Serialize)]
 struct Model {
     id: String,
     name: String,
+    effort: EffortOptions,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 struct Ticket {
     id: u64,
@@ -81,8 +134,119 @@ struct State {
 pub(crate) struct ModelHost {
     state: Arc<Mutex<State>>,
     factory: Arc<dyn Factory>,
+    openai_endpoint: String,
 }
 impl ModelHost {
+    /// Headless preflight, before identity generation. Never opens a browser.
+    pub(crate) async fn validate_creation(&self, edit: &AgentEdit) -> Result<(), ModelError> {
+        use buzz_agent_controller::{AiConfiguration, Controller};
+        if edit.harness.configuration.is_none() {
+            return Ok(());
+        }
+        edit.harness
+            .validate_launch_configuration()
+            .map_err(|message| {
+                let code = match &edit.harness.configuration {
+                    Some(AiConfiguration::Advanced { .. })
+                        if edit.harness.model.trim().is_empty() =>
+                    {
+                        "model"
+                    }
+                    Some(AiConfiguration::Advanced { .. }) => "effort",
+                    _ => "configuration",
+                };
+                ModelError::new(code, message)
+            })?;
+        if edit.harness.command == "buzz-agent" && edit.harness.provider == "openai" {
+            buzz_agent_controller::openai::validate_selection(&edit.harness)?;
+            let context = Controller::draft_model_context(edit.clone())?
+                .openai
+                .ok_or("Choose Buzz Agent with Open AI")?;
+            let ticket = self.begin_creation().await?;
+            let catalog = self
+                .run(
+                    ticket,
+                    openai::execute(
+                        context,
+                        openai::Settings::default(),
+                        Operation::Refresh,
+                        self.openai_endpoint.clone(),
+                    ),
+                )
+                .await?;
+            return catalog.validate_selection(
+                &edit.harness.model,
+                &buzz_agent_controller::EffortSelection::Default,
+            );
+        }
+        if buzz_agent_controller::codex::is_codex(&edit.harness.command) {
+            let context = Controller::draft_model_context(edit.clone())?
+                .codex
+                .ok_or("Missing Codex context")?;
+            let ticket = self.begin_creation().await?;
+            let catalog = self
+                .run(ticket, codex::execute(context, edit.harness.model.clone()))
+                .await?;
+            if let Some(AiConfiguration::Advanced { effort }) = &edit.harness.configuration {
+                catalog.validate_selection(&edit.harness.model, effort)?;
+            }
+            return Ok(());
+        }
+        // Goose and Pi retain their established configuration semantics.
+        if matches!(
+            std::path::Path::new(&edit.harness.command)
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some("goose" | "buzz-pi-acp")
+        ) {
+            return Ok(());
+        }
+        let Some(AiConfiguration::Advanced { effort }) = &edit.harness.configuration else {
+            return Ok(());
+        };
+        let context = Controller::draft_model_context(edit.clone())?;
+        let settings = edit.harness.databricks.as_ref();
+        let defaults = defaults();
+        let request = Request {
+            id: None,
+            expected_revision: None,
+            edit: None,
+            integration: None,
+            host: context.host.clone().unwrap_or_else(|| {
+                settings
+                    .map(|settings| settings.host.clone())
+                    .unwrap_or(defaults.host)
+            }),
+            filter: context.filter.clone().unwrap_or_else(|| {
+                settings
+                    .map(|settings| settings.filter.clone())
+                    .unwrap_or(defaults.filter)
+            }),
+            action: Operation::Refresh,
+            inherit_workspace: false,
+        };
+        let (workspace, filter) = resolve(&request, &context)?;
+        let cache = self.cache(&workspace)?;
+        let factory = self.factory.clone();
+        let ticket = self.begin_creation().await?;
+        let catalog = self
+            .run(ticket, async move {
+                execute(
+                    Operation::Refresh,
+                    workspace,
+                    filter,
+                    cache,
+                    false,
+                    factory,
+                    Arc::new(Headless),
+                )
+                .await
+                .map_err(ModelError::from)
+            })
+            .await?;
+        catalog.validate_selection(&edit.harness.model, effort)
+    }
+
     pub(crate) fn new(root: Result<PathBuf, String>) -> Self {
         Self {
             state: Arc::new(Mutex::new(State {
@@ -92,10 +256,14 @@ impl ModelHost {
                 closed: false,
             })),
             factory: Arc::new(RuntimeFactory),
+            openai_endpoint: "https://api.openai.com/v1/models".into(),
         }
     }
     fn begin(&self) -> Result<u64, String> {
         let mut state = self.state.lock().map_err(|_| CANCELLED)?;
+        Self::reserve(&mut state)
+    }
+    fn reserve(state: &mut State) -> Result<u64, String> {
         if state.closed {
             return Err(CANCELLED.into());
         }
@@ -122,6 +290,35 @@ impl ModelHost {
             created: std::time::Instant::now(),
         });
         Ok(id)
+    }
+    async fn begin_creation(&self) -> Result<u64, ModelError> {
+        tokio::time::timeout(Duration::from_secs(185), async {
+            loop {
+                {
+                    let mut state = self
+                        .state
+                        .lock()
+                        .map_err(|_| ModelError::new("cancelled", CANCELLED))?;
+                    if state.closed {
+                        return Err(ModelError::new("cancelled", CANCELLED));
+                    }
+                    if state.pending.as_ref().map_or(true, |pending| {
+                        pending.abort.is_none()
+                            && pending.created.elapsed() > Duration::from_secs(15)
+                    }) {
+                        return Self::reserve(&mut state).map_err(ModelError::from);
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(40)).await;
+            }
+        })
+        .await
+        .map_err(|_| {
+            ModelError::new(
+                "timeout",
+                "Model discovery is still busy. Cancel it or wait, then retry Create.",
+            )
+        })?
     }
     fn cancel(&self, ticket: u64) -> Result<(), String> {
         let mut state = self.state.lock().map_err(|_| CANCELLED)?;
@@ -150,10 +347,13 @@ impl ModelHost {
     async fn run(
         &self,
         ticket: u64,
-        work: impl std::future::Future<Output = Result<Catalog, String>> + Send + 'static,
-    ) -> Result<Catalog, String> {
+        work: impl std::future::Future<Output = Result<Catalog, ModelError>> + Send + 'static,
+    ) -> Result<Catalog, ModelError> {
         let task = {
-            let mut state = self.state.lock().map_err(|_| CANCELLED)?;
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| ModelError::new("cancelled", CANCELLED))?;
             let pending = state
                 .pending
                 .as_mut()
@@ -163,11 +363,13 @@ impl ModelHost {
                         && !p.cancelled
                         && p.created.elapsed() < Duration::from_secs(15)
                 })
-                .ok_or(CANCELLED)?;
+                .ok_or_else(|| ModelError::new("cancelled", CANCELLED))?;
             let task = tokio::spawn(async move {
                 tokio::time::timeout(Duration::from_secs(180), work)
                     .await
-                    .map_err(|_| "Connection timed out; retry explicitly".to_owned())?
+                    .map_err(|_| {
+                        ModelError::new("timeout", "Connection timed out; retry explicitly")
+                    })?
             });
             pending.abort = Some(task.abort_handle());
             task
@@ -177,27 +379,100 @@ impl ModelHost {
         let owner = self.clone();
         let (send, receive) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
-            let result = task.await.map_err(|_| CANCELLED.to_owned()).and_then(|r| r);
+            let result = task
+                .await
+                .map_err(|_| ModelError::new("cancelled", CANCELLED))
+                .and_then(|result| result);
             let result = (|| {
-                let mut state = owner.state.lock().map_err(|_| CANCELLED)?;
+                let mut state = owner
+                    .state
+                    .lock()
+                    .map_err(|_| ModelError::new("cancelled", CANCELLED))?;
                 if !state.pending.as_ref().is_some_and(|p| p.id == ticket) {
-                    return Err(CANCELLED.into());
+                    return Err(ModelError::new("cancelled", CANCELLED));
                 }
                 let cancelled = state.pending.as_ref().is_some_and(|p| p.cancelled) || state.closed;
                 state.pending = None;
                 if cancelled {
-                    Err(CANCELLED.into())
+                    Err(ModelError::new("cancelled", CANCELLED))
                 } else {
                     result
                 }
             })();
             let _ = send.send(result);
         });
-        receive.await.map_err(|_| CANCELLED.to_owned())?
+        receive
+            .await
+            .map_err(|_| ModelError::new("cancelled", CANCELLED))?
     }
     fn cache(&self, _host: &str) -> Result<PathBuf, String> {
         let state = self.state.lock().map_err(|_| CANCELLED)?;
         oauth_root(&state.root.clone()?)
+    }
+}
+impl Catalog {
+    fn validate_selection(
+        &self,
+        model: &str,
+        effort: &buzz_agent_controller::EffortSelection,
+    ) -> Result<(), ModelError> {
+        use buzz_agent_controller::EffortSelection;
+        if self.disconnected
+            || !self.discovery.as_ref().is_some_and(|discovery| {
+                discovery.authentication == "authenticated"
+                    && match self.integration {
+                        CatalogIntegration::Openai => {
+                            discovery.source == "openaiCatalog" && discovery.catalog == "remote"
+                        }
+                        CatalogIntegration::Databricks { .. } => {
+                            discovery.source == "databricksCatalog" && discovery.catalog == "remote"
+                        }
+                        CatalogIntegration::Codex => {
+                            discovery.source == "codexAcp" && discovery.catalog == "adapter"
+                        }
+                        _ => false,
+                    }
+            })
+        {
+            return Err(ModelError::new(
+                "unavailable",
+                "Account model availability could not be verified. Refresh models before creating the agent.",
+            ));
+        }
+        let selected = self
+            .models
+            .iter()
+            .find(|entry| entry.id == model)
+            .ok_or_else(|| {
+                ModelError::new(
+                "model",
+                "The selected model ID is unavailable. Refresh models and select a listed model.",
+            )
+            })?;
+        if let Some(error) = &selected.error {
+            return Err(ModelError::new("model", error.clone()));
+        }
+        let valid = match (&selected.effort, effort) {
+            (EffortOptions::Default, EffortSelection::Default) => true,
+            (EffortOptions::Unsupported, EffortSelection::Unsupported) => true,
+            (EffortOptions::Supported { options }, EffortSelection::Value { value }) => {
+                options.iter().any(|option| option.value == *value)
+            }
+            _ => false,
+        };
+        if !valid {
+            return Err(ModelError::new(
+                "effort",
+                "Choose an effort advertised for the selected model, or Not supported when explicitly reported.",
+            ));
+        }
+        Ok(())
+    }
+}
+struct Headless;
+impl BrowserOpener for Headless {
+    fn open(&self, _: &str) -> Result<(), String> {
+        Err("Sign in using Browse models before creating the agent".into())
     }
 }
 struct Opener<R: tauri::Runtime>(tauri::AppHandle<R>);
@@ -256,36 +531,121 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
     state: tauri::State<'_, ModelHost>,
     agents: tauri::State<'_, crate::agents::AgentHost>,
     ticket: u64,
-    request: Request,
-) -> Result<Catalog, String> {
+    mut request: Request,
+) -> Result<Catalog, ModelError> {
     let host = state.inner().clone();
     let controller = agents.inner().clone();
-    if request.edit.as_ref().is_some_and(|e| {
-        std::path::Path::new(&e.harness.command)
-            .file_name()
-            .and_then(|n| n.to_str())
-            == Some("buzz-pi-acp")
-    }) {
-        let edit = request.edit.clone().unwrap();
+    if matches!(request.integration.as_ref(), Some(Integration::Openai(_))) {
+        let Some(Integration::Openai(settings)) = request.integration.take() else {
+            return Err(ModelError::new(
+                "configuration",
+                "Open AI integration settings are missing",
+            ));
+        };
+        let prepared = match request.edit.take() {
+            Some(edit) => controller
+                .model_context(request.id.as_deref(), request.expected_revision, edit)
+                .await
+                .map_err(ModelError::from)
+                .and_then(|context| {
+                    context.openai.ok_or_else(|| {
+                        ModelError::new("configuration", "Choose Buzz Agent with Open AI")
+                    })
+                }),
+            None => Err(ModelError::new(
+                "configuration",
+                "Agent draft is required for Open AI setup",
+            )),
+        };
+        let endpoint = state.openai_endpoint.clone();
+        return host
+            .run(ticket, async move {
+                openai::execute(prepared?, settings, request.action, endpoint).await
+            })
+            .await;
+    }
+    if matches!(request.integration.as_ref(), Some(Integration::Codex)) {
+        let advanced = request.edit.as_ref().is_some_and(|edit| {
+            matches!(
+                edit.harness.configuration,
+                Some(buzz_agent_controller::AiConfiguration::Advanced { .. })
+            )
+        });
+        let selected = if advanced { None } else { Some(String::new()) };
+        let prepared = match request.edit.clone() {
+            Some(edit) => controller
+                .model_context(request.id.as_deref(), request.expected_revision, edit)
+                .await
+                .map_err(ModelError::from)
+                .and_then(|context| {
+                    context.codex.ok_or_else(|| {
+                        ModelError::new(
+                            "configuration",
+                            "Choose the Codex harness for Codex discovery",
+                        )
+                    })
+                }),
+            None => Err(ModelError::new(
+                "configuration",
+                "Agent draft is required for model lookup",
+            )),
+        };
+        return host
+            .run(ticket, async move {
+                if request.action != Operation::Refresh {
+                    return Err(ModelError::new(
+                        "configuration",
+                        "Use codex login in your terminal, then Refresh models. Buzz does not log out or replace your shared Codex account.",
+                    ));
+                }
+                codex::discover(prepared?, selected).await
+            })
+            .await;
+    }
+    if let Some(Integration::Databricks(settings)) = request.integration.take() {
+        request.host = settings.host;
+        request.filter = settings.filter;
+    }
+    let pi = matches!(request.integration.as_ref(), Some(Integration::Pi))
+        || request.edit.as_ref().is_some_and(|edit| {
+            std::path::Path::new(&edit.harness.command)
+                .file_name()
+                .and_then(|name| name.to_str())
+                == Some("buzz-pi-acp")
+        });
+    if pi {
+        let edit = request.edit.clone().ok_or_else(|| {
+            ModelError::new(
+                "configuration",
+                "Agent draft is required for Pi model lookup",
+            )
+        })?;
         let prepared = controller
             .pi_model_context(
                 request.id.as_deref(),
                 request.expected_revision,
                 edit.clone(),
             )
-            .await;
+            .await
+            .map_err(ModelError::from);
         return host
             .run(ticket, async move {
                 if request.action == Operation::Disconnect {
-                    return Err("Pi credentials are managed by Pi".into());
+                    return Err(ModelError::new(
+                        "configuration",
+                        "Pi credentials are managed by Pi",
+                    ));
                 }
                 let context = prepared?;
                 if request.action == Operation::Test {
                     let harness = &edit.harness;
                     crate::pi_models::test(context, &harness.provider, &harness.model).await?;
                     return Ok(Catalog {
-                        host: String::new(),
+                        integration: CatalogIntegration::Pi,
+                        host: Some(String::new()),
                         models: vec![],
+                        defaults: None,
+                        discovery: None,
                         model_overridden: false,
                         disconnected: false,
                     });
@@ -296,30 +656,39 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                     .map(|id| Model {
                         name: id.clone(),
                         id,
+                        effort: EffortOptions::Unknown,
+                        error: None,
                     })
                     .collect();
                 Ok(Catalog {
-                    host: String::new(),
+                    integration: CatalogIntegration::Pi,
+                    host: Some(String::new()),
                     models,
+                    defaults: None,
+                    discovery: None,
                     model_overridden: false,
                     disconnected: false,
                 })
             })
             .await;
     }
-    let goose = request.edit.as_ref().is_some_and(|edit| {
-        std::path::Path::new(&edit.harness.command)
-            .file_name()
-            .and_then(|name| name.to_str())
-            == Some("goose")
-    });
+    let goose = matches!(request.integration.as_ref(), Some(Integration::Goose))
+        || request.edit.as_ref().is_some_and(|edit| {
+            std::path::Path::new(&edit.harness.command)
+                .file_name()
+                .and_then(|name| name.to_str())
+                == Some("goose")
+        });
     if goose {
         // Goose's catalog handler may start OAuth on a cache miss. Only an
         // explicit Browse/Retry or Test may invoke Goose; Refresh stays headless.
         if !matches!(request.action, Operation::Connect | Operation::Test) {
             return host
                 .run(ticket, async {
-                    Err("Goose model lookup requires explicit Browse or Retry".into())
+                    Err(ModelError::new(
+                        "configuration",
+                        "Goose model lookup requires explicit Browse or Retry",
+                    ))
                 })
                 .await;
         }
@@ -333,11 +702,14 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
         };
         return host
             .run(ticket, async move {
-                let context = prepared?;
+                let context = prepared.map_err(ModelError::from)?;
                 if request.action == Operation::Test {
                     crate::goose_models::test(context).await?;
                     return Ok(Catalog {
-                        host: String::new(),
+                        integration: CatalogIntegration::Goose,
+                        host: Some(String::new()),
+                        defaults: None,
+                        discovery: None,
                         models: vec![],
                         model_overridden: false,
                         disconnected: false,
@@ -350,11 +722,16 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                     .map(|id| Model {
                         name: id.clone(),
                         id,
+                        effort: EffortOptions::Unknown,
+                        error: None,
                     })
                     .collect();
                 Ok(Catalog {
-                    host: String::new(),
+                    integration: CatalogIntegration::Goose,
+                    host: Some(String::new()),
                     models,
+                    defaults: None,
+                    discovery: None,
                     model_overridden,
                     disconnected: false,
                 })
@@ -414,16 +791,24 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
     let factory = state.factory.clone();
     let hide_inherited_host = request.inherit_workspace && request.host.is_empty();
     host.run(ticket, async move {
-        let (model_overridden, workspace, filter, cache) = prepared?;
+        let (model_overridden, workspace, filter, cache) = prepared.map_err(ModelError::from)?;
         if request.action == Operation::Disconnect {
-            controller.disconnect(&workspace).await?;
+            controller
+                .disconnect(&workspace)
+                .await
+                .map_err(ModelError::from)?;
             return Ok(Catalog {
-                host: if hide_inherited_host {
+                integration: CatalogIntegration::Databricks {
+                    host: workspace.clone(),
+                },
+                host: Some(if hide_inherited_host {
                     String::new()
                 } else {
                     workspace
-                },
+                }),
                 models: vec![],
+                defaults: None,
+                discovery: None,
                 model_overridden,
                 disconnected: true,
             });
@@ -438,13 +823,19 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
             Arc::new(Opener(app)),
         )
         .await
+        .map_err(ModelError::from)
     })
     .await
     .map(|mut catalog| {
         // The native connection uses the inherited write-only environment;
         // the catalog projection must not reveal its workspace URL to the UI.
         if hide_inherited_host {
-            catalog.host.clear();
+            if let Some(host) = catalog.host.as_mut() {
+                host.clear();
+            }
+            if let CatalogIntegration::Databricks { host } = &mut catalog.integration {
+                host.clear();
+            }
         }
         catalog
     })
@@ -599,11 +990,22 @@ async fn execute(
         .map(|m| Model {
             id: m.id,
             name: m.name,
+            effort: EffortOptions::Unsupported,
+            error: None,
         })
         .collect();
     Ok(Catalog {
-        host: workspace,
+        integration: CatalogIntegration::Databricks {
+            host: workspace.clone(),
+        },
+        host: Some(workspace),
         models,
+        defaults: None,
+        discovery: Some(Discovery {
+            source: "databricksCatalog",
+            authentication: "authenticated",
+            catalog: "remote",
+        }),
         model_overridden,
         disconnected: false,
     })

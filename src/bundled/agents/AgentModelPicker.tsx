@@ -1,38 +1,27 @@
+import { DatabricksModelSettings } from "./DatabricksModelSettings";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Combobox } from "../../shared/design-system/ui/Combobox";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   AgentControl,
   ControlSnapshot,
 } from "../../features/agents/control";
-import type { ModelCatalog } from "../../features/agents/models";
 import {
-  CheckCircleIcon,
-  CircleNotchIcon,
-  WarningCircleIcon,
-} from "../../shared/design-system/icons";
+  isVerifiedCatalog,
+  ModelError,
+  type ModelCatalog,
+  type ModelRequest,
+} from "../../features/agents/models";
+import { Select } from "../../shared/design-system/ui/Select";
 import { Button } from "../../shared/design-system/ui/Button";
-import { agentEdit, isGoose, type AgentDraft } from "./agent-edit";
+import { agentEdit, type AgentDraft } from "./agent-edit";
+import { ExternalAgentModelPicker } from "./ExternalAgentModelPicker";
 
-const VISIBLE_MODEL_LIMIT = 10;
-
-export function AgentModelPicker({
-  id,
-  draft,
-  savedRevision,
-  control,
-  defaults,
-  defaultModel,
-  inheritedWorkspace,
-  onPiProviders,
-  onChange,
-  disabled = false,
-}: {
+type AgentModelPickerProps = {
   disabled?: boolean;
-  /** Pi's signed-in providers, or null while its catalog is loading. */
-  onPiProviders?(providers: string[] | null): void;
+  recoveryAvailable?: boolean;
   id?: string | undefined;
   savedRevision?: number | undefined;
   draft: AgentDraft;
@@ -41,14 +30,58 @@ export function AgentModelPicker({
   defaultModel?: string | undefined;
   /** Workspace/filter supplied by write-only Agent defaults; values stay native. */
   inheritedWorkspace?: { host: boolean; filter: boolean };
+  onPiProviders?(providers: string[] | null): void;
+  capabilities?: NonNullable<
+    ControlSnapshot["harnessOptions"]
+  >[number]["capabilities"];
   onChange(patch: Partial<AgentDraft>): void;
-}) {
-  const statusId = useId();
-  const goose = isGoose(draft.command);
-  const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
-  const external = goose || pi;
-  // An inherited Agent defaults value wins over the compiled floor at launch;
-  // leave it blank here so native resolves the same hidden value.
+  onValidated?: ((draft: AgentDraft | null) => void) | undefined;
+  validationVersion?: number | undefined;
+};
+
+export function AgentModelPicker(props: AgentModelPickerProps) {
+  const executable = props.draft.command
+    .replaceAll("\\", "/")
+    .split("/")
+    .at(-1);
+  if (executable === "goose" || executable === "buzz-pi-acp") {
+    return (
+      <ExternalAgentModelPicker
+        id={props.id}
+        draft={props.draft}
+        savedRevision={props.savedRevision}
+        control={props.control}
+        defaults={props.defaults}
+        {...(props.inheritedWorkspace === undefined
+          ? {}
+          : { inheritedWorkspace: props.inheritedWorkspace })}
+        {...(props.defaultModel === undefined
+          ? {}
+          : { defaultModel: props.defaultModel })}
+        {...(props.onPiProviders ? { onPiProviders: props.onPiProviders } : {})}
+        onChange={props.onChange}
+        disabled={props.disabled ?? false}
+      />
+    );
+  }
+  return <ConfiguredAgentModelPicker {...props} />;
+}
+
+function ConfiguredAgentModelPicker({
+  id,
+  draft,
+  savedRevision,
+  control,
+  defaults,
+  defaultModel,
+  inheritedWorkspace,
+  capabilities,
+  recoveryAvailable = false,
+  onChange,
+  onValidated,
+  validationVersion,
+  disabled = false,
+}: AgentModelPickerProps) {
   const host =
     draft.databricks?.host ??
     (inheritedWorkspace?.host ? "" : (defaults?.host ?? ""));
@@ -60,36 +93,57 @@ export function AgentModelPicker({
     data: ModelCatalog;
   } | null>(null);
   const [status, setStatus] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [authenticationRequired, setAuthenticationRequired] = useState(false);
+  const advanced = draft.configuration?.mode === "advanced";
+  const defaultsMode = draft.configuration?.mode === "default";
   const [query, setQuery] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const attempted = useRef<string | null>(null);
   // Native resolves absolute executables and write-only provider overrides.
-  const supported = !!control.models;
+  const executable = draft.command.replaceAll("\\", "/").split("/").at(-1);
+  const codex = capabilities?.modelDiscovery === "codex";
+  const openai = draft.command === "buzz-agent" && draft.provider === "openai";
+  const supported =
+    !!control.models &&
+    (openai
+      ? capabilities?.openai !== false
+      : codex ||
+        capabilities?.modelDiscovery === "databricks" ||
+        (capabilities === undefined && executable === "buzz-agent"));
   const highlighted = useRef<ModelCatalog["models"][number] | null>(null);
   const [busy, setBusy] = useState(false);
   const pending = useRef<AbortController | null>(null);
   // All draft context participates: native resolves write-only overrides against
   // the saved revision. Discovery never persists draft values.
-  const key = JSON.stringify([
-    id,
-    savedRevision,
-    draft.revision,
-    draft.command,
-    pi ? null : draft.provider,
-    draft.args,
-    draft.workspace,
-    draft.environment,
-    pi ? null : host,
-    pi ? null : filter,
-  ]);
+  const contextKey = (environment = draft.environment) =>
+    JSON.stringify([
+      validationVersion,
+      id,
+      savedRevision,
+      draft.revision,
+      draft.command,
+      draft.provider,
+      draft.args,
+      draft.workspace,
+      openai ? null : draft.configuration?.mode,
+      environment,
+      supported,
+      recoveryAvailable,
+      host,
+      filter,
+    ]);
+  const key = contextKey();
   const currentKey = useRef(key);
   currentKey.current = key;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: context change cancels actual native work even when no result has arrived.
   useEffect(() => {
     pending.current?.abort();
     pending.current = null;
     setBusy(false);
+    setCatalog((previous) => (previous?.key === key ? previous : null));
+    setApiKey("");
     setStatus("");
+    setAuthenticationRequired(false);
     setQuery(null);
     setOpen(false);
     attempted.current = null;
@@ -98,122 +152,116 @@ export function AgentModelPicker({
       pending.current = null;
     };
   }, [key]);
-  // Provider is only a filter for Pi's catalog, but pending search text belongs
-  // to the provider the person was editing.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: provider changes retire its pending search text without invalidating Pi’s catalog.
-  useEffect(() => {
-    setQuery(null);
-    highlighted.current = null;
-  }, [draft.provider]);
-  // A test result belongs to the exact draft it tested.
-  const testKey = JSON.stringify([key, draft.provider, draft.model]);
-  const [test, setTest] = useState<{
-    key: string;
-    run: AbortController;
-    result: string;
-  } | null>(null);
-  const testing = useRef<AbortController | null>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: editing the tested draft retires its native test.
-  useEffect(
-    () => () => {
-      testing.current?.abort();
-      testing.current = null;
-    },
-    [testKey],
-  );
-  const testResult = test?.key === testKey ? test.result : null;
-  const testConnection = async () => {
-    if (!control.models || testing.current) return;
-    const run = new AbortController();
-    testing.current = run;
-    // Only this run may settle its own result; a retired run clears it.
-    const settle = (result: string) =>
-      setTest((current) =>
-        current?.run !== run
-          ? current
-          : run.signal.aborted
-            ? null
-            : { ...current, result },
-      );
-    setTest({ key: testKey, run, result: "testing" });
-    try {
-      await control.models.request(
-        {
-          id,
-          expectedRevision: id ? draft.revision : undefined,
-          edit: agentEdit(draft, true),
-          host: "",
-          filter: "",
-          action: "test",
-        },
-        run.signal,
-      );
-      settle("ok");
-    } catch (error) {
-      settle((error as Error).message);
-    } finally {
-      if (testing.current === run) testing.current = null;
-    }
-  };
-  const run = async (action: "connect" | "refresh" | "disconnect") => {
+  const run = async (
+    action: "connect" | "refresh" | "disconnect",
+    useCache = false,
+    submittedKey?: string,
+  ) => {
     if (!control.models || pending.current) return;
-    // Native runs one lookup at a time; model browsing replaces a test.
-    testing.current?.abort();
-    testing.current = null;
-    setTest(null);
-    if (!external && !host.trim() && !inheritedWorkspace?.host) {
+    if (action !== "disconnect" && !supported) return;
+    if (!codex && !openai && !host.trim() && !inheritedWorkspace?.host) {
       setStatus(
         "Set your Databricks workspace under Advanced → Model to browse models.",
       );
       return;
     }
     attempted.current = key;
+    let request: ModelRequest;
+    try {
+      request = {
+        id,
+        expectedRevision: id ? draft.revision : undefined,
+        edit: action === "disconnect" ? undefined : agentEdit(draft, true),
+        integration: openai
+          ? {
+              kind: "openai",
+              settings: submittedKey ? { apiKey: submittedKey } : {},
+            }
+          : codex
+            ? { kind: "codex" }
+            : { kind: "databricks", settings: { host, filter } },
+        action,
+        ...(!codex &&
+        !openai &&
+        ((inheritedWorkspace?.host && !host) ||
+          (inheritedWorkspace?.filter && !filter))
+          ? { inheritWorkspace: true }
+          : {}),
+      };
+    } catch (error) {
+      setStatus((error as Error).message);
+      return;
+    }
+    setApiKey("");
+    if (codex && useCache) {
+      const cached = control.models.cached?.(request);
+      if (cached) {
+        setCatalog({ key, data: cached });
+        setStatus("");
+        return;
+      }
+    }
     const abort = new AbortController();
     pending.current = abort;
     setBusy(true);
-    setCatalog(null);
+    setCatalog((previous) =>
+      codex && previous
+        ? {
+            ...previous,
+            data: {
+              ...previous.data,
+              discovery: previous.data.discovery
+                ? {
+                    ...previous.data.discovery,
+                    catalog: "cached",
+                  }
+                : null,
+            },
+          }
+        : null,
+    );
+    setAuthenticationRequired(false);
     setStatus(
-      action === "connect"
-        ? external
-          ? `Loading ${pi ? "Pi" : "Goose"} models…`
-          : "Loading models… sign in through your browser if asked."
-        : action === "refresh"
+      action === "connect" && !openai
+        ? "Loading models… sign in through your browser if asked."
+        : action === "refresh" || openai
           ? "Loading models…"
           : "Removing this app’s credentials for this workspace…",
     );
     try {
-      const data = await control.models.request(
-        {
-          id,
-          expectedRevision: id ? draft.revision : undefined,
-          edit: action === "disconnect" ? undefined : agentEdit(draft, true),
-          host: external ? "" : host,
-          filter: external ? "" : filter,
-          action,
-          ...(!external &&
-          ((inheritedWorkspace?.host && !host) ||
-            (inheritedWorkspace?.filter && !filter))
-            ? { inheritWorkspace: true }
-            : {}),
-        },
-        abort.signal,
-      );
+      if (codex) {
+        const cached = control.models.cached?.(request);
+        if (cached) setCatalog({ key, data: cached });
+      }
+      const data = await control.models.request(request, abort.signal);
       if (abort.signal.aborted || currentKey.current !== key) return;
-      setCatalog({ key, data });
+      if (openai && data.integration?.kind === "openai") {
+        const environment = submittedKey
+          ? { ...draft.environment, OPENAI_COMPAT_API_KEY: submittedKey }
+          : draft.environment;
+        setCatalog({ key: contextKey(environment), data });
+        if (submittedKey) onChange({ environment });
+      } else setCatalog({ key, data });
       setStatus(
         data.disconnected
           ? "Disconnected from this workspace in Foundation."
           : data.models.length
             ? ""
-            : goose
-              ? "No models found for this Goose provider. Check its configuration or enter a custom ID."
-              : pi
-                ? "No signed-in Pi providers found. Buzz doesn’t use API keys exported in your shell profile. Choose a provider under LLM Provider to add its API key, or enter a custom ID."
-                : "No models found. Enter a custom ID or check the workspace/filter under Advanced → Model.",
+            : codex && defaultsMode
+              ? ""
+              : openai
+                ? "No models are available for this key. Check its project permissions, then refresh."
+                : advanced
+                  ? "No available models found. Check your account, workspace and filter, then refresh."
+                  : "No models found. Enter a custom ID or check the workspace/filter under Advanced → Model.",
       );
     } catch (error) {
-      if (!abort.signal.aborted && currentKey.current === key)
+      if (!abort.signal.aborted && currentKey.current === key) {
         setStatus((error as Error).message);
+        setAuthenticationRequired(
+          error instanceof ModelError && error.code === "authentication",
+        );
+      }
     } finally {
       if (pending.current === abort) {
         pending.current = null;
@@ -221,231 +269,366 @@ export function AgentModelPicker({
       }
     }
   };
-  // Pi's catalog is headless and supplies the signed-in provider list, so load
-  // it when Pi is selected. Later context edits wait for Browse or Retry.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only entering Pi triggers the automatic lookup.
-  useEffect(() => {
-    if (pi) void run("connect");
-  }, [pi, draft.command]);
-  const fresh = catalog?.key === key ? catalog.data : null;
-  const reportedProviders = JSON.stringify(
-    !pi
-      ? []
-      : busy
-        ? null
-        : [...new Set(fresh?.models.map((m) => m.id.split("/")[0] ?? ""))],
-  );
-  useEffect(() => {
-    onPiProviders?.(JSON.parse(reportedProviders));
-  }, [reportedProviders, onPiProviders]);
-  useEffect(() => () => onPiProviders?.([]), [onPiProviders]);
-  const entries = (fresh?.models ?? []).filter(
-    (m) => !pi || !draft.provider || m.id.startsWith(`${draft.provider}/`),
-  );
-  const piNoModelsMessage =
-    "No Pi models for this provider. Buzz doesn’t use API keys exported in your shell profile. Add this provider’s API key for this agent, then browse models again.";
-  const selectedId =
-    pi && draft.provider && draft.model
-      ? `${draft.provider}/${draft.model}`
-      : draft.model;
-  const chooseModel = (value: string) => {
-    if (pi && value.includes("/") && entries.some((m) => m.id === value)) {
-      const split = value.indexOf("/");
-      onChange({
-        provider: value.slice(0, split),
-        model: value.slice(split + 1),
-      });
-    } else {
-      const prefix = `${draft.provider}/`;
-      onChange({
-        model:
-          pi && draft.provider && value.startsWith(prefix)
-            ? value.slice(prefix.length)
-            : value,
-      });
-    }
+  const submitApiKey = () => {
+    const submittedKey = apiKey.trim();
+    if (!submittedKey || disabled || busy) return;
+    void run("connect", false, submittedKey);
   };
+  // Selecting Codex starts a headless refresh; defer one microtask so StrictMode's
+  // retired effect cannot start a second native probe. Context cleanup aborts it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: key captures the discovery context; draft labels/effort must not restart discovery.
+  useEffect(() => {
+    let retired = false;
+    if (codex && supported)
+      void Promise.resolve().then(() => {
+        if (!retired) void run("refresh", !validationVersion);
+      });
+    return () => {
+      retired = true;
+    };
+  }, [key, control.models]);
+  const fresh = catalog?.key === key ? catalog.data : null;
+  const verified = isVerifiedCatalog(fresh);
+  // Older saved drafts may contain model[effort]. Show their advertised base
+  // model without silently rewriting the saved configuration on discovery.
+  const baseId = draft.model.replace(/\[[^\]]+\]$/, "");
+  const selectedId =
+    codex && fresh?.models.some((model) => model.id === baseId)
+      ? baseId
+      : draft.model;
+  const discoveredModel = fresh?.models.find(
+    (model) => model.id === selectedId,
+  );
+  const effort =
+    draft.configuration?.mode === "advanced"
+      ? draft.configuration.effort
+      : undefined;
+  const effortOptions = discoveredModel?.effort;
+  const effortValid =
+    effortOptions?.status === "default"
+      ? effort?.kind === "default"
+      : effortOptions?.status === "unsupported"
+        ? effort?.kind === "unsupported"
+        : effortOptions?.status === "supported" &&
+          effort?.kind === "value" &&
+          effortOptions.options.some((option) => option.value === effort.value);
+  const valid =
+    !busy &&
+    !status &&
+    query === null &&
+    verified &&
+    !!discoveredModel &&
+    !discoveredModel.error &&
+    effortValid;
+  useEffect(() => {
+    onValidated?.(valid ? draft : null);
+  }, [draft, valid, onValidated]);
+  const entries = codex || !advanced || verified ? (fresh?.models ?? []) : [];
   const selected =
     entries.find((model) => model.id === selectedId) ??
     (draft.model ? { id: draft.model, name: draft.model } : null);
   const items = [...entries];
-  if (selected && !entries.some((model) => model.id === selected.id))
+  if (
+    !advanced &&
+    selected &&
+    !entries.some((model) => model.id === selected.id)
+  )
     items.unshift(selected);
   const custom = query?.trim();
   if (
+    !advanced &&
     custom &&
     !items.some((model) => model.id === custom || model.name === custom)
   )
     items.push({ id: custom, name: custom });
-  const matchingItems =
-    query === null
-      ? items
-      : items.filter((item) =>
-          `${item.name} ${item.id}`.toLowerCase().includes(query.toLowerCase()),
-        );
+  const chooseModel = (model: string) => {
+    onChange({
+      model,
+      ...(openai || (advanced && model !== draft.model)
+        ? {
+            configuration: {
+              mode: "advanced" as const,
+              effort: {
+                kind: openai ? ("default" as const) : ("unsupported" as const),
+              },
+            },
+          }
+        : {}),
+    });
+  };
   const commitQuery = () => {
     if (query === null) return;
-    const match = entries.find(
+    const matches = entries.filter(
       (item) => item.id === query || item.name === query,
     );
-    chooseModel(match?.id ?? query);
+    const match =
+      entries.find((item) => item.id === query) ??
+      (matches.length === 1 ? matches[0] : undefined);
+    if (match || !advanced) chooseModel(match?.id ?? query);
     setQuery(null);
   };
   return (
     <section data-buzz-ui="" className="text-body" aria-label="Model settings">
       <div className="space-y-3">
-        <div>
-          <Combobox.Root<ModelCatalog["models"][number]>
-            disabled={disabled}
-            items={goose && busy ? [] : items}
-            filteredItems={
-              goose && busy
-                ? []
-                : goose
-                  ? matchingItems.slice(0, VISIBLE_MODEL_LIMIT)
-                  : matchingItems
-            }
-            value={selected}
-            inputValue={query ?? selected?.name ?? ""}
-            open={open}
-            onInputValueChange={(value, details) => {
-              if (
-                details.reason === "input-change" ||
-                details.reason === "input-clear"
-              ) {
-                setQuery(value);
-                // Pending text is an unsaved edit too: enable Save and protect the
-                // dialog while blur/Enter commits it or Escape abandons the query.
-                onChange({});
-              }
-            }}
-            onOpenChange={(next, details) => {
-              // Browse opens the list, even if typing already opened it. Base UI
-              // may deliver its mousedown toggle after the button's click handler.
-              if (!next && details.reason === "trigger-press") {
-                details.cancel();
-                return;
-              }
-              setOpen(next);
-              if (!next && details.reason === "escape-key") setQuery(null);
-            }}
-            modal={false}
-            onItemHighlighted={(item) => {
-              highlighted.current = item ?? null;
-            }}
-            itemToStringLabel={(model) => model.name}
-            isItemEqualToValue={(a, b) => a.id === b.id}
-            onValueChange={(model) => {
-              if (model) chooseModel(model.id);
-              setQuery(null);
-            }}
-          >
-            <Combobox.Control
-              label="Model"
-              triggerLabel="Browse models"
-              aria-describedby={status ? statusId : undefined}
-              loading={busy}
-              onBrowse={() => {
-                if (supported && !fresh && attempted.current !== key)
-                  void run("connect");
-              }}
-              placeholder={
-                defaultModel
-                  ? `Use agent defaults (${defaultModel})`
-                  : "Choose or enter a model"
-              }
-              onBlur={commitQuery}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setQuery(null);
-                if (
-                  event.key === "Enter" &&
-                  !highlighted.current &&
-                  !event.nativeEvent.isComposing
-                ) {
+        {openai && supported && (
+          <div className="space-y-3">
+            <Field label="Open AI API Key">
+              <Input
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={disabled || busy}
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
                   event.preventDefault();
-                  commitQuery();
-                  setOpen(false);
+                  if (!event.nativeEvent.isComposing) submitApiKey();
+                }}
+              />
+            </Field>
+            <Button
+              disabled={disabled || busy || !apiKey.trim()}
+              onClick={submitApiKey}
+            >
+              Check key and load models
+            </Button>
+            <p className="text-body-sm text-secondary">
+              {draft.environment.OPENAI_COMPAT_API_KEY
+                ? "A checked key is selected for this draft. "
+                : "Enter a key, or refresh to reuse the saved key. "}
+              Save the agent to store its key locally with its environment
+              settings and apply the selected model. Restart to update a running
+              agent.
+            </p>
+            <p className="text-body-sm text-secondary">
+              Choose an explicit model. Effort uses Runtime default because Open
+              AI’s model list does not report effort choices. Listed models are
+              not guaranteed to support agent conversations or have inference
+              quota.
+            </p>
+          </div>
+        )}
+        {codex && defaultsMode && (
+          <p role="status" className="text-body-sm text-secondary">
+            Default model:{" "}
+            {fresh?.defaults?.model ??
+              (busy ? "Loading…" : "Not reported by Codex")}
+            {" · "}Effort:{" "}
+            {fresh?.defaults?.effort ??
+              (busy ? "Loading…" : "Not reported by Codex")}
+            {fresh?.discovery?.catalog === "cached" &&
+              (busy ? " (cached; refreshing)" : " (cached)")}
+          </p>
+        )}
+        {codex && (
+          <p className="text-body-sm text-secondary">
+            Uses your existing Codex account and configuration. To sign in, run{" "}
+            <code>codex login</code> with the same CODEX_HOME/environment, then
+            refresh. Choices are reported by Codex and may be cached; they do
+            not guarantee inference access or quota.
+          </p>
+        )}
+        {!codex &&
+          !openai &&
+          (defaultsMode || authenticationRequired) &&
+          supported &&
+          !busy && (
+            <Button disabled={disabled} onClick={() => void run("connect")}>
+              Connect account
+            </Button>
+          )}
+        {(!defaultsMode || openai) && (
+          <div>
+            <Combobox.Root<ModelCatalog["models"][number]>
+              disabled={disabled}
+              items={items}
+              filteredItems={
+                query === null
+                  ? items
+                  : items.filter((item) =>
+                      `${item.name} ${item.id}`
+                        .toLowerCase()
+                        .includes(query.toLowerCase()),
+                    )
+              }
+              value={selected}
+              inputValue={query ?? selected?.name ?? ""}
+              open={open}
+              onInputValueChange={(value, details) => {
+                if (
+                  details.reason === "input-change" ||
+                  details.reason === "input-clear"
+                ) {
+                  setQuery(value);
+                  // Pending text is an unsaved edit too: enable Save and protect the
+                  // dialog while blur/Enter commits it or Escape abandons the query.
+                  onChange({});
                 }
               }}
-            />
-            <Combobox.Popup
-              className={goose ? "agent-model-popup" : undefined}
-              empty={busy ? null : "Type a model ID to use a custom model."}
+              onOpenChange={(next, details) => {
+                // Browse opens the list, even if typing already opened it. Base UI
+                // may deliver its mousedown toggle after the button's click handler.
+                if (!next && details.reason === "trigger-press") {
+                  details.cancel();
+                  return;
+                }
+                setOpen(next);
+                if (!next && details.reason === "escape-key") setQuery(null);
+              }}
+              modal={false}
+              onItemHighlighted={(item) => {
+                highlighted.current = item ?? null;
+              }}
+              itemToStringLabel={(model) => model.name}
+              isItemEqualToValue={(a, b) => a.id === b.id}
+              onValueChange={(model) => {
+                if (
+                  model &&
+                  (!advanced || entries.some((entry) => entry.id === model.id))
+                )
+                  chooseModel(model.id);
+                setQuery(null);
+              }}
             >
-              {busy && (
-                <div
-                  role="status"
-                  aria-label="Model lookup"
-                  className="flex items-center gap-2 px-3 py-2 text-body-sm text-secondary"
-                >
-                  <CircleNotchIcon
-                    size={16}
-                    className="motion-safe:animate-spin"
-                    aria-hidden="true"
-                  />
-                  {pi ? "Loading Pi models…" : "Loading models…"}
-                </div>
-              )}
-              {pi &&
-                !busy &&
-                (status ||
-                  (fresh && draft.provider && entries.length === 0)) && (
-                  <div className="px-3 py-2 text-body-sm text-secondary">
-                    {fresh && draft.provider && entries.length === 0
-                      ? piNoModelsMessage
-                      : status}
-                  </div>
-                )}
-              <Combobox.List
-                style={{
-                  maxHeight: "min(20rem, calc(var(--available-height) - 4rem))",
-                  overflowY: "auto",
+              <Combobox.Control
+                label="Model"
+                triggerLabel="Browse models"
+                loading={busy}
+                onBrowse={() => {
+                  if (supported && !fresh && attempted.current !== key)
+                    void run(advanced || codex ? "refresh" : "connect");
                 }}
+                placeholder={
+                  advanced
+                    ? "Choose an available model"
+                    : defaultModel
+                      ? `Use agent defaults (${defaultModel})`
+                      : "Choose or enter a model"
+                }
+                onBlur={commitQuery}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setQuery(null);
+                  if (
+                    event.key === "Enter" &&
+                    !highlighted.current &&
+                    !event.nativeEvent.isComposing
+                  ) {
+                    event.preventDefault();
+                    commitQuery();
+                    setOpen(false);
+                  }
+                }}
+              />
+              <Combobox.Popup
+                empty={
+                  busy
+                    ? "Loading models…"
+                    : advanced
+                      ? "No matching available models. Refresh the model list."
+                      : "Type a model ID to use a custom model."
+                }
               >
-                {(model: ModelCatalog["models"][number]) => {
-                  const custom = !entries.some(
-                    (entry) => entry.id === model.id,
-                  );
-                  return (
+                <Combobox.List
+                  style={{
+                    maxHeight:
+                      "min(20rem, calc(var(--available-height) - 4rem))",
+                    overflowY: "auto",
+                  }}
+                >
+                  {(model: ModelCatalog["models"][number]) => (
                     <Combobox.Item
                       key={model.id}
                       value={model}
-                      description={
-                        goose && model.name === model.id
-                          ? custom
-                            ? "Custom ID"
-                            : undefined
-                          : `${model.id}${custom ? " · Custom ID" : ""}`
-                      }
+                      description={`${model.id}${!entries.some((entry) => entry.id === model.id) ? " · Custom ID" : ""}`}
                     >
                       {model.name}
                     </Combobox.Item>
-                  );
-                }}
-              </Combobox.List>
-            </Combobox.Popup>
-          </Combobox.Root>
-        </div>
-        {goose && fresh && entries.length > VISIBLE_MODEL_LIMIT && (
+                  )}
+                </Combobox.List>
+              </Combobox.Popup>
+            </Combobox.Root>
+          </div>
+        )}
+        {advanced && (
+          <p role="status" className="text-body-sm text-secondary">
+            {!fresh
+              ? codex
+                ? "Loading model and effort choices. Refresh models if discovery fails."
+                : "Browse models to verify your account and choices before creating this agent."
+              : !verified
+                ? "Model discovery is unverified. Refresh models to load choices from this harness."
+                : !discoveredModel
+                  ? draft.model
+                    ? "The selected model is no longer available. Choose an available model; your previous selection is retained."
+                    : "Select an available model ID from this account’s catalog."
+                  : discoveredModel.error
+                    ? discoveredModel.error
+                    : effortOptions?.status === "unsupported" && effortValid
+                      ? "Effort: Not supported by this integration."
+                      : effortOptions?.status === "default" && effortValid
+                        ? "Model listed by Open AI. Effort: Runtime default."
+                        : effortValid
+                          ? "Model and effort are advertised in the refreshed catalog."
+                          : "Choose an available effort for this model. If choices are missing, refresh models."}
+          </p>
+        )}
+        {advanced && verified && effortOptions?.status === "supported" && (
+          <>
+            <Select
+              label="Effort"
+              variant="field"
+              disabled={disabled || busy}
+              value={
+                effortValid && effort?.kind === "value" ? effort.value : ""
+              }
+              groups={[
+                {
+                  label: "",
+                  options: effortOptions.options.map((option) => ({
+                    value: option.value,
+                    label: option.name,
+                  })),
+                },
+              ]}
+              onValueChange={(value) => {
+                if (
+                  effortOptions.options.some((option) => option.value === value)
+                )
+                  onChange({
+                    ...(codex ? { model: selectedId } : {}),
+                    configuration: {
+                      mode: "advanced",
+                      effort: { kind: "value", value },
+                    },
+                  });
+              }}
+            />
+            {!effortValid && effort?.kind === "value" && (
+              <p className="text-body-sm text-secondary">
+                Previous effort: {effort.value}. It is unavailable for this
+                model.
+              </p>
+            )}
+          </>
+        )}
+        {!supported && !defaultsMode && (
           <p className="text-body-sm text-secondary">
-            Showing up to {VISIBLE_MODEL_LIMIT} models. Type to search all{" "}
-            {entries.length}.
+            Model browsing is unavailable for this harness or desktop version.
+            {advanced
+              ? "Advanced creation requires verified model discovery."
+              : "You can still enter a custom model ID."}
           </p>
         )}
         {status && (
-          <p
-            id={statusId}
-            role="status"
-            className={`text-body-sm ${busy && goose ? "flex items-center gap-2 text-primary" : "text-secondary"}`}
-          >
-            {busy && goose && (
-              <CircleNotchIcon
-                size={16}
-                className="motion-safe:animate-spin"
-                aria-hidden="true"
-              />
-            )}
+          <p role="status" className="text-body-sm text-secondary">
             {status}
+          </p>
+        )}
+        {openai && fresh?.models.length === 0 && !status && (
+          <p role="status" className="text-body-sm text-secondary">
+            No models are available for this key. Check its project permissions,
+            then refresh.
           </p>
         )}
         {busy ? (
@@ -458,188 +641,83 @@ export function AgentModelPicker({
               setStatus("Cancelled. Retry when ready.");
             }}
           >
-            {external ? "Cancel model lookup" : "Cancel sign-in"}
+            Cancel model request
           </Button>
         ) : (
           status &&
-          supported && (
-            <Button disabled={disabled} onClick={() => void run("connect")}>
+          supported &&
+          !authenticationRequired && (
+            <Button
+              disabled={disabled}
+              onClick={() =>
+                void run(advanced || codex ? "refresh" : "connect")
+              }
+            >
               Retry models
             </Button>
           )
         )}
-        {supported && external && draft.provider && draft.model && !busy && (
-          <div className="space-y-2">
-            <Button
-              disabled={disabled}
-              loading={testResult === "testing"}
-              onClick={() => void testConnection()}
-            >
-              Test connection
-            </Button>
-            {testResult && (
-              <p
-                role="status"
-                className={`flex items-center gap-2 text-body-sm ${testResult === "ok" ? "text-success" : testResult === "testing" ? "text-secondary" : "text-danger"}`}
-              >
-                {testResult === "ok" ? (
-                  <CheckCircleIcon size={16} aria-hidden="true" />
-                ) : testResult !== "testing" ? (
-                  <WarningCircleIcon size={16} aria-hidden="true" />
-                ) : null}
-                {testResult === "ok"
-                  ? "Connected. The model replied."
-                  : testResult === "testing"
-                    ? "Sending a short test message…"
-                    : testResult}
-              </p>
-            )}
-          </div>
+        {supported && (
+          <Button
+            disabled={disabled || busy}
+            onClick={() => void run("refresh")}
+          >
+            Refresh models
+          </Button>
         )}
-        {pi && draft.provider && !draft.model && (
-          <p className="text-body-sm text-warning">
-            Choose a model for this provider before starting, or clear Provider
-            to use Pi defaults.
-          </p>
-        )}
-        {pi && fresh && entries.length === 0 && draft.provider && (
-          <p className="text-body-sm text-secondary">{piNoModelsMessage}</p>
-        )}
-        {pi &&
-          fresh &&
-          draft.model &&
-          !entries.some((model) => model.id === selectedId) && (
-            <p className="text-body-sm text-warning">
-              This model ID is not in Pi’s available catalog. Select a listed
-              model or confirm the exact custom ID before starting; Pi may
-              accept an invalid ID until the first message.
-            </p>
-          )}
         {fresh?.modelOverridden && (
           <p className="text-body-sm text-warning">
-            {goose ? "A GOOSE_MODEL" : "A saved BUZZ_AGENT_MODEL"} environment
-            override takes precedence. Change it in Advanced → Environment to
-            use this selection.
-          </p>
-        )}
-        {goose &&
-          fresh &&
-          draft.model &&
-          !entries.some((model) => model.id === draft.model) && (
-            <p className="text-body-sm text-warning">
-              This model ID is not in Goose’s current provider list. Select a
-              listed model or confirm the custom ID before starting.
-            </p>
-          )}
-        {goose && (
-          <p className="text-body-sm text-secondary">
-            Browse to check this Goose provider’s models using the credentials
-            entered above or already configured in Goose.
+            A saved BUZZ_AGENT_MODEL override takes precedence. Change it in
+            Advanced → Environment to use this selection.
           </p>
         )}
       </div>
-      <h3 className="mt-section-gap mb-2 text-label">Advanced</h3>
-      <div className="-mx-2">
-        <Accordion
-          variant="form"
-          keepMounted
-          items={[
-            {
-              value: "advanced",
-              title: "Model",
-              content: (
-                <div className="space-y-3">
-                  <Field label="Model ID (custom or blank)">
-                    <Input
-                      disabled={disabled}
-                      value={draft.model}
-                      spellCheck={false}
-                      onChange={(event) =>
-                        onChange({ model: event.target.value })
-                      }
-                    />
-                  </Field>
-                  {pi && (
-                    <p className="text-body-sm text-secondary">
-                      This field uses the exact model ID, including any
-                      namespace slashes, without adding the provider. Its text
-                      is saved literally.
-                    </p>
-                  )}
-                  {supported && pi && (
-                    <Button
-                      disabled={disabled || busy}
-                      onClick={() => void run("refresh")}
-                    >
-                      Refresh models
-                    </Button>
-                  )}
-                  {supported && !external && (
-                    <>
-                      <Field label="Databricks workspace (HTTPS origin)">
-                        <Input
+      {!codex && !openai && (
+        <>
+          <h3 className="mt-section-gap mb-2 text-label">Advanced</h3>
+          <div className="-mx-2">
+            <Accordion
+              variant="form"
+              keepMounted
+              items={[
+                {
+                  value: "advanced",
+                  title: "Model",
+                  content: (
+                    <div className="space-y-3">
+                      {!defaultsMode && !advanced && (
+                        <Field label="Model ID (custom or blank)">
+                          <Input
+                            disabled={disabled}
+                            value={draft.model}
+                            spellCheck={false}
+                            onChange={(event) =>
+                              onChange({ model: event.target.value })
+                            }
+                          />
+                        </Field>
+                      )}
+                      {(supported || recoveryAvailable) && (
+                        <DatabricksModelSettings
+                          host={host}
+                          filter={filter}
+                          {...(inheritedWorkspace
+                            ? { inheritedWorkspace }
+                            : {})}
                           disabled={disabled}
-                          value={host}
-                          placeholder={
-                            inheritedWorkspace?.host
-                              ? "Use agent defaults"
-                              : "https://workspace.example.com"
-                          }
-                          spellCheck={false}
-                          onChange={(event) =>
-                            onChange({
-                              databricks: { host: event.target.value, filter },
-                            })
-                          }
+                          busy={busy}
+                          onChange={onChange}
+                          run={run}
                         />
-                      </Field>
-                      <Field label="Model filter (optional)">
-                        <Input
-                          disabled={disabled}
-                          value={filter}
-                          placeholder={
-                            inheritedWorkspace?.filter
-                              ? "Use agent defaults"
-                              : undefined
-                          }
-                          spellCheck={false}
-                          onChange={(event) =>
-                            onChange({
-                              databricks: { host, filter: event.target.value },
-                            })
-                          }
-                        />
-                      </Field>
-                      <p className="text-body-sm text-secondary">
-                        Editing either field saves both displayed values.
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          disabled={disabled || busy}
-                          onClick={() => void run("refresh")}
-                        >
-                          Refresh models
-                        </Button>
-                        <Button
-                          disabled={disabled || busy}
-                          onClick={() => void run("disconnect")}
-                        >
-                          Disconnect
-                        </Button>
-                      </div>
-                      <p className="text-body-sm text-secondary">
-                        Credentials are shared within Foundation for this
-                        workspace, not with old Buzz. Disconnect removes this
-                        app’s cache, not your browser session.
-                      </p>
-                    </>
-                  )}
-                </div>
-              ),
-            },
-          ]}
-        />
-      </div>
+                      )}
+                    </div>
+                  ),
+                },
+              ]}
+            />
+          </div>
+        </>
+      )}
     </section>
   );
 }

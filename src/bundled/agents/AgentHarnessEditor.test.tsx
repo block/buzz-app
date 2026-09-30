@@ -5,7 +5,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 import { AgentHarnessEditor } from "./AgentHarnessEditor";
-import { agentDraft } from "./agent-edit";
+import { agentDraft, agentEdit, type AgentDraft } from "./agent-edit";
 import { controlFixture } from "../../features/agents/control-testing";
 
 afterEach(cleanup);
@@ -55,7 +55,7 @@ it("keeps custom mode separate from saved values and supports an unset provider"
   await user.clear(screen.getByRole("textbox", { name: "Executable" }));
   await user.type(
     screen.getByRole("textbox", { name: "Executable" }),
-    "/custom/buzz-agent",
+    "/custom/agent",
   );
   expect(screen.getByRole("textbox", { name: "Custom provider" })).toHaveValue(
     "provider",
@@ -63,9 +63,87 @@ it("keeps custom mode separate from saved values and supports an unset provider"
   await user.click(screen.getByRole("combobox", { name: "Provider" }));
   await user.click(await screen.findByRole("option", { name: "Not set" }));
   expect(screen.getByRole("status")).toHaveTextContent(
-    '{"command":"/custom/buzz-agent","provider":""}',
+    '{"command":"/custom/agent","provider":""}',
   );
 });
+
+it.each([
+  {
+    path: "/custom/agent",
+    commit: "blur",
+    model: "",
+    configuration: undefined,
+  },
+  {
+    path: "/custom/agent",
+    commit: "enter",
+    model: "",
+    configuration: undefined,
+  },
+  {
+    path: "/custom/codex-acp",
+    commit: "blur",
+    model: "codex-model",
+    configuration: {
+      mode: "advanced",
+      effort: { kind: "value", value: "high" },
+    },
+  },
+])(
+  "retires managed Codex settings on $commit only when custom path $path changes harness families",
+  async ({ path, commit, model, configuration }) => {
+    const f = controlFixture();
+    const user = userEvent.setup();
+    const initial: AgentDraft = {
+      ...agentDraft(f.agent),
+      command: "/tools/codex-acp",
+      provider: "",
+      model: "codex-model",
+      configuration: {
+        mode: "advanced",
+        effort: { kind: "value", value: "high" },
+      },
+    };
+    function Example() {
+      const [draft, setDraft] = useState(initial);
+      return (
+        <>
+          <AgentHarnessEditor
+            draft={draft}
+            options={[
+              {
+                id: "codex",
+                command: "/tools/codex-acp",
+                label: "Codex",
+                providers: [],
+              },
+            ]}
+            onChange={(patch) =>
+              setDraft((current) => ({ ...current, ...patch }))
+            }
+          />
+          <output>{JSON.stringify(draft)}</output>
+        </>
+      );
+    }
+    render(<Example />);
+    await user.click(screen.getByRole("combobox", { name: "Harness" }));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Custom executable / current value",
+      }),
+    );
+    const executable = screen.getByRole("textbox", { name: "Executable" });
+    await user.clear(executable);
+    await user.type(executable, path);
+    if (commit === "enter") await user.type(executable, "{Enter}");
+    else await user.tab();
+
+    const saved = JSON.parse(screen.getByRole("status").textContent ?? "");
+    expect(saved.model).toBe(model);
+    expect(saved.configuration).toEqual(configuration);
+  },
+);
 
 it.each(["/opt/homebrew/bin/goose", "C:\\tools\\goose"])(
   "preserves Goose settings while editing custom executable %s",
@@ -221,6 +299,28 @@ it("switching Pi, Goose and Buzz resets incompatible selections and uses each ha
   });
 });
 
+it("hides Provider for Codex, including absolute executables, and restores it for other harnesses", async () => {
+  const f = controlFixture();
+  const draft = { ...agentDraft(f.agent), command: "codex-acp", provider: "" };
+  const props = { options: [], onChange: () => {} };
+  const view = render(<AgentHarnessEditor {...props} draft={draft} />);
+  expect(screen.queryByRole("combobox", { name: "Provider" })).toBeNull();
+  view.rerender(
+    <AgentHarnessEditor
+      {...props}
+      draft={{ ...draft, command: "/bin/codex-acp" }}
+    />,
+  );
+  expect(screen.queryByRole("combobox", { name: "Provider" })).toBeNull();
+  view.rerender(
+    <AgentHarnessEditor
+      {...props}
+      draft={{ ...draft, command: "buzz-agent" }}
+    />,
+  );
+  expect(screen.getByRole("combobox", { name: "Provider" })).toBeVisible();
+});
+
 it("disables Pi's provider list while signed-in providers load and keeps the current choice", () => {
   const f = controlFixture();
   render(
@@ -250,3 +350,91 @@ it("disables Pi's provider list while signed-in providers load and keeps the cur
   );
   expect(screen.queryByLabelText("Custom provider")).toBeNull();
 });
+
+it.each(
+  ["entered", "saved", "inherited"].flatMap((source) => [
+    {
+      source,
+      label: "Provider",
+      destination: "Databricks v2",
+      configuration: { mode: "default" },
+    },
+    {
+      source,
+      label: "Harness",
+      destination: "Codex",
+      configuration: { mode: "default" },
+    },
+    {
+      source,
+      label: "Harness",
+      destination: "Goose",
+      configuration: undefined,
+    },
+  ]),
+)(
+  "retires $source OpenAI settings when selecting $destination",
+  async ({ source, label, destination, configuration }) => {
+    const f = controlFixture();
+    const options = [
+      {
+        command: "buzz-agent",
+        label: "Buzz Agent",
+        providers: [
+          { value: "openai", label: "Open AI" },
+          { value: "databricks_v2", label: "Databricks v2" },
+        ],
+      },
+      {
+        id: "codex",
+        command: "/tools/codex-acp",
+        label: "Codex",
+        providers: [],
+        defaultArgs: [],
+      },
+      {
+        command: "/tools/goose",
+        label: "Goose",
+        providers: [],
+        defaultArgs: ["acp"],
+      },
+    ];
+    const initial: AgentDraft = {
+      ...agentDraft(f.agent),
+      command: "buzz-agent",
+      provider: source === "inherited" ? "" : "openai",
+      model: "openai-model",
+      configuration: { mode: "advanced", effort: { kind: "default" } },
+      environment: {
+        KEEP_ME: "value",
+        ...(source === "entered"
+          ? { OPENAI_COMPAT_API_KEY: "synthetic-key" }
+          : {}),
+      },
+    };
+    let draft = initial;
+    function Editor() {
+      const [value, setValue] = useState(initial);
+      draft = value;
+      return (
+        <AgentHarnessEditor
+          draft={value}
+          options={options}
+          defaultProvider="openai"
+          onChange={(patch) => setValue((old) => ({ ...old, ...patch }))}
+        />
+      );
+    }
+    const user = userEvent.setup();
+    const view = render(<Editor />);
+    await user.click(screen.getByLabelText(label));
+    await user.click(await screen.findByRole("option", { name: destination }));
+    expect(draft.model).toBe("");
+    expect(draft.configuration).toEqual(configuration);
+    expect(agentEdit(draft).environment).toEqual({
+      KEEP_ME: "value",
+      OPENAI_COMPAT_API_KEY: null,
+    });
+    view.unmount();
+  },
+);

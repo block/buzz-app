@@ -40,6 +40,7 @@ fn agent(workspace: &Path) -> Agent {
             command: "buzz-agent".into(),
             args: vec![],
             model: "test-model".into(),
+            configuration: None,
             provider: "test-provider".into(),
         },
         environment: BTreeMap::from([("PROVIDER_TEST_SETTING".into(), "explicit-value".into())]),
@@ -675,6 +676,7 @@ fn exact_command_has_no_ambient_identity_and_launch_failure_is_truthful() {
     assert_eq!(env["BUZZ_AUTH_TAG"], crate::secret::test_attestation(PUB));
     assert_eq!(env["BUZZ_ACP_AGENTS"], "2");
     assert_eq!(env["BUZZ_ACP_EFFORT_LEVEL"], "high");
+    assert_eq!(env["BUZZ_ACP_RELAY_OBSERVER"], "false");
     for absent in [
         "BUZZ_MANAGED_AGENT",
         "BUZZ_MANAGED_AGENT_START_NONCE",
@@ -1435,8 +1437,13 @@ fn build_floor_agrees_at_command_oauth_and_discovery_without_rewriting_saved_age
     let settings = databricks_with_defaults(&agent, &defaults)
         .unwrap()
         .unwrap();
-    let context =
-        model_context_with_defaults(&agent.harness, &agent.environment, &defaults).unwrap();
+    let context = model_context_with_defaults(
+        &agent.harness,
+        &agent.environment,
+        &agent.workspace,
+        &defaults,
+    )
+    .unwrap();
     assert_eq!(context.host.as_deref(), Some(settings.host.as_str()));
     assert_eq!(context.filter.as_deref(), Some(settings.filter.as_str()));
     assert_eq!(settings.host, defaults.host);
@@ -1519,8 +1526,13 @@ fn saved_selectors_and_environment_override_build_floor_including_empty() {
         "DATABRICKS_HOST".into(),
         "https://override.example.com".into(),
     );
-    let context =
-        model_context_with_defaults(&agent.harness, &agent.environment, &defaults).unwrap();
+    let context = model_context_with_defaults(
+        &agent.harness,
+        &agent.environment,
+        &agent.workspace,
+        &defaults,
+    )
+    .unwrap();
     assert_eq!(
         context.host.as_deref(),
         Some("https://override.example.com")
@@ -1543,13 +1555,25 @@ fn saved_selectors_and_environment_override_build_floor_including_empty() {
     assert!(databricks_with_defaults(&agent, &defaults)
         .unwrap()
         .is_none());
-    assert!(model_context_with_defaults(&agent.harness, &agent.environment, &defaults).is_err());
+    assert!(model_context_with_defaults(
+        &agent.harness,
+        &agent.environment,
+        &agent.workspace,
+        &defaults
+    )
+    .is_err());
     agent.environment.remove("BUZZ_AGENT_PROVIDER");
     agent
         .environment
         .insert("DATABRICKS_TOKEN".into(), "SYNTHETIC".into());
     assert!(databricks_with_defaults(&agent, &defaults).is_err());
-    assert!(model_context_with_defaults(&agent.harness, &agent.environment, &defaults).is_err());
+    assert!(model_context_with_defaults(
+        &agent.harness,
+        &agent.environment,
+        &agent.workspace,
+        &defaults
+    )
+    .is_err());
 }
 
 #[test]
@@ -1592,6 +1616,57 @@ fn launch_selectors_show_defaults_blanks_and_overrides() {
 }
 
 #[test]
+#[cfg(unix)]
+fn advanced_model_selection_wins_over_hidden_model_override() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    let mut agent = agent(dir.path());
+    agent.harness.provider = "databricks_v2".into();
+    agent.harness.model = "selected-model".into();
+    agent.harness.configuration = Some(crate::AiConfiguration::Advanced {
+        effort: crate::EffortSelection::Default,
+    });
+    agent
+        .environment
+        .insert("BUZZ_AGENT_MODEL".into(), "hidden-model".into());
+
+    let defaults = crate::BuildDefaults::default();
+    let resolved = defaults.resolve(&agent.harness, &agent.environment);
+    assert_eq!(resolved.model, "selected-model");
+    assert_eq!(
+        crate::defaults::selectors(&resolved, &agent.environment).model,
+        Some("selected-model")
+    );
+
+    let context = model_context_with_defaults(
+        &agent.harness,
+        &agent.environment,
+        &agent.workspace,
+        &defaults,
+    )
+    .unwrap();
+    assert!(!context.model_overridden);
+
+    let view = agent.view(&Default::default());
+    assert_eq!(view.launch_model.as_deref(), Some("selected-model"));
+    assert_eq!(view.launch_model_env, None);
+
+    let command = runtime
+        .command_with_defaults(&agent, &Secret::parse(KEY, PUB).unwrap(), &defaults)
+        .unwrap();
+    let env: BTreeMap<_, _> = command.get_envs().collect();
+    assert_eq!(
+        env[std::ffi::OsStr::new("BUZZ_AGENT_MODEL")],
+        Some(std::ffi::OsStr::new("selected-model"))
+    );
+    assert_eq!(
+        env[std::ffi::OsStr::new("BUZZ_ACP_MODEL")],
+        Some(std::ffi::OsStr::new("selected-model"))
+    );
+}
+
+#[test]
 fn external_harnesses_never_receive_buzz_agent_build_defaults() {
     let dir = tempfile::tempdir().unwrap();
     let mut agent = agent(dir.path());
@@ -1622,6 +1697,7 @@ fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets(
             command: goose.display().to_string(),
             args: vec!["acp".into()],
             model: "short-name".into(),
+            configuration: None,
             provider: "databricks_v2".into(),
             databricks: None,
         },
@@ -1674,8 +1750,12 @@ fn discovery_accepts_only_v2_from_saved_environment_or_build_provider() {
                 }
                 _ => defaults.provider = provider.into(),
             }
-            let context =
-                model_context_with_defaults(&agent.harness, &agent.environment, &defaults);
+            let context = model_context_with_defaults(
+                &agent.harness,
+                &agent.environment,
+                &agent.workspace,
+                &defaults,
+            );
             assert_eq!(
                 context.is_ok(),
                 provider != "databricks",
@@ -1966,7 +2046,7 @@ fn import_and_repair_deliver_team_instructions_to_a_started_process() {
         fs::create_dir_all(&source).unwrap();
         let mut saved = agent(dir.path());
         saved.imported["record"]["team_id"] = json!("crew");
-        let record = json!({"pubkey":PUB,"private_key_nsec":KEY,"name":"Old name","team_id":"crew","auth_tag":saved.auth_tag,"system_prompt":"Old prompt"});
+        let record = json!({"pubkey":PUB,"private_key_nsec":KEY,"name":"Old name","model":"test-model","team_id":"crew","auth_tag":saved.auth_tag,"system_prompt":"Old prompt"});
         fs::write(
             source.join("managed-agents.json"),
             serde_json::to_vec(&json!([record])).unwrap(),
@@ -2359,6 +2439,32 @@ fn databricks_environment_override_is_not_projected_as_a_restart_selector() {
 }
 
 #[test]
+#[cfg(unix)]
+fn codex_launch_enables_owner_encrypted_observer() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let adapter = tools.path().join("codex-acp");
+    std::fs::write(&adapter, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&adapter, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut a = agent(dir.path());
+    a.harness.command = adapter.to_string_lossy().into_owned();
+    a.harness.provider.clear();
+    let command = bundle(tools.path())
+        .command_with_defaults(
+            &a,
+            &Secret::parse(KEY, PUB).unwrap(),
+            &crate::BuildDefaults::default(),
+        )
+        .unwrap();
+    let observer = command
+        .get_envs()
+        .find(|(key, _)| *key == "BUZZ_ACP_RELAY_OBSERVER")
+        .and_then(|(_, value)| value);
+    assert_eq!(observer, Some(std::ffi::OsStr::new("true")));
+}
+
+#[test]
 fn retained_import_cannot_enable_or_open_credentials_until_explicit_setup() {
     let root = tempfile::tempdir().unwrap();
     let mut imported = agent(root.path());
@@ -2540,4 +2646,135 @@ fn use_here_exhausted_revision_preserves_the_saved_import() {
     );
     assert_eq!(fs::read(path).unwrap(), before);
     assert!(!store.snapshot().unwrap().agents[0].configured);
+}
+
+#[test]
+#[cfg(unix)]
+fn start_rejects_model_less_harness_defaults_without_losing_saved_agents() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let mut a = agent(dir.path());
+    a.harness.provider = "databricks_v2".into();
+    a.harness.model.clear();
+    a.harness.configuration = Some(crate::AiConfiguration::Default);
+    a.enabled = true;
+    a.environment
+        .insert("OPENAI_COMPAT_API_KEY".into(), "old-key".into());
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    let snapshot = controller.action(&a.id, Action::Start).unwrap();
+    let error = snapshot.agents[0].error.as_deref().unwrap();
+    assert!(error.contains("Buzz Agent requires a model"), "{error}");
+    assert!(controller.running.is_empty());
+    assert_eq!(snapshot.agents.len(), 1);
+    assert_eq!(a.environment["PROVIDER_TEST_SETTING"], "explicit-value");
+    // Explicit legacy environments still belong to their owner.
+    a.harness.configuration = None;
+    let command = controller
+        .bundle
+        .as_ref()
+        .unwrap()
+        .command_with_defaults(
+            &a,
+            &Secret::parse(KEY, PUB).unwrap(),
+            &crate::BuildDefaults::default(),
+        )
+        .unwrap();
+    assert!(command
+        .get_envs()
+        .any(|(k, v)| k == "OPENAI_COMPAT_API_KEY" && v == Some(std::ffi::OsStr::new("old-key"))));
+}
+
+#[test]
+#[cfg(unix)]
+fn start_preserves_legacy_provider_specific_model_fallbacks() {
+    for (provider, model_key, credential_key) in [
+        ("openai", "OPENAI_COMPAT_MODEL", "OPENAI_COMPAT_API_KEY"),
+        ("anthropic", "ANTHROPIC_MODEL", "ANTHROPIC_API_KEY"),
+        ("openrouter", "OPENROUTER_MODEL", "OPENROUTER_API_KEY"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = tempfile::tempdir().unwrap();
+        let mut a = agent(dir.path());
+        a.harness.provider = provider.into();
+        a.harness.model.clear();
+        a.enabled = true;
+        a.environment
+            .insert(model_key.into(), "legacy-model".into());
+        a.environment
+            .insert(credential_key.into(), "legacy-credential".into());
+        let mut store = Store::open(dir.path().join("config")).unwrap();
+        store.insert(vec![a.clone()]).unwrap();
+        let mut controller = Controller::new(
+            store,
+            Arc::new(Memory),
+            Ok(bundle(tools.path())),
+            dir.path().join("ownership"),
+        );
+
+        let started = controller.action(&a.id, Action::Start).unwrap();
+        assert!(
+            matches!(started.agents[0].status, ProcessStatus::Running),
+            "{provider}: {:?}",
+            started.agents[0].error
+        );
+        controller.action(&a.id, Action::Stop).unwrap();
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn managed_openai_default_key_stays_with_its_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    let store = Store::open(dir.path().join("store")).unwrap();
+    store
+        .save_defaults(
+            &serde_json::from_value(json!({
+                "harness":"buzz-agent", "provider":"openai", "model":"test-model", "effort":"",
+                "environment":{"OPENAI_COMPAT_API_KEY":"inherited-key","KEEP_ME":"inherited-value"}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let defaults = store.defaults().unwrap();
+    for (provider, managed, override_openai) in [
+        ("openai", true, false),
+        ("databricks_v2", true, false),
+        ("databricks_v2", false, false),
+        ("databricks_v2", false, true),
+    ] {
+        let mut a = agent(dir.path());
+        a.harness.provider = provider.into();
+        a.harness.configuration = managed.then_some(crate::AiConfiguration::Advanced {
+            effort: crate::EffortSelection::Default,
+        });
+        if override_openai {
+            a.environment
+                .insert("BUZZ_AGENT_PROVIDER".into(), "openai".into());
+        }
+        let a = crate::agent_defaults::effective(&a, &defaults);
+        let command = runtime
+            .command_with_defaults(&a, &Secret::parse(KEY, PUB).unwrap(), &Default::default())
+            .unwrap();
+        let env: BTreeMap<_, _> = command.get_envs().collect();
+        assert_eq!(
+            env.get(std::ffi::OsStr::new("OPENAI_COMPAT_API_KEY"))
+                .copied()
+                .flatten(),
+            (provider == "openai" || override_openai)
+                .then_some(std::ffi::OsStr::new("inherited-key"))
+        );
+        assert_eq!(
+            env[std::ffi::OsStr::new("KEEP_ME")],
+            Some(std::ffi::OsStr::new("inherited-value"))
+        );
+    }
 }

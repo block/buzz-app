@@ -431,6 +431,7 @@ fn resolve(data: &Source, record: &Value, workspace: &Path, destination: &str) -
         session_policy_inherit: false,
         workspace: workspace.display().to_string(),
         harness: HarnessEdit {
+            configuration: None,
             databricks: None,
             command,
             args,

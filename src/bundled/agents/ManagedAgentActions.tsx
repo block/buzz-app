@@ -134,9 +134,7 @@ export function ManagedAgentActions({
       )}
       {agent.profilePending && (
         <div className="space-y-2">
-          <p role="status" className="m-0 text-body-sm">
-            Settings saved. Profile publication is pending.
-          </p>
+          <p role="status">Settings saved. Profile publication is pending.</p>
           <Button
             disabled={
               state.busy || state.status !== "ready" || !control.publishProfile

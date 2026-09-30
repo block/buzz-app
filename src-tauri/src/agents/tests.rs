@@ -6,6 +6,18 @@ use tauri::test::{get_ipc_response, mock_builder, MockRuntime};
 const RUNTIME_GATE: &str = "Synthetic runtime unavailable.";
 const IMPORT_GATE: &str = "Synthetic credential refusal.";
 
+pub(crate) fn has_prepared_identity(host: &AgentHost) -> bool {
+    host.with(|host| Ok(host.creating.is_some())).unwrap()
+}
+
+pub(crate) fn use_credentials(host: &AgentHost, credentials: Arc<dyn Credentials>) {
+    host.with(|host| {
+        host.credentials = credentials;
+        Ok(())
+    })
+    .unwrap();
+}
+
 // Test-only custody. Synthetic fixtures cannot reach PlatformCredentials.
 struct RejectingCredentials;
 impl Credentials for RejectingCredentials {
@@ -414,6 +426,72 @@ fn saving_defaults_never_starts_or_enables_stopped_agents() {
 }
 
 #[test]
+#[cfg(unix)]
+fn codex_catalog_prefers_managed_adapter_over_system_path() {
+    const CHILD_HOME: &str = "BUZZ_TEST_CODEX_CATALOG_HOME";
+    if let Some(home) = std::env::var_os(CHILD_HOME) {
+        let home = PathBuf::from(home);
+        #[cfg(target_os = "macos")]
+        let data = home.join("Library/Application Support");
+        #[cfg(not(target_os = "macos"))]
+        let data = home.join(".local/share");
+        let expected = data.join("Buzz/node-tools/bin/codex-acp");
+        let (_dir, _host, _app, view) = fixture();
+        let snapshot = invoke(&view, "agent_control_snapshot", json!({})).unwrap();
+        let codex = snapshot["harnessOptions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|option| option["id"] == "codex")
+            .unwrap();
+        assert_eq!(codex["command"], expected.to_string_lossy().as_ref());
+        assert_eq!(codex["available"], true);
+        let harness = serde_json::from_value(json!({"command":"codex-acp","args":[],"model":"","provider":"","configuration":{"mode":"default"}})).unwrap();
+        let context = buzz_agent_controller::codex::Context::new(
+            &harness,
+            &BTreeMap::new(),
+            home.to_str().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(context.adapter, expected);
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let home = tempfile::tempdir().unwrap();
+    // Both possible managed layouts keep this fixture independent of the host OS.
+    for directory in [
+        "Library/Application Support/Buzz/node-tools/bin",
+        ".local/share/Buzz/node-tools/bin",
+        "system",
+    ] {
+        let directory = home.path().join(directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let adapter = directory.join("codex-acp");
+        std::fs::write(&adapter, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&adapter, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    // A separate process scopes HOME/PATH without racing other native tests.
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "agents::tests::codex_catalog_prefers_managed_adapter_over_system_path",
+            "--nocapture",
+        ])
+        .env(CHILD_HOME, home.path())
+        .env("HOME", home.path())
+        .env("PATH", home.path().join("system"))
+        .env_remove("XDG_DATA_HOME")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     let (dir, _host, _app, view) = fixture();
     let id = seed(dir.path());
@@ -431,12 +509,13 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(
         before["harnessOptions"][0],
         json!({
+            "id":"buzz-agent", "capabilities":{"modelDiscovery":"databricks","openai":true},
             "command":"buzz-agent", "label":"Buzz Agent",
             "available":true, "status":"ready", "defaultArgs":[],
             "providers": providers
         })
     );
-    assert_eq!(before["harnessOptions"].as_array().unwrap().len(), 3);
+    assert_eq!(before["harnessOptions"].as_array().unwrap().len(), 4);
     assert_eq!(before["harnessOptions"][2]["label"], "Pi");
     assert_eq!(
         before["harnessOptions"][2]["available"],
@@ -445,6 +524,12 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(before["harnessOptions"][2]["defaultArgs"], json!([]));
     // Pi's signed-in providers come from its catalog, never a static list.
     assert_eq!(before["harnessOptions"][2]["providers"], json!([]));
+    assert_eq!(before["harnessOptions"][3]["label"], "Codex");
+    assert_eq!(before["harnessOptions"][3]["id"], "codex");
+    assert_eq!(
+        before["harnessOptions"][3]["available"],
+        buzz_agent_controller::codex::installed_adapter().is_some()
+    );
     assert_eq!(
         before["harnessOptions"][2]["status"],
         pi_status(
@@ -2059,7 +2144,11 @@ fn pi_model_lookup_waits_out_brief_host_contention() {
     holder.join().unwrap();
     assert_eq!(
         result["models"],
-        json!([{"id":"databricks/model-a","name":"databricks/model-a"}])
+        json!([{
+            "id":"databricks/model-a",
+            "name":"databricks/model-a",
+            "effort":{"status":"unknown"}
+        }])
     );
 }
 
@@ -2092,7 +2181,9 @@ fn pi_connection_test_prompts_the_draft_selection() {
     assert_eq!(test("model-a").unwrap()["models"], json!([]));
     let error = test("model-b").unwrap_err();
     assert!(
-        error.as_str().unwrap().contains("rejected the API key"),
+        error["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("rejected the API key")),
         "{error}"
     );
 }
@@ -2172,11 +2263,19 @@ async fn native_create_waits_for_a_snapshot_and_keeps_its_prepared_identity() {
     }));
     acquired.await.unwrap();
     let request_id = uuid::Uuid::new_v4().to_string();
+    let edit: AgentEdit = serde_json::from_value(json!({
+        "name":"Create fixture", "picture":null, "systemPrompt":"", "workspace":"/tmp",
+        "harness":{"command":"goose","args":["acp"],"model":"","provider":""},
+        "environment":{}
+    }))
+    .unwrap();
     let mut creating = std::pin::pin!(agent_control_create_prepare(
+        app.state(),
         app.state(),
         request_id.clone(),
         "wss://relay.example".into(),
         "ab".repeat(32),
+        edit.clone(),
     ));
     assert_pending(creating.as_mut()).await;
     release.send(()).unwrap();
@@ -2184,9 +2283,11 @@ async fn native_create_waits_for_a_snapshot_and_keeps_its_prepared_identity() {
     assert!(snapshot.await.unwrap().is_ok());
     let retried = agent_control_create_prepare(
         app.state(),
+        app.state(),
         request_id,
         "wss://relay.example".into(),
         "ab".repeat(32),
+        edit,
     )
     .await
     .unwrap();

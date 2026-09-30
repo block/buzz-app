@@ -1,4 +1,4 @@
-import { profileWeb } from "./scripts/profile-dev.mjs";
+import { loadScenario, profileWeb } from "./scripts/profile-dev.mjs";
 
 // IPC stays open until the parent has observed cleanup and any late completion.
 process.on("message", (message) => {
@@ -18,7 +18,7 @@ try {
     args: [],
     network: true,
     trace: fixture.trace === true,
-    scenario: fixture.scenario,
+    scenario: fixture.scenario && (await loadScenario(fixture.scenario)),
   });
   process.send({ type: "settled" });
 } catch (error) {

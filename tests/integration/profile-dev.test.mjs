@@ -7,15 +7,19 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   inspectorClient,
+  loadScenario,
   normalizeWebViteArgs,
+  runScenario,
   safeUrl,
   takeScenario,
   viteListenerUrl,
@@ -52,25 +56,50 @@ test("web profiling canonicalizes its Vite port and strict-port contract", () =>
   );
 });
 
-test("profiling takes one known scenario and leaves the other arguments", () => {
+test("profiling takes one scenario file and leaves the other arguments", () => {
   for (const values of [
-    ["--port", "1431", "--scenario", "channels"],
-    ["--scenario=channels", "--port", "1431"],
+    ["--port", "1431", "--scenario", "open.mjs"],
+    ["--scenario=open.mjs", "--port", "1431"],
   ])
     assert.deepEqual(takeScenario(values), {
-      scenario: "channels",
+      scenario: "open.mjs",
       args: ["--port", "1431"],
     });
   assert.deepEqual(takeScenario(["--port", "1431"]), {
     scenario: undefined,
     args: ["--port", "1431"],
   });
-  for (const values of [["--scenario"], ["--scenario=toString"]])
-    assert.throws(() => takeScenario(values), /must be one of: channels/);
+  for (const values of [["--scenario"], ["--scenario="]])
+    assert.throws(() => takeScenario(values), /requires a scenario file/);
   assert.throws(
-    () => takeScenario(["--scenario", "channels", "--scenario=channels"]),
+    () => takeScenario(["--scenario", "open.mjs", "--scenario=open.mjs"]),
     /only one --scenario/,
   );
+});
+
+test("a scenario file must default-export a function", async () => {
+  const file = fileURLToPath(
+    new URL("./fixtures/profile-web/scenario.mjs", import.meta.url),
+  );
+  const scenario = await loadScenario(file);
+  assert.equal(scenario.file, file);
+  assert.equal(typeof scenario.run, "function");
+  await assert.rejects(
+    loadScenario(fileURLToPath(import.meta.url)),
+    /must default-export a function/,
+  );
+});
+
+test("a scenario that never finishes fails at the timeout", async () => {
+  const { code, error } = await runScenario(
+    { file: "stuck.mjs", run: () => new Promise(() => {}) },
+    {},
+    "unused",
+    new AbortController().signal,
+    1,
+  );
+  assert.equal(code, 1);
+  assert.match(error.message, /did not finish within 0.001 seconds/);
 });
 
 test("web profiling derives navigation from its owned listener", () => {
@@ -174,6 +203,7 @@ async function webFixture(t, scenario) {
     ["driver.mjs", "driver.mjs"],
     ["vite.mjs", "node_modules/vite/bin/vite.js"],
     ["browser.mjs", "node_modules/@playwright/test/index.mjs"],
+    ["scenario.mjs", "scenario.mjs"],
   ])
     await copyFile(
       new URL(source, fixtures),
@@ -385,7 +415,7 @@ const profileFiles = async (fixture) =>
   (await readdir(path.join(fixture.directory, "profiles"))).sort();
 
 test("a scenario ends its own capture and saves the app's client metrics", async (t) => {
-  const fixture = await webFixture(t, { scenario: "channels" });
+  const fixture = await webFixture(t, { scenario: "scenario.mjs" });
   assert.equal((await fixture.wait("settled")).error, undefined);
   await fixture.wait("browserClosed");
   fixture.child.send("finish");
@@ -393,8 +423,8 @@ test("a scenario ends its own capture and saves the app's client metrics", async
   const calls = fixture.messages
     .filter(({ type }) => type === "call")
     .map(({ name }) => name);
-  // The opened channel is current on the second pass and is not reselected.
-  assert.equal(calls.filter((name) => name === "click").length, 1);
+  // The harness exports the metrics after the scenario and before stopping.
+  assert.ok(calls.lastIndexOf("evaluate") > calls.indexOf("click"));
   assert.ok(calls.indexOf("Profiler.stop") > calls.lastIndexOf("evaluate"));
   assert.deepEqual(await profileFiles(fixture), [
     "chromium-renderer.cpuprofile",
@@ -409,14 +439,17 @@ test("a scenario ends its own capture and saves the app's client metrics", async
       "utf8",
     ),
   );
-  assert.equal(manifest.scenario, "channels");
+  assert.equal(
+    manifest.scenario,
+    path.join(await realpath(fixture.directory), "scenario.mjs"),
+  );
   assert.equal(manifest.relay, "wss://relay.example");
   assert.ok(manifest.coverage.includes("client-metrics"));
 });
 
 test("a failed scenario step finalizes the capture without client metrics", async (t) => {
   const fixture = await webFixture(t, {
-    scenario: "channels",
+    scenario: "scenario.mjs",
     reject: "click",
   });
   assert.match((await fixture.wait("settled")).error, /fixture rejection/);
@@ -433,7 +466,7 @@ test("a failed scenario step finalizes the capture without client metrics", asyn
 
 test("Ctrl-C during a scenario saves the capture without client metrics", async (t) => {
   const fixture = await webFixture(t, {
-    scenario: "channels",
+    scenario: "scenario.mjs",
     held: "click",
     late: "resolve",
   });

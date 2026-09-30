@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { setTimeout as pause } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import process from "node:process";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -502,75 +503,7 @@ export function networkRecorder(session, directory) {
   };
 }
 
-const SCENARIO_CHANNELS = 5;
-const SCENARIO_STEP_TIMEOUT_MS = 60_000;
-const SCENARIO_PAUSE_MS = 1_000;
-const CHANNEL_ROWS =
-  'nav[aria-label="Subscribed channels"] button[data-channel-id]';
-
-// Scenarios must stay read-only: they run as the developer's real account.
-// Each returns the app's own client-metrics export (docs/client-metrics.md).
-export const scenarios = {
-  // Opens the first sidebar channels twice: a cold pass, then a warm pass.
-  // Focus stays on the sidebar, so the reading policy marks nothing read.
-  async channels(page, signal) {
-    const waitForMetrics = (description, predicate, argument) =>
-      page
-        .waitForFunction(predicate, argument, {
-          timeout: SCENARIO_STEP_TIMEOUT_MS,
-          polling: 100,
-        })
-        .catch((cause) => {
-          throw new Error(`Scenario stopped waiting for ${description}.`, {
-            cause,
-          });
-        });
-    // Opens during startup catch-up would measure live setup, not the open.
-    await waitForMetrics(
-      "live coverage to settle",
-      () =>
-        globalThis.__buzzClientMetrics?.summary().phases[0].coverageMs !==
-        undefined,
-    );
-    const options = { timeout: SCENARIO_STEP_TIMEOUT_MS };
-    const rows = page.locator(CHANNEL_ROWS);
-    await rows.first().waitFor(options);
-    const ids = await rows.evaluateAll(
-      (buttons, limit) =>
-        buttons.slice(0, limit).map((button) => button.dataset.channelId),
-      SCENARIO_CHANNELS,
-    );
-    // The app finishes an open by timing it or counting it as not timed.
-    const finishedOpens = () =>
-      page.evaluate(() => {
-        const { n, skipped } = globalThis.__buzzClientMetrics.summary().opens;
-        return n + skipped;
-      });
-    for (const id of [...ids, ...ids]) {
-      const row = page
-        .locator(`${CHANNEL_ROWS}[data-channel-id=${JSON.stringify(id)}]`)
-        .first();
-      // Reselecting the channel on screen opens nothing.
-      if ((await row.getAttribute("aria-current", options)) === "page")
-        continue;
-      const before = await finishedOpens();
-      await row.click(options);
-      await waitForMetrics(
-        `channel ${id.slice(0, 8)} to open`,
-        (count) => {
-          const { n, skipped } = globalThis.__buzzClientMetrics.summary().opens;
-          return n + skipped > count;
-        },
-        before,
-      );
-      // Let trailing work finish so it is not charged to the next open.
-      await pause(SCENARIO_PAUSE_MS, undefined, { signal });
-    }
-    return await page.evaluate(() =>
-      globalThis.__buzzClientMetrics.export("channels"),
-    );
-  },
-};
+const SCENARIO_TIMEOUT_MS = 5 * 60_000;
 
 export function takeScenario(values) {
   const args = [];
@@ -584,19 +517,49 @@ export function takeScenario(values) {
     if (scenario !== undefined)
       throw new Error("Profiling accepts only one --scenario option.");
     scenario = value === "--scenario" ? values[++index] : value.slice(11);
-    if (!Object.hasOwn(scenarios, scenario))
-      throw new Error(
-        `--scenario must be one of: ${Object.keys(scenarios).join(", ")}.`,
-      );
+    if (!scenario) throw new Error("--scenario requires a scenario file.");
   }
   return { scenario, args };
 }
 
-async function runScenario(name, page, directory, signal) {
+// A scenario file default-exports `async (page, { signal }) => {}` and drives
+// the Playwright page. It runs as the developer's real account.
+export async function loadScenario(file) {
+  const location = path.resolve(file);
+  const { default: run } = await import(pathToFileURL(location).href);
+  if (typeof run !== "function")
+    throw new Error(`Scenario ${location} must default-export a function.`);
+  return { file: location, run };
+}
+
+export async function runScenario(
+  scenario,
+  page,
+  directory,
+  signal,
+  timeoutMs = SCENARIO_TIMEOUT_MS,
+) {
+  const finished = new AbortController();
   try {
-    const metrics = await scenarios[name](page, signal);
-    // An interrupted capture must not report a complete scenario.
-    signal.throwIfAborted();
+    const metrics = await Promise.race([
+      (async () => {
+        await scenario.run(page, { signal });
+        // The app's own client-metrics export (docs/client-metrics.md).
+        return await page.evaluate(
+          (label) => globalThis.__buzzClientMetrics.export(label),
+          path.basename(scenario.file),
+        );
+      })(),
+      // Ctrl-C also ends this wait, so an interrupted scenario that finishes
+      // late saves no metrics.
+      pause(timeoutMs, undefined, {
+        signal: AbortSignal.any([signal, finished.signal]),
+      }).then(() => {
+        throw new Error(
+          `Scenario did not finish within ${timeoutMs / 1000} seconds.`,
+        );
+      }),
+    ]);
     await writeFile(
       `${directory}/client-metrics.json`,
       `${JSON.stringify(metrics, null, 2)}\n`,
@@ -604,6 +567,8 @@ async function runScenario(name, page, directory, signal) {
     return { reason: "scenario", code: 0 };
   } catch (error) {
     return { reason: "scenario", code: 1, error };
+  } finally {
+    finished.abort();
   }
 }
 
@@ -624,7 +589,7 @@ export async function profileWeb({
       ...(scenario ? ["client-metrics"] : []),
     ],
     network,
-    scenario: scenario ?? null,
+    scenario: scenario?.file ?? null,
     relay: process.env.BUZZ_RELAY_URL ?? null,
   });
 
@@ -730,7 +695,7 @@ export async function profileWeb({
     console.log(
       `\nProfiling ${url}. ${
         scenario
-          ? `Running scenario ${scenario}; the capture stops when it ends.`
+          ? `Running scenario ${scenario.file}; the capture stops when it ends.`
           : "Press Ctrl-C to stop and save the profile."
       }`,
     );
@@ -898,7 +863,7 @@ async function main() {
   const profileArgs = process.argv.slice(3);
   const network = target === "web" && profileArgs.includes("--network");
   const trace = target === "web" && profileArgs.includes("--trace");
-  const { scenario, args } = takeScenario(
+  const { scenario: scenarioFile, args } = takeScenario(
     profileArgs.filter(
       (argument) => argument !== "--network" && argument !== "--trace",
     ),
@@ -910,7 +875,7 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  if (scenario !== undefined && target !== "web")
+  if (scenarioFile !== undefined && target !== "web")
     throw new Error("--scenario is supported for web profiling only.");
   if (process.platform !== "darwin") {
     console.error("Development profiling currently supports macOS only.");
@@ -921,6 +886,7 @@ async function main() {
     .toISOString()
     .replaceAll(":", "-")
     .replace(/\.\d{3}Z$/, "Z");
+  const scenario = scenarioFile && (await loadScenario(scenarioFile));
   const directory = `${root}.profiles/${stamp}-${target}`;
   await mkdir(directory, { recursive: true });
   if (target === "web")

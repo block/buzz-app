@@ -28,23 +28,11 @@ const session = {
     );
   },
 };
-let current = false;
-const row = {
-  first: () => row,
-  waitFor: () => operation("waitFor"),
-  evaluateAll: () => operation("evaluateAll", ["fixture-channel"]),
-  getAttribute: async () => (current ? "page" : null),
-  async click() {
-    await operation("click");
-    current = true;
-  },
-};
 const page = {
   context() {
     return { newCDPSession: () => operation("newCDPSession", session) };
   },
-  locator: () => row,
-  waitForFunction: () => operation("waitForFunction"),
+  locator: () => ({ click: () => operation("click") }),
   evaluate: () =>
     operation("evaluate", { epochMilliseconds: 1, monotonicMilliseconds: 1 }),
   async goto() {

@@ -60,14 +60,18 @@ need their own validation.
   sessions short. Press Ctrl+C to finalize the capture; the command prints the
   `.profiles/...-web` output directory. Load `.cpuprofile` and trace files in
   Chromium DevTools (**Performance** > **Load profile**).
-  Use `just web profile --scenario channels` for an unattended capture. It waits
-  for live coverage, opens the first five sidebar channels twice (cold, then
-  warm), saves the app's [client metrics](client-metrics.md) export as
-  `client-metrics.json`, and exits without Ctrl+C. A step that does not finish
-  within 60 seconds fails the run, which then saves no client metrics. The
-  scenario only selects sidebar channels, but it still runs as your real account
-  with normal session traffic and presence. `manifest.json` records the scenario
-  and the `BUZZ_RELAY_URL` environment value.
+  Use `just web profile --scenario <file>` for an unattended capture. The file
+  is any JavaScript module, inside or outside the repository (a relative path
+  resolves from the repository root), that default-exports
+  `async (page, { signal }) => {}` and drives the Playwright `page`. When it
+  returns, the command saves the app's [client metrics](client-metrics.md)
+  export as `client-metrics.json` and exits without Ctrl+C. A scenario that
+  throws or does not finish within five minutes fails the run, which then saves
+  no client metrics. `signal` aborts on Ctrl+C. A scenario runs as your real
+  account, so keep it read-only. Every capture starts from a fresh browser
+  profile with no community selected unless `BUZZ_DEV_OPEN_RELAY=1` is set.
+  `manifest.json` records the scenario file and the `BUZZ_RELAY_URL` environment
+  value.
 - `just desktop [args...]`: install locked dependencies and forward arguments to
   Tauri, e.g. `just desktop --port 1431 --no-watch`. Before launching, the adapter
   builds the pinned agent runtime when missing/outdated, or verifies and reuses it.

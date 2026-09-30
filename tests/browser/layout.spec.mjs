@@ -431,12 +431,20 @@ test("narrow link panels begin after the rendered sidebar", async ({
   await expect(panel(page)).toHaveCount(0);
 });
 
+// Virtua expires an imperative scroll 150ms after its last size update and
+// restores the list's pointer events 150ms after the last scroll event. That
+// observable state plus settled geometry replaces a fake clock, which would
+// also reorder requestAnimationFrame against the rendering update.
+async function virtuaIdle(page) {
+  await expect(
+    page.getByRole("region", { name: "Channel message history" }).locator("ol"),
+  ).toHaveCSS("pointer-events", "auto");
+  await settle(page);
+}
+
 readingTest(
   "panel resizing preserves bottom follow and the visible reading anchor",
   async ({ page, app }) => {
-    // Virtua ends an imperative scroll on a 150ms timer. The clock lets the
-    // test expire it exactly, instead of sleeping past it on wall time.
-    await page.clock.install();
     await open(page, app);
     await settle(page);
     await link(page, app, "https://github.com/block/buzz/pull/4");
@@ -466,20 +474,18 @@ readingTest(
     await settle(page);
     await expectBottom();
     // Late layout-only reflow must not need another message or viewport resize.
-    // Expire Virtua's 150ms imperative-scroll scheduler first. Change actual
+    // Let Virtua's imperative-scroll scheduler expire first. Change actual
     // row layout, not scroll methods/metrics or the production observer callback.
-    await page.clock.runFor(150);
     // Timer expiry can commit another virtualized range; native resize/scroll
     // delivery must finish before the separate late-layout change begins.
-    await settle(page);
+    await virtuaIdle(page);
     await expectBottom();
     const lateLayout = await page.addStyleTag({
       content: `[data-message-id="${received.id}"] p { padding-bottom: 120px; }`,
     });
     await settle(page);
     await expectBottom();
-    await page.clock.runFor(150);
-    await settle(page);
+    await virtuaIdle(page);
     await expectBottom();
     await lateLayout.evaluate((element) => element.remove());
     await settle(page);
@@ -528,7 +534,7 @@ readingTest(
     await expectAnchor(page, saved);
     // Reflow can arrive after Virtua's 150ms imperative-scroll scheduler ends.
     // Keep the selected reading anchor, not the partially clipped row above it.
-    await page.clock.runFor(150);
+    await virtuaIdle(page);
     const preceding = await history.evaluate((element, id) => {
       const rows = [...element.querySelectorAll("[data-message-id]")];
       const index = rows.findIndex((row) => row.dataset.messageId === id);

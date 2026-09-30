@@ -69,6 +69,13 @@ function setup({
     },
   });
   viewport[key] = direction === "rtl" ? -offset : offset;
+  // With a range set, act like a browser after a shrink: layout clamps the
+  // current offset before a relative scroll reads it, and the result is an
+  // integer inside the range, as WebKit reports it.
+  const clamp = (value) =>
+    viewport.max === undefined
+      ? value
+      : Math.trunc(Math.min(value, viewport.max));
   for (const method of ["scrollTo", "scrollBy"])
     viewport[method] = (options) => {
       calls.push({
@@ -77,8 +84,9 @@ function setup({
         overflow: style.getPropertyValue(axis),
         priority: style.getPropertyPriority(axis),
       });
-      viewport[key] =
-        (method === "scrollBy" ? viewport[key] : 0) + options[option];
+      viewport[key] = clamp(
+        (method === "scrollBy" ? clamp(viewport[key]) : 0) + options[option],
+      );
     };
   store.W(4, 500); // measured viewport
   store.W(1, offset); // observed native scrolling
@@ -306,6 +314,84 @@ it("does not change the imperative scheduler's smooth or instant scrolling polic
     c.driver._();
     vi.clearAllTimers();
   }
+});
+
+it("takes the absolute path for an integer offset at a fractional end when rows above shrink", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 1500 });
+  // The last row wraps to a fractional height: the end is 1500.17, and WebKit
+  // reports the reader at that bottom as 1500. Nothing above moved yet.
+  c.store.W(3, [[19, 100.17]]);
+  c.driver.J();
+  expect(c.calls).toHaveLength(0);
+  // Two rows above the viewport shrink by 80 in total. The browser's integer
+  // range ends at 1420; Virtua's fractional end is 1420.17, and the stale
+  // 1500 minus 80 falls 0.17 short of it.
+  c.viewport.max = 1420;
+  c.store.W(3, [
+    [1, 60],
+    [2, 60],
+  ]);
+  c.driver.J();
+  expect(c.calls).toEqual([
+    {
+      method: "scrollTo",
+      options: { top: 1421, behavior: "instant" },
+      overflow: "",
+      priority: "",
+    },
+  ]);
+  expect(c.viewport.scrollTop).toBe(1420); // not the clamp plus the shrink again
+  c.driver._();
+});
+
+it.each([
+  ["larger than the reader's gap to the end", 1490, "scrollTo", 1410],
+  ["smaller than that gap", 1300, "scrollBy", -80],
+])(
+  "a shrink %s keeps the reader's content in place",
+  (_, offset, method, top) => {
+    const c = setup({ platform: "Linux x86_64", offset });
+    c.viewport.max = 1420;
+    c.store.W(3, [
+      [1, 60],
+      [2, 60],
+    ]);
+    c.driver.J();
+    expect(c.calls).toEqual([
+      {
+        method,
+        options: { top, behavior: "instant" },
+        overflow: "",
+        priority: "",
+      },
+    ]);
+    expect(c.viewport.scrollTop).toBe(offset - 80);
+    c.driver._();
+  },
+);
+
+it("cancels a pending imperative scroll so later size updates stop re-applying it", async () => {
+  const c = setup({ platform: "Linux x86_64", offset: 0 });
+  c.store.W(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 100]),
+  );
+  await c.driver.V(() => 1500, false);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(c.calls).toHaveLength(1);
+  expect(vi.getTimerCount()).toBe(1); // the 150ms re-apply window
+  // Stock policy: a row measured inside that window re-applies the target.
+  c.store.W(3, [[19, 140]]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(c.calls).toHaveLength(2);
+  expect(c.calls.at(-1).options).toEqual({ top: 1500, behavior: "instant" });
+  c.driver.cancel();
+  expect(vi.getTimerCount()).toBe(0);
+  c.store.W(3, [[18, 140]]);
+  await vi.advanceTimersByTimeAsync(200);
+  expect(c.calls).toHaveLength(2);
+  c.driver.cancel(); // idle cancel is safe
+  c.driver._();
 });
 
 for (const [name, config, deferred] of [

@@ -1,5 +1,5 @@
 diff --git a/lib/index.js b/lib/index.js
-index a183cc7b1669aab25467840540ce3bd1c025fb47..d960e2ea2a9435296756a64fe3a3773b429ab081 100644
+index a183cc7b1669aab25467840540ce3bd1c025fb47..3c930ecbef03c27e59dbcca5e75e309d57afacad 100644
 --- a/lib/index.js
 +++ b/lib/index.js
 @@ -6,6 +6,10 @@ import { jsx as c } from "react/jsx-runtime";
@@ -108,7 +108,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..d960e2ea2a9435296756a64fe3a3773b
              behavior: t ? "smooth" : "instant"
          });
      }), u = t ? "width" : "height", d = /* @__PURE__ */ new WeakMap, h = C(t => {
-@@ -263,10 +311,15 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -263,18 +311,27 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
          }
          o.length && e.W(3, o);
      });
@@ -125,16 +125,22 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..d960e2ea2a9435296756a64fe3a3773b
                      const e = u.style, t = e[c];
                      e[c] = "hidden", p(() => {
                          e[c] = t;
-@@ -274,7 +327,7 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+                     });
                  }
-                 const r = e.T() + t;
-                 r <= 0 || r >= e.O() + e.t() - e.o() ? u.scrollTo({
+-                const r = e.T() + t;
+-                r <= 0 || r >= e.O() + e.t() - e.o() ? u.scrollTo({
 -                    [l]: T(r, i),
-+                    [l]: T(edgeOffset(r), i),
++                const r = e.T() + t, end = e.O() + e.t() - e.o();
++                // Layout clamps an offset beyond a shrunken end before scrollBy
++                // reads it, so a relative correction would apply the shrink twice.
++                // WebKit's integer scrollTop also reads up to 1px short of a
++                // fractional end. Both cases take the absolute path.
++                r <= 0 || r >= end - 1 || e.T() > end + 1 ? u.scrollTo({
++                    [l]: T(r >= end - 1 ? edgeOffset(Math.max(r, end)) : r, i),
                      behavior: "instant"
                  }) : u.scrollBy({
                      [l]: T(t, i),
-@@ -283,7 +336,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -283,12 +340,17 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
              }), r[1](!0);
          },
          _() {
@@ -145,10 +151,42 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..d960e2ea2a9435296756a64fe3a3773b
          },
          P: (e, t) => (d.set(e, t), h.A(e), () => {
              d.delete(e), h.B(e);
-@@ -797,4 +852,3 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+         }),
+         V: f,
++        // Reader input retires a pending imperative scroll, whose loop would
++        // otherwise re-apply the old target on any size update for 150ms.
++        cancel: a,
+         J() {
+             o && o.Y();
+         },
+@@ -544,6 +606,7 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+         getItemOffset: O.u,
+         getItemSize: O.h,
+         scrollToIndex: (e, t) => q(H, O, e, t),
++        cancelScrollToIndex: H.cancel,
+         scrollTo: e => W(H, e),
+         scrollBy: e => ((e, t, n) => {
+             W(e, n + t.T());
+@@ -797,4 +860,3 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
  });
 -
 +
  export { G as VList, j as Virtualizer, U as WindowVirtualizer, N as experimental_VGrid };
-\ No newline at end of file
 -//# sourceMappingURL=index.js.map
+\ No newline at end of file
+diff --git a/lib/react/Virtualizer.d.ts b/lib/react/Virtualizer.d.ts
+index 766ff2a7c7408c6ee6cb12f2ea377938c1f87505..2fe21f39cbc99d80e7b5408ea3f975e649aa984c 100644
+--- a/lib/react/Virtualizer.d.ts
++++ b/lib/react/Virtualizer.d.ts
+@@ -42,6 +42,11 @@ export interface VirtualizerHandle {
+      * @param opts options
+      */
+     scrollToIndex(index: number, opts?: ScrollToIndexOpts): void;
++    /**
++     * Cancel a pending {@link VirtualizerHandle.scrollToIndex}, {@link VirtualizerHandle.scrollTo} or {@link VirtualizerHandle.scrollBy},
++     * so later size updates no longer re-apply its target. Call it when reader input must win.
++     */
++    cancelScrollToIndex(): void;
+     /**
+      * Scroll to the given offset.
+      * @param offset offset from start

@@ -27,6 +27,7 @@ vi.mock("virtua", async () => {
       useImperativeHandle(ref, () => ({
         cache: undefined,
         scrollToIndex: scroll.toIndex,
+        cancelScrollToIndex() {},
         scrollTo: scroll.toOffset,
       }));
       return <ol style={{ height: 2000 }}>{children}</ol>;

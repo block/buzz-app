@@ -227,6 +227,7 @@ function setup({
     cache: [],
     scrollTo: vi.fn(),
     scrollToIndex: vi.fn(),
+    cancelScrollToIndex: vi.fn(),
   };
   blocked ??= freshness === "cached";
   let accepted = false;
@@ -518,6 +519,30 @@ it("an append does not steal a reading position when virtualizer still reports b
   });
   h.render();
   expect(h.hasJumpToLatest()).toBe(false);
+  h.unmount();
+});
+it("reader input retires a pending jump so a live append cannot pull the reader back", () => {
+  const h = setup();
+  h.scroll();
+  h.render();
+  expect(h.hasJumpToLatest()).toBe(true);
+  h.handle.scrollToIndex.mockClear();
+  h.jumpToLatest();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, {
+    align: "end",
+  });
+  h.element.scrollTop = 3038;
+  h.dispatchScroll();
+  h.handle.cancelScrollToIndex.mockClear();
+  // The reader wheels back up while Virtua could still re-apply the jump.
+  h.element.scrollTop = 2538;
+  h.scroll();
+  expect(h.handle.cancelScrollToIndex).toHaveBeenCalledOnce();
+  h.handle.scrollToIndex.mockClear();
+  h.append();
+  h.render();
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  expect(h.hasJumpToLatest()).toBe(true);
   h.unmount();
 });
 it("loads older rows at the current DOM threshold despite a stale far-away virtualizer offset", () => {
@@ -1537,6 +1562,43 @@ it("records a measured shrink before an append hides its queued native scroll cl
   h.unmount();
   expect(h.saved().bottom).toBe(true);
 });
+
+it.each([false, true])(
+  "a shrink that carries the offset past its clamp keeps bottom follow unless a gesture preceded it=%s",
+  (gesture) => {
+    const h = setup();
+    h.element.scrollTop = 3038;
+    h.scroll();
+    // Closing a side panel widens the feed. The re-pin frame re-arms the list
+    // height observer before Virtua measures the rows at their new width.
+    h.element.clientWidth = 1400;
+    h.resize();
+    if (gesture) h.gesture();
+    // Rows above the viewport shrink by 300. The browser clamps to the new
+    // bottom before Virtua's relative correction reads the offset, so the
+    // shrink lands twice; the height commit is observed before its scroll event.
+    h.element.scrollHeight -= 300;
+    h.element.scrollTop -= 600;
+    h.handle.scrollToIndex.mockClear();
+    h.measureRows();
+    h.dispatchScroll();
+    h.render();
+    if (gesture) {
+      expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+      expect(h.hasJumpToLatest()).toBe(true);
+    } else {
+      expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, {
+        align: "end",
+      });
+      h.element.scrollTop = h.element.scrollHeight - h.element.clientHeight;
+      h.dispatchScroll();
+      h.render();
+      expect(h.hasJumpToLatest()).toBe(false);
+    }
+    h.unmount();
+    expect(h.saved().bottom).toBe(!gesture);
+  },
+);
 
 it.each([false, true])(
   "a row refresh before the first measured height preserves cold restoration unless the reader intervenes=%s",

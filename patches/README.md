@@ -113,6 +113,33 @@ still responds to measurements. The browser navigation case exercises real wheel
 input and late row growth, asserting position as well as arrival count. These are
 not native momentum/compositor acceptance, and do not change the limits above.
 
+The element scroller also returns its existing cancel function and the
+`Virtualizer` handle exposes it as `cancelScrollToIndex`, declared in the React
+typings. `ChannelTimeline` calls it from its reader-gesture handler alongside its
+own intent counter. Window scrolling, prepend cancellation and the loop's timing
+are unchanged. The installed-driver regression shows a size update re-applying
+the target until the explicit cancel runs and never afterwards.
+
+## Corrections after a browser clamp
+
+When rows above the viewport shrink, the automatic correction moves the offset
+by the same amount. Stock Virtua applies it relatively unless the target reaches
+the end, but the layout that `scrollBy` forces clamps an offset beyond the new
+end first, so the shrink lands twice: once from the clamp, once from the
+correction. WebKit reports an integer `scrollTop`, which reads up to 1px short
+of a fractional end, so a reader at the bottom missed the end test there while
+Chromium's fractional offset met it.
+
+The element driver takes the absolute path when the target lies within 1px of
+the end, rounding outward as before, and when the last observed offset lies
+more than 1px beyond the new end, scrolling to the exact target. Interior
+corrections, growth and prepend shifts stay relative. The installed-driver
+regressions clamp the fake viewport like a browser and cover an integer offset
+at a fractional end and a shrink larger than the reader's gap to the end.
+`ChannelTimeline` treats an upward offset that arrives with a shrink as reader
+input only after a gesture; while following, it re-pins the bottom instead of
+demoting to Jump-to-latest.
+
 ## Automated checks
 
 ```sh

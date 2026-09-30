@@ -176,7 +176,8 @@ function Timeline({
   const olderDemand = useRef(false);
   const settled = useRef(false),
     userScrolled = useRef(false),
-    follow = useRef(true);
+    follow = useRef(true),
+    gestured = useRef(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const recordPosition = useCallback(
@@ -224,6 +225,9 @@ function Timeline({
       )
         return;
       const previous = measuredPosition.current;
+      const shrink = previous
+        ? Math.min(0, element.scrollHeight - previous.height)
+        : 0;
       // List shrinkage can clamp scrollTop upward without reader movement. An
       // upward offset beyond that clamp is input, including later events from
       // one smooth keyboard scroll / scrollbar drag. Layout growth alone is not.
@@ -231,9 +235,18 @@ function Timeline({
         previous &&
         element.clientWidth === previous.width &&
         element.clientHeight === previous.viewport &&
-        element.scrollTop <
-          previous.offset + Math.min(0, element.scrollHeight - previous.height);
-      if (follow.current && !movedUp && (previous || !userScrolled.current))
+        element.scrollTop < previous.offset + shrink;
+      // A shrink can also carry the offset past its clamp with no input at all
+      // when a correction lands after the browser has already clamped. While
+      // following, only a gesture since the last record makes that reader
+      // movement; otherwise the bottom stays followed and is re-pinned.
+      const input = gestured.current;
+      gestured.current = false;
+      if (
+        follow.current &&
+        (!movedUp || (shrink < 0 && !input)) &&
+        (previous || !userScrolled.current)
+      )
         position.bottom = true;
       // Restoration can scroll before Virtua measures rows beneath the anchor,
       // briefly reaching the estimated bottom. Only reader input may follow.
@@ -565,8 +578,13 @@ function Timeline({
   const gesture = () => {
     restoredAnchor.current = undefined;
     intent.current++;
+    // Virtua re-applies a pending imperative scroll on size updates for 150ms.
+    // Reader input retires it so a live append cannot pull the reader back.
+    handle.current?.cancelScrollToIndex();
     userScrolled.current = true;
     if (scroller.current) recordPosition(scroller.current);
+    // Movement this input causes reaches recordPosition through later events.
+    gestured.current = true;
     // At a restored top edge, input cannot move the DOM and emits no scroll.
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);

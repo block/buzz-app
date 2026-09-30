@@ -3102,12 +3102,30 @@ describe("project resource picker", () => {
       screen.queryByRole("button", { name: "Add issue or pull request" }),
     ).toBeNull();
     cleanup();
-    const ambiguous = picker(() => Promise.resolve({ status: "ambiguous" }));
+    let resolveHome: ((value: unknown) => void) | undefined;
+    const ambiguous = picker(() =>
+      resolveHome
+        ? new Promise((resolve) => {
+            resolveHome = resolve;
+          })
+        : Promise.resolve({ status: "ambiguous" }),
+    );
     await ambiguous.open();
     expect(
       await screen.findByText(/belongs to more than one project/),
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: row })).toBeNull();
+    // Ambiguity is recoverable: once the conflict is resolved, retry rereads.
+    resolveHome = () => {};
+    await ambiguous.h.user.click(
+      screen.getByRole("button", { name: "Retry project" }),
+    );
+    expect(await screen.findByText("Loading project…")).toBeInTheDocument();
+    await act(async () => {
+      resolveHome?.({ status: "home", project });
+    });
+    expect(await screen.findByRole("button", { name: row })).toBeVisible();
+    expect(screen.queryByText(/belongs to more than one project/)).toBeNull();
     cleanup();
     const failed = picker(() => Promise.reject(new Error("offline")));
     await failed.open();

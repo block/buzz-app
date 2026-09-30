@@ -301,14 +301,9 @@ export function ResourcePicker({
                     ? "This channel belongs to more than one project, so issues and pull requests can't be chosen here."
                     : "Could not load this channel's project."}
                 </p>
-                {home === "error" && (
-                  <Button
-                    type="button"
-                    onClick={() => setAttempt((n) => n + 1)}
-                  >
-                    Retry project
-                  </Button>
-                )}
+                <Button type="button" onClick={() => setAttempt((n) => n + 1)}>
+                  Retry project
+                </Button>
               </>
             ) : (
               <>

@@ -829,7 +829,6 @@ it("opens direct messages through a purpose-bound command and validates the resu
   ).rejects.toThrow("invalid direct message");
 });
 
-
 it("discards a pending observer decode after disconnect and reconnect", async () => {
   const sockets: Socket[] = [];
   class Socket {

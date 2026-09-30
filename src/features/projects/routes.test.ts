@@ -68,6 +68,40 @@ describe("entity destinations", () => {
     );
   });
   it.each([
+    [`repo?owner=${owner}&d=repo`, "relay=https://elsewhere.example"],
+    [
+      `repo?owner=${owner}&d=repo&tab=commits&commit=${"a".repeat(40)}`,
+      "foo=bar&foo=baz",
+    ],
+    // `commit` is outside the project grammar and `tab` outside the PR and
+    // issue grammars, so they are ignored there rather than fatal.
+    [`project?owner=${owner}&d=project`, `commit=${id}`],
+    [`pr?id=${id}&owner=${owner}&d=repo`, "tab=prs"],
+    [`issue?id=${id}&owner=${owner}&d=repo`, "foo=bar"],
+  ])(
+    "ignores query parameters outside the entity grammar on %s: %s",
+    (canonical, extra) => {
+      const href = `buzz://${canonical}`;
+      const parsed = parseBuzzLink(href);
+      expect(parsed?.format).toBe("entity");
+      const route = (parsed as { route: EntityRoute }).route;
+      for (const lax of [
+        `${href}&${extra}`,
+        `buzz://${canonical.replace("?", `?${extra}&`)}`,
+      ]) {
+        expect(parseBuzzLink(lax)).toEqual(parsed);
+        expect(
+          deepLinkStep(lax, {
+            viewer: scope.viewer,
+            selected: scope.communityOrigin,
+          }),
+        ).toEqual({ open: entityTarget(route, scope) });
+      }
+      // Anything rebuilt from the parsed route is canonical again.
+      expect(entityHref(route)).toBe(href);
+    },
+  );
+  it.each([
     `repo?owner=${owner}`,
     `repo?owner=no&d=repo`,
     `repo?owner=${owner}&d=..repo`,
@@ -77,10 +111,9 @@ describe("entity destinations", () => {
     `repo?owner=${owner}&d=repo&tab=files&commit=${id}`,
     `repo?owner=${owner}&d=repo&tab=commits&commit=short`,
     `repo?owner=${owner}&d=repo&owner=${owner}`,
-    `repo?owner=${owner}&d=repo&relay=https://elsewhere.example`,
-    `project?owner=${owner}&d=project&commit=${id}`,
+    `repo?owner=${owner}&d=repo&tab=files&tab=commits`,
+    `pr?id=${id}&id=${id}&owner=${owner}&d=repo`,
     `issue?owner=${owner}&d=repo`,
-    `pr?id=${id}&owner=${owner}&d=repo&tab=prs`,
     `repo/path?owner=${owner}&d=repo`,
     `repo?owner=${owner}&d=repo#frag`,
     `user@repo?owner=${owner}&d=repo`,

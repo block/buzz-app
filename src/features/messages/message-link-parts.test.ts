@@ -17,6 +17,25 @@ it("recognizes bare and wrapped Buzz channel, message, thread and shared links",
     }
   }
 });
+it("keeps Buzz links with unknown query parameters as links rather than plain text", () => {
+  const url = `buzz://message?channel=general&id=${"a".repeat(64)}&foo=bar`;
+  for (const text of [url, `<${url}>`, `[Reply](${url})`]) {
+    const parts = messageLinkParts(`See ${text}.`);
+    expect(parts.filter((part) => part.url).map((part) => part.url)).toEqual([
+      url,
+    ]);
+  }
+  expect(
+    messageLinkParts("See buzz://channel/general?relay=evil.").filter(
+      (part) => part.url,
+    ),
+  ).toEqual([
+    {
+      text: "buzz://channel/general?relay=evil",
+      url: "buzz://channel/general?relay=evil",
+    },
+  ]);
+});
 it("does not turn malformed Buzz addresses into links", () => {
   const content = "<buzz://message?channel=general&id=bad>";
   expect(messageLinkParts(content).some((part) => part.url)).toBe(false);

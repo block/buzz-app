@@ -84,6 +84,29 @@ it("binds message and channel links to the selected community and viewer", () =>
     },
   });
 });
+it("ignores query parameters outside the Buzz link grammar and opens the destination", () => {
+  expect(deepLinkStep(`${messageLink}&foo=bar`, client)).toEqual({
+    open: {
+      version: 1,
+      kind: "conversation",
+      scope: { viewer, communityOrigin: origin },
+      channelId: "general",
+      messageId: message,
+      threadRootId: root,
+    },
+  });
+  expect(
+    deepLinkStep(`${messageLink}&viewer=${"b".repeat(64)}`, client),
+  ).toEqual(deepLinkStep(messageLink, client));
+  expect(deepLinkStep("buzz://channel/general?foo=bar", client)).toEqual({
+    open: {
+      version: 1,
+      kind: "conversation",
+      scope: { viewer, communityOrigin: origin },
+      channelId: "general",
+    },
+  });
+});
 it("fails as unavailable without a selected community or identity, never inventing one", () => {
   expect(
     deepLinkStep("buzz://channel/general", { viewer, selected: null }),
@@ -125,9 +148,10 @@ it.each([
   "buzz",
   "buzz://user@channel/general",
   "buzz://channel:443/general",
-  "buzz://channel/general?relay=evil",
   `${messageLink}#fragment`,
-  `${messageLink}&viewer=${"b".repeat(64)}`,
+  // Unknown keys are ignored, but a duplicated known key is ambiguous.
+  `buzz://message?channel=general&channel=other&id=${message}`,
+  `${messageLink}&id=${message}`,
   "buzz://message?channel=general&id=bad",
   "https://example.com/?next=buzz://channel/general",
   "javascript:alert(1)",
@@ -238,6 +262,32 @@ it("waits for loading to finish even for links that will fail, then reports them
   expect(t.host.fail).not.toHaveBeenCalled();
   t.become({ status: "unavailable" });
   expect(t.log).toEqual(["fail:invalid-target"]);
+  t.stop();
+});
+it("opens an OS message link carrying unknown query parameters as the bound conversation", async () => {
+  const t = harness(ready);
+  await settle();
+  t.arrive(`${messageLink}&foo=bar&foo=baz`);
+  await settle();
+  expect(t.log).toEqual([
+    `open:${JSON.stringify({
+      version: 1,
+      kind: "conversation",
+      scope: { viewer, communityOrigin: origin },
+      channelId: "general",
+      messageId: message,
+      threadRootId: root,
+    })}`,
+  ]);
+  expect(t.host.fail).not.toHaveBeenCalled();
+  expect(t.host.navigation.snapshot().entry.target).toEqual({
+    version: 1,
+    kind: "conversation",
+    scope: { viewer, communityOrigin: origin },
+    channelId: "general",
+    messageId: message,
+    threadRootId: root,
+  });
   t.stop();
 });
 it("opens the latest intent from a burst without presenting superseded destinations", async () => {

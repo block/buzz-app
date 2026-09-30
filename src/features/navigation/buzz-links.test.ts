@@ -70,13 +70,67 @@ it("supports channels and leaves shared-link community ownership intact", () => 
     channelId: "general",
   });
 });
+it("ignores query parameters outside the Buzz link grammar, as the original desktop client does", () => {
+  const thread = "b".repeat(64);
+  const parsed = {
+    format: "legacy",
+    channelId: "c89a3185-29c5-40db-8284-054536d98b09",
+    messageId:
+      "9a77911a6e94147b1ce2cdb3c4e87046c67a29f29f3dd25626134621a5f6924b",
+  };
+  const withUnknown = `${example}&thread=${thread}&foo=bar`;
+  expect(parseBuzzLink(withUnknown)).toEqual({
+    ...parsed,
+    threadRootId: thread,
+  });
+  expect(buzzLinkKind(withUnknown)).toBe("thread");
+  expect(
+    deepLinkStep(withUnknown, {
+      viewer: scope.viewer,
+      selected: scope.communityOrigin,
+    }),
+  ).toEqual({
+    open: {
+      version: 1,
+      kind: "conversation",
+      scope,
+      channelId: parsed.channelId,
+      messageId: parsed.messageId,
+      threadRootId: thread,
+    },
+  });
+  // Unknown keys are dropped with their values and repeats, wherever they sit.
+  expect(parseBuzzLink(`${example}&foo=1&foo=2`)).toEqual(parsed);
+  expect(parseBuzzLink(`${example}&viewer=${"b".repeat(64)}`)).toEqual(parsed);
+  expect(
+    parseBuzzLink(
+      `buzz://message?foo=bar&channel=${parsed.channelId}&relay=evil&id=${parsed.messageId}`,
+    ),
+  ).toEqual(parsed);
+  // The channel forms carry everything in the path and ignore any query.
+  expect(parseBuzzLink("buzz://channel/general?relay=evil")).toEqual({
+    format: "legacy",
+    channelId: "general",
+  });
+  expect(parseBuzzLink(`buzz://channel/general/${thread}?foo=bar`)).toEqual({
+    format: "legacy",
+    channelId: "general",
+    messageId: thread,
+  });
+  // A duplicated known key is ambiguous and still rejects.
+  expect(
+    parseBuzzLink(`buzz://message?channel=a&channel=b&id=${parsed.messageId}`),
+  ).toBeNull();
+  expect(parseBuzzLink(`${example}&thread=${thread}&thread=${thread}`)).toBe(
+    null,
+  );
+});
 it.each([
   "buzz://channel/",
   "buzz://channel/general/extra",
   "buzz://channel/general/",
   `buzz://channel/general/${"a".repeat(64)}/extra`,
   `buzz://channel/general%2F${"a".repeat(64)}`,
-  "buzz://channel/general?relay=evil",
   "buzz://channel/%2Fprivate",
   "buzz://channel/%ZZ",
   "buzz://user@channel/general",
@@ -84,7 +138,6 @@ it.each([
   "buzz://message?channel=general&id=bad",
   `${example}&id=${"b".repeat(64)}`,
   `${example}&thread=bad`,
-  `${example}&viewer=${"b".repeat(64)}`,
   `${example}#fragment`,
   "buzz://message/extra?channel=general",
   "buzz://join?relay=example",

@@ -25,8 +25,11 @@ The OS ingress accepts the Buzz link forms and nothing else:
 Entity sections are `files`, `commits`, `issues`, `prs`, `contributors`, and
 `channels`; omitting the section opens the overview. Repository commit links add
 `&tab=commits&commit=<40- or 64-hex hash>`. Identifiers use 1-64 ASCII letters,
-digits, `_`, `-`, or `.`, without a leading dot or `..`. Unknown or duplicate
-parameters are rejected. The same forms work in message content.
+digits, `_`, `-`, or `.`, without a leading dot or `..`. Query parameters outside
+a form's grammar are ignored, with their values and any repeats, so a link that
+another client decorated still opens; a duplicated known parameter is rejected as
+ambiguous. The `channel` forms carry everything in the path and ignore any query.
+The same forms work in message content.
 
 None carries a community, so each binds to the currently selected community and
 viewer, and fail `unavailable` when no community is selected or no identity is

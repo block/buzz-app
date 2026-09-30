@@ -22,6 +22,18 @@ const rowIn = (page, section) =>
   page.locator(`[data-sidebar-section="${section}"] [data-channel-id="beta"]`);
 const sidebar = (page) =>
   page.getByRole("navigation", { name: "Subscribed channels" });
+// Hold a real pointer drag over a section header; the caller releases it.
+async function pull(page, row, section) {
+  const from = await row.boundingBox();
+  const to = await page
+    .locator(`[data-sidebar-section="${section}"] summary`)
+    .boundingBox();
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, {
+    steps: 8,
+  });
+}
 // No saving UI is a completion signal: wait for the final confirmed Star command
 // of each move (including no-op Star writes), not merely relay publication.
 const confirmations = new WeakMap();
@@ -234,6 +246,78 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
   await expect(
     restoredSort.getByRole("menuitemradio", { name: "Recent" }),
   ).toHaveAttribute("aria-checked", "true");
+});
+
+// A real pointer owns the activation distance, hit testing and click suppression;
+// the saved move itself is the row menu's.
+test("dragging a channel between a group and Channels saves, reloads, and rolls back like the row menu", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const beta = rowIn(page, "group:work");
+  const ungrouped = rowIn(page, "channels");
+  async function drag(row, section) {
+    await pull(page, row, section);
+    await expect(
+      page.locator(`[data-sidebar-section="${section}"][data-drop-target]`),
+    ).toBeVisible();
+    await page.mouse.up();
+  }
+  await expect(beta).toBeVisible();
+
+  await drag(beta, "channels");
+  await expect(ungrouped).toBeFocused();
+  await expect(beta).toHaveCount(0);
+  await saved(page, app, 1);
+  expect(app.report.sidebarPublications[0].blob.assignments).toEqual({});
+
+  await drag(ungrouped, "group:work");
+  await expect(beta).toBeFocused();
+  await expect(ungrouped).toHaveCount(0);
+  await saved(page, app, 2);
+  expect(app.report.sidebarPublications[1].blob.assignments).toEqual({
+    beta: "work",
+  });
+  await page.reload();
+  await expect(beta).toBeVisible();
+  // Like the Move menu, dragging waits for the confirmed preference read.
+  await expect(
+    page.getByRole("complementary", { name: "Channel sidebar" }),
+  ).not.toHaveAttribute("aria-busy");
+
+  // Dropping back on the row's own section is not a move.
+  await pull(page, beta, "group:work");
+  await expect(page.locator("[data-channel-dragging]")).toBeVisible();
+  await expect(page.locator("[data-drop-target]")).toHaveCount(0);
+  await page.mouse.up();
+  await expect(page.locator("[data-channel-dragging]")).toHaveCount(0);
+  await expect(beta).toBeVisible();
+  expect(app.report.sidebarPublications).toHaveLength(2);
+
+  await page.route("**/sidebar-assignment", async (route) => {
+    app.report.sidebarAssignmentFailures ??= [];
+    app.report.sidebarAssignmentFailures.push(route.request().url());
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Group removal failed; retry" }),
+    });
+  });
+  await drag(beta, "channels");
+  const error = page
+    .getByRole("alert")
+    .filter({ hasText: "Couldn’t save the move for Beta" });
+  await expect(error).toContainText("Relay request failed (502)");
+  await expect(beta).toBeVisible();
+  await expect(ungrouped).toHaveCount(0);
+  await page.unroute("**/sidebar-assignment");
+  await error.getByRole("button", { name: "Retry move" }).click();
+  await expect(ungrouped).toBeFocused();
+  await saved(page, app, 3);
+  await page.reload();
+  await expect(ungrouped).toBeVisible();
+  await expect(beta).toHaveCount(0);
 });
 
 test("optimistic Star moves close the menu before the write, roll back with visible retry, and remove to Channels after reload", async ({
@@ -843,6 +927,13 @@ test.describe("new personal schema", () => {
     ).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(actions).toHaveCount(0);
+    // Dragging shares the Move gate: a pull neither lifts the row nor saves.
+    await pull(page, personal, "channels");
+    await expect(
+      page.locator("[data-channel-dragging], [data-drop-target]"),
+    ).toHaveCount(0);
+    await page.mouse.up();
+    await expect(personal).toBeVisible();
     expect(app.report.sidebarPublications ?? []).toHaveLength(0);
     await page.unroute("**/sidebar-preferences", failLegacy);
     await failure.getByRole("button", { name: "Retry", exact: true }).click();

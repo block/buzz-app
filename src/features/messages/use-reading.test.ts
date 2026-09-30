@@ -16,6 +16,15 @@ function setup({
   focused = true,
   settled = true,
   strict = false,
+  focus = "timeline",
+  displayed = true,
+}: {
+  supported?: boolean;
+  focused?: boolean;
+  settled?: boolean;
+  strict?: boolean;
+  focus?: "timeline" | "sidebar";
+  displayed?: boolean;
 } = {}) {
   vi.useFakeTimers();
   vi.spyOn(document, "hasFocus").mockReturnValue(focused);
@@ -27,10 +36,10 @@ function setup({
   element.tabIndex = 0;
   const outside = document.createElement("button");
   document.body.append(element, outside);
-  element.focus();
-  vi.spyOn(element, "getClientRects").mockReturnValue([
-    new DOMRect(0, 0, 500, 500),
-  ] as unknown as DOMRectList);
+  (focus === "timeline" ? element : outside).focus();
+  vi.spyOn(element, "getClientRects").mockReturnValue(
+    (displayed ? [new DOMRect(0, 0, 500, 500)] : []) as unknown as DOMRectList,
+  );
   vi.spyOn(element, "getBoundingClientRect").mockReturnValue(
     new DOMRect(0, 0, 500, 500),
   );
@@ -136,6 +145,24 @@ it.each([{ focused: false }, { settled: false }])(
     expect(h.reading).not.toHaveBeenCalled();
   },
 );
+it("selecting a channel from the sidebar reads nothing until the timeline itself has focus", () => {
+  const h = setup({ focus: "sidebar" });
+  vi.advanceTimersByTime(1000);
+  h.retarget("next-room");
+  vi.advanceTimersByTime(1000);
+  expect(h.reading).not.toHaveBeenCalled();
+  // Positive arm: the same fully visible rows are read once focus arrives.
+  act(() => h.element.focus());
+  h.element.dispatchEvent(new Event("focusin"));
+  vi.advanceTimersByTime(750);
+  expect(h.leases.at(-1)?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+});
+it("a mounted timeline that is not displayed never reads, even with focus", () => {
+  const h = setup({ displayed: false });
+  h.element.dispatchEvent(new Event("scroll"));
+  vi.advanceTimersByTime(1000);
+  expect(h.reading).not.toHaveBeenCalled();
+});
 it("captures the cancellable lease before dwell and disposes it on hidden/unmount", () => {
   const h = setup();
   vi.advanceTimersByTime(300);

@@ -542,6 +542,7 @@ function Timeline({
   return (
     <section
       ref={scroller}
+      data-message-scroller
       className={styles.feed}
       data-channel-timeline={channelId}
       onWheel={gesture}

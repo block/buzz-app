@@ -430,6 +430,28 @@ test("browser jobs use the version-matched pinned Playwright image without apt p
     );
     assert.equal(jobs[lane].container.options, "--init --ipc=host");
     assert.equal(jobs[lane].defaults.run.shell, "bash");
+    const steps = jobs[lane].steps;
+    const trust = steps.find(
+      (step) => step.name === "Trust checked-out workspace",
+    );
+    assert.ok(trust);
+    assert.equal(
+      trust.run,
+      'git config --global --add safe.directory "$GITHUB_WORKSPACE"',
+    );
+    assert.equal(trust.if, undefined);
+    assert.equal(trust["continue-on-error"], undefined);
+    assert.ok(
+      steps.indexOf(trust) >
+        steps.findIndex((step) => step.uses === "./.github/actions/setup"),
+    );
+    assert.ok(
+      steps.indexOf(trust) <
+        steps.findIndex((step) =>
+          step.run?.includes("-- pnpm test:browser:ci"),
+        ),
+    );
+
     assert.doesNotMatch(job(lane), /apt-get|playwright install|run: cargo/);
   }
   const setup = read(".github/actions/setup/action.yml");

@@ -121,6 +121,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+      # Container steps need their own Git trust for the host-owned checkout.
+      - name: Trust checked-out workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       # Preserve Chromium -> WebKit measurement dependencies; never shard or
       # overlap the two measurement projects on this runner.
       - name: Serial Chromium and WebKit measurements
@@ -217,6 +220,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+      # Container steps need their own Git trust for the host-owned checkout.
+      - name: Trust checked-out workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: native-browser-fixture

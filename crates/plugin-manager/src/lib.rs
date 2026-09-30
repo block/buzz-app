@@ -223,14 +223,7 @@ struct Release {
     signature: Option<Event>,
 }
 const RELEASE_MARKER: &str = "buzz-plugin-release-v1";
-fn release_url(url: &str) -> bool {
-    url::Url::parse(url).is_ok_and(|parsed| {
-        matches!(parsed.scheme(), "https" | "http")
-            && !parsed.host_str().unwrap_or("").is_empty()
-            && parsed.username().is_empty()
-            && parsed.password().is_none()
-    })
-}
+const RELEASE_KIND: Kind = Kind::Custom(1064);
 
 fn publisher(bytes: &[u8], signature: &Event) -> Result<String> {
     publisher_for_hash(&hash(bytes), signature)
@@ -239,14 +232,10 @@ fn publisher_for_hash(digest: &str, signature: &Event) -> Result<String> {
     signature
         .verify()
         .map_err(|_| "Invalid plugin release event ID or signature")?;
-    if signature.kind != Kind::FileMetadata {
-        return Err("Plugin release must be a NIP-94 file metadata event".into());
+    if signature.kind != RELEASE_KIND || !signature.content.is_empty() {
+        return Err("Plugin release must be a NIP-PS event with empty content".into());
     }
-    for (key, expected) in [
-        ("x", digest.to_string()),
-        ("m", "application/json".into()),
-        ("t", RELEASE_MARKER.into()),
-    ] {
+    for (key, expected) in [("x", digest.to_string()), ("t", RELEASE_MARKER.into())] {
         let values: Vec<&str> = signature
             .tags
             .iter()
@@ -261,33 +250,21 @@ fn publisher_for_hash(digest: &str, signature: &Event) -> Result<String> {
             return Err(format!("Invalid or ambiguous plugin release {key} tag"));
         }
     }
-    let urls: Vec<_> = signature
-        .tags
-        .iter()
-        .filter(|tag| tag.as_slice().first().map(String::as_str) == Some("url"))
-        .collect();
-    if urls.len() != 1 || urls[0].as_slice().len() != 2 || !release_url(&urls[0].as_slice()[1]) {
-        return Err("Invalid or ambiguous plugin release url tag".into());
-    }
     Ok(signature.pubkey.to_hex())
 }
 
-pub fn sign_release(directory: &Path, key_text: &str, url: &str) -> Result<String> {
-    if !release_url(url) {
-        return Err("Release URL must be HTTP(S) without credentials".into());
-    }
+pub fn sign_release(directory: &Path, key_text: &str) -> Result<String> {
     let bytes = artifact_from_text(
         &read_limited(&directory.join("manifest.json"))?,
         read_limited(&directory.join("plugin.js"))?,
     )?;
     let secret = SecretKey::parse(key_text.trim()).map_err(|_| "Invalid signing key")?;
-    let event = EventBuilder::new(Kind::FileMetadata, "")
-        .tags([
-            Tag::custom("url", [url]),
-            Tag::custom("m", ["application/json"]),
-            Tag::custom("x", [hash(&bytes).as_str()]),
-            Tag::custom("t", [RELEASE_MARKER]),
-        ])
+    let tags = [
+        Tag::custom("x", [hash(&bytes).as_str()]),
+        Tag::custom("t", [RELEASE_MARKER]),
+    ];
+    let event = EventBuilder::new(RELEASE_KIND, "")
+        .tags(tags)
         .finalize(&Keys::new(secret))
         .map_err(err)?;
     let publisher = publisher(&bytes, &event)?;
@@ -300,13 +277,12 @@ pub fn sign_release(directory: &Path, key_text: &str, url: &str) -> Result<Strin
 }
 
 /// Sign with the desktop human identity without creating or exporting a credential.
-pub fn sign_release_saved(directory: &Path, url: &str) -> Result<String> {
-    sign_release_from_store(directory, url, buzz_credential_store::read_human)
+pub fn sign_release_saved(directory: &Path) -> Result<String> {
+    sign_release_from_store(directory, buzz_credential_store::read_human)
 }
 
 fn sign_release_from_store<K: AsRef<[u8]>>(
     directory: &Path,
-    url: &str,
     read: impl FnOnce() -> std::result::Result<K, buzz_credential_store::Error>,
 ) -> Result<String> {
     use bech32::{primitives::decode::CheckedHrpstring, Bech32};
@@ -328,7 +304,7 @@ fn sign_release_from_store<K: AsRef<[u8]>>(
     {
         return Err("Saved Buzz human identity is malformed; nothing was changed".into());
     }
-    sign_release(directory, text, url)
+    sign_release(directory, text)
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -933,7 +909,6 @@ mod tests {
         )
         .unwrap();
         fs::write(source.join("plugin.js"), "export const saved = true;").unwrap();
-        let url = "https://example.test/plugin.artifact.json";
         for (error, expected) in [
             (Error::Absent, "Set up your Buzz human identity"),
             (Error::Denied, "access was denied"),
@@ -942,7 +917,7 @@ mod tests {
             (Error::Unavailable, "could not be read"),
         ] {
             assert!(
-                super::sign_release_from_store(&source, url, || Err::<Vec<u8>, _>(error))
+                super::sign_release_from_store(&source, || Err::<Vec<u8>, _>(error))
                     .unwrap_err()
                     .contains(expected)
             );
@@ -953,7 +928,7 @@ mod tests {
             vec![0xff],
             SecretKey::generate().to_secret_hex().into_bytes(),
         ] {
-            assert!(super::sign_release_from_store(&source, url, || Ok(invalid))
+            assert!(super::sign_release_from_store(&source, || Ok(invalid))
                 .unwrap_err()
                 .contains("malformed"));
             assert!(!source.join("plugin.artifact.json").exists());
@@ -961,9 +936,14 @@ mod tests {
 
         let key = SecretKey::generate();
         let nsec = key.to_bech32().unwrap();
-        let publisher =
-            super::sign_release_from_store(&source, url, || Ok(nsec.into_bytes())).unwrap();
+        let publisher = super::sign_release_from_store(&source, || Ok(nsec.into_bytes())).unwrap();
         assert_eq!(publisher, Keys::new(key).public_key().to_hex());
+        let event: nostr::event::Event =
+            serde_json::from_slice(&fs::read(source.join("plugin.signature.json")).unwrap())
+                .unwrap();
+        assert_eq!(event.kind, super::RELEASE_KIND);
+        assert_eq!(event.content, "");
+        assert_eq!(event.tags.len(), 2);
         let prepared = crate::imports::prepare_folder(&source).unwrap();
         assert_eq!(
             prepared.preview.candidates[0].publisher.as_deref(),
@@ -990,7 +970,7 @@ mod tests {
 
     #[test]
     fn release_requires_valid_event_and_exact_artifact_bytes() {
-        use super::{publisher, RELEASE_MARKER};
+        use super::{publisher, RELEASE_KIND, RELEASE_MARKER};
         use nostr::{
             event::{EventBuilder, FinalizeEvent, Kind, Tag},
             key::Keys,
@@ -1003,25 +983,36 @@ mod tests {
         let key = Keys::generate();
         let tags = || {
             vec![
-                Tag::custom("url", ["https://example.test/plugin.artifact.json"]),
-                Tag::custom("m", ["application/json"]),
                 Tag::custom("x", [super::hash(&bytes)]),
                 Tag::custom("t", [RELEASE_MARKER]),
             ]
         };
         let sign = |tags| {
-            EventBuilder::new(Kind::FileMetadata, "")
+            EventBuilder::new(RELEASE_KIND, "")
                 .tags(tags)
                 .finalize(&key)
                 .unwrap()
         };
         let good = sign(tags());
         assert_eq!(publisher(&bytes, &good).unwrap(), good.pubkey.to_hex());
-        let wrong_kind = EventBuilder::new(Kind::TextNote, "")
+        let mut extra = tags();
+        extra.push(Tag::custom("note", ["not authoritative"]));
+        assert_eq!(
+            publisher(&bytes, &sign(extra)).unwrap(),
+            good.pubkey.to_hex()
+        );
+        for kind in [Kind::FileMetadata, Kind::TextNote] {
+            let wrong_kind = EventBuilder::new(kind, "")
+                .tags(tags())
+                .finalize(&key)
+                .unwrap();
+            assert!(publisher(&bytes, &wrong_kind).is_err());
+        }
+        let nonempty = EventBuilder::new(RELEASE_KIND, "not empty")
             .tags(tags())
             .finalize(&key)
             .unwrap();
-        assert!(publisher(&bytes, &wrong_kind).is_err());
+        assert!(publisher(&bytes, &nonempty).is_err());
         for altered in [
             artifact_from_text(
                 r#"{"id":"example.page","name":"Changed","apiVersion":1}"#,
@@ -1039,7 +1030,7 @@ mod tests {
         let mut bad_id = good.clone();
         bad_id.id = "00".repeat(32).parse().unwrap();
         assert!(publisher(&bytes, &bad_id).is_err());
-        let other = EventBuilder::new(Kind::FileMetadata, "")
+        let other = EventBuilder::new(RELEASE_KIND, "")
             .tags(tags())
             .finalize(&Keys::generate())
             .unwrap();
@@ -1054,27 +1045,42 @@ mod tests {
             },
             {
                 let mut t = tags();
-                t[2] = Tag::custom("x", ["00".repeat(32)]);
-                t
-            },
-            {
-                let mut t = tags();
-                t[3] = Tag::custom("t", ["wrong-purpose"]);
-                t
-            },
-            {
-                let mut t = tags();
-                t.push(t[2].clone());
-                t
-            },
-            {
-                let mut t = tags();
-                t[1] = Tag::custom("m", ["text/plain"]);
-                t
-            },
-            {
-                let mut t = tags();
                 t.remove(0);
+                t
+            },
+            {
+                let mut t = tags();
+                t[0] = Tag::custom("x", ["00".repeat(32)]);
+                t
+            },
+            {
+                let mut t = tags();
+                t[0] = Tag::custom("x", [super::hash(&bytes).to_uppercase()]);
+                t
+            },
+            {
+                let mut t = tags();
+                t[1] = Tag::custom("t", ["wrong-purpose"]);
+                t
+            },
+            {
+                let mut t = tags();
+                t.push(t[0].clone());
+                t
+            },
+            {
+                let mut t = tags();
+                t.push(t[1].clone());
+                t
+            },
+            {
+                let mut t = tags();
+                t[0] = Tag::custom("x", [super::hash(&bytes), String::new()]);
+                t
+            },
+            {
+                let mut t = tags();
+                t[1] = Tag::custom("t", Vec::<String>::new());
                 t
             },
         ] {

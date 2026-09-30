@@ -338,7 +338,8 @@ it.each(["channel", "session"])(
 );
 it("keeps details readable without editing authority or host support", async () => {
   const h = harness();
-  h.load.mockResolvedValueOnce({ ...base, canEdit: false });
+  const loaded = deferred<ChannelDetails>();
+  h.load.mockReturnValueOnce(loaded.promise);
   const { rerender } = render(
     <ChannelSettingsPanel
       scope="community:viewer"
@@ -351,7 +352,17 @@ it("keeps details readable without editing authority or host support", async () 
   );
   expect(screen.getByText(channel.description)).toBeVisible();
   expect(screen.getByText("Public")).toBeVisible();
-  await screen.findByText(/Only current channel owners/);
+  const editor = screen.getByRole("region", {
+    name: "Edit channel details",
+    hidden: true,
+  });
+  expect(editor).toHaveAttribute("aria-busy", "true");
+  await act(async () => loaded.resolve({ ...base, canEdit: false }));
+  expect(editor).toHaveAttribute("aria-busy", "false");
+  expect(editor).toBeEmptyDOMElement();
+  expect(
+    screen.queryByText(/Only current channel owners/),
+  ).not.toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "Edit details" }),
   ).not.toBeInTheDocument();

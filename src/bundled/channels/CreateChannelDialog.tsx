@@ -365,8 +365,7 @@ function OpenCreateChannelDialog({
               disabled={busy || !!pending}
               onClick={() => {
                 if (busy || pending) return;
-                if (skipWarning)
-                  rememberPrivacyConfirmation(session.scope, privacyChoice);
+                if (skipWarning) rememberPrivacyConfirmation(session.scope);
                 setPrivateChannel(privacyChoice === "private");
                 setPrivacyChoice(undefined);
                 setError("");
@@ -389,7 +388,7 @@ function OpenCreateChannelDialog({
                 onCheckedChange={(checked) => {
                   if (!editing.current) return;
                   const choice = checked ? "private" : "public";
-                  if (skipPrivacyConfirmation(session.scope, choice)) {
+                  if (skipPrivacyConfirmation(session.scope)) {
                     setPrivateChannel(checked);
                     setError("");
                   } else {

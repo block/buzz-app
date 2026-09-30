@@ -57,7 +57,7 @@ function editor(visibility: "public" | "private", currentScope = scope) {
 }
 
 it.each(["private", "public"] as const)(
-  "remembers only the %s warning across Create, reopening, and Edit; writes remain explicit",
+  "opting out from %s skips both directions across Create, reopening, and Edit; writes remain explicit",
   async (choice) => {
     const user = userEvent.setup();
     const onCreate = vi.fn(async () => {});
@@ -84,16 +84,24 @@ it.each(["private", "public"] as const)(
     );
     await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(onCreate).not.toHaveBeenCalled();
-    expect(skipPrivacyConfirmation(scope, choice)).toBe(true);
+    expect(skipPrivacyConfirmation(scope)).toBe(true);
     const opposite = choice === "private" ? "public" : "private";
-    expect(skipPrivacyConfirmation(scope, opposite)).toBe(false);
 
     view.unmount();
     const reopened = render(create);
-    if (choice === "public") {
+    // Every toggle stays in the form, including the opposite direction.
+    for (const checked of [true, false]) {
       await user.click(screen.getByRole("switch", { name: "Private" }));
-      await user.click(screen.getByRole("button", { name: "Continue" }));
+      expect(screen.getByRole("dialog")).toHaveAccessibleName(
+        "Create a channel",
+      );
+      expect(screen.getByRole("switch", { name: "Private" })).toHaveAttribute(
+        "aria-checked",
+        String(checked),
+      );
     }
+    if (choice === "public")
+      await user.click(screen.getByRole("switch", { name: "Private" }));
     await user.click(screen.getByRole("switch", { name: "Private" }));
     expect(screen.getByRole("dialog")).toHaveAccessibleName("Create a channel");
     expect(screen.getByRole("switch", { name: "Private" })).toHaveAttribute(
@@ -124,6 +132,15 @@ it.each(["private", "public"] as const)(
       "aria-checked",
       String(choice === "private"),
     );
+    await user.click(screen.getByRole("switch", { name: "Private" }));
+    expect(screen.getByRole("dialog")).toHaveAccessibleName(
+      "Edit channel details",
+    );
+    expect(screen.getByRole("switch", { name: "Private" })).toHaveAttribute(
+      "aria-checked",
+      String(opposite === "private"),
+    );
+    await user.click(screen.getByRole("switch", { name: "Private" }));
     expect(edit.save).not.toHaveBeenCalled();
     // Opting out of privacy warnings does not opt out of unsaved-draft protection.
     await user.keyboard("{Escape}");
@@ -153,8 +170,12 @@ it.each(["private", "public"] as const)(
     await user.click(
       screen.getByRole("checkbox", { name: "Don’t show me this again" }),
     );
-    expect(skipPrivacyConfirmation(scope, choice)).toBe(false);
+    expect(skipPrivacyConfirmation(scope)).toBe(false);
     await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.click(screen.getByRole("switch", { name: "Private" }));
+    expect(screen.getByRole("dialog")).toHaveAccessibleName(
+      "Edit channel details",
+    );
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     await user.click(screen.getByRole("button", { name: "Edit details" }));
     await user.click(screen.getByRole("switch", { name: "Private" }));
@@ -181,18 +202,28 @@ it.each(["private", "public"] as const)(
 );
 
 it("fails safe on corrupt or unavailable preference storage", () => {
-  const key = "channel-privacy-confirmation:public:dismissed";
+  const key = "channel-privacy-confirmation:dismissed";
   for (const invalid of ["true", 1, {}, [true], null]) {
     writeView(scope, key, invalid);
-    expect(skipPrivacyConfirmation(scope, "public")).toBe(false);
+    expect(skipPrivacyConfirmation(scope)).toBe(false);
   }
   vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
     throw new Error("Storage unavailable");
   });
-  expect(() => rememberPrivacyConfirmation(scope, "public")).not.toThrow();
+  expect(() => rememberPrivacyConfirmation(scope)).not.toThrow();
   expect(readView(scope, key, false)).toBe(false);
   vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
     throw new Error("Storage unavailable");
   });
-  expect(skipPrivacyConfirmation(scope, "public")).toBe(false);
+  expect(skipPrivacyConfirmation(scope)).toBe(false);
 });
+
+it.each(["private", "public"])(
+  "honors an existing %s opt-out for both directions",
+  (choice) => {
+    writeView(scope, `channel-privacy-confirmation:${choice}:dismissed`, true);
+    expect(skipPrivacyConfirmation(scope)).toBe(true);
+    expect(skipPrivacyConfirmation("other-community:viewer")).toBe(false);
+    expect(skipPrivacyConfirmation("community:other-viewer")).toBe(false);
+  },
+);

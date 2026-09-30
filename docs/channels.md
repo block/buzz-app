@@ -434,7 +434,8 @@ closing Settings, as does the form’s explicit **Cancel**. Pending saves and st
 checks block dialog dismissal and show a
 loading spinner on the disabled **Edit details** button without changing its label.
 Saving and permission loading do not add text status rows or reserve empty space;
-actionable errors, permission denials and uncertain-save warnings remain visible.
+viewers without editing authority see neither Edit details nor an explanatory hint.
+Actionable errors and uncertain-save warnings remain visible.
 After an uncertain outcome, **Edit details** re-enables so the save may be closed
 and reopened for check-only recovery, never a blind resend. The panel retains its
 own Close/Escape focus return, conversation and collapsed Diagnostics.
@@ -521,9 +522,10 @@ the confirmation's Close control leaves the switch unchanged and returns to the
 intact form with focus on the switch. All other draft fields—including Create's
 selected destination and accepted template setup—survive either path. The consequence
 is shown once in the confirmation body, connected as the dialog's accessible description.
-**Don’t show me this again** is saved only on **Continue**, separately for public and
+**Don’t show me this again** is saved only on **Continue** and skips both public and
 private warnings. It is a device-local preference shared by Create and Edit for the
-same community/viewer scope, using the existing view-state storage. Cancel, Escape,
+same community/viewer scope, using the existing view-state storage. Existing opt-outs
+for either direction also skip both warnings. Cancel, Escape,
 Close and backdrop dismissal do not remember it. If storage is unavailable or invalid,
 the warning remains enabled. Skipping the warning still only stages the choice:
 Create/Save, authorization and discard protection are unchanged. Busy/frozen creation

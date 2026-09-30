@@ -3,19 +3,20 @@ import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { readView, writeView } from "../../shared/view-state";
 
 type Visibility = "private" | "public";
-const preferenceKey = (visibility: Visibility) =>
-  `channel-privacy-confirmation:${visibility}:dismissed`;
+const preferenceKey = "channel-privacy-confirmation:dismissed";
 
-// View intent only: shared by Create/Edit, never authorization to publish.
-export function skipPrivacyConfirmation(scope: string, visibility: Visibility) {
-  return readView<unknown>(scope, preferenceKey(visibility), false) === true;
+// View intent only: shared by Create/Edit and both directions, never authorization.
+export function skipPrivacyConfirmation(scope: string) {
+  // Honor opt-outs saved before the two directions shared one preference.
+  return [
+    preferenceKey,
+    "channel-privacy-confirmation:private:dismissed",
+    "channel-privacy-confirmation:public:dismissed",
+  ].some((key) => readView<unknown>(scope, key, false) === true);
 }
 
-export function rememberPrivacyConfirmation(
-  scope: string,
-  visibility: Visibility,
-) {
-  writeView(scope, preferenceKey(visibility), true);
+export function rememberPrivacyConfirmation(scope: string) {
+  writeView(scope, preferenceKey, true);
 }
 
 export function ChannelPrivacyConfirmation({

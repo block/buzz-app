@@ -261,9 +261,7 @@ export function ChannelDetailsEditor({
     }
   }
   const status =
-    attempt?.status === "unconfirmed" ||
-    (!attempt && !view.loading && view.base && !canEdit) ||
-    view.error ? (
+    attempt?.status === "unconfirmed" || view.error ? (
       <div id={statusId} className={styles.detailsEditor}>
         {attempt?.status === "unconfirmed" && (
           <p role="status">
@@ -271,9 +269,6 @@ export function ChannelDetailsEditor({
             again. Checking never resends it. Closing this dialog does not undo
             the change.
           </p>
-        )}
-        {!attempt && !view.loading && view.base && !canEdit && (
-          <p>Only current channel owners and admins can edit these details.</p>
         )}
         {view.error && <p role="alert">{view.error}</p>}
         {!attempt && view.error && (
@@ -289,7 +284,11 @@ export function ChannelDetailsEditor({
       </div>
     ) : null;
   return (
-    <section className={styles.detailsEditor} aria-label="Edit channel details">
+    <section
+      className={styles.detailsEditor}
+      aria-label="Edit channel details"
+      aria-busy={view.loading}
+    >
       {(canEdit || attempt) && (
         <Button
           ref={editButton}
@@ -364,8 +363,7 @@ export function ChannelDetailsEditor({
                 disabled={locked || !canEdit}
                 onClick={() => {
                   if (draft && view.privacyChoice && !locked && canEdit) {
-                    if (view.skipWarning)
-                      rememberPrivacyConfirmation(scope, view.privacyChoice);
+                    if (view.skipWarning) rememberPrivacyConfirmation(scope);
                     patch({
                       draft: { ...draft, visibility: view.privacyChoice },
                       privacyChoice: undefined,
@@ -389,7 +387,7 @@ export function ChannelDetailsEditor({
                     onCheckedChange={(checked) => {
                       if (locked || !canEdit) return;
                       const visibility = checked ? "private" : "public";
-                      if (skipPrivacyConfirmation(scope, visibility))
+                      if (skipPrivacyConfirmation(scope))
                         patch({ draft: { ...draft, visibility } });
                       else
                         patch({

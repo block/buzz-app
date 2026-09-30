@@ -234,7 +234,7 @@
   .navigation-item:active {
     background: var(--affordance-subtle-pressed);
   }
-  @media (max-width: 480px) {
+  @media (max-width: 30rem) {
     .buzz-dialog {
       --dialog-padding: var(--space-4);
     }
@@ -282,7 +282,7 @@
     /* Only toast cards intercept clicks, not the empty viewport or its gaps. */
     pointer-events: none;
   }
-  @media (max-width: 700px) {
+  @media (max-width: 43.75rem) {
     .buzz-toast-viewport {
       --toast-top: 12rem;
     }

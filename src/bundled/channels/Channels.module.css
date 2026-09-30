@@ -21,7 +21,7 @@
   overflow: hidden;
 }
 .withPanel {
-  grid-template-columns: minmax(320px, 1.1fr) minmax(316px, 1fr);
+  grid-template-columns: minmax(20rem, 1.1fr) minmax(19.75rem, 1fr);
 }
 .sidebar,
 .conversation {
@@ -36,8 +36,8 @@
   /* Figma specifies true Semibold for unread rows, rather than the legacy 500 alias. */
   --type-weight-semibold: 600;
   --size-row: var(--space-6);
-  --radius-row: 10px;
-  --affordance-selected: var(--affordance-subtle);
+  --radius-row: 0.625rem;
+  /* Selection keeps its own role as subtle control fills become quieter. */
   --affordance-panel-hover: var(--affordance-navigation-quiet);
   --sidebar-padding: var(--space-2);
   --sidebar-padding-end: var(--sidebar-padding);
@@ -109,9 +109,9 @@
 }
 .sidebarIcon {
   display: inline-grid;
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
+  width: 1.125rem;
+  height: 1.125rem;
+  flex: 0 0 1.125rem;
   place-items: center;
 }
 .placeholder {
@@ -263,7 +263,7 @@
   top: var(--space-5);
 }
 .unreadEdge[data-edge="below"] {
-  bottom: 4px;
+  bottom: 0.25rem;
 }
 .channelSection {
   position: relative;
@@ -330,7 +330,7 @@
   position: absolute;
   z-index: 1;
   top: var(--space-half);
-  right: 4px;
+  right: 0.25rem;
   display: flex;
   align-items: center;
   color: var(--text-unavailable);
@@ -416,7 +416,7 @@
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 3px;
+  width: 0.1875rem;
   height: 7.5%;
   border-radius: var(--radius-pill);
   background: var(--border-focus);
@@ -524,7 +524,7 @@
   letter-spacing: var(--text-title--letter-spacing);
 }
 .connect p {
-  max-width: 550px;
+  max-width: 34.375rem;
   color: var(--text-subtle);
 }
 .connect button {
@@ -535,7 +535,7 @@
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
-@media (max-width: 1000px) {
+@media (max-width: 62.5rem) {
   .board,
   .withPanel {
     grid-template-columns: minmax(0, 1fr);
@@ -544,14 +544,14 @@
     position: absolute;
     grid-column: 1;
     inset: 0 0 0 auto;
-    width: min(420px, 100%);
+    width: min(26.25rem, 100%);
     z-index: 2;
     box-shadow: var(--elevation-dock);
     margin-left: 0;
   }
 }
 /* A widened persistent sidebar can leave less room than viewport width implies. */
-@container (max-width: 651px) {
+@container (max-width: 40.6875rem) {
   .withPanel {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -559,19 +559,20 @@
     position: absolute;
     grid-column: 1;
     inset: 0 0 0 auto;
-    width: min(420px, 100%);
+    width: min(26.25rem, 100%);
     z-index: 2;
     box-shadow: var(--elevation-dock);
     margin-left: 0;
   }
 }
+/* AppShell uses the same physical breakpoint for navigation and resizing. */
 @media (max-width: 650px) {
   .board,
   .withPanel {
     grid-template-columns: minmax(0, 1fr);
   }
   .sidebarResizeHandle {
-    width: 4px;
+    width: 0.25rem;
     margin: 0;
     visibility: hidden;
     pointer-events: none;
@@ -614,8 +615,8 @@
 .settingsIcon {
   display: grid;
   place-items: center;
-  width: 72px;
-  height: 72px;
+  width: 4.5rem;
+  height: 4.5rem;
   border-radius: var(--radius-pill);
   background: var(--affordance-prominent);
   color: var(--text-inverse);
@@ -668,8 +669,8 @@
   display: block;
   margin-inline-start: auto;
   flex-shrink: 0;
-  width: 6px;
-  height: 6px;
+  width: 0.375rem;
+  height: 0.375rem;
   border-radius: 50%;
   background: var(--affordance-prominent);
 }
@@ -687,15 +688,15 @@
 .activityList {
   /* Follow the popup's inner curve after its list inset and 1px border. */
   --radius-row: calc(var(--radius-panel) - var(--space-1) - 1px);
-  max-height: 360px;
+  max-height: 22.5rem;
   overflow-y: auto;
 }
 .activityItem {
   width: 100%;
 }
 .activityAvatar {
-  width: 30px;
-  height: 30px;
+  width: 1.875rem;
+  height: 1.875rem;
 }
 .activityItemBody {
   display: grid;
@@ -762,7 +763,7 @@
 }
 .channelDrawer {
   height: 42%;
-  min-height: 180px;
+  min-height: 11.25rem;
   max-height: 65%;
   flex-shrink: 0;
   border-top: 1px solid var(--border-standard);
@@ -788,8 +789,8 @@
 .working {
   display: block;
   z-index: 1;
-  width: 6px;
-  height: 6px;
+  width: 0.375rem;
+  height: 0.375rem;
   flex-shrink: 0;
   border-radius: 50%;
   background: var(--affordance-accent-prominent);
@@ -799,9 +800,9 @@
    the participant-count chip's subtle roles. */
 .typing {
   display: inline-flex;
-  width: 22px;
-  height: 22px;
-  flex: 0 0 22px;
+  width: 1.375rem;
+  height: 1.375rem;
+  flex: 0 0 1.375rem;
   align-items: center;
   justify-content: center;
   gap: var(--space-half);
@@ -809,8 +810,8 @@
   background: var(--affordance-subtle);
 }
 .typing > span {
-  width: 4px;
-  height: 4px;
+  width: 0.25rem;
+  height: 0.25rem;
   border-radius: 50%;
   background: var(--text-subtle);
 }
@@ -834,17 +835,17 @@
 /* Match the adjacent small avatars without creating image/profile demand. */
 .dmAvatar {
   display: inline-grid;
-  width: 22px;
-  height: 22px;
-  flex: 0 0 22px;
+  width: 1.375rem;
+  height: 1.375rem;
+  flex: 0 0 1.375rem;
   place-items: center;
 }
 
 .dmCount {
   display: grid;
-  width: 22px;
-  min-width: 22px;
-  height: 22px;
+  width: 1.375rem;
+  min-width: 1.375rem;
+  height: 1.375rem;
   padding-inline: var(--space-half);
   flex-shrink: 0;
   place-items: center;

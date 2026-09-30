@@ -245,9 +245,15 @@ the title for labelled regions. `PanelHeader` still owns workspace chrome, and
 those with a generic heading. The initial adoption covers Profile, Plugins,
 Appearance, Shortcuts and Notifications; other pages can adopt these when touched.
 
-Light-mode inset fields and quiet fills use neutral-2 (#f5f5f6). Panel hover uses
-that same stop; subtle-button hover sits between neutral-2 and neutral-3, while
-selected and pressed states retain stronger contrast. Dark-mode roles are unchanged.
+Light-mode inset fields and quiet fills use neutral-2 (#f5f5f6). Panel and floating hover use
+that same stop; subtle-button hover is #f1f1f2. In dark mode, panels, popovers,
+subtle controls, and hover fills have separate steps. See the shared DESIGN.md
+quiet surface stack and the viewer’s Colors & surfaces playground.
+
+Authored CSS dimensions now use rem across shell, channel, message, picker, and
+settings layouts. Physical strokes and browser/media measurement coordinates
+remain pixels. The Rem & text sizing playground separately adjusts the root and
+text scale without persisting either change or changing the host text-only zoom contract.
 
 ## Preference rows
 

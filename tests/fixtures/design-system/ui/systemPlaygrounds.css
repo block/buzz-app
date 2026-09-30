@@ -1,0 +1,91 @@
+@layer components {
+  .system-sweep-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .system-sweep-controls {
+    display: grid;
+    min-width: 0;
+    justify-items: start;
+    gap: var(--space-3);
+  }
+  .system-sweep-controls > .buzz-field,
+  .system-sweep-controls > nav {
+    width: 100%;
+  }
+  .system-sweep-stage {
+    padding: var(--space-6);
+    border-radius: var(--radius-panel);
+    background: var(--surface-base);
+  }
+  .system-sweep-stage[data-gradient] {
+    background: var(--bg-app);
+  }
+  .system-sweep-stack {
+    display: grid;
+    gap: var(--space-6);
+    padding: var(--space-6);
+  }
+  .system-sweep-raised {
+    padding: var(--space-6);
+  }
+  .system-sweep-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+    gap: var(--space-4);
+  }
+  .system-sweep-surface {
+    min-width: 0;
+    padding: var(--space-5);
+    border: 1px solid var(--border-standard);
+    border-radius: var(--radius-panel);
+  }
+  .system-sweep-surface > code {
+    display: block;
+    margin-block: var(--space-2) var(--space-5);
+  }
+  .system-rem-rulers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-6);
+  }
+  .system-rem-ruler,
+  .system-px-ruler {
+    height: var(--space-3);
+    margin-top: var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--affordance-prominent);
+  }
+  .system-rem-ruler {
+    width: 10rem;
+  }
+  /* An intentional fixed reference makes the unit difference observable. */
+  .system-px-ruler {
+    width: 160px;
+  }
+  .system-rem-specimen {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    gap: var(--space-5);
+    padding: var(--space-6);
+    border: 1px solid var(--border-standard);
+    border-radius: var(--radius-panel);
+    background: var(--surface-panel);
+  }
+  .system-rem-specimen[data-narrow] {
+    max-width: 22rem;
+  }
+  .system-rem-specimen > h3 {
+    text-wrap: balance;
+  }
+  .system-rem-specimen > p {
+    max-width: 65ch;
+    text-wrap: pretty;
+  }
+  .system-rem-long-value {
+    overflow-wrap: anywhere;
+  }
+}

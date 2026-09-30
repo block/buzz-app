@@ -79,7 +79,7 @@ export function AvatarEditor(props: Props) {
         >
           <Popover.Popup
             data-buzz-ui=""
-            className="popover-surface w-[360px] max-w-[calc(100vw-24px)] max-h-[min(760px,var(--available-height))] overflow-auto p-4 text-body"
+            className="popover-surface w-[22.5rem] max-w-[calc(100vw-1.5rem)] max-h-[min(47.5rem,var(--available-height))] overflow-auto p-4 text-body"
           >
             <Popover.Title className="sr-only">Edit avatar</Popover.Title>
             {open && (

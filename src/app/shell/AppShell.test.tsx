@@ -11,8 +11,16 @@ import { AppShell } from "./AppShell";
 
 vi.mock("../../bundled", () => ({ bundledPlugins: [] }));
 
-// jsdom has no media queries; responsive geometry is covered in browser tests.
+// jsdom has no media queries or layout observers; responsive geometry is
+// covered in browser tests.
 beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   vi.stubGlobal("matchMedia", (media: string) => ({
     media,
     matches: false,

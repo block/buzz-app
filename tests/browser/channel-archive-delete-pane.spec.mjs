@@ -38,12 +38,13 @@ for (const action of ["archive", "delete"]) {
       });
       const row = sidebar.locator(`[data-channel-id="${channelId}"]`);
       await row.click();
-      await expect(
-        page.getByRole("textbox", {
-          name: "Message #Lifecycle channel",
-          exact: true,
-        }),
-      ).toBeVisible();
+      const composer = page.getByRole("textbox", {
+        name: "Message #Lifecycle channel",
+        exact: true,
+      });
+      await expect(composer).toBeVisible();
+      const draft = "Keep this draft through archive and restore";
+      if (action === "archive") await composer.fill(draft);
       const conversationUrl = page.url();
       const panel = panelFor(page);
       // Hold the real permission read to prove the button, not a visible
@@ -208,11 +209,10 @@ for (const action of ["archive", "delete"]) {
             exact: true,
           }),
         ).toBeFocused();
+        await expect(composer).toBeDisabled();
+        await expect(composer).toHaveJSProperty("value", draft);
         await expect(
-          page.getByRole("textbox", {
-            name: "Message #Lifecycle channel",
-            exact: true,
-          }),
+          page.getByRole("button", { name: "Send message", exact: true }),
         ).toBeDisabled();
       } else {
         await expect(panel).toHaveCount(0);
@@ -230,11 +230,10 @@ for (const action of ["archive", "delete"]) {
         await expect(
           panel.getByRole("button", { name: "Unarchive channel", exact: true }),
         ).toBeVisible();
+        await expect(composer).toBeDisabled();
+        await expect(composer).toHaveJSProperty("value", draft);
         await expect(
-          page.getByRole("textbox", {
-            name: "Message #Lifecycle channel",
-            exact: true,
-          }),
+          page.getByRole("button", { name: "Send message", exact: true }),
         ).toBeDisabled();
         await panel
           .getByRole("button", { name: "Close channel settings", exact: true })
@@ -278,6 +277,8 @@ for (const action of ["archive", "delete"]) {
           exact: true,
         });
         await expect(restore).toBeVisible();
+        await expect(composer).toBeDisabled();
+        await expect(composer).toHaveJSProperty("value", draft);
         await expect(
           panel.getByRole("button", { name: "Archive channel", exact: true }),
         ).toHaveCount(0);
@@ -323,16 +324,20 @@ for (const action of ["archive", "delete"]) {
             exact: true,
           }),
         ).toBeFocused();
-        const restoredComposer = page.getByRole("textbox", {
-          name: "Message #Lifecycle channel",
-          exact: true,
-        });
-        await expect(restoredComposer).toBeVisible();
-        await expect(restoredComposer).toBeEditable();
+        await expect(composer).toBeVisible();
+        await expect(composer).toBeEditable();
+        await expect(composer).toHaveJSProperty("value", draft);
+        await expect(
+          page.getByRole("button", { name: "Send message", exact: true }),
+        ).toBeEnabled();
         await page.reload();
         await expect(row).toBeVisible();
-        await expect(restoredComposer).toBeVisible();
-        await expect(restoredComposer).toBeEditable();
+        await expect(composer).toBeVisible();
+        await expect(composer).toBeEditable();
+        await expect(composer).toHaveJSProperty("value", draft);
+        await expect(
+          page.getByRole("button", { name: "Send message", exact: true }),
+        ).toBeEnabled();
         expect(
           app.report.lifecyclePublications.map((event) => event.tags),
         ).toEqual([

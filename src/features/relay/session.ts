@@ -51,7 +51,7 @@ import { createTyping } from "./typing";
 import { createUnread } from "./unread";
 import type { IncomingListener, IncomingMessage } from "./incoming";
 import { objectBody } from "./body";
-import type { ChannelList } from "./contracts";
+import type { ChannelList, ChannelSummary } from "./contracts";
 import { createChannelActivity } from "./channel-activity";
 import { readSidebarPreferences } from "./sidebar-preferences";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
@@ -712,6 +712,7 @@ export function createRelaySession(
     activityStatus: channelActivity.status(),
   });
   let channelActivityRevision = channelActivity.revision();
+  const projectedChannels = new WeakMap<ChannelSummary, ChannelSummary>();
   const channelQueries = Object.freeze({
     ...channels.queries,
     list() {
@@ -726,9 +727,12 @@ export function createRelaySession(
       channelActivityRevision = activityRevision;
       const projected = snapshot.channels.map((channel) => {
         const lastActivityAt = channelActivity.last(channel.id);
-        return lastActivityAt === undefined
-          ? channel
-          : Object.freeze({ ...channel, lastActivityAt });
+        if (lastActivityAt === undefined) return channel;
+        const previous = projectedChannels.get(channel);
+        if (previous?.lastActivityAt === lastActivityAt) return previous;
+        const next = Object.freeze({ ...channel, lastActivityAt });
+        projectedChannels.set(channel, next);
+        return next;
       });
       activityChannelList = Object.freeze({
         ...snapshot,

@@ -22,6 +22,7 @@ test("nested replies send, stay open, and reveal through links at readable panel
   page,
   app,
 }) => {
+  await page.clock.install();
   await open(page, app);
   const root = app.histories
     .get("primary/alpha")
@@ -94,9 +95,15 @@ test("nested replies send, stay open, and reveal through links at readable panel
   const failed = panel
     .locator("[data-message-id]")
     .filter({ hasText: "Nested browser reply" });
-  await expect(
-    failed.getByText("Couldn’t send this message.", { exact: true }),
-  ).toBeVisible({ timeout: 15000 });
+  await expect.poll(() => rejected).toBeTruthy();
+  // The rejection stays quiet for the delivery grace (DELIVERY_GRACE_MS); cross
+  // it on the controlled clock.
+  const failure = failed.getByText("Couldn’t send this message.", {
+    exact: true,
+  });
+  await expect(failure).toHaveCount(0);
+  await page.clock.fastForward(10_000);
+  await expect(failure).toBeVisible();
   await failed.getByRole("button", { name: "Retry", exact: true }).click();
   await expect
     .poll(

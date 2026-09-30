@@ -327,6 +327,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
   page,
 }, testInfo) => {
   const errors = watchPageErrors(page);
+  await page.clock.install();
   await page.goto("/tests/fixtures/messages.html");
   await page.evaluate(() => window.messagesFixture.activate());
   await expect
@@ -575,9 +576,19 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
   await draft.fill("reject second reply");
   await draft.press("Enter");
   await expect(draft).toHaveJSProperty("value", "");
-  await expect(
-    panel.getByText("Couldn’t send this message.", { exact: true }),
-  ).toBeVisible({ timeout: 15_000 });
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.messagesFixture.report.publications.length),
+    )
+    .toBe(1);
+  // The rejection stays quiet for the delivery grace (DELIVERY_GRACE_MS); cross
+  // it on the controlled clock.
+  const failure = panel.getByText("Couldn’t send this message.", {
+    exact: true,
+  });
+  await expect(failure).toHaveCount(0);
+  await page.clock.fastForward(10_000);
+  await expect(failure).toBeVisible();
   await panel.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(
     panel.getByRole("button", { name: "Retry", exact: true }),

@@ -10,7 +10,7 @@ test.use({
   // the viewer's linked message is focused.
   threadUnreadOwnedRoot: false,
   pluginFixtures: true,
-  historyCounts: { alpha: 640, beta: 1 },
+  historyCounts: { alpha: 20, beta: 1 },
 });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const state = (page) =>

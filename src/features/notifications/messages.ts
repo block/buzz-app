@@ -53,7 +53,6 @@ export function bindMessageNotifications(
   let generation = 0;
   let stopIncoming = () => {};
   let stopAccess = () => {};
-  let stopSync = () => {};
   let stopPreferences = () => {};
   const update = () => {
     const client = communities.snapshot();
@@ -67,7 +66,6 @@ export function bindMessageNotifications(
     generation++;
     stopIncoming();
     stopAccess();
-    stopSync();
     stopPreferences();
     notifications.revalidate();
     session = relay.session;
@@ -181,8 +179,6 @@ export function bindMessageNotifications(
       }
     };
     stopIncoming = owned.subscribeIncoming(receive);
-    // Only reconsider retained live candidates; readiness is not an event source.
-    stopSync = owned.unread.subscribeSync(() => notifications.revalidate());
     const preferencesChanged = () => {
       notifications.revalidate();
       if (owned.sidebarPreferences.snapshot().status === "idle")
@@ -214,7 +210,6 @@ export function bindMessageNotifications(
     stopCommunities();
     stopIncoming();
     stopAccess();
-    stopSync();
     stopPreferences();
   };
 }

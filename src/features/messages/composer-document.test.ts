@@ -185,6 +185,30 @@ describe("composer Markdown boundary", () => {
         markdown(numbers(1, "a"), paragraph(), numbers(1, "b")),
         ["list", "list"],
       ],
+      // The parity carries across the empty paragraph as the list kind does,
+      // so a third list separated the same way takes the first marker again
+      // rather than repeating the second and merging with it.
+      [
+        markdown(
+          bullets("a"),
+          paragraph(),
+          bullets("b"),
+          paragraph(),
+          paragraph(),
+          bullets("c"),
+        ),
+        ["list", "list", "list"],
+      ],
+      [
+        markdown(
+          numbers(1, "a"),
+          paragraph(),
+          numbers(1, "b"),
+          paragraph(),
+          numbers(1, "c"),
+        ),
+        ["list", "list", "list"],
+      ],
       [
         markdown(bullets("a"), paragraph(schema.text("text")), bullets("b")),
         ["list", "paragraph", "list"],
@@ -217,6 +241,8 @@ describe("composer Markdown boundary", () => {
       "999999999. item\n999999999. next",
       "- a\n\n\n\n* b",
       "1. a\n\n\n\n1) b",
+      "- a\n\n\n\n* b\n\n\n\n\n- c",
+      "1. a\n\n\n\n1) b\n\n\n\n1. c",
       "- a\n\ntext\n\n- b",
       "- a\n\n```\ncode\n```\n\n- b",
       "- a\n\n> q\n\n- b",
@@ -248,6 +274,69 @@ describe("composer Markdown boundary", () => {
       { type: "list", ordered: true, start: 1, children: [{}] },
       { type: "list", ordered: true, start: 1, children: [{}] },
     ]);
+    for (const index of [6, 7])
+      expect(fromMarkdown(cases[index]?.[0] ?? "").children).toMatchObject([
+        { type: "list", children: [{}] },
+        { type: "list", children: [{}] },
+        { type: "list", children: [{}] },
+      ]);
+  });
+  it("writes intraword emphasis with asterisks so the source stays readable", () => {
+    const italic = (text: string) =>
+      schema.text(text, [schema.marks.italic.create()]);
+    const cases: [string, string, string][] = [
+      ["foo", "bar", "baz"],
+      ["2", "3", "4"],
+      ["a", "b", ""],
+      ["", "b", "c"],
+    ];
+    for (const [before, inner, after] of cases) {
+      const output = serialize(
+        ...(before ? [schema.text(before)] : []),
+        italic(inner),
+        ...(after ? [schema.text(after)] : []),
+      );
+      expect(output).toBe(`${before}*${inner}*${after}`);
+      expect(fromMarkdown(output).children[0]).toMatchObject({
+        type: "paragraph",
+        children: [
+          ...(before ? [{ type: "text", value: before }] : []),
+          { type: "emphasis", children: [{ type: "text", value: inner }] },
+          ...(after ? [{ type: "text", value: after }] : []),
+        ],
+      });
+    }
+    // Whitespace or punctuation beside the span keeps the underscore, and so
+    // does another span's delimiter: the neighbour is read from the wire, not
+    // from the paragraph text.
+    expect(serialize(schema.text("a "), italic("b"), schema.text(" c"))).toBe(
+      "a _b_ c",
+    );
+    expect(serialize(schema.text("("), italic("b"), schema.text(")"))).toBe(
+      "(_b_)",
+    );
+    expect(serialize(italic("b"))).toBe("_b_");
+    expect(serialize(italic("a"), bold("b"))).toBe("_a_**b**");
+    // Inside a bold run the neighbours are the bold prose, so * forms intraword
+    // where the stock handler would encode them.
+    const both = schema.text("b", [
+      schema.marks.bold.create(),
+      schema.marks.italic.create(),
+    ]);
+    expect(serialize(bold("a"), both, bold("c"))).toBe("**a*b*c**");
+    expect(fromMarkdown("**a*b*c**").children[0]).toMatchObject({
+      type: "paragraph",
+      children: [
+        {
+          type: "strong",
+          children: [
+            { type: "text", value: "a" },
+            { type: "emphasis", children: [{ type: "text", value: "b" }] },
+            { type: "text", value: "c" },
+          ],
+        },
+      ],
+    });
   });
   it("uses syntax-aware escaping and delimiter flanking", () => {
     expect(serialize(bold("*"))).toBe("**\\***");

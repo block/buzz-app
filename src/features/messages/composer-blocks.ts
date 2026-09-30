@@ -19,6 +19,7 @@ import {
   exitCode,
 } from "prosemirror-commands";
 import type { Command } from "prosemirror-state";
+import type { ResolvedPos } from "prosemirror-model";
 import {
   composerSchema as schema,
   projectComposerDocument,
@@ -289,14 +290,42 @@ function closedBelow(fence: Fence, lines: readonly string[]): boolean {
   return lines.some((line) => !readFence(line, fence));
 }
 
+/** Draft offsets of the run of sibling paragraphs holding the caret's. Sibling
+ * paragraphs serialise joined by single newlines, exactly as the draft text
+ * holds them, so the timeline reads the run as one source context: a fence
+ * opened or closed in one paragraph counts for the others, and a toolbar
+ * toggle that splits a paragraph changes nothing on the wire. Any other block
+ * between two paragraphs ends the run. */
+function paragraphRun(
+  $from: ResolvedPos,
+  source: ReturnType<typeof projectComposerDocument>,
+): { start: number; end: number } {
+  const depth = $from.depth,
+    parent = $from.node(depth - 1);
+  let first = $from.index(depth - 1),
+    last = first,
+    from = $from.before(depth),
+    to = $from.after(depth);
+  while (first > 0 && parent.child(first - 1).type === schema.nodes.paragraph)
+    from -= parent.child(--first).nodeSize;
+  while (
+    last + 1 < parent.childCount &&
+    parent.child(last + 1).type === schema.nodes.paragraph
+  )
+    to += parent.child(++last).nodeSize;
+  return { start: source.source(from), end: source.source(to - 1) };
+}
+
 /** Typing the third character of a line holding only ``` or ~~~ turns that line
  * into a code block at once, without waiting for Enter. Only a fence the typed
  * character completes at the end of its line qualifies: a fence that closes or
- * sits inside a block the paragraph's other lines open (pasted source, or a
- * message opened for editing), fences inside code/link/literal ranges or
- * tokens, and any line inside an existing code block stay literal source. The
- * transaction carries the deletion and the block; the caller closes history
- * around it, so one undo restores the typed fence. */
+ * sits inside a block the other lines of its paragraph, or of the sibling
+ * paragraphs joined to it on the wire, open (pasted source, a message opened
+ * for editing, or a paragraph a toolbar toggle split), fences inside
+ * code/link/literal ranges or tokens, and any line inside an existing code
+ * block stay literal source. The transaction carries the deletion and the
+ * block; the caller closes history around it, so one undo restores the typed
+ * fence. */
 export function composerCodeFence(
   state: EditorState,
   typed: string,
@@ -318,9 +347,11 @@ export function composerCodeFence(
   if (!match || match[1]?.[0] !== typed) return;
   // A closing fence, a fence line inside an open block, or an opening fence a
   // later line already closes is authored source the timeline renders as code:
-  // it never opens a second block.
-  if (insideFence(text.slice(block.start, start).split("\n"))) return;
-  const below = text.slice(caret, source.source(block.to));
+  // it never opens a second block. The lines read are those of the whole run
+  // of sibling paragraphs, since the wire joins them with single newlines.
+  const run = paragraphRun($from, source);
+  if (insideFence(text.slice(run.start, start).split("\n"))) return;
+  const below = text.slice(caret, run.end);
   if (
     below &&
     closedBelow({ marker: typed, length: 3 }, below.slice(1).split("\n"))
@@ -419,8 +450,14 @@ export function composerBlockPrefix(
   if (!block) return;
   const start = Math.max(block.start, text.lastIndexOf("\n", caret - 1) + 1);
   if (text.slice(start, caret) !== match[0]) return;
-  // A marker inside authored fenced source is a code line on the timeline.
-  if (insideFence(text.slice(block.start, start).split("\n"))) return;
+  // A marker inside authored fenced source is a code line on the timeline,
+  // whichever paragraph of the run the fence was opened in.
+  if (
+    insideFence(
+      text.slice(paragraphRun($from, source).start, start).split("\n"),
+    )
+  )
+    return;
   const from = source.position(start),
     to = $from.pos;
   if (source.source(from) !== start) return;

@@ -55,8 +55,8 @@ function blocksMarkdown(doc: EditorNode): string {
   // adjacent lists alternate their marker as mdast-util-to-markdown does: `-`
   // then `*` for bullets, `.` then `)` for numbers. A block that serialises to
   // nothing but whitespace, such as an empty paragraph, adds only blank lines
-  // to the wire, so the sequence carries across it; any other block between
-  // two lists starts the sequence again.
+  // to the wire, so both the last list kind and the parity carry across it
+  // unchanged; any other block between two lists starts the sequence again.
   let lastList: NodeType | undefined;
   let alternate = false;
   doc.forEach((block) => {
@@ -70,7 +70,7 @@ function blocksMarkdown(doc: EditorNode): string {
       );
     const list =
       block.type.name === "bullet_list" || block.type.name === "ordered_list";
-    alternate = list && lastList === block.type && !alternate;
+    if (list) alternate = lastList === block.type && !alternate;
     let output: string;
     if (block.type.name === "code_block") {
       const language: unknown = block.attrs.language;
@@ -118,7 +118,10 @@ function blocksMarkdown(doc: EditorNode): string {
     } else output = paragraphMarkdown(block);
     blocks.push(output);
     if (list) lastList = block.type;
-    else if (/\S/.test(output)) lastList = undefined;
+    else if (/\S/.test(output)) {
+      lastList = undefined;
+      alternate = false;
+    }
     previous = block;
   });
   return blocks.join("");
@@ -184,12 +187,14 @@ function paragraphMarkdown(block: EditorNode): string {
   if (!literals.length && ranges.every((spans) => !spans.length)) return text;
   const raw = new WeakSet<Text>();
   const literal = new WeakSet<Text>();
-  // The timeline binds a signed mention only when the character before its @
-  // and the one after its name are not word characters, and _ is one. An
-  // emphasis span holding a recipient therefore uses *, so *@Honey* renders
-  // italic and stays a bound mention where _@Honey_ would lose the binding.
-  // Chosen over refusing the typed *@Honey* conversion so toolbar italics on a
-  // chip send a bindable form too; every other emphasis keeps _.
+  // Emphasis is written with _ except in two cases that take *. The timeline
+  // binds a signed mention only when the character before its @ and the one
+  // after its name are not word characters, and _ is one, so a span holding a
+  // recipient uses *: *@Honey* renders italic and stays a bound mention where
+  // _@Honey_ would lose the binding. Chosen over refusing the typed *@Honey*
+  // conversion so toolbar italics on a chip send a bindable form too. The
+  // second case, a span touching a word character on the wire, is decided in
+  // the handler below from the serialized neighbours.
   const asterisk = new WeakSet<Emphasis>();
   const source = (
     start: number,
@@ -359,16 +364,33 @@ function paragraphMarkdown(block: EditorNode): string {
   };
   // The stock handler reads its marker from the serializer options, so swap
   // the option for the span being written rather than reimplementing its
-  // flanking encoding.
+  // flanking encoding. `info` carries the wire neighbours: the character the
+  // serializer wrote last and the one the next node will start with, so a
+  // delimiter another span emits between the emphasis and the prose counts as
+  // punctuation, exactly as the stock handler classifies it. A span touching a
+  // word character there takes *, since _ cannot open or close intraword and
+  // the stock handler would encode both neighbours as character references
+  // (fo&#x6F;_&#x62;a&#x72;_&#x62;az); * forms there as typed, so agents and
+  // the CLI reading the raw event see foo*bar*baz.
+  const word = (character: string) =>
+    !!character && !/[\s\p{P}\p{S}]/u.test(character);
   const emphasis: Handle & { peek?: Handle } = (node, parent, state, info) => {
     const previous = state.options.emphasis;
-    state.options.emphasis = asterisk.has(node) ? "*" : "_";
+    state.options.emphasis =
+      asterisk.has(node) ||
+      word(info.before.slice(-1)) ||
+      word(info.after.slice(0, 1))
+        ? "*"
+        : "_";
     try {
       return defaultHandlers.emphasis(node, parent, state, info);
     } finally {
       state.options.emphasis = previous;
     }
   };
+  // The peek only tells the preceding node which character follows it, and
+  // both markers are punctuation to every rule that reads it, so the wire
+  // neighbours need not be known here.
   emphasis.peek = (node) => (asterisk.has(node) ? "*" : "_");
   const tree: Root = {
     type: "root",

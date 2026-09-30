@@ -282,7 +282,9 @@ it("follows the parser for intraword delimiters: snake_case stays literal, 5*3*2
   expect(h.input.querySelectorAll("em")).toHaveLength(1);
   expect(h.input.querySelector("em")).toHaveTextContent("3");
   expect(h.input).toHaveValue("snake_case_more 532");
-  // The wire form encodes the neighbours so recipients render what the composer shows.
+  // The wire keeps the typed asterisks, which form intraword where _ would
+  // need its neighbours encoded, so raw readers see the source as typed.
+  expect(h.markdown()).toBe("snake_case_more 5*3*2");
   expect(fromMarkdown(h.markdown()).children[0]).toMatchObject({
     type: "paragraph",
     children: [
@@ -650,6 +652,64 @@ it("keeps a typed opening fence literal when a later line already closes it", as
   expect(h.input.querySelector("pre")).toBeNull();
   expect(h.input).toHaveValue("```\ncode\n```");
   expect(h.markdown()).toBe("```\ncode\n```");
+});
+
+/** Split the caret's empty last line into its own paragraph with the toolbar's
+ * quote toggle and its lift, which leaves the split in place. Sibling paragraphs
+ * send joined by one newline, so the wire is unchanged. */
+function splitLastLine(h: ReturnType<typeof mount>, paragraphs: number) {
+  act(() => h.input.toggleFormat("blockquote"));
+  act(() => h.input.toggleFormat("blockquote"));
+  expect(h.input.querySelector("blockquote")).toBeNull();
+  expect(h.input.querySelectorAll(":scope > p")).toHaveLength(paragraphs);
+}
+
+it("keeps a fence literal that closes a block an earlier sibling paragraph opened, then converts below the closed block", async () => {
+  const h = mount();
+  await h.user.keyboard("```");
+  act(() => h.input.undo(false));
+  expect(h.input).toHaveValue("```");
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}code{Shift>}{Enter}{/Shift}");
+  splitLastLine(h, 2);
+  expect(h.markdown()).toBe("```\ncode\n");
+  // The line closes the fence the first paragraph opened; on the wire the two
+  // paragraphs are one fenced block, so the third backtick stays literal.
+  await h.user.keyboard("```");
+  expect(h.input.querySelector("pre")).toBeNull();
+  expect(h.input).toHaveValue("```\ncode\n```");
+  expect(h.markdown()).toBe("```\ncode\n```");
+  expect(fromMarkdown(h.markdown()).children).toMatchObject([
+    { type: "code", value: "code" },
+  ]);
+  // Below the closed block, a fence in a further split paragraph opens one.
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}");
+  splitLastLine(h, 3);
+  await h.user.keyboard("```more");
+  expect(h.input.querySelectorAll("pre")).toHaveLength(1);
+  expect(h.input.querySelector("pre > code")).toHaveTextContent("more");
+  expect(h.input).toHaveValue("```\ncode\n```\nmore");
+  expect(h.markdown()).toBe("```\ncode\n```\n\n```\nmore\n```");
+  expect(fromMarkdown(h.markdown()).children).toMatchObject([
+    { type: "code", value: "code" },
+    { type: "code", value: "more" },
+  ]);
+});
+
+it("keeps a typed opening fence literal when a later sibling paragraph closes it", async () => {
+  const h = mount("``");
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}");
+  splitLastLine(h, 2);
+  act(() => h.input.insertText("code\n```"));
+  expect(h.input).toHaveValue("``\ncode\n```");
+  act(() => h.input.setSelectionRange(2, 2));
+  await h.user.keyboard("`");
+  expect(h.input.querySelector("pre")).toBeNull();
+  expect(h.input.querySelectorAll(":scope > p")).toHaveLength(2);
+  expect(h.input).toHaveValue("```\ncode\n```");
+  expect(h.markdown()).toBe("```\ncode\n```");
+  expect(fromMarkdown(h.markdown()).children).toMatchObject([
+    { type: "code", value: "code" },
+  ]);
 });
 
 it.each([
@@ -1099,6 +1159,29 @@ it("alternates the marker between adjacent lists of one kind so they stay separa
   ).toEqual(["list", "list", "list", "paragraph", "list"]);
 });
 
+it.each([
+  ["- ", "ul", "- a\n\n* b\n\n\n\n- c"],
+  ["1. ", "ol", "1. a\n\n1) b\n\n\n\n1. c"],
+] as const)(
+  "keeps alternating %j list markers across an empty paragraph so three lists stay three",
+  async (marker, tag, wire) => {
+    const h = mount();
+    // Two Shift+Enters leave the list; a third on the empty paragraph adds a
+    // blank line, which the marker's conversion splits into its own paragraph.
+    await h.user.keyboard(
+      `${marker}a{Shift>}{Enter}{Enter}{/Shift}${marker}b{Shift>}{Enter}{Enter}{Enter}{/Shift}${marker}c`,
+    );
+    expect(h.input.querySelectorAll(`:scope > ${tag}`)).toHaveLength(3);
+    expect(h.input.querySelectorAll(":scope > p")).toHaveLength(1);
+    expect(h.markdown()).toBe(wire);
+    expect(fromMarkdown(h.markdown()).children).toMatchObject([
+      { type: "list", children: [{ type: "listItem" }] },
+      { type: "list", children: [{ type: "listItem" }] },
+      { type: "list", children: [{ type: "listItem" }] },
+    ]);
+  },
+);
+
 it("leaves a marker typed after prose, and ordinary spaces, as paragraph text", async () => {
   const h = mount();
   await h.user.keyboard("note - one 1. two > three");
@@ -1147,6 +1230,16 @@ it("does not convert an inserted or pasted marker, or one typed inside pasted fe
   expect(fenced.input.querySelector("ul, pre")).toBeNull();
   expect(fenced.input).toHaveValue("```\n- code\n```");
   expect(fenced.markdown()).toBe("```\n- code\n```");
+  // A fence left open by an earlier sibling paragraph still covers the line.
+  const split = mount();
+  await split.user.keyboard("```");
+  act(() => split.input.undo(false));
+  await split.user.keyboard("{Shift>}{Enter}{/Shift}");
+  splitLastLine(split, 2);
+  await split.user.keyboard("- item");
+  expect(split.input.querySelector("ul, pre")).toBeNull();
+  expect(split.input).toHaveValue("```\n- item");
+  expect(split.markdown()).toBe("```\n- item");
 });
 
 it("keeps a marker literal on a line holding a mention chip", async () => {

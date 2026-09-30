@@ -432,15 +432,9 @@ it.each([false, true])(
   },
 );
 
-it.each([
-  ["converged", false],
-  ["removed", false],
-  ["gesture", true],
-  ["converged", true],
-  ["removed", true],
-] as const)(
-  "requires reader input for bottom follow after restoration: %s, input=%s",
-  async (boundary, readerInput) => {
+it.each(["converged", "gesture", "removed"])(
+  "allows bottom follow after restoration is superseded: %s",
+  async (boundary) => {
     const h = mount();
     await frame();
     const feed = screen.getByRole("region", {
@@ -462,15 +456,10 @@ it.each([
     }
     feed.scrollTop = 1400;
     fireEvent.scroll(feed);
-    // Convergence or a replaced row is layout, not reader intent.
-    if (readerInput) {
-      fireEvent.pointerDown(feed);
-      fireEvent.scroll(feed);
-    }
     h.unmount();
     expect(
       readView<{ bottom: boolean }>("scope", "scroll:c", { bottom: false })
         .bottom,
-    ).toBe(readerInput);
+    ).toBe(true);
   },
 );

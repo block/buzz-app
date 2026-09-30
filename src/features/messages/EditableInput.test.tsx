@@ -1238,8 +1238,13 @@ const controlKeys = [
   ["Page Up's function-key character U+F72C", "\uF72C"],
   ["Page Down's function-key character U+F72D", "\uF72D"],
 ] as const;
-/** Right Arrow committed as text in both forms the host can produce. */
-const rightArrowCharacters = ["\u001D", "\uF703"] as const;
+/** Right Arrow committed as text in both forms the host can produce. Each
+ * carries a label because neither character has a glyph: interpolated raw
+ * into a case name or an assertion message they read identically. */
+const rightArrowCharacters = [
+  ["Right Arrow's layout translation U+001D", "\u001D"],
+  ["Right Arrow's function-key character U+F703", "\uF703"],
+] as const;
 const caretKeys = [
   "ArrowRight",
   "ArrowLeft",
@@ -1391,13 +1396,15 @@ it.each([
       expect(snapshot(h), key).toEqual(before);
       expect(h.input.selectionStart, key).toBe(h.input.selectionEnd);
     }
-    for (const character of rightArrowCharacters) {
+    for (const [label, character] of rightArrowCharacters) {
       act(() => h.input.setSelectionRange(start, start));
-      expect(nativeInsert(h.input, character), character).toBe(false);
-      expect(snapshot(h), character).toEqual(before);
-      expect(nativeInsert(h.input, character, false), character).toBe(true);
-      await waitFor(() => expect(h.input.textContent).not.toContain(character));
-      expect(snapshot(h), character).toEqual(before);
+      expect(nativeInsert(h.input, character), label).toBe(false);
+      expect(snapshot(h), label).toEqual(before);
+      expect(nativeInsert(h.input, character, false), label).toBe(true);
+      await waitFor(() =>
+        expect(h.input.textContent, label).not.toContain(character),
+      );
+      expect(snapshot(h), label).toEqual(before);
     }
     expect(h.input).toHaveValue(value);
     expect(h.draft().recipients.map((item) => item.name)).toEqual(
@@ -1407,8 +1414,8 @@ it.each([
 );
 
 it.each(rightArrowCharacters)(
-  "never runs a typed conversion for the control character %s",
-  async (character) => {
+  "never runs a typed conversion for %s committed as text",
+  async (_label, character) => {
     const h = mount();
     await h.user.keyboard("**a*");
     const before = snapshot(h);

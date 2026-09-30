@@ -804,8 +804,12 @@ it("keeps a composed message unchanged through caret keys at its end and refuses
   expect(h.input().innerHTML).toBe(html);
   expect(h.messages.send).not.toHaveBeenCalled();
   // The desktop build committed Right Arrow's raw keyboard-layout translation
-  // U+001D; AppKit's function-key character for the key is U+F703.
-  for (const character of ["\u001D", "\uF703"]) {
+  // U+001D; AppKit's function-key character for the key is U+F703. Neither
+  // has a glyph, so each assertion names its form rather than the character.
+  for (const [label, character] of [
+    ["Right Arrow's layout translation U+001D", "\u001D"],
+    ["Right Arrow's function-key character U+F703", "\uF703"],
+  ] as const) {
     let prevented = false;
     act(() => {
       h.input().focus();
@@ -818,10 +822,10 @@ it("keeps a composed message unchanged through caret keys at its end and refuses
         }),
       );
     });
-    expect(prevented, character).toBe(true);
-    expect(h.input()).toHaveValue("Hello!\nacascac\naa a\nacacs\n");
-    expect(h.input().innerHTML).toBe(html);
-    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(prevented, label).toBe(true);
+    expect(h.input(), label).toHaveValue("Hello!\nacascac\naa a\nacacs\n");
+    expect(h.input().innerHTML, label).toBe(html);
+    expect(h.messages.send, label).not.toHaveBeenCalled();
   }
 });
 

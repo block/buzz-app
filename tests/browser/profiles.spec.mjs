@@ -716,7 +716,10 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   expect(await row.boundingBox()).toEqual(restingBounds);
   await actions.click();
   const menu = page.getByRole("menu", { name: "Actions for Viewer" });
-  await expect(menu.getByRole("menuitem")).toHaveText(["View profile"]);
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "View profile",
+    "Copy npub",
+  ]);
   await expect(menu).toBeFocused();
   await page.mouse.move(0, 0);
   await expect(actionSlot).toHaveCSS("opacity", "1");
@@ -727,15 +730,11 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   await row.focus();
   await expect(actionSlot).toHaveCSS("opacity", "1");
   await page.keyboard.press("Tab");
-  const identityPreview = page.getByRole("dialog", {
-    name: "Viewer (you) identity",
-  });
-  await expect(
-    identityPreview.getByRole("button", { name: "Copy npub" }),
-  ).toBeFocused();
-  await page.keyboard.press("Tab");
   await expect(actions).toBeFocused();
-  await expect(identityPreview).not.toBeVisible();
+  await actions.press("Enter");
+  await menu.getByRole("menuitem", { name: "Copy npub" }).click();
+  await expect(actions).toBeFocused();
+  await expect(dialog).toBeVisible();
 
   // Browser-only: portal menus inside a modal must hand focus to the profile
   // panel, or restore the correct row control on Escape, without closing both.
@@ -743,7 +742,10 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
     if (entry === "ellipsis") await actions.press("Enter");
     else if (entry === "right-click") await row.click({ button: "right" });
     else await row.press(entry);
-    await expect(menu.getByRole("menuitem")).toHaveText(["View profile"]);
+    await expect(menu.getByRole("menuitem")).toHaveText([
+      "View profile",
+      "Copy npub",
+    ]);
     if (entry === "right-click") {
       await expect(menu).toBeFocused();
       await page.keyboard.press("Escape");
@@ -810,4 +812,52 @@ test.describe("touch member actions", () => {
     await details.press("Escape");
     await expect(members).toBeFocused();
   });
+});
+
+// Real Members -> verified session DM -> ChannelsPage navigation/focus handoff.
+// Only the relay transport is synthetic; this must never send a live message.
+test("member Send message navigates a human DM without sending or returning focus to Members", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.goto("/tests/fixtures/profiles.html?member-message");
+  await page
+    .getByRole("button", { name: "Channel members", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Channel members",
+    exact: true,
+  });
+  const actions = dialog.getByRole("button", {
+    name: "Actions for Mic",
+    exact: true,
+  });
+  await actions.locator("xpath=ancestor::li").hover();
+  await actions.click();
+  const menu = page.getByRole("menu", { name: "Actions for Mic", exact: true });
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "View profile",
+    "Send message",
+    "Copy npub",
+  ]);
+  await menu
+    .getByRole("menuitem", { name: "Send message", exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => window.profilesFixture.dmOpens))
+    .toEqual([[await page.evaluate(() => window.profilesFixture.keys.mic)]]);
+  await expect(
+    page.getByRole("heading", { name: "Mic", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Mic", exact: true }),
+  ).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Channel members", exact: true }),
+  ).not.toBeFocused();
+  expect(
+    await page.evaluate(() => window.profilesFixture.report.publications),
+  ).toBe(0);
+  expect(errors.unexplained()).toEqual([]);
 });

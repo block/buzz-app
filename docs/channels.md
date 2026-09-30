@@ -482,19 +482,25 @@ Non-member search ranking is unchanged.
 Current-member avatars and rows open the existing Profiles panel when its contribution
 is enabled; the Members dialog closes and closing the profile returns focus to the
 Channel members button. Names and smaller, muted inline **managed by** hints sit
-centered at rest with no pills. Hover reveals a disambiguated short npub underneath
+centered at rest with no pills. Hover reveals a longer abbreviated npub underneath
 using the existing 140ms height/opacity transition, just like invitation rows;
-keyboard focus and reduced motion reveal it immediately. The avatar and actions
-stay centered. These rows retain the shared identity preview on hover/focus,
-including **Copy npub** and agent manager details. The preview anchors to the
-profile identity, not the separate Add or actions button. Tab visits its copy
-action before continuing to the next row control; Escape dismisses the preview
-before closing Members. Its keyboard description composes with available presence
-status. The full key remains available in Profiles. The manager link opens
+keyboard focus and reduced motion reveal it immediately. The abbreviation shows
+`npub1` plus six leading payload characters and six trailing characters. It stays
+abbreviated: no dwell timer, inline expansion, copy icon, or identity card. Shared
+identity previews on other surfaces remain unchanged. Available presence status
+stays on the profile control. The manager link opens
 Profiles with the same focus handoff; row-profile and owner-profile controls are
 siblings, never nested. Every current member has a separate
 ellipsis button (not nested inside profile navigation), with **View profile** first
-and only permitted administration actions below it. Owner/self protection, missing
+then **Send message** for other humans on a DM-capable connection, then **Copy npub**
+for every identity (including agents, owners and self), followed by permitted
+administration actions. Copy writes the full canonical npub, never the abbreviation,
+and reports success or clipboard failure without navigating or mutating membership.
+Send message reuses the session's verified direct-message opener and the current
+conversation navigation owner; it sends no message automatically. One dialog-owned
+waiter blocks duplicate opens, shows pending/error status and allows explicit retry.
+Closing Members cancels that waiter and suppresses late navigation; a successful
+handoff leaves destination focus alone. Owner/self protection, missing
 writer support and pending/uncertain writes suppress mutations, not the profile
 menu. If Profiles is unavailable, View profile is disabled. Pointer hover, keyboard
 focus and an open menu reveal the reserved action slot without moving row content;
@@ -505,7 +511,9 @@ Channel members button when closed. Invitation rows reuse the same avatar, name,
 managed-by hint and public-key hover/focus presentation, without a channel-role
 badge. Their avatars and identity rows open Profiles just like current members;
 only the separate, extra-small prominent **Add / Adding…** button invites someone.
-People and agent avatars both use the shared 32px default size. Both row types
+Invitation results expose the same identity menu and context-menu entry points,
+with Add separate and no role/removal actions. People and agent avatars both use the
+shared 32px default size. Both row types
 share a 48px minimum height, growing with their content rather than
 clipping it; profile targets fill the row height, with identity and actions centered.
 Profile navigation stays available during an invitation; missing Profiles support

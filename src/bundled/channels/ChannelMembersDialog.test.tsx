@@ -478,18 +478,6 @@ it("finishes confirmed local-agent startup after closing and reopening during pu
   t.hold();
   await t.user.click(await t.search());
   await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
-  expect(
-    screen.queryByRole("dialog", { name: "Fixture agent identity" }),
-  ).not.toBeInTheDocument();
-  await t.user.click(
-    screen.getByRole("button", { name: "Preview Fixture agent identity" }),
-  );
-  const preview = await screen.findByRole("dialog", {
-    name: "Fixture agent identity",
-  });
-  await t.user.keyboard("{Escape}");
-  await vi.waitFor(() => expect(preview).not.toBeInTheDocument());
-  expect(screen.getByRole("dialog", { name: "Channel members" })).toBeVisible();
   await t.user.keyboard("{Escape}");
   await vi.waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
@@ -516,18 +504,6 @@ it("keeps closed-dialog startup failures recoverable without another membership 
   t.hold();
   await t.user.click(await t.search());
   await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
-  expect(
-    screen.queryByRole("dialog", { name: "Fixture agent identity" }),
-  ).not.toBeInTheDocument();
-  await t.user.click(
-    screen.getByRole("button", { name: "Preview Fixture agent identity" }),
-  );
-  const preview = await screen.findByRole("dialog", {
-    name: "Fixture agent identity",
-  });
-  await t.user.keyboard("{Escape}");
-  await vi.waitFor(() => expect(preview).not.toBeInTheDocument());
-  expect(screen.getByRole("dialog", { name: "Channel members" })).toBeVisible();
   await t.user.keyboard("{Escape}");
   await vi.waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
@@ -728,12 +704,9 @@ it("keeps Members open when the profile dispatcher declines the target", async (
   );
   expect(onOpenLink).toHaveBeenCalledOnce();
   expect(screen.getByRole("dialog", { name: "Channel members" })).toBeVisible();
-  const preview = await screen.findByRole("dialog", {
-    name: "Carl (you) identity",
-  });
-  await t.user.keyboard("{Escape}");
-  await vi.waitFor(() => expect(preview).not.toBeInTheDocument());
-  expect(screen.getByRole("dialog", { name: "Channel members" })).toBeVisible();
+  expect(
+    screen.queryByRole("dialog", { name: /identity$/ }),
+  ).not.toBeInTheDocument();
   expect(
     screen.getByRole("button", { name: /Open profile for Carl/ }),
   ).toHaveFocus();
@@ -798,10 +771,19 @@ it("shares the identity presentation with invitation rows without assigning a ch
   ).toBeInTheDocument();
   const key = row.querySelector('[aria-hidden="true"].text-mono');
   expect(key).toHaveTextContent(/^npub/);
-  expect(row.querySelector("[title]")).toHaveAttribute(
-    "title",
-    npubEncode(t.fixture.agent.pubkey),
+  const npub = npubEncode(t.fixture.agent.pubkey);
+  expect(key).toHaveTextContent(`${npub.slice(0, 11)}…${npub.slice(-6)}`);
+  expect(
+    within(row).queryByRole("button", { name: /Copy/ }),
+  ).not.toBeInTheDocument();
+  await t.user.click(
+    within(row).getByRole("button", { name: "Actions for Fixture agent" }),
   );
+  expect(
+    (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
+  ).toEqual(["View profile", "Copy npub"]);
+  await t.user.keyboard("{Escape}");
+  expect(row.querySelector("[title]")).not.toBeInTheDocument();
   expect(within(row).queryByText("Role unverified")).not.toBeInTheDocument();
   expect(within(add).getByText("Add", { exact: true })).toBeVisible();
   expect(t.publish).not.toHaveBeenCalled();

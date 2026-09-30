@@ -1,4 +1,6 @@
 import { motion } from "motion/react";
+import { npubEncode } from "nostr-tools/nip19";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import {
   useEffect,
   useRef,
@@ -38,14 +40,6 @@ function useMemberReveal() {
       if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false);
     },
   };
-}
-
-export function InvitationRow({ children }: { children: ReactNode }) {
-  return (
-    <motion.div className={styles.member} {...useMemberReveal()}>
-      {children}
-    </motion.div>
-  );
 }
 
 export function useMemberAdministration(
@@ -119,6 +113,9 @@ export function MemberRow({
   name,
   returnFocus,
   onViewProfile,
+  onSendMessage,
+  messagePending,
+  invitationAction,
   children,
 }: {
   session: RelaySession;
@@ -127,9 +124,13 @@ export function MemberRow({
   name: string;
   returnFocus: React.RefObject<HTMLElement | null>;
   onViewProfile?: (() => boolean) | undefined;
+  onSendMessage?: (() => void) | undefined;
+  messagePending?: boolean | undefined;
+  invitationAction?: ReactNode;
   children: ReactNode;
 }) {
   const reveal = useMemberReveal();
+  const notify = useToastNotification();
   const capability = session.memberAdministration;
   const state = useSyncExternalStore(
     capability.subscribe,
@@ -144,6 +145,7 @@ export function MemberRow({
   const openingProfile = useRef(false);
   const role = state.authority.roles[pubkey] ?? "unknown";
   const permitted =
+    !invitationAction &&
     capability.available &&
     state.status === "ready" &&
     canManageMember(state.authority, session.viewer ?? "", pubkey);
@@ -166,7 +168,13 @@ export function MemberRow({
         }}
       >
         <ContextMenuTrigger
-          render={<motion.li {...reveal} />}
+          render={
+            invitationAction ? (
+              <motion.div {...reveal} />
+            ) : (
+              <motion.li {...reveal} />
+            )
+          }
           className={styles.member}
           data-menu-open={menuOpen || undefined}
           onContextMenu={(event) => {
@@ -193,6 +201,7 @@ export function MemberRow({
           }}
         >
           <div className={styles.profile}>{children}</div>
+          {invitationAction}
           <span className={styles.memberActions}>
             <IconButton
               variant="ghost"
@@ -229,6 +238,23 @@ export function MemberRow({
             }}
           >
             View profile
+          </MenuItem>
+          {onSendMessage && (
+            <MenuItem disabled={messagePending} onClick={onSendMessage}>
+              Send message
+            </MenuItem>
+          )}
+          <MenuItem
+            onClick={() => {
+              void Promise.resolve()
+                .then(() => navigator.clipboard.writeText(npubEncode(pubkey)))
+                .then(
+                  () => notify("Copied npub", "success"),
+                  () => notify("Couldn’t copy npub. Try again.", "error"),
+                );
+            }}
+          >
+            Copy npub
           </MenuItem>
           {permitted && !locked && (
             <>

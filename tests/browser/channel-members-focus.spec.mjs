@@ -78,85 +78,57 @@ test("identity copy preserves modal focus and addition returns focus only to its
       await expect(add).not.toBeFocused();
       const before = await add.boundingBox();
       await identity.hover({ position: { x: 20, y: 20 } });
-      const card = page.getByRole("dialog", {
-        name: "Morgan identity",
+      const row = add.locator("../..");
+      const key = row.locator('[aria-hidden="true"].text-mono');
+      await expect(key).toHaveText(/^npub1.{6}….{6}$/);
+      const actions = dialog.getByRole("button", {
+        name: "Actions for Morgan",
         exact: true,
       });
-      await expect(card).toBeVisible();
-      const npub = await identity.getAttribute("title");
-      await expect(card).toContainText(npub);
-      await expect(card.getByText("Public key", { exact: true })).toHaveCount(
-        0,
-      );
       expect(await add.boundingBox()).toEqual(before);
-      const copy = card.getByRole("button", {
-        name: "Copy npub",
+      await actions.click();
+      const menu = page.getByRole("menu", {
+        name: "Actions for Morgan",
         exact: true,
       });
-      // Hit testing proves the positioned portal is above the modal/backdrop.
-      await copy.click();
+      await expect(menu.getByRole("menuitem")).toHaveText([
+        "View profile",
+        "Copy npub",
+      ]);
+      await menu
+        .getByRole("menuitem", { name: "Copy npub", exact: true })
+        .click();
+      const npub = await page.evaluate(() => window.focusFixture.personNpub);
       await expect
         .poll(() => page.evaluate(() => window.copiedNpubs))
         .toEqual([npub]);
-      await expect(add).toBeEnabled();
-      // Pointer entry has not focused Add: Escape must find the row control.
-      await expect(copy).toBeFocused();
-      await page.keyboard.press("Escape");
-      await expect(card).not.toBeVisible();
+      await expect(actions).toBeFocused();
       await expect(dialog).toBeVisible();
-      await expect(identity).toBeFocused();
+      await expect(add).toBeEnabled();
       await page.mouse.move(0, 0);
       await search.focus();
-      await expect(card).not.toBeVisible();
-      // Hold the hover/focus delay: rapid Tab must not require a pause.
-      await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
-      await page.clock.pauseAt(new Date("2026-01-01T00:00:01Z"));
-      try {
-        await page.keyboard.press("Tab");
-        await expect(
-          dialog.getByRole("button", {
-            name: "Clear search people and agents",
-          }),
-        ).toBeFocused();
-        await page.keyboard.press("Tab");
-        await expect(identity).toBeFocused();
-        await page.keyboard.press("Tab");
-        await expect(copy).toBeFocused();
-      } finally {
-        await page.clock.resume();
-      }
-      await expect(card).toBeVisible();
-      await expect(identity).toHaveAttribute(
-        "aria-details",
-        await card.getAttribute("id"),
-      );
-      await expect(identity).toHaveAccessibleDescription(
-        /Tab to reach Copy npub/,
-      );
-      await expect(identity).not.toHaveAttribute("aria-haspopup");
+      await page.keyboard.press("Tab");
+      await expect(
+        dialog.getByRole("button", { name: "Clear search people and agents" }),
+      ).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(identity).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(add).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(actions).toBeFocused();
+      await page.keyboard.press("Enter");
+      await menu
+        .getByRole("menuitem", { name: "Copy npub", exact: true })
+        .focus();
       await page.keyboard.press("Enter");
       await expect
         .poll(() => page.evaluate(() => window.copiedNpubs))
         .toEqual([npub, npub]);
-      await page.keyboard.press("Shift+Tab");
-      await expect(identity).toBeFocused();
-      await page.keyboard.press("Tab");
-      await expect(copy).toBeFocused();
-      await page.keyboard.press("Tab");
-      await expect(add).toBeFocused();
-      await expect(card).not.toBeVisible();
-      await page.keyboard.press("Shift+Tab");
-      await expect(identity).toBeFocused();
-      await expect(card).toBeVisible();
-      await page.keyboard.press("Tab");
-      await expect(copy).toBeFocused();
-      await page.keyboard.press("Escape");
-      await expect(card).not.toBeVisible();
-      await expect(dialog).toBeVisible();
-      await expect(identity).toBeFocused();
-      await expect(identity).not.toHaveAttribute("aria-details");
-      await page.keyboard.press("Tab");
-      await expect(add).toBeFocused();
+      await expect(actions).toBeFocused();
+      await expect(
+        page.getByRole("dialog", { name: "Morgan identity", exact: true }),
+      ).toHaveCount(0);
     }
     await add.focus();
     await page.keyboard.press("Enter");
@@ -222,6 +194,7 @@ test("identity copy preserves modal focus and addition returns focus only to its
     }
   }
   await team.getByRole("textbox").focus();
+  await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
   await page.clock.pauseAt(new Date("2026-01-01T01:00:00Z"));
   try {
     await page.keyboard.press("Tab");
@@ -244,9 +217,9 @@ test("identity copy preserves modal focus and addition returns focus only to its
   expect(errors).toEqual([]);
 });
 
-// Real hit testing and portal geometry cannot be checked in jsdom. Hover the
-// name first, then move straight to the visible Add label without locator retries.
-test("identity previews leave multiword candidate Add actions clickable", async ({
+// Real hit testing cannot be checked in jsdom. Hover the identity, then
+// move straight to the visible Add label without locator retries.
+test("longer inline keys leave multiword candidate Add actions clickable", async ({
   page,
 }) => {
   const { errors } = watchPageErrors(page);
@@ -279,12 +252,19 @@ test("identity previews leave multiword candidate Add actions clickable", async 
         name: new RegExp(`Open profile for ${name} `),
       });
       await identity.hover({ position: { x: 20, y: 20 } });
-      const card = page.getByRole("dialog", {
-        name: `${name} identity`,
-        exact: true,
-      });
-      await expect(card).toBeVisible();
-      await opened(card);
+      const key = add
+        .locator("../..")
+        .locator('[aria-hidden="true"].text-mono');
+      await expect(key).toBeVisible();
+      await expect(key).toHaveText(/^npub1.{6}….{6}$/);
+      const keyBounds = await key.boundingBox();
+      const addBounds = await add.boundingBox();
+      expect(keyBounds.x + keyBounds.width).toBeLessThanOrEqual(addBounds.x);
+      expect(
+        await dialog.evaluate(
+          (element) => element.scrollWidth <= element.clientWidth,
+        ),
+      ).toBe(true);
       const bounds = await add.getByText("Add", { exact: true }).boundingBox();
       const point = {
         x: bounds.x + bounds.width / 2,
@@ -358,20 +338,11 @@ test("Escape returns focus only while the closing identity preview still owns it
   const { errors } = watchPageErrors(page);
   for (const move of ["none", "search", "tab"]) {
     await page.goto(url);
-    await page
-      .getByRole("button", { name: "Channel members", exact: true })
-      .click();
-    const dialog = page.getByRole("dialog", {
-      name: "Channel members",
-      exact: true,
-    });
-    const search = dialog.getByRole("searchbox");
-    await search.fill("Morgan");
-    const add = dialog.getByRole("button", { name: /Add Morgan/ });
-    const identity = dialog.getByRole("button", {
-      name: /Open profile for Morgan/,
-    });
-    await identity.hover({ position: { x: 20, y: 20 } });
+    await page.getByRole("button", { name: "Edit team", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Team", exact: true });
+    const search = dialog.getByRole("textbox");
+    const identity = dialog.getByRole("checkbox", { name: /Morgan/ });
+    await identity.hover();
     const card = page.getByRole("dialog", {
       name: "Morgan identity",
       exact: true,
@@ -381,7 +352,7 @@ test("Escape returns focus only while the closing identity preview still owns it
     await copy.click();
     await expect(copy).toBeFocused();
     const exit = await holdPreviewExit(page);
-    const next = add;
+    const next = dialog.getByRole("button", { name: "Close", exact: true });
     try {
       await page.keyboard.press("Escape");
       await exit.held(card);
@@ -452,12 +423,6 @@ test("inline member identity geometry and separate addition focus", async ({
     );
     expect(await memberRow.boundingBox()).toEqual(rowBoundsBeforeReveal);
     expect(await memberAvatar.boundingBox()).toEqual(avatarBoundsBeforeReveal);
-    // The retained preview can overlap Search. Leave its hover region rather
-    // than forcing a pointer through the card, then return to the field.
-    await page.mouse.move(0, 0);
-    await expect(
-      page.getByRole("dialog", { name: "Carl (you) identity" }),
-    ).not.toBeVisible();
     await search.hover();
     await expect(memberMetadata).toHaveCSS("height", "0px");
     await memberRow
@@ -567,4 +532,32 @@ test("inline member identity geometry and separate addition focus", async ({
         : search,
     ).toBeFocused();
   }
+});
+
+test.describe("touch identity actions", () => {
+  test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
+  test("copies the full key from the menu without hover or profile navigation", async ({
+    page,
+  }) => {
+    await page.goto(url);
+    await page
+      .getByRole("button", { name: "Channel members", exact: true })
+      .tap();
+    const dialog = page.getByRole("dialog", {
+      name: "Channel members",
+      exact: true,
+    });
+    const actions = dialog.getByRole("button", {
+      name: "Actions for Carl",
+      exact: true,
+    });
+    await expect(actions).toBeVisible();
+    await actions.tap();
+    await page.getByRole("menuitem", { name: "Copy npub", exact: true }).tap();
+    const npub = await page.evaluate(() => window.focusFixture.viewerNpub);
+    await expect
+      .poll(() => page.evaluate(() => window.copiedNpubs))
+      .toEqual([npub]);
+    await expect(dialog).toBeVisible();
+  });
 });

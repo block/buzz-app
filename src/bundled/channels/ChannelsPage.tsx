@@ -960,6 +960,14 @@ function ChannelWorkspace({
                           control={agentControl}
                           canOpenLink={canOpenLink}
                           onOpenLink={openLink}
+                          onOpenConversation={
+                            navigator && viewer
+                              ? (id) =>
+                                  openLink(
+                                    `buzz://channel/${encodeURIComponent(id)}`,
+                                  )
+                              : undefined
+                          }
                         />
                       )}
                       {drawer.launchers}

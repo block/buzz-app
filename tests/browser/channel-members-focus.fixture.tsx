@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { npubEncode } from "nostr-tools/nip19";
 import { AgentSelection } from "../../src/bundled/channel-templates/TemplateFields";
 import { Dialog } from "../../src/shared/design-system/ui/Dialog";
 import { Button } from "../../src/shared/design-system/ui/Button";
@@ -111,5 +112,11 @@ function Fixture() {
 createRoot(root).render(<Fixture />);
 // The test controls when confirmation arrives; no relay or member is contacted.
 Object.assign(window, {
-  focusFixture: { published, additions, confirm: () => releasePublish() },
+  focusFixture: {
+    published,
+    additions,
+    personNpub: npubEncode(person.pubkey),
+    viewerNpub: npubEncode(viewer.pubkey),
+    confirm: () => releasePublish(),
+  },
 });

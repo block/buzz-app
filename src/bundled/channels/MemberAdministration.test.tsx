@@ -9,6 +9,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { formatPublicKey } from "../../shared/identity/public-key";
 import { npubEncode } from "nostr-tools/nip19";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
@@ -32,6 +33,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   Reflect.deleteProperty(HTMLElement.prototype, "showPopover");
   for (const stop of stops.splice(0)) stop();
 });
@@ -43,6 +45,8 @@ async function setup(
   roleRead?: Promise<void>,
   targetAgent = false,
   presence?: Presence,
+  messageSupport = false,
+  messageNavigation = true,
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -125,13 +129,27 @@ async function setup(
   session.channels.ensureList();
   await vi.waitFor(() => expect(session.channels.list().status).toBe("ready"));
   const onOpenLink = vi.fn(() => true);
+  const onOpenConversation = vi.fn(() => true);
+  const openMessage = vi.fn(
+    async (_keys: readonly string[], _signal: AbortSignal) => "dm-1",
+  );
+  const presentedSession = {
+    ...session,
+    ...(presence ? { presence } : {}),
+    directMessages: {
+      ...session.directMessages,
+      available: messageSupport,
+      open: openMessage,
+    },
+  };
   render(
     <ToastProvider>
       <ChannelMembersButton
-        session={presence ? { ...session, presence } : session}
+        session={presentedSession}
         channelId={id}
         canOpenLink={() => true}
         onOpenLink={onOpenLink}
+        onOpenConversation={messageNavigation ? onOpenConversation : undefined}
       />
     </ToastProvider>,
   );
@@ -149,6 +167,8 @@ async function setup(
     publish,
     query,
     onOpenLink,
+    onOpenConversation,
+    openMessage,
     target,
     viewer,
     relay,
@@ -375,7 +395,7 @@ it.each([
     await screen.findByRole("menuitem", { name: "Remove from channel" });
     expect(
       screen.getAllByRole("menuitem").map((item) => item.textContent),
-    ).toEqual(["View profile", ...actions]);
+    ).toEqual(["View profile", "Copy npub", ...actions]);
     await t.user.keyboard("{Escape}");
     expect(
       within(row).getByRole("button", { name: /Open profile/ }),
@@ -665,7 +685,11 @@ it.each([false, true])(
       required(
         screen
           .getAllByRole("button", { name: /^Open profile for/ })
-          .find((button) => button.title === npubEncode(t.target.pubkey))
+          .find((button) =>
+            button
+              .getAttribute("aria-label")
+              ?.includes(`(${formatPublicKey(t.target.pubkey)})`),
+          )
           ?.closest("li"),
       );
     if (failure) {
@@ -800,7 +824,7 @@ async function expectProfileOnly(
   await user.click(screen.getByRole("button", { name: `Actions for ${name}` }));
   expect(
     (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
-  ).toEqual(["View profile"]);
+  ).toEqual(["View profile", "Copy npub"]);
   await vi.waitFor(() => expect(screen.getByRole("menu")).toHaveFocus());
   await user.keyboard("{Escape}");
   await vi.waitFor(() =>
@@ -831,7 +855,12 @@ it.each(["ellipsis", "context", "keyboard", "context-key"])(
     }
     expect(
       (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
-    ).toEqual(["View profile", "Make admin", "Remove from channel"]);
+    ).toEqual([
+      "View profile",
+      "Copy npub",
+      "Make admin",
+      "Remove from channel",
+    ]);
     expect(t.onOpenLink).not.toHaveBeenCalled();
     expect(t.publish).not.toHaveBeenCalled();
     await t.user.click(screen.getByRole("menuitem", { name: "View profile" }));
@@ -892,8 +921,7 @@ it.each([false, true])(
     });
     const avatar = required(profile.querySelector(".buzz-avatar-status"));
     expect(avatar).not.toHaveAttribute("data-status");
-    expect(profile).toHaveAttribute("title", npubEncode(t.target.pubkey));
-    expect(profile).toHaveAccessibleDescription(/Tab to reach Copy npub/);
+    expect(profile).not.toHaveAttribute("title");
     expect(profile).not.toHaveAccessibleDescription(/Presence:/);
     expect(avatar).toHaveAttribute("data-shape", agent ? "squircle" : "circle");
     expect(listeners.get(t.target.pubkey)?.size).toBe(1);
@@ -905,13 +933,10 @@ it.each([false, true])(
       });
       if (next === "unknown") {
         expect(avatar).not.toHaveAttribute("data-status");
-        expect(profile).toHaveAccessibleDescription(/Tab to reach Copy npub/);
         expect(profile).not.toHaveAccessibleDescription(/Presence:/);
       } else {
         expect(avatar).toHaveAttribute("data-status", next);
-        expect(profile).toHaveAccessibleDescription(
-          new RegExp(`Tab to reach Copy npub.*Presence: ${next}`),
-        );
+        expect(profile).toHaveAccessibleDescription(`Presence: ${next}`);
       }
     }
     await t.user.type(screen.getByRole("searchbox"), "Carl");
@@ -923,3 +948,227 @@ it.each([false, true])(
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
+
+it.each(["Carl", "Owner", "Morgan"])(
+  "copies the full npub for %s without opening a profile or changing membership",
+  async (name) => {
+    const t = await setup();
+    const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    const profile = screen.getByRole("button", {
+      name: new RegExp(`^Open profile for ${name} `),
+    });
+    const row = required(profile.closest("li"));
+    const npub =
+      name === "Carl"
+        ? npubEncode(t.viewer.pubkey)
+        : name === "Morgan"
+          ? npubEncode(t.target.pubkey)
+          : npubEncode(
+              required(
+                t.session.channels
+                  .get?.(id)
+                  ?.members?.find(
+                    (key) => key !== t.viewer.pubkey && key !== t.target.pubkey,
+                  ),
+              ),
+            );
+    await t.user.click(
+      within(row).getByRole("button", { name: `Actions for ${name}` }),
+    );
+    await t.user.click(
+      await screen.findByRole("menuitem", { name: "Copy npub" }),
+    );
+    expect(copy).toHaveBeenCalledExactlyOnceWith(npub);
+    expect(await screen.findByText("Copied npub")).toBeVisible();
+    expect(
+      screen.getByRole("dialog", { name: "Channel members" }),
+    ).toBeVisible();
+    expect(t.onOpenLink).not.toHaveBeenCalled();
+    expect(t.publish).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps agent Copy available after clipboard rejection and retries from the menu", async () => {
+  const t = await setup("owner", "member", true, undefined, true);
+  const copy = vi
+    .spyOn(navigator.clipboard, "writeText")
+    .mockRejectedValueOnce(new Error("denied"))
+    .mockResolvedValue();
+  const actions = screen.getByRole("button", { name: "Actions for Morgan" });
+  await t.user.click(actions);
+  await t.user.click(
+    await screen.findByRole("menuitem", { name: "Copy npub" }),
+  );
+  expect(
+    await screen.findByText("Couldn’t copy npub. Try again."),
+  ).toBeVisible();
+  await t.user.click(actions);
+  await t.user.click(
+    await screen.findByRole("menuitem", { name: "Copy npub" }),
+  );
+  expect(await screen.findByText("Copied npub")).toBeVisible();
+  expect(copy).toHaveBeenNthCalledWith(2, npubEncode(t.target.pubkey));
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
+it.each([
+  [false, "member", true, true, true],
+  [true, "member", true, true, false],
+  [false, "bot", true, true, false],
+  [false, "member", false, true, false],
+  [false, "member", true, false, false],
+] as const)(
+  "gates Send message by human identity, capability and navigation (%s/%s/%s/%s)",
+  async (agent, role, available, navigation, offered) => {
+    const t = await setup(
+      "member",
+      role,
+      true,
+      undefined,
+      agent,
+      undefined,
+      available,
+      navigation,
+    );
+    await t.user.click(
+      screen.getByRole("button", { name: "Actions for Morgan" }),
+    );
+    expect(
+      (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
+    ).toEqual(
+      offered
+        ? ["View profile", "Send message", "Copy npub"]
+        : ["View profile", "Copy npub"],
+    );
+    await t.user.keyboard("{Escape}");
+    await t.user.click(
+      screen.getByRole("button", { name: "Actions for Carl" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Copy npub" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("menuitem", { name: "Send message" }),
+    ).not.toBeInTheDocument();
+    expect(t.openMessage).not.toHaveBeenCalled();
+  },
+);
+
+it("opens a confirmed human DM once, then hands navigation off without a membership write", async () => {
+  const t = await setup(
+    "member",
+    "member",
+    true,
+    undefined,
+    false,
+    undefined,
+    true,
+  );
+  let release!: (id: string) => void;
+  t.openMessage.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  const actions = screen.getByRole("button", { name: "Actions for Morgan" });
+  await t.user.click(actions);
+  await t.user.click(
+    await screen.findByRole("menuitem", { name: "Send message" }),
+  );
+  expect(t.openMessage).toHaveBeenCalledExactlyOnceWith(
+    [t.target.pubkey],
+    expect.any(AbortSignal),
+  );
+  expect(await screen.findByText("Opening conversation…")).toBeVisible();
+  await t.user.click(actions);
+  expect(
+    await screen.findByRole("menuitem", { name: "Send message" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await t.user.click(screen.getByRole("menuitem", { name: "Send message" }));
+  expect(t.openMessage).toHaveBeenCalledOnce();
+  await t.user.keyboard("{Escape}");
+  await act(async () => release("dm-1"));
+  expect(t.onOpenConversation).toHaveBeenCalledExactlyOnceWith("dm-1");
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect(t.onOpenLink).not.toHaveBeenCalled();
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
+it.each(["read", "navigation"])(
+  "retains Members after DM %s failure and allows explicit retry",
+  async (failure) => {
+    const t = await setup(
+      "member",
+      "member",
+      true,
+      undefined,
+      false,
+      undefined,
+      true,
+    );
+    if (failure === "read")
+      t.openMessage.mockRejectedValueOnce(new Error("DM unavailable"));
+    else t.onOpenConversation.mockReturnValueOnce(false);
+    const actions = screen.getByRole("button", { name: "Actions for Morgan" });
+    await t.user.click(actions);
+    await t.user.click(
+      await screen.findByRole("menuitem", { name: "Send message" }),
+    );
+    expect(
+      await screen.findByText(
+        failure === "read"
+          ? "DM unavailable"
+          : "Could not open the conversation. Try Send message again.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("dialog", { name: "Channel members" }),
+    ).toBeVisible();
+    await t.user.click(actions);
+    await t.user.click(
+      await screen.findByRole("menuitem", { name: "Send message" }),
+    );
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(t.openMessage).toHaveBeenCalledTimes(2);
+    expect(t.publish).not.toHaveBeenCalled();
+  },
+);
+
+it("closing Members aborts the DM waiter and prevents late navigation", async () => {
+  const t = await setup(
+    "member",
+    "member",
+    true,
+    undefined,
+    false,
+    undefined,
+    true,
+  );
+  let release!: (id: string) => void;
+  t.openMessage.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  await t.user.click(
+    screen.getByRole("button", { name: "Actions for Morgan" }),
+  );
+  await t.user.click(
+    await screen.findByRole("menuitem", { name: "Send message" }),
+  );
+  const signal = required(t.openMessage.mock.calls[0]?.[1]);
+  expect(signal.aborted).toBe(false);
+  await t.user.click(
+    screen.getByRole("button", { name: "Close channel members" }),
+  );
+  expect(signal.aborted).toBe(true);
+  await act(async () => release("dm-1"));
+  expect(t.onOpenConversation).not.toHaveBeenCalled();
+  expect(t.publish).not.toHaveBeenCalled();
+});

@@ -27,9 +27,6 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import type { AriaAttributes } from "react";
-import { AgentOwnerPreview } from "../../features/profiles/AgentOwnerPreview";
-import { IdentityRow } from "../../shared/identity/IdentityRow";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import {
   ArrowsClockwiseIcon,
@@ -37,7 +34,6 @@ import {
 } from "../../shared/design-system/icons";
 import {
   MemberRow,
-  InvitationRow,
   MemberAdministrationStatus,
   useMemberAdministration,
 } from "./MemberAdministration";
@@ -78,7 +74,8 @@ function MemberAvatar({
   );
 }
 
-type ProfileNavigation = {
+type MemberNavigation = {
+  onOpenConversation?: ((channelId: string) => boolean) | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   onOpenLink?:
     | ((target: string, returnFocus?: HTMLElement) => boolean)
@@ -91,11 +88,12 @@ export function ChannelMembersButton({
   control,
   canOpenLink,
   onOpenLink,
+  onOpenConversation,
 }: {
   session: RelaySession;
   channelId: string;
   control?: AgentControl | undefined;
-} & ProfileNavigation) {
+} & MemberNavigation) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   return (
@@ -117,6 +115,7 @@ export function ChannelMembersButton({
           control={control}
           canOpenLink={canOpenLink}
           onOpenLink={onOpenLink}
+          onOpenConversation={onOpenConversation}
           close={() => setOpen(false)}
           trigger={trigger}
         />
@@ -134,16 +133,20 @@ export function ChannelMembersDialog({
   trigger,
   canOpenLink,
   onOpenLink,
+  onOpenConversation,
 }: {
   session: RelaySession;
   channelId: string;
   control?: AgentControl | undefined;
   close(): void;
   trigger: React.RefObject<HTMLButtonElement | null>;
-} & ProfileNavigation) {
+} & MemberNavigation) {
   const reducedMotion = useReducedMotion();
   const presenceId = useId();
-  const openingProfile = useRef(false);
+  const openingDestination = useRef(false);
+  const messagePending = useRef(false);
+  const [openingMessage, setOpeningMessage] = useState(false);
+  const [messageError, setMessageError] = useState("");
   const input = useRef<HTMLElement>(null);
   const focusedAdd = useRef<{ key: string; button: HTMLButtonElement } | null>(
     null,
@@ -197,6 +200,9 @@ export function ChannelMembersDialog({
     const controller = new AbortController();
     lifetime.current = controller;
     setAgentsBusy(false);
+    messagePending.current = false;
+    setOpeningMessage(false);
+    setMessageError("");
     return () => {
       controller.abort();
       lifetime.current = undefined;
@@ -385,6 +391,53 @@ export function ChannelMembersDialog({
     }
   };
 
+  const openMessage = async (key: string) => {
+    const signal = lifetime.current?.signal;
+    if (
+      !signal ||
+      signal.aborted ||
+      messagePending.current ||
+      !onOpenConversation ||
+      !session.directMessages.available ||
+      !session.viewer ||
+      key === session.viewer ||
+      known.has(key) ||
+      profiles.get(key)?.isAgent ||
+      candidates.get(key)?.isAgent ||
+      administration.authority.roles[key] === "bot"
+    )
+      return;
+    messagePending.current = true;
+    setOpeningMessage(true);
+    setMessageError("");
+    try {
+      const destination = await session.directMessages.open([key], signal);
+      if (signal.aborted) return;
+      // The destination owns focus; closing Members must not return it to this header.
+      openingDestination.current = true;
+      if (onOpenConversation(destination)) close();
+      else {
+        openingDestination.current = false;
+        setMessageError(
+          "Could not open the conversation. Try Send message again.",
+        );
+      }
+    } catch (reason) {
+      openingDestination.current = false;
+      if (!signal.aborted)
+        setMessageError(
+          reason instanceof Error
+            ? reason.message
+            : "Could not open the conversation. Try Send message again.",
+        );
+    } finally {
+      if (!signal.aborted) {
+        messagePending.current = false;
+        setOpeningMessage(false);
+      }
+    }
+  };
+
   const row = (
     key: string,
     name: string,
@@ -392,11 +445,12 @@ export function ChannelMembersDialog({
     picture?: string,
     agent?: boolean,
   ) => {
+    const role = administration.authority.roles[key];
     const isAgent = agent || known.has(key) || profiles.get(key)?.isAgent;
+    const npub = npubEncode(key);
     const artwork = picture ?? profiles.get(key)?.picture;
     const target = profileTarget(key);
     const clickable = !!target && !!onOpenLink && !!canOpenLink?.(target);
-    const role = administration.authority.roles[key];
     const roleLabel =
       isAgent && role === "bot"
         ? "member"
@@ -423,12 +477,12 @@ export function ChannelMembersDialog({
     const openProfile = (destination: string | undefined) => {
       if (!destination || !canOpenLink?.(destination)) return false;
       // Hand modal focus to the existing panel, with a stable return target.
-      openingProfile.current = true;
+      openingDestination.current = true;
       if (onOpenLink?.(destination, trigger.current ?? undefined)) {
         close();
         return true;
       }
-      openingProfile.current = false;
+      openingDestination.current = false;
       return false;
     };
     const viewProfile = () => openProfile(target);
@@ -437,17 +491,15 @@ export function ChannelMembersDialog({
     const ownerName = owner
       ? `${label(owner)}${owner === session.viewer ? " (you)" : ""}`
       : "";
-    const profile = (previewProps: AriaAttributes) => (
+    const identity = (
       <div className={styles.profileContent}>
         {clickable && (
           <div className={styles.profileHitTarget}>
             <NavigationItem
-              {...previewProps}
               label=""
               icon={avatar}
               aria-label={`Open profile for ${name} (${keys.get(key)})${isAgent ? ", agent" : ""}${adding ? ", not in this channel" : roleLabel ? `, ${roleLabel}` : ""}${!adding && archived.has(key) ? ", archived" : ""}`}
-              title={npubEncode(key)}
-              aria-describedby={`${previewProps["aria-describedby"]} ${presenceId}-${key}`}
+              aria-describedby={`${presenceId}-${key}`}
               onClick={viewProfile}
             />
           </div>
@@ -455,7 +507,6 @@ export function ChannelMembersDialog({
         <div
           className={styles.staticProfile}
           data-profile-link={clickable || undefined}
-          title={npubEncode(key)}
         >
           {!clickable && avatar}
           <span className="min-w-0 flex-1">
@@ -500,7 +551,7 @@ export function ChannelMembersDialog({
                   className={`${styles.publicKey} text-mono text-body-sm text-subtle`}
                   aria-hidden="true"
                 >
-                  {keys.get(key)}
+                  {`${npub.slice(0, 11)}…${npub.slice(-6)}`}
                 </span>
               </span>
             </motion.span>
@@ -508,49 +559,7 @@ export function ChannelMembersDialog({
         </div>
       </div>
     );
-    const identity = (
-      <IdentityRow
-        pubkey={key}
-        name={`${name}${key === session.viewer ? " (you)" : ""}`}
-        picture={artwork ? session.media(artwork, "small") : undefined}
-        isAgent={isAgent}
-        keyLabel={keys.get(key)}
-        detail={archived.has(key) ? "Archived" : undefined}
-        previewDetail={
-          isAgent ? (
-            <AgentOwnerPreview session={session} pubkey={key} />
-          ) : undefined
-        }
-        renderContent={profile}
-        render={clickable ? (content) => content : undefined}
-      />
-    );
-    return adding ? (
-      <InvitationRow key={key}>
-        <div className={styles.profile}>{identity}</div>
-        <span className={styles.addAction}>
-          <Button
-            variant="prominent"
-            size="xs"
-            aria-label={`Add ${name} (${keys.get(key)})`}
-            aria-disabled={busy.has(key) || undefined}
-            disabled={rosterBusy || !!rosterError}
-            onBlur={(event) => {
-              if (focusedAdd.current?.button === event.currentTarget)
-                focusedAdd.current = null;
-            }}
-            onClick={(event) => {
-              if (busy.has(key)) return;
-              if (document.activeElement === event.currentTarget)
-                focusedAdd.current = { key, button: event.currentTarget };
-              void add(key);
-            }}
-          >
-            {busy.has(key) ? "Adding…" : "Add"}
-          </Button>
-        </span>
-      </InvitationRow>
-    ) : (
+    return (
       <MemberRow
         key={key}
         session={session}
@@ -559,6 +568,42 @@ export function ChannelMembersDialog({
         name={name}
         returnFocus={input}
         onViewProfile={clickable ? viewProfile : undefined}
+        onSendMessage={
+          !isAgent &&
+          role !== "bot" &&
+          key !== session.viewer &&
+          session.viewer &&
+          session.directMessages.available &&
+          onOpenConversation
+            ? () => void openMessage(key)
+            : undefined
+        }
+        messagePending={openingMessage}
+        invitationAction={
+          adding ? (
+            <span className={styles.addAction}>
+              <Button
+                variant="prominent"
+                size="xs"
+                aria-label={`Add ${name} (${keys.get(key)})`}
+                aria-disabled={busy.has(key) || undefined}
+                disabled={rosterBusy || !!rosterError}
+                onBlur={(event) => {
+                  if (focusedAdd.current?.button === event.currentTarget)
+                    focusedAdd.current = null;
+                }}
+                onClick={(event) => {
+                  if (busy.has(key)) return;
+                  if (document.activeElement === event.currentTarget)
+                    focusedAdd.current = { key, button: event.currentTarget };
+                  void add(key);
+                }}
+              >
+                {busy.has(key) ? "Adding…" : "Add"}
+              </Button>
+            </span>
+          ) : undefined
+        }
       >
         {identity}
       </MemberRow>
@@ -595,7 +640,7 @@ export function ChannelMembersDialog({
         />
       }
       initialFocus={input}
-      finalFocus={() => (openingProfile.current ? false : trigger.current)}
+      finalFocus={() => (openingDestination.current ? false : trigger.current)}
     >
       <div className={styles.layout}>
         <div className="shrink-0">
@@ -735,6 +780,16 @@ export function ChannelMembersDialog({
               )}
             </p>
           ))}
+          {openingMessage && (
+            <p role="status" className="text-body-sm text-subtle">
+              Opening conversation…
+            </p>
+          )}
+          {messageError && (
+            <p role="alert" className="text-body-sm text-danger">
+              {messageError}
+            </p>
+          )}
           {notice && (
             <p role="status" className="text-body-sm text-subtle">
               {notice}

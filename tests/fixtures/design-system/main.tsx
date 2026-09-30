@@ -34,8 +34,6 @@ import { SystemDocumentPage } from "./ui/SystemDocumentPage";
 import { MessagesPage } from "./ui/MessagesPage";
 import { MissingPage } from "./ui/MissingPage";
 import { FoundationAlignmentPage } from "./ui/FoundationAlignmentPage";
-import { SurfacePlayground } from "./ui/SurfacePlayground";
-import { RemPlayground } from "./ui/RemPlayground";
 
 // Explicit design-only routes: no import of the app route tree or native startup.
 // Hash history keeps deep links reloadable on a static file host.
@@ -52,16 +50,6 @@ const detail = createRoute({
   component: () => <ComponentDetailPage slug={detail.useParams().component} />,
 });
 const pages = [
-  createRoute({
-    getParentRoute: () => design,
-    path: "surface-playground",
-    component: SurfacePlayground,
-  }),
-  createRoute({
-    getParentRoute: () => design,
-    path: "rem-playground",
-    component: RemPlayground,
-  }),
   createRoute({
     getParentRoute: () => design,
     path: "forms",

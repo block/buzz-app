@@ -29,13 +29,6 @@ function componentNavItems(
 
 const SECTIONS: NavSection[] = [
   {
-    heading: "System playgrounds",
-    items: [
-      ["Colors & surfaces", "/design/surface-playground"],
-      ["Rem & text sizing", "/design/rem-playground"],
-    ],
-  },
-  {
     heading: "Foundations",
     items: [
       ["Color", "/design/color", [["Token table", "/design/color/table"]]],

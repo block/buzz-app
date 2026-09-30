@@ -248,12 +248,12 @@ Appearance, Shortcuts and Notifications; other pages can adopt these when touche
 Light-mode inset fields and quiet fills use neutral-2 (#f5f5f6). Panel and floating hover use
 that same stop; subtle-button hover is #f1f1f2. In dark mode, panels, popovers,
 subtle controls, and hover fills have separate steps. See the shared DESIGN.md
-quiet surface stack and the viewer’s Colors & surfaces playground.
+quiet surface stack.
 
 Authored CSS dimensions now use rem across shell, channel, message, picker, and
 settings layouts. Physical strokes and browser/media measurement coordinates
-remain pixels. The Rem & text sizing playground separately adjusts the root and
-text scale without persisting either change or changing the host text-only zoom contract.
+remain pixels. The host text-size preference changes type independently of the
+root size and layout geometry.
 
 ## Preference rows
 

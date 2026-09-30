@@ -69,7 +69,7 @@ for (const mode of ["light", "dark"]) {
     await copy.hover();
     await expect(copy).toHaveCSS(
       "background-color",
-      mode === "light" ? "rgb(239, 239, 240)" : "rgb(64, 64, 64)",
+      mode === "light" ? "rgb(241, 241, 242)" : "rgb(46, 46, 46)",
     );
     await page.keyboard.press(
       browserName === "webkit" && process.platform === "darwin"
@@ -106,17 +106,35 @@ for (const mode of ["light", "dark"]) {
       )
       .toBe(true);
     await page.keyboard.press(`${modifier}+0`);
+    await expect(region).toHaveCSS("font-size", "14px");
+    await expect(key).toHaveCSS("font-size", "12px");
     for (const width of [1280, 900, 390]) {
       await page.setViewportSize({ width, height: 800 });
+      // matchMedia updates React navigation after the viewport changes. Measure
+      // containment only after the shell has applied that responsive layout.
+      const navigation = page.locator(".shell-navigation");
+      if (width <= 650)
+        await expect(navigation).not.toHaveAttribute(
+          "data-sidebar-collapsible",
+        );
+      else
+        await expect(navigation).toHaveAttribute(
+          "data-sidebar-collapsible",
+          "true",
+        );
       await expect(key).toBeVisible();
-      const bounds = await region.boundingBox();
-      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
-      expect(
-        await region.evaluate((el) => el.scrollWidth > el.clientWidth),
-      ).toBe(false);
-      expect(await key.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
-        false,
-      );
+      await expect
+        .poll(async () => {
+          const bounds = await region.boundingBox();
+          return bounds.x + bounds.width;
+        })
+        .toBeLessThanOrEqual(width);
+      await expect
+        .poll(() => region.evaluate((el) => el.scrollWidth > el.clientWidth))
+        .toBe(false);
+      await expect
+        .poll(() => key.evaluate((el) => el.scrollWidth > el.clientWidth))
+        .toBe(false);
       // The human profile has no Memories tab; keyboard navigation stays
       // confined to the available tabs, including at narrow widths.
       const tabs = region.getByRole("tablist", { name: "Profile sections" });

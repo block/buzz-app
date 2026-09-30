@@ -611,8 +611,6 @@ root or layout spacing. Keep physical hairlines, optical offsets, and runtime
 geometry returned by the browser or media APIs in pixels. Sidebar resize limits
 and its 650px navigation breakpoint remain paired with their JavaScript owner;
 the timeline's 56px leading region remains paired with Virtua's start margin.
-The viewer’s Colors & surfaces and Rem & text sizing playgrounds exercise both
-layer relationships and independent root/text scaling.
 
 ## Writing
 

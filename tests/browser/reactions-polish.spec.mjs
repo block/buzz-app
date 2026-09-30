@@ -1,6 +1,50 @@
 import { expect } from "@playwright/test";
 import { test } from "./source-fixture.mjs";
 
+// Browser-only: actual rem geometry and the line-height clipping boundary need
+// the production stylesheet and layout engine, not a DOM emulator.
+test("reaction counts grow with root and text size without clipping", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/emoji.html?reactions");
+  const message = page
+    .locator("[data-message-id]")
+    .filter({ hasText: "Historic" });
+  const pill = message.locator('button[data-reaction=":party:"]');
+  const count = pill.locator('[class*="_reactionCountMotion_"]');
+  await expect(count).toBeVisible();
+  await expect(pill).toHaveCSS("min-width", "48px");
+  await expect(count).toHaveCSS("font-size", "12px");
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "150%";
+  });
+  await expect(pill).toHaveCSS("min-width", "72px");
+  await expect(count).toHaveCSS("font-size", "18px");
+  await page.evaluate(() =>
+    document.documentElement.style.setProperty("--buzz-text-scale", "2"),
+  );
+  await expect(pill).toHaveCSS("min-width", "72px");
+  await expect(count).toHaveCSS("font-size", "36px");
+  await expect
+    .poll(() =>
+      count.evaluate(
+        (el) =>
+          el.clientHeight >= Number.parseFloat(getComputedStyle(el).lineHeight),
+      ),
+    )
+    .toBe(true);
+  await page.evaluate(() => {
+    document.documentElement.style.removeProperty("font-size");
+  });
+  await expect(count).toHaveCSS("font-size", "24px");
+  await expect(count).toHaveCSS("height", "28px");
+  await page.evaluate(() =>
+    document.documentElement.style.removeProperty("--buzz-text-scale"),
+  );
+  await expect(count).toHaveCSS("font-size", "12px");
+  await expect(count).toHaveCSS("height", "14px");
+});
+
 test("reaction pills wrap, preview, toggle, and add from the inline control", async ({
   page,
 }, testInfo) => {

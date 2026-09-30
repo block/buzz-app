@@ -66,12 +66,19 @@ need their own validation.
   `async (page, { signal }) => {}` and drives the Playwright `page`. When it
   returns, the command saves the app's [client metrics](client-metrics.md)
   export as `client-metrics.json` and exits without Ctrl+C. A scenario that
-  throws or does not finish within five minutes fails the run, which then saves
-  no client metrics. `signal` aborts on Ctrl+C. A scenario runs as your real
-  account, so keep it read-only. Every capture starts from a fresh browser
-  profile with no community selected unless `BUZZ_DEV_OPEN_RELAY=1` is set.
-  `manifest.json` records the scenario file and the `BUZZ_RELAY_URL` environment
-  value.
+  throws or does not finish within five minutes fails the run: the command
+  prints the scenario's stack and the directory holding the remaining
+  artifacts, saves no client metrics, and exits nonzero. Ctrl+C during a
+  scenario also saves no client metrics but exits zero, like any interrupted
+  capture. `signal` aborts on Ctrl+C, at the timeout, and when the capture ends,
+  so pass it to any wait that would otherwise outlive the run. A scenario
+  outside the repository resolves bare imports from its own location, not from
+  the repository's `node_modules`. A scenario runs as your real account, so
+  keep it read-only. Every capture starts from a fresh browser profile with no
+  community selected unless `BUZZ_DEV_OPEN_RELAY=1` is set. `manifest.json`
+  records the scenario file and `relay`, the `https://` origin of the
+  `BUZZ_RELAY_URL` that development mode resolves from the environment or
+  `.env.local`; a value the dev server would reject is recorded as `null`.
 - `just desktop [args...]`: install locked dependencies and forward arguments to
   Tauri, e.g. `just desktop --port 1431 --no-watch`. Before launching, the adapter
   builds the pinned agent runtime when missing/outdated, or verifies and reuses it.

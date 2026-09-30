@@ -5,6 +5,7 @@ import { setTimeout as pause } from "node:timers/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import process from "node:process";
+import { relayOrigin } from "../src/features/communities/destination.ts";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
@@ -173,6 +174,20 @@ async function recordManifest(directory, target, profileArgs, extra = {}) {
       2,
     )}\n`,
   );
+}
+
+// The relay the dev server will use: Vite's development environment (.env
+// files, with the process environment winning) reduced to the validated public
+// origin. A rejected value may carry a credential, so it is never recorded.
+export async function configuredRelay(directory = root) {
+  const { loadEnv } = await import("vite");
+  const value = loadEnv("development", directory, "BUZZ_").BUZZ_RELAY_URL;
+  if (!value?.trim()) return null;
+  try {
+    return relayOrigin(value);
+  } catch {
+    return null;
+  }
 }
 
 function processGroupAlive(pid) {
@@ -539,11 +554,14 @@ export async function runScenario(
   signal,
   timeoutMs = SCENARIO_TIMEOUT_MS,
 ) {
-  const finished = new AbortController();
+  // The scenario's signal aborts on Ctrl-C, at the timeout, and once this run
+  // settles, so abort-aware work it leaves behind cannot keep the process alive.
+  const ended = new AbortController();
+  const stop = AbortSignal.any([signal, ended.signal]);
   try {
     const metrics = await Promise.race([
       (async () => {
-        await scenario.run(page, { signal });
+        await scenario.run(page, { signal: stop });
         // The app's own client-metrics export (docs/client-metrics.md).
         return await page.evaluate(
           (label) => globalThis.__buzzClientMetrics.export(label),
@@ -552,9 +570,7 @@ export async function runScenario(
       })(),
       // Ctrl-C also ends this wait, so an interrupted scenario that finishes
       // late saves no metrics.
-      pause(timeoutMs, undefined, {
-        signal: AbortSignal.any([signal, finished.signal]),
-      }).then(() => {
+      pause(timeoutMs, undefined, { signal: stop }).then(() => {
         throw new Error(
           `Scenario did not finish within ${timeoutMs / 1000} seconds.`,
         );
@@ -568,7 +584,7 @@ export async function runScenario(
   } catch (error) {
     return { reason: "scenario", code: 1, error };
   } finally {
-    finished.abort();
+    ended.abort();
   }
 }
 
@@ -579,6 +595,7 @@ export async function profileWeb({
   network,
   trace = false,
   scenario,
+  scenarioTimeoutMs,
 }) {
   const vite = normalizeWebViteArgs(args);
   await recordManifest(directory, "web", profileArgs, {
@@ -590,10 +607,12 @@ export async function profileWeb({
     ],
     network,
     scenario: scenario?.file ?? null,
-    relay: process.env.BUZZ_RELAY_URL ?? null,
+    relay: await configuredRelay(),
   });
 
   const control = stopController();
+  // Aborts the scenario's signal however the capture ends, including Vite exit.
+  const captureEnd = new AbortController();
   // Browser operations do not accept AbortSignal. Stop waiting immediately and
   // let finally close the owning browser; late results must not resume startup.
   const duringStartup = async (operation) => {
@@ -703,14 +722,28 @@ export async function profileWeb({
       control.requested,
       viteExit,
       ...(scenario
-        ? [runScenario(scenario, page, directory, control.abort.signal)]
+        ? [
+            runScenario(
+              scenario,
+              page,
+              directory,
+              AbortSignal.any([control.abort.signal, captureEnd.signal]),
+              scenarioTimeoutMs,
+            ),
+          ]
         : []),
     ]);
-    if (outcome.error) failures.push(outcome.error);
+    if (outcome.error)
+      failures.push(
+        new Error(`Scenario failed; artifacts remain at ${directory}.`, {
+          cause: outcome.error,
+        }),
+      );
   } catch (error) {
     if (!control.abort.signal.aborted) failures.push(error);
     outcome ??= { reason: "startup", code: 1 };
   } finally {
+    captureEnd.abort();
     let rendererProfile;
     let brokerProfile;
     if (rendererStarted) {
@@ -858,6 +891,14 @@ async function profileDesktop({ directory, profileArgs, args }) {
   process.exitCode = forced ? 130 : outcome.code;
 }
 
+// A wrapped failure names the artifacts; its cause carries the stack to debug.
+export function failureReport(error) {
+  if (!(error instanceof Error)) return error;
+  const { cause } = error;
+  if (cause === undefined) return error.message;
+  return `${error.message}\n${cause instanceof Error ? cause.stack : cause}`;
+}
+
 async function main() {
   const target = process.argv[2];
   const profileArgs = process.argv.slice(3);
@@ -908,7 +949,7 @@ if (
   try {
     await main();
   } catch (error) {
-    console.error(error instanceof Error ? error.message : error);
+    console.error(failureReport(error));
     await stopChildren();
     process.exitCode = 1;
   }

@@ -19,6 +19,7 @@ try {
     network: true,
     trace: fixture.trace === true,
     scenario: fixture.scenario && (await loadScenario(fixture.scenario)),
+    scenarioTimeoutMs: fixture.scenarioTimeoutMs,
   });
   process.send({ type: "settled" });
 } catch (error) {

@@ -14,8 +14,11 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as pause } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import {
+  configuredRelay,
+  failureReport,
   inspectorClient,
   loadScenario,
   normalizeWebViteArgs,
@@ -90,9 +93,16 @@ test("a scenario file must default-export a function", async () => {
   );
 });
 
-test("a scenario that never finishes fails at the timeout", async () => {
+test("a scenario that never finishes is aborted and fails at the timeout", {
+  timeout: 10_000,
+}, async () => {
+  let waiting;
   const { code, error } = await runScenario(
-    { file: "stuck.mjs", run: () => new Promise(() => {}) },
+    {
+      file: "stuck.mjs",
+      run: (_page, { signal }) =>
+        (waiting = pause(60_000, undefined, { signal })),
+    },
     {},
     "unused",
     new AbortController().signal,
@@ -100,6 +110,59 @@ test("a scenario that never finishes fails at the timeout", async () => {
   );
   assert.equal(code, 1);
   assert.match(error.message, /did not finish within 0.001 seconds/);
+  await assert.rejects(waiting, { name: "AbortError" });
+});
+
+test("the recorded relay is the validated origin of Vite's development environment", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "buzz-profile-env-"));
+  const original = process.env.BUZZ_RELAY_URL;
+  const setProcess = (value) => {
+    if (value === undefined) delete process.env.BUZZ_RELAY_URL;
+    else process.env.BUZZ_RELAY_URL = value;
+  };
+  t.after(async () => {
+    setProcess(original);
+    await rm(directory, { recursive: true, force: true });
+  });
+  const relay = async (file, environment) => {
+    await writeFile(
+      path.join(directory, ".env.local"),
+      file === undefined ? "" : `BUZZ_RELAY_URL='${file}'\n`,
+    );
+    setProcess(environment);
+    return await configuredRelay(directory);
+  };
+  assert.equal(await relay(), null);
+  assert.equal(await relay("wss://file.example/"), "https://file.example");
+  assert.equal(
+    await relay("wss://file.example", "wss://process.example"),
+    "https://process.example",
+  );
+  // A rejected value may carry a credential; neither source may record it.
+  for (const rejected of [
+    "wss://user:secret@relay.example",
+    "wss://relay.example/?token=secret",
+    "wss://relay.example/#secret",
+    "wss://relay.example/secret",
+    "ws://relay.example",
+    "secret",
+  ]) {
+    assert.equal(await relay(rejected), null, rejected);
+    assert.equal(await relay("wss://file.example", rejected), null, rejected);
+  }
+});
+
+test("a wrapped failure reports its cause's stack", () => {
+  const cause = new Error("step failed");
+  assert.equal(
+    failureReport(new Error("Scenario failed.", { cause })),
+    `Scenario failed.\n${cause.stack}`,
+  );
+  assert.equal(failureReport(new Error("plain")), "plain");
+  assert.equal(
+    failureReport(new Error("cancelled", { cause: undefined })),
+    "cancelled",
+  );
 });
 
 test("web profiling derives navigation from its owned listener", () => {
@@ -192,18 +255,24 @@ async function webFixture(t, scenario) {
     "scripts",
     "node_modules/vite/bin",
     "node_modules/@playwright/test",
+    "src/features/communities",
     "profiles",
   ])
     await mkdir(path.join(directory, name), { recursive: true });
-  await copyFile(
-    new URL("../../scripts/profile-dev.mjs", import.meta.url),
-    path.join(directory, "scripts/profile-dev.mjs"),
-  );
+  for (const file of [
+    "scripts/profile-dev.mjs",
+    "src/features/communities/destination.ts",
+  ])
+    await copyFile(
+      new URL(`../../${file}`, import.meta.url),
+      path.join(directory, file),
+    );
   for (const [source, destination] of [
     ["driver.mjs", "driver.mjs"],
     ["vite.mjs", "node_modules/vite/bin/vite.js"],
     ["browser.mjs", "node_modules/@playwright/test/index.mjs"],
     ["scenario.mjs", "scenario.mjs"],
+    ["waiting-scenario.mjs", "waiting-scenario.mjs"],
   ])
     await copyFile(
       new URL(source, fixtures),
@@ -213,11 +282,24 @@ async function webFixture(t, scenario) {
     path.join(directory, "node_modules/@playwright/test/package.json"),
     JSON.stringify({ type: "module", exports: "./index.mjs" }),
   );
+  // Only the dev server is a stub; the profiler reads the relay the way the
+  // real Vite does, from the documented .env.local setup.
+  await writeFile(
+    path.join(directory, "node_modules/vite/package.json"),
+    JSON.stringify({ type: "module", exports: "./index.mjs" }),
+  );
+  await writeFile(
+    path.join(directory, "node_modules/vite/index.mjs"),
+    `export { loadEnv } from ${JSON.stringify(import.meta.resolve("vite"))};\n`,
+  );
+  await writeFile(
+    path.join(directory, ".env.local"),
+    "BUZZ_RELAY_URL=wss://relay.example\n",
+  );
   const child = fork(path.join(directory, "driver.mjs"), [], {
     cwd: directory,
     env: {
       PATH: process.env.PATH,
-      BUZZ_RELAY_URL: "wss://relay.example",
       BUZZ_TEST_SCENARIO: JSON.stringify(scenario),
     },
     stdio: ["ignore", "pipe", "pipe", "ipc"],
@@ -443,7 +525,7 @@ test("a scenario ends its own capture and saves the app's client metrics", async
     manifest.scenario,
     path.join(await realpath(fixture.directory), "scenario.mjs"),
   );
-  assert.equal(manifest.relay, "wss://relay.example");
+  assert.equal(manifest.relay, "https://relay.example");
   assert.ok(manifest.coverage.includes("client-metrics"));
 });
 
@@ -452,7 +534,13 @@ test("a failed scenario step finalizes the capture without client metrics", asyn
     scenario: "scenario.mjs",
     reject: "click",
   });
-  assert.match((await fixture.wait("settled")).error, /fixture rejection/);
+  const settled = await fixture.wait("settled");
+  assert.ok(
+    settled.error.startsWith("Scenario failed; artifacts remain at "),
+    settled.error,
+  );
+  assert.ok(settled.error.endsWith("/profiles."), settled.error);
+  assert.match(settled.cause, /fixture rejection/);
   await fixture.wait("browserClosed");
   fixture.child.send("finish");
   assert.deepEqual(await fixture.exited, [1, null], fixture.log());
@@ -483,4 +571,41 @@ test("Ctrl-C during a scenario saves the capture without client metrics", async 
     (await profileFiles(fixture)).includes("client-metrics.json"),
     false,
   );
+});
+
+test("a timed-out scenario is aborted so the process can exit", {
+  timeout: 30_000,
+}, async (t) => {
+  const fixture = await webFixture(t, {
+    scenario: "waiting-scenario.mjs",
+    scenarioTimeoutMs: 50,
+  });
+  const settled = await fixture.wait("settled");
+  assert.match(settled.error, /^Scenario failed; artifacts remain at /);
+  assert.match(settled.cause, /did not finish within 0.05 seconds/);
+  await fixture.wait("scenarioAborted");
+  await fixture.wait("browserClosed");
+  fixture.child.send("finish");
+  // The scenario's pending timer would hold the process open if not aborted.
+  assert.deepEqual(await fixture.exited, [1, null], fixture.log());
+  assert.equal(
+    (await profileFiles(fixture)).includes("client-metrics.json"),
+    false,
+  );
+});
+
+test("a scenario is aborted when Vite exits during the capture", {
+  timeout: 30_000,
+}, async (t) => {
+  const fixture = await webFixture(t, { scenario: "waiting-scenario.mjs" });
+  await fixture.wait("scenarioWaiting");
+  const pid = Number(
+    await readFile(path.join(fixture.directory, "vite.pid"), "utf8"),
+  );
+  process.kill(-pid, "SIGKILL");
+  await fixture.wait("settled");
+  await fixture.wait("scenarioAborted");
+  await fixture.wait("browserClosed");
+  fixture.child.send("finish");
+  assert.deepEqual(await fixture.exited, [1, null], fixture.log());
 });

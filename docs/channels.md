@@ -385,8 +385,16 @@ Each command has explicit confirmation. The lifecycle owner rechecks signed chan
 profile eligibility before signing and again before publication, validates
 the returned command, and confirms relay-owned state before removing a row. Archive retains membership;
 confirmed Delete/Leave use the existing access-loss purge. Commands use narrow
-development-broker routes, never the message outbox or automatic replay. Hosts
-without this capability display an unavailable notice; packaged native transport supports these dedicated commands.
+development-broker routes or the packaged native `relay_channel_sign` and
+`relay_channel_publish` commands, never the message outbox or automatic replay.
+Both hosts admit only the exact two-tag `9002` shape with `archived=true` (Archive)
+or `archived=false` (Unarchive); other values, extra tags, cross-route commands and
+altered or foreign signatures are rejected. Hosts without this capability display
+an unavailable notice. Native Unarchive requires rebuilding/restarting the desktop
+binary; updating the frontend alone does not update the Rust validator. Rust
+validator and production-IPC tests cover both values, but do not establish an
+installed desktop Archive → Unarchive round trip against a live relay; that
+acceptance remains outstanding.
 
 Main’s DM × remains local removal, including restoration on new message evidence.
 The separate, confirmed Hide conversation action publishes `41012`, not Leave or Delete. The separate relay-authored `30622`

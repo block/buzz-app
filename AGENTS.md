@@ -122,6 +122,21 @@ failure paths or weakening assertions. Enforce these rules during agent review;
 do not rely on contributors filling in a PR template. Follow the
 [test-layer review rules](docs/contributing.md#choosing-a-test-layer).
 
+Keep browser journeys fast. Each one pays a full app start in two engines, and
+hosted WebKit is the slowest lane.
+
+- Reuse the worker-scoped server and build (`tests/browser/source-fixture.mjs`,
+  `compiledApp`). Start a server inside a test only for mutable middleware.
+- Never wait out a product timer. Cross debounces, grace periods and expiries on
+  `page.clock`, after a barrier proves the timer is scheduled.
+- Give an assertion that must stay false a short explicit bound, not the default.
+- Run one variant per product branch and say which branch each variant of a loop
+  covers. Variants that share a branch belong in Vitest.
+- Assert saved records, state machines and protocol output in Vitest. A journey
+  keeps only what needs a real browser.
+- Check the slowest tests in the CI job summary and explain any new journey over
+  about 20 seconds on hosted WebKit.
+
 ## Deterministic tests
 
 Tests must control the ordering they assert, not depend on runner speed.

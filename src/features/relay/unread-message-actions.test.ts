@@ -264,6 +264,32 @@ it.each(["revoke", "clear", "dispose"] as const)(
   },
 );
 
+it.each(["revoke", "clear"] as const)(
+  "a manual mark queued behind a held read stays unsaved after %s",
+  async (action) => {
+    const h = setup();
+    await h.unread.ensure();
+    const held = h.hold();
+    const read = h.unread.markThrough(
+      { kind: "message", channelId: channel, messageId: h.root },
+      h.root,
+    );
+    const rejected = [expect(read).rejects.toThrow()];
+    try {
+      await held.started;
+      rejected.push(expect(h.unread.markUnreadLocal(target)).rejects.toThrow());
+      // The owner stays open, so only the save's own check can refuse it.
+      if (action === "revoke") h.revoke();
+      else h.owner.clear();
+    } finally {
+      held.release();
+    }
+    await Promise.all(rejected);
+    expect(h.journal().manual).toEqual([]);
+    expect(h.api.write).not.toHaveBeenCalled();
+  },
+);
+
 it.each(["cached", "outsider"] as const)(
   "%s read-only membership cannot start reading until membership is confirmed",
   async (state) => {

@@ -783,12 +783,16 @@ function ThreadMessages({
         scroller={scroller}
         settled={positioned}
         rootId={snapshot.root?.id}
+        // A visible exact reply can outlive its unavailable root. Until resolved,
+        // observe rows individually; an absent root must not mean channel catch-up.
         latestMessageId={
-          snapshot.replies.reduce<ChannelMessage | undefined>(
-            (latest, row) =>
-              !latest || row.createdAt > latest.createdAt ? row : latest,
-            undefined,
-          )?.id
+          snapshot.root
+            ? snapshot.replies.reduce<ChannelMessage | undefined>(
+                (latest, row) =>
+                  !latest || row.createdAt > latest.createdAt ? row : latest,
+                undefined,
+              )?.id
+            : undefined
         }
       />
       <section

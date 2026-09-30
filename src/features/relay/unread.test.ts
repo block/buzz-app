@@ -43,6 +43,7 @@ function setup(
   let journal: ReadJournal | undefined = preloaded?.(newReadJournal());
   let hold: Promise<void> | undefined;
   let commitHold: Promise<void> | undefined;
+  let committedSignal: (() => void) | undefined;
   let started: (() => void) | undefined;
   let failNextSave = false;
   let failure: Error | undefined;
@@ -68,6 +69,8 @@ function setup(
       if (commitHold) {
         const wait = commitHold;
         commitHold = undefined;
+        committedSignal?.();
+        committedSignal = undefined;
         await wait;
       }
       return journal;
@@ -155,10 +158,15 @@ function setup(
      * like a storage transaction still committing when relay events arrive. */
     holdCommit() {
       let release = () => {};
+      let signal = () => {};
+      const committed = new Promise<void>((resolve) => {
+        signal = resolve;
+      });
+      committedSignal = signal;
       commitHold = new Promise<void>((resolve) => {
         release = resolve;
       });
-      return release;
+      return { committed, release };
     },
   };
 }
@@ -1541,36 +1549,53 @@ it("mark all serialises channel reads over listed channels, skips read ones and 
   ).toBe(0);
 });
 
-it("mark all skips a channel whose grant is revoked mid-sweep instead of failing", async () => {
-  const h = setup();
-  h.grant("room");
-  h.grant("other");
-  h.emit([
-    message(h.alice, "room", "one", 11),
-    message(h.alice, "other", "two", 12),
-  ]);
-  clock(0);
-  const cut = { room: 11, other: 12 };
-  const [first, second] = h.session.channels
-    .list()
-    .channels.map((channel) => channel.id)
-    .filter((id) => id in cut) as (keyof typeof cut)[];
-  assert(first && second);
-  // Let the initial journal save settle so the hold lands on the sweep's write.
-  await flush();
-  // The first channel's write is still committing when the second grant goes.
-  const release = h.holdCommit();
-  const sweep = h.session.unread.markAllChannelsRead();
-  await flush();
-  expect(h.journal()?.state.frontiers).toEqual({ [first]: cut[first] });
-  h.emit([roster(h.relay, second, [], 20)]);
-  release();
-  const results = await sweep;
-  expect(results).toHaveLength(1);
-  expect(results[0]?.durability).toBe("saved");
-  // The revoked channel earned neither a frontier nor a failure.
-  expect(h.journal()?.state.frontiers).toEqual({ [first]: cut[first] });
-});
+it.each(["revoke", "grant"] as const)(
+  "mark all keeps untouched channels and click-time cuts across a mid-sweep %s",
+  async (action) => {
+    const h = setup();
+    const cut = { room: 11, other: 12, third: 13 };
+    for (const [id, timestamp] of Object.entries(cut)) {
+      h.grant(id);
+      h.emit([message(h.alice, id, id, timestamp)]);
+    }
+    clock(20);
+    const [first, second, third] = h.session.channels
+      .list()
+      .channels.map((channel) => channel.id);
+    assert(first && second && third);
+    await flush();
+    const held = h.holdCommit();
+    const sweep = h.session.unread.markAllChannelsRead();
+    // Attach before releasing the save so a regression is an assertion failure,
+    // not an unhandled rejection while the ordering gate is held.
+    const result = expect(sweep).resolves.toHaveLength(
+      action === "revoke" ? 2 : 3,
+    );
+    try {
+      await held.committed;
+      expect(h.journal()?.state.frontiers).toEqual({ [first]: 20 });
+      if (action === "revoke") h.emit([roster(h.relay, second, [], 30)]);
+      else {
+        h.grant("new", 30);
+        h.emit([message(h.alice, "new", "not selected", 31)]);
+      }
+      clock(40);
+      h.emit([message(h.alice, third, "after the click", 35)]);
+    } finally {
+      held.release();
+    }
+    await result;
+    expect(h.journal()?.state.frontiers).toEqual({
+      [first]: 20,
+      ...(action === "grant" ? { [second]: 20 } : {}),
+      [third]: 20,
+    });
+    expect(
+      h.session.unread.snapshot({ kind: "channel", channelId: third })
+        .observedCount,
+    ).toBe(1);
+  },
+);
 
 it.each([true, false])(
   "empty channel read saves a click cutoff only with frontier support (%s)",

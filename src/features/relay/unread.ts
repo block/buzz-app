@@ -192,6 +192,9 @@ export function createUnread({
   const messageForceKey = (channelId: string) => `message-force:${channelId}`;
   const visits = new Map<string, number>();
   const mutations = new Map<string, Promise<unknown>>();
+  // Explicit channel reads survive unrelated roster changes, but never their
+  // own revoke/regrant or a session/cache reset. Tokens cannot be revived.
+  const channelReadGenerations = new Map<string, object>();
   function serialize<T>(
     channelId: string,
     operation: () => Promise<T>,
@@ -681,6 +684,8 @@ export function createUnread({
   function purge() {
     // A revoke/regrant must not revive a transaction accepted under the old access epoch.
     epoch++;
+    for (const channelId of channelReadGenerations.keys())
+      if (!allowed(channelId)) channelReadGenerations.delete(channelId);
     const denied = new Set(
       [...known, ...forcedMessages.keys()].filter(
         (channel) => !allowed(channel),
@@ -930,8 +935,12 @@ export function createUnread({
       // when that thread's replies are outside our bounded evidence window.
       if (!threadReference(event)) keys.add(`thread:${event.id}`);
     }
-    const generation = epoch;
-    const valid = () => !closed && generation === epoch && allowed(channelId);
+    const generation = channelReadGenerations.get(channelId) ?? {};
+    channelReadGenerations.set(channelId, generation);
+    const valid = () =>
+      !closed &&
+      channelReadGenerations.get(channelId) === generation &&
+      allowed(channelId);
     return async () => {
       const result =
         rows.length || reads.snapshot().capability === "frontier-sync"
@@ -1300,12 +1309,14 @@ export function createUnread({
     },
     stale() {
       epoch++;
+      channelReadGenerations.clear();
       freshness = "stale";
       reads.stale();
       publish();
     },
     clear() {
       epoch++;
+      channelReadGenerations.clear();
       repairAgain = false;
       indexed = false;
       events.clear();
@@ -1320,6 +1331,7 @@ export function createUnread({
     dispose() {
       closed = true;
       epoch++;
+      channelReadGenerations.clear();
       lifetime.abort();
       for (const stop of [...handles]) stop();
       stopRead();

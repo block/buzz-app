@@ -812,3 +812,53 @@ it("without close, the embedded thread keeps its reader but has no close header 
   });
   expect(close).toHaveBeenCalledOnce();
 });
+
+it("observes a visible reply before its root resolves, then enables thread catch-up", async () => {
+  vi.useFakeTimers();
+  const h = messagesHarness();
+  const reply = {
+    ...row,
+    id: "c".repeat(64),
+    content: "available reply",
+    createdAt: 2,
+  };
+  h.snapshot.root = undefined;
+  h.snapshot.replies = [reply];
+  h.resize(600);
+  const observe = vi.fn(async () => {});
+  const catchUp = vi.fn(async (_id: string, rootId?: string) => {
+    if (!rootId)
+      throw new Error("A thread reply cannot advance the channel frontier");
+  });
+  h.props.session = {
+    ...h.session,
+    unread: {
+      ...h.session.unread,
+      sync: () =>
+        ({ capability: "frontier-sync" }) as ReturnType<
+          RelaySession["unread"]["sync"]
+        >,
+      reading: () => ({ view() {}, observe, catchUp, dispose() {} }),
+    },
+  };
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+    new DOMRect(0, 0, 500, 500),
+  ] as unknown as DOMRectList);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 500, 500),
+  );
+  h.render();
+  screen.getByRole("button", { name: "Close thread" }).focus();
+  await act(() => vi.advanceTimersByTimeAsync(299));
+  expect(observe).not.toHaveBeenCalled();
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(observe).toHaveBeenCalledExactlyOnceWith([reply.id]);
+  expect(catchUp).not.toHaveBeenCalled();
+
+  h.snapshot.root = row;
+  h.render();
+  await act(() => vi.advanceTimersByTimeAsync(300));
+  expect(catchUp).toHaveBeenCalledExactlyOnceWith(reply.id, row.id);
+});

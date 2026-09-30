@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open, end, settle } from "./timeline.mjs";
+import { open, end, settle, wheel } from "./timeline.mjs";
 import {
   holdReadingFocus,
   releaseReadingFocus,
@@ -237,7 +237,7 @@ test("loaded virtual rows reveal per attempt without thread reads or live-update
     history.locator(`[data-message-id="${first.id}"]`),
   ).toBeInViewport();
   await history.hover();
-  await page.mouse.wheel(0, -500);
+  await wheel(page, -500, history);
   await expect
     .poll(() =>
       history.evaluate(
@@ -245,7 +245,23 @@ test("loaded virtual rows reveal per attempt without thread reads or live-update
       ),
     )
     .toBeGreaterThan(80);
+  const detachedTop = await history.evaluate((element) => element.scrollTop);
   app.append("primary", "alpha", "Second detached arrival");
+  // A row can remeasure after newer reader input (for example, media loading).
+  // Preserve the detached position through that measurement, not just the count
+  // before Virtua has delivered it. Finish native wheel movement before taking
+  // the exact baseline; the driver regression, not this settled browser check,
+  // controls cancellation inside the retained command's 150ms lifetime.
+  await history
+    .locator("[data-message-id]")
+    .last()
+    .evaluate((row) => {
+      row.style.paddingBottom = "24px";
+    });
+  await settle(page, history);
+  expect(await history.evaluate((element) => element.scrollTop)).toBe(
+    detachedTop,
+  );
   await expect(jump).toHaveAccessibleName("1 new message");
   await jump.focus();
   await page.keyboard.press("Enter");

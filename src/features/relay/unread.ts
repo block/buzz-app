@@ -911,6 +911,15 @@ export function createUnread({
       return event ? [event] : [];
     });
   }
+  // Queued explicit reads and manual intent share the same access fence.
+  function channelIntentValid(channelId: string) {
+    const generation = channelReadGenerations.get(channelId) ?? {};
+    channelReadGenerations.set(channelId, generation);
+    return () =>
+      !closed &&
+      channelReadGenerations.get(channelId) === generation &&
+      allowed(channelId);
+  }
   // Capture evidence and time once per click, including every channel in a sweep.
   function channelReadIntent(channelId: string, clickedAt: number) {
     if (closed || !allowed(channelId))
@@ -935,12 +944,7 @@ export function createUnread({
       // when that thread's replies are outside our bounded evidence window.
       if (!threadReference(event)) keys.add(`thread:${event.id}`);
     }
-    const generation = channelReadGenerations.get(channelId) ?? {};
-    channelReadGenerations.set(channelId, generation);
-    const valid = () =>
-      !closed &&
-      channelReadGenerations.get(channelId) === generation &&
-      allowed(channelId);
+    const valid = channelIntentValid(channelId);
     return async () => {
       const result =
         rows.length || reads.snapshot().capability === "frontier-sync"
@@ -1253,10 +1257,9 @@ export function createUnread({
     },
     async markUnreadLocal(target) {
       const key = targetKey(target);
-      const generation = epoch;
+      const channelValid = channelIntentValid(target.channelId);
       const valid = () => {
-        if (closed || generation !== epoch || !allowed(target.channelId))
-          return false;
+        if (!channelValid()) return false;
         if (target.kind !== "channel")
           requireMessage(
             target,
@@ -1271,10 +1274,9 @@ export function createUnread({
     },
     async clearUnreadLocal(target) {
       const key = targetKey(target);
-      const generation = epoch;
+      const channelValid = channelIntentValid(target.channelId);
       const valid = () => {
-        if (closed || generation !== epoch || !allowed(target.channelId))
-          return false;
+        if (!channelValid()) return false;
         if (target.kind !== "channel")
           requireMessage(
             target,

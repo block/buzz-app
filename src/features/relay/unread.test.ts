@@ -1803,9 +1803,14 @@ it.each(["markThrough", "clearUnreadLocal", "markChannelRead"] as const)(
 
 it.each(
   (["clearCache", "dispose", "revoke-regrant"] as const).flatMap((action) =>
-    (["markUnreadLocal", "markMessageRead", "markMessageUnread"] as const).map(
-      (markAction) => ({ action, markAction }),
-    ),
+    (
+      [
+        "markUnreadLocal",
+        "clearUnreadLocal",
+        "markMessageRead",
+        "markMessageUnread",
+      ] as const
+    ).map((markAction) => ({ action, markAction })),
   ),
 )(
   "queued $markAction stays invalid after $action",
@@ -1822,8 +1827,8 @@ it.each(
     try {
       await held.started;
       const mark =
-        markAction === "markUnreadLocal"
-          ? h.session.unread.markUnreadLocal(h.target)
+        markAction === "markUnreadLocal" || markAction === "clearUnreadLocal"
+          ? h.session.unread[markAction](h.target)
           : h.session.unread[markAction]("room", row.id);
       pending.push(expect(mark).rejects.toThrow());
       if (action === "revoke-regrant") {
@@ -2091,37 +2096,75 @@ it("channel bottom quiets replies newer than the top-level head; Mark all still 
   lease.dispose();
 });
 
-it("Mark all preserves newer channel and thread unread intent queued behind a held earlier channel", async () => {
-  const h = setup();
-  h.grant("room");
-  h.grant("other");
-  const roots = [
-    message(h.alice, "room", "one", 11),
-    message(h.alice, "other", "two", 12),
-  ];
-  h.emit(roots);
-  await flush();
-  const second = h.session.channels.list().channels[1]?.id;
-  const root = roots.find((row) =>
-    row.tags.some(([key, id]) => key === "h" && id === second),
-  );
-  assert(second && root);
-  const held = h.holdSaveStarted();
-  const sweep = h.session.unread.markAllChannelsRead();
-  await held.started;
-  const channel = { kind: "channel" as const, channelId: second };
-  const thread = {
-    kind: "thread" as const,
-    channelId: second,
-    rootId: root.id,
-  };
-  const markChannel = h.session.unread.markUnreadLocal(channel);
-  const markThread = h.session.unread.markUnreadLocal(thread);
-  held.release();
-  await Promise.all([sweep, markChannel, markThread]);
-  expect(h.session.unread.snapshot(channel).manual).toBe("local-only");
-  expect(h.session.unread.snapshot(thread).manual).toBe("local-only");
-});
+it.each(["none", "grant", "revoke"])(
+  "Mark all preserves newer channel and thread unread intent across unrelated %s",
+  async (change) => {
+    const h = setup();
+    h.grant("room");
+    h.grant("other");
+    const roots = [
+      message(h.alice, "room", "one", 11),
+      message(h.alice, "other", "two", 12),
+    ];
+    h.emit(roots);
+    await flush();
+    const second = h.session.channels.list().channels[1]?.id;
+    const root = roots.find((row) =>
+      row.tags.some(([key, id]) => key === "h" && id === second),
+    );
+    assert(second && root);
+    const held = h.holdSaveStarted();
+    const sweep = h.session.unread.markAllChannelsRead();
+    await held.started;
+    const channel = { kind: "channel" as const, channelId: second };
+    const thread = {
+      kind: "thread" as const,
+      channelId: second,
+      rootId: root.id,
+    };
+    const markChannel = h.session.unread.markUnreadLocal(channel);
+    const markThread = h.session.unread.markUnreadLocal(thread);
+    if (change === "grant") h.grant("unrelated");
+    if (change === "revoke") {
+      // Revoke a third, unselected channel, leaving both selected channels valid.
+      h.grant("unrelated");
+      h.emit([roster(h.relay, "unrelated", [], 20)]);
+    }
+    held.release();
+    await Promise.all([sweep, markChannel, markThread]);
+    expect(h.session.unread.snapshot(channel).manual).toBe("local-only");
+    expect(h.session.unread.snapshot(thread).manual).toBe("local-only");
+  },
+);
+
+it.each(["channel", "thread", "message"] as const)(
+  "queued %s manual clear survives an unrelated grant",
+  async (kind) => {
+    const h = setup();
+    h.grant("room");
+    const row = message(h.alice, "room", "root", 11);
+    h.emit([row]);
+    const target =
+      kind === "channel"
+        ? h.target
+        : kind === "thread"
+          ? { kind, channelId: "room", rootId: row.id }
+          : { kind, channelId: "room", messageId: row.id };
+    const held = h.holdSaveStarted();
+    const mark = h.session.unread.markUnreadLocal(target);
+    let clear: Promise<unknown> | undefined;
+    try {
+      await held.started;
+      clear = h.session.unread.clearUnreadLocal(target);
+      h.grant("unrelated");
+    } finally {
+      held.release();
+    }
+    await Promise.all([mark, clear]);
+    expect(h.session.unread.snapshot(target).manual).toBe("none");
+    expect(h.journal()?.localUnread).toEqual({});
+  },
+);
 
 it.each(["channel", "thread", "message"] as const)(
   "cleared %s override floors do not block reply quieting, but active overrides do",

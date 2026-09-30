@@ -1,7 +1,11 @@
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
-import { readJournal as journal } from "./reading.mjs";
+import {
+  readJournal as journal,
+  holdReadingFocus,
+  releaseReadingFocus,
+} from "./reading.mjs";
 
 const alphaId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 test.use({
@@ -296,6 +300,8 @@ test("a surviving window publishes a closed window's durable read intent", async
   context,
   app,
 }) => {
+  await page.clock.install();
+  await holdReadingFocus(page);
   await open(page, app);
   await park(page);
   const survivor = await context.newPage();
@@ -305,6 +311,7 @@ test("a surviving window publishes a closed window's durable read intent", async
       app.report.consoleErrors.push(message.text());
   });
   try {
+    await holdReadingFocus(survivor);
     await open(survivor, app);
     await park(survivor);
     await options(survivor);
@@ -312,17 +319,33 @@ test("a surviving window publishes a closed window's durable read intent", async
     await expect(
       survivor.getByText(/Read sync: frontier-sync · reconciled/),
     ).toBeVisible();
+    for (const window of [page, survivor])
+      await window.evaluate(() =>
+        window.fixtureRelay.snapshot().session.unread.ensure(),
+      );
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+    expect((await journal(page)).state.frontiers).toEqual({});
     await page.bringToFront();
+    const ids = await visible(page);
+    expect(ids.length).toBeGreaterThan(0);
+    await releaseReadingFocus(page);
     await history(page).focus();
+    await page.clock.runFor(300);
+    // One dwell writes catch-up, then each visible message. A positive revision
+    // alone can be an intermediate durable state, not the publication baseline.
     await expect
-      .poll(async () => (await journal(page)).revision)
-      .toBeGreaterThan(0);
+      .poll(async () =>
+        Object.keys((await journal(page)).state.frontiers).sort(),
+      )
+      .toEqual([`activity:${alphaId}`, ...ids.map((id) => `msg:${id}`)].sort());
+    await park(page);
     const stored = await journal(page);
     await expect(
       survivor.getByText(/Read sync: frontier-sync · pending/),
     ).toBeVisible();
     expect(app.report.readPublications).toEqual([]);
     await page.close(); // Cancel the origin publisher before its normal five-second debounce.
+    await survivor.clock.resume(); // The controlled clock is shared by this context.
     await expect
       .poll(() => app.report.readPublications.length, { timeout: 12000 })
       .toBe(1);

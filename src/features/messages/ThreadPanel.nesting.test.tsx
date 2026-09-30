@@ -106,7 +106,6 @@ function setup(messageId = "root", unread?: RelaySession["unread"]) {
     messages: { retry: () => {} },
     media: () => undefined,
     unread: unread ?? {
-      subscribeMessages: () => () => {},
       snapshot: () => undefined,
       attention: () => ({ unread: false }),
     },
@@ -345,20 +344,16 @@ for (const startsWithChild of [false, true])
       ).toBeVisible();
   });
 
-it("keeps branch totals without deriving unread counts or retaining descendant selectors", () => {
-  const subscribeMessages = vi.fn(() => () => {});
+it("keeps branch totals without deriving unread counts", () => {
   const attention = vi.fn(() => ({ status: "unread", unread: true }));
   const unread = {
-    subscribeMessages,
     attention,
   } as unknown as RelaySession["unread"];
   const h = setup("root", unread);
   expect(screen.getByRole("button", { name: "View 2 replies" })).toBeVisible();
-  expect(subscribeMessages).not.toHaveBeenCalled();
   expect(attention).not.toHaveBeenCalled();
   h.update([row("parent", "root"), row("replacement", "parent")]);
   expect(screen.getByRole("button", { name: "View 1 reply" })).toBeVisible();
-  expect(subscribeMessages).not.toHaveBeenCalled();
 });
 
 it("starts a nested branch with an author header even when the author matches its parent", () => {

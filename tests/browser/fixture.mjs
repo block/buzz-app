@@ -1729,6 +1729,7 @@ export const test = base.extend({
           : undefined,
         pending,
         histories,
+        threadReplies, // Signed upstream data, like histories; never client read state.
         // Signed device-cache input for the startup scale journey; same modeled
         // wire responses as a real roster/head read, without visiting every row.
         startupCache() {
@@ -1981,6 +1982,7 @@ export const test = base.extend({
         ...(report.sidebarStarFailures ?? []),
         ...(report.sidebarAssignmentFailures ?? []),
         ...(report.sidebarPreferenceFailures ?? []),
+        ...(report.sidebarPermissionFailures ?? []),
         ...(report.startupFailures ?? []),
       ];
       const injectedSidebarFailure = (message, index) => {

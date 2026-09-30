@@ -25,7 +25,7 @@ async function openTarget(page, value) {
   return page.evaluate((value) => window.fixtureNavigation.open(value), value);
 }
 
-test("old root and reply beyond the first thread page open exactly; reclick and Back reveal again", async ({
+test("old root and reply open exactly in a bounded newest window; reclick and Back reveal again", async ({
   page,
   app,
 }) => {
@@ -79,7 +79,7 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
           exact: true,
         }),
       ).toHaveCount(0); // Edited-body names cannot inherit original signed recipients.
-      await expect(thread(page).locator("[data-message-id]")).toHaveCount(81);
+      await expect(thread(page).locator("[data-message-id]")).toHaveCount(11);
       await expect(
         page.getByRole("textbox", { name: "Reply to thread", exact: true }),
       ).toBeVisible();
@@ -89,11 +89,14 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
     initialHeadQueries,
   );
   expect(app.report.queries.some((q) => q.filter.depth_limit)).toBe(true);
-  expect(
-    app.report.queries.some((q) => q.filter.thread_cursor !== undefined),
-    "the exact reply requires a second thread page",
-  ).toBe(true);
-  expect(app.report.queries.filter((q) => q.filter.until)).toHaveLength(0);
+  const windows = app.report.queries.filter((q) => q.filter.depth_limit);
+  expect(windows.length).toBeGreaterThan(0);
+  for (const { filter } of windows) {
+    expect(filter.thread_window).toBe(true);
+    expect(filter.limit).toBe(10);
+    expect(filter.thread_cursor).toBeUndefined();
+    expect(filter.until).toBeUndefined();
+  }
   // Settings temporarily takes the rail without disposing the routed thread.
   const threadElement = page.locator('[aria-label="Thread"]');
   await threadElement.evaluate((element) => {
@@ -341,7 +344,7 @@ for (const nested of [false, true])
           }
           try {
             await expect(thread(page).locator("[data-message-id]")).toHaveCount(
-              81,
+              11,
             );
             if (nested)
               await expect(
@@ -755,7 +758,7 @@ readTest(
     } finally {
       release();
     }
-    await expect(thread(page).locator("[data-message-id]")).toHaveCount(81);
+    await expect(thread(page).locator("[data-message-id]")).toHaveCount(11);
     await expect(
       thread(page).locator(`[data-message-id="${app.exact.target.id}"]`),
     ).toBeFocused();
@@ -887,7 +890,7 @@ for (const movedFocus of [false, true])
         status: "opened",
       });
       const region = thread(page);
-      await expect(region.locator("[data-message-id]")).toHaveCount(82);
+      await expect(region.locator("[data-message-id]")).toHaveCount(11);
       await expect(region.getByText("Loading thread…")).toHaveCount(0);
       const row = region.locator(`[data-message-id="${parent.id}"]`);
       await row.getByRole("button", { name: "Reveal spoiler" }).click();
@@ -949,7 +952,27 @@ liveTest(
       .toBe(true);
     expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
     const region = thread(page);
-    await expect(region.locator("[data-message-id]")).toHaveCount(81);
+    await expect(region.locator("[data-message-id]")).toHaveCount(11);
+    // Reconnect repairs the retained range, not all history. Demand both older
+    // pages through the panel before establishing the middle-history anchor.
+    for (const count of [61, 81]) {
+      await region.evaluate((element) => {
+        element.scrollTop = 0;
+        element.dispatchEvent(new Event("scroll"));
+      });
+      await region.hover();
+      await page.mouse.wheel(0, -300);
+      await expect(region.locator("[data-message-id]")).toHaveCount(count);
+    }
+    const older = app.report.queries.filter(
+      ({ filter }) => filter.thread_window && filter.until !== undefined,
+    );
+    expect(older).toHaveLength(2);
+    for (const { filter } of older) {
+      expect(filter.limit).toBe(50);
+      expect(filter.before_id).toEqual(expect.any(String));
+      expect(filter.thread_cursor).toBeUndefined();
+    }
     await expect(region.getByText("Loading thread…")).toHaveCount(0);
     const readingRow = region.locator(
       `[data-message-id="${app.exact.replies[40].id}"]`,
@@ -1015,7 +1038,7 @@ liveTest(
     await open(page, app);
     expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
     const region = thread(page);
-    await expect(region.locator("[data-message-id]")).toHaveCount(81);
+    await expect(region.locator("[data-message-id]")).toHaveCount(11);
     app.deleteTarget();
     await expect(
       region.locator(`[data-message-id="${app.exact.target.id}"]`),
@@ -1023,12 +1046,12 @@ liveTest(
     await expect(
       region.locator(`[data-message-id="${app.exact.root.id}"]`),
     ).toBeAttached();
-    await expect(region.locator("[data-message-id]")).toHaveCount(80);
+    await expect(region.locator("[data-message-id]")).toHaveCount(10);
     await expect(region).toBeFocused();
     await expect(region).toHaveAttribute("tabindex", "0");
     app.append(
       "primary",
-      "alpha",
+      ids.alpha,
       "Reply after selected deletion",
       true,
       true,

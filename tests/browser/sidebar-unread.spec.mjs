@@ -372,19 +372,9 @@ test("resizing, collapsed groups and new unread evidence update only the display
   await cue(page, "below").click();
   await expect(cue(page, "below")).toHaveCount(0);
   app.append("primary", ids["dm-127"], "New offscreen unread", false, false);
-  // Non-active channels have no live content route. Discover the new evidence
-  // through the existing bounded refresh, not by inventing a subscription.
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
-  await page.getByText("Diagnostics", { exact: true }).click();
-  await page.getByText("Unread status", { exact: true }).click();
-  await page
-    .getByRole("button", { name: "Refresh unread observations", exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  // Non-active channels have no live content route. Window activation asks the
+  // existing sidebar owner to refresh; no deleted Diagnostics control or engine call.
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(cue(page, "below")).toBeVisible();
   await cue(page, "below").click();
   await expect.poll(() => inView(page, ids["dm-127"])).toBe(true);
@@ -393,20 +383,13 @@ test("resizing, collapsed groups and new unread evidence update only the display
   await expect(
     page.getByText("New offscreen unread", { exact: true }),
   ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
+  await row(page, ids["dm-127"]).click({ button: "right" });
+  const readMenu = page.getByRole("menu", { name: /Actions for / });
+  await readMenu
+    .getByRole("menuitem", { name: "Mark as Read", exact: true })
     .click();
-  await page.getByText("Diagnostics", { exact: true }).click();
-  await page
-    .getByRole("button", {
-      name: "Mark read through loaded messages",
-      exact: true,
-    })
-    .click();
+  await expect(readMenu).toHaveCount(0);
   await expect(row(page, ids["dm-127"]).getByRole("img")).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
   await scroll(page, 2700);
   await expect(cue(page, "below")).toHaveCount(0);
 });
@@ -435,16 +418,28 @@ test("session changes discard the previous sidebar targets and manual unread sti
       page.getByText(/secondary alpha message/).first(),
     ).toBeVisible();
     await expect(cue(page, "below")).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
+    await row(page, ids.alpha).click({ button: "right" });
+    const manualMenu = page.getByRole("menu", { name: "Actions for Alpha" });
+    await manualMenu
+      .getByRole("menuitem", { name: "Mark as Read", exact: true })
       .click();
-    await page.getByText("Diagnostics", { exact: true }).click();
-    await page
-      .getByRole("button", { name: "Mark unread on this device", exact: true })
+    await expect(manualMenu).toHaveCount(0);
+    await expect(row(page, ids.alpha).getByRole("img")).toHaveCount(0);
+    await row(page, ids.alpha).click({ button: "right" });
+    await manualMenu
+      .getByRole("menuitem", { name: "Mark as Unread", exact: true })
       .click();
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .click();
+    await expect(manualMenu).toHaveCount(0);
+    await expect
+      .poll(async () =>
+        (await sidebarJournals(page)).some((journal) =>
+          journal.manual.some(
+            (target) =>
+              target.kind === "channel" && target.channelId === ids.alpha,
+          ),
+        ),
+      )
+      .toBe(true);
     await expect.poll(() => pendingRoutes.length).toBeGreaterThan(0);
     const panel = page.getByRole("complementary", { name: "Channel sidebar" });
     await expect(panel).toHaveAttribute("aria-busy", "true");

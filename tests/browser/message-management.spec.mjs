@@ -300,7 +300,7 @@ test("DM menus edit own messages but never expose destructive actions for peers"
   await peerRow.hover();
   await peerRow.getByRole("button", { name: "More message actions" }).click();
   await expect(
-    page.getByRole("menuitem", { name: /^Mark (read|unread)$/ }),
+    page.getByRole("menuitem", { name: /^Mark (read through here|unread)$/ }),
   ).toBeVisible();
   await expect(
     page.getByRole("menuitem", { name: "Edit message", exact: true }),

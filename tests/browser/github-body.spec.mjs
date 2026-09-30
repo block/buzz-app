@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
 import { end, settle } from "./timeline.mjs";
 
@@ -101,7 +101,7 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .waitFor();
   await settle(page);
-  app.append("primary", "alpha", target);
+  app.append("primary", ids.alpha, target);
   const link = page.locator(`a[href="${target}"]`);
   await expect(link).toBeAttached();
   await end(page);

@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 // Browser geometry is the contract: jsdom cannot show a rounded overflow clip.
@@ -27,7 +27,7 @@ for (const multiple of [false, true]) {
         name: "Show navigation",
         exact: true,
       });
-      const alpha = sidebar.locator('button[data-channel-id="alpha"]');
+      const alpha = sidebar.locator(`button[data-channel-id="${ids.alpha}"]`);
       await expect(
         alpha.getByRole("img", { name: /unread threads?/ }),
       ).toBeVisible();

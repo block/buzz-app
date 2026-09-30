@@ -28,7 +28,7 @@ vi.mock("../relay/react", () => {
 });
 vi.mock("../messages/MessageRow", () => ({
   MessageRow: ({ row, onOpenLink, onOpenMediaReview }: MessageRowProps) => (
-    <article>
+    <article data-message-id={row.id}>
       <button type="button" onClick={() => onOpenLink?.("fixture:one")}>
         Open linked panel
       </button>
@@ -67,6 +67,7 @@ vi.mock("../../shared/design-system/ui/Dialog", () => ({
 }));
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -128,8 +129,11 @@ function fixture(
     snapshot: () => undefined,
     subscribe: () => () => {},
     attention: () => ({ unread: false }),
-    enterChannel: vi.fn(async () => {}),
-    leaveChannel: vi.fn(),
+    reading: vi.fn((_channelId: string) => ({
+      view: vi.fn(),
+      observe: vi.fn(async () => {}),
+      dispose: vi.fn(),
+    })),
   };
   const outbox = {
     subscribe: () => () => {},
@@ -239,17 +243,53 @@ it.each([
   },
 );
 
-it("keeps one channel visit while the thread is retargeted within a channel", () => {
+it("owns focused reading per thread and retires it on thread/channel retarget and unmount", () => {
   const h = fixture();
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+    new DOMRect(0, 0, 500, 500),
+  ] as unknown as DOMRectList);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 500, 500),
+  );
   const view = render(<EmbeddedThread {...h.props} />);
-  expect(h.unread.enterChannel).toHaveBeenCalledExactlyOnceWith("c");
+  const focusReading = () =>
+    act(() => {
+      screen.getByRole("region", { name: "Thread messages" }).focus();
+    });
+  expect(h.unread.reading).not.toHaveBeenCalled(); // Mount is not reading.
+  focusReading();
+  expect(h.unread.reading).toHaveBeenCalledExactlyOnceWith("c");
+  const first = h.unread.reading.mock.results[0]?.value;
+  if (!first) throw new Error("Missing first reading lease");
+  expect(first.view).toHaveBeenCalledWith(
+    [h.props.messageId],
+    expect.any(Function),
+  );
+  expect(first.view.mock.calls[0][1]()).toBe(true);
+
   view.rerender(<EmbeddedThread {...h.props} messageId={"c".repeat(64)} />);
-  expect(h.unread.enterChannel).toHaveBeenCalledOnce();
-  expect(h.unread.leaveChannel).not.toHaveBeenCalled();
-  // Leaving the channel is the barrier: the visit does follow the channel.
+  expect(first.dispose).toHaveBeenCalledOnce();
+  expect(first.view.mock.calls[0][1]()).toBe(false);
+  expect(h.unread.reading).toHaveBeenCalledOnce();
+  focusReading();
+  expect(h.unread.reading).toHaveBeenCalledTimes(2);
+  expect(h.unread.reading).toHaveBeenLastCalledWith("c");
+  const second = h.unread.reading.mock.results[1]?.value;
+  if (!second) throw new Error("Missing second reading lease");
+
   view.rerender(<EmbeddedThread {...h.props} channelId="d" />);
-  expect(h.unread.leaveChannel).toHaveBeenCalledExactlyOnceWith("c");
-  expect(h.unread.enterChannel).toHaveBeenLastCalledWith("d");
+  expect(second.dispose).toHaveBeenCalledOnce();
+  expect(second.view.mock.calls[0][1]()).toBe(false);
+  focusReading();
+  expect(h.unread.reading).toHaveBeenCalledTimes(3);
+  expect(h.unread.reading).toHaveBeenLastCalledWith("d");
+  const third = h.unread.reading.mock.results[2]?.value;
+  if (!third) throw new Error("Missing third reading lease");
+  view.unmount();
+  expect(third.dispose).toHaveBeenCalledOnce();
+  expect(third.view.mock.calls[0][1]()).toBe(false);
 });
 
 it("offers recovery for a failed edit left in the outbox", () => {

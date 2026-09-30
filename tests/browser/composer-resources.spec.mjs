@@ -1,5 +1,5 @@
 import { finalizeEvent, getPublicKey } from "nostr-tools";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 // Browser-only: Chromium moves focus to <body> when the focused button is
@@ -16,7 +16,7 @@ const repo = finalizeEvent(
     tags: [
       ["d", "game"],
       ["name", "Game repo"],
-      ["buzz-channel", "alpha"],
+      ["buzz-channel", ids.alpha],
     ],
   },
   key,
@@ -29,7 +29,7 @@ const project = finalizeEvent(
     tags: [
       ["d", "proj"],
       ["name", "Proj"],
-      ["buzz-channel", "alpha"],
+      ["buzz-channel", ids.alpha],
       ["a", `30617:${owner}:game`],
     ],
   },

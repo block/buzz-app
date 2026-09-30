@@ -208,7 +208,7 @@ test("section labels fade on overflow and recover when widened", async ({
     name: "Channel sidebar",
     exact: true,
   });
-  const row = sidebar.locator('[data-channel-id="beta"]');
+  const row = sidebar.locator(`[data-channel-id="${ids.beta}"]`);
   await row.click({ button: "right" });
   await page
     .getByRole("menuitem", { name: "Move channel", exact: true })

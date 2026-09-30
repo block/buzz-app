@@ -683,8 +683,8 @@ test("channel name fades follow renames without resizing the sidebar", async ({
 
 const fillSidebar = test.extend({
   dmLabels: true,
-  sessionChannels: ["alpha"],
-  sessionParents: { alpha: "11111111-1111-4111-8111-111111111111" },
+  sessionChannels: [ids.alpha],
+  sessionParents: { [ids.alpha]: "11111111-1111-4111-8111-111111111111" },
 });
 
 // Fill lives on the channel wrapper pseudo-element but directly on ordinary and

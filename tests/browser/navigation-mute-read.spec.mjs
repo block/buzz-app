@@ -33,11 +33,28 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     "aria-label",
     /^8 unread messages/,
   );
+  // Fail the actual permission read: canonical channel IDs no longer fail
+  // validation before reaching the relay. Other menu actions must stay usable.
+  await page.route("**/api/relay/**/query", async (route) => {
+    const filters = route.request().postDataJSON();
+    if (
+      filters.some(
+        (filter) =>
+          filter.kinds?.includes(39001) && filter["#d"]?.includes(ids.beta),
+      )
+    ) {
+      app.report.sidebarPermissionFailures ??= [];
+      app.report.sidebarPermissionFailures.push(route.request().url());
+      await route.fulfill({
+        status: 502,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Fixture permission failure" }),
+      });
+    } else await route.continue();
+  });
   await beta.focus();
   await page.keyboard.press("Shift+F10");
   await expect(menu).toBeVisible();
-  // This fixture's legacy ids.beta id cannot authorize lifecycle commands. Its
-  // failed permission group must not remove or disable the existing actions.
   await expect(menu.getByRole("alert")).toHaveText(
     "Channel actions unavailable",
   );

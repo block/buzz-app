@@ -1,4 +1,4 @@
-import { test, expect, ids } from "./fixture.mjs";
+import { test, expect, ids, sidebarJournals } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({
@@ -49,7 +49,45 @@ test("thread buttons show observed unread independently, clear only after readin
   // Reading needs a 750ms dwell (use-reading.ts). The clock runs that deadline
   // exactly where the test proves that something is not reading.
   await page.clock.install();
+  const fullHistory = app.histories.get(`primary/${ids.alpha}`);
+  const fullReplies = new Map(app.threadReplies);
+  app.histories.set(`primary/${ids.alpha}`, fullHistory.slice(0, 1));
+  app.threadReplies.clear();
   await open(page, app);
+  const alpha = page.locator(`button[data-channel-id="${ids.alpha}"]`);
+  const actions = page.getByRole("menu", { name: "Actions for Alpha" });
+  await alpha.click({ button: "right" });
+  await actions
+    .getByRole("menuitem", { name: "Mark as Read", exact: true })
+    .click();
+  await expect(actions).toHaveCount(0);
+  await expect(alpha.getByRole("img")).toHaveCount(0);
+  await alpha.click({ button: "right" });
+  await actions
+    .getByRole("menuitem", { name: "Mark as Unread", exact: true })
+    .click();
+  await expect(actions).toHaveCount(0);
+  await expect
+    .poll(async () =>
+      (await sidebarJournals(page)).some((journal) =>
+        journal.manual.some(
+          (target) =>
+            target.kind === "channel" && target.channelId === ids.alpha,
+        ),
+      ),
+    )
+    .toBe(true);
+  // Restore/deliver upstream signed history only after the real menu reminder.
+  app.histories.set(`primary/${ids.alpha}`, fullHistory);
+  for (const [root, replies] of fullReplies)
+    app.threadReplies.set(root, replies);
+  for (const event of fullHistory.slice(1)) app.relay.publish("primary", event);
+  // Reload fetches the server's thread summaries as well as message rows;
+  // live messages alone do not carry the fixture's 39005 summary events.
+  await page.reload();
+  await page
+    .getByRole("textbox", { name: "Message #Alpha", exact: true })
+    .waitFor();
   const roots = app.histories
     .get(`primary/${ids.alpha}`)
     .filter((row) => row.content.startsWith("Thread root"));
@@ -70,23 +108,12 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(dot(first)).toBeVisible();
   await expect(dot(other)).toBeVisible();
   await expect(broadcast).toHaveAccessibleName(/\d+ unread replies/);
-  const alpha = page.locator(`button[data-channel-id="${ids.alpha}"]`);
   const activity = alpha.getByRole("img", { name: /unread threads?/ });
   await expect(activity).toBeVisible();
   await expect(alpha.getByText("Alpha", { exact: true })).toHaveCSS(
     "font-weight",
     "600",
   );
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
-  await page.getByText("Diagnostics", { exact: true }).click();
-  await page
-    .getByRole("button", { name: "Mark unread on this device", exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
   await expect(
     alpha.getByRole("img", { name: /Marked unread on this device only/ }),
   ).toBeAttached();
@@ -112,7 +139,6 @@ test("thread buttons show observed unread independently, clear only after readin
   // The sibling context trigger must not steal the activity button's props or
   // focus. Exercise the real portals while unread activity is still present.
   await alpha.click({ button: "right" });
-  const actions = page.getByRole("menu", { name: "Actions for Alpha" });
   await expect(
     actions.getByRole("menuitem", { name: "New session" }),
   ).toBeVisible();

@@ -393,7 +393,6 @@ test.describe("touch branch controls", () => {
       exact: true,
     });
     const summary = panel.getByRole("button", { name: /^View 1 reply/ });
-    await expect(summary).toContainText("(1 new)");
     await summary.tap();
     await expect(summary).toHaveCount(0);
     await expect(

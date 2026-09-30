@@ -47,28 +47,11 @@ async function visible(page) {
       .map((row) => row.dataset.messageId);
   });
 }
-async function options(page) {
-  const trigger = page.getByRole("button", {
-    name: "Channel settings",
-    exact: true,
-  });
-  const opening = (await trigger.getAttribute("aria-expanded")) === "false";
-  await trigger.click();
-  if (opening) {
-    // The details and lifecycle readers finish independently. Observe both before
-    // checking diagnostics so a late details alert cannot escape the assertion.
-    await expect(
-      page
-        .getByRole("region", { name: "Edit channel details", exact: true })
-        .getByText(
-          "Only current channel owners and admins can edit these details.",
-        ),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Leave channel", exact: true }),
-    ).toBeVisible();
-    await page.getByText("Diagnostics", { exact: true }).click();
-  }
+async function channelReadAction(page, name) {
+  await alpha(page).click({ button: "right" });
+  const menu = page.getByRole("menu", { name: "Actions for Alpha" });
+  await menu.getByRole("menuitem", { name, exact: true }).click();
+  await expect(menu).toHaveCount(0);
 }
 
 // The real startup composition must order optional catalog reads after channel
@@ -182,7 +165,7 @@ test("built sidebar → visible dwell → durable journal → relay write; reloa
   await settledBadge();
 });
 
-test("focus cancellation and local manual-unread survive dwell/reload until explicit mark-through", async ({
+test("focus cancellation and local manual-unread survive dwell/reload until explicit channel read", async ({
   page,
   app,
 }) => {
@@ -232,14 +215,25 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
   await page.clock.runFor(900);
   await page.clock.resume();
   expect(app.report.readWrites).toEqual([]); // Focus left before dwell.
-  await options(page);
-  await page
-    .getByRole("button", { name: "Mark unread on this device", exact: true })
-    .click();
+  // The real menu offers a local reminder only once the channel is read.
+  await channelReadAction(page, "Mark as Read");
+  await expect(alpha(page).getByRole("img")).toHaveCount(0);
+  await expect.poll(async () => (await journal(page)).pending).toEqual([]);
+  const writesBeforeManual = [...app.report.readWrites];
+  await channelReadAction(page, "Mark as Unread");
   await expect.poll(async () => alphaManual(await journal(page))).toBe(true);
   expect((await journal(page)).pending).toEqual([]);
-  expect(app.report.readWrites).toEqual([]);
-  await options(page);
+  expect(app.report.readWrites).toEqual(writesBeforeManual);
+  const arrival = app.append(
+    "primary",
+    ids.alpha,
+    "After local reminder",
+    true,
+    false,
+  );
+  await expect(
+    history(page).getByText(arrival.content, { exact: true }),
+  ).toBeVisible();
   await expect(
     alpha(page).getByRole("img", {
       name: "Marked unread on this device only",
@@ -268,13 +262,7 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
       exact: true,
     }),
   ).toBeVisible();
-  await options(page);
-  await page
-    .getByRole("button", {
-      name: "Mark read through loaded messages",
-      exact: true,
-    })
-    .click();
+  await channelReadAction(page, "Mark as Read");
   await expect.poll(async () => alphaManual(await journal(page))).toBe(false);
   await expect
     .poll(() => app.relay.sidebarApi.frontier("primary", ids.alpha).channel)
@@ -304,11 +292,13 @@ test("a surviving window delivers a closed window's saved read intent", async ({
   try {
     await open(survivor, app);
     await composer(survivor).focus();
-    await options(survivor);
-    await survivor.getByText("Unread status", { exact: true }).click();
-    await expect(
-      survivor.getByText(/Read sync: frontier-sync · reconciled/),
-    ).toBeVisible();
+    await expect
+      .poll(() =>
+        survivor.evaluate(
+          () => window.fixtureRelay.snapshot().session.unread.sync().status,
+        ),
+      )
+      .toBe("reconciled");
     await page.bringToFront();
     await history(page).focus();
     await expect
@@ -327,80 +317,93 @@ test("a surviving window delivers a closed window's saved read intent", async ({
     await expect
       .poll(async () => (await journal(survivor)).pending)
       .toEqual([]);
-    await expect(
-      survivor.getByText(/Read sync: frontier-sync · reconciled/),
-    ).toBeVisible();
+    await expect
+      .poll(() =>
+        survivor.evaluate(
+          () => window.fixtureRelay.snapshot().session.unread.sync().status,
+        ),
+      )
+      .toBe("reconciled");
   } finally {
     await survivor.close();
   }
 });
 
-test.describe("explicit mark-through with membership activity", () => {
+test.describe("explicit channel read with membership activity", () => {
   test.use({ membershipActivity: true });
 
   for (const activityOnly of [false, true]) {
     test(
       activityOnly
-        ? "activity-only history explains the missing message without clearing manual unread"
-        : "chat followed by membership activity clears manual unread through the newest chat",
+        ? "membership-only channel clears manual unread without a relay intent"
+        : "chat after a local reminder advances the channel cut past membership activity",
       async ({ page, app }) => {
-        // Model only upstream signed history; the app must load and verify it.
         const loaded = app.histories.get(`primary/${ids.alpha}`).slice(-4);
-        app.histories.set(
-          `primary/${ids.alpha}`,
-          activityOnly
-            ? loaded.filter((event) => event.kind === 40099)
-            : loaded,
-        );
-        const lastChat = loaded.findLast((event) => event.kind === 9);
+        const activity = loaded.filter((event) => event.kind === 40099);
+        const chats = loaded.filter((event) => event.kind === 9);
+        // Start read, so the user can reach Mark as Unread in the real menu.
+        app.histories.set(`primary/${ids.alpha}`, activity);
         await open(page, app);
         await composer(page).focus();
         await expect(
           history(page).locator("[data-membership-row]"),
         ).toHaveCount(1);
+        await channelReadAction(page, "Mark as Unread");
+        await expect
+          .poll(async () => alphaManual(await journal(page)))
+          .toBe(true);
+        const writes = [...app.report.readWrites];
         if (!activityOnly) {
-          await expect(alpha(page).getByRole("img")).toHaveAttribute(
-            "aria-label",
-            /^2 unread messages/,
-          );
+          app.histories.set(`primary/${ids.alpha}`, loaded);
+          for (const event of chats) app.relay.publish("primary", event);
+          await expect(
+            history(page).getByText(chats.at(-1).content, { exact: true }),
+          ).toBeVisible();
+          await expect
+            .poll(() =>
+              page.evaluate(
+                (channelId) =>
+                  window.fixtureRelay
+                    .snapshot()
+                    .session.unread.snapshot({ kind: "channel", channelId })
+                    .unread,
+                ids.alpha,
+              ),
+            )
+            .toEqual({ status: "exact", value: 2 });
         }
-        await options(page);
-        await page
-          .getByRole("button", {
-            name: "Mark unread on this device",
-            exact: true,
-          })
-          .click();
         await expect(alpha(page).getByRole("img")).toHaveAttribute(
           "aria-label",
           "Marked unread on this device only",
         );
-        const before = await journal(page);
-        expect(alphaManual(before)).toBe(true);
-        const writes = [...app.report.readWrites];
-        await page
-          .getByRole("button", {
-            name: "Mark read through loaded messages",
-            exact: true,
-          })
-          .click();
+        await channelReadAction(page, "Mark as Read");
+        await expect
+          .poll(async () => alphaManual(await journal(page)))
+          .toBe(false);
+        await expect
+          .poll(async () => (await journal(page)).pending)
+          .toEqual([]);
         if (activityOnly) {
-          await expect(page.getByRole("alert")).toHaveText(
-            "Load a verified message before marking through it.",
-          );
-          expect(await journal(page)).toEqual(before);
           expect(app.report.readWrites).toEqual(writes);
+          expect(
+            app.relay.sidebarApi.frontier("primary", ids.alpha).channel,
+          ).toBeNull();
         } else {
           await expect
             .poll(
               () => app.relay.sidebarApi.frontier("primary", ids.alpha).channel,
             )
-            .toBe(lastChat.created_at);
-          expect(alphaManual(await journal(page))).toBe(false);
-          await expect(alpha(page).getByRole("img")).toHaveCount(0);
-          await expect(page.getByRole("alert")).toHaveCount(0);
+            .toBe(chats.at(-1).created_at);
+          expect(app.report.readWrites.at(-1).intents).toEqual([
+            {
+              type: "mark_channel_read",
+              channel_id: ids.alpha,
+              message_id: chats.at(-1).id,
+            },
+          ]);
         }
-        // Do not let the shared fixture's legacy WebKit exception mask this path.
+        await expect(alpha(page).getByRole("img")).toHaveCount(0);
+        await expect(page.getByRole("alert")).toHaveCount(0);
         expect(app.report.errors).toEqual([]);
       },
     );

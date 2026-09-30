@@ -182,7 +182,6 @@ function messagesHarness(
     messages: { retry: vi.fn() },
     media: () => undefined,
     unread: {
-      subscribeMessages: () => () => {},
       sync: () => ({ capability: "unsupported" }),
       snapshot: () => undefined,
       subscribe: () => () => {},

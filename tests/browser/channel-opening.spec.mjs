@@ -237,7 +237,7 @@ test.describe("large thread opening", () => {
     threadUnread: true,
     presenceThreadAuthors: 300,
   });
-  test("300-author thread opening retains bounded traversal and measures cold/reopened rendering", async ({
+  test("300-author thread measures bounded opening separately from demanded full history", async ({
     page,
     app,
   }) => {
@@ -251,13 +251,14 @@ test.describe("large thread opening", () => {
       exact: true,
     });
     for (const phase of ["cold", "reopened"]) {
+      const beforeQueries = app.report.queries.length;
       const timing = await trigger.evaluate(async (button) => {
         const start = performance.now();
         button.click();
         let firstPaint;
         await new Promise((resolve, reject) => {
           const deadline = setTimeout(
-            () => reject(new Error("thread did not finish traversal")),
+            () => reject(new Error("thread did not paint its newest window")),
             10000,
           );
           const check = () => {
@@ -280,7 +281,7 @@ test.describe("large thread opening", () => {
               firstPaint = performance.now() - start;
             if (
               !visible ||
-              rows.length !== 301 ||
+              rows.length !== 11 ||
               panel.textContent.includes("Loading thread…")
             )
               return requestAnimationFrame(check);
@@ -293,18 +294,63 @@ test.describe("large thread opening", () => {
         });
         return {
           firstVisibleMs: firstPaint,
-          fullTraversalPaintMs: performance.now() - start,
+          newestWindowPaintMs: performance.now() - start,
         };
       });
+      await expect(history.locator("[data-message-id]")).toHaveCount(11);
+      await expect(
+        history.getByText("Distinct author reply 299", { exact: true }),
+      ).toBeInViewport();
+      const windows = () =>
+        app.report.queries
+          .slice(beforeQueries)
+          .filter(({ filter }) => filter.thread_window);
+      expect(windows()).toHaveLength(1);
+      expect(windows()[0].filter.limit).toBe(10);
+      expect(windows()[0].filter.until).toBeUndefined();
       app.report.measurements.push({
         scenario: "300-author-thread",
         phase,
         ...timing,
       });
-      await expect(history.locator("[data-message-id]")).toHaveCount(301);
-      await expect(
-        history.getByText("Distinct author reply 299", { exact: true }),
-      ).toBeInViewport();
+      // Sample reopening before expanding shared verified history, so both
+      // opening phases measure the same bounded tail.
+      if (phase === "reopened") {
+        // Separate user-demand traversal from opening: this includes automation
+        // round trips between gestures, so it is not a pure render benchmark.
+        const scrollbackStart = await page.evaluate(() => performance.now());
+        for (const count of [61, 111, 161, 211, 261, 301]) {
+          await history.evaluate((element) => {
+            element.scrollTop = 0;
+            element.dispatchEvent(new Event("scroll"));
+          });
+          await history.hover();
+          await page.mouse.wheel(0, -300);
+          await expect(history.locator("[data-message-id]")).toHaveCount(count);
+        }
+        const fullHistoryPaint = await page.evaluate(
+          () =>
+            new Promise((resolve) => {
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => resolve(performance.now())),
+              );
+            }),
+        );
+        expect(windows()).toHaveLength(7);
+        for (const { filter } of windows().slice(1)) {
+          expect(filter.limit).toBe(50);
+          expect(filter.until).toEqual(expect.any(Number));
+          expect(filter.before_id).toEqual(expect.any(String));
+          expect(filter.thread_cursor).toBeUndefined();
+        }
+        await expect(
+          history.getByText("Distinct author reply 0", { exact: true }),
+        ).toBeAttached();
+        app.report.measurements.push({
+          scenario: "300-author-thread-scrollback",
+          demandedFullHistoryMs: fullHistoryPaint - scrollbackStart,
+        });
+      }
       await page
         .getByRole("button", { name: "Close thread", exact: true })
         .click();

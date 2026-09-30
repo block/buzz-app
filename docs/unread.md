@@ -98,7 +98,9 @@ list stays marked incomplete. Merely revealing the popover does not acknowledge 
 reply.
 A local manual-unread mark strengthens the label without fabricating priority; the
 underlying relay count remains available.
-Channel Settings → Diagnostics exposes explicit actions and Unread status/retry. Unknown and
+The sidebar row menu offers **Mark as Unread** on read channels and **Mark as Read**
+on unread channels. The message menu offers **Mark unread** and **Mark read through here**
+for individual message contexts. Diagnostics has no read-state controls. Unknown and
 zero both omit unread styling; the API preserves the distinction. There is no
 notification or feed service here.
 
@@ -176,14 +178,13 @@ development broker.
 
 ## Bounds and failure semantics
 
-Mounted thread panels group descendant evidence by canonical context. Each partial
-lease admits at most 500 new message selectors within the session's 1,000-selector
-budget. Unselected messages stay unknown, so nested branch labels say “At least”
-or “Unread status unknown” rather than claiming completeness. The 500 limit is
-per grant, not a class-wide reservation: multiple large panels can consume the
-whole budget. Notification leases require their full selection; exhaustion reaches
-the notification service's reported-error path, rather than silently expiring an
-unknown candidate. This is not a guarantee of native OS banner delivery.
+Collapsed reply branches show total replies, not aggregated unread counts.
+Message subscriptions retain their resolved context selectors until disposal.
+The session admits at most 1,000 context leases and 1,000 distinct message selectors
+across their contexts; a request exceeding either bound throws rather than
+partially admitting selectors. Disposing a lease releases its demand. Context
+reads batch at most 20 targets and 100 message IDs per request; these wire bounds
+are separate from the retained-demand limits.
 
 The journal coalesces dominated pending prefixes before sending. If a newer anchor
 covers an older pending prefix but the relay subsequently blocks the newer anchor

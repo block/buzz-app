@@ -39,8 +39,8 @@ type Overlay =
     };
 
 /**
- * As in Channels, the channel visit and message recovery span threads of one
- * channel; retargeting remounts only the thread and its overlay.
+ * As in Channels, message recovery spans threads of one channel; retargeting
+ * remounts the thread, its reading observation and its overlay.
  */
 export function EmbeddedThread(props: Props) {
   const { session, scope, channelId, messageId } = props;

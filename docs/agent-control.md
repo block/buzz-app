@@ -41,6 +41,7 @@ existing agents and profile retry remain intact.
 Without the dev broker, the native identity signs the owner authorization only
 for the key this host prepared for the pending Create; other broker-only helpers
 remain unavailable.
+Native owner-scoped authorization and community resolution are available; packaged support still requires attended native acceptance.
 
 **Not imported from old Buzz** is a separate collapsible section. Expanding it
 loads installed identities for the connected community; already-managed exact

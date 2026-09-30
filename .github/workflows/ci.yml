@@ -34,16 +34,33 @@ jobs:
       # check already ran TypeScript; do not repeat pnpm build's typecheck.
       - name: Frontend build
         run: ./bin/pnpm exec vite build
-      - name: All Vitest tests
+
+  vitest:
+    if: github.event_name != 'workflow_dispatch'
+    name: Vitest (${{ matrix.shard }}/3)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # The shards together run every Vitest file exactly once. Parallelism comes
+    # from runners; each runner keeps the two-worker contention limit below.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Vitest tests
         env:
           # Bound contention between suites that sign and verify large fixtures.
           BUZZ_TEST_WORKERS: "2"
-        run: ./bin/node scripts/ci-test-report.mjs kind=vitest report=test-results/ci/vitest.json evidence=test-results/ci/vitest-timing.json title="Vitest tests" -- ./bin/pnpm exec vitest run --reporter=default --reporter=json --outputFile=test-results/ci/vitest.json
+        run: ./bin/node scripts/ci-test-report.mjs kind=vitest report=test-results/ci/vitest.json evidence=test-results/ci/vitest-timing.json title="Vitest tests (${{ matrix.shard }}/3)" -- ./bin/pnpm exec vitest run --shard=${{ matrix.shard }}/3 --reporter=default --reporter=json --outputFile=test-results/ci/vitest.json
       - name: Vitest timing evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: vitest-timing
+          name: vitest-timing-${{ matrix.shard }}
           path: test-results/ci
           retention-days: 7
 
@@ -251,18 +268,19 @@ jobs:
   required:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Automatic CI (not requested)' || 'CI required' }}
     if: always() && github.event_name != 'workflow_dispatch'
-    needs: [javascript, native, measurements, browser_fixture, browser]
+    needs: [javascript, vitest, native, measurements, browser_fixture, browser]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: Require every lane and every shard
         env:
           JAVASCRIPT: ${{ needs.javascript.result }}
+          VITEST: ${{ needs.vitest.result }}
           NATIVE: ${{ needs.native.result }}
           MEASUREMENTS: ${{ needs.measurements.result }}
           FIXTURE: ${{ needs.browser_fixture.result }}
           BROWSER: ${{ needs.browser.result }}
         run: |
-          for result in "$JAVASCRIPT" "$NATIVE" "$MEASUREMENTS" "$FIXTURE" "$BROWSER"; do
+          for result in "$JAVASCRIPT" "$VITEST" "$NATIVE" "$MEASUREMENTS" "$FIXTURE" "$BROWSER"; do
             test "$result" = success || exit 1
           done

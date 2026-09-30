@@ -325,6 +325,7 @@ test("automatic CI stays on Linux and manual dispatch runs only Windows", () => 
   const { jobs } = parse(workflow);
   for (const lane of [
     "javascript",
+    "vitest",
     "native",
     "measurements",
     "browser_fixture",
@@ -354,6 +355,31 @@ test("automatic CI stays on Linux and manual dispatch runs only Windows", () => 
   );
 });
 
+test("three Vitest shards cover the suite once and keep the worker limit", () => {
+  const { jobs } = parse(workflow);
+  const { strategy, steps } = jobs.vitest;
+  assert.equal(strategy["fail-fast"], false);
+  assert.deepEqual(strategy.matrix, { shard: [1, 2, 3] });
+  assert.equal(jobs.vitest["continue-on-error"], undefined);
+  const runs = steps.filter((step) => step.run?.includes("vitest run"));
+  assert.equal(runs.length, 1);
+  const [run] = runs;
+  assert.equal(run.if, undefined);
+  assert.equal(run["continue-on-error"], undefined);
+  assert.equal(run.env.BUZZ_TEST_WORKERS, "2");
+  assert.match(
+    run.run,
+    / -- \.\/bin\/pnpm exec vitest run --shard=\$\{\{ matrix\.shard \}\}\/3 /,
+  );
+  assert.equal(
+    steps.find((step) => step.uses?.startsWith("actions/upload-artifact@")).with
+      .name,
+    `vitest-timing-\${{ matrix.shard }}`,
+  );
+  // Vitest runs only in its shards; no other job may run an unsharded copy.
+  assert.equal(workflow.match(/vitest run/g).length, 1);
+});
+
 test("required gate executes its real shell and rejects every unsuccessful lane", () => {
   const required = job("required");
   const { jobs } = parse(workflow);
@@ -368,10 +394,17 @@ test("required gate executes its real shell and rejects every unsuccessful lane"
   assert.doesNotMatch(required, /^ {8}if:/m);
   assert.match(
     required,
-    /^ {4}needs: \[javascript, native, measurements, browser_fixture, browser\]$/m,
+    /^ {4}needs: \[javascript, vitest, native, measurements, browser_fixture, browser\]$/m,
   );
   assert.doesNotMatch(required, /continue-on-error/);
-  const lanes = ["JAVASCRIPT", "NATIVE", "MEASUREMENTS", "FIXTURE", "BROWSER"];
+  const lanes = [
+    "JAVASCRIPT",
+    "VITEST",
+    "NATIVE",
+    "MEASUREMENTS",
+    "FIXTURE",
+    "BROWSER",
+  ];
   for (const lane of lanes)
     assert.ok(
       required.includes(
@@ -435,7 +468,7 @@ test("browser jobs use one immutable image matching the package pin, without per
       "true",
     );
   }
-  for (const name of ["javascript", "native", "windows-native"])
+  for (const name of ["javascript", "vitest", "native", "windows-native"])
     assert.equal(jobs[name].container, undefined);
   assert.equal(setup.inputs["browser-engine"].default, "all");
   const configured = (name) =>

@@ -329,7 +329,9 @@ across cached, parallel jobs rather than running the entire recipe several times
 [Three documented WebKit cases remain local-only](browser-testing.md#ci-coverage-and-local-only-webkit-checks);
 the complete suite still runs with `pnpm test` / `just scan`:
 
-- **JavaScript:** Biome, one TypeScript check, frontend build, all Vitest tests.
+- **JavaScript:** Biome, one TypeScript check, frontend build.
+- **Vitest:** all Vitest tests, split by file across three runners with
+  `--shard`; each runner keeps the two-worker limit.
 - **Rust and tool integration:** workspace formatting, Clippy, all Rust tests and
   doctests (including Tauri), and every Node integration test. The CLI integration
   tests build Rust and install scaffold dependencies; they are intentionally CI-only

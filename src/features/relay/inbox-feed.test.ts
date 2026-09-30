@@ -2,7 +2,6 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import { keypair, message, metadata, roster, signed } from "./testing";
 import type { RelayEvent, ReadFilter } from "./events";
-import { mergeInboxItems } from "../../bundled/inbox/items";
 import type { LiveCallbacks } from "./live";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -75,13 +74,10 @@ it("reads addressed history independently of the retained unread window, never a
   const mentions = await take(h, 9);
   expect(mentions.promise).toBeDefined();
   mentions.resolve([addressed, other]);
-  const actions = await take(h, 46010);
-  actions.resolve([]);
   await work;
   expect(h.session.inboxFeed.snapshot()).toMatchObject({
     status: "ready",
     mentions: [addressed],
-    needsAction: [],
     limited: false,
   });
   // The session reconciles authorized history into shared unread evidence, not a shadow store.
@@ -89,6 +85,10 @@ it("reads addressed history independently of the retained unread window, never a
     addressed.id,
   ]);
   expect(h.session.channels.window("room").rows).toEqual([]);
+  expect(h.query).toHaveBeenCalledTimes(1);
+  expect(h.query.mock.calls[0]?.[0]).toEqual([
+    { kinds: [40002, 9], "#p": [h.viewer.pubkey], limit: 50 },
+  ]);
 });
 it("reconciles live addressed updates and drops membership-revoked history before listeners", async () => {
   const h = setup();
@@ -98,7 +98,6 @@ it("reconciles live addressed updates and drops membership-revoked history befor
   mentions.resolve([
     message(h.alice, "room", "first", 20, [["p", h.viewer.pubkey]]),
   ]);
-  (await take(h, 46010)).resolve([]);
   await work;
   const updates: number[] = [];
   h.session.inboxFeed.subscribe(() =>
@@ -129,7 +128,6 @@ it("cache clear fences late completions; fresh demand recovers", async () => {
   expect(h.query).toHaveBeenCalledTimes(1);
   const again = h.session.inboxFeed.ensure();
   (await take(h, 9)).resolve([]);
-  (await take(h, 46010)).resolve([]);
   await again;
   expect(h.session.inboxFeed.snapshot().status).toBe("ready");
 });
@@ -145,7 +143,6 @@ it("surfaces read denial without treating it as empty, then retries", async () =
   });
   const again = h.session.inboxFeed.refresh();
   (await take(h, 9)).resolve([]);
-  (await take(h, 46010)).resolve([]);
   await again;
   expect(h.session.inboxFeed.snapshot().status).toBe("ready");
 });
@@ -160,51 +157,32 @@ async function discover(h: ReturnType<typeof setup>) {
     expect(h.session.channels.list().status).toBe("ready"),
   );
 }
-const rows = (h: ReturnType<typeof setup>) =>
-  mergeInboxItems(
-    h.session.unread.inbox().items,
-    h.session.inboxFeed.snapshot(),
-    h.session.channels.list().channels,
-    h.session,
-  );
-const project = (h: ReturnType<typeof setup>, text: string, at: number) =>
-  signed(h.alice, {
-    kind: 1621,
-    content: text,
-    created_at: at,
-    tags: [
-      ["a", `30617:${h.alice.pubkey}:repo`],
-      ["p", h.viewer.pubkey],
-    ],
-  });
+const rows = (h: ReturnType<typeof setup>) => h.session.unread.inbox().items;
+const addressed = (h: ReturnType<typeof setup>, text: string, at: number) =>
+  message(h.alice, "room", text, at, [["p", h.viewer.pubkey]]);
 it("complete initial roster remains lazy; first demand, invalidation and fresh demand really read", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const h = setup();
   await discover(h);
   expect(
     h.query.mock.calls.some(([filters]) =>
-      filters.some((filter) => filter.kinds?.includes(46010)),
+      filters.some((filter) => !!filter["#p"] && filter.kinds?.includes(9)),
     ),
   ).toBe(false);
   expect(h.session.inboxFeed.snapshot().status).toBe("idle");
   const first = h.session.inboxFeed.ensure();
   const gate = await take(h, 9);
   expect(h.session.inboxFeed.snapshot().status).toBe("loading");
-  const issue = project(h, "historical issue", 15);
+  const issue = addressed(h, "historical mention", 15);
   gate.resolve([issue]);
-  (await take(h, 46010)).resolve([]);
   await first;
-  expect(rows(h).map((row) => row.preview)).toContain("historical issue");
+  expect(rows(h).map((row) => row.preview)).toContain("historical mention");
   const addressedReads = () =>
     h.query.mock.calls.filter(([filters]) =>
-      filters.some(
-        (filter) =>
-          !!filter["#p"] &&
-          (filter.kinds?.includes(9) || filter.kinds?.includes(46010)),
-      ),
+      filters.some((filter) => !!filter["#p"] && filter.kinds?.includes(9)),
     ).length;
   const count = addressedReads();
-  expect(count).toBe(2);
+  expect(count).toBe(1);
   h.admit([h.alice.pubkey], 30);
   expect(h.session.inboxFeed.snapshot().mentions).toEqual([]);
   // Admission/listeners run synchronously; drain microtasks and the existing
@@ -216,7 +194,6 @@ it("complete initial roster remains lazy; first demand, invalidation and fresh d
   const fresh = await take(h, 9);
   expect(addressedReads()).toBe(count + 1);
   fresh.resolve([issue]);
-  (await take(h, 46010)).resolve([]);
   await next;
   expect(h.session.inboxFeed.snapshot().status).toBe("ready");
 });
@@ -240,7 +217,6 @@ it("reconnect recovers demanded feed but never starts an unopened feed", async (
   expect(h.session.inboxFeed.snapshot().status).toBe("idle");
   const first = h.session.inboxFeed.ensure();
   (await take(h, 9)).resolve([]);
-  (await take(h, 46010)).resolve([]);
   await first;
   h.live.state({ status: "retrying", routes: [] });
   expect(h.session.inboxFeed.snapshot().status).toBe("idle");
@@ -251,21 +227,21 @@ it("reconnect recovers demanded feed but never starts an unopened feed", async (
     roster(h.relay, "room", [h.viewer.pubkey, h.alice.pubkey], 10),
     metadata(h.relay, "room", "Room", 10),
   ]);
-  (await take(h, 9)).resolve([project(h, "reconnected issue", 30)]);
-  (await take(h, 46010)).resolve([]);
+  (await take(h, 9)).resolve([addressed(h, "reconnected mention", 30)]);
   await vi.waitFor(() =>
     expect(h.session.inboxFeed.snapshot().status).toBe("ready"),
   );
-  expect(rows(h).map((row) => row.preview)).toContain("reconnected issue");
+  expect(rows(h).map((row) => row.preview)).toContain("reconnected mention");
 });
-it("finite completion merges concurrent live project arrivals and author deletions", async () => {
+it("finite completion merges concurrent live chat arrivals and author deletions", async () => {
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);
-  const old = project(h, "old", 20),
-    live = project(h, "live", 30);
+  const old = addressed(h, "old", 20),
+    live = addressed(h, "live", 30);
+  // Establish deletion admission before holding the finite mention read.
+  h.live.receive([old]);
   const first = h.session.inboxFeed.ensure();
-  (await take(h, 9)).resolve([old]);
-  const approval = await take(h, 46010);
+  const mention = await take(h, 9);
   try {
     h.live.receive([live]);
     expect(rows(h).map((row) => row.preview)).toContain("live");
@@ -278,7 +254,7 @@ it("finite completion merges concurrent live project arrivals and author deletio
       }),
     ]);
   } finally {
-    approval.resolve([]);
+    mention.resolve([old]);
   }
   await first;
   expect(rows(h).map((row) => row.preview)).toEqual(["live"]);
@@ -302,7 +278,6 @@ it("channel feed history uses the shared fold: own/deleted rows stay absent and 
   ]);
   const work = h.session.inboxFeed.ensure();
   (await take(h, 9)).resolve([reply, own]);
-  (await take(h, 46010)).resolve([]);
   await work;
   expect(rows(h).map((row) => row.id)).toEqual([`room:${reply.id}`]);
   h.live.receive([root]);
@@ -321,7 +296,6 @@ it("channel feed history uses the shared fold: own/deleted rows stay absent and 
   expect(rows(h)).toEqual([]);
   const refresh = h.session.inboxFeed.refresh();
   (await take(h, 9)).resolve([reply, own]);
-  (await take(h, 46010)).resolve([]);
   await refresh;
   expect(rows(h)).toEqual([]);
 });
@@ -329,27 +303,21 @@ it("channel feed history uses the shared fold: own/deleted rows stay absent and 
 it("a live deletion arriving before a held finite result suppresses its late row even while loading", async () => {
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);
-  const issue = project(h, "late deleted", 20);
+  const chat = addressed(h, "late deleted", 20);
   // Establish shared target visibility first; orphan reference-only deletions
   // are deliberately not admitted by the session access owner.
-  h.live.receive([issue]);
+  h.live.receive([chat]);
   const work = h.session.inboxFeed.ensure();
   const mention = await take(h, 9);
   h.live.receive([
     signed(h.alice, {
       kind: 5,
-      tags: [["e", issue.id]],
+      tags: [["e", chat.id]],
       content: "",
       created_at: 30,
     }),
   ]);
-  mention.resolve([issue]);
-  const approval = await take(h, 46010);
-  try {
-    expect(rows(h)).toEqual([]);
-  } finally {
-    approval.resolve([]);
-  }
+  mention.resolve([chat]);
   await work;
   expect(rows(h)).toEqual([]);
 });
@@ -360,21 +328,13 @@ it.each([false, true])(
     const h = setup();
     h.admit([h.viewer.pubkey, h.alice.pubkey]);
     const feed = h.session.inboxFeed;
-    const mention = project(h, "retired issue", 20);
-    const approval = signed(h.alice, {
-      kind: 46010,
-      content: "Approval",
-      created_at: 21,
-      tags: [["p", h.viewer.pubkey]],
-    });
+    const mention = addressed(h, "retired mention", 20);
     const initial = feed.ensure();
     (await take(h, 9)).resolve([mention]);
-    (await take(h, 46010)).resolve([approval]);
     await initial;
     expect(feed.snapshot()).toMatchObject({
       status: "ready",
       mentions: [mention],
-      needsAction: [approval],
     });
     const work = pending ? feed.refresh() : undefined;
     const held = pending ? await take(h, 9) : undefined;
@@ -385,7 +345,6 @@ it.each([false, true])(
       expect(feed.snapshot()).toMatchObject({
         status: "idle",
         mentions: [],
-        needsAction: [],
         limited: false,
       });
       expect(notify).not.toHaveBeenCalled();
@@ -396,58 +355,68 @@ it.each([false, true])(
     expect(feed.snapshot()).toMatchObject({
       status: "idle",
       mentions: [],
-      needsAction: [],
     });
     expect(notify).not.toHaveBeenCalled();
   },
 );
 
-it("reprojects retained nonchat candidates after joining from an empty admitted snapshot without another feed read", async () => {
+it("reprojects retained chat candidates after joining from an empty admitted snapshot without another feed read", async () => {
   const h = setup();
   h.live.receive([
     roster(h.relay, "room", [h.alice.pubkey], 10),
     metadata(h.relay, "room", "Room", 10, [["public"]]),
   ]);
-  const issue = signed(h.alice, {
-    kind: 1621,
-    content: "Addressed issue",
-    created_at: 20,
-    tags: [
-      ["h", "room"],
-      ["p", h.viewer.pubkey],
-    ],
-  });
-  const approval = signed(h.alice, {
-    kind: 46010,
-    content: "Approval",
-    created_at: 21,
-    tags: [
-      ["h", "room"],
-      ["p", h.viewer.pubkey],
-    ],
-  });
+  const chat = addressed(h, "Addressed chat", 20);
   const work = h.session.inboxFeed.ensure();
-  (await take(h, 9)).resolve([issue]);
-  (await take(h, 46010)).resolve([approval]);
+  (await take(h, 9)).resolve([chat]);
   await work;
   expect(h.session.inboxFeed.snapshot()).toMatchObject({
     status: "ready",
     mentions: [],
-    needsAction: [],
   });
-  const reads = h.query.mock.calls.filter(([filters]) =>
-    filters.some((f) => f.kinds?.includes(46010) || f.kinds?.includes(9)),
-  ).length;
+  expect(rows(h)).toEqual([]);
+  const reads = h.query.mock.calls.length;
   h.admit([h.viewer.pubkey, h.alice.pubkey], 30);
   expect(h.session.inboxFeed.snapshot()).toMatchObject({
     status: "ready",
-    mentions: [issue],
-    needsAction: [approval],
+    mentions: [chat],
   });
+  // Unread never admitted the pre-membership chat. Its existing admission owner
+  // needs fresh evidence; the feed snapshot must not create an alternate row.
+  expect(rows(h)).toEqual([]);
   await h.session.inboxFeed.ensure();
-  expect(
-    h.query.mock.calls.filter(([filters]) =>
-      filters.some((f) => f.kinds?.includes(46010) || f.kinds?.includes(9)),
-    ).length,
-  ).toBe(reads);
+  expect(h.query).toHaveBeenCalledTimes(reads);
+  h.live.receive([chat]);
+  expect(rows(h).map((row) => row.messageId)).toEqual([chat.id]);
+});
+it("excludes nonchat and approval events from finite/live feed rows and coalesces one bounded chat request", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const chat = addressed(h, "Chat mention", 20);
+  const nonchat = [
+    1, 45001, 45003, 1618, 1619, 1621, 1630, 1631, 1632, 1633, 46010, 46011,
+    46012,
+  ].map((kind) =>
+    signed(h.alice, {
+      kind,
+      content: `Excluded ${kind}`,
+      created_at: 21,
+      tags: [
+        ["h", "room"],
+        ["p", h.viewer.pubkey],
+        ["a", `30617:${h.alice.pubkey}:repo`],
+      ],
+    }),
+  );
+  const first = h.session.inboxFeed.ensure(),
+    second = h.session.inboxFeed.refresh();
+  (await take(h, 9)).resolve([chat, ...nonchat]);
+  await Promise.all([first, second]);
+  expect(h.query).toHaveBeenCalledTimes(1);
+  expect(h.session.inboxFeed.snapshot().mentions).toEqual([chat]);
+  const before = h.session.unread.inbox();
+  h.live.receive(nonchat);
+  expect(h.session.unread.inbox()).toBe(before);
+  expect(rows(h).map((row) => row.messageId)).toEqual([chat.id]);
+  expect(h.session.inboxFeed.snapshot().mentions).toEqual([chat]);
 });

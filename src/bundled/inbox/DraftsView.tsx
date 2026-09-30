@@ -22,7 +22,6 @@ import {
   listDraftViews,
   subscribeView,
 } from "../../shared/view-state";
-import { formatPublicKey } from "../../shared/identity/public-key";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -33,6 +32,7 @@ import {
   XIcon,
 } from "../../shared/design-system/icons/index";
 import styles from "./Inbox.module.css";
+import { dmLabel } from "./dm-label";
 
 export function DraftsView({
   session,
@@ -136,22 +136,7 @@ export function DraftsView({
   const destination = (channel: ChannelSummary | undefined) => {
     if (!channel) return "Unavailable conversation";
     if (channel.channelType !== "dm") return `#${channel.name}`;
-    if (!channel.participants?.length) return "Notes to self";
-    return (
-      channel.participants
-        .slice(0, 3)
-        .map((id) =>
-          name(
-            id,
-            profiles.get(id)?.name ?? formatPublicKey(id) ?? "Unknown person",
-            channel.participants,
-          ),
-        )
-        .join(", ") +
-      (channel.participants.length > 3
-        ? ` +${channel.participants.length - 3}`
-        : "")
-    );
+    return dmLabel(channel.participants, profiles, name);
   };
   const activeChannel = active
     ? channelFor(active.coordinates.channelId)

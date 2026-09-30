@@ -18,14 +18,14 @@ does not enable it.
   never guessed as Humans. Profiles load for bounded activity candidates even
   when the sender filter currently has no rows. Classification uses already-cached
   profiles for every evaluated author, including beyond that enrichment page.
-  All keeps existing project and
-  needs-action admission without offering separate filter choices.
+  All includes only these chat conversations. Project and approval activity are
+  outside this Inbox slice.
 - Incoming DMs grouped by channel; mentions and participating thread replies
   grouped by verified conversation. Each row shows its channel (#name) or DM
   participants in the same compact, muted highlight directly below the bold
   sender, without category tags; DMs show a text label without an extra icon.
   The lazy, finite viewer-addressed feed also
-  supplies recent mentions and approval-related events. Own messages and generic
+  supplies recent chat mentions. Own messages and generic
   channel traffic do not create rows. A mention may also match Threads.
 - Stable conversation IDs, newest relevant activity ordering and the oldest
   observed unread message as the opening anchor (latest when read). Selecting an
@@ -82,11 +82,10 @@ does not enable it.
 evidence and read actions. `session.inboxFeed` owns finite, verified addressed
 history and live reconciliation. Its admitted channel events contribute to the
 shared unread fold, never a second raw row projection that could resurrect
-own/deleted messages or invent unresolved conversation roots. Nonchat projection
-stays bounded and reprojects retained candidates on membership changes, including
-an empty admitted view becoming eligible after joining; this starts no new read.
-Project updates use the evidenced issue/PR root kind, otherwise
-open the repository rather than guessing an item type. Arrivals and admitted
+own/deleted messages or invent unresolved conversation roots. Inbox renders these
+shared conversation rows directly; there is no second project/approval row merge.
+The feed retains its existing bounded chat snapshot and membership reprojection,
+but that snapshot is not a separate row source or read-state owner. Arrivals and admitted
 deletions during a finite read are reconciled inside that attempt's bounds and
 generation. Inbox owns only presentation, filtering and selection. No parallel signing or persistence capability is added. Optional
 profile enrichment is background work; access, cache clear and session
@@ -103,8 +102,9 @@ disable read mutations. Saved frontiers are not proof of remote reconciliation.
 
 This is **bounded recent evidence**, not a complete historical inbox. The unread
 owner retains at most 4,096 events / 8 MiB and observes up to 500 recent events
-per 128-channel roster batch; the addressed feed queries up to 50 mentions and
-20 approval events. Missing roots, participation, or older activity can omit
+per 128-channel roster batch; the addressed feed queries up to 50 chat mentions
+(kinds 9 and 40002) in one finite request. No project or approval kinds are
+requested. Missing roots, participation, or older activity can omit
 rows; an empty view does not mean all caught up. The UI initially renders 50
 conversations and Show more reveals the remaining rows in its current evidence.
 A ready Inbox has no permanent Refresh control. Failure offers local Retry;
@@ -135,9 +135,9 @@ is retryable, never proof of an empty thread. See
 Reminders and their NIP-ER lifecycle are **not included** in this change.
 The unfinished reminder prototype is preserved separately for later work,
 not shipped in the Inbox source or broker routes. Follow/mute Inbox policy,
-full backlog discovery and feed-only read-state parity need further work. Projects have preview/canonical navigation,
-but some approval rows lack useful detail. Removing their filter choices does not
-make All complete. Native/ACP packaged acceptance and human visual feedback
+full backlog discovery and nonchat activity are outside this slice. Project and
+approval queries, grouping, routing and detail presentation are deliberately
+excluded rather than presented as partial parity. Native/ACP packaged acceptance and human visual feedback
 remain open. Do not treat this as the full OG Inbox port.
 
 ## Verification and trying it
@@ -162,6 +162,13 @@ recovery; the saved draft uses the actual newest window. A separate DM case
 proves an old selected unread target outside the top-level head is focused and
 opens its exact canonical origin with one composer. These are fixture
 checks, not live acceptance.
+
+The chat-only reduction removes the two project-root-routing tests with their
+removed implementation. Feed lifecycle coverage now uses chat events for the
+same finite/live arrival, deletion, revocation, cache reset, reconnect, pending
+disposal and membership transitions. Additional checks enforce one bounded
+chat-only query and no project/approval Inbox rows. Existing composer, draft
+storage, exact navigation, read-state and browser journeys remain.
 
 In the agreed worktree, open the running isolated native Inbox Dev app (or its
 printed local URL). Choose a community and Inbox. Try both dropdowns and Unread

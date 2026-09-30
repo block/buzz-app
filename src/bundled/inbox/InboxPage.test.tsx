@@ -2045,3 +2045,29 @@ it("hands keyboard focus into draft deletion and back on cancel without changing
     "Keep this draft",
   );
 });
+it("All activity stays chat-only when addressed project and approval evidence arrives", async () => {
+  const h = fixture();
+  const nonchat = [1621, 46010].map((kind) =>
+    signed(h.alice, {
+      kind,
+      content: `Not an Inbox conversation ${kind}`,
+      created_at: 40,
+      tags: [
+        ["h", "room"],
+        ["p", h.viewer.pubkey],
+        ["a", `30617:${h.alice.pubkey}:repo`],
+      ],
+    }),
+  );
+  h.events.push(...nonchat);
+  render(h.view);
+  await screen.findByText("Please review this");
+  await waitFor(() =>
+    expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready"),
+  );
+  expect(rows()).toHaveLength(2);
+  act(() => h.emit(nonchat));
+  expect(rows()).toHaveLength(2);
+  expect(screen.queryByText(/Not an Inbox conversation/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Open in project" })).toBeNull();
+});

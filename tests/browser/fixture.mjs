@@ -1041,22 +1041,10 @@ export const test = base.extend({
         ];
       // Inbox's existing lazy addressed feed also opens after a restored page
       // visit. Model its actual scope/kinds, never accept unknown queries silently.
-      if (
-        filter["#p"] &&
-        !filter["#h"] &&
-        (filter.kinds?.includes(9) || filter.kinds?.includes(46010))
-      ) {
-        const kinds = filter.kinds.includes(9)
-          ? [
-              9, 40002, 1, 45001, 45003, 1618, 1619, 1621, 1630, 1631, 1632,
-              1633,
-            ]
-          : [46010, 46011, 46012];
-        expect([...filter.kinds].sort((a, b) => a - b)).toEqual(
-          kinds.sort((a, b) => a - b),
-        );
+      if (filter["#p"] && !filter["#h"] && filter.kinds?.includes(9)) {
+        expect([...filter.kinds].sort((a, b) => a - b)).toEqual([9, 40002]);
         expect(filter["#p"]).toEqual([viewer]);
-        expect(filter.limit).toBe(filter.kinds.includes(9) ? 50 : 20);
+        expect(filter.limit).toBe(50);
         const events = [...histories.entries()]
           .filter(([key]) => key.startsWith(`${community}/`))
           .flatMap(([, events]) => events)

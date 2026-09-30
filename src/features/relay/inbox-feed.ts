@@ -2,10 +2,7 @@ import type { ChannelQueries } from "./contracts";
 import type { RelayEvent, ReadFilter } from "./events";
 import type { RelayReader } from "./reader";
 
-const mentionKinds = [
-  9, 40002, 1, 45001, 45003, 1618, 1619, 1621, 1630, 1631, 1632, 1633,
-];
-const actionKinds = [46010, 46011, 46012];
+const mentionKinds = [9, 40002];
 const union = (
   old: readonly RelayEvent[],
   next: readonly RelayEvent[],
@@ -23,7 +20,6 @@ const deletedBy = (event: RelayEvent, deletions: readonly RelayEvent[]) =>
 export type InboxFeedSnapshot = Readonly<{
   status: "idle" | "loading" | "ready" | "error";
   mentions: readonly RelayEvent[];
-  needsAction: readonly RelayEvent[];
   error?: string | undefined;
   /** Finite reads are bounded, not a claim of complete historical coverage. */
   limited: boolean;
@@ -51,21 +47,18 @@ export function createInboxFeed({
   let arrivals:
     | {
         mentions: readonly RelayEvent[];
-        actions: readonly RelayEvent[];
         deletions: readonly RelayEvent[];
       }
     | undefined;
   let rawMentions: readonly RelayEvent[] = [];
-  let rawActions: readonly RelayEvent[] = [];
   let snapshot: InboxFeedSnapshot = Object.freeze({
     status: "idle",
     mentions: [],
-    needsAction: [],
     limited: false,
   });
   const listeners = new Set<() => void>();
   const stopChannels = channels.subscribeList(() => {
-    if (rawMentions.length || rawActions.length) publish({});
+    if (rawMentions.length) publish({});
   });
   const admitted = (event: RelayEvent) => {
     if (!event.tags.some(([name, value]) => name === "p" && value === viewer))
@@ -84,9 +77,11 @@ export function createInboxFeed({
           ))
     );
   };
-  function project(events: readonly RelayEvent[], kinds: readonly number[]) {
+  function project(events: readonly RelayEvent[]) {
     return Object.freeze(
-      events.filter((event) => kinds.includes(event.kind) && admitted(event)),
+      events.filter(
+        (event) => mentionKinds.includes(event.kind) && admitted(event),
+      ),
     );
   }
   function publish(patch: Partial<InboxFeedSnapshot>) {
@@ -94,8 +89,7 @@ export function createInboxFeed({
     snapshot = Object.freeze({
       ...snapshot,
       ...patch,
-      mentions: project(rawMentions, mentionKinds),
-      needsAction: project(rawActions, actionKinds),
+      mentions: project(rawMentions),
     });
     for (const listener of listeners) notify(listener);
   }
@@ -108,41 +102,28 @@ export function createInboxFeed({
     controller = owned;
     const delta = {
       mentions: [] as readonly RelayEvent[],
-      actions: [] as readonly RelayEvent[],
       deletions: [] as readonly RelayEvent[],
     };
     arrivals = delta;
     publish({ status: "loading", error: undefined });
     work = (async () => {
       try {
-        // OG get_feed: 50 mentions and 20 approvals, not a limitless archive.
+        // Bounded addressed chat history; nonchat and approvals belong elsewhere.
         const mentionFilter: ReadFilter = {
           kinds: mentionKinds,
           "#p": [viewer],
           limit: 50,
         };
-        const actionFilter: ReadFilter = {
-          kinds: actionKinds,
-          "#p": [viewer],
-          limit: 20,
-        };
         const mentions = await reader.read([mentionFilter], {
-          signal: owned.signal,
-        });
-        if (closed || generation !== epoch) return;
-        const needsAction = await reader.read([actionFilter], {
           signal: owned.signal,
         });
         if (closed || generation !== epoch) return;
         rawMentions = union(mentions, delta.mentions, 50).filter(
           (event) => !deletedBy(event, delta.deletions),
         );
-        rawActions = union(needsAction, delta.actions, 20).filter(
-          (event) => !deletedBy(event, delta.deletions),
-        );
         publish({
           status: "ready",
-          limited: mentions.length >= 50 || needsAction.length >= 20,
+          limited: mentions.length >= 50,
           error: undefined,
         });
       } catch (error) {
@@ -188,15 +169,13 @@ export function createInboxFeed({
     },
     receive(events: readonly RelayEvent[]) {
       if (closed || snapshot.status === "idle") return;
-      const mentions = project(events, mentionKinds);
-      const needsAction = project(events, actionKinds);
+      const mentions = project(events);
       const deletions = events.filter(
         (event) => event.kind === 5 || event.kind === 9005,
       );
-      if (!mentions.length && !needsAction.length && !deletions.length) return;
+      if (!mentions.length && !deletions.length) return;
       if (arrivals) {
         arrivals.mentions = union(arrivals.mentions, mentions, 50);
-        arrivals.actions = union(arrivals.actions, needsAction, 20);
         const merged = union(arrivals.deletions, deletions, 71);
         if (merged.length > 70) {
           // Cannot safely reconcile a bounded attempt after excessive deletion traffic.
@@ -206,7 +185,6 @@ export function createInboxFeed({
           work = undefined;
           arrivals = undefined;
           rawMentions = [];
-          rawActions = [];
           publish({
             status: "error",
             error: "Inbox changed during refresh. Try again.",
@@ -219,9 +197,6 @@ export function createInboxFeed({
       rawMentions = union(rawMentions, mentions, 50).filter(
         (event) => !deletedBy(event, removed),
       );
-      rawActions = union(rawActions, needsAction, 20).filter(
-        (event) => !deletedBy(event, removed),
-      );
       publish({});
     },
     clear() {
@@ -231,7 +206,6 @@ export function createInboxFeed({
       work = undefined;
       arrivals = undefined;
       rawMentions = [];
-      rawActions = [];
       // Preserve never-requested demand. Previously loaded data recovers explicitly
       // through Refresh (or the existing reconnect callback), not a new retry loop.
       publish({ status: "idle", limited: false, error: undefined });
@@ -244,12 +218,10 @@ export function createInboxFeed({
       work = undefined;
       arrivals = undefined;
       rawMentions = [];
-      rawActions = [];
       // Retained capabilities expose no retired content; do not notify dead consumers.
       snapshot = Object.freeze({
         status: "idle",
         mentions: [],
-        needsAction: [],
         limited: false,
       });
       stopChannels();

@@ -8,7 +8,6 @@ import {
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { InboxItem } from "../../features/relay/inbox";
-import { mergeInboxItems, type InboxRow } from "./items";
 import { InboxDetail } from "./InboxDetail";
 import { DraftsView } from "./DraftsView";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
@@ -34,6 +33,7 @@ import {
   MenuPopup,
 } from "../../shared/design-system/ui/Menu";
 import styles from "./Inbox.module.css";
+import { dmLabel } from "./dm-label";
 
 type ActivityFilter = "all" | "dms" | "threads" | "mentions";
 type SenderFilter = "everyone" | "humans" | "agents";
@@ -49,20 +49,13 @@ const senders = [
   { value: "agents", label: "Agents" },
 ] as const;
 const matchesActivity = (
-  item: InboxRow,
+  item: InboxItem,
   filter: ActivityFilter,
   isDm: boolean,
 ) => {
   switch (filter) {
     case "all":
-      return !!(
-        item.mentioned ||
-        item.thread ||
-        item.project ||
-        item.needsAction ||
-        item.agent ||
-        item.target.kind === "channel"
-      );
+      return true;
     case "dms":
       return isDm;
     case "mentions":
@@ -193,7 +186,7 @@ export function InboxView({
       session.agentChoices.ensure();
     }
   }, [session, list.status, list.asOf, refreshAfterRoster]);
-  const items = mergeInboxItems(inbox.items, feed, list.channels, session);
+  const items = inbox.items;
   const activityItems = items.filter((item) =>
     matchesActivity(
       item,
@@ -574,33 +567,18 @@ export function InboxView({
                       "Unknown sender",
                     channel?.members,
                   );
-                  const dmName = channel?.participants
-                    ? channel.participants.length
-                      ? channel.participants
-                          .slice(0, 3)
-                          .map((id) =>
-                            name(
-                              id,
-                              profiles.get(id)?.name ??
-                                formatPublicKey(id) ??
-                                "Unknown person",
-                              channel.participants,
-                            ),
-                          )
-                          .join(", ") +
-                        (channel.participants.length > 3
-                          ? ` +${channel.participants.length - 3}`
-                          : "")
-                      : "Notes to self"
-                    : (channel?.name ?? "Direct message");
+                  const dmName = dmLabel(
+                    channel?.participants,
+                    profiles,
+                    name,
+                    channel?.name ?? "Direct message",
+                  );
                   const context =
                     channel?.channelType === "dm"
                       ? `DM · ${dmName}`
                       : channel
                         ? `#${channel.name}`
-                        : item.project
-                          ? "Project update"
-                          : "Conversation";
+                        : "Conversation";
                   const unread = hasUnread(item);
                   return (
                     <li

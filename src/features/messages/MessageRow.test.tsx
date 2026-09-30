@@ -40,6 +40,41 @@ const row: ChannelMessage = {
   replyCount: 23,
 };
 
+it.each([false, true])(
+  "carries agent-envelope appearance into avatar navigation: %s",
+  (agentEnvelope) => {
+    const authorId = "ab".repeat(32);
+    const open = vi.fn(() => true);
+    try {
+      renderDom(
+        <MessageRow
+          row={{
+            ...row,
+            authorId,
+            ...(agentEnvelope ? { agentEnvelope: true as const } : {}),
+          }}
+          profile={undefined}
+          media={() => undefined}
+          onOpenLink={open}
+          canOpenLink={() => true}
+          day={false}
+          retry={undefined}
+        />,
+      );
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: `View ${authorId.slice(0, 10)} profile`,
+        }),
+      );
+      expect(open).toHaveBeenCalledWith(
+        profileTarget(authorId, { agent: agentEnvelope }),
+      );
+    } finally {
+      cleanup();
+    }
+  },
+);
+
 it("keeps agent badges but omits human presence and status symbols from messages", () => {
   const agentRow = { ...row, authorId: "a".repeat(64) };
   const subscribe = vi.fn(() => () => {});
@@ -1238,3 +1273,52 @@ it.each([true, false])(
     view.unmount();
   },
 );
+
+it("plays native audio and voice notes through the authenticated scheme", () => {
+  for (const name of [undefined, "voice note.m4a"]) {
+    const html = renderToStaticMarkup(
+      <MessageRow
+        row={{
+          ...row,
+          attachments: [
+            {
+              url: "https://relay.test/media/audio",
+              kind: "audio",
+              ...(name ? { name } : {}),
+            },
+          ],
+        }}
+        profile={undefined}
+        media={() =>
+          `buzz-media://localhost/${encodeURIComponent(`https://relay.test/media/${"a".repeat(64)}.m4a`)}`
+        }
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(html).toContain(`aria-label="Play ${name ?? "audio"}"`);
+    expect(html).toContain("<audio");
+    expect(html).not.toContain("Open file");
+  }
+});
+
+it("never mounts an audio player for a native lookalike", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [{ url: "https://relay.test/audio", kind: "audio" }],
+      }}
+      profile={undefined}
+      media={() =>
+        `buzz-media://evil.test/${encodeURIComponent(`https://relay.test/media/${"a".repeat(64)}.m4a`)}`
+      }
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).not.toContain("<audio");
+  expect(html).toContain("File unavailable");
+});

@@ -7,6 +7,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { AccountActionsService } from "../../features/account-actions/service";
 import type { Communities } from "../../features/communities/service";
+import type { OpenTarget } from "../../features/navigation/targets";
 import { CommunityRail } from "../../features/communities/CommunityRail";
 import { ProfileButton } from "./ProfileButton";
 import { PageSearch, type SearchServices } from "./PageSearch";
@@ -27,9 +28,11 @@ export function AppShell({
   sidebar,
   communities,
   accountActions,
+  onProfile,
   searchServices,
   navigationControls,
   onCommunitySelect,
+  onOpenTarget,
   launchers,
   companion,
   children,
@@ -43,26 +46,55 @@ export function AppShell({
   sidebar?: (pages: ReactNode) => ReactNode;
   communities: Communities;
   accountActions: AccountActionsService;
+  onProfile?: ((trigger: HTMLButtonElement) => void) | undefined;
   searchServices?: SearchServices;
   navigationControls?: ReactNode;
   onCommunitySelect?: (id: string | null) => void;
+  /** Community menu destinations, opened through the host's navigation. */
+  onOpenTarget?: (target: OpenTarget) => void;
   launchers?: ReactNode;
   companion?: ReactNode;
   children: ReactNode;
 }) {
   const fillsWorkspace = workspace || selected === "settings";
+  const channelsNavigation =
+    selected === "buzz.channels/channels" || selected === "buzz.agents/agents";
+  const [narrow, setNarrow] = useState(
+    () => window.matchMedia("(max-width: 650px)").matches,
+  );
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 650px)");
+    const update = () => setNarrow(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  const collapsibleSidebar = channelsNavigation || selected === "settings";
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationToggle = useRef<HTMLButtonElement>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Only a new navigation attempt closes the drawer; opening the disclosure must not retrigger this effect.
+  const visibleSidebar = narrow ? navigationOpen : sidebarOpen;
+  const toggleLabel = narrow
+    ? navigationOpen
+      ? "Hide navigation"
+      : "Show navigation"
+    : sidebarOpen
+      ? "Hide Channel sidebar"
+      : "Show Channel sidebar";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Only a navigation attempt closes the drawer.
   useEffect(() => {
     if (navigationOpen && navigationToggle.current?.getClientRects().length) {
       document.getElementById("main-content")?.focus({ preventScroll: true });
     }
     setNavigationOpen(false);
   }, [navigationAttempt]);
-  const pageNavigation = (
+  // Only primary pages get a row; search below still lists every active page.
+  // Every primary page comes from an optional plugin, so an empty list is
+  // reachable; skip the landmark rather than announce an empty region.
+  const primaryPages = orderPages(pages.filter((page) => page.primary));
+  const pageNavigation = primaryPages.length ? (
     <nav aria-label="Pages" className="shell-pages">
-      {orderPages(pages).map((page) => {
+      {primaryPages.map((page) => {
         const { label, icon: Icon } = pagePresentation(page);
         return (
           <NavigationItem
@@ -76,12 +108,16 @@ export function AppShell({
             }}
             selected={selected === page.key}
             label={label}
-            icon={<Icon aria-hidden="true" size={20} />}
+            icon={
+              <span className="shell-page-icon">
+                <Icon aria-hidden="true" weight="bold" size={15} />
+              </span>
+            }
           />
         );
       })}
     </nav>
-  );
+  ) : null;
   return (
     <div
       data-shell-tone={tone}
@@ -109,19 +145,25 @@ export function AppShell({
           data-tauri-drag-region={macDesktop ? undefined : true}
           {...titleBarDragProps}
         >
-          {navigationControls}
-          <span className="shell-navigation-toggle">
+          {(collapsibleSidebar || narrow) && (
             <IconButton
               ref={navigationToggle}
-              aria-label={
-                navigationOpen ? "Hide navigation" : "Show navigation"
-              }
-              aria-expanded={navigationOpen}
+              data-shell-sidebar-toggle=""
+              type="button"
+              variant="chrome"
+              shape="round"
+              aria-label={toggleLabel}
+              aria-expanded={visibleSidebar}
               aria-controls="shell-navigation"
-              onClick={() => setNavigationOpen((open) => !open)}
-              icon={<SidebarIcon aria-hidden="true" size={20} />}
+              title={toggleLabel}
+              onClick={() => {
+                if (narrow) setNavigationOpen((open) => !open);
+                else setSidebarOpen((open) => !open);
+              }}
+              icon={<SidebarIcon aria-hidden="true" size={16} />}
             />
-          </span>
+          )}
+          {navigationControls}
         </div>
         <div
           className="shell-actions"
@@ -139,19 +181,29 @@ export function AppShell({
             accountActions={accountActions}
             settingsSelected={selected === "settings"}
             onSettings={() => onSelect("settings")}
+            onProfile={onProfile}
           />
         </div>
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <CommunityRail communities={communities} onSelect={onCommunitySelect} />
+        <CommunityRail
+          communities={communities}
+          onSelect={onCommunitySelect}
+          onOpenTarget={onOpenTarget}
+        />
         <div
           className={`shell-body ${selected === "settings" ? "shell-body-settings" : ""}`}
         >
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: Delegated Escape from descendant controls closes the disclosure; the layout wrapper is not itself interactive. */}
           <div
             id="shell-navigation"
             className="shell-navigation"
+            data-sidebar-collapsible={
+              (collapsibleSidebar && !narrow) || undefined
+            }
+            data-sidebar-open={visibleSidebar || undefined}
+            aria-hidden={(collapsibleSidebar || narrow) && !visibleSidebar}
+            inert={(collapsibleSidebar || narrow) && !visibleSidebar}
             data-expanded={navigationOpen}
             onKeyDown={(event) => {
               if (

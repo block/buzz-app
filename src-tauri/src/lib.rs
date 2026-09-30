@@ -17,7 +17,14 @@ mod os_idle;
 use os_idle::get_os_idle_seconds;
 mod relay;
 use identity::{identity_create, identity_export, identity_import, identity_restore, IdentityHost};
-use relay::{relay_http, relay_sign};
+use relay::{
+    media_download, relay_agent_library, relay_agent_log_proof, relay_agent_memories_read,
+    relay_agent_observer, relay_agent_resolve, relay_channel_publish, relay_channel_sign,
+    relay_decode_read_state, relay_decode_sidebar, relay_direct_message, relay_http,
+    relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_publish_read_state, relay_sign,
+    relay_sign_read_state, relay_sign_sidebar, relay_upload, relay_upload_cancel,
+    relay_workflow_runs,
+};
 mod terminal;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
 mod goose_models;
@@ -27,11 +34,11 @@ mod managed_pi;
 mod pi_models;
 use agents::{
     agent_control_action, agent_control_attach_mention, agent_control_clone_settings,
-    agent_control_create_commit, agent_control_create_prepare, agent_control_creation_profile,
-    agent_control_delete, agent_control_import_commit, agent_control_import_preview,
-    agent_control_log_challenge, agent_control_read_log, agent_control_save,
-    agent_control_save_defaults, agent_control_snapshot, agent_control_start_on_app_launch,
-    agent_control_use_here, AgentHost,
+    agent_control_create_authorize, agent_control_create_commit, agent_control_create_prepare,
+    agent_control_creation_profile, agent_control_delete, agent_control_import_commit,
+    agent_control_import_preview, agent_control_log_challenge, agent_control_read_log,
+    agent_control_save, agent_control_save_defaults, agent_control_snapshot,
+    agent_control_start_on_app_launch, agent_control_use_here, AgentHost,
 };
 use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},
@@ -349,6 +356,23 @@ async fn plugin_recover(
 ) -> Result<InstallationResult, String> {
     with_manager(manager, |m| m.recover().map(|catalog| ready(&m, catalog))).await
 }
+/// Tauri's restart ignores `prevent_exit`, so confirm the same agent teardown
+/// that gates Quit before requesting it; a failure keeps the app running.
+#[tauri::command]
+async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        handle.state::<ModelHost>().shutdown();
+        handle.state::<AgentHost>().shutdown()
+    })
+    .await
+    .map_err(|_| "Agent shutdown could not be confirmed".to_owned())?
+    .map_err(|error| {
+        format!("Agent shutdown incomplete; restart Buzz to finish the update: {error}")
+    })?;
+    app.request_restart();
+    Ok(())
+}
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         identity_restore,
@@ -356,7 +380,27 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         identity_create,
         identity_export,
         relay_sign,
+        relay_decode_read_state,
+        relay_sign_read_state,
+        relay_publish_read_state,
         relay_http,
+        relay_workflow_runs,
+        relay_channel_sign,
+        relay_channel_publish,
+        relay_kit_sign,
+        relay_kit_prepare,
+        relay_kit_decode,
+        relay_direct_message,
+        relay_decode_sidebar,
+        relay_sign_sidebar,
+        relay_agent_resolve,
+        relay_agent_log_proof,
+        relay_agent_observer,
+        relay_agent_memories_read,
+        relay_agent_library,
+        relay_upload,
+        relay_upload_cancel,
+        media_download,
         get_os_idle_seconds,
         plugin_import_folder,
         plugin_import_git,
@@ -370,6 +414,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_host_run_command,
         plugin_host_request,
         agent_control_create_prepare,
+        agent_control_create_authorize,
         agent_control_create_commit,
         agent_control_creation_profile,
         agent_control_snapshot,
@@ -402,7 +447,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         terminal_write,
         terminal_resize,
         terminal_close,
-        terminal_close_owner
+        terminal_close_owner,
+        update_restart
     ]
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -461,8 +507,17 @@ pub fn run() {
         });
     #[cfg(target_os = "macos")]
     let builder = builder.manage(TitleBarFillFrames::default());
+    // Register the updater only in configured release builds; omit it locally.
+    #[cfg(buzz_updater_enabled)]
+    let builder = if tauri::is_dev() {
+        builder
+    } else {
+        builder.plugin(tauri_plugin_updater::Builder::new().build())
+    };
     builder
         .manage(IdentityHost::default())
+        .manage(relay::Uploads::default())
+        .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())
         .manage(HarnessSetup::default())
         .manage(Terminals::default())

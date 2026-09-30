@@ -32,6 +32,10 @@ import {
   memberCommand,
 } from "./community-admin.mjs";
 import {
+  leaveRefusal,
+  leaveRequestTemplate,
+} from "../src/features/communities/leave-protocol.ts";
+import {
   directMessageEvent,
   directMessageReceipt,
 } from "./direct-messages.mjs";
@@ -68,6 +72,7 @@ import {
   assertSidebarAssignmentIntent,
   mutateSidebarAssignment,
   SIDEBAR_REQUEST_BYTES,
+  SIDEBAR_HEAD_BYTES,
   SIDEBAR_UPLOAD_MS,
   SIDEBAR_UPLOAD_SLOTS,
 } from "./sidebar-preferences.mjs";
@@ -127,7 +132,6 @@ function validProfilePicture(value) {
 const MAX_FILTERS = 4,
   MAX_LIMIT = 500,
   MAX_INFLIGHT = 6,
-  SIDEBAR_HEAD_BYTES = SIDEBAR_REQUEST_BYTES + 4096,
   UPSTREAM_TIMEOUT_MS = 20000,
   KEEPALIVE_MS = 60000;
 
@@ -1951,6 +1955,7 @@ export function relayBrokerPlugin({
               "/api/relay/accept-policy",
               "/api/relay/invite",
               "/api/relay/member",
+              "/api/relay/leave",
               "/api/relay/gifs",
               "/api/relay/workflow-runs",
               "/api/relay/project-git",
@@ -2157,18 +2162,29 @@ export function relayBrokerPlugin({
           const policy = route === "/api/relay/accept-policy";
           const invite = route === "/api/relay/invite";
           const member = route === "/api/relay/member";
+          const leave = route === "/api/relay/leave";
           const gifs = route === "/api/relay/gifs";
           // Only these routes may surface an exact, allowed relay refusal.
           const refusal =
-            invite || member ? adminReason : claim ? claimReason : undefined;
-          if (invite || member) {
+            invite || member
+              ? adminReason
+              : claim
+                ? claimReason
+                : leave
+                  ? leaveRefusal
+                  : undefined;
+          if (invite || member || leave) {
             // Community-bound only; the relay remains the authority for roles.
             if (!scoped)
               return json(res, 400, { error: "Select a community first" });
             try {
+              // The viewer's own leave request has one shape; the body carries nothing.
               filters = invite
                 ? inviteRequest(filters)
-                : finalizeEvent(memberCommand(filters), key);
+                : finalizeEvent(
+                    leave ? leaveRequestTemplate() : memberCommand(filters),
+                    key,
+                  );
             } catch (error) {
               return json(res, 400, { error: error.message, sent: false });
             }
@@ -2435,6 +2451,7 @@ export function relayBrokerPlugin({
             !policy &&
             !invite &&
             !member &&
+            !leave &&
             !gifs &&
             !workflowPath &&
             !readPublishing &&
@@ -2499,7 +2516,7 @@ export function relayBrokerPlugin({
             workflowPath ??
             (gifs
               ? gifSearchPath
-              : profile || directMessage || member
+              : profile || directMessage || member || leave
                 ? "/events"
                 : claim
                   ? "/api/invites/claim"
@@ -2663,16 +2680,18 @@ export function relayBrokerPlugin({
                 });
               }
             }
-            if (profile || member) {
+            if (profile || member || leave) {
               const receipt = JSON.parse(text);
               if (
                 receipt.event_id !== filters.id ||
                 typeof receipt.accepted !== "boolean"
               )
                 return json(res, 502, {
-                  error: member
-                    ? "Member change could not be confirmed"
-                    : "Profile publication could not be confirmed",
+                  error: leave
+                    ? "Leave request could not be confirmed"
+                    : member
+                      ? "Member change could not be confirmed"
+                      : "Profile publication could not be confirmed",
                 });
             }
             res.writeHead(200, {

@@ -9,7 +9,9 @@ import {
   verifyEvent,
 } from "nostr-tools";
 import { writeFile } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import { platform, arch } from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -45,6 +47,7 @@ export const test = base.extend({
   initialSidebarSort: [{}, { option: true }],
   channelLifecycle: [false, { option: true }],
   lifecycleRole: ["owner", { option: true }],
+  lifecycleOwnerAgent: [false, { option: true }],
   lifecycleVisibility: [{ archived: [], hidden: [] }, { option: true }],
   sidebarIcons: [false, { option: true }],
   channelNames: [{}, { option: true }],
@@ -84,6 +87,7 @@ export const test = base.extend({
       initialSidebarSort,
       channelLifecycle,
       lifecycleRole,
+      lifecycleOwnerAgent,
       lifecycleVisibility,
       sidebarIcons,
       channelNames,
@@ -166,6 +170,30 @@ export const test = base.extend({
     );
     // Kind 0 by author for keys a test creates; served on later profile reads.
     const servedProfiles = new Map();
+    const ownerAgentKey = lifecycleOwnerAgent ? generateSecretKey() : undefined;
+    const ownerAgent = ownerAgentKey ? getPublicKey(ownerAgentKey) : undefined;
+    const ownerAgentProfile = ownerAgentKey
+      ? sign(
+          0,
+          [
+            [
+              "auth",
+              viewer,
+              "",
+              bytesToHex(
+                schnorr.sign(
+                  createHash("sha256")
+                    .update(`nostr:agent-auth:${ownerAgent}:`)
+                    .digest(),
+                  userKey,
+                ),
+              ),
+            ],
+          ],
+          JSON.stringify({ name: "Owner Agent", is_agent: true }),
+          ownerAgentKey,
+        )
+      : undefined;
     const participants = largeSidebar
       ? Array.from({ length: 1001 }, (_, i) =>
           (i + 1).toString(16).padStart(64, "0"),
@@ -654,7 +682,15 @@ export const test = base.extend({
         return [sign(13534, [["member", viewer, "member"]])];
       }
       if (filter.kinds?.includes(30617) || filter.kinds?.includes(30621)) {
-        expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
+        if ("#buzz-channel" in filter) {
+          // A channel's project-home read: one kind per filter, one channel.
+          expect([[30617], [30621]]).toContainEqual(filter.kinds);
+          expect(filter).toEqual({
+            kinds: filter.kinds,
+            "#buzz-channel": [expect.any(String)],
+            limit: 100,
+          });
+        } else expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
         return [];
       }
       if (personalSidebar && filter.ids)
@@ -688,6 +724,14 @@ export const test = base.extend({
               ),
             ]
           : [];
+      if (filter.kinds?.includes(13534)) {
+        expect(filter).toEqual({
+          authors: [getPublicKey(relayKey)],
+          kinds: [13534],
+          limit: 1,
+        });
+        return [sign(13534, [["member", viewer, "owner"]], "", relayKey)];
+      }
       if (filter.kinds?.includes(39001))
         return rosterIds
           .filter((id) => !filter["#d"] || filter["#d"].includes(id))
@@ -697,8 +741,11 @@ export const test = base.extend({
               [
                 ["d", id],
                 ...(lifecycleRows.some((row) => row.id === id) &&
-                lifecycleRole === "owner"
-                  ? [["p", viewer, "owner"]]
+                ["owner", "admin"].includes(lifecycleRole)
+                  ? [["p", viewer, lifecycleRole]]
+                  : []),
+                ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
+                  ? [["p", ownerAgent, "owner"]]
                   : []),
               ],
               "",
@@ -720,6 +767,9 @@ export const test = base.extend({
                   ? lifecycleRole
                   : "member",
               ],
+              ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
+                ? [["p", ownerAgent, "", "owner"]]
+                : []),
               ...(agentPeers && channels.includes(id)
                 ? participants.map((pubkey) => ["p", pubkey, "", "member"])
                 : dmLabels && id === "dm-peer"
@@ -869,10 +919,15 @@ export const test = base.extend({
       }
       if (filter.kinds?.includes(0))
         return [
-          profiles.get(community),
           ...[...servedProfiles.values()].filter((event) =>
             filter.authors?.includes(event.pubkey),
           ),
+          ...(ownerAgentProfile && filter.authors?.includes(ownerAgent)
+            ? [ownerAgentProfile]
+            : []),
+          ...(filter.authors?.includes(viewer)
+            ? [profiles.get(community)]
+            : []),
           ...membershipKeys
             .filter((key) => filter.authors?.includes(getPublicKey(key)))
             .map((key) =>
@@ -1225,23 +1280,19 @@ export const test = base.extend({
                 },
               }
             : {}),
-          ...(readState || savedSidebar
-            ? {
-                ...(readState
-                  ? {
-                      discovery: (community) => ({
-                        self: getPublicKey(relayKey),
-                        read_state_snapshot: {
-                          version: 1,
-                          community_id: communityIds[community],
-                          max_events: 4096,
-                          max_bytes: 8388608,
-                        },
-                      }),
-                    }
-                  : {}),
-              }
-            : {}),
+          discovery: (community) => ({
+            self: getPublicKey(relayKey),
+            ...(readState
+              ? {
+                  read_state_snapshot: {
+                    version: 1,
+                    community_id: communityIds[community],
+                    max_events: 4096,
+                    max_bytes: 8388608,
+                  },
+                }
+              : {}),
+          }),
         })
       : undefined;
     const middleware = async (request, response, next) => {
@@ -1268,6 +1319,14 @@ export const test = base.extend({
           request.method === "GET"
         )
           return send(response, { policy: null });
+        if (route === "invite" && request.method === "POST")
+          return send(response, {
+            code: "fixture",
+            url: `${JSON.parse(fixtureAliases)[community]}/invite/fixture`,
+            expires_at: 1700003600,
+            max_uses: body.max_uses ?? null,
+            uses_remaining: body.max_uses ?? null,
+          });
         if (route === "session") {
           report.sessions.push(community);
           return send(response, {
@@ -1459,7 +1518,7 @@ export const test = base.extend({
                   communityAliases: fixtureAliases,
                   identity: () => userKey.slice(),
                   agentLibrary: () => ({ definitions: [], identities: [] }),
-                  ...(readState
+                  ...(readState || channelLifecycle
                     ? {}
                     : {
                         authority: async () => ({
@@ -1544,6 +1603,10 @@ export const test = base.extend({
       );
       await use({
         sign: (template) => finalizeEvent(template, userKey),
+        membershipSnapshot(role) {
+          expect(["owner", "admin", "member"]).toContain(role);
+          return sign(13534, [["member", viewer, role]], "", relayKey);
+        },
         origin,
         report,
         watchPageErrors(other) {

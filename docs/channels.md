@@ -90,13 +90,14 @@ preferences, not channel access grants: sidebar sections still intersect the
 authorized roster. Local-first launch also restores a display-only copy from the
 existing account/relay-scoped device store; this does not add automatic cross-device sync.
 
-The browser/development host exposes one narrow **Mute/Unmute** command. It
+The development broker and packaged native host expose narrow **Mute/Unmute** commands. Each
 re-reads the viewer's signed encrypted `channel-mutes` coordinate, changes only the
 requested entry, publishes through existing relay admission, and confirms via
-readback. Publication uses the existing authenticated live socket, scoped to the
-requesting session/community; a missing or disconnected owner fails without HTTP
-fallback or automatic replay. Unrelated fields and explicit unmute tombstones
-survive. Invalid, unreadable, or over-budget heads fail closed; only a successful absent-head read
+readback. The development broker publishes through its existing authenticated live
+socket, scoped to the requesting session/community; a missing or disconnected owner
+fails without HTTP fallback or automatic replay. Packaged native uses the signed
+`POST /events` writer and never automatically replays an unconfirmed write.
+Unrelated fields and explicit unmute tombstones survive. Invalid, unreadable, or over-budget heads fail closed; only a successful absent-head read
 can seed a record. Same-host writes serialize per relay. This is confirmed
 whole-record replacement, not atomic cross-device merging or a durable outbox;
 simultaneous writers on different hosts can still race. Failure requires explicit
@@ -122,7 +123,9 @@ without fetching history or inventing exact counts. Read errors remain in-menu
 for explicit retry. Focus resolves the current row by identity even if saved
 preferences relocated it during the transaction. Read actions require
 `frontier-sync`; hosts lacking mute writes keep read-only preference projection.
-Packaged hosts gain no speculative native preference writer.
+The packaged host decodes verified self-encrypted sidebar records and signs
+only validated sidebar coordinates; it uses its signed HTTP writer and confirms
+via readback.
 
 Move channel, Create new, exclusive Starred placement and startup presentation also
 belong to this persistent sidebar. The session serializes placement, sort and mute
@@ -182,7 +185,7 @@ conversation content and unmount when leaving Messages.
 ## Sidebar sort persistence
 
 Each sidebar section can independently select **A–Z** (the default) or **Recent**.
-The development broker saves these choices in the desktop-compatible encrypted
+The development broker and packaged native host save these choices in the desktop-compatible encrypted
 kind-30078 `channel-sort` record: `{ version: 1, groups: { ... } }`. A–Z removes
 that group's override. Saving preserves unrelated fields and choices present in
 the record read before publication.
@@ -296,11 +299,36 @@ change shared-menu styling.
 The row menu resolves fresh relay-authored metadata (`39000`), administrators
 (`39001`) and membership (`39002`) at exact channel coordinates before offering
 Archive/Delete/Leave or DM Hide. Archive requires a direct owner/admin role;
-Delete requires a direct owner role; the last owner cannot Leave. The menu omits
-Leave when it is forbidden, without an ownership-transfer explanation. Action
-labels have no trailing ellipsis; confirmation dialogs are unchanged. DMs offer Hide
-only. Delegated owner-agent authority and community-admin overrides are not
-inferred or supported by this slice; the relay remains the final authority.
+Delete is offered to a direct owner or a member with verified ownership evidence
+for an owner-role agent; the last direct owner cannot Leave. The menu omits Leave
+when it is forbidden, without an ownership-transfer explanation. Action labels
+have no trailing ellipsis. DMs offer Hide only.
+
+Owner-agent eligibility follows the desktop's profile-based UX: read the channel
+owners' latest signed kind-0 profiles in bounded exact-author batches, then verify
+the unique NIP-OA tag, target binding, owner signature and conditions against the
+profile event. Display-only owner fields and agent hints never qualify. The
+existing shared verifier owns these checks; no new relay query or deployment is
+needed. Direct owners, DMs, archived channels and Archive/Leave execution do not
+require these optional profile reads. A failed five-second owner-profile lookup
+preserves independently established Archive/Leave, omits Delete and exposes
+"Delete check unavailable" with explicit retry in both surfaces. Settings keeps
+its retry button focusable and busy during a fresh read, without retaining stale
+actions. If focus is still on recovery when the read finishes, it moves to the
+retry, an allowed action (Delete first), or a no-actions status. Moving focus
+elsewhere while waiting cancels that handoff.
+
+**Profile provenance is not the relay's persisted authorization mapping.** It is
+an eligibility hint for offering an attempt, not proof the command will succeed.
+A profile without the attestation may hide Delete from a human the relay would
+accept; a conflicting valid attestation may expose an attempt the relay rejects.
+Profile replacement does not establish relay ownership transfer or revocation.
+The viewer signs the unchanged Delete command and the relay enforces its stored
+ownership and current channel state. A definitive rejection retains the channel
+and recoverable confirmation; uncertain delivery still blocks blind resubmission.
+Archive/Leave depend only on the viewer's own channel role. Existing membership
+requirements remain; nonmember access, owner-agent Archive authority and
+community-admin overrides are not added.
 Membership accepts NIP-29 `p` tags with optional relay and role fields
 (`["p", pubkey, relay_hint?, role?]`), including the relay's four-field roster.
 These fields never substitute for the separate administrator record. Invalid
@@ -310,22 +338,35 @@ permission reads show neither a loading row nor a lifecycle separator; the
 separator appears with the resolved actions or unavailable/retry section, and is
 omitted when there are no lifecycle items. Actions appear only after verification.
 
-Channel Settings also offers **Leave channel** in its tools area after a fresh
-lifecycle permission check. Forbidden Leave is omitted, just as in the row menu;
-failed checks offer retry and unsupported connections explain unavailability.
-DMs, sessions and read-only views have no channel Leave entry. This control hands
-off to the same persistent sidebar confirmation/navigation owner, so confirmed
-membership removal can unmount Settings without cancelling its completion.
-Cancellation returns focus to the Settings Leave button (or the sidebar fallback
-if that entry has gone away). Metadata and member-role editing remain separate.
+Channel Settings also offers **Leave channel**, **Archive channel** and **Delete
+channel** in its tools area, using one fresh lifecycle permission check. Each
+entry follows its own permission result: a last owner can Archive/Delete even
+though Leave is forbidden, while an ordinary admin without owner-agent evidence can Archive but not Delete.
+Forbidden entries are omitted; failed checks offer retry and unsupported
+connections explain unavailability. DMs, sessions and read-only nonmember/cached views have no channel
+lifecycle entries. Archived channels cannot be deleted:
+the relay rejects Delete while archived. An administrator must restore the channel
+through another supported client before deletion.
+These controls hand off to the same persistent sidebar confirmation/navigation
+owner, so confirmed removal can unmount Settings without cancelling completion.
+Cancellation returns focus to the originating Settings button (or the sidebar
+fallback if that entry has gone away). Archive retains messages and membership;
+restore requires another supported client until archived browsing/restore lands.
+Archive confirmation explains that a channel administrator can unarchive later
+using another supported client, and that this app cannot restore it yet. Archive and Leave
+use the default button style in Settings. Archive, Leave and Hide confirmation
+primary actions use the prominent variant; Delete remains destructive and Cancel
+keeps the default secondary style.
+Delete keeps the named-channel warning and destructive confirmation button without
+requiring the channel name to be typed. Metadata and member-role editing remain
+separate.
 
-Each command has explicit confirmation; Delete additionally requires the channel
-name. The lifecycle owner rechecks authority before signing and again before
-publication, validates the returned command, and confirms relay-owned state before
-removing a row. Archive retains membership; confirmed Delete/Leave use the existing
-access-loss purge. Commands use narrow development-broker routes, never the message
-outbox or automatic replay. Hosts without this capability display an unavailable
-notice; native/direct-signer parity is deferred.
+Each command has explicit confirmation. The lifecycle owner rechecks signed channel state and, for owner-agent Delete,
+profile eligibility before signing and again before publication, validates
+the returned command, and confirms relay-owned state before removing a row. Archive retains membership;
+confirmed Delete/Leave use the existing access-loss purge. Commands use narrow
+development-broker routes, never the message outbox or automatic replay. Hosts
+without this capability display an unavailable notice; packaged native transport supports these dedicated commands.
 
 Main’s DM × remains local removal, including restoration on new message evidence.
 The separate, confirmed Hide conversation action publishes `41012`, not Leave or Delete. The separate relay-authored `30622`
@@ -419,7 +460,7 @@ admission are unchanged. Publishing reuses the same community's authenticated li
 socket; no HTTP fallback or new connection is added. Restart an already-running
 dev broker to load these routes. `just web` supports this complete browser flow;
 `just desktop` is not required. Hosts without the dedicated capability stay
-read-only; packaged/native adapter parity is not implemented here.
+read-only; packaged/native uses dedicated purpose-bound commands for these edits.
 
 Behavior matrices live in `channel-details.test.ts`,
 `ChannelDetailsEditor.test.tsx`, `store.test.ts` and `relay-broker-api.test.mjs`.

@@ -2,9 +2,12 @@
 
 The shell is owned by `src/app/shell`, independently of relay operations and page
 content. `App.tsx` composes startup/recovery, built-in Settings, and the
-existing contributed-page lifecycle. Messages is the landing page; legacy Home
-targets resolve to Messages in the same visit. Channels is required, including
-when older preferences saved it disabled. Navigation removes disabled optional plugins
+existing contributed-page lifecycle. Messages is the default destination at
+startup; legacy Home targets resolve to Messages in the same visit. Old version-1
+Channels Inbox/Bestie routes resolve to their standalone pages in that same visit,
+preserving community scope and normal plugin availability checks. Channels is
+required, including when older preferences saved it disabled. Navigation removes
+disabled optional plugins
 from page choices; a retained destination whose provider is unavailable displays
 an explicit failure with retry instead of silently selecting another page.
 Browser controls, host shortcuts and toolbar arrows traverse the same visit history.
@@ -23,13 +26,19 @@ semantic tokens, UI authoring rules and the local component reference.
   styles live in Tailwind's base layer, so utilities can override them normally.
   Existing feature CSS variables remain available for incremental adoption.
 - `src/app/shell/presentation.ts` owns page labels, icons and navigation ordering.
-  Messages comes first, then Projects; other contributed pages follow by
-  displayed label with a full contribution-key tie-breaker. Sidebar navigation and
-  page search share this policy, independent of plugin activation/re-enable order.
+  Messages comes first, then Inbox, Bestie and Projects; other contributed pages
+  follow by displayed label with a full contribution-key tie-breaker. Sidebar
+  navigation and page search share this ordering, independent of plugin
+  activation/re-enable order. Sidebar navigation lists only pages registered with
+  `primary: true` (Inbox, Bestie, Projects, Agents and Workflows among the bundled
+  plugins); page search lists every active page. Inbox and Bestie are placeholder
+  pages of their own plugins, so disabling Bestie removes its row along with its
+  launcher. Channels and Sessions are vended without rows: Messages opens by default,
+  from any channel row and from search; Sessions opens from Messages and search.
   Channels is presented as Messages. Legacy tone props are retained for
   compatibility; all pages share the supplied gradient and repeating CSS dots.
   Add recognized page presentation here without changing plugin contracts.
-- `AppShell.tsx` owns the 56px header, vertical page navigation, contributed panel
+- `AppShell.tsx` owns the 48px header, vertical page navigation, contributed panel
   launchers, Settings access, community rail, and page frames. Page navigation sits
   above the channel list outside Settings, using its saved sidebar width
   and resize behavior. Settings replaces that card with `SettingsSidebar.tsx`,
@@ -39,13 +48,15 @@ semantic tokens, UI authoring rules and the local component reference.
   Sidebar session state resets on scope/connection generation without remounting
   unrelated pages. Its own error boundary keeps page navigation and Settings usable.
   Page buttons use shared navigation rows and focus the main region on selection.
-  A scrollable page list leaves room for channels at short heights.
+  At short heights page rows scroll with the channel list rather than in their own list.
   At widths up to 650px, every page collapses navigation behind the header’s
   Show navigation button to preserve readable content at 200% text size. The
   220px disclosure overlays content, supports Escape, and keeps sidebar state
   mounted. A navigation selection closes the phone drawer and hands focus to the
   main content; this includes conversation and Settings-section selections.
-  Desktop layouts retain the visible sidebar and saved width.
+  Messages, Agents, and desktop Settings share an animated header toggle; hiding
+  the sidebar preserves its mounted state and saved width. Reduced motion disables
+  the transition. Other desktop pages retain the visible sidebar.
   The header keeps history and account/search actions, with no second navigation row.
   Full-height pages get a 16px outer gutter (8px on narrow screens) and own their
   card surfaces. The shell adds no white backing behind them. Document pages
@@ -98,7 +109,11 @@ Enter/Space selects without closing the menu. See
 [presence ownership and limitations](presence.md). Escape, outside click and Tab
 leaving dismiss the menu; Escape returns focus to the avatar. Selecting Settings
 focuses the main region after the menu finishes closing, unless focus has already
-moved into the page.
+moved into the page. With a community selected, the avatar inside the menu is a
+menu item that opens the viewer's own profile in the shell companion slot, using
+the same `profile` panel as other profile links; the panel takes focus, and
+closing it returns focus to the header avatar. Personal space has no community
+profile, so its menu avatar stays presentational.
 The avatar does not display the selected community's profile. It uses a configured
 HTTPS picture directly, with the name's first letter on a missing/failed picture
 or a person icon when unnamed. No sample person's photo is used as the user's
@@ -114,9 +129,61 @@ The rail reads saved-community NIP-11 icons through the same-origin broker with 
 most two concurrent optional reads, including inactive communities without
 opening sessions; slow icon responses cannot occupy all foreground connections.
 Unavailable or unsupported images fall back to a saved icon or name initial.
-The rail does not acquire inactive sessions or claim an unread total: the unread
-capability provides bounded observed evidence, not exact community totals
-([unread ownership](unread.md)).
+Each saved community has a context menu (right-click, the ContextMenu key or
+Shift+F10, labelled “Actions for <name>”) built from the shared context-menu
+primitives, in the original's order: Mark all as read, then Copy community URL,
+Invite to community and Community settings, then a separator and the destructive
+Leave community. Copy writes the canonical HTTPS
+origin and reports through the host toast stack. Mark all as read acts only on
+the selected community's ready session and only while its read state can sync;
+elsewhere it stays visible but disabled with a note saying why. Invite to
+community appears only on the selected community, only when the relay-signed
+roster names the viewer an owner or admin (the same roles the Membership
+settings card reads), and never in native builds, which cannot mint invites; it
+opens the Membership settings card scoped to that community. The rail reads
+that roster through the selected community's existing session and verifies it
+against the relay authority that session already holds, so the read adds no
+session request to the connection and opens no other session. That card shares the
+rail's gate rather than a copy of it: in native builds it stays registered as a
+read-only member list with a note, without its Invite members button or
+per-member actions, so a Settings section, history entry or `buzz://open`
+locator naming it still opens instead of reporting unavailable. Community settings is
+on every community and opens Settings scoped to that community's origin, which
+selects it on the way. Leave community is on every community and opens an alert
+dialog owned by the rail (“Leave <name>?”) whose destructive confirm shows a
+pending state while the request runs; the menu item itself is disabled and reads
+“Leaving…” for that community until the relay answers. The rail publishes the
+NIP-43 leave request to the community's relay by origin, then asks the
+communities service to forget it. The relay's acceptance or its "not a member"
+answer removes the community and purges its device state; its banned answer
+removes the community and disposes the session but keeps the device state,
+because the relay still holds the membership while the ban lasts, and the
+informational notice says the viewer is currently banned and the community can
+be added again by its URL if access is restored, without promising permanence.
+Any other refusal or an unreachable relay keeps the membership and reports the
+reason. A failure after the relay has answered is the device's own and reads
+that way: the community was left but this device could not finish cleaning up,
+with the storage error's own words in parentheses, and leaving it again
+finishes. Only the service call can produce that message; the host's selection
+callback and the success notice run outside it, so a host that throws while
+navigating is logged as its own error and the leave still reports success.
+Saved data the purge could not clear is logged by store and adds a line to the
+success notice. When the left community was selected, the rail routes the
+fallback to Personal space through the host's selection callback so navigation
+and ingress recovery match a click on Personal space, rather than leaving a page
+scoped to a gone community. Focus
+returns to the community when it is still saved; once it is gone, focus follows
+the selection, to the still-selected community or to Personal space where a
+left selection now lands. Closing a menu opened from the keyboard returns focus to
+that community. Closing one opened by pointer returns focus to the field the
+right-click interrupted: browsers focus the rail button on the click itself,
+before the menu opens, so the rail remembers what had focus ahead of that move
+and restores it while it is still on the page, and a right-click while typing
+does not leave the caret on the rail. With nothing interrupted, focus lands on
+that community.
+Opening a menu or running any item never acquires an inactive session, and the
+rail still claims no unread total: the unread capability provides bounded
+observed evidence, not exact community totals ([unread ownership](unread.md)).
 
 Visible copy uses Buzz, never “workspace.” The legacy `workspace` layout identifier
 and CSS variable are implementation details retained for plugin compatibility.
@@ -155,6 +222,9 @@ Disabling Bestie removes its snake and open card without evicting a local link c
 The shell supplies the outer page gutter. Channel previews, roster labels, and routine refresh
 and freshness indicators are omitted. Channel Settings → Diagnostics keeps
 manual refresh, outbox inspection, and timing capture available on demand.
+Background thread reads and sidebar enrichment/reconnection do not insert progress
+rows into populated views. Initial empty loads still explain the wait; failures
+and their retry controls remain visible.
 
 The composer preserves the session's text sending and keyboard behavior. Its
 rounded input and lavender send arrow follow the reference; unsupported upload,

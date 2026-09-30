@@ -1,3 +1,4 @@
+import { useAgentOwnerEvidence } from "../../features/profiles/useAgentOwnerEvidence";
 import { useAgentControlRefresh } from "../../features/agents/control-react";
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
 import {
@@ -20,14 +21,10 @@ import { ProfileRuntime, useRuntimeAgents } from "./ProfileRuntime";
 import type { Navigation } from "../../features/navigation/controller";
 import { ProfileChannels } from "./ProfileChannels";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
-import {
-  PresenceIndicator,
-  usePresenceStatus,
-} from "../../features/presence/react";
+import { usePresenceStatus } from "../../features/presence/react";
 import {
   type ReactNode,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
@@ -40,15 +37,17 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { ProfileActivity } from "./ProfileActivity";
 import type { PanelProps } from "../../features/panels/service";
-import { profileKey, profileTarget } from "../../features/profiles/target";
+import {
+  profileAgentHint,
+  profilePanelKey,
+  profileTarget,
+} from "../../features/profiles/target";
+import { formatPublicKey } from "../../shared/identity/public-key";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import {
-  ProfileAgentIdentity,
-  useAgentOwnerEvidence,
-} from "./ProfileAgentIdentity";
+import { ProfileAgentIdentity } from "./ProfileAgentIdentity";
 import styles from "./Profiles.module.css";
 
 const emptyState: AgentControlState = {
@@ -78,7 +77,7 @@ export function ProfilePanel({
   refreshControl?: boolean;
 }) {
   const connection = useRelayConnection(relay);
-  const pubkey = profileKey(target);
+  const pubkey = profilePanelKey(target);
   if (!pubkey) return <p>Unsupported profile.</p>;
   if (connection.status !== "ready")
     return <p>Connect to a community to view this profile.</p>;
@@ -88,6 +87,7 @@ export function ProfilePanel({
       refreshControl={refreshControl}
       session={connection.session}
       pubkey={pubkey}
+      agentHint={profileAgentHint(target)}
       instanceId={instanceId}
       context={context}
       navigation={navigation}
@@ -109,6 +109,7 @@ export function ProfilePanel({
 }
 function ProfileDetails({
   children,
+  agentHint,
   refreshControl,
   session,
   pubkey,
@@ -120,6 +121,7 @@ function ProfileDetails({
   instanceId,
   close,
 }: {
+  agentHint: boolean;
   instanceId?: string | undefined;
   refreshControl: boolean;
   children?: ReactNode;
@@ -189,9 +191,8 @@ function ProfileDetails({
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const presence = usePresenceStatus(session.presence, pubkey, true);
   const knownAgent = agentPubkeys.has(pubkey);
-  const thinkingId = useId();
-  const describeThinking =
-    knownAgent && tab === "info" && presence !== "unknown";
+  // Navigation carries appearance, not the evidence used by private controls.
+  const displayAgent = knownAgent || agentHint;
   const ownership = useAgentOwnerEvidence(
     session,
     knownAgent ? pubkey : undefined,
@@ -249,7 +250,11 @@ function ProfileDetails({
   }
   const npub = profileTarget(pubkey)?.slice(6) ?? pubkey;
   const identityName = useChannelIdentityNames(session, context?.channelId);
-  const name = identityName(pubkey, profile?.name ?? "Unknown profile");
+  const name = identityName(
+    pubkey,
+    profile?.name ??
+      (displayAgent ? "Unknown agent" : (formatPublicKey(pubkey) ?? pubkey)),
+  );
   const picture = profile?.picture
     ? (session.media(profile.picture) ?? null)
     : null;
@@ -323,7 +328,6 @@ function ProfileDetails({
       ref={region}
       data-buzz-ui=""
       aria-label="Profile details"
-      aria-describedby={describeThinking ? thinkingId : undefined}
       tabIndex={-1}
       className={styles.root}
     >
@@ -346,22 +350,26 @@ function ProfileDetails({
                 session={session}
                 agentPubkey={pubkey}
                 channelId={context?.channelId}
-                thinkingDescriptionId={
-                  describeThinking ? thinkingId : undefined
-                }
                 src={picture}
-                alt={
-                  tab === "info" && presence !== "unknown"
-                    ? ""
-                    : `${name} avatar`
-                }
+                alt={`${name} avatar`}
                 fallback={name}
                 size="fill"
-                shape={agentPubkeys.has(pubkey) ? "squircle" : "circle"}
+                shape={displayAgent ? "squircle" : "circle"}
                 statusBadge={presence === "unknown" ? undefined : presence}
               />
             </div>
-            <h2 className="text-heading">{name}</h2>
+            <div className="min-w-0">
+              <h2 className="text-heading">{name}</h2>
+              {presence !== "unknown" && (
+                <p className="text-body-sm text-secondary">
+                  {
+                    { online: "Active", away: "Away", offline: "Offline" }[
+                      presence
+                    ]
+                  }
+                </p>
+              )}
+            </div>
           </div>
           <Tabs
             value={selectedTab}
@@ -382,11 +390,6 @@ function ProfileDetails({
               <div className={styles.tabContent}>
                 {selected === "info" ? (
                   <>
-                    <PresenceIndicator
-                      presence={session.presence}
-                      pubkey={pubkey}
-                      profile
-                    />
                     <UserStatusDisplay session={session} userId={pubkey} />
                     {canMessage && (
                       <div>
@@ -445,7 +448,7 @@ function ProfileDetails({
                           scope={scope}
                           communityOrigin={communityOrigin}
                           viewer={viewer}
-                          knownAgent={knownAgent}
+                          knownAgent={displayAgent}
                         />
                       )}
                     <div className={styles.publicKey}>

@@ -357,7 +357,7 @@ fallback if that entry has gone away). Archive retains the current conversation,
 messages, membership and open Settings, replacing Archive with Unarchive after a
 fresh permission read. The conversation stays selected after reload; archived
 write restrictions still apply. When refreshed Settings actions remount, focus
-returns to its persistent Close control instead of an unrelated sidebar row;
+returns to its persistent Settings-tab close control instead of an unrelated sidebar row;
 joined archived channels remain available by name in search, labeled **Archived
 channel**, but stay out of the sidebar and Recent activity. Open the search result
 and Settings to restore it. This uses the existing membership discovery and exact

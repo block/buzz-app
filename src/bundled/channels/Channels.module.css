@@ -48,6 +48,10 @@
   --sidenav-emoji-size: 13px;
   padding-inline: var(--sidebar-padding) var(--sidebar-padding-end);
 }
+.conversation [data-tab-pane-toggle][aria-expanded="true"] {
+  /* An open pane shares the selected tab fill, rather than a held press. */
+  --affordance-subtle-pressed: var(--affordance-subtle);
+}
 .sidebarBrand {
   height: var(--space-6);
   display: flex;

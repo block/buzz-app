@@ -59,13 +59,13 @@ import {
   type ReactNode,
 } from "react";
 import {
-  DotsThreeIcon,
+  SlidersHorizontalIcon,
   ArrowSquareLeftIcon,
   ArrowSquareRightIcon,
   PlugIcon,
   ChatCircleIcon,
   GearIcon,
-  PlusIcon,
+  BrowserIcon,
 } from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
 import type { RelayData } from "../../features/relay/service";
@@ -1414,11 +1414,17 @@ function ChannelWorkspace({
                             });
                           }
                         }}
-                        icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
+                        icon={
+                          <SlidersHorizontalIcon
+                            size="1rem"
+                            aria-hidden="true"
+                          />
+                        }
                       />
                       {current && (
                         <IconButton
                           ref={splitTrigger}
+                          data-tab-pane-toggle=""
                           size="toolbar"
                           aria-label="Toggle tab pane"
                           title={
@@ -1665,7 +1671,7 @@ function ChannelWorkspace({
                           icon: target ? (
                             conversationIcon(target)
                           ) : (
-                            <PlusIcon size="1rem" />
+                            <BrowserIcon size="1rem" />
                           ),
                           close: () => closeConversationTab(tab.id),
                           content:

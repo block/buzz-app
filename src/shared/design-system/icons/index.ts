@@ -198,6 +198,11 @@ export const SmileyStickerIcon = defineIcon(
   "phosphor",
   PhosphorSmileyStickerIcon,
 );
+import { SlidersHorizontalIcon as PhosphorSlidersHorizontalIcon } from "@phosphor-icons/react/dist/csr/SlidersHorizontal";
+export const SlidersHorizontalIcon = defineIcon(
+  "phosphor",
+  PhosphorSlidersHorizontalIcon,
+);
 import { SquaresFourIcon as PhosphorSquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
 export const SquaresFourIcon = defineIcon("phosphor", PhosphorSquaresFourIcon);
 import { StopIcon as PhosphorStopIcon } from "@phosphor-icons/react/dist/csr/Stop";

@@ -63,7 +63,7 @@ export const dialogs = [
     id: "create",
     name: "Create agent",
     group: "Agent dialogs",
-    path: "Agents → Add agent",
+    path: "Agents → Create Agent",
     source: "src/bundled/agents/AgentCreateDialog.tsx",
     frame: "Local Base UI frame",
     note: "Wide form with advanced fields. Explicit Close can leave saving in progress; implicit dismissal protects dirty work.",

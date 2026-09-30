@@ -68,6 +68,7 @@ export function ConversationTab({
         className={styles.conversation}
         aria-label={`Conversation in ${channel.name}`}
       >
+        <MessageManagementStatus />
         {tab.kind === "thread" ? (
           <ThreadPanel
             session={session}
@@ -84,7 +85,6 @@ export function ConversationTab({
           />
         ) : (
           <>
-            <MessageManagementStatus />
             <ChannelBody
               queries={session}
               scope={scope}

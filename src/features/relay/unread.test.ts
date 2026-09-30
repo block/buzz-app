@@ -3,8 +3,9 @@ import { createRelaySession } from "./session";
 import { createUnread } from "./unread";
 import { deferredSidebar, sidebarFixture, sidebarRow } from "./sidebar-testing";
 import { keypair, message, metadata, roster, signed } from "./testing";
+import { matchesEvent } from "./projection";
 import type { LiveCallbacks } from "./live";
-import type { RelayEvent } from "./events";
+import type { ReadFilter, RelayEvent } from "./events";
 const channel = "01234567-89ab-cdef-0123-456789abcdef";
 const other = "11234567-89ab-cdef-0123-456789abcdef";
 const target = { kind: "channel", channelId: channel } as const;
@@ -19,7 +20,9 @@ function setup(initialGrant = true) {
     peer = keypair(),
     relay = keypair();
   let live!: LiveCallbacks;
-  const query = vi.fn(async () => [] as RelayEvent[]);
+  const query = vi.fn(
+    async (_filters: readonly ReadFilter[]) => [] as RelayEvent[],
+  );
   const owner = createRelaySession(
     {
       viewer: viewer.pubkey,
@@ -1205,7 +1208,7 @@ it.each(
     await h.unread.ensure();
     const preview = () => h.unread.activity(channel).items?.[0]?.preview;
     expect(preview()).toBe(live ? unloaded : "Open thread to read");
-    h.query.mockResolvedValueOnce(
+    const stored =
       presented === "edited"
         ? [
             // Newest, but not the author's: never the presentation.
@@ -1214,7 +1217,12 @@ it.each(
             edit(h.peer, "superseded", 12),
             reply,
           ]
-        : [reply],
+        : [reply];
+    // The relay answers only what the read asks for.
+    h.query.mockImplementationOnce(async (filters) =>
+      stored.filter((event) =>
+        filters.some((filter) => matchesEvent(event, filter)),
+      ),
     );
     await h.unread.loadActivity(channel);
     expect(preview()).toBe(presented);

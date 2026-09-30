@@ -94,9 +94,11 @@ its hover/focus/click popover lists the relay's bounded set of newest unread
 threads, dropping only those with exact-zero attention (unknown attention stays, as
 possible attention), and opens the existing thread panel, so overlapping priority
 and thread activity never produce duplicate dots. Each preview is the thread's
-newest unread reply, not its newest attention reply, shown as the timeline presents
-it: agent envelopes unwrapped, and the author's latest edit as of opening the
-popover. The relay caps the list before
+newest unread reply, not its newest attention reply, with agent envelopes unwrapped
+and the author's edits applied as read when the popover opens. That read is bounded,
+so a preview can differ from the timeline: it takes the newest 500 edits across the
+listed replies, so a reply can show an older edit or its original text, and it does
+not read deletions, so a deleted edit still shows. The relay caps the list before
 the client filters it, so an older attention thread can be omitted; an incomplete
 list stays marked incomplete. Merely revealing the popover does not acknowledge a
 reply.

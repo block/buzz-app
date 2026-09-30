@@ -13,6 +13,7 @@ import { prepareMedia } from "./media-preparation.mjs";
 import { assertSidebarSortIntent, mutateSidebarSort } from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import { parseGitRead } from "../src/features/projects/git.ts";
+import { validateMemberAdministrationTemplate } from "../src/features/channel-members/administration-protocol.ts";
 import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
 import { validateDetailsTemplate } from "../src/features/relay/channel-details-protocol.ts";
 import { validateArchiveRequestTemplate } from "../src/features/relay/identity-archive-protocol.ts";
@@ -1427,6 +1428,7 @@ export function relayBrokerPlugin({
               ],
               channelLifecycle: true,
               channelDetails: true,
+              memberAdministration: true,
               identityArchives: true,
               workflowReads: true,
               projectGit: true,
@@ -1934,6 +1936,8 @@ export function relayBrokerPlugin({
               "/api/relay/sign",
               "/api/relay/channel-details-sign",
               "/api/relay/channel-details-publish",
+              "/api/relay/member-administration-sign",
+              "/api/relay/member-administration-publish",
               "/api/relay/channel-lifecycle-sign",
               "/api/relay/channel-lifecycle-publish",
               "/api/relay/identity-archive-sign",
@@ -2278,6 +2282,9 @@ export function relayBrokerPlugin({
           const details =
             route === "/api/relay/channel-details-sign" ||
             route === "/api/relay/channel-details-publish";
+          const administration =
+            route === "/api/relay/member-administration-sign" ||
+            route === "/api/relay/member-administration-publish";
           const lifecycle =
             route === "/api/relay/channel-lifecycle-sign" ||
             route === "/api/relay/channel-lifecycle-publish";
@@ -2287,15 +2294,26 @@ export function relayBrokerPlugin({
           const signing =
             route === "/api/relay/sign" ||
             route === "/api/relay/channel-details-sign" ||
+            route === "/api/relay/member-administration-sign" ||
             route === "/api/relay/channel-lifecycle-sign" ||
             route === "/api/relay/identity-archive-sign";
           const publishing =
             route === "/api/relay/publish" ||
             route === "/api/relay/channel-details-publish" ||
+            route === "/api/relay/member-administration-publish" ||
             route === "/api/relay/channel-lifecycle-publish" ||
             route === "/api/relay/identity-archive-publish";
           if (signing || publishing) {
-            if (archive) {
+            if (administration) {
+              try {
+                validateMemberAdministrationTemplate(filters, viewer);
+              } catch {
+                return json(res, 400, {
+                  error: "Invalid member administration command",
+                  sent: false,
+                });
+              }
+            } else if (archive) {
               try {
                 validateArchiveRequestTemplate(filters);
                 if (!(await getAuthority(relay)).archiveAuthority)

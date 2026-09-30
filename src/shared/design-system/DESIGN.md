@@ -330,6 +330,13 @@ the close button so its hit area does not enlarge the text gap. The body owns
 vertical padding matching the dialog's horizontal padding: `--space-6` (24px),
 or `--space-4` (16px) at the compact breakpoint. Do not add an outer flex gap
 on top of that body padding.
+For a bounded dialog with fixed controls above a list, use `height="stable"`
+with `bodyLayout="flex"`. The body becomes a non-scrolling flex column; the
+feature supplies a `flex: 1; min-height: 0` composition with fixed controls and
+one flexing scrollport. Keep all results and recovery feedback reachable in that
+scrollport. Without footer actions, the flex body omits its bottom padding so
+only the popup supplies the outer bottom gutter. With actions, it retains the
+body-to-footer spacing. The default flow layout and other dialogs remain unchanged.
 The shared Dialog uses state opacity and settling transform tokens for a centered
 0.98-scale entrance, with fast timing on exit. Base UI owns transition presence;
 keep the controlled component mounted while setting `open={false}` for an exit.

@@ -24,6 +24,7 @@ export function IdentityRow({
   detail,
   previewDetail,
   render,
+  renderContent,
 }: {
   pubkey: string;
   name: string;
@@ -32,6 +33,8 @@ export function IdentityRow({
   keyLabel?: string | undefined;
   detail?: string | undefined;
   previewDetail?: ReactNode;
+  /** Custom row presentation; preserve preview accessibility on its focus target. */
+  renderContent?: ((previewProps: AriaAttributes) => ReactNode) | undefined;
   render?:
     | ((content: ReactNode, previewProps: AriaAttributes) => ReactNode)
     | undefined;
@@ -48,26 +51,37 @@ export function IdentityRow({
   const notify = useToastNotification();
   const npub = npubEncode(pubkey);
   const content = (
-    <span ref={anchor} className="inline-flex max-w-full align-middle">
-      <ChoiceRow
-        leading={
-          <Avatar
-            alt=""
-            fallback={name}
-            src={picture}
-            size="small"
-            shape={isAgent ? "squircle" : "circle"}
-          />
-        }
-        label={<span className="block truncate text-body-sm">{name}</span>}
-        description={
-          <span className="block truncate text-caption">
-            {isAgent ? "Agent · " : ""}
-            {keyLabel}
-            {detail ? ` · ${detail}` : ""}
-          </span>
-        }
-      />
+    <span
+      ref={anchor}
+      className={
+        renderContent
+          ? "flex min-w-0 flex-1"
+          : "inline-flex max-w-full align-middle"
+      }
+    >
+      {renderContent ? (
+        renderContent(previewProps)
+      ) : (
+        <ChoiceRow
+          leading={
+            <Avatar
+              alt=""
+              fallback={name}
+              src={picture}
+              size="small"
+              shape={isAgent ? "squircle" : "circle"}
+            />
+          }
+          label={<span className="block truncate text-body-sm">{name}</span>}
+          description={
+            <span className="block truncate text-caption">
+              {isAgent ? "Agent · " : ""}
+              {keyLabel}
+              {detail ? ` · ${detail}` : ""}
+            </span>
+          }
+        />
+      )}
     </span>
   );
   return (

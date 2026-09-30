@@ -21,7 +21,7 @@ test("channel members opens from the header, fits each viewport, and returns key
     [1440, 850, "light"],
     [800, 850, "dark"],
     [390, 850, "light"],
-    [800, 360, "dark"],
+    [800, 300, "dark"],
   ]) {
     await page.setViewportSize({ width, height });
     await page.evaluate(
@@ -70,19 +70,25 @@ test("channel members opens from the header, fits each viewport, and returns key
       .poll(async () => (await dialog.boundingBox()).height)
       .toBe(box.height);
     const body = dialog.locator(".buzz-dialog-body");
-    await expect(body).toHaveCSS("overflow-y", "auto");
+    await expect(body).toHaveCSS("overflow-y", "hidden");
+    const list = dialog.getByRole("region", {
+      name: "Member list",
+      exact: true,
+    });
+    await expect(list).toHaveCSS("overflow-y", "auto");
     await expect(
       dialog.getByRole("button", { name: "Close channel members" }),
     ).toBeInViewport();
-    if (height === 360) {
+    // A single compact row now fits at 360px; use a genuinely constrained viewport.
+    if (height === 300) {
       expect(
-        await body.evaluate((node) => node.scrollHeight > node.clientHeight),
+        await list.evaluate((node) => node.scrollHeight > node.clientHeight),
       ).toBe(true);
-      await body.evaluate((node) => {
+      await list.evaluate((node) => {
         node.scrollTop = node.scrollHeight;
       });
       await expect
-        .poll(() => body.evaluate((node) => node.scrollTop))
+        .poll(() => list.evaluate((node) => node.scrollTop))
         .toBeGreaterThan(0);
       await expect(
         dialog.getByRole("button", { name: "Close channel members" }),

@@ -90,7 +90,12 @@ function Fixture() {
   const [selected, setSelected] = useState<string[]>([]);
   return (
     <ToastProvider>
-      <ChannelMembersButton session={session} channelId={channelId} />
+      <ChannelMembersButton
+        session={session}
+        channelId={channelId}
+        canOpenLink={() => true}
+        onOpenLink={() => true}
+      />
       <Button onClick={() => setOpen(true)}>Edit team</Button>
       <Dialog open={open} onOpenChange={setOpen} title="Team">
         <AgentSelection

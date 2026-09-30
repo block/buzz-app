@@ -760,7 +760,7 @@ function ChannelWorkspace({
     };
   }, [currentId, showingThread?.navigation]);
   const openLink = useCallback(
-    (url: string) => {
+    (url: string, returnFocus?: HTMLElement) => {
       const { current, navigation } = destination.current;
       const connection = relay.snapshot();
       if (
@@ -795,9 +795,10 @@ function ChannelWorkspace({
       if (context.channelId && candidate) {
         setSettings(undefined);
         panelTrigger.current =
-          document.activeElement instanceof HTMLElement
+          returnFocus ??
+          (document.activeElement instanceof HTMLElement
             ? document.activeElement
-            : null;
+            : null);
         if (context.routedThread) select(context.channelId);
         setThread(undefined);
         open({
@@ -957,6 +958,8 @@ function ChannelWorkspace({
                           session={queries}
                           channelId={current.id}
                           control={agentControl}
+                          canOpenLink={canOpenLink}
+                          onOpenLink={openLink}
                         />
                       )}
                       {drawer.launchers}

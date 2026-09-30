@@ -468,6 +468,159 @@ Real-relay Save/privacy changes require deliberate testing on a disposable chann
 unit/broker tests and a browser Cancel walkthrough do not establish live-write or
 native acceptance.
 
+## Member administration
+
+The existing **Channel members** dialog keeps ordinary invitations and adds
+verified roles plus per-member administration. Members sort by verified role:
+Owners first, then Admins, then everyone else, alphabetically by displayed name
+within each group (public key breaks ties). Before roles resolve, rows remain
+alphabetical; refresh preserves the last verified role order on failure. Search
+filters that order without changing it; non-member search ranking is unchanged.
+Current-member avatars and rows
+open the existing Profiles panel when its contribution is enabled; the Members
+dialog closes and closing the profile returns focus to the Channel members button.
+The two-line row keeps the identity and a smaller, muted inline **managed by**
+hint above verified role and archive badges. The hint follows the name, not a
+separate right-aligned column; its owner link opens Profiles with the same focus
+handoff. Row-profile and owner-profile controls are siblings, never nested.
+Hover cross-fades the second-line pills and disambiguated short npub in 140ms,
+keeping the name and owner link fixed; keyboard focus and reduced motion switch
+immediately. The profile exposes the full key.
+Rows without badges (including invitations and members awaiting their first role
+read) center the identity at rest, revealing the key beneath it on hover/focus.
+The existing Motion dependency animates the metadata height/opacity in 140ms;
+reduced motion and focus entry are immediate. The avatar and action stay centered,
+and badge-bearing members keep their name/owner position fixed. Every current member has a separate
+ellipsis button (not nested inside profile navigation), with **View profile** first
+and only permitted administration actions below it. Owner/self protection, missing
+writer support and pending/uncertain writes suppress mutations, not the profile
+menu. If Profiles is unavailable, View profile is disabled. Pointer hover, keyboard
+focus and an open menu reveal the reserved action slot without moving row content;
+non-hover/touch input keeps the trigger visible. Right-click, Context Menu and
+Shift+F10 open the same shared menu. Escape returns focus to the originating row
+control; profile navigation hands focus to the panel and returns to the external
+Channel members button when closed. Invitation rows reuse the same avatar, name,
+managed-by hint and public-key hover/focus presentation, without a channel-role
+badge. Their avatars and identity rows open Profiles just like current members;
+only the separate, extra-small prominent **Add / Adding…** button invites someone.
+People and agent avatars both use the shared 32px default size. Both row types
+share a 52px minimum height, growing with their content rather than
+clipping it; profile targets fill the row height, with identity and actions centered.
+Profile navigation stays available during an invitation; missing Profiles support
+leaves the identity static without disabling the separate Add button.
+The dialog retains its shared surface. A quiet `border-standard` outline frames
+one scrolling viewport, with Members and Not in this channel separated inside it
+without extra boxes or fills. Both group headings stick to the top of this viewport
+while scrolling within their own section, with an opaque matching surface so rows
+do not show through. The Members refresh control stays with its heading.
+A compact ghost refresh icon sits beside **Members · #**;
+its tooltip and accessible name are **Refresh member data**. It is the single retry
+control for roster, verified roles, missing member names, shared agent choices,
+archive visibility, agent ownership/manager names and the active directory search. Errors stay near their data,
+without separate fetch-retry buttons. The current search text is retained; directory
+refresh starts at page one rather than mixing old pages with fresh results. Empty
+queries and view-only membership do not trigger directory searches. Cached names
+reuse the shared profile directory; failed/missing names are retried. The separate
+roster read remains usable when role verification fails. The icon spins linearly
+until all these reads settle (except with reduced motion), exposes `aria-busy`, and
+keeps its focus target without a separate loading label or spinner. Duplicate clicks
+and refresh during membership writes are blocked. Optional-name loading/failure does
+not disable Add once the roster is verified. Failed invitations keep their explicit
+Retry; data refresh never resubmits an invitation, role change or removal.
+Supporting buttons use outline emphasis; **Show more results** uses the small size
+and is horizontally centered beneath the search results.
+Role confirmations use prominent, and removal remains destructive.
+The title, channel name and search stay fixed.
+The search composition reduces the shared header-to-body gap by `--space-2`
+(16px normally, 8px at the compact breakpoint) without affecting other dialogs.
+The member-list area flexes into the remaining dialog height and owns the only
+scrollbar, including search results and recovery messages. Members and Not in this
+channel flow naturally one after the other; only the bordered viewport fills spare
+height, never a group inside it. The shared Dialog's opt-in flex body
+keeps the outer body non-scrolling; other dialogs are unchanged.
+Agent runtime/access management is not added to the member menu.
+
+Manager attribution uses the existing NIP-OA verifier on each agent's winning
+signed kind-0 head, combining one dialog-owned live observation with retained
+profile-directory evidence. Verification is event-bound: newer invalid or missing
+auth removes the claim; older reads cannot restore it. Identity hints, local agent
+inventory and channel roles never establish ownership. Missing/invalid evidence
+shows no manager hint. Read/admission/name failures join the shared refresh; an
+unavailable owner name falls back to their public key. Verified public evidence
+can remain during a failed background read. No private/runtime authority is granted.
+
+Agent avatar shapes describe identity type, not the channel's protocol role.
+A verified Bot role for an agent identity is presented as **Member**, including
+the accessible name; a Bot without an agent hint still displays Bot. Other verified role badges, including
+Member/Admin/Owner/Guest, retain their labels.
+This is presentation only: stored Bot roles, invitation defaults and administration
+permissions are unchanged. Before the first role read finishes,
+the role pill and its accessible label are absent; verified pills appear when ready.
+Refresh retains previously verified roles. An open dialog reloads idle role data
+when session access invalidation clears it, but only for a current, non-cached
+channel. Failed reads still require explicit refresh; recovery never replays writes.
+Missing or unfamiliar role hints after
+a completed read remain unverified/unknown rather than defaulting to Member.
+
+`features/channel-members/administration.ts` owns this session-scoped capability;
+`session.ts` only composes its reader, narrow writer, access guard, discovery
+updates and teardown. The dialog does not own a connection, privileged outbox or
+retry loop. Each fresh read verifies exact relay-authored metadata (`39000`),
+administrators (`39001`) and the complete roster (`39002`). Administrator and
+roster roles must agree; malformed or inconsistent snapshots fail closed.
+
+Current direct owners/admins of an unarchived stream/forum channel can manage
+another non-owner member:
+
+| Target role | Change role | Remove from this channel |
+| --- | --- | --- |
+| Admin / Member / Guest | Admin / Member, excluding the current role | Yes |
+| Bot | No conversion | Yes |
+| Owner, self, unknown or inconsistent | No | No |
+
+The menu deliberately omits **Make guest** while Guest's permission contract is
+unsettled: the inspected relay message path does not enforce the role's documented
+read-only meaning, while Git push policy does distinguish Guest from Member.
+Existing Guest roles remain visible and can be deliberately changed to Member or
+Admin, or removed; they are never automatically converted. This is a menu-only
+restriction, not a change to relay semantics or the broker's supported commands.
+
+DMs and session channels have no administration actions. No ownership transfer,
+community-admin override, delegated agent-owner authority or new invitation
+restriction is introduced. Personal Leave remains a separate lifecycle operation;
+removing a member neither deletes their identity nor stops their agents.
+
+Role change and removal use separate deliberate confirmations, initially focused
+on Cancel. The service checks fresh actor/target state before signing and again
+before publication, rejects altered signer payloads, and confirms the requested
+role or roster absence with a fresh read. Relay acceptance alone is not success.
+Pending intent survives dialog close/reopen and suppresses duplicate actions.
+Definitive failure preserves the last confirmed roles and offers explicit refresh;
+an uncertain outcome offers readback only, never automatic resubmission. If the
+requested result still cannot be observed, administration remains blocked in that
+session. Cache clear, access loss and disposal fence late completions, but cannot
+retract a request already sent. Recovery is in-memory, not durable across restart.
+
+The development broker advertises a separate `memberAdministration` capability
+and admits only exact `9000` Admin/Member/Guest changes or `9001` other-member
+removals through its purpose-bound routes. Generic invitation signing is unchanged;
+the relay still enforces the authoritative ACL. Hosts without this writer can
+read verified roles but expose no management controls. Native/direct-signer parity
+is deferred rather than silently falling back to an unrestricted writer.
+
+**Accepted protocol limitation:** role commands are existing relay upserts, not
+conditional updates. A departure after final preflight can be undone by the role
+command re-adding the target; a concurrent role edit can be overwritten. Client
+checks/readback reduce uncertainty but do not provide atomic conflict rejection.
+Preventing these races requires separately scoped relay support.
+
+Regression coverage lives in `administration.test.ts`,
+`MemberAdministration.test.tsx`, and `dev/relay-broker-api.test.mjs`; existing
+`ChannelMembersDialog.test.tsx` invitation coverage remains. Synthetic confirmed
+writes/recovery and a real-app read/confirmation/cancel exercise do not establish
+native or deployed destructive-write acceptance. Those checks and human tryout
+remain separate delivery gates.
+
 ## Performance and correctness carried from Astra
 
 The port retains the prepared-store implementation and its behavior tests:

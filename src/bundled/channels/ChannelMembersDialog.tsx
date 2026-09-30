@@ -1,3 +1,6 @@
+import { motion, useReducedMotion } from "motion/react";
+import { Button as BaseButton } from "@base-ui/react/button";
+import referenceStyles from "../../shared/InlineReference.module.css";
 import { npubEncode } from "nostr-tools/nip19";
 import {
   useEffect,
@@ -10,6 +13,8 @@ import type { RelaySession } from "../../features/relay/session";
 import type { AgentControl } from "../../features/agents/control";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
+import { profileTarget } from "../../features/profiles/target";
+import styles from "./ChannelMembersDialog.module.css";
 import { canAddMembers } from "../../features/channel-members/members";
 import {
   formatPublicKey,
@@ -19,21 +24,42 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import type { AriaAttributes } from "react";
 import { AgentOwnerPreview } from "../../features/profiles/AgentOwnerPreview";
 import { IdentityRow } from "../../shared/identity/IdentityRow";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import { UsersIcon } from "../../shared/design-system/icons";
+import {
+  ArrowsClockwiseIcon,
+  UsersIcon,
+} from "../../shared/design-system/icons";
+import {
+  MemberRow,
+  InvitationRow,
+  MemberAdministrationStatus,
+  useMemberAdministration,
+} from "./MemberAdministration";
 import { useMemberSearch } from "./useMemberSearch";
+import { useMemberOwners } from "./useMemberOwners";
+
+type ProfileNavigation = {
+  canOpenLink?: ((target: string) => boolean) | undefined;
+  onOpenLink?:
+    | ((target: string, returnFocus?: HTMLElement) => boolean)
+    | undefined;
+};
 
 export function ChannelMembersButton({
   session,
   channelId,
   control,
+  canOpenLink,
+  onOpenLink,
 }: {
   session: RelaySession;
   channelId: string;
   control?: AgentControl | undefined;
-}) {
+} & ProfileNavigation) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   return (
@@ -53,6 +79,8 @@ export function ChannelMembersButton({
           session={session}
           channelId={channelId}
           control={control}
+          canOpenLink={canOpenLink}
+          onOpenLink={onOpenLink}
           close={() => setOpen(false)}
           trigger={trigger}
         />
@@ -68,13 +96,17 @@ export function ChannelMembersDialog({
   control,
   close,
   trigger,
+  canOpenLink,
+  onOpenLink,
 }: {
   session: RelaySession;
   channelId: string;
   control?: AgentControl | undefined;
   close(): void;
   trigger: React.RefObject<HTMLButtonElement | null>;
-}) {
+} & ProfileNavigation) {
+  const reducedMotion = useReducedMotion();
+  const openingProfile = useRef(false);
   const input = useRef<HTMLElement>(null);
   const focusedAdd = useRef<{ key: string; button: HTMLButtonElement } | null>(
     null,
@@ -99,7 +131,8 @@ export function ChannelMembersDialog({
   const [nameError, setNameError] = useState("");
   const [rosterBusy, setRosterBusy] = useState(true);
   const [refresh, setRefresh] = useState(0);
-  const [nameRefresh, setNameRefresh] = useState(0);
+  const [namesBusy, setNamesBusy] = useState(false);
+  const [agentsBusy, setAgentsBusy] = useState(false);
   const list = useSyncExternalStore(
     session.channels.subscribeList,
     session.channels.list,
@@ -122,14 +155,16 @@ export function ChannelMembersDialog({
     session.channels.get?.(channelId);
   const canAdd = canAddMembers(session, channel);
   const search = useMemberSearch(session, query, canAdd);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: destination changes retire addition notices.
   useEffect(() => {
     const controller = new AbortController();
     lifetime.current = controller;
+    setAgentsBusy(false);
     return () => {
       controller.abort();
       lifetime.current = undefined;
     };
-  }, []);
+  }, [session, channelId]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh explicitly retries the roster read.
   useEffect(() => {
     let current = true;
@@ -167,11 +202,18 @@ export function ChannelMembersDialog({
     };
   }, [session, channelId, refresh]);
   const memberKey = channel?.members?.join(":") ?? "";
-  // biome-ignore lint/correctness/useExhaustiveDependencies: nameRefresh explicitly retries missing names.
+  const administration = useMemberAdministration(
+    session,
+    channelId,
+    memberKey,
+    !!channel && !channel.cached,
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh retries missing names with the other dialog reads.
   useEffect(() => {
+    setNameError("");
+    setNamesBusy(!!memberKey);
     if (!memberKey) return;
     let current = true;
-    setNameError("");
     void session.profiles
       .ensure(memberKey.split(":"), "background")
       .catch(() => {
@@ -179,11 +221,14 @@ export function ChannelMembersDialog({
           setNameError(
             "Some names could not load. Public keys still identify members. Try again.",
           );
+      })
+      .finally(() => {
+        if (current) setNamesBusy(false);
       });
     return () => {
       current = false;
     };
-  }, [session, memberKey, nameRefresh]);
+  }, [session, memberKey, refresh]);
   const known = new Map(
     agents.identities.map((agent) => [agent.pubkey, agent]),
   );
@@ -201,9 +246,18 @@ export function ChannelMembersDialog({
     `${name} ${key} ${npubEncode(key)}`
       .toLowerCase()
       .includes(query.trim().toLowerCase());
+  const rolePriority = (key: string) => {
+    const role = administration.authority.roles[key];
+    return role === "owner" ? 0 : role === "admin" ? 1 : 2;
+  };
   const currentMembers = [...members]
     .filter((key) => matches(key, label(key)))
-    .sort((a, b) => label(a).localeCompare(label(b)) || a.localeCompare(b));
+    .sort(
+      (a, b) =>
+        rolePriority(a) - rolePriority(b) ||
+        label(a).localeCompare(label(b)) ||
+        a.localeCompare(b),
+    );
   const candidates = new Map(
     search.people.map((person) => [person.pubkey, person]),
   );
@@ -219,8 +273,52 @@ export function ChannelMembersDialog({
   const available = [...candidates.values()].filter(
     (person) => !members.has(person.pubkey) && !archived.has(person.pubkey),
   );
+  const agentKeys = [
+    ...new Set([
+      ...currentMembers.filter(
+        (key) => known.has(key) || profiles.get(key)?.isAgent,
+      ),
+      ...available
+        .filter(
+          (person) =>
+            person.isAgent ||
+            known.has(person.pubkey) ||
+            profiles.get(person.pubkey)?.isAgent,
+        )
+        .map((person) => person.pubkey),
+    ]),
+  ]
+    .sort()
+    .join(":");
+  const ownership = useMemberOwners(session, agentKeys, refresh);
+  const refreshing =
+    ownership.busy ||
+    rosterBusy ||
+    administration.status === "loading" ||
+    namesBusy ||
+    search.loading ||
+    agents.pending ||
+    agentsBusy ||
+    archives.status === "loading";
+  const mutationPending =
+    busy.size > 0 || administration.operation?.status === "pending";
+  const refreshMembers = () => {
+    if (refreshing || mutationPending) return;
+    setRosterBusy(true);
+    setRefresh((value) => value + 1);
+    void session.memberAdministration.refresh(channelId).catch(() => {});
+    // Native inventory retains ready data during refresh, so its snapshot alone
+    // does not expose every in-flight read.
+    const signal = lifetime.current?.signal;
+    setAgentsBusy(true);
+    void session.agentChoices.refresh().finally(() => {
+      if (!signal?.aborted) setAgentsBusy(false);
+    });
+    void session.archives.refresh();
+    search.refresh();
+  };
   const keys = publicKeyLabels([...members, ...candidates.keys()]);
-  // A confirmed addition replaces its focused Add button with a static member row.
+  // A confirmed addition replaces its focused Add button with a member row.
   // DOM removal does not emit blur, so restore focus only if it was not moved elsewhere.
   useLayoutEffect(() => {
     const previous = focusedAdd.current;
@@ -253,6 +351,131 @@ export function ChannelMembersDialog({
   ) => {
     const isAgent = agent || known.has(key) || profiles.get(key)?.isAgent;
     const artwork = picture ?? profiles.get(key)?.picture;
+    const target = profileTarget(key);
+    const clickable = !!target && !!onOpenLink && !!canOpenLink?.(target);
+    const role = administration.authority.roles[key];
+    const roleLabel =
+      isAgent && role === "bot"
+        ? "member"
+        : (role ??
+          (administration.status === "idle" ||
+          administration.status === "loading"
+            ? undefined
+            : "Role unverified"));
+    const hasBadges = !adding && !!(roleLabel || archived.has(key));
+    const expanded = {
+      height: "auto",
+      marginTop: "var(--space-1)",
+      opacity: 1,
+    };
+    const avatar = (
+      <Avatar
+        alt=""
+        fallback={name}
+        src={artwork ? session.media(artwork, "small") : undefined}
+        size="default"
+        shape={isAgent ? "squircle" : "circle"}
+      />
+    );
+    const openProfile = (destination: string | undefined) => {
+      if (!destination || !canOpenLink?.(destination)) return false;
+      // Hand modal focus to the existing panel, with a stable return target.
+      openingProfile.current = true;
+      if (onOpenLink?.(destination, trigger.current ?? undefined)) {
+        close();
+        return true;
+      }
+      openingProfile.current = false;
+      return false;
+    };
+    const viewProfile = () => openProfile(target);
+    const owner = isAgent ? ownership.owners.get(key) : undefined;
+    const ownerTarget = owner ? profileTarget(owner) : undefined;
+    const ownerName = owner
+      ? `${label(owner)}${owner === session.viewer ? " (you)" : ""}`
+      : "";
+    const profile = (previewProps: AriaAttributes) => (
+      <div className={styles.profileContent}>
+        {clickable && (
+          <div className={styles.profileHitTarget}>
+            <NavigationItem
+              {...previewProps}
+              label=""
+              icon={avatar}
+              aria-label={`Open profile for ${name} (${keys.get(key)})${isAgent ? ", agent" : ""}${adding ? ", not in this channel" : roleLabel ? `, ${roleLabel}` : ""}${!adding && archived.has(key) ? ", archived" : ""}`}
+              title={npubEncode(key)}
+              onClick={viewProfile}
+            />
+          </div>
+        )}
+        <div
+          className={styles.staticProfile}
+          data-profile-link={clickable || undefined}
+          title={npubEncode(key)}
+        >
+          {!clickable && avatar}
+          <span className="min-w-0 flex-1">
+            <span className={styles.identity}>
+              <span className={styles.identityName}>
+                <span className={`${styles.name} text-body-sm`}>
+                  {name}
+                  {key === session.viewer ? " (you)" : ""}
+                </span>
+              </span>
+              {owner && (
+                <span className={styles.manager}>
+                  {" managed by "}
+                  {ownerTarget && onOpenLink && canOpenLink?.(ownerTarget) ? (
+                    <BaseButton
+                      className={referenceStyles.link}
+                      aria-label={`Open owner profile: ${ownerName}`}
+                      onClick={() => openProfile(ownerTarget)}
+                    >
+                      {ownerName}
+                    </BaseButton>
+                  ) : (
+                    ownerName
+                  )}
+                </span>
+              )}
+            </span>
+            <motion.span
+              className={styles.metadata}
+              variants={{
+                rest: hasBadges
+                  ? expanded
+                  : { height: 0, marginTop: 0, opacity: 0 },
+                revealed: expanded,
+                focused: { ...expanded, transition: { duration: 0 } },
+              }}
+              transition={{
+                duration: reducedMotion ? 0 : 0.14,
+                ease: [0.23, 1, 0.32, 1],
+              }}
+            >
+              <span className={styles.metadataContent}>
+                {hasBadges && (
+                  <span className={styles.badges}>
+                    {roleLabel && (
+                      <span className={styles.badge}>{roleLabel}</span>
+                    )}
+                    {archived.has(key) && (
+                      <span className={styles.badge}>Archived</span>
+                    )}
+                  </span>
+                )}
+                <span
+                  className={`${styles.publicKey} text-mono text-body-sm text-subtle`}
+                  aria-hidden="true"
+                >
+                  {keys.get(key)}
+                </span>
+              </span>
+            </motion.span>
+          </span>
+        </div>
+      </div>
+    );
     const identity = (
       <IdentityRow
         pubkey={key}
@@ -260,44 +483,53 @@ export function ChannelMembersDialog({
         picture={artwork ? session.media(artwork, "small") : undefined}
         isAgent={isAgent}
         keyLabel={keys.get(key)}
+        detail={archived.has(key) ? "Archived" : undefined}
         previewDetail={
           isAgent ? (
             <AgentOwnerPreview session={session} pubkey={key} />
           ) : undefined
         }
-        detail={archived.has(key) ? "Archived" : undefined}
-        render={
-          adding
-            ? (content, previewProps) => (
-                <NavigationItem
-                  {...previewProps}
-                  label={content}
-                  trailing={busy.has(key) ? "Adding…" : "Add"}
-                  aria-label={`Add ${name} (${npubEncode(key)})`}
-                  aria-disabled={busy.has(key) || undefined}
-                  disabled={rosterBusy || !!rosterError}
-                  onBlur={(event) => {
-                    if (focusedAdd.current?.button === event.currentTarget)
-                      focusedAdd.current = null;
-                  }}
-                  onClick={(event) => {
-                    if (busy.has(key)) return;
-                    if (document.activeElement === event.currentTarget)
-                      focusedAdd.current = { key, button: event.currentTarget };
-                    void add(key);
-                  }}
-                />
-              )
-            : undefined
-        }
+        renderContent={profile}
+        render={clickable ? (content) => content : undefined}
       />
     );
     return adding ? (
-      <div key={key}>{identity}</div>
+      <InvitationRow key={key}>
+        <div className={styles.profile}>{identity}</div>
+        <span className={styles.addAction}>
+          <Button
+            variant="prominent"
+            size="xs"
+            aria-label={`Add ${name} (${keys.get(key)})`}
+            aria-disabled={busy.has(key) || undefined}
+            disabled={rosterBusy || !!rosterError}
+            onBlur={(event) => {
+              if (focusedAdd.current?.button === event.currentTarget)
+                focusedAdd.current = null;
+            }}
+            onClick={(event) => {
+              if (busy.has(key)) return;
+              if (document.activeElement === event.currentTarget)
+                focusedAdd.current = { key, button: event.currentTarget };
+              void add(key);
+            }}
+          >
+            {busy.has(key) ? "Adding…" : "Add"}
+          </Button>
+        </span>
+      </InvitationRow>
     ) : (
-      <li key={key} className="flex items-center px-control-inset py-2">
+      <MemberRow
+        key={key}
+        session={session}
+        channelId={channelId}
+        pubkey={key}
+        name={name}
+        returnFocus={input}
+        onViewProfile={clickable ? viewProfile : undefined}
+      >
         {identity}
-      </li>
+      </MemberRow>
     );
   };
   return (
@@ -308,57 +540,85 @@ export function ChannelMembersDialog({
       }}
       title="Channel members"
       height="stable"
+      bodyLayout="flex"
       description={channel?.name}
       closeLabel="Close channel members"
       initialFocus={input}
-      finalFocus={trigger}
+      finalFocus={() => (openingProfile.current ? false : trigger.current)}
     >
-      <div className="space-y-4">
-        <SearchField
-          inputRef={input}
-          label="Search people and agents"
-          placeholder={canAdd ? "Add people and agents" : "Search members"}
-          value={query}
-          onValueChange={setQuery}
-          maxLength={256}
-        />
-        {!canAdd && (
-          <p className="text-body-sm text-subtle">
-            {channel?.channelType === "dm"
-              ? "DM membership cannot be changed here."
-              : channel?.archived
-                ? "Archived channels cannot add members."
-                : !session.outbox?.supports(9000)
-                  ? "Adding members is unavailable in this connection."
-                  : "Join this channel to add people and agents."}
-          </p>
-        )}
-        {rosterBusy && !members.size && (
-          <p role="status" className="text-body-sm text-subtle">
-            Loading members…
-          </p>
-        )}
-        {rosterError && (
-          <p role="alert" className="text-body-sm text-danger">
-            {rosterError}{" "}
-            <Button onClick={() => setRefresh((value) => value + 1)}>
-              Retry members
-            </Button>
-          </p>
-        )}
-        <div className="-mx-3 px-1 py-1 max-[480px]:-mx-1">
-          <h3 className="px-control-inset pb-2 text-caption text-subtle">
-            Members · {members.size}
-          </h3>
-          <ul>{currentMembers.map((key) => row(key, label(key), false))}</ul>
-          {!currentMembers.length && !rosterBusy && (
-            <p className="px-control-inset text-body-sm text-subtle">
-              {query ? "No members match your search." : "No members to show."}
+      <div className={styles.layout}>
+        <div className="shrink-0">
+          <SearchField
+            inputRef={input}
+            label="Search people and agents"
+            placeholder={canAdd ? "Add people and agents" : "Search members"}
+            value={query}
+            onValueChange={setQuery}
+            maxLength={256}
+          />
+        </div>
+        <section className={styles.memberList} aria-label="Member list">
+          {!canAdd && (
+            <p className="text-body-sm text-subtle">
+              {channel?.channelType === "dm"
+                ? "DM membership cannot be changed here."
+                : channel?.archived
+                  ? "Archived channels cannot add members."
+                  : !session.outbox?.supports(9000)
+                    ? "Adding members is unavailable in this connection."
+                    : "Join this channel to add people and agents."}
             </p>
           )}
+          {rosterError && (
+            <p role="alert" className="text-body-sm text-danger">
+              {rosterError}
+            </p>
+          )}
+          <MemberAdministrationStatus session={session} channelId={channelId} />
+          <section aria-label="Members">
+            <div
+              className={`${styles.groupHeading} flex items-center justify-between gap-2 px-control-inset pb-2`}
+            >
+              <h3 className="text-caption text-subtle">
+                Members · {members.size}
+              </h3>
+              <IconButton
+                variant="ghost"
+                size="xs"
+                aria-label="Refresh member data"
+                title="Refresh member data"
+                aria-busy={refreshing}
+                disabled={refreshing || mutationPending}
+                focusableWhenDisabled
+                onClick={refreshMembers}
+                icon={
+                  <ArrowsClockwiseIcon
+                    size={16}
+                    aria-hidden="true"
+                    className={
+                      refreshing ? "motion-safe:animate-spin" : undefined
+                    }
+                  />
+                }
+              />
+            </div>
+            <ul>{currentMembers.map((key) => row(key, label(key), false))}</ul>
+            {!currentMembers.length && !rosterBusy && (
+              <p className="px-control-inset text-body-sm text-subtle">
+                {query
+                  ? "No members match your search."
+                  : "No members to show."}
+              </p>
+            )}
+          </section>
           {canAdd && query.trim() && (
-            <section className="mt-4" aria-label="Not in this channel">
-              <h3 className="px-control-inset pb-2 text-caption text-subtle">
+            <section
+              className={styles.memberGroup}
+              aria-label="Not in this channel"
+            >
+              <h3
+                className={`${styles.groupHeading} px-control-inset pb-2 text-caption text-subtle`}
+              >
                 Not in this channel
               </h3>
               {available.map((person) =>
@@ -388,60 +648,63 @@ export function ChannelMembersDialog({
                   role="alert"
                   className="px-control-inset text-body-sm text-danger"
                 >
-                  {search.error}{" "}
-                  <Button onClick={search.retry}>Retry search</Button>
+                  {search.error}
                 </p>
               )}
               {search.more && (
-                <Button onClick={search.next} disabled={search.loading}>
-                  Show more results
-                </Button>
+                <div className="flex justify-center">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={search.next}
+                    disabled={search.loading}
+                  >
+                    Show more results
+                  </Button>
+                </div>
               )}
             </section>
           )}
-        </div>
-        {nameError && (
-          <p role="status" className="text-body-sm text-subtle">
-            {nameError}{" "}
-            <Button onClick={() => setNameRefresh((value) => value + 1)}>
-              Retry names
-            </Button>
-          </p>
-        )}
-        {agents.error && (
-          <p role="alert" className="text-body-sm text-danger">
-            Some agents could not load.{" "}
-            <Button onClick={() => void session.agentChoices.refresh()}>
-              Retry agents
-            </Button>
-          </p>
-        )}
-        {archives.status === "error" && (
-          <p role="alert" className="text-body-sm text-danger">
-            Archived identities could not be checked.{" "}
-            <Button onClick={() => void session.archives.refresh()}>
-              Retry archive check
-            </Button>
-          </p>
-        )}
-        {Object.entries(errors).map(([key, error]) => (
-          <p role="alert" key={key} className="text-body-sm text-danger">
-            {label(key)}: {error}{" "}
-            {!additions.find((item) => item.pubkey === key)?.removed && (
-              <Button
-                disabled={busy.has(key) || !canAdd}
-                onClick={() => void add(key)}
-              >
-                {busy.has(key) ? "Retrying…" : "Retry"}
-              </Button>
-            )}
-          </p>
-        ))}
-        {notice && (
-          <p role="status" className="text-body-sm text-subtle">
-            {notice}
-          </p>
-        )}
+          {nameError && (
+            <p role="status" className="text-body-sm text-subtle">
+              {nameError}
+            </p>
+          )}
+          {ownership.failed && (
+            <p role="status" className="text-body-sm text-subtle">
+              Some agent managers or their names could not load. Try again.
+            </p>
+          )}
+          {agents.error && (
+            <p role="alert" className="text-body-sm text-danger">
+              Some agents could not load.
+            </p>
+          )}
+          {archives.status === "error" && (
+            <p role="alert" className="text-body-sm text-danger">
+              Archived identities could not be checked.
+            </p>
+          )}
+          {Object.entries(errors).map(([key, error]) => (
+            <p role="alert" key={key} className="text-body-sm text-danger">
+              {label(key)}: {error}{" "}
+              {!additions.find((item) => item.pubkey === key)?.removed && (
+                <Button
+                  variant="outline"
+                  disabled={busy.has(key) || !canAdd}
+                  onClick={() => void add(key)}
+                >
+                  {busy.has(key) ? "Retrying…" : "Retry"}
+                </Button>
+              )}
+            </p>
+          ))}
+          {notice && (
+            <p role="status" className="text-body-sm text-subtle">
+              {notice}
+            </p>
+          )}
+        </section>
       </div>
     </Dialog>
   );

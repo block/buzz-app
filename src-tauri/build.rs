@@ -47,6 +47,7 @@ fn main() {
             "relay_agent_library",
             "relay_upload",
             "relay_upload_cancel",
+            "media_download",
             "get_os_idle_seconds",
             "plugin_import_folder",
             "plugin_import_git",

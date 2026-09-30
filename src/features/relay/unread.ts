@@ -1,6 +1,7 @@
 import type { ChannelQueries } from "./contracts";
 import type { RelayEvent } from "./events";
 import type { RelayReader } from "./reader";
+import { foldMessages } from "./fold";
 import { threadReference } from "./thread-reference";
 import { createSidebarState, contextKey } from "./sidebar-state";
 import {
@@ -98,6 +99,14 @@ const sameCount = (a: ReadCount, b: ReadCount) =>
 const zero: ReadCount = Object.freeze({ status: "exact", value: 0 });
 const channelOf = (event: RelayEvent | undefined) =>
   event?.tags.find(([name]) => name === "h")?.[1];
+/** A message as the timeline presents it: its author's latest edit, agent envelope unwrapped. */
+const present = (
+  message: RelayEvent,
+  evidence: readonly RelayEvent[] = [message],
+) =>
+  foldMessages(channelOf(message) ?? "", "", evidence, {
+    includeReplies: true,
+  }).find((row) => row.id === message.id)?.content ?? message.content;
 const wireTarget = (target: UnreadTarget): ReadTarget => ({
   channel_id: target.channelId,
   ...(target.kind === "thread" ? { root_id: target.rootId } : {}),
@@ -140,7 +149,7 @@ export function createUnread({
   });
   const snapshots = new Map<string, UnreadSnapshot>(),
     activities = new Map<string, ThreadActivitySnapshot>();
-  const previews = new Map<string, RelayEvent>();
+  const previews = new Map<string, { event: RelayEvent; content: string }>();
   const listeners = new Set<() => void>();
   type Demand = {
     target: Extract<UnreadTarget, { kind: "message" }>;
@@ -182,7 +191,7 @@ export function createUnread({
   const manualRevision = new Map<string, number>();
   const lifetime = new AbortController();
   const event = (id: string) => {
-    const value = find(id) ?? previews.get(id);
+    const value = find(id) ?? previews.get(id)?.event;
     return value && allowed(channelOf(value) ?? "") ? value : undefined;
   };
   function context(message: RelayEvent): ReadTarget | undefined {
@@ -460,7 +469,9 @@ export function createUnread({
                 latestMessageId: t.latest_reply_id,
                 authorId: preview?.pubkey ?? "",
                 createdAt: t.latest_reply_at,
-                preview: preview?.content ?? "Open thread to read",
+                preview: preview
+                  ? (previews.get(preview.id)?.content ?? present(preview))
+                  : "Open thread to read",
                 unread: t.unread,
               };
             })
@@ -504,17 +515,23 @@ export function createUnread({
       const items = activity(channelId).items;
       if (!items?.length || !allowed(channelId)) return;
       const generation = epoch;
+      const ids = items.map((t) => t.latestMessageId);
       const found = await reader.read(
-        [{ ids: items.map((t) => t.latestMessageId), limit: 5 }],
+        [
+          { ids, limit: 5 },
+          { kinds: [40003], "#e": ids, limit: 500 },
+        ],
         { signal: lifetime.signal, priority: "background" },
       );
       if (closed || epoch !== generation || !allowed(channelId)) return;
-      const ids = new Set(items.map((t) => t.latestMessageId));
       for (const message of found)
-        if (ids.has(message.id) && channelOf(message) === channelId) {
+        if (ids.includes(message.id) && channelOf(message) === channelId) {
           if (previews.size >= 100)
             previews.delete(previews.keys().next().value ?? "");
-          previews.set(message.id, message);
+          previews.set(message.id, {
+            event: message,
+            content: present(message, found),
+          });
         }
       publish();
     },

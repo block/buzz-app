@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import { createUnread } from "./unread";
 import { deferredSidebar, sidebarFixture, sidebarRow } from "./sidebar-testing";
-import { keypair, message, metadata, roster } from "./testing";
+import { keypair, message, metadata, roster, signed } from "./testing";
 import type { LiveCallbacks } from "./live";
 import type { RelayEvent } from "./events";
 const channel = "01234567-89ab-cdef-0123-456789abcdef";
@@ -496,7 +496,14 @@ it.each([true, false])(
     h.query.mockClear();
     await h.unread.loadActivity(channel);
     expect(h.query).toHaveBeenCalledExactlyOnceWith(
-      [{ ids: items.slice(1).map((item) => item.latest_reply_id), limit: 5 }],
+      [
+        { ids: items.slice(1).map((item) => item.latest_reply_id), limit: 5 },
+        {
+          kinds: [40003],
+          "#e": items.slice(1).map((item) => item.latest_reply_id),
+          limit: 500,
+        },
+      ],
       expect.any(AbortSignal),
       expect.any(String),
       "background",
@@ -1129,5 +1136,87 @@ it.each([
       { type: "mark_channel_read", channel_id: other, message_id: anchor },
     ]);
     await vi.waitFor(() => expect(h.bff.journal().pending).toEqual([]));
+  },
+);
+it.each(
+  (
+    [
+      ["an unedited reply", 9, "plain", "plain", "plain"],
+      ["an edited reply", 9, "original", "original", "edited"],
+      [
+        "an agent reply",
+        40002,
+        JSON.stringify({ content: "agent says" }),
+        "agent says",
+        "agent says",
+      ],
+      ["a reply the fold does not present", 45003, "raw", "raw", "raw"],
+    ] as const
+  ).flatMap(
+    ([name, ...arm]) =>
+      [
+        [name, "observed live", ...arm],
+        [name, "unobserved", ...arm],
+      ] as const,
+  ),
+)(
+  "Activity previews %s, %s, as the timeline presents it",
+  async (_, observed, kind, content, unloaded, presented) => {
+    const live = observed === "observed live";
+    const h = setup();
+    const root = message(h.peer, channel, "root", 10);
+    const reply = signed(h.peer, {
+      kind,
+      content,
+      created_at: 11,
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "root"],
+      ],
+    });
+    const edit = (key: typeof h.peer, text: string, created_at: number) =>
+      signed(key, {
+        kind: 40003,
+        content: text,
+        created_at,
+        tags: [
+          ["h", channel],
+          ["e", reply.id],
+        ],
+      });
+    if (live) h.emit([root, reply]);
+    h.bff.rows.set(
+      channel,
+      sidebarRow(channel, {
+        threads: {
+          complete: true,
+          items: [
+            {
+              root_id: root.id,
+              latest_reply_id: reply.id,
+              latest_reply_at: 11,
+              unread: { status: "exact", value: 1 },
+              attention: { status: "exact", value: 1 },
+            },
+          ],
+        },
+      }),
+    );
+    await h.unread.ensure();
+    const preview = () => h.unread.activity(channel).items?.[0]?.preview;
+    expect(preview()).toBe(live ? unloaded : "Open thread to read");
+    h.query.mockResolvedValueOnce(
+      presented === "edited"
+        ? [
+            // Newest, but not the author's: never the presentation.
+            edit(h.viewer, "forged", 14),
+            edit(h.peer, "edited", 13),
+            edit(h.peer, "superseded", 12),
+            reply,
+          ]
+        : [reply],
+    );
+    await h.unread.loadActivity(channel);
+    expect(preview()).toBe(presented);
   },
 );

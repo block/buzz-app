@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { holdReadingFocus, releaseReadingFocus } from "./reading.mjs";
 
 test.use({
   productionBroker: true,
@@ -16,6 +17,7 @@ test.describe("mentioned reply priority", () => {
     page,
     app,
   }) => {
+    await holdReadingFocus(page);
     await open(page, app);
     const alpha = page.locator('button[data-channel-id="alpha"]');
     await expect(
@@ -48,17 +50,7 @@ test("thread buttons show observed unread independently, clear only after readin
   // Reading needs a 300ms dwell (use-reading.ts). The clock runs that deadline
   // exactly where the test proves that something is not reading.
   await page.clock.install();
-  // Keep setup out of the reading surface, including the composer's mount-time
-  // focus. Later thread/composer focus remains real and earns its own dwell.
-  await page.addInitScript(() => {
-    document.addEventListener("focusin", ({ target }) => {
-      if (
-        target instanceof Element &&
-        target.matches('[role="textbox"][aria-label="Message #Alpha"]')
-      )
-        document.querySelector('button[data-channel-id="alpha"]')?.focus();
-    });
-  });
+  await holdReadingFocus(page);
   await open(page, app);
   const roots = app.histories
     .get("primary/alpha")
@@ -155,6 +147,7 @@ test("thread buttons show observed unread independently, clear only after readin
     .first();
   await item.focus();
   await expect(item).toBeFocused();
+  await releaseReadingFocus(page);
   await item.press("Enter");
   await expect(
     page.getByRole("complementary", { name: "Thread", exact: true }),
@@ -315,6 +308,7 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
   page,
   app,
 }) => {
+  await holdReadingFocus(page);
   await open(page, app);
   const root = app.histories
     .get("primary/alpha")
@@ -345,6 +339,7 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
       .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
       .getByRole("button", { name: /^View thread:/ });
     await expect(trigger).toHaveCSS("pointer-events", "auto");
+    await releaseReadingFocus(page);
     await trigger.click();
     await expect.poll(() => requested).toBe(true);
     const before = await page.evaluate(() => {

@@ -1,6 +1,7 @@
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
+import { readJournal as journal } from "./reading.mjs";
 
 const alphaId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 test.use({
@@ -19,24 +20,6 @@ const composer = (page) =>
 // Focus outside the reading surface. The timeline and its own composer both
 // read after dwell; a focused sidebar row selects and reads nothing.
 const park = (page) => alpha(page).focus();
-// Observe the real durable result, never seed state or call an engine test hook.
-async function journal(page) {
-  return page.evaluate(
-    () =>
-      new Promise((resolve, reject) => {
-        const request = indexedDB.open("buzz-read-state-v1", 1);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-          const db = request.result;
-          const tx = db.transaction("partitions", "readonly");
-          const read = tx.objectStore("partitions").getAll();
-          read.onsuccess = () => resolve(read.result[0]);
-          read.onerror = () => reject(read.error);
-          tx.oncomplete = () => db.close();
-        };
-      }),
-  );
-}
 async function visible(page) {
   return history(page).evaluate((element) => {
     const viewport = element.getBoundingClientRect();

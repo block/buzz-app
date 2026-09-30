@@ -1,6 +1,7 @@
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { holdReadingFocus } from "./reading.mjs";
 
 // Browser-only boundary: real shared-menu focus/dismissal, production broker,
 // IndexedDB reload and app-global preference startup. Policy matrices live in Vitest.
@@ -17,16 +18,9 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
 }, testInfo) => {
   await page.addInitScript(() => {
     localStorage.setItem("buzz-appearance.v1", "dark");
-    // This journey exercises sidebar intent, not reading Alpha. Keep startup
-    // and reload focus outside its composer before automatic dwell can begin.
-    document.addEventListener("focusin", ({ target }) => {
-      if (
-        target instanceof Element &&
-        target.matches('[role="textbox"][aria-label="Message #Alpha"]')
-      )
-        document.querySelector('button[data-channel-id="alpha"]')?.focus();
-    });
   });
+  // Sidebar actions and reload must not read the selected conversation.
+  await holdReadingFocus(page);
   await open(page, app);
   // Context menus make the rest of the page aria-hidden while open.
   const sidebar = page.getByRole("navigation", {

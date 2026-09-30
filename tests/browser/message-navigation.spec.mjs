@@ -1,5 +1,10 @@
 import { test, expect } from "./fixture.mjs";
 import { open, end, settle } from "./timeline.mjs";
+import {
+  holdReadingFocus,
+  releaseReadingFocus,
+  readJournal,
+} from "./reading.mjs";
 
 test.use({
   pluginFixtures: true,
@@ -770,15 +775,25 @@ readTest(
   "settings blocks reading and focus in a retained thread",
   async ({ page, app }) => {
     await page.clock.install();
+    await holdReadingFocus(page);
     await open(page, app);
     await page.evaluate(() =>
       window.fixtureRelay.snapshot().session.unread.ensure(),
     );
-    expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
-    await page
-      .getByRole("button", { name: "Close thread", exact: true })
-      .focus();
     await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+    await releaseReadingFocus(page);
+    const opening = openTarget(page, target(app));
+    // Exact reveal requires real focus for two animation frames. Advance one
+    // frame at a time until its owner completes, without earning reading dwell.
+    await expect
+      .poll(async () => {
+        await page.clock.runFor(16);
+        return status(page);
+      })
+      .toBe("opened");
+    expect(await opening).toEqual({ status: "opened" });
+    expect((await readJournal(page)).state.frontiers).toEqual({});
+    expect(app.report.readPublications).toEqual([]);
     const before = app.report.readPublications.length;
     const row = page.locator(
       `[aria-label="Thread messages"] [data-message-id="${app.exact.target.id}"]`,
@@ -804,6 +819,7 @@ readTest(
         .evaluate((element) => element.contains(document.activeElement)),
     ).toBe(false);
     await page.clock.runFor(10000);
+    expect((await readJournal(page)).state.frontiers).toEqual({});
     expect(app.report.readPublications.length).toBe(before);
     await page
       .getByRole("button", { name: "Close channel settings", exact: true })

@@ -12,7 +12,6 @@ const signal = () => new AbortController().signal;
 const account = {
   retention_seconds: 2592000,
   cutoff_ms: -1000,
-  imported_at_ms: null,
 };
 const row = () => ({
   channel_id: channel,
@@ -171,32 +170,17 @@ it("requires the complete advertised contract", () => {
   ).toBe(false);
 });
 
-it("admits one atomic 2000-message snapshot but rejects duplicates, overflow and aggregate overflow", () => {
-  const ids = Array.from({ length: 2001 }, (_, i) =>
-    i.toString(16).padStart(64, "0"),
-  );
-  const intent = (message_ids: string[]) => ({
-    type: "mark_messages_read",
-    channel_id: channel,
-    message_ids,
-  });
-  const write = (intents: unknown[]) =>
-    sidebarOperation({ type: "write", intents });
-  expect(
-    JSON.parse(write([intent(ids.slice(0, 2000))]).body ?? "null"),
-  ).toEqual({
-    intents: [intent(ids.slice(0, 2000))],
-  });
-  for (const intents of [
-    [intent([])],
-    [intent([id, id])],
-    [intent(ids)],
-    [intent(ids.slice(0, 1000)), intent(ids.slice(1000))],
-    [{ ...intent([id]), message_id: id }],
-  ])
-    expect(() => write(intents)).toThrow("Invalid sidebar operation");
+it("rejects the shelved exact-message intent", () => {
+  expect(() =>
+    sidebarOperation({
+      type: "write",
+      intents: [
+        { type: "mark_messages_read", channel_id: channel, message_ids: [id] },
+      ],
+    }),
+  ).toThrow("Invalid sidebar operation");
 });
-it("requires explicit-message discovery before exposing the combined API", () => {
+it("accepts base v1 without an exact-message capability", () => {
   const descriptor = {
     version: 1,
     base_path: "/buzz/v1",
@@ -206,9 +190,9 @@ it("requires explicit-message discovery before exposing the combined API", () =>
     max_context_messages: 100,
     max_thread_summaries: 5,
   };
-  expect(supportsSidebarApi(descriptor)).toBe(false);
+  expect(supportsSidebarApi(descriptor)).toBe(true);
   expect(supportsSidebarApi({ ...descriptor, max_message_reads: 100 })).toBe(
-    false,
+    true,
   );
   expect(supportsSidebarApi({ ...descriptor, max_message_reads: 2000 })).toBe(
     true,

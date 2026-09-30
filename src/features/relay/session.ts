@@ -691,19 +691,6 @@ export function createRelaySession(
     reader: requests.reader,
     viewer: transport?.viewer ?? "",
     find: (id) => recent.peek(id)?.event ?? retainedEvent(id),
-    // Enumerate current loaded conversation owners, not incidental LRU/history caches.
-    loaded: (channelId) => {
-      const rows = new Map(
-        channels.queries.window(channelId).rows.map((row) => [row.id, row]),
-      );
-      for (const thread of threads) {
-        if (thread.channelId !== channelId || !canAccess(channelId)) continue;
-        const snapshot = thread.view.snapshot();
-        for (const row of [snapshot.root, ...snapshot.replies, snapshot.target])
-          if (row) rows.set(row.id, row);
-      }
-      return [...rows.values()];
-    },
     notify,
   });
   const activityStatus = (): NonNullable<ChannelList["activityStatus"]> => {
@@ -733,8 +720,14 @@ export function createRelaySession(
       sourceChannelList = snapshot;
       channelActivityRevision = activityRevision;
       const projected = snapshot.channels.map((channel) => {
+        const authoritative = unread.state.row(channel.id)?.latest_message_at;
+        const hinted = unread.state.liveHint(channel.id)?.latest.createdAt;
         const lastActivityAt =
-          unread.state.row(channel.id)?.latest_message_at ?? undefined;
+          authoritative == null
+            ? hinted
+            : hinted === undefined
+              ? authoritative
+              : Math.max(authoritative, hinted);
         return lastActivityAt === undefined
           ? channel
           : Object.freeze({ ...channel, lastActivityAt });
@@ -1988,6 +1981,20 @@ export function createRelaySession(
               .map((event) => event.id)
           : [],
       );
+      const activityCandidates = new Set(
+        provenance?.phase === "live" && provenance.channelId
+          ? events
+              .filter(
+                (event) =>
+                  transport.sidebarApi?.eligibleKinds?.includes(event.kind) &&
+                  event.tags.filter(([name]) => name === "h").length === 1 &&
+                  event.tags.find(([name]) => name === "h")?.[1] ===
+                    provenance.channelId &&
+                  !recent.peek(event.id),
+              )
+              .map((event) => event.id)
+          : [],
+      );
       // Signed membership notifications are hints, not roster authority. Schedule
       // before visibility filtering, because a newly granted channel may be denied locally.
       if (
@@ -2024,6 +2031,10 @@ export function createRelaySession(
       )
         activity.channelEvents(
           events.filter((event) => event.pubkey !== transport.viewer),
+        );
+      if (!closed && epoch === accessEpoch && generation === liveGeneration)
+        unread.live(
+          visible.filter((event) => activityCandidates.has(event.id)),
         );
       const incomingChannelId = provenance?.channelId;
       if (

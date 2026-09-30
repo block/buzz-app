@@ -6,14 +6,11 @@ export type ReadCount =
 export type ReadTarget = { channel_id: string; root_id?: string };
 export type ReadIntent =
   | { type: "mark_through"; target: ReadTarget; message_id: string }
-  | { type: "mark_channel_read"; channel_id: string; message_id: string }
-  | { type: "mark_messages_read"; channel_id: string; message_ids: string[] };
-export const MAX_MESSAGE_READS = 2000;
+  | { type: "mark_channel_read"; channel_id: string; message_id: string };
 export type ContextQuery = { target: ReadTarget; message_ids: string[] };
 export type ReadAccount = {
   retention_seconds: number;
   cutoff_ms: number;
-  imported_at_ms: number | null;
 };
 export type ThreadReadSummary = {
   root_id: string;
@@ -60,6 +57,7 @@ export type SidebarOperation =
   | { type: "contexts"; targets: ContextQuery[] }
   | { type: "write"; intents: ReadIntent[] };
 export type SidebarApi = {
+  readonly eligibleKinds?: readonly number[];
   sidebar(query: SidebarRequest, signal: AbortSignal): Promise<SidebarPage>;
   contexts(
     targets: ContextQuery[],
@@ -103,8 +101,7 @@ const account = (v: unknown) =>
   record(v) &&
   integer(v.retention_seconds) &&
   typeof v.cutoff_ms === "number" &&
-  Number.isSafeInteger(v.cutoff_ms) &&
-  nullable(v.imported_at_ms, integer);
+  Number.isSafeInteger(v.cutoff_ms);
 const message = (v: unknown) =>
   record(v) &&
   id(v.message_id) &&
@@ -200,32 +197,17 @@ export function sidebarOperation(value: unknown): {
       100,
       (v) =>
         record(v) &&
-        (v.type === "mark_messages_read"
-          ? keys(v, ["type", "channel_id", "message_ids"]) &&
-            uuid(v.channel_id) &&
-            array(v.message_ids, MAX_MESSAGE_READS, id) &&
-            v.message_ids.length > 0 &&
-            unique(v.message_ids)
-          : id(v.message_id) &&
-            (v.type === "mark_through"
-              ? keys(v, ["type", "target", "message_id"]) && target(v.target)
-              : v.type === "mark_channel_read" &&
-                keys(v, ["type", "channel_id", "message_id"]) &&
-                uuid(v.channel_id))),
+        id(v.message_id) &&
+        (v.type === "mark_through"
+          ? keys(v, ["type", "target", "message_id"]) && target(v.target)
+          : v.type === "mark_channel_read" &&
+            keys(v, ["type", "channel_id", "message_id"]) &&
+            uuid(v.channel_id)),
     ) &&
     value.intents.length
   ) {
     const body = JSON.stringify({ intents: value.intents });
-    const messageReads = (value.intents as ReadIntent[]).reduce(
-      (n, intent) =>
-        n +
-        (intent.type === "mark_messages_read" ? intent.message_ids.length : 0),
-      0,
-    );
-    if (
-      messageReads <= MAX_MESSAGE_READS &&
-      new TextEncoder().encode(body).length <= 256 * 1024
-    )
+    if (new TextEncoder().encode(body).length <= 64 * 1024)
       return { path: "/buzz/v1/me/read-state", method: "POST", body };
   }
   throw new Error("Invalid sidebar operation");
@@ -241,9 +223,19 @@ export function supportsSidebarApi(v: unknown): boolean {
     v.max_intents === 100 &&
     v.max_contexts === 20 &&
     v.max_context_messages === 100 &&
-    v.max_thread_summaries === 5 &&
-    v.max_message_reads === MAX_MESSAGE_READS
+    v.max_thread_summaries === 5
   );
+}
+
+/** Eligibility for immediate presentation comes from this relay, not a client copy. */
+export function sidebarEligibleKinds(value: unknown): readonly number[] {
+  if (
+    !record(value) ||
+    !array(value.eligible_kinds, 100, integer) ||
+    !unique(value.eligible_kinds)
+  )
+    return [];
+  return Object.freeze([...(value.eligible_kinds as number[])]);
 }
 
 /** Bound encoded bytes before parsing; unknown response fields remain extensible. */
@@ -273,8 +265,10 @@ export function createSidebarApi(
     operation: SidebarOperation,
     signal: AbortSignal,
   ) => Promise<unknown>,
+  eligibleKinds: readonly number[] = [],
 ): SidebarApi {
   return {
+    eligibleKinds,
     async sidebar(query, signal) {
       const op = { type: "sidebar", query } as const;
       sidebarOperation(op);

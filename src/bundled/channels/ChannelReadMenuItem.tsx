@@ -32,7 +32,9 @@ export function ChannelReadMenuItem({
   );
   const get = useCallback(() => unread.snapshot(target), [unread, target]);
   const snapshot = useSyncExternalStore(subscribe, get, get);
-  const isUnread = snapshot.manual !== "none" || hasUnread(snapshot.unread);
+  const isUnread =
+    snapshot.manual !== "none" ||
+    (snapshot.unreadVisible ?? hasUnread(snapshot.unread));
   return (
     <MenuItem
       closeOnClick={false}

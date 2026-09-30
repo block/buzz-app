@@ -29,7 +29,7 @@ semantic tokens, UI authoring rules and the local component reference.
   Channels is presented as Messages. Legacy tone props are retained for
   compatibility; all pages share the supplied gradient and repeating CSS dots.
   Add recognized page presentation here without changing plugin contracts.
-- `AppShell.tsx` owns the 56px header, vertical page navigation, contributed panel
+- `AppShell.tsx` owns the 48px header, vertical page navigation, contributed panel
   launchers, Settings access, community rail, and page frames. Page navigation sits
   above the channel list outside Settings, using its saved sidebar width
   and resize behavior. Settings replaces that card with `SettingsSidebar.tsx`,
@@ -45,7 +45,9 @@ semantic tokens, UI authoring rules and the local component reference.
   220px disclosure overlays content, supports Escape, and keeps sidebar state
   mounted. A navigation selection closes the phone drawer and hands focus to the
   main content; this includes conversation and Settings-section selections.
-  Desktop layouts retain the visible sidebar and saved width.
+  Messages, Agents, and desktop Settings share an animated header toggle; hiding
+  the sidebar preserves its mounted state and saved width. Reduced motion disables
+  the transition. Other desktop pages retain the visible sidebar.
   The header keeps history and account/search actions, with no second navigation row.
   Full-height pages get a 16px outer gutter (8px on narrow screens) and own their
   card surfaces. The shell adds no white backing behind them. Document pages
@@ -98,7 +100,11 @@ Enter/Space selects without closing the menu. See
 [presence ownership and limitations](presence.md). Escape, outside click and Tab
 leaving dismiss the menu; Escape returns focus to the avatar. Selecting Settings
 focuses the main region after the menu finishes closing, unless focus has already
-moved into the page.
+moved into the page. With a community selected, the avatar inside the menu is a
+menu item that opens the viewer's own profile in the shell companion slot, using
+the same `profile` panel as other profile links; the panel takes focus, and
+closing it returns focus to the header avatar. Personal space has no community
+profile, so its menu avatar stays presentational.
 The avatar does not display the selected community's profile. It uses a configured
 HTTPS picture directly, with the name's first letter on a missing/failed picture
 or a person icon when unnamed. No sample person's photo is used as the user's

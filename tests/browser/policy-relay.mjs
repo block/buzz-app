@@ -11,7 +11,6 @@ export const buzzV1Discovery = Object.freeze({
   max_contexts: 20,
   max_context_messages: 100,
   max_thread_summaries: 5,
-  max_message_reads: 2000,
 });
 const ELIGIBLE = [9, 40002, 45001, 45003];
 const exact = (value) => ({ status: "exact", value });
@@ -36,7 +35,6 @@ function buzzV1({ viewer, report, rows, events }) {
         channel: null,
         cut: null,
         threads: new Map(),
-        messages: new Set(),
       });
     return all.get(channel);
   };
@@ -74,9 +72,7 @@ function buzzV1({ viewer, report, rows, events }) {
       root === undefined
         ? frontier.channel
         : max(frontier.threads.get(root) ?? null, frontier.cut);
-    const unread =
-      !frontier.messages.has(event.id) &&
-      (through === null || event.created_at > through);
+    const unread = through === null || event.created_at > through;
     const direct =
       member(community, channel)?.channel_type === "dm" ||
       event.tags.some(
@@ -168,7 +164,6 @@ function buzzV1({ viewer, report, rows, events }) {
   const account = {
     retention_seconds: 2592000,
     cutoff_ms: 0,
-    imported_at_ms: null,
   };
   function sidebar(community, params) {
     const all = rows(community).toSorted((a, b) =>
@@ -240,24 +235,6 @@ function buzzV1({ viewer, report, rows, events }) {
         : intent.channel_id;
     if (!member(community, channel)) return { status: "blocked" };
     const all = history(community, channel);
-    if (intent.type === "mark_messages_read") {
-      const ids = intent.message_ids;
-      if (
-        !ids.length ||
-        ids.length > 2000 ||
-        new Set(ids).size !== ids.length ||
-        ids.some(
-          (id) =>
-            !/^[0-9a-f]{64}$/.test(id) ||
-            !all.has(id) ||
-            !ELIGIBLE.includes(all.get(id).kind) ||
-            all.get(id).pubkey === viewer,
-        )
-      )
-        return { status: "invalid" };
-      for (const id of ids) state(community, channel).messages.add(id);
-      return { status: "applied" };
-    }
     const anchor = all.get(intent.message_id);
     if (!anchor) return { status: "blocked" };
     if (!ELIGIBLE.includes(anchor.kind)) return { status: "invalid" };
@@ -371,16 +348,6 @@ function buzzV1({ viewer, report, rows, events }) {
       expect(rest).toEqual({});
       expect(intents.length).toBeGreaterThan(0);
       expect(intents.length).toBeLessThanOrEqual(100);
-      expect(
-        intents.reduce(
-          (n, intent) =>
-            n +
-            (intent.type === "mark_messages_read"
-              ? intent.message_ids.length
-              : 0),
-          0,
-        ),
-      ).toBeLessThanOrEqual(2000);
       const outcomes = intents.map((intent) => apply(community, intent));
       report.readWrites.push({
         community,

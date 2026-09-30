@@ -8,7 +8,6 @@ const other = "11234567-89ab-cdef-0123-456789abcdef";
 const account = {
   retention_seconds: 2592000,
   cutoff_ms: 0,
-  imported_at_ms: null,
 };
 const row = (channel_id = channel) => ({
   channel_id,
@@ -23,7 +22,7 @@ const row = (channel_id = channel) => ({
   latest_message_complete: true,
   threads: { items: [], complete: true },
 });
-const page = (channels = [row()]): SidebarPage => ({
+const page = (channels: SidebarPage["channels"] = [row()]): SidebarPage => ({
   account,
   channels,
   next_cursor: null,
@@ -37,6 +36,7 @@ function harness() {
   let state: SidebarJournal = { pending: [], manual: [] };
   let access = true,
     visible = true;
+  let rejectAcknowledgementAt: number | undefined;
   const api = {
     sidebar: vi.fn<SidebarApi["sidebar"]>(async () => page()),
     contexts: vi.fn<SidebarApi["contexts"]>(async (targets) => ({
@@ -61,7 +61,15 @@ function harness() {
     visible: () => visible,
     storage: {
       update: async (change) => {
-        state = structuredClone(change(state));
+        const next = change(state);
+        if (
+          rejectAcknowledgementAt === state.pending.length &&
+          next.pending.length < state.pending.length
+        ) {
+          rejectAcknowledgementAt = undefined;
+          throw new Error("acknowledgement storage failed");
+        }
+        state = structuredClone(next);
         return state;
       },
       close() {},
@@ -72,6 +80,9 @@ function harness() {
     owner,
     api,
     journal: () => state,
+    rejectAcknowledgementAt: (pending: number) => {
+      rejectAcknowledgementAt = pending;
+    },
     deny: () => {
       access = false;
     },
@@ -326,15 +337,15 @@ it("does not overwrite a failed context pass with successful sidebar readiness",
   lease.dispose();
 });
 
-it("bounds bulk demand, preserves strict admission errors and recycles released capacity", async () => {
+it("bounds selector demand, surfaces admission errors and recycles released capacity", async () => {
   const h = harness();
   const ids = Array.from({ length: 1100 }, (_, i) =>
     i.toString(16).padStart(64, "0"),
   );
-  const first = h.owner.retain(
-    { target: { channel_id: channel }, message_ids: ids },
-    true,
-  );
+  const first = h.owner.retain({
+    target: { channel_id: channel },
+    message_ids: ids.slice(0, 500),
+  });
   await first.ready;
   const initial = h.owner.context({ channel_id: channel });
   expect(initial?.status === "available" && initial.messages.length).toBe(500);
@@ -354,11 +365,6 @@ it("bounds bulk demand, preserves strict admission errors and recycles released 
       message_ids: ids.slice(1000),
     }),
   ).toThrow("capacity");
-  const overflow = h.owner.retain(
-    { target: { channel_id: other }, message_ids: ids.slice(1000) },
-    true,
-  );
-  await overflow.ready;
   first.dispose();
   const retained = h.owner.context({ channel_id: channel });
   expect(
@@ -367,7 +373,6 @@ it("bounds bulk demand, preserves strict admission errors and recycles released 
   ).toEqual([ids[0]]);
   shared.dispose();
   second.dispose();
-  overflow.dispose();
   const reclaimed = h.owner.retain({
     target: { channel_id: other },
     message_ids: ids.slice(1000),
@@ -379,16 +384,17 @@ it("bounds bulk demand, preserves strict admission errors and recycles released 
   reclaimed.dispose();
 });
 
-it("flushes whole message snapshots within the aggregate POST budget without splitting a click", async () => {
+it("batches independent context anchors at the 100-intent limit", async () => {
   const h = harness();
-  const intents = [0, 1, 2].map((n) => ({
+  const intents = Array.from({ length: 201 }, (_, n) => ({
     createdAt: n,
     intent: {
-      type: "mark_messages_read" as const,
-      channel_id: channel,
-      message_ids: Array.from({ length: n === 0 ? 2000 : 1000 }, (_, i) =>
-        (n * 2000 + i).toString(16).padStart(64, "0"),
-      ),
+      type: "mark_through" as const,
+      target: {
+        channel_id: channel,
+        root_id: n.toString(16).padStart(64, "0"),
+      },
+      message_id: "a".repeat(64),
     },
   }));
   await h.owner.journal.enqueue(
@@ -397,9 +403,202 @@ it("flushes whole message snapshots within the aggregate POST budget without spl
     () => true,
   );
   await h.owner.retry();
-  expect(h.api.write.mock.calls.map(([batch]) => batch)).toEqual([
-    [intents[0]?.intent],
-    [intents[1]?.intent, intents[2]?.intent],
+  expect(h.api.write.mock.calls.map(([batch]) => batch.length)).toEqual([
+    100, 100, 1,
   ]);
   expect(h.journal().pending).toEqual([]);
 });
+
+it("saturated applied presentation retains the whole next batch and schedules recovery", async () => {
+  vi.useFakeTimers();
+  const h = harness();
+  await h.owner.ensure();
+  const reads = Array.from({ length: 1000 }, (_, i) => ({
+    createdAt: 1,
+    intent: {
+      type: "mark_through" as const,
+      target: {
+        channel_id: channel,
+        root_id: i.toString(16).padStart(64, "0"),
+      },
+      message_id: "a".repeat(64),
+    },
+  }));
+  await h.owner.journal.enqueue(
+    reads,
+    () => false,
+    () => true,
+  );
+  // Flush without advancing the invalidation timer; unresolved overlays fill capacity.
+  await h.owner.ensure();
+  await vi.advanceTimersByTimeAsync(0);
+  // ensure's first flush may predate enqueue, so explicitly retry with a held read.
+  const held = deferredSidebar<SidebarPage>();
+  h.api.sidebar.mockImplementationOnce(() => held.promise);
+  const first = h.owner.retry();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(h.journal().pending).toHaveLength(0);
+  const next = {
+    createdAt: 2,
+    intent: {
+      type: "mark_through" as const,
+      target: { channel_id: channel, root_id: "f".repeat(64) },
+      message_id: "b".repeat(64),
+    },
+  };
+  await h.owner.enqueue(
+    [next],
+    () => false,
+    () => true,
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(h.journal().pending).toHaveLength(1);
+  expect(h.owner.sync().error).toContain("reconciliation scheduled");
+  held.resolve(page());
+  await first;
+  await vi.advanceTimersByTimeAsync(250);
+  await h.owner.retry();
+  expect(h.journal().pending).toHaveLength(0);
+});
+
+const capacityReads = (count: number, start = 0) =>
+  Array.from({ length: count }, (_, offset) => ({
+    createdAt: 1,
+    intent: {
+      type: "mark_through" as const,
+      target: {
+        channel_id: channel,
+        root_id: (start + offset).toString(16).padStart(64, "0"),
+      },
+      message_id: "a".repeat(64),
+    },
+  }));
+
+it("retries already-applied IDs at capacity after failed journal acknowledgement without resetting surfaces or revision", async () => {
+  vi.useFakeTimers();
+  const h = harness();
+  await h.owner.ensure();
+  const target = {
+    channel_id: channel,
+    root_id: (999).toString(16).padStart(64, "0"),
+  };
+  // A mounted unresolved message prevents pruning even after sidebar settlement.
+  h.api.contexts.mockImplementation(async (queries) => ({
+    account,
+    contexts: queries.map((q) => ({
+      status: "available",
+      through_timestamp: null,
+      messages: q.message_ids.map((message_id) => ({
+        message_id,
+        status: "unknown",
+      })),
+    })),
+  }));
+  const lease = h.owner.retain({ target, message_ids: ["a".repeat(64)] });
+  await lease.ready;
+  h.rejectAcknowledgementAt(100);
+  await h.owner.enqueue(
+    capacityReads(1000),
+    () => false,
+    () => true,
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(h.owner.sync().error).toBe("acknowledgement storage failed");
+  const pending = h.journal().pending;
+  expect(pending).toHaveLength(100);
+  expect(h.owner.covered(target, 1, false, "a".repeat(64))).toBe(true);
+  // This response starts after original application but before the same-ID retry.
+  const held = deferredSidebar<SidebarPage>();
+  h.api.sidebar.mockImplementationOnce(() => held.promise);
+  const refresh = h.owner.refresh();
+  await vi.advanceTimersByTimeAsync(0);
+  const retry = h.owner.retry();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(h.api.write.mock.calls.at(-1)?.[0]).toEqual(
+    pending.map((p) => p.intent),
+  );
+  expect(h.journal().pending).toHaveLength(0);
+  expect(h.owner.covered(target, 1, false, "a".repeat(64))).toBe(true);
+  const summary = {
+    ...row(),
+    threads: {
+      complete: true,
+      items: [
+        {
+          root_id: target.root_id,
+          latest_reply_id: "a".repeat(64),
+          latest_reply_at: 1,
+          unread: { status: "exact" as const, value: 1 },
+          attention: { status: "exact" as const, value: 0 },
+        },
+      ],
+    },
+  };
+  held.resolve(page([summary]));
+  await Promise.all([refresh, retry]);
+  // Reusing the ID preserves its old revision: this response can settle summary,
+  // while the unknown selected message still retains its independent coverage.
+  expect(h.owner.covered(target, 1)).toBe(false);
+  expect(h.owner.covered(target, 1, false, "a".repeat(64))).toBe(true);
+  lease.dispose();
+});
+
+it.each(["applied", "blocked"] as const)(
+  "admits none of a two-operand overflow with one slot left, then recovers with %s",
+  async (outcome) => {
+    vi.useFakeTimers();
+    const h = harness();
+    await h.owner.ensure();
+    await h.owner.enqueue(
+      capacityReads(999),
+      () => false,
+      () => true,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.journal().pending).toHaveLength(0);
+    const next = capacityReads(2, 1000);
+    await h.owner.enqueue(
+      next,
+      () => false,
+      () => true,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.owner.sync().error).toContain("presentation capacity");
+    expect(h.journal().pending.map((p) => p.intent)).toEqual(
+      next.map((p) => p.intent),
+    );
+    for (const read of next)
+      expect(h.owner.covered(read.intent.target, 1)).toBe(true);
+    if (outcome === "applied") {
+      // Applicable refresh frees the old entries; the complete batch can retry.
+      await vi.advanceTimersByTimeAsync(250);
+    } else {
+      // A terminal retry must remove both pending masks. A partially admitted
+      // first operand would leak coverage after the journal removes that operand.
+      h.api.write.mockResolvedValueOnce([
+        { status: "blocked" },
+        { status: "blocked" },
+      ]);
+    }
+    const held = deferredSidebar<SidebarPage>();
+    h.api.sidebar.mockImplementationOnce(() => held.promise);
+    const retry = h.owner.retry();
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.journal().pending).toHaveLength(0);
+      if (outcome === "blocked") {
+        // Check BEFORE a successful read could hide a leaked applied operand.
+        for (const read of next)
+          expect(h.owner.covered(read.intent.target, 1)).toBe(false);
+        expect(h.owner.operationError(channel)).toContain("blocked");
+      } else {
+        expect(h.api.write.mock.calls.at(-1)?.[0]).toEqual(
+          next.map((p) => p.intent),
+        );
+      }
+    } finally {
+      held.resolve(page());
+      await retry;
+    }
+  },
+);

@@ -275,7 +275,6 @@ it.each([1, 2, 130])(
         account: {
           retention_seconds: 2592000,
           cutoff_ms: 0,
-          imported_at_ms: null,
         },
         channels: ids.map((id) =>
           sidebarRow(id, { unread: { status: "exact", value: 1 } }),

@@ -105,7 +105,7 @@ it("a subscriber clear during progressive publication stops subsequent pages", a
   expect(h.bff.api.sidebar).toHaveBeenCalledTimes(1);
   expect(h.owner.row(id(1))).toBeUndefined();
 });
-it("transient failure requires refresh and preserves earlier rows without exact-zero fabrication", async () => {
+it("transient startup failure automatically recovers on reconnect without fabricating zero", async () => {
   const h = harness();
   h.bff.api.sidebar
     .mockResolvedValueOnce({
@@ -120,8 +120,9 @@ it("transient failure requires refresh and preserves earlier rows without exact-
   expect(h.bff.api.sidebar).toHaveBeenCalledTimes(2);
   expect(h.owner.row(id(1))).toBeDefined();
   h.bff.rows.set(id(1), sidebarRow(id(1)));
-  await h.owner.refresh();
-  expect(h.owner.sync().status).toBe("ready");
+  h.owner.reconnect();
+  await vi.waitFor(() => expect(h.owner.sync().status).toBe("ready"));
+  expect(h.bff.api.sidebar).toHaveBeenCalledTimes(3);
 });
 it("stops a malicious repeated cursor rather than querying indefinitely", async () => {
   const h = harness();

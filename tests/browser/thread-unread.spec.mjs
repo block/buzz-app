@@ -46,6 +46,9 @@ test("thread buttons show observed unread independently, clear only after readin
   page,
   app,
 }, testInfo) => {
+  // Reading needs a 750ms dwell (use-reading.ts). The clock runs that deadline
+  // exactly where the test proves that something is not reading.
+  await page.clock.install();
   await open(page, app);
   const roots = app.histories
     .get(`primary/${ids.alpha}`)
@@ -205,7 +208,7 @@ test("thread buttons show observed unread independently, clear only after readin
     exact: true,
   });
   await replyComposer.focus();
-  await page.waitForTimeout(1000);
+  await page.clock.runFor(750);
   await expect(replyComposer).toBeFocused();
   await expect(first).toHaveAccessibleName(/\d+ unread replies/); // Click/composer focus is not reading.
   await history.focus();
@@ -245,8 +248,24 @@ test("thread buttons show observed unread independently, clear only after readin
   await panel
     .getByRole("button", { name: "Close thread", exact: true })
     .click();
-  app.reply(roots[0].id, true);
-  await page.waitForTimeout(1000);
+  const own = app.reply(roots[0].id, true);
+  // Barrier: the session indexed this reply under the exact root. A live own
+  // reply need not have authoritative BFF message context to be non-unread.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        ({ channelId, id }) =>
+          window.fixtureRelay
+            .snapshot()
+            .session.unread.attention(channelId, id),
+        { channelId: ids.alpha, id: own.id },
+      ),
+    )
+    .toMatchObject({
+      category: "thread",
+      rootId: roots[0].id,
+      unread: false,
+    });
   await expect(first).toHaveAccessibleName("View thread: 23 replies");
   app.reply(roots[0].id);
   await expect(first).toHaveAccessibleName(/\d+ unread replies/);

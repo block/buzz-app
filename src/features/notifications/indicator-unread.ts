@@ -51,7 +51,10 @@ export function bindUnreadIndicator(
             kind: "channel",
             channelId,
           });
-          return snapshot.manual !== "none" || hasUnread(snapshot.unread);
+          return (
+            snapshot.manual !== "none" ||
+            (snapshot.unreadVisible ?? hasUnread(snapshot.unread))
+          );
         }),
       );
     };

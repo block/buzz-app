@@ -106,9 +106,10 @@ async function fixture(
   });
   bff.api.write.mockImplementation(async (intents) => {
     for (const intent of intents) {
-      if (intent.type !== "mark_messages_read") continue;
-      for (const id of intent.message_ids)
-        bff.messages.set(id, { message_id: id, status: "read" });
+      bff.messages.set(intent.message_id, {
+        message_id: intent.message_id,
+        status: "read",
+      });
     }
     return intents.map(() => ({ status: "applied" }));
   });
@@ -445,7 +446,7 @@ it("rejects an empty edit of a message with original attachments without deletin
   expect(h.publications).toHaveLength(0);
 });
 
-it("reverses an own message force from its menu without changing notification eligibility", async () => {
+it("reverses a selected own-message local mark without forcing the channel or notification eligibility", async () => {
   const h = await fixture();
   const target = {
     kind: "message" as const,
@@ -473,9 +474,12 @@ it("reverses an own message force from its menu without changing notification el
     unread: { status: "exact", value: 0 },
     manual: "local-only",
   });
-  expect(h.session.unread.snapshot(channelTarget).manual).toBe("local-only");
+  // Selected-message manual intent must not resurrect the deleted channel force.
+  expect(h.session.unread.snapshot(channelTarget).manual).toBe("none");
   fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Mark read" }));
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Mark read through here" }),
+  );
   await waitFor(() =>
     expect(h.session.unread.attention(channel, h.original.id).forced).toBe(
       false,
@@ -505,7 +509,9 @@ it("toggles relay unread after acknowledgement without a dialog", async () => {
       true,
     ),
   );
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Mark read" }));
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Mark read through here" }),
+  );
   await waitFor(() =>
     expect(h.session.unread.attention(channel, h.original.id).unread).toBe(
       false,
@@ -583,51 +589,6 @@ it("recovers an uncertain deletion after the row and dialog disappear", async ()
   await act(async () => h.publication(1).result.resolve());
 });
 
-it("waits for confirmed membership before entering a restored channel visit", async () => {
-  const h = await fixture();
-  cleanup();
-  const live = h.session.channels.list();
-  let snapshot: typeof live = {
-    ...live,
-    channels: live.channels.map((channel) => ({
-      ...channel,
-      cached: true,
-      readOnly: true,
-    })),
-  };
-  const listeners = new Set<() => void>();
-  const enterChannel = vi.fn(h.session.unread.enterChannel);
-  const leaveChannel = vi.fn(h.session.unread.leaveChannel);
-  const session = {
-    ...h.session,
-    channels: {
-      ...h.session.channels,
-      list: () => snapshot,
-      subscribeList(listener: () => void) {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
-    },
-    unread: { ...h.session.unread, enterChannel, leaveChannel },
-  };
-  const mounted = render(
-    <MessageManagement session={session} channelId={channel}>
-      Restored conversation
-    </MessageManagement>,
-  );
-  await act(async () => {});
-  expect(enterChannel).not.toHaveBeenCalled();
-  expect(screen.queryByRole("alert")).toBeNull();
-  await act(async () => {
-    snapshot = live;
-    for (const listener of listeners) listener();
-  });
-  expect(enterChannel).toHaveBeenCalledExactlyOnceWith(channel);
-  expect(screen.queryByRole("alert")).toBeNull();
-  mounted.unmount();
-  expect(leaveChannel).toHaveBeenCalledExactlyOnceWith(channel);
-});
-
 async function heldUnreadAction(action: "read" | "unread") {
   const h = await fixture(action === "unread");
   cleanup();
@@ -645,8 +606,8 @@ async function heldUnreadAction(action: "read" | "unread") {
     unread: {
       ...h.session.unread,
       ...(action === "read"
-        ? { markMessageRead: mutation }
-        : { markMessageUnread: mutation }),
+        ? { markThrough: mutation }
+        : { markUnreadLocal: mutation }),
     },
   };
   const row = session.channels.window(channel).rows[0];
@@ -664,9 +625,14 @@ async function heldUnreadAction(action: "read" | "unread") {
   const mounted = render(surface());
   fireEvent.click(screen.getByRole("button", { name: "Read actions" }));
   fireEvent.click(
-    await screen.findByRole("menuitem", { name: `Mark ${action}` }),
+    await screen.findByRole("menuitem", {
+      name: action === "read" ? "Mark read through here" : "Mark unread",
+    }),
   );
-  expect(mutation).toHaveBeenCalledExactlyOnceWith(channel, row.id);
+  expect(mutation).toHaveBeenCalledExactlyOnceWith(
+    { kind: "message", channelId: channel, messageId: row.id },
+    ...(action === "read" ? [row.id] : []),
+  );
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   return { result, mutation, mounted, surface, session };
 }
@@ -741,38 +707,6 @@ it("keeps a new visit's failure when an older visit finishes later", async () =>
   }
 });
 
-it("scopes channel-entry failures to their visit and clears displayed failures on retarget", async () => {
-  const h = await fixture();
-  cleanup();
-  const result = deferred<void>();
-  const enterChannel = vi.fn(() => result.promise);
-  const session = {
-    ...h.session,
-    unread: { ...h.session.unread, enterChannel },
-  };
-  const surface = (channelId: string) => (
-    <MessageManagement session={session} channelId={channelId}>
-      Conversation
-    </MessageManagement>
-  );
-  const mounted = render(surface(channel));
-  expect(enterChannel).toHaveBeenCalledOnce();
-  try {
-    mounted.rerender(surface("other"));
-    await act(async () => result.reject(new Error("Old entry failed")));
-    expect(screen.queryByRole("alert")).toBeNull();
-    enterChannel.mockRejectedValueOnce(new Error("Current entry failed"));
-    mounted.rerender(surface(channel));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Current entry failed",
-    );
-    mounted.rerender(surface("other"));
-    expect(screen.queryByRole("alert")).toBeNull();
-  } finally {
-    await act(async () => result.resolve());
-  }
-});
-
 it("keeps a message menu status subscription stable across server publications", async () => {
   const h = await fixture(false);
   await waitFor(() =>
@@ -788,7 +722,7 @@ it("keeps a message menu status subscription stable across server publications",
   expect(h.subscribeMessage).toHaveBeenCalledTimes(before);
   expect(h.stopMessage).not.toHaveBeenCalled();
   expect(
-    await screen.findByRole("menuitem", { name: "Mark read" }),
+    await screen.findByRole("menuitem", { name: "Mark read through here" }),
   ).toBeVisible();
   h.mounted.unmount();
   expect(h.stopMessage).toHaveBeenCalledTimes(1);
@@ -843,7 +777,9 @@ it("releases the old message lease once when the same menu switches session owne
   expect(first.stopMessage).toHaveBeenCalledTimes(1);
   expect(second.subscribeMessage).toHaveBeenCalledTimes(1);
   expect(second.stopMessage).not.toHaveBeenCalled();
-  expect(screen.getByRole("menuitem", { name: "Mark read" })).toBeVisible();
+  expect(
+    screen.getByRole("menuitem", { name: "Mark read through here" }),
+  ).toBeVisible();
   mounted.unmount();
   expect(first.stopMessage).toHaveBeenCalledTimes(1);
   expect(second.stopMessage).toHaveBeenCalledTimes(1);

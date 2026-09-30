@@ -89,8 +89,6 @@ async function setup(
   });
   bff.api.write.mockImplementation(async (intents) => {
     for (const intent of intents) {
-      if (intent.type === "mark_messages_read")
-        throw new Error("Unexpected exact read in notification fixture");
       const event = observed.get(intent.message_id);
       if (event) frontier = Math.max(frontier ?? -1, event.created_at);
     }
@@ -1037,7 +1035,7 @@ it.each([true, false])(
   },
 );
 
-it("alerts a fresh mention while a large thread owns bounded bulk context demand", async () => {
+it("alerts a fresh mention beside loaded thread history without bulk context demand", async () => {
   const h = await setup();
   const threadChannel = "11234567-89ab-cdef-0123-456789abcdef";
   h.emit([
@@ -1051,18 +1049,11 @@ it("alerts a fresh mention while a large thread owns bounded bulk context demand
     ]),
   );
   h.emit([root, ...replies]);
-  const release = h.owner.session.unread.subscribeMessages(
-    threadChannel,
-    replies.map((r) => r.id),
-    () => {},
-  );
-  cleanups.push(release);
-  await vi.waitFor(() =>
-    expect(
-      h.owner.session.unread.attention(threadChannel, replies[0]?.id ?? "")
-        .status,
-    ).toBe("eligible"),
-  );
+  // Thread branch presentation no longer retains per-message unread selectors.
+  expect(
+    h.owner.session.unread.attention(threadChannel, replies[0]?.id ?? "")
+      .status,
+  ).toBe("unknown");
   const mention = h.make("Mention beside a large thread");
   h.emit([mention], "live");
   await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(1));

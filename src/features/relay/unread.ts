@@ -1,4 +1,4 @@
-import type { ChannelQueries, ChannelMessage } from "./contracts";
+import type { ChannelQueries } from "./contracts";
 import type { RelayEvent } from "./events";
 import type { RelayReader } from "./reader";
 import { threadReference } from "./thread-reference";
@@ -11,12 +11,7 @@ import {
   type SidebarStorage,
   type AnchoredRead,
 } from "./sidebar-journal";
-import {
-  MAX_MESSAGE_READS,
-  type SidebarApi,
-  type ReadCount,
-  type ReadTarget,
-} from "./sidebar-api";
+import type { SidebarApi, ReadCount, ReadTarget } from "./sidebar-api";
 export type { UnreadTarget, ReadMutationResult } from "./sidebar-journal";
 export type ReadSyncSnapshot = Readonly<{
   capability: "unsupported" | "frontier-sync";
@@ -29,6 +24,8 @@ export type UnreadSnapshot = Readonly<{
   latestMessage?: Readonly<{ id: string; createdAt: number }>;
   unread: ReadCount;
   attention: ReadCount;
+  unreadVisible?: boolean;
+  attentionVisible?: boolean;
   freshness: "unknown" | "observed" | "stale";
   manual: "none" | "local-only";
   error?: string | undefined;
@@ -67,11 +64,6 @@ export interface UnreadCapability {
   snapshot(target: UnreadTarget): UnreadSnapshot;
   attention(channelId: string, messageId: string): MessageAttention;
   subscribe(target: UnreadTarget, listener: () => void): () => void;
-  subscribeMessages(
-    channelId: string,
-    messageIds: readonly string[],
-    listener: () => void,
-  ): () => void;
   activity(channelId: string): ThreadActivitySnapshot;
   subscribeActivity(channelId: string, listener: () => void): () => void;
   loadActivity(channelId: string): Promise<void>;
@@ -85,16 +77,6 @@ export interface UnreadCapability {
     target: UnreadTarget,
     messageId: string,
   ): Promise<ReadMutationResult>;
-  markMessageUnread(
-    channelId: string,
-    messageId: string,
-  ): Promise<ReadMutationResult>;
-  markMessageRead(
-    channelId: string,
-    messageId: string,
-  ): Promise<ReadMutationResult>;
-  leaveChannel(channelId: string): void;
-  enterChannel(channelId: string): Promise<void>;
   clearUnreadLocal(target: UnreadTarget): Promise<ReadMutationResult>;
   markChannelRead(channelId: string): Promise<ReadMutationResult>;
   markUnreadLocal(target: UnreadTarget): Promise<ReadMutationResult>;
@@ -127,7 +109,6 @@ export function createUnread({
   reader,
   viewer,
   find,
-  loaded = (id) => channels.window(id).rows,
   notify = (listener) => listener(),
 }: {
   api: SidebarApi | undefined;
@@ -137,7 +118,6 @@ export function createUnread({
   reader: RelayReader;
   viewer: string;
   find: (id: string) => RelayEvent | undefined;
-  loaded?: (channelId: string) => readonly ChannelMessage[];
   notify?: (listener: () => void) => void;
 }) {
   let closed = false,
@@ -165,14 +145,7 @@ export function createUnread({
   >();
   const handles = new Set<() => void>();
   const manualRevision = new Map<string, number>();
-  const forcedMessages = new Map<string, Set<string>>();
-  const entered = new Set<string>();
-  const visits = new Map<string, number>();
   const mutations = new Map<string, Promise<unknown>>();
-  const messageForce = (channelId: string) => ({
-    kind: "message-force" as const,
-    channelId,
-  });
   function serialize<T>(
     channelId: string,
     operation: () => Promise<T>,
@@ -190,69 +163,6 @@ export function createUnread({
       if (mutations.get(channelId) === settled) mutations.delete(channelId);
     });
     return next;
-  }
-  function messageSubtree(channelId: string, messageId: string) {
-    if (!allowed(channelId)) throw new Error("Read target unavailable");
-    const rows = [
-      ...new Map(loaded(channelId).map((row) => [row.id, row])).values(),
-    ];
-    const selected = rows.find((row) => row.id === messageId);
-    if (!selected) throw new Error("Load a verified message before marking it");
-    const ids = new Set([messageId]);
-    const children = new Map<string, string[]>();
-    for (const row of rows) {
-      if (!row.replyParentId) continue;
-      const siblings = children.get(row.replyParentId) ?? [];
-      siblings.push(row.id);
-      children.set(row.replyParentId, siblings);
-    }
-    for (const id of ids)
-      for (const child of children.get(id) ?? []) ids.add(child);
-    if (ids.size > MAX_MESSAGE_READS)
-      throw new Error("Loaded reply subtree exceeds the read action limit");
-    const captured = rows
-      .filter((row) => ids.has(row.id))
-      .map((row) => {
-        const raw = event(row.id);
-        if (
-          !raw ||
-          row.channelId !== channelId ||
-          row.authorId !== raw.pubkey ||
-          row.membership ||
-          (row.delivery && !["accepted", "seen"].includes(row.delivery)) ||
-          channelOf(raw) !== channelId ||
-          ![9, 40002, 45001, 45003].includes(raw.kind)
-        )
-          throw new Error("Read target unavailable");
-        return { row, raw };
-      });
-    const generation = epoch,
-      visit = visits.get(channelId) ?? 0;
-    const valid = () => {
-      if (
-        closed ||
-        generation !== epoch ||
-        !allowed(channelId) ||
-        (visits.get(channelId) ?? 0) !== visit
-      )
-        return false;
-      const current = new Map(loaded(channelId).map((row) => [row.id, row]));
-      return captured.every(({ row, raw }) => {
-        const now = current.get(row.id);
-        return (
-          event(row.id) === raw &&
-          now?.channelId === channelId &&
-          now.authorId === raw.pubkey &&
-          (!now.delivery || ["accepted", "seen"].includes(now.delivery)) &&
-          !now.membership &&
-          now.content === row.content &&
-          now.sourceContent === row.sourceContent &&
-          now.replyParentId === row.replyParentId &&
-          now.threadRootId === row.threadRootId
-        );
-      });
-    };
-    return { captured, valid };
   }
   const lifetime = new AbortController();
   const event = (id: string) => {
@@ -377,19 +287,50 @@ export function createUnread({
       } else if (status?.status === "read" || status?.status === "not_counted")
         unread = attention = zero;
     }
+    const covered =
+      target.kind === "message"
+        ? (() => {
+            const message = event(target.messageId),
+              resolved = message && context(message);
+            return (
+              !!message &&
+              !!resolved &&
+              state.covered(resolved, message.created_at, false, message.id)
+            );
+          })()
+        : !!latestMessage &&
+          (target.kind === "channel"
+            ? row?.latest_message_complete === true
+            : row?.threads.complete === true &&
+              unread.status === "exact" &&
+              attention.status === "exact") &&
+          state.covered(
+            wireTarget(target),
+            latestMessage.createdAt,
+            target.kind === "channel",
+          );
+    const hint = state.liveHint(target.channelId)?.unread;
+    const hinted =
+      !!hint &&
+      (target.kind === "channel" ||
+        (target.kind === "message"
+          ? target.messageId === hint.id
+          : hint.target?.root_id === target.rootId)) &&
+      !(
+        hint.target &&
+        state.covered(hint.target, hint.createdAt, false, hint.id)
+      );
     const result: UnreadSnapshot = Object.freeze({
       target,
+      unreadVisible: (hasUnread(unread) && !covered) || hinted,
+      attentionVisible:
+        (hasUnread(attention) && !covered) || (hinted && hint.attention),
       unread,
       attention,
       ...(latestMessage ? { latestMessage } : {}),
       freshness: freshness(),
       manual:
-        allowed(target.channelId) &&
-        (state.journal.manual(target) ||
-          (target.kind === "channel" &&
-            state.journal.manual(messageForce(target.channelId))) ||
-          (target.kind === "message" &&
-            forcedMessages.get(target.channelId)?.has(target.messageId)))
+        allowed(target.channelId) && state.journal.manual(target)
           ? "local-only"
           : "none",
       error: state.operationError(target.channelId) ?? state.sync().error,
@@ -398,6 +339,8 @@ export function createUnread({
       cached &&
       cached.freshness === result.freshness &&
       cached.manual === result.manual &&
+      cached.unreadVisible === result.unreadVisible &&
+      cached.attentionVisible === result.attentionVisible &&
       cached.error === result.error &&
       sameCount(cached.unread, result.unread) &&
       sameCount(cached.attention, result.attention) &&
@@ -438,7 +381,11 @@ export function createUnread({
           : target.root_id
             ? "thread"
             : undefined;
-    const forced = forcedMessages.get(channelId)?.has(messageId) ?? false;
+    const forced = state.journal.manual({
+      kind: "message",
+      channelId,
+      messageId,
+    });
     return {
       status:
         status?.status === "unread"
@@ -456,9 +403,9 @@ export function createUnread({
       forced,
       unread:
         message.pubkey !== viewer &&
-        (status?.status === "unread" ||
-          forced ||
-          state.journal.manual({ kind: "message", channelId, messageId })),
+        (forced ||
+          (status?.status === "unread" &&
+            !state.covered(target, message.created_at, false, messageId))),
       viewing,
     };
   }
@@ -474,7 +421,18 @@ export function createUnread({
       items: row
         ? row.threads.items
             .filter(
-              (t) => t.attention.status === "unknown" || hasUnread(t.attention),
+              (t) =>
+                t.attention.status === "unknown" ||
+                (hasUnread(t.attention) &&
+                  !(
+                    row.threads.complete &&
+                    t.unread.status === "exact" &&
+                    t.attention.status === "exact" &&
+                    state.covered(
+                      { channel_id: channelId, root_id: t.root_id },
+                      t.latest_reply_at,
+                    )
+                  )),
             )
             .map((t) => {
               const preview = event(t.latest_reply_id);
@@ -511,34 +469,6 @@ export function createUnread({
       return () => {
         off();
         lease?.dispose();
-      };
-    },
-    subscribeMessages(channelId, messageIds, listener) {
-      const queries = new Map<
-        string,
-        { target: ReadTarget; message_ids: string[] }
-      >();
-      for (const id of new Set(messageIds)) {
-        const message = event(id),
-          resolved = message && context(message);
-        if (!resolved || resolved.channel_id !== channelId) continue;
-        const key = contextKey(resolved);
-        const query = queries.get(key) ?? { target: resolved, message_ids: [] };
-        query.message_ids.push(id);
-        queries.set(key, query);
-      }
-      const leases: ReturnType<typeof state.retain>[] = [];
-      try {
-        for (const query of queries.values())
-          leases.push(state.retain(query, true));
-      } catch (error) {
-        for (const lease of leases) lease.dispose();
-        throw error;
-      }
-      const off = subscribe(listener);
-      return () => {
-        off();
-        for (const lease of leases) lease.dispose();
       };
     },
     subscribeActivity: (_channelId, listener) => subscribe(listener),
@@ -617,7 +547,7 @@ export function createUnread({
               !message ||
               !target ||
               target.channel_id !== channelId ||
-              ![9, 40002, 45001, 45003].includes(message.kind)
+              !api?.eligibleKinds?.includes(message.kind)
             )
               continue;
             const key = contextKey(target),
@@ -666,100 +596,6 @@ export function createUnread({
         ),
       );
     },
-    async markMessageUnread(channelId, messageId) {
-      const { captured, valid } = messageSubtree(channelId, messageId);
-      manualRevision.set(channelId, (manualRevision.get(channelId) ?? 0) + 1);
-      return serialize(channelId, async () => {
-        const result = await state.journal.markUnread(
-          messageForce(channelId),
-          valid,
-        );
-        if (valid()) {
-          const forced = forcedMessages.get(channelId) ?? new Set<string>();
-          for (const { row } of captured) forced.add(row.id);
-          forcedMessages.set(channelId, forced);
-          publish();
-        }
-        return result;
-      });
-    },
-    async markMessageRead(channelId, messageId) {
-      const { captured, valid } = messageSubtree(channelId, messageId);
-      const foreign = captured.filter(({ raw }) => raw.pubkey !== viewer);
-      // Unsupported hosts may remove only a local force on already proven reads.
-      if (
-        !api &&
-        foreign.some(({ row, raw }) => {
-          const target = context(raw),
-            evidence = target && state.context(target);
-          return (
-            evidence?.status !== "available" ||
-            !evidence.messages.some(
-              (m) =>
-                m.message_id === row.id &&
-                (m.status === "read" || m.status === "not_counted"),
-            )
-          );
-        })
-      )
-        throw new Error("Sidebar API unsupported");
-      return serialize(channelId, async () => {
-        const ids = new Set(captured.map(({ row }) => row.id));
-        const forced = forcedMessages.get(channelId);
-        const remaining = forced && [...forced].some((id) => !ids.has(id));
-        const intents: AnchoredRead[] =
-          foreign.length && api
-            ? [
-                {
-                  intent: {
-                    type: "mark_messages_read",
-                    channel_id: channelId,
-                    message_ids: foreign.map(({ row }) => row.id),
-                  },
-                  createdAt: Math.max(
-                    ...foreign.map(({ raw }) => raw.created_at),
-                  ),
-                },
-              ]
-            : [];
-        const clear = (t: import("./sidebar-journal").SidebarManualTarget) =>
-          t.channelId === channelId &&
-          ((t.kind === "message-force" && !remaining) ||
-            (t.kind === "message" && ids.has(t.messageId)));
-        const result = intents.length
-          ? await state.enqueue(intents, clear, valid)
-          : await state.journal.enqueue([], clear, valid);
-        if (valid()) {
-          for (const id of ids) forced?.delete(id);
-          if (!forced?.size) forcedMessages.delete(channelId);
-          publish();
-        }
-        return result;
-      });
-    },
-    leaveChannel(channelId) {
-      visits.set(channelId, (visits.get(channelId) ?? 0) + 1);
-      entered.delete(channelId);
-      if (forcedMessages.delete(channelId)) publish();
-    },
-    enterChannel(channelId) {
-      const visit = visits.get(channelId) ?? 0,
-        generation = epoch;
-      return serialize(channelId, async () => {
-        if (entered.has(channelId)) return;
-        const valid = () =>
-          !closed &&
-          generation === epoch &&
-          allowed(channelId) &&
-          (visits.get(channelId) ?? 0) === visit;
-        await state.journal.enqueue(
-          [],
-          (t) => t.kind === "message-force" && t.channelId === channelId,
-          valid,
-        );
-        if (valid()) entered.add(channelId);
-      });
-    },
     async clearUnreadLocal(target) {
       const generation = epoch;
       if (!allowed(target.channelId))
@@ -799,7 +635,6 @@ export function createUnread({
           (t) => t.channelId === channelId,
           valid,
         );
-        if (valid() && forcedMessages.delete(channelId)) publish();
         return result;
       });
     },
@@ -822,6 +657,36 @@ export function createUnread({
   return {
     capability,
     state,
+    live(events: readonly RelayEvent[]) {
+      for (const message of events) {
+        const channelId = channelOf(message);
+        if (
+          !channelId ||
+          !allowed(channelId) ||
+          !api?.eligibleKinds?.includes(message.kind)
+        )
+          continue;
+        const target = context(message);
+        const direct =
+          channels.list().channels.find((c) => c.id === channelId)
+            ?.channelType === "dm" ||
+          message.tags.some(
+            ([name, value]) =>
+              (name === "p" && value?.toLowerCase() === viewer) ||
+              (name === "broadcast" && value === "1"),
+          );
+        state.live(
+          channelId,
+          {
+            id: message.id,
+            createdAt: message.created_at,
+            ...(target ? { target } : {}),
+            attention: direct,
+          },
+          message.pubkey !== viewer,
+        );
+      }
+    },
     accept(events: readonly RelayEvent[]) {
       for (const message of events) {
         const id = channelOf(message);
@@ -830,9 +695,6 @@ export function createUnread({
     },
     purge() {
       epoch++;
-      for (const id of forcedMessages.keys())
-        if (!allowed(id)) forcedMessages.delete(id);
-      for (const id of entered) if (!allowed(id)) entered.delete(id);
       for (const stop of [...handles]) stop();
       previews.clear();
       state.purge();
@@ -844,8 +706,6 @@ export function createUnread({
     reconnect: state.reconnect,
     clear() {
       epoch++;
-      forcedMessages.clear();
-      entered.clear();
       for (const stop of [...handles]) stop();
       previews.clear();
       state.clear();
@@ -854,8 +714,6 @@ export function createUnread({
       closed = true;
       epoch++;
       lifetime.abort();
-      forcedMessages.clear();
-      entered.clear();
       for (const stop of [...handles]) stop();
       stop();
       stopRoster();

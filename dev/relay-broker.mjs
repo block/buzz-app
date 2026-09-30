@@ -62,6 +62,7 @@ import {
   assertSidebarAssignmentIntent,
   mutateSidebarAssignment,
   SIDEBAR_REQUEST_BYTES,
+  SIDEBAR_HEAD_BYTES,
   SIDEBAR_UPLOAD_MS,
   SIDEBAR_UPLOAD_SLOTS,
 } from "./sidebar-preferences.mjs";
@@ -121,7 +122,6 @@ function validProfilePicture(value) {
 const MAX_FILTERS = 4,
   MAX_LIMIT = 500,
   MAX_INFLIGHT = 6,
-  SIDEBAR_HEAD_BYTES = SIDEBAR_REQUEST_BYTES + 4096,
   CHANNEL_KIT_DECODE_BYTES = 512 * 1024,
   UPSTREAM_TIMEOUT_MS = 20000,
   KEEPALIVE_MS = 60000;
@@ -1927,7 +1927,7 @@ export function relayBrokerPlugin({
                 presence
                   ? Buffer.byteLength(raw) > 20 * 1024
                   : route === "/api/relay/sidebar-api"
-                    ? Buffer.byteLength(raw) > 256 * 1024
+                    ? Buffer.byteLength(raw) > 64 * 1024
                     : raw.length > 65536
               )
                 return json(res, 413, { error: "Filter body too large" });

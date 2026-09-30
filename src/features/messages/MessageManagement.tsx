@@ -113,29 +113,6 @@ export function MessageManagement({
     setNotice((current) =>
       current.visit === visit ? { ...current, error } : current,
     );
-  useEffect(() => {
-    const { session, visitChannelId } = visit;
-    let active = true;
-    if (visitChannelId)
-      void session.unread.enterChannel(visitChannelId).catch((cause) => {
-        if (active)
-          setNotice((current) =>
-            current.visit === visit
-              ? {
-                  ...current,
-                  error:
-                    cause instanceof Error
-                      ? cause.message
-                      : "Could not restore unread state.",
-                }
-              : current,
-          );
-      });
-    return () => {
-      active = false;
-      if (visitChannelId) session.unread.leaveChannel(visitChannelId);
-    };
-  }, [visit]);
   return (
     <Management.Provider
       value={{
@@ -266,8 +243,8 @@ export function MessageManagementItems({
           management.report(undefined);
           void (
             unread
-              ? session.unread.markMessageRead(row.channelId, row.id)
-              : session.unread.markMessageUnread(row.channelId, row.id)
+              ? session.unread.markThrough(target, row.id)
+              : session.unread.markUnreadLocal(target)
           ).catch((cause) =>
             management.report(
               cause instanceof Error
@@ -278,7 +255,7 @@ export function MessageManagementItems({
         }}
       >
         <MenuIcon>{unread ? <EnvelopeOpenIcon /> : <EnvelopeIcon />}</MenuIcon>
-        {unread ? "Mark read" : "Mark unread"}
+        {unread ? "Mark read through here" : "Mark unread"}
       </MenuItem>
     </>
   );

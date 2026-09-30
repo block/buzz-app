@@ -11,7 +11,6 @@ import type { SidebarJournal, SidebarStorage } from "./sidebar-journal";
 export const sidebarAccount = {
   retention_seconds: 2592000,
   cutoff_ms: 0,
-  imported_at_ms: null,
 };
 export const sidebarRow = (
   channel_id: string,
@@ -39,6 +38,7 @@ export function sidebarFixture() {
   const key = (target: ReadTarget) =>
     `${target.channel_id}:${target.root_id ?? ""}`;
   const api = {
+    eligibleKinds: [9, 40002, 45001, 45003],
     sidebar: vi.fn<SidebarApi["sidebar"]>(
       async (query): Promise<SidebarPage> => ({
         account: sidebarAccount,

@@ -5,9 +5,11 @@ import {
   connectNativeTransport,
   nativeRelayRequest,
   nativeRelaySigner,
+  nativeWriteKinds,
 } from "./native";
 import { keypair, message, signed } from "./testing";
 import { createOutbox, type OutgoingEvent, PublishRejected } from "./outbox";
+import { createMessages } from "./messages";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -446,3 +448,351 @@ it.each(["online", "tampered", "wrong-author", "empty"] as const)(
     expect(fetch).not.toHaveBeenCalled();
   },
 );
+
+it.each(["message", "reaction"] as const)(
+  "publishes native %s removal with the broker's kind-5 tags",
+  async (target) => {
+    const transport = await connectNativeTransport(community);
+    assert.exists(transport.writer);
+    const original = message(viewer, "channel", "remove me", 1700000000);
+    const reaction = signed(viewer, {
+      kind: 7,
+      content: "👍",
+      tags: [
+        ["h", "channel"],
+        ["e", original.id],
+      ],
+    });
+    const chosen = target === "message" ? original : reaction;
+    const owner = createOutbox(viewer.pubkey, transport.writer, {
+      load: () => [],
+      save: () => {},
+    });
+    owners.push(owner);
+    await owner.outbox.ready();
+    const messages = createMessages(
+      owner.outbox,
+      viewer.pubkey,
+      (id) => [original, reaction].find((event) => event.id === id),
+      () => [],
+      () => {},
+    );
+    respond = (request) => ({
+      body: {
+        accepted: true,
+        event_id: JSON.parse(request.body ?? "{}").id,
+      },
+    });
+    messages.remove([chosen.id]);
+    await vi.waitFor(() =>
+      expect(
+        requests.filter((request) => request.path === "/events"),
+      ).toHaveLength(1),
+    );
+    const event = JSON.parse(requests.at(-1)?.body ?? "null");
+    expect(event).toMatchObject({
+      kind: 5,
+      pubkey: viewer.pubkey,
+      content: "",
+    });
+    expect(event.tags).toEqual([
+      ["h", "channel"],
+      ["e", chosen.id],
+      ["k", String(chosen.kind)],
+      ["client-id", expect.any(String)],
+    ]);
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.some(
+          ([command, args]) =>
+            command === "relay_sign" &&
+            (args as { event: EventTemplate }).event.kind === 5,
+        ),
+    ).toBe(true);
+  },
+);
+
+it("exposes workflow history over the purpose-bound native route and workflow write kinds", async () => {
+  const transport = await connectNativeTransport(community);
+  expect(nativeWriteKinds).toEqual(expect.arrayContaining([30620, 46020, 5]));
+  expect(transport.writer?.kinds).toEqual(nativeWriteKinds);
+  assert.exists(transport.workflows);
+  const id = "11111111-1111-4111-8111-111111111111";
+  const cursor = { before: "2026-09-29T20:00:00Z", beforeId: id };
+  const runs = { runs: [], next: null };
+  vi.mocked(invoke).mockImplementationOnce(async (command, args) => {
+    expect(command).toBe("relay_workflow_runs");
+    expect(args).toEqual({ community, id, cursor });
+    return { status: 200, headers: {}, body: JSON.stringify(runs) };
+  });
+  expect(
+    await transport.workflows.runs(id, cursor, new AbortController().signal),
+  ).toEqual(runs);
+  await expect(
+    transport.workflows.runs("../", undefined, new AbortController().signal),
+  ).rejects.toThrow("Invalid workflow ID");
+  const controller = new AbortController();
+  controller.abort();
+  await expect(
+    transport.workflows.runs(id, undefined, controller.signal),
+  ).rejects.toThrow();
+  expect(requests).toEqual([
+    { community, path: "/", method: "GET", body: null },
+  ]);
+});
+
+it("workflow history surfaces bounded host refusals and fences late native results", async () => {
+  const transport = await connectNativeTransport(community);
+  assert.exists(transport.workflows);
+  const id = "11111111-1111-4111-8111-111111111111";
+  const pending = deferred<{
+    status: number;
+    headers: Record<string, string>;
+    body: string;
+  }>();
+  vi.mocked(invoke).mockImplementationOnce(() => pending.promise);
+  const controller = new AbortController();
+  const read = transport.workflows.runs(id, undefined, controller.signal);
+  controller.abort();
+  pending.resolve({
+    status: 200,
+    headers: {},
+    body: '{"runs":[],"next":null}',
+  });
+  await expect(read).rejects.toThrow();
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 403,
+    headers: {},
+    body: '{"error":"denied"}',
+  });
+  await expect(
+    transport.workflows.runs(id, undefined, new AbortController().signal),
+  ).rejects.toMatchObject({ kind: "denied" });
+});
+
+it("shares workflow history admission and cooldown with signed queries", async () => {
+  const transport = await connectNativeTransport(community);
+  assert.exists(transport.workflows);
+  const id = "11111111-1111-4111-8111-111111111111";
+  const quota = '{"error":"rate-limited: quota exceeded; retry in 60s"}';
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 429,
+    headers: {},
+    body: quota,
+  });
+  await expect(
+    transport.workflows.runs(id, undefined, new AbortController().signal),
+  ).rejects.toMatchObject({ status: 429 });
+  const calls = vi.mocked(invoke).mock.calls.length;
+  await expect(transport.query([{ kinds: [9], limit: 1 }])).rejects.toThrow(
+    "paused",
+  );
+  expect(vi.mocked(invoke).mock.calls.length).toBe(calls);
+});
+
+it("holds the shared admission lease until a cancelled native history request settles", async () => {
+  const scope = "https://packaged-admission.test";
+  const transport = await connectNativeTransport(scope);
+  const workflows = transport.workflows;
+  assert.exists(workflows);
+  const id = "11111111-1111-4111-8111-111111111111";
+  const pending = Array.from({ length: 6 }, () =>
+    deferred<{
+      status: number;
+      headers: Record<string, string>;
+      body: string;
+    }>(),
+  );
+  const historyCalls: number[] = [];
+  vi.mocked(invoke).mockImplementation((command, args) => {
+    if (command === "relay_workflow_runs") {
+      const index = historyCalls.push(1) - 1;
+      return (
+        pending[index]?.promise ??
+        Promise.reject(new Error("Unexpected history request"))
+      );
+    }
+    if (command === "relay_http" && (args as Request).path === "/query") {
+      requests.push(args as Request);
+      return Promise.resolve({ status: 200, headers: {}, body: "[]" });
+    }
+    return Promise.reject(new Error(`Unexpected command: ${command}`));
+  });
+  const controllers = pending.map(() => new AbortController());
+  const reads = controllers.map((controller) =>
+    workflows.runs(id, undefined, controller.signal),
+  );
+  await vi.waitFor(() => expect(historyCalls).toHaveLength(6));
+  const outcomes = reads.map((read) => expect(read).rejects.toThrow());
+  for (const controller of controllers) controller.abort();
+  const query = transport.query([{ kinds: [9], limit: 1 }]);
+  await Promise.resolve();
+  expect(requests).toHaveLength(1); // Discovery only; all six IPC requests still hold slots.
+  for (const request of pending) {
+    request.resolve({
+      status: 200,
+      headers: {},
+      body: '{"runs":[],"next":null}',
+    });
+  }
+  await Promise.all(outcomes);
+  await expect(query).resolves.toEqual([]);
+  expect(requests.at(-1)?.path).toBe("/query");
+});
+
+it("advertises purpose-bound channel capabilities and gates creation on NIP-29", async () => {
+  const transport = await connectNativeTransport(community);
+  expect(transport.archiveAuthority).toBe(relay.pubkey);
+  expect(transport.writer?.kinds).toContain(30078);
+  expect(transport.writer?.kinds).not.toContain(9007);
+  assert.exists(transport.channelLifecycle);
+  assert.exists(transport.channelDetails);
+  assert.exists(transport.identityArchive);
+  assert.exists(transport.channelKit);
+  assert.exists(transport.openDirectMessage);
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 200,
+    headers: {},
+    body: JSON.stringify({ self: relay.pubkey, supported_nips: [29] }),
+  });
+  expect((await connectNativeTransport(community)).writer?.kinds).toContain(
+    9007,
+  );
+});
+
+it("routes lifecycle sign/publish separately from the message writer and preserves definitive rejection", async () => {
+  const transport = await connectNativeTransport(community);
+  assert.exists(transport.channelLifecycle);
+  const signal = new AbortController().signal;
+  const id = "11111111-1111-4111-8111-111111111111";
+  const template = {
+    kind: 9002,
+    created_at: 1700000010,
+    content: "",
+    tags: [
+      ["h", id],
+      ["archived", "true"],
+    ],
+  };
+  const event = signed(viewer, template);
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "identity_restore") return viewer.pubkey;
+    if (command === "relay_http")
+      return {
+        status: 200,
+        headers: {},
+        body: JSON.stringify({ self: relay.pubkey }),
+      };
+    if (command === "relay_channel_sign") {
+      expect(args).toEqual({
+        community,
+        route: "channel-lifecycle",
+        event: template,
+      });
+      return event;
+    }
+    if (command === "relay_channel_publish") {
+      expect(args).toEqual({ community, route: "channel-lifecycle", event });
+      return {
+        status: 200,
+        headers: {},
+        body: JSON.stringify({
+          accepted: true,
+          event_id: event.id,
+          message: "confirmed",
+        }),
+      };
+    }
+    throw new Error(`Unexpected native command: ${command}`);
+  });
+  expect(await transport.channelLifecycle.sign(template, signal)).toEqual(
+    event,
+  );
+  expect(await transport.channelLifecycle.publish(event, signal)).toBe(
+    "confirmed",
+  );
+  expect(
+    vi.mocked(invoke).mock.calls.some(([command]) => command === "relay_sign"),
+  ).toBe(false);
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 403,
+    headers: {},
+    body: JSON.stringify({ error: "denied" }),
+  });
+  await expect(
+    transport.channelLifecycle.publish(event, signal),
+  ).rejects.toBeInstanceOf(PublishRejected);
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 429,
+    headers: {},
+    body: JSON.stringify({ sent: false, error: "rate-limited: try later" }),
+  });
+  await expect(
+    transport.channelLifecycle.publish(event, signal),
+  ).rejects.toThrow("rate-limited: unrecognized reason");
+});
+
+it("prepares and decodes only verified community-scoped recipe records", async () => {
+  const transport = await connectNativeTransport(community);
+  assert.exists(transport.channelKit);
+  const signal = new AbortController().signal;
+  const record = {
+    version: 1 as const,
+    community,
+    deleted: false,
+    value: { type: "team" as const, id: "mine", name: "Mine", agents: [] },
+  };
+  const { coordinate, KIT_TAG } = await import("../channel-templates/model");
+  const event = signed(viewer, {
+    kind: 30078,
+    created_at: 1700000010,
+    content: "encrypted",
+    tags: [
+      ["d", coordinate(record)],
+      ["t", KIT_TAG],
+    ],
+  });
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "relay_kit_prepare") {
+      expect(args).toEqual({ community, record });
+      return "encrypted";
+    }
+    if (command === "relay_kit_decode") {
+      expect(args).toEqual({ community, events: [event] });
+      return [{ eventId: event.id, record }];
+    }
+    throw new Error(`Unexpected native command: ${command}`);
+  });
+  expect(await transport.channelKit.prepare(record, signal)).toBe("encrypted");
+  expect(await transport.channelKit.decode([event], signal)).toEqual([
+    { eventId: event.id, record },
+  ]);
+  await expect(
+    transport.channelKit.decode(
+      [{ ...event, content: "changed" } as VerifiedEvent],
+      signal,
+    ),
+  ).rejects.toThrow();
+});
+
+it("opens direct messages through a purpose-bound command and validates the result", async () => {
+  const transport = await connectNativeTransport(community);
+  assert.exists(transport.openDirectMessage);
+  const id = "11111111-1111-4111-8111-111111111111";
+  vi.mocked(invoke).mockResolvedValueOnce(id);
+  expect(
+    await transport.openDirectMessage(
+      [relay.pubkey],
+      new AbortController().signal,
+    ),
+  ).toBe(id);
+  expect(vi.mocked(invoke).mock.lastCall).toEqual([
+    "relay_direct_message",
+    { community, pubkeys: [relay.pubkey] },
+  ]);
+  vi.mocked(invoke).mockResolvedValueOnce("invalid");
+  await expect(
+    transport.openDirectMessage([relay.pubkey], new AbortController().signal),
+  ).rejects.toThrow("invalid direct message");
+});

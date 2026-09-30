@@ -230,34 +230,6 @@ function ThreadMessages({
     }
     return branches;
   }, [tree, snapshot.replies]);
-  const unreadReplyIds = useMemo(
-    () => [
-      ...new Set(
-        [...branchReplies.values()].flatMap((replies) =>
-          replies.map((reply) => reply.id),
-        ),
-      ),
-    ],
-    [branchReplies],
-  );
-  const subscribeUnread = useCallback(
-    (listener: () => void) =>
-      session.unread.subscribeMessages(channelId, unreadReplyIds, listener),
-    [session.unread, channelId, unreadReplyIds],
-  );
-  // Context evidence can change without changing the aggregate thread count.
-  // A primitive snapshot tracks exactly the flags consumed by branch labels.
-  const unreadSnapshot = useCallback(
-    () =>
-      unreadReplyIds
-        .map((id) => {
-          const value = session.unread.attention(channelId, id);
-          return value.unread ? "1" : value.status === "unknown" ? "?" : "0";
-        })
-        .join(""),
-    [session.unread, channelId, unreadReplyIds],
-  );
-  useSyncExternalStore(subscribeUnread, unreadSnapshot, unreadSnapshot);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [replyParent, setReplyParent] = useState<string>();
   const resolveName = useChannelIdentityNames(session, channelId);
@@ -661,18 +633,6 @@ function ThreadMessages({
         children?.length && !expanded.has(row.id) ? undefined : row;
       previousParent = parent;
       const descendants = branchReplies.get(row.id) ?? [];
-      const evidence = descendants.map((reply) =>
-        session.unread.attention(channelId, reply.id),
-      );
-      const unreadCount = evidence.filter((value) => value.unread).length;
-      const incomplete = evidence.some(
-        (value) => !value.unread && value.status === "unknown",
-      );
-      const unreadLabel = unreadCount
-        ? `${incomplete ? "At least " : ""}${unreadCount} new in available replies`
-        : incomplete
-          ? "Unread status unknown"
-          : undefined;
       const message = (
         <MessageRow
           extensions={extensions}
@@ -713,7 +673,7 @@ function ThreadMessages({
             message={message}
             hasReplies={!!children?.length}
             layout={continuation ? "continuation" : "thread"}
-            label={`View ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
+            label={`View ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}`}
             summary={
               <ReplySummary
                 count={descendants.length}
@@ -724,8 +684,6 @@ function ThreadMessages({
                 agentPubkeys={agentPubkeys}
                 resolveName={resolveName}
                 media={session.media}
-                unreadLabel={unreadLabel}
-                unreadCount={unreadCount}
               />
             }
             depth={depth}
@@ -792,6 +750,7 @@ function ThreadMessages({
     <MessageEditScope>
       <section
         ref={scroller}
+        data-message-scroller
         className={styles.threadHistory}
         aria-label="Thread messages"
         onScroll={(event) => {

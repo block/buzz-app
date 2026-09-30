@@ -97,15 +97,9 @@ it("retains unknown outcomes and never erases another window's pending intent", 
   await a.acknowledge(sent, [{ status: "unknown", retryable: true }]);
   expect(s.read().pending).toHaveLength(2);
   await a.acknowledge(sent, [{ status: "applied" }]);
-  expect(
-    s
-      .read()
-      .pending.map((p) =>
-        p.intent.type === "mark_messages_read"
-          ? p.intent.message_ids
-          : p.intent.message_id,
-      ),
-  ).toEqual(["b".repeat(64)]);
+  expect(s.read().pending.map((p) => p.intent.message_id)).toEqual([
+    "b".repeat(64),
+  ]);
   await b.reload();
   expect(b.snapshot()).toEqual(a.snapshot());
 });
@@ -161,38 +155,4 @@ it("coalesces monotone same-context and whole-channel cuts, preserving independe
   for (let i = 6; i < 1010; i++) await add([mark(undefined, i)]);
   expect(s.read().pending).toHaveLength(2); // a channel prefix cannot replace a whole-channel cut
   expect(s.read().pending.at(-1)?.createdAt).toBe(1009);
-});
-
-it("does not coalesce discrete snapshots with prefixes or one another, and preserves them for replay", async () => {
-  const s = storage(),
-    journal = createSidebarJournal(s.storage, () => {});
-  const exact = {
-    type: "mark_messages_read" as const,
-    channel_id: channel,
-    message_ids: ["b".repeat(64), "c".repeat(64)],
-  };
-  const add = (intents: Parameters<typeof journal.enqueue>[0]) =>
-    journal.enqueue(
-      intents,
-      () => false,
-      () => true,
-    );
-  await add([{ intent: exact, createdAt: 1 }]);
-  await add([{ intent, createdAt: 2 }]);
-  await add([
-    { intent: { ...exact, message_ids: ["d".repeat(64)] }, createdAt: 1 },
-  ]);
-  expect(s.read().pending.map((p) => p.intent)).toEqual([
-    exact,
-    intent,
-    { ...exact, message_ids: ["d".repeat(64)] },
-  ]);
-  const captured = structuredClone(journal.snapshot().pending);
-  await journal.acknowledge(
-    captured,
-    captured.map(() => ({ status: "unknown", retryable: true })),
-  );
-  const reloaded = createSidebarJournal(s.storage, () => {});
-  await reloaded.reload();
-  expect(reloaded.snapshot().pending).toEqual(captured);
 });

@@ -8,9 +8,7 @@ export type UnreadTarget =
   | { kind: "channel"; channelId: string }
   | { kind: "thread"; channelId: string; rootId: string }
   | { kind: "message"; channelId: string; messageId: string };
-export type SidebarManualTarget =
-  | UnreadTarget
-  | { kind: "message-force"; channelId: string };
+export type SidebarManualTarget = UnreadTarget;
 export const unreadTargetKey = (target: SidebarManualTarget) =>
   `${target.channelId}:${target.kind}:${target.kind === "thread" ? target.rootId : target.kind === "message" ? target.messageId : ""}`;
 export type AnchoredRead = { intent: ReadIntent; createdAt: number };
@@ -58,10 +56,7 @@ function validate(value: SidebarJournal): SidebarJournal {
     sidebarOperation({ type: "write", intents: [p.intent] });
   }
   for (const t of value.manual) {
-    if (
-      !t ||
-      !["channel", "thread", "message", "message-force"].includes(t.kind)
-    )
+    if (!t || !["channel", "thread", "message"].includes(t.kind))
       throw new Error("Invalid manual unread");
     sidebarOperation({
       type: "contexts",
@@ -86,9 +81,6 @@ function validate(value: SidebarJournal): SidebarJournal {
 function dominates(a: AnchoredRead, b: AnchoredRead) {
   const x = a.intent,
     y = b.intent;
-  // A discrete snapshot is never a context prefix, in either direction.
-  if (x.type === "mark_messages_read" || y.type === "mark_messages_read")
-    return false;
   const channel = (i: ReadIntent) =>
     i.type === "mark_through" ? i.target.channel_id : i.channel_id;
   return (

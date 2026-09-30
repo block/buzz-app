@@ -1,8 +1,8 @@
 import {
   createSidebarApi,
-  sidebarOperation,
   sidebarResponse,
   supportsSidebarApi,
+  sidebarEligibleKinds,
   type SidebarApi,
 } from "./sidebar-api";
 import {
@@ -425,7 +425,6 @@ export async function connectBrokerTransport(
     ...(supportsSidebarApi(session.buzz_v1)
       ? {
           sidebarApi: createSidebarApi(async (operation, signal) => {
-            sidebarOperation(operation);
             const response = await fetch(`${endpoint}/sidebar-api`, {
               method: "POST",
               credentials: "same-origin",
@@ -449,7 +448,7 @@ export async function connectBrokerTransport(
               );
             }
             return sidebarResponse(response);
-          }),
+          }, sidebarEligibleKinds(session.buzz_v1)),
         }
       : {}),
     ...(session.attachmentUploads === true && session.relayUrl
@@ -882,6 +881,17 @@ const hex = (buffer: ArrayBuffer) =>
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 const signedAdmissions = createHostAdmission();
+/** A native purpose-bound read shares signed HTTP capacity and server cooldowns. */
+export function admittedSignedWorkflowRead(
+  origin: string,
+  viewer: string,
+  request: () => Promise<Response>,
+  signal: AbortSignal,
+): Promise<Response> {
+  const lane = signedAdmissions(relayOrigin(origin), viewer).api;
+  return lane.prepare(() => admittedApiRequest(lane, request, signal));
+}
+
 /** NIP-98 signed reads for a host that owns a signer (Tauri, NIP-07). Reads and writes use the same identity and relay scope. */
 export async function connectSignedTransport(
   signer: Signer,
@@ -1099,7 +1109,7 @@ async function signedPost(
   });
 }
 /** A transport failure is an unknown outcome; only a definitive rejection is a failed write. */
-async function acceptPublish(response: Response, id: string) {
+export async function acceptPublish(response: Response, id: string) {
   if (!response.ok) {
     if ([400, 401, 403, 404, 413, 422].includes(response.status))
       throw new PublishRejected(

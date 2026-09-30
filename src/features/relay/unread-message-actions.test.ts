@@ -49,7 +49,6 @@ function setup(count = 2) {
     viewer: "viewer",
     reader: { read: async () => [] },
     find: (id) => events.get(id),
-    loaded: () => rows,
     channels: {
       list: () => ({
         status: "ready",
@@ -107,71 +106,62 @@ function setup(count = 2) {
     },
   };
 }
-it.each([2000, 2001])(
-  "enforces the %s-row snapshot bound before persistence or local clearing",
-  async (count) => {
-    const h = setup(count);
-    await h.unread.ensure();
-    await h.unread.markUnreadLocal(target);
-    const save = vi.spyOn(h.storage, "update");
-    if (count === 2001) {
-      await expect(h.unread.markMessageRead(channel, h.root)).rejects.toThrow();
-      expect(save).not.toHaveBeenCalled();
-      expect(h.journal().manual).toEqual([target]);
-      expect(h.api.write).not.toHaveBeenCalled();
-    } else {
-      await h.unread.markMessageRead(channel, h.root);
-      await vi.waitFor(() => expect(h.api.write).toHaveBeenCalled());
-      expect(h.api.write.mock.calls[0]?.[0][0]).toMatchObject({
-        type: "mark_messages_read",
-        message_ids: expect.any(Array),
-      });
-      const intent = h.api.write.mock.calls[0]?.[0][0];
-      expect(
-        intent?.type === "mark_messages_read" && intent.message_ids.length,
-      ).toBe(2000);
-      expect(h.journal().manual).toEqual([target]);
-    }
-  },
-);
-it.each(["revoke", "clear", "dispose", "drop", "leave"] as const)(
-  "rejects held subtree reads after %s without consuming the saved force",
+it.each(["revoke", "clear", "dispose"] as const)(
+  "rejects held prefix reads after %s without consuming the saved force",
   async (action) => {
     const h = setup();
-    await h.unread.markMessageUnread(channel, h.root);
+    await h.unread.markUnreadLocal({
+      kind: "message",
+      channelId: channel,
+      messageId: h.root,
+    });
     const before = structuredClone(h.journal());
     const held = h.hold();
-    const read = h.unread.markMessageRead(channel, h.root);
+    const read = h.unread.markThrough(
+      { kind: "message", channelId: channel, messageId: h.root },
+      h.root,
+    );
     const rejected = expect(read).rejects.toThrow();
     await held.started;
     if (action === "revoke") h.revoke();
     if (action === "clear") h.owner.clear();
     if (action === "dispose") h.owner.dispose();
-    if (action === "drop") h.drop();
-    if (action === "leave") h.unread.leaveChannel(channel);
     held.release();
     await rejected;
     expect(h.journal()).toEqual(before);
     expect(h.api.write).not.toHaveBeenCalled();
   },
 );
-it("storage rejection preserves force and a clean retry saves exactly the snapshot", async () => {
+it("storage rejection preserves force and a clean retry saves exactly the fixed anchor", async () => {
   const h = setup();
-  await h.unread.markMessageUnread(channel, h.root);
+  await h.unread.markUnreadLocal({
+    kind: "message",
+    channelId: channel,
+    messageId: h.root,
+  });
   vi.spyOn(h.storage, "update").mockRejectedValueOnce(new Error("disk full"));
-  await expect(h.unread.markMessageRead(channel, h.root)).rejects.toThrow(
-    "disk full",
-  );
+  await expect(
+    h.unread.markThrough(
+      { kind: "message", channelId: channel, messageId: h.root },
+      h.root,
+    ),
+  ).rejects.toThrow("disk full");
   expect(h.unread.attention(channel, h.root).forced).toBe(true);
   expect(h.journal().pending).toEqual([]);
-  await h.unread.markMessageRead(channel, h.root);
+  await h.unread.markThrough(
+    { kind: "message", channelId: channel, messageId: h.root },
+    h.root,
+  );
   expect(h.unread.attention(channel, h.root).forced).toBe(false);
   await vi.waitFor(() => expect(h.api.write).toHaveBeenCalled());
 });
 it("keeps unknown outcomes durable and retries identical operands", async () => {
   const h = setup();
   h.api.write.mockResolvedValueOnce([{ status: "unknown", retryable: true }]);
-  await h.unread.markMessageRead(channel, h.root);
+  await h.unread.markThrough(
+    { kind: "message", channelId: channel, messageId: h.root },
+    h.root,
+  );
   await vi.waitFor(() => expect(h.unread.sync().status).toBe("error"));
   expect(h.journal().pending).toHaveLength(1);
   const sent = h.api.write.mock.calls[0]?.[0];
@@ -179,28 +169,16 @@ it("keeps unknown outcomes durable and retries identical operands", async () => 
   expect(h.api.write.mock.calls[1]?.[0]).toEqual(sent);
   expect(h.journal().pending).toEqual([]);
 });
-it("reopening fences the prior visit, removes its hint, and preserves independent channel intent", async () => {
-  const h = setup();
-  await h.unread.enterChannel(channel);
-  await h.unread.markUnreadLocal(target);
-  const held = h.hold();
-  const marking = h.unread.markMessageUnread(channel, h.root);
-  const rejected = expect(marking).rejects.toThrow();
-  await held.started;
-  h.unread.leaveChannel(channel);
-  const opening = h.unread.enterChannel(channel);
-  held.release();
-  await Promise.all([rejected, opening]);
-  expect(h.journal().manual).toEqual([target]);
-  expect(h.unread.attention(channel, h.root).forced).toBe(false);
-});
 it.each(["markThrough", "clearUnreadLocal", "markChannelRead"] as const)(
   "serializes %s after queued message read and channel unread",
   async (action) => {
     const h = setup();
     await h.unread.ensure();
     const held = h.hold();
-    const read = h.unread.markMessageRead(channel, h.root);
+    const read = h.unread.markThrough(
+      { kind: "message", channelId: channel, messageId: h.root },
+      h.root,
+    );
     await held.started;
     const unread = h.unread.markUnreadLocal(target);
     const last =
@@ -215,38 +193,6 @@ it.each(["markThrough", "clearUnreadLocal", "markChannelRead"] as const)(
   },
 );
 
-it("successful leave keeps only its durable force hint until reopen, preserving channel intent", async () => {
-  const h = setup();
-  await h.unread.enterChannel(channel);
-  await h.unread.markUnreadLocal(target);
-  await h.unread.markMessageUnread(channel, h.root);
-  h.unread.leaveChannel(channel);
-  expect(h.unread.attention(channel, h.root).forced).toBe(false);
-  expect(h.journal().manual).toEqual([
-    target,
-    { kind: "message-force", channelId: channel },
-  ]);
-  await h.unread.enterChannel(channel);
-  expect(h.journal().manual).toEqual([target]);
-});
-it.each(["source", "edit", "delete"] as const)(
-  "a descendant %s change invalidates the entire captured read",
-  async (kind) => {
-    const h = setup();
-    await h.unread.markMessageUnread(channel, h.root);
-    const before = structuredClone(h.journal());
-    const held = h.hold();
-    const read = h.unread.markMessageRead(channel, h.root);
-    const rejected = expect(read).rejects.toThrow();
-    await held.started;
-    h.changeDescendant(kind);
-    held.release();
-    await rejected;
-    expect(h.journal()).toEqual(before);
-    expect(h.unread.attention(channel, h.root).forced).toBe(true);
-    expect(h.api.write).not.toHaveBeenCalled();
-  },
-);
 it.each(["channel", "thread", "message"] as const)(
   "a later %s local-unread wins over queued message and channel read",
   async (kind) => {
@@ -259,7 +205,10 @@ it.each(["channel", "thread", "message"] as const)(
           ? { kind, channelId: channel, rootId: h.root }
           : { kind, channelId: channel, messageId: h.root };
     const held = h.hold();
-    const read = h.unread.markMessageRead(channel, h.root);
+    const read = h.unread.markThrough(
+      { kind: "message", channelId: channel, messageId: h.root },
+      h.root,
+    );
     await held.started;
     const channelRead = h.unread.markChannelRead(channel);
     const unread = h.unread.markUnreadLocal(selected);

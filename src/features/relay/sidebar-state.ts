@@ -1,14 +1,15 @@
-import {
-  MAX_MESSAGE_READS,
-  type SidebarApi,
-  type ChannelReadSummary,
-  type ContextQuery,
-  type ContextState,
+import type {
+  SidebarApi,
+  ChannelReadSummary,
+  ContextQuery,
+  ContextState,
+  ReadTarget,
 } from "./sidebar-api";
 import {
   createSidebarJournal,
   type SidebarStorage,
   type AnchoredRead,
+  type PendingRead,
   type SidebarManualTarget,
 } from "./sidebar-journal";
 
@@ -57,6 +58,61 @@ export function createSidebarState({
   const rows = new Map<string, ChannelReadSummary>();
   const operationErrors = new Map<string, string>();
   const contexts = new Map<string, ContextState>();
+  // Applied operands outlive journal acknowledgement until each presentation
+  // surface receives applicable evidence. Counts themselves are never edited.
+  type LiveHint = {
+    id: string;
+    createdAt: number;
+    target?: ReadTarget;
+    attention: boolean;
+    revision: number;
+  };
+  const liveHints = new Map<string, { latest: LiveHint; unread?: LiveHint }>();
+  const saving = new Map<symbol, AnchoredRead[]>();
+  const applied = new Map<
+    string,
+    {
+      read: PendingRead;
+      revision: number;
+      settled: Set<string>;
+    }
+  >();
+  const readChannel = (read: AnchoredRead) =>
+    read.intent.type === "mark_through"
+      ? read.intent.target.channel_id
+      : read.intent.channel_id;
+  function covered(
+    target: ContextQuery["target"],
+    timestamp: number,
+    channel = false,
+    messageId?: string,
+  ) {
+    if (!allowed(target.channel_id)) return false;
+    const surface = channel
+      ? `${target.channel_id}:sidebar`
+      : `${contextKey(target)}:${messageId ?? "summary"}`;
+    return [...saving.values()]
+      .flat()
+      .concat(
+        journal.snapshot().pending,
+        [...applied.values()]
+          .filter((entry) => !entry.settled.has(surface))
+          .map((entry) => entry.read),
+      )
+      .some(
+        (read) =>
+          readChannel(read) === target.channel_id &&
+          read.createdAt >= timestamp &&
+          (read.intent.type === "mark_channel_read" ||
+            (!channel && read.intent.target.root_id === target.root_id)),
+      );
+  }
+  function settle(channelId: string, surface: string, watermark: number) {
+    for (const entry of applied.values())
+      if (readChannel(entry.read) === channelId && entry.revision <= watermark)
+        entry.settled.add(surface);
+  }
+
   const wanted = new Map<symbol, ContextQuery>();
   const dirty = new Set<string>();
   const listeners = new Set<() => void>();
@@ -98,10 +154,7 @@ export function createSidebarState({
     const result = (lane === "write" ? writes : serial).then(async () => {
       if (closed || generation !== epoch)
         throw new DOMException("Sidebar cancelled", "AbortError");
-      return work(
-        AbortSignal.any([owner.signal, AbortSignal.timeout(10000)]),
-        generation,
-      );
+      return work(owner.signal, generation);
     });
     if (lane === "write") writes = result.catch(() => {});
     else serial = result.catch(() => {});
@@ -112,7 +165,7 @@ export function createSidebarState({
     if (closed || generation !== epoch)
       throw new DOMException("Sidebar cancelled", "AbortError");
   }
-  function applyRow(row: ChannelReadSummary) {
+  function applyRow(row: ChannelReadSummary, watermark: number) {
     if (!allowed(row.channel_id)) {
       rows.delete(row.channel_id);
       return;
@@ -120,6 +173,31 @@ export function createSidebarState({
     if (!rows.has(row.channel_id) && rows.size >= MAX_CHANNELS)
       throw new Error("Sidebar exceeds channel capacity");
     rows.set(row.channel_id, row);
+    const hint = liveHints.get(row.channel_id);
+    if (
+      hint &&
+      hint.latest.revision <= watermark &&
+      row.latest_message_complete &&
+      row.unread.status === "exact" &&
+      row.attention.status === "exact"
+    )
+      liveHints.delete(row.channel_id);
+    if (
+      row.latest_message_complete &&
+      row.unread.status === "exact" &&
+      row.attention.status === "exact"
+    )
+      settle(row.channel_id, `${row.channel_id}:sidebar`, watermark);
+    for (const thread of row.threads.items)
+      if (
+        thread.unread.status === "exact" &&
+        thread.attention.status === "exact"
+      )
+        settle(
+          row.channel_id,
+          `${row.channel_id}:${thread.root_id}:summary`,
+          watermark,
+        );
   }
   let contextRead: Promise<void> | undefined;
   const contextDirty = new Set<string>();
@@ -186,6 +264,7 @@ export function createSidebarState({
                 ];
               });
               if (!currentQueries.length || !api) return;
+              const watermark = revision;
               const result = await api.contexts(currentQueries, signal);
               current(generation, signal);
               const remaining = selectedContexts();
@@ -196,6 +275,16 @@ export function createSidebarState({
                 if (!state || !live) return;
                 const previous = contexts.get(key);
                 if (state.status === "available") {
+                  // An omitted or unknown selector cannot settle its presentation.
+                  for (const message of state.messages)
+                    if (
+                      ["read", "not_counted", "unread"].includes(message.status)
+                    )
+                      settle(
+                        q.target.channel_id,
+                        `${key}:${message.message_id}`,
+                        watermark,
+                      );
                   const messages = new Map(
                     previous?.status === "available"
                       ? previous.messages.map((m) => [m.message_id, m])
@@ -237,11 +326,12 @@ export function createSidebarState({
     for (let offset = 0; offset < ids.length; offset += 20) {
       const batch = ids.slice(offset, offset + 20);
       await schedule(async (signal, generation) => {
+        const watermark = revision;
         const result = await api.sidebar({ channel_ids: batch }, signal);
         current(generation, signal);
         const present = new Set(result.channels.map((row) => row.channel_id));
         for (const id of batch) if (!present.has(id)) rows.delete(id);
-        for (const row of result.channels) applyRow(row);
+        for (const row of result.channels) applyRow(row, watermark);
         publish();
       });
     }
@@ -262,6 +352,7 @@ export function createSidebarState({
           total = 0;
         do {
           cursor = await schedule(async (signal, generation) => {
+            const watermark = revision;
             const page = await api.sidebar(cursor ? { cursor } : {}, signal);
             current(generation, signal);
             total += page.channels.length;
@@ -272,7 +363,7 @@ export function createSidebarState({
               throw new Error("Sidebar exceeds channel capacity");
             for (const row of page.channels) {
               seen.add(row.channel_id);
-              applyRow(row);
+              applyRow(row, watermark);
             }
             publish();
             current(generation, signal);
@@ -306,19 +397,8 @@ export function createSidebarState({
       await journal.reload();
       // A finite captured batch; new local work schedules another pass.
       const pending = journal.snapshot().pending;
-      for (let offset = 0; offset < pending.length; ) {
-        const batch: typeof pending = [];
-        let messageReads = 0;
-        for (const item of pending.slice(offset, offset + 100)) {
-          const count =
-            item.intent.type === "mark_messages_read"
-              ? item.intent.message_ids.length
-              : 0;
-          if (messageReads + count > MAX_MESSAGE_READS) break;
-          messageReads += count;
-          batch.push(item);
-        }
-        offset += batch.length;
+      for (let offset = 0; offset < pending.length; offset += 100) {
+        const batch = pending.slice(offset, offset + 100);
         const outcomes = await schedule(async (signal, generation) => {
           const result = await api.write(
             batch.map((p) => p.intent),
@@ -327,6 +407,50 @@ export function createSidebarState({
           current(generation, signal);
           return result;
         }, "write");
+        // Admission is batch-atomic: if presentation capacity is full, retain the
+        // durable operands and schedule the reads that can free it before retry.
+        for (const [id, entry] of applied) {
+          const channel = readChannel(entry.read),
+            row = rows.get(channel);
+          if (
+            entry.settled.has(`${channel}:sidebar`) &&
+            row?.threads.complete &&
+            row.threads.items.every((thread) =>
+              entry.settled.has(`${channel}:${thread.root_id}:summary`),
+            ) &&
+            [...wanted.values()]
+              .filter((q) => q.target.channel_id === channel)
+              .every((q) =>
+                q.message_ids.every((messageId) =>
+                  entry.settled.has(`${contextKey(q.target)}:${messageId}`),
+                ),
+              )
+          )
+            applied.delete(id);
+        }
+        const accepted = batch.filter(
+          (_, i) => outcomes[i]?.status === "applied",
+        );
+        if (
+          applied.size +
+            accepted.filter((read) => !applied.has(read.id)).length >
+          MAX_CONTEXTS
+        ) {
+          for (const entry of applied.values())
+            invalidate(readChannel(entry.read));
+          for (const read of batch) invalidate(readChannel(read));
+          throw new Error(
+            "Read presentation capacity reached; reconciliation scheduled",
+          );
+        }
+        // Capture before acknowledgement publishes deletion of pending operands.
+        for (const read of accepted)
+          if (!applied.has(read.id))
+            applied.set(read.id, {
+              read,
+              revision: ++revision,
+              settled: new Set(),
+            });
         await journal.acknowledge(batch, outcomes);
         batch.forEach((p, i) => {
           const id =
@@ -408,6 +532,31 @@ export function createSidebarState({
     context: (target: ContextQuery["target"]) =>
       allowed(target.channel_id) ? contexts.get(contextKey(target)) : undefined,
     journal,
+    covered,
+    liveHint: (channelId: string) =>
+      allowed(channelId) ? liveHints.get(channelId) : undefined,
+    live(channelId: string, hint: Omit<LiveHint, "revision">, unread: boolean) {
+      if (!allowed(channelId)) return;
+      if (!liveHints.has(channelId) && liveHints.size >= MAX_CHANNELS) {
+        fail(new Error("Live presentation capacity reached"));
+        return;
+      }
+      const previous = liveHints.get(channelId),
+        next = { ...hint, revision: ++revision };
+      liveHints.set(channelId, {
+        latest:
+          previous && previous.latest.createdAt > hint.createdAt
+            ? { ...previous.latest, revision }
+            : next,
+        ...(unread
+          ? { unread: next }
+          : previous?.unread
+            ? { unread: previous.unread }
+            : {}),
+      });
+      publish();
+      invalidate(channelId);
+    },
     operationError: (channelId: string) =>
       allowed(channelId) ? operationErrors.get(channelId) : undefined,
     subscribe(listener: () => void) {
@@ -428,7 +577,7 @@ export function createSidebarState({
     },
     invalidate,
     /** Each consumer owns its selectors until disposal; ingestion never retains demand. */
-    retain(query: ContextQuery, partial = false) {
+    retain(query: ContextQuery) {
       if (closed || !api || !allowed(query.target.channel_id))
         return { ready: Promise.resolve(), dispose() {} };
       const selected = selectedContexts();
@@ -438,23 +587,16 @@ export function createSidebarState({
       let available =
         MAX_SELECTORS -
         [...selected.values()].reduce((n, q) => n + q.message_ids.length, 0);
-      // Bulk display demand leaves half the budget for other consumers. Strict
-      // single-message consumers (notifications) must surface admission failure.
-      if (partial) available = Math.min(available, MAX_SELECTORS / 2);
-      if (wanted.size >= MAX_CONTEXTS) {
-        if (!partial) throw new Error("Read context capacity reached");
-        return { ready: Promise.resolve(), dispose() {} };
-      }
+      if (wanted.size >= MAX_CONTEXTS)
+        throw new Error("Read context capacity reached");
       const message_ids = [...new Set(query.message_ids)].filter((id) => {
         if (existing.has(id)) return true;
         if (available <= 0) return false;
         available--;
         return true;
       });
-      if (!partial && message_ids.length < new Set(query.message_ids).size)
+      if (message_ids.length < new Set(query.message_ids).size)
         throw new Error("Read context capacity reached");
-      if (query.message_ids.length && !message_ids.length)
-        return { ready: Promise.resolve(), dispose() {} };
       query = { ...query, message_ids };
       const token = Symbol();
       wanted.set(token, query);
@@ -487,11 +629,20 @@ export function createSidebarState({
       valid: () => boolean,
     ) {
       if (!api) throw new Error("Sidebar API unsupported");
-      const result = await journal.enqueue(intents, clear, valid);
-      const inFlight = flushing;
-      if (inFlight) void inFlight.then(() => flush());
-      else void flush();
-      return result;
+      if (!valid()) throw new Error("Reading context changed");
+      const token = Symbol();
+      saving.set(token, intents);
+      publish();
+      try {
+        const result = await journal.enqueue(intents, clear, valid);
+        const inFlight = flushing;
+        if (inFlight) void inFlight.then(() => flush());
+        else void flush();
+        return result;
+      } finally {
+        saving.delete(token);
+        publish();
+      }
     },
     stale() {
       if (sync.status !== "unsupported") publish({ status: "stale" });
@@ -504,6 +655,9 @@ export function createSidebarState({
       active.abort();
       active = new AbortController();
       for (const id of rows.keys()) if (!allowed(id)) rows.delete(id);
+      for (const id of liveHints.keys()) if (!allowed(id)) liveHints.delete(id);
+      for (const [id, entry] of applied)
+        if (!allowed(readChannel(entry.read))) applied.delete(id);
       for (const [key, q] of wanted)
         if (!allowed(q.target.channel_id)) {
           wanted.delete(key);
@@ -518,6 +672,9 @@ export function createSidebarState({
       active.abort();
       active = new AbortController();
       rows.clear();
+      applied.clear();
+      liveHints.clear();
+      saving.clear();
       operationErrors.clear();
       contexts.clear();
       wanted.clear();
@@ -540,6 +697,9 @@ export function createSidebarState({
       hostDocument?.removeEventListener("visibilitychange", activate);
       listeners.clear();
       rows.clear();
+      applied.clear();
+      liveHints.clear();
+      saving.clear();
       operationErrors.clear();
       contexts.clear();
       wanted.clear();

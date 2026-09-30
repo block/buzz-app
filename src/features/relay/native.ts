@@ -1,16 +1,43 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination } from "../communities/destination";
-import { eventDto } from "./events";
+import { eventDto, type RelayEvent } from "./events";
 import {
+  coordinate,
+  KIT_TAG,
+  parseKitRecord,
+  type KitRecord,
+} from "../channel-templates/model";
+import type { RelayWriter } from "./transport";
+import { validateLifecycleTemplate } from "./channel-lifecycle-protocol";
+import { validateDetailsTemplate } from "./channel-details-protocol";
+import { validateArchiveRequestTemplate } from "./identity-archive-protocol";
+import { workflowHost, workflowRunsPath } from "../workflows/http";
+import { WORKFLOW_KINDS } from "../workflows/protocol";
+
+import { PublishRejected } from "./outbox";
+
+import {
+  acceptPublish,
   connectSignedTransport,
+  admittedSignedWorkflowRead,
   type ReadTransport,
   type Signer,
 } from "./transport";
-import { PublishRejected } from "./outbox";
+import { nativeSidebar } from "./native-sidebar";
 
 export const nativeWriteKinds = [
-  7, 9, 1984, 9000, 9001, 30315, 40003, 40100, 42000,
+  30078,
+  7,
+  9,
+  1984,
+  9000,
+  9001,
+  30315,
+  40003,
+  40100,
+  42000,
+  ...WORKFLOW_KINDS,
 ] as const;
 
 /** Cancellation fences JS results; a dispatched native write may still complete. */
@@ -38,6 +65,14 @@ export async function nativeRelayRequest(
   // IPC cannot abort reqwest. Retain the shared admission slot until native work
   // settles (bounded by its timeout), then reject any obsolete result.
   bounded.throwIfAborted();
+  return nativeResponse(result);
+}
+
+function nativeResponse(result: {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}): Response {
   return new Response(
     [204, 205, 304].includes(result.status) ? null : result.body,
     { status: result.status, headers: result.headers },
@@ -56,7 +91,7 @@ export function nativeRelaySigner(community: string): Signer {
     async signEvent(event: EventTemplate) {
       const { kind, created_at, tags, content } = event;
       return eventDto(
-        await invoke("relay_sign", {
+        await invoke(kind === 30078 ? "relay_kit_sign" : "relay_sign", {
           community: origin,
           event: { kind, created_at, tags, content },
         }),
@@ -94,6 +129,8 @@ export async function connectNativeTransport(
   const author = info.self;
   if (typeof author !== "string" || !/^[a-f0-9]{64}$/.test(author))
     throw new Error("Relay did not advertise its identity");
+  const creation =
+    Array.isArray(info.supported_nips) && info.supported_nips.includes(29);
   const transport = await connectSignedTransport(
     nativeRelaySigner(origin),
     origin,
@@ -102,12 +139,155 @@ export async function connectNativeTransport(
   signal?.throwIfAborted();
   const writer = transport.writer;
   if (!writer) throw new Error("Native relay writer is unavailable");
+  const commandWriter = (
+    route: "channel-details" | "channel-lifecycle" | "identity-archive",
+    validate: (event: EventTemplate) => void,
+  ): RelayWriter => ({
+    async sign(event, signal) {
+      signal.throwIfAborted();
+      validate(event);
+      const result = eventDto(
+        await invoke("relay_channel_sign", {
+          community: origin,
+          route,
+          event,
+        }),
+      );
+      signal.throwIfAborted();
+      validate(result);
+      if (result.pubkey !== transport.viewer)
+        throw new Error("Invalid channel lifecycle command");
+      return result;
+    },
+    async publish(event, signal) {
+      signal.throwIfAborted();
+      validate(event);
+      if (event.pubkey !== transport.viewer)
+        throw new Error("Invalid channel lifecycle command");
+      const result = await invoke<{
+        status: number;
+        headers: Record<string, string>;
+        body: string;
+      }>("relay_channel_publish", { community: origin, route, event });
+      signal.throwIfAborted();
+      return acceptPublish(
+        new Response(result.body, {
+          status: result.status,
+          headers: result.headers,
+        }),
+        event.id,
+      );
+    },
+  });
   // Capabilities describe implemented host operations, not everything this key can sign.
   return {
     ...transport,
+    workflows: workflowHost(async (route, body, signal) => {
+      if (route !== "workflow-runs") throw new Error("Invalid workflow read");
+      workflowRunsPath(body);
+      signal.throwIfAborted();
+      const response = await admittedSignedWorkflowRead(
+        origin,
+        transport.viewer,
+        async () => {
+          const result = await invoke<{
+            status: number;
+            headers: Record<string, string>;
+            body: string;
+          }>("relay_workflow_runs", {
+            community: origin,
+            id: (body as { id: string }).id,
+            cursor:
+              (body as { cursor?: { before: string; beforeId: string } })
+                .cursor ?? null,
+          });
+          return nativeResponse(result);
+        },
+        signal,
+      );
+      signal.throwIfAborted();
+      return response;
+    }),
+    archiveAuthority: author,
+    channelLifecycle: commandWriter(
+      "channel-lifecycle",
+      validateLifecycleTemplate,
+    ),
+    channelDetails: commandWriter("channel-details", validateDetailsTemplate),
+    identityArchive: commandWriter(
+      "identity-archive",
+      validateArchiveRequestTemplate,
+    ),
+    async openDirectMessage(pubkeys, signal) {
+      signal.throwIfAborted();
+      const id = await invoke<string>("relay_direct_message", {
+        community: origin,
+        pubkeys,
+      });
+      signal.throwIfAborted();
+      if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(id))
+        throw new Error("The relay returned an invalid direct message.");
+      return id;
+    },
+    channelKit: {
+      async prepare(record: KitRecord, signal) {
+        signal.throwIfAborted();
+        const valid = parseKitRecord(record, origin);
+        const content = await invoke<string>("relay_kit_prepare", {
+          community: origin,
+          record: valid,
+        });
+        signal.throwIfAborted();
+        if (typeof content !== "string" || content.length > 24 * 1024)
+          throw new Error("Invalid encrypted recipe");
+        return content;
+      },
+      async decode(events: readonly RelayEvent[], signal) {
+        signal.throwIfAborted();
+        if (events.length > 16)
+          throw new Error("Recipe decode capacity exceeded");
+        const owned = events.map(eventDto);
+        const decoded = await invoke<{ eventId: string; record: KitRecord }[]>(
+          "relay_kit_decode",
+          {
+            community: origin,
+            events: owned,
+          },
+        );
+        signal.throwIfAborted();
+        if (!Array.isArray(decoded) || decoded.length !== owned.length)
+          throw new Error("Incomplete private recipe decode");
+        return decoded.map((row, index) => {
+          const event = owned[index];
+          if (
+            !event ||
+            row.eventId !== event.id ||
+            event.pubkey !== transport.viewer ||
+            event.kind !== 30078 ||
+            event.tags.filter(([key]) => key === "d").length !== 1 ||
+            event.tags.filter(([key]) => key === "t").length !== 1 ||
+            event.tags.some(
+              ([key]) => !["d", "t", "client-id"].includes(key ?? ""),
+            )
+          )
+            throw new Error("Recipe decode mismatch");
+          const record = parseKitRecord(row.record, origin);
+          if (
+            !event.tags.some(
+              ([key, value]) => key === "d" && value === coordinate(record),
+            ) ||
+            !event.tags.some(([key, value]) => key === "t" && value === KIT_TAG)
+          )
+            throw new Error("Recipe decode mismatch");
+          return { eventId: row.eventId, record };
+        });
+      },
+    },
+
+    ...nativeSidebar(transport),
     writer: {
       ...writer,
-      kinds: nativeWriteKinds,
+      kinds: creation ? [...nativeWriteKinds, 9007] : nativeWriteKinds,
       async publish(event, signal) {
         // The relay rejects old events before deduplication. An explicit retry
         // can confirm the original ID, but must never silently re-date it.

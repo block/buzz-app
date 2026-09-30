@@ -37,7 +37,6 @@ async function harness(enabled = true) {
                   max_contexts: 20,
                   max_context_messages: 100,
                   max_thread_summaries: 5,
-                  max_message_reads: 2000,
                 },
               }
             : {}),
@@ -68,7 +67,6 @@ async function harness(enabled = true) {
                 account: {
                   retention_seconds: 2592000,
                   cutoff_ms: 0,
-                  imported_at_ms: null,
                 },
                 channels: [],
                 next_cursor: null,
@@ -148,21 +146,19 @@ it.each([429, 503])(
   },
 );
 
-it("signs the entire 2000-ID action and rejects oversized route bodies before upstream writes", async () => {
+it("signs a fixed prefix and rejects oversized route bodies before upstream writes", async () => {
   const h = await harness();
   const intent = {
-    type: "mark_messages_read",
-    channel_id: channel,
-    message_ids: Array.from({ length: 2000 }, (_, i) =>
-      i.toString(16).padStart(64, "0"),
-    ),
+    type: "mark_through",
+    target: { channel_id: channel },
+    message_id: "a".repeat(64),
   };
   await h.transport.sidebarApi.write([intent], new AbortController().signal);
   expect(JSON.parse(h.calls[0].body)).toEqual({ intents: [intent] });
   const response = await fetch(`${h.base}/api/relay/sidebar-api`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: " ".repeat(256 * 1024 + 1),
+    body: " ".repeat(64 * 1024 + 1),
   });
   expect(response.status).toBe(413);
   expect(h.calls).toHaveLength(1);

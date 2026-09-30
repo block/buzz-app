@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
-import { deferredSidebar, sidebarFixture, sidebarRow } from "./sidebar-testing";
-import { bounds, keypair, message, metadata, roster } from "./testing";
+import { sidebarFixture, sidebarRow } from "./sidebar-testing";
+import { keypair, message, metadata, roster } from "./testing";
 import type { LiveCallbacks } from "./live";
 import type { RelayEvent } from "./events";
 const channel = "01234567-89ab-cdef-0123-456789abcdef";
@@ -332,7 +332,6 @@ it.each(["ensure", "refresh"] as const)(
         account: {
           retention_seconds: 2592000,
           cutoff_ms: 0,
-          imported_at_ms: null,
         },
         channels: [sidebarRow(channel)],
         next_cursor: null,
@@ -380,7 +379,6 @@ it("metadata arriving during a held traversal does not replay access-unchanged r
       account: {
         retention_seconds: 2592000,
         cutoff_ms: 0,
-        imported_at_ms: null,
       },
       channels: [sidebarRow(channel)],
       next_cursor: null,
@@ -395,80 +393,88 @@ it("metadata arriving during a held traversal does not replay access-unchanged r
   expect(h.snapshot().unread.status).toBe("exact");
 });
 
-it("snapshots only loaded session thread descendants, never later arrivals or incidental LRU rows", async () => {
+it("a row prefix retains its fixed context/anchor without capturing descendants", async () => {
   const h = setup();
   const root = message(h.peer, channel, "root", 11);
   const child = message(h.peer, channel, "child", 12, [
     ["e", root.id, "", "reply"],
   ]);
-  const own = message(h.viewer, channel, "own", 13, [
-    ["e", root.id, "", "reply"],
-  ]);
-  const unrelated = message(h.peer, channel, "unrelated", 14);
-  h.emit([root, child, own, unrelated]);
-  // Live retention alone does not authorize a loaded-message action.
-  await expect(h.unread.markMessageRead(channel, unrelated.id)).rejects.toThrow(
-    "Load a verified",
-  );
-  const thread = h.session.thread(channel, root.id);
-  cleanups.push(thread.dispose);
-  await vi.waitFor(() =>
-    expect(thread.snapshot().replies.map((row) => row.id)).toContain(child.id),
-  );
+  h.emit([root, child]);
   await h.unread.markUnreadLocal(target);
-  await h.unread.markMessageUnread(channel, root.id);
-  expect(h.unread.attention(channel, own.id)).toMatchObject({
-    forced: true,
-    unread: false,
-  });
-  const gate = deferredSidebar<void>(),
-    started = deferredSidebar<void>();
-  const update = h.bff.storage.update;
-  vi.spyOn(h.bff.storage, "update").mockImplementationOnce(async (change) => {
-    started.resolve();
-    await gate.promise;
-    return update(change);
-  });
-  const read = h.unread.markMessageRead(channel, root.id);
-  await started.promise;
-  const late = message(h.peer, channel, "late", 15, [
-    ["e", root.id, "", "reply"],
-  ]);
-  h.emit([late]);
-  gate.resolve();
-  await read;
+  await h.unread.markThrough(
+    { kind: "message", channelId: channel, messageId: root.id },
+    root.id,
+  );
   await vi.waitFor(() => expect(h.bff.api.write).toHaveBeenCalled());
   expect(h.bff.api.write.mock.calls.flatMap(([intents]) => intents)).toEqual([
     {
-      type: "mark_messages_read",
-      channel_id: channel,
-      message_ids: [root.id, child.id],
+      type: "mark_through",
+      target: { channel_id: channel },
+      message_id: root.id,
     },
   ]);
-  expect(h.unread.attention(channel, own.id).forced).toBe(false);
   expect(h.snapshot().manual).toBe("local-only");
-  expect(thread.snapshot().replies.map((row) => row.id)).toContain(late.id);
+});
+it("a selected local unread mark does not force its reply subtree", async () => {
+  const h = setup();
+  const root = message(h.peer, channel, "root", 11);
+  const child = message(h.peer, channel, "child", 12, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.emit([root, child]);
+  const selected = {
+    kind: "message",
+    channelId: channel,
+    messageId: root.id,
+  } as const;
+  await h.unread.markUnreadLocal(selected);
+  expect(h.unread.attention(channel, root.id).forced).toBe(true);
+  expect(h.unread.attention(channel, child.id).forced).toBe(false);
+  await h.unread.clearUnreadLocal(selected);
+  expect(h.unread.attention(channel, root.id).forced).toBe(false);
+  expect(h.bff.api.write).not.toHaveBeenCalled();
 });
 
-it("channel-loaded own messages can be forced and cleared without relay operands", async () => {
-  const h = setup(),
-    own = message(h.viewer, channel, "own", 11);
-  h.query.mockResolvedValue([
-    own,
-    bounds(h.relay, channel, "head", { has_more: false, next_cursor: null }),
+it("a covered observed thread anchor does not mask an incomplete lower-bound tail", async () => {
+  const h = setup();
+  const root = message(h.peer, channel, "root", 10);
+  const reply = message(h.peer, channel, "observed reply", 20, [
+    ["e", root.id, "", "root"],
+    ["e", root.id, "", "reply"],
   ]);
-  h.session.channels.ensure(channel);
-  await vi.waitFor(() =>
-    expect(h.session.channels.window(channel).rows).toHaveLength(1),
+  h.emit([root, reply]);
+  h.bff.rows.set(
+    channel,
+    sidebarRow(channel, {
+      unread: { status: "at_least", value: 2 },
+      attention: { status: "at_least", value: 2 },
+      latest_message_id: reply.id,
+      latest_message_at: 20,
+      threads: {
+        complete: false,
+        items: [
+          {
+            root_id: root.id,
+            unread: { status: "at_least", value: 2 },
+            attention: { status: "at_least", value: 2 },
+            latest_reply_id: reply.id,
+            latest_reply_at: 20,
+          },
+        ],
+      },
+    }),
   );
-  await h.unread.enterChannel(channel);
-  await h.unread.markMessageUnread(channel, own.id);
-  expect(h.unread.attention(channel, own.id)).toMatchObject({
-    forced: true,
-    unread: false,
+  await h.unread.ensure();
+  h.bff.api.write.mockImplementation(() => new Promise(() => {}));
+  const thread = {
+    kind: "thread",
+    channelId: channel,
+    rootId: root.id,
+  } as const;
+  await h.unread.markThrough(thread, reply.id);
+  expect(h.unread.snapshot(thread)).toMatchObject({
+    unreadVisible: true,
+    attentionVisible: true,
   });
-  await h.unread.markMessageRead(channel, own.id);
-  expect(h.unread.attention(channel, own.id).forced).toBe(false);
-  expect(h.bff.journal().manual).toEqual([]);
-  expect(h.bff.api.write).not.toHaveBeenCalled();
+  expect(h.unread.activity(channel).items).toHaveLength(1);
 });

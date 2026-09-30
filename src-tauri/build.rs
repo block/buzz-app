@@ -1,4 +1,13 @@
 fn main() {
+    // Release builds enable the updater only when both values are supplied; its
+    // `plugins.updater` config comes from the same values via `tauri build --config`.
+    println!("cargo:rerun-if-env-changed=BUZZ_UPDATER_PUBLIC_KEY");
+    println!("cargo:rerun-if-env-changed=BUZZ_UPDATER_ENDPOINT");
+    println!("cargo:rustc-check-cfg=cfg(buzz_updater_enabled)");
+    let configured = |name| std::env::var(name).is_ok_and(|value| !value.trim().is_empty());
+    if configured("BUZZ_UPDATER_PUBLIC_KEY") && configured("BUZZ_UPDATER_ENDPOINT") {
+        println!("cargo:rustc-cfg=buzz_updater_enabled");
+    }
     let mut attributes = tauri_build::Attributes::new();
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
@@ -22,6 +31,15 @@ fn main() {
             "identity_export",
             "relay_sign",
             "relay_http",
+            "relay_workflow_runs",
+            "relay_channel_sign",
+            "relay_channel_publish",
+            "relay_kit_sign",
+            "relay_kit_prepare",
+            "relay_kit_decode",
+            "relay_direct_message",
+            "relay_decode_sidebar",
+            "relay_sign_sidebar",
             "get_os_idle_seconds",
             "plugin_import_folder",
             "plugin_import_git",
@@ -35,6 +53,7 @@ fn main() {
             "plugin_host_run_command",
             "plugin_host_request",
             "agent_control_create_prepare",
+            "agent_control_create_authorize",
             "agent_control_create_commit",
             "agent_control_creation_profile",
             "agent_control_snapshot",
@@ -59,6 +78,8 @@ fn main() {
             "notification_show",
             "dock_permission",
             "unread_indicator_set",
+            "deep_link_take",
+            "deep_link_watch",
             "terminal_create_owner",
             "terminal_spawn",
             "terminal_read",
@@ -66,6 +87,7 @@ fn main() {
             "terminal_resize",
             "terminal_close",
             "terminal_close_owner",
+            "update_restart",
             "browser_attach",
             "browser_set_bounds",
             "browser_detach",

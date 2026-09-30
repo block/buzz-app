@@ -185,6 +185,23 @@ it("restores a signed community profile and preserves extra fields when publishi
   ).rejects.toThrow("not confirmed");
 });
 
+it("authorizes a new agent only through the native pending-create command", async () => {
+  const auth = ["auth", key.pubkey, "", "ab".repeat(64)];
+  vi.mocked(invoke).mockResolvedValueOnce(auth);
+  const request = { pubkey: "ba".repeat(32), owner: key.pubkey };
+  await expect(
+    communityRequest(community, "authorize-agent", request),
+  ).resolves.toEqual({ auth });
+  expect(invoke).toHaveBeenCalledExactlyOnceWith(
+    "agent_control_create_authorize",
+    { destination: community, ...request },
+  );
+  await expect(
+    communityRequest(community, "authorize-agent", { owner: key.pubkey }),
+  ).rejects.toThrow("Invalid agent owner authorization");
+  expect(invoke).toHaveBeenCalledOnce();
+});
+
 it("keeps development requests on the existing broker even inside Tauri", async () => {
   vi.stubEnv("VITE_BUZZ_LIVE", "1");
   vi.mocked(fetch).mockResolvedValue(
@@ -196,4 +213,37 @@ it("keeps development requests on the existing broker even inside Tauri", async 
     expect.anything(),
   );
   expect(invoke).not.toHaveBeenCalled();
+});
+
+it("routes exact owner setup confirmation through native commands, not the broker", async () => {
+  const owner = key.pubkey;
+  const pubkey = "ab".repeat(32);
+  vi.mocked(invoke).mockImplementationOnce(async (command, args) => {
+    expect(command).toBe("relay_agent_resolve");
+    expect(args).toEqual({
+      community,
+      target: { pubkey, owner, confirmed: true },
+    });
+    return {
+      pubkey,
+      owner,
+      relayUrl: "wss://native-admission.test",
+      signature: "proof",
+    };
+  });
+  expect(
+    await communityRequest(community, "resolve-agent-community", {
+      pubkey,
+      owner,
+      confirmed: true,
+    }),
+  ).toMatchObject({ pubkey, owner });
+  await expect(
+    communityRequest(community, "resolve-agent-community", {
+      pubkey,
+      owner,
+      confirmed: false,
+    }),
+  ).rejects.toThrow("Explicit owner community resolution required");
+  expect(requests).toEqual([]);
 });

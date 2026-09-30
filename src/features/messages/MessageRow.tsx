@@ -27,7 +27,7 @@ import type { ChannelMessage, Profile } from "../relay/contracts";
 import { AttachmentImage } from "./AttachmentImage";
 import { DeliveryNotice } from "./DeliveryNotice";
 import { AudioAttachment } from "./AudioAttachment";
-import { isProxySource } from "./attachment-source";
+import { isNativeMediaSource, isProxySource } from "./attachment-source";
 import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
 import { MessageMarkdown } from "./MessageMarkdown";
@@ -176,6 +176,7 @@ export const MessageRow = memo(function MessageRow({
     !channelList.channels.find((channel) => channel.id === row.channelId)
       ?.readOnly
   );
+  const rowRef = useRef<HTMLDivElement>(null);
   const menuTrigger = useRef<HTMLButtonElement>(null);
   const [reporting, setReporting] = useState<"open" | "sent">();
   const reportActive = reporting !== undefined;
@@ -261,7 +262,7 @@ export const MessageRow = memo(function MessageRow({
           </span>
         </div>
       )}
-      <div className={styles.message} data-layout={layout}>
+      <div ref={rowRef} className={styles.message} data-layout={layout}>
         {layout === "continuation" ? (
           <span className={styles.messageGutter}>
             <MessageTimestamp createdAt={row.createdAt} compact />
@@ -353,6 +354,7 @@ export const MessageRow = memo(function MessageRow({
           <div className={styles.messageHeader}>
             {!row.membership && (
               <MessageActionBar
+                rowRef={rowRef}
                 menuTriggerRef={menuTrigger}
                 messageId={row.id}
                 onReply={
@@ -459,7 +461,10 @@ export const MessageRow = memo(function MessageRow({
                   />
                 );
               if (attachment.kind === "audio") {
-                if (source && isProxySource(source))
+                if (
+                  source &&
+                  (isProxySource(source) || isNativeMediaSource(source))
+                )
                   return (
                     <AudioAttachment
                       key={url}

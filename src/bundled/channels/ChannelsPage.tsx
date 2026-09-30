@@ -217,6 +217,7 @@ function ChannelWorkspace({
       ? groupEntry.record.value
       : undefined;
   const [canvasOpen, setCanvasOpen] = useState(false);
+  const canvasTrigger = useRef<HTMLButtonElement>(null);
   const [kitError, setKitError] = useState("");
   useEffect(() => {
     void queries.emoji.ensure();
@@ -886,6 +887,7 @@ function ChannelWorkspace({
           channelId={current.id}
           open={canvasOpen}
           onOpenChange={setCanvasOpen}
+          finalFocus={canvasTrigger}
         />
       )}
       <Panel as="article" aria-label="Conversation">
@@ -1105,14 +1107,15 @@ function ChannelWorkspace({
         <div className={styles.panelStack}>
           {showingChannelPanel && showingSettings && (
             <ChannelSettingsPanel
+              canvas={queries.canvas}
+              canvasOpen={canvasOpen}
+              openCanvas={(trigger) => {
+                canvasTrigger.current = trigger;
+                setCanvasOpen(true);
+              }}
               setupTools={
                 current && (
                   <div style={{ display: "grid", gap: "var(--space-3)" }}>
-                    {!current.readOnly && (
-                      <Button onClick={() => setCanvasOpen(true)}>
-                        Canvas
-                      </Button>
-                    )}
                     {templateProvider && (
                       <OwnedContribution
                         key={current.id}

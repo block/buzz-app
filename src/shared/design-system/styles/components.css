@@ -876,7 +876,7 @@
   .buzz-select-option[data-highlighted] {
     --text-subtle: var(--text-standard);
     --text-metadata: var(--text-standard);
-    background: var(--affordance-floating-hover);
+    background: var(--interaction-row-hover);
   }
   .buzz-menu-item[data-tone="danger"] {
     color: var(--text-danger);
@@ -941,8 +941,7 @@
      Content surfaces keep the panel recipe, regardless of viewport width. */
   .buzz-menu-popup[data-size="compact"],
   .buzz-popover-popup[data-size="compact"] {
-    --affordance-floating-hover: var(--affordance-subtle-hover);
-    --interaction-row-hover: var(--affordance-floating-hover);
+    --interaction-row-hover: var(--affordance-subtle-hover);
     --interaction-selected: var(--affordance-subtle-pressed);
     border-radius: var(--radius-row);
   }
@@ -952,7 +951,7 @@
     transition: none;
   }
   .buzz-popover-popup[data-size="compact"] .navigation-item:focus-visible {
-    background: var(--affordance-floating-hover);
+    background: var(--interaction-row-hover);
     outline-offset: -2px;
   }
   .buzz-popover-popup[data-size="wide"] {

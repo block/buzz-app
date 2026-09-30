@@ -170,6 +170,10 @@ a nested opaque Panel resets. Feature-only surfaces must opt into the recipe
 matching their paint; an arbitrary background utility alone is not a context.
 
 Inherited custom-property aliases resolve on the owner, not again on each child.
+The ordinary recipe binds at every theme owner (`:root` and scoped `.dark`),
+including always-dark media inside a light app. This default belongs in the base
+layer: explicit floating, nested Panel and semantic recipes must win on the same
+node. Adding a scoped theme requires rebinding its dependent aliases too.
 Do not override upstream `--affordance-*` values on a wrapper to retint controls.
 The existing semantic exceptions have named shared recipes: `interaction-availability`
 on the status owner uses `data-status="online" | "away" | "offline"` (unknown stays

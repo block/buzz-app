@@ -154,9 +154,9 @@ const OVERRIDES = new Map([
   // Preserve the existing, designer-approved availability capsule when moving
   // its recipe out of feature CSS. These are not new contrast exemptions:
   // docs/presence.md records the measured Online shortfall in both themes.
-  ["styles/materials.css:179", "Availability resting status mix: 12%."],
-  ["styles/materials.css:184", "Availability hover status mix: 18%."],
-  ["styles/materials.css:189", "Availability pressed/open status mix: 24%."],
+  ["styles/materials.css:182", "Availability resting status mix: 12%."],
+  ["styles/materials.css:187", "Availability hover status mix: 18%."],
+  ["styles/materials.css:192", "Availability pressed/open status mix: 24%."],
 ]);
 
 const failures = [];

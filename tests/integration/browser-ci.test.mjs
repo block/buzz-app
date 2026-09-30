@@ -58,6 +58,14 @@ test("twelve browser jobs retain isolated measurements and a required native fix
         "cargo build --locked -p buzzodz-plugins --example fixture-bridge",
     ),
   );
+  // Setup must run on misses too, not merely when a cache is present.
+  const build = fixture.steps.find(
+    (step) =>
+      step.run ===
+      "cargo build --locked -p buzzodz-plugins --example fixture-bridge",
+  );
+  assert.equal(build.if, undefined);
+  assert.equal(build["continue-on-error"], undefined);
   const upload = fixture.steps.find(
     (step) => step.with?.name === "native-browser-fixture",
   );

@@ -302,13 +302,6 @@ export function Settings({
                               {failure}
                             </p>
                           )}
-                          {plugin.source === "external" && (
-                            <p className="m-0 break-all text-caption text-muted">
-                              Publisher:{" "}
-                              {plugin.publisher ??
-                                (plugin.error ? "unverified" : "unsigned")}
-                            </p>
-                          )}
                           <div className="actions items-center">
                             {plugin.previous && (
                               <Button

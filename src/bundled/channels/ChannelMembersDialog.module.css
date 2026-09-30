@@ -23,6 +23,10 @@
 .memberList > * {
   flex-shrink: 0;
 }
+/* Headings already provide their top inset; tighten only adjacent role groups. */
+.memberList > section + section:not(.memberGroup) {
+  margin-block-start: calc(-1 * var(--space-2));
+}
 .loadingMembers {
   display: grid;
   flex: 1;

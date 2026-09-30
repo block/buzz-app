@@ -602,6 +602,11 @@ export function ChannelMembersDialog({
         name={name}
         returnFocus={input}
         onViewProfile={clickable ? viewProfile : undefined}
+        onViewOwnerProfile={
+          ownerTarget && onOpenLink && canOpenLink?.(ownerTarget)
+            ? () => openProfile(ownerTarget)
+            : undefined
+        }
         onSendMessage={
           !isAgent &&
           role !== "bot" &&
@@ -646,6 +651,7 @@ export function ChannelMembersDialog({
   return (
     <Dialog
       open
+      dismissOnOutsideClick
       onOpenChange={(open) => {
         if (!open) close();
       }}

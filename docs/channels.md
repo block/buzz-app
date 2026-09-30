@@ -498,8 +498,9 @@ identity previews on other surfaces remain unchanged. Available presence status
 stays on the profile control. The manager link opens
 Profiles with the same focus handoff; row-profile and owner-profile controls are
 siblings, never nested. Every current member has a separate
-ellipsis button (not nested inside profile navigation), with **View profile** first
-then **Send message** for other humans on a DM-capable connection, then **Copy npub**
+ellipsis button (not nested inside profile navigation), with **View profile** first,
+then **View owner profile** for agents with verified ownership and available profile
+navigation, or **Send message** for other humans on a DM-capable connection, then **Copy npub**
 for every identity (including agents, owners and self), followed by permitted
 administration actions. Copy writes the full canonical npub, never the abbreviation,
 and reports success or clipboard failure without navigating or mutating membership.
@@ -512,7 +513,10 @@ writer support and pending/uncertain writes suppress mutations, not the profile
 menu. If Profiles is unavailable, View profile is disabled. Pointer hover, keyboard
 focus and an open menu reveal the reserved action slot without moving row content;
 non-hover/touch input keeps the trigger visible. Right-click, Context Menu and
-Shift+F10 open the same shared menu. Escape returns focus to the originating row
+Shift+F10 open the same action list through the shared context menu. The ellipsis
+uses a separate shared Menu root/trigger so each input retains its platform
+interaction owner; only one menu is open per row. The trigger owns toggling and
+outside-press dismissal. Escape returns focus to the originating row
 control; profile navigation hands focus to the panel and returns to the external
 Channel members button when closed. Invitation rows reuse the same avatar, name,
 managed-by hint and public-key hover/focus presentation, without a channel-role
@@ -551,7 +555,9 @@ Retry; data refresh never resubmits an invitation, role change or removal.
 Supporting buttons use outline emphasis; **Show more results** uses the small size
 and is horizontally centered beneath the search results.
 Role confirmations use prominent, and removal remains destructive.
-The title, channel name and search stay fixed.
+The title, channel name and search stay fixed. Members uses the shared Dialog
+with `dismissOnOutsideClick` enabled. Adjacent role groups use an 8px gap in
+addition to the heading’s own top inset; invitation/recovery spacing is unchanged.
 The search composition reduces the shared header-to-body gap by `--space-2`
 (16px normally, 8px at the compact breakpoint) without affecting other dialogs.
 The member-list area flexes into the remaining dialog height and owns the only

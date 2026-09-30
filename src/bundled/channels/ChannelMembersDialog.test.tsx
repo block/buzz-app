@@ -127,11 +127,13 @@ async function setup(
     </ToastProvider>,
   );
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Channel members" }));
+  const trigger = screen.getByRole("button", { name: "Channel members" });
+  await user.click(trigger);
   if (missingNames) await screen.findByText(/Some names could not load/);
   else await screen.findByText("Carl (you)");
   return {
     user,
+    trigger,
     fixture,
     control,
     dispose: owner.dispose,
@@ -900,9 +902,14 @@ function managedProfile(
   });
 }
 
-it.each([false, true])(
-  "opens the verified manager from the inline hint without inviting or opening the agent (member: %s)",
-  async (member) => {
+it.each([
+  [false, "hint"],
+  [true, "hint"],
+  [false, "menu"],
+  [true, "menu"],
+] as const)(
+  "opens the verified manager without inviting or opening the agent (member: %s, source: %s)",
+  async (member, source) => {
     const onOpenLink = vi.fn(() => true);
     const t = await setup("stream", false, false, {
       canOpenLink: () => true,
@@ -939,8 +946,22 @@ it.each([false, true])(
       screen.queryByText("Agent", { exact: true }),
     ).not.toBeInTheDocument();
     expect(owner.parentElement).toHaveTextContent("managed by Carl (you)");
-    owner.focus();
-    await t.user.keyboard("{Enter}");
+    if (source === "hint") {
+      owner.focus();
+      await t.user.keyboard("{Enter}");
+    } else {
+      await t.user.click(
+        screen.getByRole("button", { name: "Actions for Morgan" }),
+      );
+      expect(
+        (await screen.findAllByRole("menuitem")).map(
+          (item) => item.textContent,
+        ),
+      ).toEqual(["View profile", "View owner profile", "Copy npub"]);
+      await t.user.click(
+        screen.getByRole("menuitem", { name: "View owner profile" }),
+      );
+    }
     expect(onOpenLink).toHaveBeenCalledExactlyOnceWith(
       profileTarget(t.viewer.pubkey),
       screen.getByRole("button", { name: "Channel members" }),
@@ -948,6 +969,51 @@ it.each([false, true])(
     await vi.waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
+    expect(t.publish).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["unavailable", "declined"] as const)(
+  "keeps Members usable when owner profile navigation is %s",
+  async (navigation) => {
+    const onOpenLink = vi.fn(() => false);
+    const t = await setup("stream", false, false, {
+      canOpenLink: () => navigation !== "unavailable",
+      onOpenLink,
+    });
+    const agent = managedProfile(t.person, t.viewer, 1800000000);
+    const original = t.query.getMockImplementation();
+    if (!original) throw new Error("Missing query");
+    t.query.mockImplementation(async (filters) =>
+      (await original(filters)).map((event) =>
+        event.pubkey === t.person.pubkey && event.kind === 0 ? agent : event,
+      ),
+    );
+    await t.search();
+    await screen.findByText(/managed by/);
+    const actions = screen.getByRole("button", { name: "Actions for Morgan" });
+    await t.user.click(actions);
+    await screen.findByRole("menu", { name: "Actions for Morgan" });
+    if (navigation === "unavailable") {
+      expect(
+        screen.queryByRole("menuitem", { name: "View owner profile" }),
+      ).toBeNull();
+      expect(onOpenLink).not.toHaveBeenCalled();
+      await t.user.keyboard("{Escape}");
+    } else {
+      await t.user.click(
+        screen.getByRole("menuitem", { name: "View owner profile" }),
+      );
+      expect(onOpenLink).toHaveBeenCalledExactlyOnceWith(
+        profileTarget(t.viewer.pubkey),
+        t.trigger,
+      );
+      await vi.waitFor(() => expect(actions).toHaveFocus());
+    }
+    expect(
+      screen.getByRole("dialog", { name: "Channel members" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: /Add Morgan/ })).toBeEnabled();
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
@@ -982,6 +1048,14 @@ it("removes ownership on a newer invalid signed head and never restores it from 
   expect(
     screen.queryByRole("button", { name: /Open owner profile/ }),
   ).not.toBeInTheDocument();
+  await t.user.click(
+    screen.getByRole("button", { name: "Actions for Morgan" }),
+  );
+  await screen.findByRole("menu", { name: "Actions for Morgan" });
+  expect(
+    screen.queryByRole("menuitem", { name: "View owner profile" }),
+  ).toBeNull();
+
   expect(t.publish).not.toHaveBeenCalled();
 });
 

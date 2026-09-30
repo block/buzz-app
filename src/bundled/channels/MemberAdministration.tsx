@@ -22,6 +22,8 @@ import {
   ContextMenuRoot,
   ContextMenuTrigger,
   MenuItem,
+  MenuRoot,
+  MenuTrigger,
   MenuPopup,
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
@@ -113,6 +115,7 @@ export function MemberRow({
   name,
   returnFocus,
   onViewProfile,
+  onViewOwnerProfile,
   onSendMessage,
   messagePending,
   invitationAction,
@@ -124,6 +127,7 @@ export function MemberRow({
   name: string;
   returnFocus: React.RefObject<HTMLElement | null>;
   onViewProfile?: (() => boolean) | undefined;
+  onViewOwnerProfile?: (() => boolean) | undefined;
   onSendMessage?: (() => void) | undefined;
   messagePending?: boolean | undefined;
   invitationAction?: ReactNode;
@@ -139,7 +143,7 @@ export function MemberRow({
   );
   const [selection, setSelection] = useState<MemberChange>();
   const cancel = useRef<HTMLButtonElement>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState<"button" | "context">();
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement>();
   const menuReturnFocus = useRef<HTMLElement | null>(null);
   const openingProfile = useRef(false);
@@ -158,13 +162,77 @@ export function MemberRow({
   useEffect(() => {
     setSelection(undefined);
   }, [session, channelId]);
+  const finalFocus = () =>
+    selection || openingProfile.current
+      ? false
+      : (menuReturnFocus.current ?? returnFocus.current);
+  const menuItems = (
+    <>
+      <MenuItem
+        disabled={!onViewProfile}
+        onClick={() => {
+          // The destination panel takes focus; neither closing layer may
+          // restore focus to a row in the dialog that is being unmounted.
+          openingProfile.current = onViewProfile?.() ?? false;
+        }}
+      >
+        View profile
+      </MenuItem>
+      {onViewOwnerProfile && (
+        <MenuItem
+          onClick={() => {
+            openingProfile.current = onViewOwnerProfile();
+          }}
+        >
+          View owner profile
+        </MenuItem>
+      )}
+      {onSendMessage && (
+        <MenuItem disabled={messagePending} onClick={onSendMessage}>
+          Send message
+        </MenuItem>
+      )}
+      <MenuItem
+        onClick={() => {
+          void Promise.resolve()
+            .then(() => navigator.clipboard.writeText(npubEncode(pubkey)))
+            .then(
+              () => notify("Copied npub", "success"),
+              () => notify("Couldn’t copy npub. Try again.", "error"),
+            );
+        }}
+      >
+        Copy npub
+      </MenuItem>
+      {permitted && !locked && (
+        <>
+          <MenuSeparator />
+          {role !== "bot" &&
+            editableMemberRoles
+              // Guest assignment is hidden until its permission contract is settled.
+              .filter((next) => next !== role && next !== "guest")
+              .map((next) => (
+                <MenuItem key={next} onClick={() => choose(next)}>
+                  Make {next}
+                </MenuItem>
+              ))}
+          {role !== "bot" && <MenuSeparator />}
+          <MenuItem tone="danger" onClick={() => choose("remove")}>
+            Remove from channel
+          </MenuItem>
+        </>
+      )}
+    </>
+  );
   return (
     <>
       <ContextMenuRoot
-        open={menuOpen}
+        open={menuOpen === "context"}
         onOpenChange={(open) => {
           if (open) openingProfile.current = false;
-          setMenuOpen(open);
+          setMenuOpen((current) =>
+            open ? "context" : current === "context" ? undefined : current,
+          );
         }}
       >
         <ContextMenuTrigger
@@ -196,84 +264,57 @@ export function MemberRow({
               menuReturnFocus.current = event.target as HTMLElement;
               setMenuAnchor(event.currentTarget);
               openingProfile.current = false;
-              setMenuOpen(true);
+              setMenuOpen("context");
             }
           }}
         >
           <div className={styles.profile}>{children}</div>
           {invitationAction}
           <span className={styles.memberActions}>
-            <IconButton
-              variant="ghost"
-              size="sm"
-              aria-label={`Actions for ${name}`}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              onClick={(event) => {
-                menuReturnFocus.current = event.currentTarget;
-                setMenuAnchor(event.currentTarget);
-                openingProfile.current = false;
-                setMenuOpen(true);
+            {/* A regular trigger needs its own root: registering it on the
+                context root replaces Base UI's context-menu interaction owner. */}
+            <MenuRoot
+              open={menuOpen === "button"}
+              onOpenChange={(open, details) => {
+                if (open) {
+                  openingProfile.current = false;
+                  menuReturnFocus.current =
+                    details.trigger instanceof HTMLElement
+                      ? details.trigger
+                      : null;
+                }
+                setMenuOpen((current) =>
+                  open ? "button" : current === "button" ? undefined : current,
+                );
               }}
-              icon={<DotsThreeIcon size={18} aria-hidden="true" />}
-            />
+            >
+              <MenuTrigger
+                render={
+                  <IconButton
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Actions for ${name}`}
+                    icon={<DotsThreeIcon size={18} aria-hidden="true" />}
+                  />
+                }
+              />
+              <MenuPopup
+                aria-label={`Actions for ${name}`}
+                align="end"
+                finalFocus={finalFocus}
+              >
+                {menuItems}
+              </MenuPopup>
+            </MenuRoot>
           </span>
         </ContextMenuTrigger>
         <MenuPopup
           aria-label={`Actions for ${name}`}
           anchor={menuAnchor}
           align={menuAnchor ? "end" : "start"}
-          finalFocus={() =>
-            selection || openingProfile.current
-              ? false
-              : (menuReturnFocus.current ?? returnFocus.current)
-          }
+          finalFocus={finalFocus}
         >
-          <MenuItem
-            disabled={!onViewProfile}
-            onClick={() => {
-              // The destination panel takes focus; neither closing layer may
-              // restore focus to a row in the dialog that is being unmounted.
-              openingProfile.current = onViewProfile?.() ?? false;
-            }}
-          >
-            View profile
-          </MenuItem>
-          {onSendMessage && (
-            <MenuItem disabled={messagePending} onClick={onSendMessage}>
-              Send message
-            </MenuItem>
-          )}
-          <MenuItem
-            onClick={() => {
-              void Promise.resolve()
-                .then(() => navigator.clipboard.writeText(npubEncode(pubkey)))
-                .then(
-                  () => notify("Copied npub", "success"),
-                  () => notify("Couldn’t copy npub. Try again.", "error"),
-                );
-            }}
-          >
-            Copy npub
-          </MenuItem>
-          {permitted && !locked && (
-            <>
-              <MenuSeparator />
-              {role !== "bot" &&
-                editableMemberRoles
-                  // Guest assignment is hidden until its permission contract is settled.
-                  .filter((next) => next !== role && next !== "guest")
-                  .map((next) => (
-                    <MenuItem key={next} onClick={() => choose(next)}>
-                      Make {next}
-                    </MenuItem>
-                  ))}
-              {role !== "bot" && <MenuSeparator />}
-              <MenuItem tone="danger" onClick={() => choose("remove")}>
-                Remove from channel
-              </MenuItem>
-            </>
-          )}
+          {menuItems}
         </MenuPopup>
       </ContextMenuRoot>
       {selection && permitted && !locked && (

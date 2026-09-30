@@ -632,3 +632,58 @@ for (const [width, reducedMotion] of [
     }
   });
 }
+
+// Real pointer sequencing is essential: outside pointerdown used to close the
+// manually-opened menu before the ellipsis click immediately reopened it.
+test("member menus toggle and dismiss through shared owners", async ({
+  page,
+}) => {
+  const { errors } = watchPageErrors(page);
+  await page.goto(url);
+  const trigger = page.getByRole("button", { name: "Channel members" });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "Channel members" });
+  const actions = dialog.getByRole("button", { name: "Actions for Carl" });
+  const menu = page.getByRole("menu", { name: "Actions for Carl" });
+  await expect(actions).toBeAttached();
+  await dialog.getByRole("button", { name: /Open profile for Carl/ }).hover();
+  await actions.click();
+  await expect(menu).toBeVisible();
+  await actions.click();
+  await expect(menu).toHaveCount(0);
+  await expect(actions).toBeFocused();
+  await actions.click();
+  await expect(menu).toBeVisible();
+  await dialog.getByRole("searchbox").click();
+  await expect(menu).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("searchbox").click();
+  await expect(dialog.getByRole("searchbox")).toBeFocused();
+  await dialog
+    .getByRole("button", { name: /Open profile for Carl/ })
+    .click({ button: "right" });
+  await expect(menu).toBeVisible();
+  await expect(menu).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  const profile = dialog.getByRole("button", { name: /Open profile for Carl/ });
+  await expect(profile).toBeFocused();
+  for (const key of ["Shift+F10", "ContextMenu"]) {
+    await page.keyboard.press(key);
+    await expect(menu).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    await expect(profile).toBeFocused();
+  }
+  await actions.focus();
+  await page.keyboard.press("Enter");
+  await expect(menu.getByRole("menuitem").first()).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(actions).toBeFocused();
+  await page.mouse.click(8, 8);
+  await expect(dialog).toHaveCount(0);
+  expect(await page.evaluate(() => window.focusFixture.additions)).toEqual([]);
+  expect(errors).toEqual([]);
+});

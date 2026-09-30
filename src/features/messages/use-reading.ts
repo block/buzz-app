@@ -46,14 +46,28 @@ export function useReading({
     // reading it. A parent scope's composer belongs to another surface. A panel
     // that owns the list opts in whole, so opening it is enough.
     const surface = element.closest("[data-reading-surface]");
+    // A tabbed thread's header is outside its content, but aria-labelledby
+    // identifies its owning tab. Never borrow focus from a sibling tab.
+    const tabPanel = surface?.closest('[role="tabpanel"]');
+    const focusedTab = (node: EventTarget | null) => {
+      const label = tabPanel?.getAttribute("aria-labelledby");
+      const tab = label ? document.getElementById(label) : null;
+      return (
+        tab?.getAttribute("role") === "tab" &&
+        tab.getAttribute("aria-selected") === "true" &&
+        tab.contains(node as Node | null)
+      );
+    };
     const focused = (node: EventTarget | null) =>
       node instanceof Node &&
       (element.contains(node) ||
         !!surface?.contains(node) ||
+        focusedTab(node) ||
         !!composer?.current?.contains(node));
     const active = () =>
       !stopped &&
       element.isConnected &&
+      !element.closest('[inert], [hidden], [aria-hidden="true"]') &&
       settled.current &&
       document.visibilityState === "visible" &&
       document.hasFocus() &&

@@ -205,6 +205,49 @@ it("focus anywhere in the panel that owns the list earns dwell", () => {
   vi.advanceTimersByTime(300);
   expect(h.leases[0]?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
 });
+it("only the owning selected tab earns dwell; inactive and restored content does not", () => {
+  const h = setup({ focus: "outside" });
+  const pane = document.createElement("div");
+  pane.setAttribute("role", "tabpanel");
+  pane.setAttribute("aria-labelledby", "thread-tab");
+  const tab = document.createElement("button");
+  tab.id = "thread-tab";
+  tab.setAttribute("role", "tab");
+  tab.setAttribute("aria-selected", "true");
+  const other = document.createElement("button");
+  other.setAttribute("role", "tab");
+  document.body.append(tab, other, pane);
+  const surface = h.element.closest("aside");
+  expect(surface).not.toBeNull();
+  if (surface) pane.append(surface);
+  // Remount after establishing the real tab/content ownership boundary.
+  h.retarget("thread-room");
+  vi.advanceTimersByTime(300);
+  expect(h.reading).not.toHaveBeenCalled();
+  other.focus();
+  vi.advanceTimersByTime(300);
+  expect(h.reading).not.toHaveBeenCalled();
+  tab.focus();
+  vi.advanceTimersByTime(299);
+  expect(h.leases.at(-1)?.observe).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(1);
+  expect(h.leases.at(-1)?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+  h.mutation();
+  const pending = h.leases.at(-1);
+  pane.setAttribute("inert", "");
+  tab.setAttribute("aria-selected", "false");
+  vi.advanceTimersByTime(300);
+  expect(pending?.observe).not.toHaveBeenCalled();
+  expect(pending?.dispose).toHaveBeenCalledOnce();
+  // Restoring visible content without moving focus back is still not reading.
+  other.focus();
+  pane.removeAttribute("inert");
+  tab.setAttribute("aria-selected", "true");
+  h.mutation();
+  const count = h.reading.mock.calls.length;
+  vi.advanceTimersByTime(300);
+  expect(h.reading).toHaveBeenCalledTimes(count);
+});
 it("focus moving from the list to its composer keeps reading; another surface's composer cancels it", () => {
   const h = setup();
   vi.advanceTimersByTime(100);

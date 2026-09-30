@@ -216,6 +216,7 @@ function messagesHarness(
   const close = vi.fn(),
     bubble = vi.fn();
   const props = {
+    active: true,
     session,
     scope: "scope",
     channelName: "General",
@@ -357,6 +358,33 @@ it("loads history automatically with error-only retry and no routine history con
   expect(h.view.refresh).toHaveBeenCalledTimes(3);
   expect(h.ensure).toHaveBeenCalledOnce();
 });
+it("keeps initial rows pending until positioned, exposes errors, and lets reading interrupt loading", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  h.snapshot.canLoadMore = true;
+  h.render();
+  expect(h.element).toHaveAttribute("data-positioning");
+  expect(h.element.querySelector("[data-thread-rows]")).toHaveAttribute(
+    "inert",
+  );
+  h.snapshot.status = "error";
+  h.snapshot.error = "History unavailable";
+  h.render();
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  expect(
+    within(h.element).getByRole("button", { name: "Retry thread" }),
+  ).toBeVisible();
+  h.snapshot.status = "loading";
+  h.snapshot.error = undefined;
+  h.render();
+  expect(h.element).toHaveAttribute("data-positioning");
+  fireEvent.wheel(h.element);
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  h.scroll(500);
+  h.snapshot.status = "ready";
+  h.snapshot.canLoadMore = false;
+  h.render();
+  expect(h.element.scrollTop).toBe(500);
+});
 it("starts a single older page after scrolling through 80% of loaded history", () => {
   const h = messagesHarness();
   h.snapshot.direction = "older";
@@ -374,7 +402,7 @@ it("starts a single older page after scrolling through 80% of loaded history", (
   h.scroll(0);
   expect(h.view.loadMore).toHaveBeenCalledOnce();
 });
-it("shows initial thread loading only until content is available", () => {
+it("keeps initial thread loading until available content has been positioned", () => {
   const h = messagesHarness();
   h.snapshot.status = "loading";
   h.snapshot.root = undefined;
@@ -385,8 +413,69 @@ it("shows initial thread loading only until content is available", () => {
   ).toBeNull();
   h.snapshot.root = row;
   h.render();
+  expect(section).toHaveAttribute("data-positioning");
+  expect(within(section).getByText("Loading thread…")).toBeVisible();
+  h.snapshot.status = "ready";
+  h.render();
+  expect(section).not.toHaveAttribute("data-positioning");
   expect(within(section).getByText("root")).toBeVisible();
   expect(within(section).queryByText("Loading thread…")).toBeNull();
+});
+it("keeps a seeded initial refresh unread until legacy continuation is positioned", async () => {
+  vi.useFakeTimers();
+  const h = messagesHarness(ordinaryNavigation());
+  h.resize(600);
+  vi.mocked(document.hasFocus).mockReturnValue(true);
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+    new DOMRect(0, 0, 500, 500),
+  ] as unknown as DOMRectList);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 500, 500),
+  );
+  const observe = vi.fn(async () => {});
+  const reading = vi.fn(() => ({
+    view: vi.fn(),
+    observe,
+    catchUp: vi.fn(async () => {}),
+    dispose: vi.fn(),
+  }));
+  Object.assign(h.session.unread, {
+    sync: () => ({ capability: "frontier-sync" }),
+    reading,
+  });
+  h.snapshot.status = "loading";
+  h.snapshot.readKind = "refresh";
+  h.render();
+  h.element.focus();
+  expect(h.element).toHaveAttribute("data-positioning");
+  await act(() => vi.advanceTimersByTimeAsync(300));
+  expect(reading).not.toHaveBeenCalled();
+
+  h.snapshot.status = "ready";
+  h.snapshot.readKind = undefined;
+  h.snapshot.direction = "forward";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.replies = [{ ...row, id: "reply", content: "reply" }];
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  h.snapshot.status = "loading";
+  h.snapshot.readKind = "older";
+  h.render();
+  expect(h.element).toHaveAttribute("data-positioning");
+  await act(() => vi.advanceTimersByTimeAsync(300));
+  expect(reading).not.toHaveBeenCalled();
+
+  // The empty continuation changes neither rows nor geometry. Positioning must
+  // wake the existing reader, without a new focus or scroll gesture.
+  h.snapshot.status = "ready";
+  h.snapshot.readKind = undefined;
+  h.snapshot.canLoadMore = false;
+  h.render();
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  await act(() => vi.advanceTimersByTimeAsync(299));
+  expect(observe).not.toHaveBeenCalled();
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(observe).toHaveBeenCalledExactlyOnceWith([row.id, "reply"]);
 });
 it("keeps older-page loading quiet and retry between root and replies", () => {
   const h = messagesHarness();
@@ -470,6 +559,10 @@ it("positions after successful history loading, then follows live replies withou
   h.snapshot.status = "ready";
   h.render();
   expect(h.element.scrollTop).toBe(3400);
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  expect(h.element.querySelector("[data-thread-rows]")).not.toHaveAttribute(
+    "inert",
+  );
   h.scroll(3400);
   h.snapshot.replies = [{ ...row, id: "new", content: "live arrival" }];
   h.resize(4800);
@@ -720,6 +813,30 @@ it("ordinary routed loading failure completes as unavailable, never as an opened
     reason: "unavailable",
   });
 });
+it.each(["ready", "unavailable", "error"] as const)(
+  "a restored background thread waits for its verified target (%s)",
+  (targetStatus) => {
+    const navigation = ordinaryNavigation();
+    navigation.target.threadRootId = "different-root";
+    const h = messagesHarness(navigation);
+    h.props.active = false;
+    h.snapshot.targetStatus = "loading";
+    h.render();
+    expect(navigation.complete).not.toHaveBeenCalled();
+    h.snapshot.targetStatus = targetStatus;
+    h.snapshot.target = targetStatus === "ready" ? row : undefined;
+    h.render();
+    expect(navigation.complete).toHaveBeenCalledExactlyOnceWith(
+      targetStatus === "ready"
+        ? { status: "opened" }
+        : {
+            status: "failed",
+            reason:
+              targetStatus === "unavailable" ? "not-found" : "unavailable",
+          },
+    );
+  },
+);
 it("a presented ordinary thread survives the real navigation deadline while history is pending", async () => {
   vi.useFakeTimers();
   const controller = createNavigationController(createMemoryHistory());
@@ -777,6 +894,33 @@ it("revoked ordinary presentation cannot position or complete after loading", ()
   h.render();
   expect(h.element.scrollTop).toBe(0);
   expect(navigation.complete).not.toHaveBeenCalled();
+});
+
+it("retains its owned thread view for renames and remounts for destination, scope and session changes", () => {
+  const h = messagesHarness();
+  const mounted = render(<ThreadPanel {...h.props} />);
+  const history = () => screen.getByRole("region", { name: "Thread messages" });
+  const initial = history();
+  mounted.rerender(<ThreadPanel {...h.props} />);
+  mounted.rerender(<ThreadPanel {...h.props} channelName="Renamed" />);
+  expect(history()).toBe(initial);
+  expect(h.thread).toHaveBeenCalledTimes(1);
+  const changes: Partial<ThreadPanelProps>[] = [
+    { channelId: "other" },
+    { messageId: "other" },
+    { scope: "other" },
+    { session: { ...h.session } },
+  ];
+  for (const change of changes) {
+    mounted.rerender(<ThreadPanel {...h.props} />);
+    const previous = history();
+    const owned = h.view;
+    const count = h.thread.mock.calls.length;
+    mounted.rerender(<ThreadPanel {...h.props} {...change} />);
+    expect(history()).not.toBe(previous);
+    expect(owned.dispose).toHaveBeenCalledTimes(1);
+    expect(h.thread).toHaveBeenCalledTimes(count + 1);
+  }
 });
 
 it("without close, the embedded thread keeps its reader but has no close header or Escape dismissal", () => {

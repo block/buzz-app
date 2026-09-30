@@ -294,3 +294,46 @@ it.each(["cached", "outsider"] as const)(
     ]);
   },
 );
+
+it("message read and unread toggle presentation before the local save or relay acknowledgement", async () => {
+  const h = setup();
+  const message = {
+    kind: "message",
+    channelId: channel,
+    messageId: h.root,
+  } as const;
+  h.messages.set(h.root, {
+    message_id: h.root,
+    status: "unread",
+    attention: true,
+  });
+  h.api.write.mockImplementation(() => new Promise(() => {}));
+  const stop = h.unread.subscribe(message, () => {});
+  try {
+    await vi.waitFor(() =>
+      expect(h.unread.attention(channel, h.root).unread).toBe(true),
+    );
+    const readSave = h.hold();
+    const read = h.unread.markThrough(message, h.root);
+    await readSave.started;
+    // Nothing is saved or sent yet; the read is still being committed locally.
+    expect(h.journal().pending).toEqual([]);
+    expect(h.api.write).not.toHaveBeenCalled();
+    expect(h.unread.attention(channel, h.root).unread).toBe(false);
+    readSave.release();
+    await read;
+    const unreadSave = h.hold();
+    const unread = h.unread.markUnreadLocal(message);
+    await unreadSave.started;
+    expect(h.journal().manual).toEqual([]);
+    expect(h.unread.attention(channel, h.root)).toMatchObject({
+      unread: true,
+      forced: true,
+    });
+    unreadSave.release();
+    await unread;
+    expect(h.journal().manual).toEqual([message]);
+  } finally {
+    stop();
+  }
+});

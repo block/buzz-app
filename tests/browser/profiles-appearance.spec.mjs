@@ -82,12 +82,26 @@ for (const mode of ["light", "dark"]) {
     await page.mouse.click(2, 2);
     await copy.focus();
     await expect(copy).toHaveCSS("outline-style", "none");
-    // Text controls can grow beyond their minimum to contain enlarged type.
+    // Text and control geometry grow together while keeping labels contained.
     const modifier = process.platform === "darwin" ? "Meta" : "Control";
     await page.keyboard.press(`${modifier}+=`);
-    await expect(region).toHaveCSS("font-size", "15.4px");
-    await expect(key).toHaveCSS("font-size", "13.2px");
-    await expect(copy).toHaveCSS("min-height", "32px");
+    // WebKit serializes rem multiplication as e.g. 15.400001px. Compare the
+    // numeric size to five decimal places, well below a rendered layout unit.
+    for (const [control, property, base] of [
+      [region, "font-size", 14],
+      [key, "font-size", 12],
+      [copy, "min-height", 32],
+    ]) {
+      await expect
+        .poll(() =>
+          control.evaluate(
+            (element, property) =>
+              parseFloat(getComputedStyle(element).getPropertyValue(property)),
+            property,
+          ),
+        )
+        .toBeCloseTo(base * 1.1, 5);
+    }
     await expect
       .poll(() =>
         copy.evaluate((element) => {
@@ -96,7 +110,7 @@ for (const mode of ["light", "dark"]) {
             .querySelector(".buzz-button-label")
             .getBoundingClientRect();
           return (
-            button.height >= 32 &&
+            button.height > 32 &&
             label.top >= button.top &&
             label.bottom <= button.bottom &&
             label.left >= button.left &&

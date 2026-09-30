@@ -34,7 +34,6 @@ import {
 import { nativeSidebar } from "./native-sidebar";
 
 export const nativeWriteKinds = [
-
   30078,
   7,
   9,

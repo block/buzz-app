@@ -40,8 +40,8 @@ test("sidebar activity opens the working agent panel", async ({
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   const key = generateSecretKey();
   const agent = getPublicKey(key);
-  app.observer(activity("turn_liveness", "alpha", "sidebar"), key);
-  const row = page.locator('[data-channel-id="alpha"]');
+  app.observer(activity("turn_liveness", ids.alpha, "sidebar"), key);
+  const row = page.locator(`[data-channel-id="${ids.alpha}"]`);
   await expect(
     row.getByRole("img", { name: /working in Alpha$/ }),
   ).toBeVisible();
@@ -454,9 +454,15 @@ it("profile activity opens the exact agent and originating channel before its fi
   page,
   app,
 }, testInfo) => {
-  await open(page, app);
-  // The relay advertises /buzz/v1 even without the readState fixture option.
-  // Exercise a read write before profile activity.
+  // This fixture's custom UUID sorts after Beta; choose the originating channel
+  // rather than assuming the workspace's first-channel fallback is Alpha.
+  await page.goto(app.origin);
+  await page.locator(`[data-channel-id="${profileChannelId}"]`).click();
+  await page
+    .getByRole("textbox", { name: "Message #Alpha", exact: true })
+    .waitFor();
+  await settle(page);
+  // Exercise a read write through the ordinary message action before activity.
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();
@@ -470,18 +476,33 @@ it("profile activity opens the exact agent and originating channel before its fi
   await expect(
     page.getByRole("button", { name: "Leave channel", exact: true }),
   ).toBeVisible();
-  await page.getByText("Diagnostics", { exact: true }).click();
-  await page
-    .getByRole("button", {
-      name: "Mark read through loaded messages",
-      exact: true,
-    })
-    .click();
-  await expect.poll(() => app.report.readWrites.length).toBe(1);
-  await expect(page.getByRole("alert")).toHaveCount(0);
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();
+  const initialMessage = app.histories.get(`primary/${profileChannelId}`)[0];
+  const initialRow = page.locator(
+    `[data-channel-timeline] [data-message-id="${initialMessage.id}"]`,
+  );
+  await initialRow.hover();
+  await initialRow
+    .getByRole("button", { name: "More message actions" })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Mark read through here", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      app.report.readWrites.some(({ intents, outcomes }) =>
+        intents.some(
+          (intent, i) =>
+            intent.type === "mark_through" &&
+            intent.message_id === initialMessage.id &&
+            outcomes[i].status === "applied",
+        ),
+      ),
+    )
+    .toBe(true);
+  await expect(page.getByRole("alert")).toHaveCount(0);
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   const profile = page.getByRole("complementary", {
     name: "Profile",

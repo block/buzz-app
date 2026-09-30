@@ -2,6 +2,7 @@ import { expect } from "@playwright/test";
 import { verifyEvent } from "nostr-tools";
 import { createHash } from "node:crypto";
 
+const ELIGIBLE = [9, 40002, 45001, 45003];
 export const buzzV1Discovery = Object.freeze({
   version: 1,
   base_path: "/buzz/v1",
@@ -11,8 +12,8 @@ export const buzzV1Discovery = Object.freeze({
   max_contexts: 20,
   max_context_messages: 100,
   max_thread_summaries: 5,
+  eligible_kinds: ELIGIBLE,
 });
-const ELIGIBLE = [9, 40002, 45001, 45003];
 const exact = (value) => ({ status: "exact", value });
 const newest = (a, b) =>
   b.created_at - a.created_at || a.id.localeCompare(b.id);

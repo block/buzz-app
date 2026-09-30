@@ -7,7 +7,7 @@ import type {
 } from "../../features/agents/control";
 import type { RelaySession } from "../../features/relay/session";
 import type { Profile } from "../../features/relay/contracts";
-import { mediaUrl } from "../../features/relay/transport";
+import { communityMedia } from "../../features/profiles/avatar-upload";
 import { CaretDownIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard } from "./AgentCard";
@@ -108,18 +108,7 @@ export function InventoryIdentityCard({
       headingLevel={community ? 4 : 3}
       name={row.displayName}
       avatar={avatar}
-      media={
-        imageCommunity
-          ? (url, size) =>
-              mediaUrl(
-                url,
-                (target) =>
-                  `/api/relay/${encodeURIComponent(imageCommunity)}/media?url=${encodeURIComponent(target)}`,
-                imageCommunity,
-                size,
-              )
-          : undefined
-      }
+      media={imageCommunity ? communityMedia(imageCommunity) : undefined}
       identities={[{ pubkey: row.pubkey, name: row.displayName }]}
       session={session}
       editable={setups}

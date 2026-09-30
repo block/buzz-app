@@ -358,6 +358,12 @@ for (const mode of ["light", "dark"]) {
     const entry = agentEntry(page, agent);
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
+      // The shell applies its media-query change in React. Wait for that commit
+      // before measuring; otherwise these reads can straddle sidebar collapse.
+      await expect(page.locator("[data-shell-sidebar-toggle]")).toHaveAttribute(
+        "aria-label",
+        width <= 650 ? "Show navigation" : "Hide Channel sidebar",
+      );
       await expect(entry).toBeVisible();
       const entryBox = await entry.boundingBox();
       const formBox = await page

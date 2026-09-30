@@ -75,6 +75,11 @@ html[data-keyboard-navigation] .handle::after,
 .handle[data-resizing]::after {
   transition: none;
 }
+.handle:focus-visible::before {
+  opacity: 1;
+  transform: translate(0, -50%);
+  visibility: visible;
+}
 .handle[data-resizing]::before {
   opacity: 0;
   visibility: hidden;

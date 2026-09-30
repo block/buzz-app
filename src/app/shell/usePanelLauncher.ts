@@ -4,6 +4,7 @@ import type { Panels, RegisteredPanel } from "../../features/panels/service";
 type Opened = {
   id: string;
   panel: RegisteredPanel;
+  target: string;
   trigger: HTMLButtonElement;
 };
 export function usePanelLauncher(panels: Panels, ready: boolean) {
@@ -13,11 +14,10 @@ export function usePanelLauncher(panels: Panels, ready: boolean) {
     panels.snapshot,
   );
   const [opened, setOpened] = useState<Opened>();
+  const panelRef = useRef<HTMLElement>(null);
   // Exact installation object, not just key/revision: same-revision re-enable is new intent.
   const selected =
-    ready && opened && available.includes(opened.panel)
-      ? opened.panel
-      : undefined;
+    ready && opened && available.includes(opened.panel) ? opened : undefined;
   useEffect(() => {
     if (opened && !selected) setOpened(undefined);
   }, [opened, selected]);
@@ -25,6 +25,16 @@ export function usePanelLauncher(panels: Panels, ready: boolean) {
   useEffect(() => {
     const before = previous.current;
     previous.current = opened;
+    // Focus after the menu's event handling, including first-open fallback bodies.
+    // Preserve focus when the panel's content has already claimed it.
+    const card = panelRef.current;
+    if (
+      opened &&
+      before !== opened &&
+      card &&
+      !card.contains(document.activeElement)
+    )
+      card.focus();
     if (
       before &&
       !opened &&
@@ -34,16 +44,41 @@ export function usePanelLauncher(panels: Panels, ready: boolean) {
       before.trigger.focus();
   }, [opened, panels]);
   return {
+    panelRef,
     available: ready ? available : [],
-    selected,
-    openingId: selected ? opened?.id : undefined,
+    selected: selected?.panel,
+    target: selected?.target,
+    openingId: selected?.id,
     launch(panel: RegisteredPanel, trigger: HTMLButtonElement) {
-      if (ready && panel.launcher && panels.snapshot().includes(panel))
+      const { launcher } = panel;
+      if (ready && launcher && panels.snapshot().includes(panel))
         setOpened((current) =>
           current?.panel === panel
             ? undefined
-            : { id: crypto.randomUUID(), panel, trigger },
+            : {
+                id: crypto.randomUUID(),
+                panel,
+                target: launcher.target,
+                trigger,
+              },
         );
+    },
+    canOpen(target: string) {
+      return ready && !!panels.resolve(target);
+    },
+    /** Show whichever registered panel claims this target; reopening keeps it. */
+    open(target: string, trigger: HTMLButtonElement) {
+      const panel = ready ? panels.resolve(target) : undefined;
+      if (panel)
+        setOpened((current) => ({
+          id:
+            current?.panel === panel && current.target === target
+              ? current.id
+              : crypto.randomUUID(),
+          panel,
+          target,
+          trigger,
+        }));
     },
     close() {
       // Bind to this opening, not merely this panel: reopening gets a new lifetime.

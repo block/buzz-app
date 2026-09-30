@@ -1151,15 +1151,16 @@ function ChannelWorkspace({
     }
     return openLink(url, true);
   };
-  const hasPanel =
+  const hasChannelPanel =
     !composingMessage &&
     (settings ||
       tabState.tabs.length > 0 ||
       panelTabs.length > 0 ||
       showingThread ||
-      companion ||
       drawer.side);
-  const showingPanel = tabState.paneOpen && hasPanel;
+  const hasPanel = companion || hasChannelPanel;
+  const showingChannelPanel = tabState.paneOpen && hasChannelPanel;
+  const showingPanel = companion || showingChannelPanel;
   const split = usePanelSplit();
   useEffect(() => {
     if (showingSettings && settings)
@@ -1421,15 +1422,18 @@ function ChannelWorkspace({
                           size="toolbar"
                           aria-label="Toggle tab pane"
                           title={
-                            showingPanel ? "Close tab pane" : "Open tab pane"
+                            showingChannelPanel
+                              ? "Close tab pane"
+                              : "Open tab pane"
                           }
-                          aria-expanded={!!showingPanel}
+                          aria-expanded={!!showingChannelPanel}
                           onClick={() => {
-                            tabState.setPaneOpen(!showingPanel);
-                            if (!showingPanel && !rootTabIds.length) addTab();
+                            tabState.setPaneOpen(!showingChannelPanel);
+                            if (!showingChannelPanel && !rootTabIds.length)
+                              addTab();
                           }}
                           icon={
-                            showingPanel ? (
+                            showingChannelPanel ? (
                               <ArrowSquareRightIcon
                                 size="1rem"
                                 aria-hidden="true"
@@ -1563,160 +1567,177 @@ function ChannelWorkspace({
       >
         {hasPanel && !showingMediaReview && (
           <>
-            {(settings ||
-              showingThread ||
-              panelTabs.length > 0 ||
-              tabState.tabs.length > 0) && (
-              <div className={styles.retainedPanel}>
-                <PanelWorkspace
-                  key={currentId}
-                  value={selectedTab}
-                  select={selectPanelTab}
-                  add={addTab}
-                  items={[
-                    ...(settings
-                      ? [
-                          {
-                            id: "settings",
-                            label: "Channel settings",
-                            icon: <GearIcon size="1rem" />,
-                            close: closeSettings,
-                            content: settingsContent,
-                          },
-                        ]
-                      : []),
-                    ...(showingThread
-                      ? [
-                          {
-                            id: "thread",
-                            label: "Thread",
-                            icon: (
-                              <ChatCircleIcon size="1rem" aria-hidden="true" />
-                            ),
-                            close: () => {
-                              afterClose("thread");
-                              closeThread();
+            {hasChannelPanel &&
+              (settings ||
+                showingThread ||
+                panelTabs.length > 0 ||
+                tabState.tabs.length > 0) && (
+                <div
+                  className={styles.retainedPanel}
+                  hidden={!!companion && !showingChannelPanel}
+                >
+                  <PanelWorkspace
+                    key={currentId}
+                    value={selectedTab}
+                    select={selectPanelTab}
+                    add={addTab}
+                    items={[
+                      ...(settings
+                        ? [
+                            {
+                              id: "settings",
+                              label: "Channel settings",
+                              icon: <GearIcon size="1rem" />,
+                              close: closeSettings,
+                              content: settingsContent,
                             },
-                            content: (
-                              <ThreadPanel
-                                sessionConversation={
-                                  current?.channelType === "session"
+                          ]
+                        : []),
+                      ...(showingThread
+                        ? [
+                            {
+                              id: "thread",
+                              label: "Thread",
+                              icon: (
+                                <ChatCircleIcon
+                                  size="1rem"
+                                  aria-hidden="true"
+                                />
+                              ),
+                              close: () => {
+                                afterClose("thread");
+                                closeThread();
+                              },
+                              content: (
+                                <ThreadPanel
+                                  sessionConversation={
+                                    current?.channelType === "session"
+                                  }
+                                  extensions={extensions}
+                                  session={queries}
+                                  scope={scope}
+                                  channelName={current?.name ?? ""}
+                                  channelId={showingThread.channelId}
+                                  messageId={showingThread.messageId}
+                                  navigation={showingThread.navigation}
+                                  active={
+                                    tabState.paneOpen &&
+                                    selectedTab === "thread"
+                                  }
+                                  replyRequest={
+                                    replyRequest?.channelId ===
+                                      showingThread.channelId &&
+                                    replyRequest.messageId ===
+                                      showingThread.messageId &&
+                                    replyRequest.entryId ===
+                                      showingThread.navigation?.entryId
+                                      ? replyRequest.sequence
+                                      : undefined
+                                  }
+                                  close={() => {
+                                    afterClose("thread");
+                                    closeThread();
+                                  }}
+                                  onOpenLink={(url) => openLink(url, true)}
+                                  onOpenMediaReview={openMediaReview}
+                                  canOpenLink={canOpenLink}
+                                />
+                              ),
+                            },
+                          ]
+                        : []),
+                      ...tabState.tabs.map((tab) => {
+                        const target =
+                          tab.kind === "new"
+                            ? undefined
+                            : channels.find(
+                                (item) => item.id === tab.channelId,
+                              );
+                        const usable = target && !target.readOnly;
+                        return {
+                          id: tab.id,
+                          label:
+                            tab.kind === "new"
+                              ? "New tab"
+                              : tab.kind === "thread"
+                                ? `Thread · ${target?.name ?? "Unavailable"}`
+                                : (target?.name ?? "Unavailable conversation"),
+                          icon: target ? (
+                            conversationIcon(target)
+                          ) : (
+                            <PlusIcon size="1rem" />
+                          ),
+                          close: () => closeConversationTab(tab.id),
+                          content:
+                            tab.kind === "new" ? (
+                              <ChannelTabPicker
+                                channels={tabDestinations}
+                                tools={tabTools}
+                                chooseTool={(panel) =>
+                                  chooseTool(tab.id, panel)
                                 }
-                                extensions={extensions}
+                                icon={conversationIcon}
+                                choose={(channelId) =>
+                                  chooseConversation(tab.id, channelId)
+                                }
+                              />
+                            ) : usable ? (
+                              <ConversationTab
+                                tab={tab}
+                                channel={target}
                                 session={queries}
                                 scope={scope}
-                                channelName={current?.name ?? ""}
-                                channelId={showingThread.channelId}
-                                messageId={showingThread.messageId}
-                                navigation={showingThread.navigation}
-                                active={
-                                  tabState.paneOpen && selectedTab === "thread"
+                                extensions={extensions}
+                                openLink={(url) =>
+                                  openConversationLink(target.id, url)
                                 }
-                                replyRequest={
-                                  replyRequest?.channelId ===
-                                    showingThread.channelId &&
-                                  replyRequest.messageId ===
-                                    showingThread.messageId &&
-                                  replyRequest.entryId ===
-                                    showingThread.navigation?.entryId
-                                    ? replyRequest.sequence
-                                    : undefined
-                                }
-                                close={() => {
-                                  afterClose("thread");
-                                  closeThread();
-                                }}
-                                onOpenLink={(url) => openLink(url, true)}
-                                onOpenMediaReview={openMediaReview}
                                 canOpenLink={canOpenLink}
+                                openThread={(id, root, intent) =>
+                                  openConversationThread(
+                                    target.id,
+                                    id,
+                                    root,
+                                    intent,
+                                  )
+                                }
+                                close={() => closeConversationTab(tab.id)}
                               />
+                            ) : (
+                              <p role="status" className={styles.empty}>
+                                This conversation is no longer available.
+                              </p>
                             ),
-                          },
-                        ]
-                      : []),
-                    ...tabState.tabs.map((tab) => {
-                      const target =
-                        tab.kind === "new"
-                          ? undefined
-                          : channels.find((item) => item.id === tab.channelId);
-                      const usable = target && !target.readOnly;
-                      return {
-                        id: tab.id,
-                        label:
-                          tab.kind === "new"
-                            ? "New tab"
-                            : tab.kind === "thread"
-                              ? `Thread · ${target?.name ?? "Unavailable"}`
-                              : (target?.name ?? "Unavailable conversation"),
-                        icon: target ? (
-                          conversationIcon(target)
-                        ) : (
-                          <PlusIcon size="1rem" />
-                        ),
-                        close: () => closeConversationTab(tab.id),
-                        content:
-                          tab.kind === "new" ? (
-                            <ChannelTabPicker
-                              channels={tabDestinations}
-                              tools={tabTools}
-                              chooseTool={(panel) => chooseTool(tab.id, panel)}
-                              icon={conversationIcon}
-                              choose={(channelId) =>
-                                chooseConversation(tab.id, channelId)
-                              }
-                            />
-                          ) : usable ? (
-                            <ConversationTab
-                              tab={tab}
-                              channel={target}
-                              session={queries}
-                              scope={scope}
-                              extensions={extensions}
-                              openLink={(url) =>
-                                openConversationLink(target.id, url)
-                              }
-                              canOpenLink={canOpenLink}
-                              openThread={(id, root, intent) =>
-                                openConversationThread(
-                                  target.id,
-                                  id,
-                                  root,
-                                  intent,
-                                )
-                              }
-                              close={() => closeConversationTab(tab.id)}
-                            />
-                          ) : (
-                            <p role="status" className={styles.empty}>
-                              This conversation is no longer available.
-                            </p>
-                          ),
-                      };
-                    }),
-                    ...panelTabs.map((entry) => ({
-                      id: tabId(entry),
-                      instance: entry,
-                      label: entry.panel.title,
-                      ...(entry.channelContext && {
-                        icon: channelToolIcon(entry.panel),
+                        };
                       }),
-                      close: () => closeTab(entry),
-                      content: (
-                        <PanelCard
-                          panel={entry.panel}
-                          target={entry.target}
-                          context={panelContext(entry)}
-                          channelContext={entry.channelContext}
-                          close={() => closeTab(entry)}
-                        />
-                      ),
-                    })),
-                  ]}
-                />
-              </div>
-            )}
-            {drawer.side && (
-              <div className={styles.retainedPanel} hidden={showingSettings}>
+                      ...panelTabs.map((entry) => ({
+                        id: tabId(entry),
+                        instance: entry,
+                        label: entry.panel.title,
+                        ...(entry.channelContext && {
+                          icon: channelToolIcon(entry.panel),
+                        }),
+                        close: () => closeTab(entry),
+                        content: (
+                          <PanelCard
+                            panel={entry.panel}
+                            target={entry.target}
+                            context={panelContext(entry)}
+                            channelContext={entry.channelContext}
+                            close={() => closeTab(entry)}
+                          />
+                        ),
+                      })),
+                    ]}
+                  />
+                </div>
+              )}
+            {hasChannelPanel && drawer.side && (
+              <div
+                className={styles.retainedPanel}
+                hidden={
+                  showingSettings || (!!companion && !showingChannelPanel)
+                }
+              >
                 {drawer.side}
               </div>
             )}

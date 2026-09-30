@@ -388,6 +388,9 @@
   ~ :not([inert], [hidden], [data-panel-resize]) {
   border-block-start: 1px solid var(--border-standard);
 }
+.retainedPanel[hidden] {
+  display: none;
+}
 .retainedPanel {
   display: grid;
   min-height: 0;

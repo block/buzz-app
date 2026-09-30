@@ -23,8 +23,7 @@
    system's text-primary and border-primary meanings. */
 @theme inline {
   --spacing: var(--space-1);
-  /* Scale type, not Tailwind spacing (which is also rem-based). Plugins can
-     consume these utilities or multiply custom font sizes by --buzz-text-scale. */
+  /* Type and spacing share the host-scaled root rem. */
   --text-xs: var(--text-caption);
   --text-xs--line-height: var(--text-caption--line-height);
   --text-sm: var(--text-body-sm);
@@ -186,7 +185,8 @@
 
   .shell-header {
     @apply flex shrink-0 items-center justify-between;
-    height: 3rem;
+    min-height: 3rem;
+    flex-wrap: wrap;
     padding-left: var(--space-4);
     padding-right: var(--space-2);
     gap: var(--space-2);
@@ -198,7 +198,7 @@
     }
   }
   .shell-communities {
-    @apply flex min-w-0 items-center justify-start;
+    @apply flex min-w-0 shrink-0 items-center justify-start;
     gap: var(--space-1);
     padding-left: var(--space-4);
   }
@@ -214,9 +214,9 @@
   /* Matches the channel sidebar's icon box so page rows align with sections. */
   .shell-page-icon {
     display: inline-grid;
-    width: 18px;
-    height: 18px;
-    flex: 0 0 18px;
+    width: 1.125rem;
+    height: 1.125rem;
+    flex: 0 0 1.125rem;
     place-items: center;
   }
   .shell-navigation {
@@ -270,6 +270,7 @@
   }
   .shell-actions {
     @apply flex items-center justify-end;
+    margin-left: auto;
     gap: var(--space-2);
   }
   .shell-header .buzz-button[data-icon-variant] {
@@ -358,10 +359,10 @@
   }
 }
 
-/* Host text preference feeds the system ramp exactly once; rem geometry is unchanged.
-   Compatibility names forward to shared values; the host owns appearance. */
+/* Apply the saved scale once at the root so type, icons and spacing grow together.
+   Keep the existing preference token for persisted settings and fixed-pixel plugins. */
 :root {
-  --type-scale: var(--buzz-text-scale, 1);
+  font-size: calc(100% * var(--buzz-text-scale, 1));
   --buzz-mono-family: var(--font-system-mono);
   --default-mono-font-family: var(--buzz-mono-family);
 }

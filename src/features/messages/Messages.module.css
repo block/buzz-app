@@ -54,8 +54,8 @@
   padding: 0;
 }
 .edge {
-  /* Virtua's startMargin uses ChannelTimeline's physical EDGE_HEIGHT. */
-  height: 56px;
+  /* ChannelTimeline measures this region for Virtua's pixel startMargin. */
+  height: 3.5rem;
   box-sizing: border-box;
   display: flex;
   align-items: center;

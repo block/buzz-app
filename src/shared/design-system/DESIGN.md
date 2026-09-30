@@ -501,8 +501,8 @@ namespaces: colour registers as `--color-*` and is named for emphasis
 name ever means both.
 
 The active sizes are 12, 14, 16, 18, 20, 24, 28, 32, 36, 44, 56, 72 and 96px
-at 100% text size. Sans roles use Inter and mono roles use JetBrains Mono.
-Values scale with the host text-size preference.
+at 100% interface size. Sans roles use Inter and mono roles use JetBrains Mono.
+Values scale with the host interface-size preference.
 
 - Components use named roles, never private primitive sizes. The viewer shows
   each utility’s semantic role and complete setting alongside the size ladder.
@@ -661,11 +661,11 @@ Borders stay decorative unless needed to identify a control or state.
 
 Use rem for authored UI dimensions and spacing, semantic roles for text, and
 unitless line-height. At the default 16px root the migration retains geometry.
-The host text-size preference still changes only type; it does not change the
-root or layout spacing. Keep physical hairlines, optical offsets, and runtime
+The host interface-size preference scales the root, so text, numeric icons and
+rem layout spacing grow together. Keep physical hairlines, optical offsets, and runtime
 geometry returned by the browser or media APIs in pixels. Sidebar resize limits
 and its 650px navigation breakpoint remain paired with their JavaScript owner;
-the timeline's 56px leading region remains paired with Virtua's start margin.
+the timeline measures its rem-sized leading region for Virtua's pixel start margin.
 
 ## Writing
 

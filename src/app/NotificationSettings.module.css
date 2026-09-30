@@ -26,6 +26,7 @@
 
 .soundRows {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-1);
   padding-left: var(--space-4);
 }
@@ -59,6 +60,7 @@
 
 .soundControls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
@@ -104,4 +106,18 @@
   overflow-x: auto;
   margin-left: auto;
   max-width: 100%;
+}
+
+.permission .actions > button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.soundControls [class~="buzz-select"],
+.soundControls [class~="buzz-button"] {
+  max-width: 100%;
+}
+.soundControls [class~="buzz-button-label"] {
+  flex-wrap: wrap;
 }

@@ -1303,7 +1303,7 @@ fn assert_strict(event: &serde_json::Value, verb: &str, server: &str) {
 #[tokio::test]
 async fn media_proxy_signs_a_fresh_get_and_forwards_only_the_range() {
     let (base, task) = fixture_server(
-        "HTTP/1.1 206 Partial Content\r\nContent-Type: text/html\r\nContent-Range: bytes 0-3/10\r\nContent-Length: 4\r\nConnection: close\r\n\r\n<b>x",
+        "HTTP/1.1 206 Partial Content\r\nContent-Type: text/html\r\nContent-Range: bytes 0-3/10\r\nContent-Length: 4\r\nConnection: close\r\n\r\n<b>x".into(),
     );
     let url = base.join(&format!("/media/{}", "a".repeat(64))).unwrap();
     let response = fetch_media(
@@ -1331,7 +1331,7 @@ async fn media_proxy_signs_a_fresh_get_and_forwards_only_the_range() {
 #[tokio::test]
 async fn media_proxy_passes_relay_denials_through_without_a_body() {
     let (base, task) = fixture_server(
-        "HTTP/1.1 401 Unauthorized\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 401 Unauthorized\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into(),
     );
     let url = base.join(&format!("/media/{}", "b".repeat(64))).unwrap();
     assert_eq!(
@@ -1346,7 +1346,7 @@ async fn media_proxy_passes_relay_denials_through_without_a_body() {
 #[tokio::test]
 async fn upload_signs_the_exact_bytes_it_sends() {
     let (base, task) = fixture_server(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into(),
     );
     let url = base.join("/upload").unwrap();
     // ASCII: the fixture server compares lengths on decoded text.

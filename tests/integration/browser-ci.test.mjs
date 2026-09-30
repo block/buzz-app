@@ -11,9 +11,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, posix } from "node:path";
+import { join, posix } from "node:path";
 import test from "node:test";
 import { parse } from "yaml";
+import { imageEngines } from "../../scripts/check-browser-image.mjs";
 import ciConfig from "../browser/playwright.ci.config.mjs";
 import config from "../browser/playwright.config.mjs";
 import { run } from "../browser/run-command.mjs";
@@ -90,18 +91,41 @@ test("twelve independent browser jobs retain isolated measurements and native se
     assert.deepEqual(projects[engine].dependencies, ["webkit-measurements"]);
 });
 
-test("browser Rust setup uses the repository pin before Hermit and fails closed", (t) => {
+test("browser fixture retains a validated repository Rust pin and linker before Hermit", (t) => {
   const { steps } = parse(workflow).jobs.browser;
+  const resolve = steps.find((step) => step.id === "browser-rust");
   const install = steps.find(
     (step) => step.name === "Install minimal pinned Rust for browser fixtures",
   );
-  assert.ok(install);
-  assert.equal(install.if, undefined);
-  assert.equal(install["continue-on-error"], undefined);
+  const select = steps.find(
+    (step) => step.name === "Keep fixture toolchain inside Hermit",
+  );
+  const prerequisites = steps.find(
+    (step) => step.name === "Native fixture build prerequisites",
+  );
+  assert.equal(
+    install.uses,
+    "dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87",
+  );
+  assert.equal(
+    install.with.toolchain,
+    `\${{ steps.browser-rust.outputs.version }}`,
+  );
+  assert.match(
+    prerequisites.run,
+    /apt-get install --no-install-recommends -y build-essential/,
+  );
+  assert.ok(steps.indexOf(resolve) < steps.indexOf(install));
+  assert.ok(steps.indexOf(install) < steps.indexOf(select));
   assert.ok(
-    steps.indexOf(install) <
+    steps.indexOf(select) <
       steps.findIndex((step) => step.uses === "./.github/actions/setup"),
   );
+  for (const step of [prerequisites, resolve, install, select]) {
+    assert.ok(step);
+    assert.equal(step.if, undefined);
+    assert.equal(step["continue-on-error"], undefined);
+  }
   const pins = readdirSync(new URL("../../bin", import.meta.url)).filter(
     (name) => /^\.rust-.*\.pkg$/.test(name),
   );
@@ -117,46 +141,41 @@ test("browser Rust setup uses the repository pin before Hermit and fails closed"
     });
   writeFileSync(
     join(cwd, "rustup"),
-    '#!/bin/sh\nprintf "%s\\n" "$*" >> calls\nif [ "$1" = toolchain ]; then exit "$INSTALL_STATUS"; fi\nprintf "%s/toolchain/rustc\\n" "$PWD"\n',
+    '#!/bin/sh\n[ "$1 $2 $3 $4" = "which --toolchain $RUST_VERSION rustc" ] || exit 1\nprintf "%s/toolchain/rustc\\n" "$PWD"\n',
     { mode: 0o755 },
   );
   const output = join(cwd, "output");
-  const execute = (status = "0") => {
+  const execute = (script) => {
     writeFileSync(output, "");
-    writeFileSync(join(cwd, "calls"), "");
-    return spawnSync("bash", ["-eo", "pipefail", "-c", install.run], {
+    return spawnSync("bash", ["-eo", "pipefail", "-c", script], {
       cwd,
       env: {
         ...process.env,
         PATH: `${cwd}:${process.env.PATH}`,
+        GITHUB_OUTPUT: output,
         GITHUB_ENV: output,
-        INSTALL_STATUS: status,
+        RUST_VERSION: version,
       },
       encoding: "utf8",
       timeout: 5000,
     });
   };
-  assert.notEqual(execute().status, 0, "missing pin must fail");
+  assert.notEqual(execute(resolve.run).status, 0, "missing pin must fail");
   symlinkSync("hermit", join(cwd, "bin", pins[0]));
-  const result = execute();
+  const result = execute(resolve.run);
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(
-    readFileSync(join(cwd, "calls"), "utf8"),
-    `toolchain install ${version} --profile minimal --no-self-update\nwhich --toolchain ${version} rustc\n`,
-  );
+  assert.equal(readFileSync(output, "utf8"), `version=${version}\n`);
+  assert.equal(execute(select.run).status, 0);
   assert.equal(
     readFileSync(output, "utf8"),
     `RUSTUP_TOOLCHAIN=${version}\nHERMIT_PREPEND_PATH=${cwd}/toolchain\n`,
   );
-  assert.notEqual(
-    execute("1").status,
-    0,
-    "installation failure must propagate",
-  );
+  rmSync(join(cwd, "toolchain", "cargo"));
+  assert.notEqual(execute(select.run).status, 0, "missing compiler must fail");
   assert.equal(readFileSync(output, "utf8"), "");
   symlinkSync("hermit", join(cwd, "bin/.rust-other.pkg"));
-  assert.notEqual(execute().status, 0, "ambiguous pin must fail");
-  assert.equal(readFileSync(join(cwd, "calls"), "utf8"), "");
+  assert.notEqual(execute(resolve.run).status, 0, "ambiguous pin must fail");
+  assert.equal(readFileSync(output, "utf8"), "");
 });
 
 test("workflow shards discover every functional test/project exactly once", (t) => {
@@ -391,131 +410,74 @@ test("Hermit cache keys distinguish jobs that provision different tools", () => 
   assert.match(setup, /key: hermit-.*\$\{\{ github\.job \}\}/);
 });
 
-test("browser cache follows the installed Playwright version, not unrelated dependency edits", (t) => {
-  const { steps } = parse(read(".github/actions/setup/action.yml")).runs;
-  const version = steps.find((step) => step.id === "playwright");
-  const cache = steps.find((step) => step.name === "Cache Playwright engines");
-  const install = steps.find(
-    (step) => step.name === "Install pinned browser engines and libraries",
-  );
-  assert.ok(version, "resolve the installed version after the frozen install");
-  assert.ok(
-    steps.findIndex((step) => step.run === "pnpm install --frozen-lockfile") <
-      steps.indexOf(version),
-  );
-  assert.ok(steps.indexOf(version) < steps.indexOf(cache));
-  assert.ok(steps.indexOf(cache) < steps.indexOf(install));
-  for (const step of [version, cache, install])
-    assert.equal(step.if, "inputs.browsers == 'true'");
-  assert.equal(install.env.PLAYWRIGHT_ENGINE, `\${{ inputs.browser-engine }}`);
-  assert.equal(
-    cache.with.key,
-    `playwright-\${{ runner.os }}-\${{ runner.arch }}-\${{ steps.playwright.outputs.version }}-\${{ inputs.browser-engine }}`,
-  );
-  assert.equal(cache.with["restore-keys"], undefined);
-
-  const cwd = mkdtempSync(join(tmpdir(), "buzz-playwright-version-"));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
-  const manifest = join(cwd, "node_modules/@playwright/test/package.json");
-  const output = join(cwd, "output");
-  mkdirSync(dirname(manifest), { recursive: true });
-  const resolve = () => {
-    writeFileSync(output, "");
-    return spawnSync("bash", ["-e", "-c", version.run], {
-      cwd,
-      env: { ...process.env, GITHUB_OUTPUT: output },
-      encoding: "utf8",
-      timeout: 5000,
-    });
-  };
-  for (const installed of ["1.60.0", "1.61.0"]) {
-    writeFileSync(manifest, JSON.stringify({ version: installed }));
-    for (const unrelated of ["before", "after"]) {
-      writeFileSync(join(cwd, "pnpm-lock.yaml"), unrelated);
-      const result = resolve();
-      assert.equal(result.status, 0, result.stderr);
-      assert.equal(readFileSync(output, "utf8"), `version=${installed}\n`);
-    }
-  }
-  rmSync(manifest);
-  assert.notEqual(
-    resolve().status,
-    0,
-    "missing installation must fail, not cache an empty version",
-  );
-  assert.equal(readFileSync(output, "utf8"), "");
-});
-
-test("functional shards install only their engine; measurements retain both and provisioning errors fail closed", (t) => {
-  const action = parse(read(".github/actions/setup/action.yml"));
+test("browser jobs use one immutable image matching the package pin, without per-job browser downloads", () => {
   const { jobs } = parse(workflow);
-  const setup = (name) =>
-    jobs[name].steps.find((step) => step.uses === "./.github/actions/setup");
-  assert.equal(action.inputs["browser-engine"].default, "all");
+  const setup = parse(read(".github/actions/setup/action.yml"));
+  const version = JSON.parse(read("package.json")).devDependencies[
+    "@playwright/test"
+  ];
+  const image = `mcr.microsoft.com/playwright:v${version}-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27`;
+  for (const name of ["measurements", "browser"]) {
+    const job = jobs[name];
+    assert.equal(job.container.image, image);
+    assert.equal(job.container.options, "--init --ipc=host");
+    assert.equal(job.defaults.run.shell, "bash");
+    assert.equal(job["timeout-minutes"], 15);
+    assert.equal(
+      job.steps.find((step) => step.uses === "./.github/actions/setup").with
+        .browsers,
+      "true",
+    );
+  }
+  for (const name of ["javascript", "native", "windows-native"])
+    assert.equal(jobs[name].container, undefined);
+  assert.equal(setup.inputs["browser-engine"].default, "all");
+  const configured = (name) =>
+    jobs[name].steps.find((step) => step.uses === "./.github/actions/setup")
+      .with;
   assert.equal(
-    setup("browser").with["browser-engine"],
+    configured("browser")["browser-engine"],
     `\${{ matrix.engine }}`,
   );
-  assert.equal(setup("measurements").with.browsers, "true");
-  assert.equal(setup("measurements").with["browser-engine"], undefined);
-  assert.equal(jobs.browser["timeout-minutes"], 15);
-  assert.equal(jobs.measurements["timeout-minutes"], 15);
-  const install = action.runs.steps.find(
-    (step) => step.name === "Install pinned browser engines and libraries",
+  assert.equal(configured("measurements")["browser-engine"], undefined);
+  const steps = setup.runs.steps,
+    verify = steps.find((step) => step.name === "Verify pinned browser image");
+  assert.equal(verify.if, "inputs.browsers == 'true'");
+  assert.equal(verify["continue-on-error"], undefined);
+  assert.equal(verify.run, "node scripts/check-browser-image.mjs");
+  assert.equal(verify.env.PLAYWRIGHT_ENGINE, `\${{ inputs.browser-engine }}`);
+  assert.ok(
+    steps.indexOf(verify) >
+      steps.findIndex((step) => step.run === "pnpm install --frozen-lockfile"),
   );
-  assert.equal(install.if, "inputs.browsers == 'true'");
-  assert.equal(install["continue-on-error"], undefined);
-  assert.doesNotMatch(install.run, /eval|continue-on-error|\|\| true/);
-  const cwd = mkdtempSync(join(tmpdir(), "buzz-browser-engine-"));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
-  writeFileSync(
-    join(cwd, "pnpm"),
-    '#!/bin/sh\nprintf "%s\\n" "$@" > "$PWD/args"\nexit "$INSTALL_STATUS"\n',
-    { mode: 0o755 },
+  assert.doesNotMatch(
+    read(".github/actions/setup/action.yml"),
+    /playwright install|apt-get|ms-playwright/,
   );
-  const execute = (engine, status = "0") => {
-    writeFileSync(join(cwd, "args"), "");
-    return spawnSync("bash", ["-eo", "pipefail", "-c", install.run], {
-      cwd,
-      env: {
-        ...process.env,
-        PATH: `${cwd}:${process.env.PATH}`,
-        PLAYWRIGHT_ENGINE: engine,
-        INSTALL_STATUS: status,
-      },
-      encoding: "utf8",
-      timeout: 5000,
-    });
+});
+
+test("image verification rejects version/image mismatch and never silently omits an engine", () => {
+  const version = JSON.parse(read("package.json")).devDependencies[
+    "@playwright/test"
+  ];
+  const info = {
+    driverVersion: version,
+    dockerImageName: `mcr.microsoft.com/playwright:v${version}-noble`,
   };
-  for (const [engine, expected] of [
-    ["all", ["chromium", "webkit"]],
-    ["chromium", ["chromium"]],
-    ["webkit", ["webkit"]],
-  ]) {
-    const result = execute(engine);
-    assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(
-      readFileSync(join(cwd, "args"), "utf8").trim().split("\n"),
-      ["exec", "playwright", "install", "--with-deps", ...expected],
-    );
-    assert.equal(
-      execute(engine, "7").status,
-      7,
-      "installer errors must propagate",
-    );
-  }
+  assert.deepEqual(imageEngines(info, version, "all"), ["chromium", "webkit"]);
+  for (const engine of ["chromium", "webkit"])
+    assert.deepEqual(imageEngines(info, version, engine), [engine]);
   for (const engine of [
     "",
     "firefox",
     "chromium webkit",
-    "chromium; touch unexpected",
-    "$(touch unexpected)",
-  ]) {
-    assert.notEqual(execute(engine).status, 0);
-    assert.equal(
-      readFileSync(join(cwd, "args"), "utf8"),
-      "",
-      "invalid input must not run an installer",
-    );
-  }
+    "chromium;echo unexpected",
+  ])
+    assert.throws(() => imageEngines(info, version, engine));
+  for (const bad of [
+    {},
+    { ...info, driverVersion: "0.0.0" },
+    { ...info, dockerImageName: "untrusted/image" },
+  ])
+    assert.throws(() => imageEngines(bad, version, "all"));
 });

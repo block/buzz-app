@@ -108,6 +108,13 @@ jobs:
     if: github.event_name != 'workflow_dispatch'
     name: Browser measurements
     runs-on: ubuntu-24.04
+    # Match package.json's Playwright version and pin immutable browser/OS layers.
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+      options: --init --ipc=host
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -147,6 +154,13 @@ jobs:
     # Measurements stay isolated on their own runner, not on our critical path.
     # CI required still requires their success independently of these jobs.
     runs-on: ubuntu-24.04
+    # Match package.json's Playwright version and pin immutable browser/OS layers.
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+      options: --init --ipc=host
+    defaults:
+      run:
+        shell: bash
     # Six file-level shards split the large file groups that remain together
     # with four or five shards, leaving room for setup inside the same deadline.
     timeout-minutes: 15
@@ -159,26 +173,35 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      # Browser fixtures need only the pinned compiler, Cargo and standard library,
-      # not Hermit's full Rust archive (including docs). Keep this path first even
-      # when pnpm/Node re-enter Hermit, so cold shards do not install Rust twice.
-      - name: Install minimal pinned Rust for browser fixtures
-        shell: bash
+      # The browser image already contains both engines and their libraries.
+      # Its native fixture still needs a compiler/linker and the repository Rust pin.
+      - name: Native fixture build prerequisites
+        run: |
+          apt-get update
+          apt-get install --no-install-recommends -y build-essential
+      - name: Resolve pinned browser Rust
+        id: browser-rust
         run: |
           pins=(bin/.rust-*.pkg)
           test "${#pins[@]}" -eq 1
           test -L "${pins[0]}"
           version=${pins[0]#bin/.rust-}
           version=${version%.pkg}
-          rustup toolchain install "$version" --profile minimal --no-self-update
-          rustc_path=$(rustup which --toolchain "$version" rustc)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install minimal pinned Rust for browser fixtures
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: ${{ steps.browser-rust.outputs.version }}
+      - name: Keep fixture toolchain inside Hermit
+        env:
+          RUST_VERSION: ${{ steps.browser-rust.outputs.version }}
+        run: |
+          rustc_path=$(rustup which --toolchain "$RUST_VERSION" rustc)
           toolchain_bin=$(dirname "$rustc_path")
           test -x "$toolchain_bin/rustc"
           test -x "$toolchain_bin/cargo"
-          echo "RUSTUP_TOOLCHAIN=$version" >> "$GITHUB_ENV"
+          echo "RUSTUP_TOOLCHAIN=$RUST_VERSION" >> "$GITHUB_ENV"
           echo "HERMIT_PREPEND_PATH=$toolchain_bin" >> "$GITHUB_ENV"
-      # Each functional shard runs one engine; avoid installing the other
-      # engine's Linux media/system libraries inside this job's deadline.
       - uses: ./.github/actions/setup
         with:
           browsers: "true"

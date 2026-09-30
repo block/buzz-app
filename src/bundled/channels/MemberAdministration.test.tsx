@@ -10,7 +10,6 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { formatPublicKey } from "../../shared/identity/public-key";
-import { npubEncode } from "nostr-tools/nip19";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { keypair, profile, signed } from "../../features/relay/testing";
@@ -239,6 +238,61 @@ it.each([
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
+
+it.each([
+  [true, "owner", "Owners"],
+  [true, "admin", "Admins"],
+  [true, "member", "Agents"],
+  [true, "guest", "Agents"],
+  [true, "bot", "Agents"],
+  [false, "bot", "Members"],
+] as const)(
+  "groups agent identities below elevated roles (agent: %s, role: %s)",
+  async (agent, role, expected) => {
+    const t = await setup("member", role, true, undefined, agent);
+    const row = screen.getByRole("button", {
+      name: /^Open profile for Morgan/,
+    });
+    expect(row.closest("section")).toHaveAttribute("aria-label", expected);
+    expect(memberOrder()).toEqual(
+      role === "owner"
+        ? ["Morgan", "Owner", "Carl"]
+        : role === "admin"
+          ? ["Owner", "Morgan", "Carl"]
+          : ["Owner", "Carl", "Morgan"],
+    );
+    const count = expected === "Owners" || expected === "Members" ? 2 : 1;
+    await t.user.type(screen.getByRole("searchbox"), "Morgan");
+    expect(memberOrder()).toEqual(["Morgan"]);
+    expect(
+      screen.getByRole("heading", { name: `${expected} · ${count}` }),
+    ).toBeVisible();
+    expect(t.publish).not.toHaveBeenCalled();
+  },
+);
+
+it("moves an agent between elevated roles and Agents after a verified refresh", async () => {
+  const t = await setup("member", "member", true, undefined, true);
+  const refresh = screen.getByRole("button", { name: "Refresh member data" });
+  for (const [role, group] of [
+    ["admin", "Admins"],
+    ["owner", "Owners"],
+    ["member", "Agents"],
+  ]) {
+    await vi.waitFor(() =>
+      expect(refresh).toHaveAttribute("aria-busy", "false"),
+    );
+    t.confirm(role);
+    await t.user.click(refresh);
+    await vi.waitFor(() =>
+      expect(screen.getByText("Morgan").closest("section")).toHaveAttribute(
+        "aria-label",
+        group,
+      ),
+    );
+  }
+  expect(t.publish).not.toHaveBeenCalled();
+});
 
 it("withholds initial rows until roles settle, then preserves content through refresh", async () => {
   let release!: () => void;
@@ -527,7 +581,7 @@ it.each([
     await screen.findByRole("menuitem", { name: "Remove from channel" });
     expect(
       screen.getAllByRole("menuitem").map((item) => item.textContent),
-    ).toEqual(["View profile", "Copy npub", ...actions]);
+    ).toEqual(["View profile", ...actions]);
     await t.user.keyboard("{Escape}");
     expect(
       within(row).getByRole("button", { name: /Open profile/ }),
@@ -551,7 +605,7 @@ it("changes an existing Guest to Member only after explicit confirmation", async
   expect(t.publish).toHaveBeenCalledOnce();
 });
 it.each([false, true])(
-  "groups Bot with Members while retaining its accessible role and removal-only policy (Agent: %s)",
+  "groups Bot by identity while retaining its accessible role and removal-only policy (Agent: %s)",
   async (agent) => {
     const t = await setup("owner", "bot", true, undefined, agent);
     const row = screen.getByRole("button", { name: /Open profile for Morgan/ });
@@ -559,7 +613,7 @@ it.each([false, true])(
       expect(
         row.closest("li")?.querySelector('[data-avatar-shape="squircle"]'),
       ).toBeInTheDocument();
-      expect(row.closest("section")).toHaveAttribute("aria-label", "Members");
+      expect(row.closest("section")).toHaveAttribute("aria-label", "Agents");
       expect(
         within(required(row.closest("li"))).queryByText("bot"),
       ).not.toBeInTheDocument();
@@ -602,7 +656,7 @@ it.each(["member", "admin", "owner", "guest"])(
     ).not.toBeInTheDocument();
     expect(row.closest("section")).toHaveAttribute(
       "aria-label",
-      role === "owner" ? "Owners" : role === "admin" ? "Admins" : "Members",
+      role === "owner" ? "Owners" : role === "admin" ? "Admins" : "Agents",
     );
     expect(row).toHaveAccessibleName(new RegExp(`, ${role}$`));
     expect(t.publish).not.toHaveBeenCalled();
@@ -956,7 +1010,7 @@ async function expectProfileOnly(
   await user.click(screen.getByRole("button", { name: `Actions for ${name}` }));
   expect(
     (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
-  ).toEqual(["View profile", "Copy npub"]);
+  ).toEqual(["View profile"]);
   await vi.waitFor(() => expect(screen.getByRole("menu")).toHaveFocus());
   await user.keyboard("{Escape}");
   await vi.waitFor(() =>
@@ -987,12 +1041,7 @@ it.each(["ellipsis", "context", "keyboard", "context-key"])(
     }
     expect(
       (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
-    ).toEqual([
-      "View profile",
-      "Copy npub",
-      "Make admin",
-      "Remove from channel",
-    ]);
+    ).toEqual(["View profile", "Make admin", "Remove from channel"]);
     expect(t.onOpenLink).not.toHaveBeenCalled();
     expect(t.publish).not.toHaveBeenCalled();
     await t.user.click(screen.getByRole("menuitem", { name: "View profile" }));
@@ -1082,66 +1131,21 @@ it.each([false, true])(
 );
 
 it.each(["Carl", "Owner", "Morgan"])(
-  "copies the full npub for %s without opening a profile or changing membership",
+  "offers profile navigation instead of Copy npub for %s",
   async (name) => {
     const t = await setup();
-    const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
-    const profile = screen.getByRole("button", {
-      name: new RegExp(`^Open profile for ${name} `),
-    });
-    const row = required(profile.closest("li"));
-    const npub =
-      name === "Carl"
-        ? npubEncode(t.viewer.pubkey)
-        : name === "Morgan"
-          ? npubEncode(t.target.pubkey)
-          : npubEncode(
-              required(
-                t.session.channels
-                  .get?.(id)
-                  ?.members?.find(
-                    (key) => key !== t.viewer.pubkey && key !== t.target.pubkey,
-                  ),
-              ),
-            );
     await t.user.click(
-      within(row).getByRole("button", { name: `Actions for ${name}` }),
+      screen.getByRole("button", { name: `Actions for ${name}` }),
     );
-    await t.user.click(
-      await screen.findByRole("menuitem", { name: "Copy npub" }),
-    );
-    expect(copy).toHaveBeenCalledExactlyOnceWith(npub);
-    expect(await screen.findByText("Copied npub")).toBeVisible();
+    const view = await screen.findByRole("menuitem", { name: "View profile" });
     expect(
-      screen.getByRole("dialog", { name: "Channel members" }),
-    ).toBeVisible();
-    expect(t.onOpenLink).not.toHaveBeenCalled();
+      screen.queryByRole("menuitem", { name: "Copy npub" }),
+    ).not.toBeInTheDocument();
+    await t.user.click(view);
+    expect(t.onOpenLink).toHaveBeenCalledOnce();
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
-
-it("keeps agent Copy available after clipboard rejection and retries from the menu", async () => {
-  const t = await setup("owner", "member", true, undefined, true);
-  const copy = vi
-    .spyOn(navigator.clipboard, "writeText")
-    .mockRejectedValueOnce(new Error("denied"))
-    .mockResolvedValue();
-  const actions = screen.getByRole("button", { name: "Actions for Morgan" });
-  await t.user.click(actions);
-  await t.user.click(
-    await screen.findByRole("menuitem", { name: "Copy npub" }),
-  );
-  expect(
-    await screen.findByText("Couldn’t copy npub. Try again."),
-  ).toBeVisible();
-  await t.user.click(actions);
-  await t.user.click(
-    await screen.findByRole("menuitem", { name: "Copy npub" }),
-  );
-  expect(await screen.findByText("Copied npub")).toBeVisible();
-  expect(copy).toHaveBeenNthCalledWith(2, npubEncode(t.target.pubkey));
-  expect(t.publish).not.toHaveBeenCalled();
-});
 
 it.each([
   [false, "member", true, true, true],
@@ -1167,17 +1171,13 @@ it.each([
     );
     expect(
       (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
-    ).toEqual(
-      offered
-        ? ["View profile", "Send message", "Copy npub"]
-        : ["View profile", "Copy npub"],
-    );
+    ).toEqual(offered ? ["View profile", "Send message"] : ["View profile"]);
     await t.user.keyboard("{Escape}");
     await t.user.click(
       screen.getByRole("button", { name: "Actions for Carl" }),
     );
     expect(
-      await screen.findByRole("menuitem", { name: "Copy npub" }),
+      await screen.findByRole("menuitem", { name: "View profile" }),
     ).toBeVisible();
     expect(
       screen.queryByRole("menuitem", { name: "Send message" }),

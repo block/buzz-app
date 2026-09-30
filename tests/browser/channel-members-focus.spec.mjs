@@ -54,7 +54,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 // A real mounted member dialog and shared session, but no relay or external write.
-test("identity copy preserves modal focus and addition returns focus only to its owner", async ({
+test("identity menus preserve modal focus and addition returns focus only to its owner", async ({
   page,
 }, testInfo) => {
   const { errors } = watchPageErrors(page);
@@ -91,17 +91,8 @@ test("identity copy preserves modal focus and addition returns focus only to its
         name: "Actions for Morgan",
         exact: true,
       });
-      await expect(menu.getByRole("menuitem")).toHaveText([
-        "View profile",
-        "Copy npub",
-      ]);
-      await menu
-        .getByRole("menuitem", { name: "Copy npub", exact: true })
-        .click();
-      const npub = await page.evaluate(() => window.focusFixture.personNpub);
-      await expect
-        .poll(() => page.evaluate(() => window.copiedNpubs))
-        .toEqual([npub]);
+      await expect(menu.getByRole("menuitem")).toHaveText(["View profile"]);
+      await page.keyboard.press("Escape");
       await expect(actions).toBeFocused();
       await expect(dialog).toBeVisible();
       await expect(add).toBeEnabled();
@@ -118,13 +109,10 @@ test("identity copy preserves modal focus and addition returns focus only to its
       await page.keyboard.press("Tab");
       await expect(actions).toBeFocused();
       await page.keyboard.press("Enter");
-      await menu
-        .getByRole("menuitem", { name: "Copy npub", exact: true })
-        .focus();
-      await page.keyboard.press("Enter");
-      await expect
-        .poll(() => page.evaluate(() => window.copiedNpubs))
-        .toEqual([npub, npub]);
+      await expect(
+        menu.getByRole("menuitem", { name: "View profile", exact: true }),
+      ).toBeFocused();
+      await page.keyboard.press("Escape");
       await expect(actions).toBeFocused();
       await expect(
         page.getByRole("dialog", { name: "Morgan identity", exact: true }),
@@ -536,7 +524,7 @@ test("inline member identity geometry and separate addition focus", async ({
 
 test.describe("touch identity actions", () => {
   test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
-  test("copies the full key from the menu without hover or profile navigation", async ({
+  test("opens profiles from the member menu without hover", async ({
     page,
   }) => {
     await page.goto(url);
@@ -553,12 +541,15 @@ test.describe("touch identity actions", () => {
     });
     await expect(actions).toBeVisible();
     await actions.tap();
-    await page.getByRole("menuitem", { name: "Copy npub", exact: true }).tap();
-    const npub = await page.evaluate(() => window.focusFixture.viewerNpub);
-    await expect
-      .poll(() => page.evaluate(() => window.copiedNpubs))
-      .toEqual([npub]);
-    await expect(dialog).toBeVisible();
+    const menu = page.getByRole("menu", { name: "Actions for Carl" });
+    await expect(menu.getByRole("menuitem")).toHaveText(["View profile"]);
+    await menu
+      .getByRole("menuitem", { name: "View profile", exact: true })
+      .tap();
+    await expect(dialog).toHaveCount(0);
+    expect(await page.evaluate(() => window.focusFixture.additions)).toEqual(
+      [],
+    );
   });
 });
 
@@ -685,5 +676,119 @@ test("member menus toggle and dismiss through shared owners", async ({
   await page.mouse.click(8, 8);
   await expect(dialog).toHaveCount(0);
   expect(await page.evaluate(() => window.focusFixture.additions)).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+// Native scroll events, portaled focus and final-focus scroll restoration require
+// a browser; jsdom cannot establish the row geometry or preserved scroll offset.
+test("scrolling members dismisses button and context menus without jumping back", async ({
+  page,
+}) => {
+  const { errors } = watchPageErrors(page);
+  await page.goto(`${url}?scroll`);
+  await page
+    .getByRole("button", { name: "Channel members", includeHidden: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Channel members",
+    includeHidden: true,
+  });
+  const list = dialog.getByRole("region", {
+    name: "Member list",
+    includeHidden: true,
+  });
+  const actions = dialog.getByRole("button", { name: "Actions for Carl" });
+  const profile = dialog.getByRole("button", { name: /Open profile for Carl/ });
+  const menu = page.getByRole("menu", { name: "Actions for Carl" });
+  await expect(list.getByRole("listitem", { includeHidden: true })).toHaveCount(
+    17,
+  );
+  for (const mode of ["button", "context", "keyboard"]) {
+    await list.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    await expect
+      .poll(() => list.evaluate((element) => element.scrollTop))
+      .toBe(0);
+    await profile.hover();
+    if (mode === "button") await actions.click();
+    else if (mode === "context") await profile.click({ button: "right" });
+    else {
+      await profile.focus();
+      await page.keyboard.press("Shift+F10");
+    }
+    await opened(menu);
+    // A scroll inside the portaled menu is not a scroll of the member list.
+    await menu.dispatchEvent("scroll");
+    await expect(menu).toHaveAttribute("data-open", "");
+    await list.evaluate(
+      (element) =>
+        new Promise((resolve) => {
+          element.addEventListener("scroll", resolve, { once: true });
+          element.scrollTop = 160;
+        }),
+    );
+    await expect(menu).toHaveCount(0);
+    await expect(dialog).toBeVisible();
+    expect(await list.evaluate((element) => element.scrollTop)).toBe(160);
+  }
+  expect(await page.evaluate(() => window.focusFixture.additions)).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test("portaled menu focus does not leave an empty second identity line", async ({
+  page,
+}) => {
+  const { errors } = watchPageErrors(page);
+  await page.goto(url);
+  await page
+    .getByRole("button", { name: "Channel members", includeHidden: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Channel members",
+    includeHidden: true,
+  });
+  const row = dialog.getByRole("listitem", { includeHidden: true }).first();
+  const profile = row.getByRole("button", { name: /Open profile for Carl/ });
+  const actions = row.getByRole("button", { name: "Actions for Carl" });
+  const key = row.locator('[aria-hidden="true"].text-mono');
+  const metadata = key.locator("../..");
+  const search = dialog.getByRole("searchbox", { includeHidden: true });
+  const menu = page.getByRole("menu", { name: "Actions for Carl" });
+  await expect(profile).toBeVisible();
+  for (const mode of ["button", "context", "keyboard"]) {
+    await profile.hover();
+    await expect(key).toBeVisible();
+    if (mode === "button") await actions.click();
+    else if (mode === "context") await profile.click({ button: "right" });
+    else {
+      await profile.focus();
+      await page.keyboard.press("Shift+F10");
+    }
+    await opened(menu);
+    await menu.getByRole("menuitem").first().focus();
+    await search.hover();
+    await expect(key).toBeHidden();
+    await expect(metadata).toHaveCSS("height", "0px");
+    await expect(metadata).toHaveCSS("margin-top", "0px");
+    const nameBounds = await row
+      .getByText("Carl (you)", { exact: true })
+      .boundingBox();
+    const avatarBounds = await row.locator("[data-avatar-shape]").boundingBox();
+    expect(nameBounds.y + nameBounds.height / 2).toBeCloseTo(
+      avatarBounds.y + avatarBounds.height / 2,
+      0,
+    );
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    await search.focus();
+    await expect(metadata).toHaveCSS("height", "0px");
+    await profile.focus();
+    await expect(key).toBeVisible();
+    await expect(metadata).toHaveAttribute("style", /height: auto/);
+    await search.focus();
+    await expect(key).toBeHidden();
+    await expect(metadata).toHaveCSS("height", "0px");
+  }
   expect(errors).toEqual([]);
 });

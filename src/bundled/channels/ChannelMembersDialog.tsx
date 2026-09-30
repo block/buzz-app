@@ -150,6 +150,7 @@ export function ChannelMembersDialog({
   const [openingMessage, setOpeningMessage] = useState(false);
   const [messageError, setMessageError] = useState("");
   const input = useRef<HTMLElement>(null);
+  const scrollport = useRef<HTMLElement>(null);
   const focusedAdd = useRef<{ key: string; button: HTMLButtonElement } | null>(
     null,
   );
@@ -326,11 +327,17 @@ export function ChannelMembersDialog({
   const currentMembers = [...members].sort(
     (a, b) => label(a).localeCompare(label(b)) || a.localeCompare(b),
   );
-  const groups = ["Owners", "Admins", "Members"].map((name) => {
+  const groups = ["Owners", "Admins", "Members", "Agents"].map((name) => {
     const keys = currentMembers.filter((key) => {
       const role = administration.authority.roles[key];
       const group =
-        role === "owner" ? "Owners" : role === "admin" ? "Admins" : "Members";
+        role === "owner"
+          ? "Owners"
+          : role === "admin"
+            ? "Admins"
+            : known.has(key) || profiles.get(key)?.isAgent
+              ? "Agents"
+              : "Members";
       return group === name;
     });
     return {
@@ -601,6 +608,7 @@ export function ChannelMembersDialog({
         pubkey={key}
         name={name}
         returnFocus={input}
+        scrollport={scrollport}
         onViewProfile={clickable ? viewProfile : undefined}
         onViewOwnerProfile={
           ownerTarget && onOpenLink && canOpenLink?.(ownerTarget)
@@ -697,7 +705,11 @@ export function ChannelMembersDialog({
             maxLength={256}
           />
         </div>
-        <section className={styles.memberList} aria-label="Member list">
+        <section
+          ref={scrollport}
+          className={styles.memberList}
+          aria-label="Member list"
+        >
           {!canAdd && (
             <p className="text-body-sm text-subtle">
               {channel?.channelType === "dm"

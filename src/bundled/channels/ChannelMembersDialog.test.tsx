@@ -783,7 +783,7 @@ it("shares the identity presentation with invitation rows without assigning a ch
   );
   expect(
     (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
-  ).toEqual(["View profile", "Copy npub"]);
+  ).toEqual(["View profile"]);
   await t.user.keyboard("{Escape}");
   expect(row.querySelector("[title]")).not.toBeInTheDocument();
   expect(within(row).queryByText("Role unverified")).not.toBeInTheDocument();
@@ -957,7 +957,7 @@ it.each([
         (await screen.findAllByRole("menuitem")).map(
           (item) => item.textContent,
         ),
-      ).toEqual(["View profile", "View owner profile", "Copy npub"]);
+      ).toEqual(["View profile", "View owner profile"]);
       await t.user.click(
         screen.getByRole("menuitem", { name: "View owner profile" }),
       );

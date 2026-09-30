@@ -1,6 +1,4 @@
 import { motion } from "motion/react";
-import { npubEncode } from "nostr-tools/nip19";
-import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import {
   useEffect,
   useRef,
@@ -37,7 +35,9 @@ function useMemberReveal() {
     initial: false as const,
     animate: focused ? "focused" : "rest",
     whileHover: focused ? "focused" : "revealed",
-    onFocusCapture: () => setFocused(true),
+    // React focus bubbles through portals; only physical row controls reveal it.
+    onFocusCapture: (event: FocusEvent<HTMLElement>) =>
+      setFocused(event.currentTarget.contains(event.target)),
     onBlurCapture: (event: FocusEvent<HTMLElement>) => {
       if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false);
     },
@@ -114,6 +114,7 @@ export function MemberRow({
   pubkey,
   name,
   returnFocus,
+  scrollport,
   onViewProfile,
   onViewOwnerProfile,
   onSendMessage,
@@ -126,6 +127,7 @@ export function MemberRow({
   pubkey: string;
   name: string;
   returnFocus: React.RefObject<HTMLElement | null>;
+  scrollport: React.RefObject<HTMLElement | null>;
   onViewProfile?: (() => boolean) | undefined;
   onViewOwnerProfile?: (() => boolean) | undefined;
   onSendMessage?: (() => void) | undefined;
@@ -134,7 +136,6 @@ export function MemberRow({
   children: ReactNode;
 }) {
   const reveal = useMemberReveal();
-  const notify = useToastNotification();
   const capability = session.memberAdministration;
   const state = useSyncExternalStore(
     capability.subscribe,
@@ -145,6 +146,13 @@ export function MemberRow({
   const cancel = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState<"button" | "context">();
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement>();
+  useEffect(() => {
+    const viewport = scrollport.current;
+    if (!menuOpen || !viewport) return;
+    const dismiss = () => setMenuOpen(undefined);
+    viewport.addEventListener("scroll", dismiss, { passive: true });
+    return () => viewport.removeEventListener("scroll", dismiss);
+  }, [menuOpen, scrollport]);
   const menuReturnFocus = useRef<HTMLElement | null>(null);
   const openingProfile = useRef(false);
   const role = state.authority.roles[pubkey] ?? "unknown";
@@ -192,18 +200,6 @@ export function MemberRow({
           Send message
         </MenuItem>
       )}
-      <MenuItem
-        onClick={() => {
-          void Promise.resolve()
-            .then(() => navigator.clipboard.writeText(npubEncode(pubkey)))
-            .then(
-              () => notify("Copied npub", "success"),
-              () => notify("Couldn’t copy npub. Try again.", "error"),
-            );
-        }}
-      >
-        Copy npub
-      </MenuItem>
       {permitted && !locked && (
         <>
           <MenuSeparator />

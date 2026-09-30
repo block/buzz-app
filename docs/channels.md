@@ -472,9 +472,11 @@ native acceptance.
 
 The existing **Channel members** dialog keeps ordinary invitations and adds
 verified roles plus per-member administration. Current members appear in separate
-**Owners**, **Admins** and **Members** groups with sticky headings and counts.
-Verified authority alone places someone in Owners or Admins; everyone else stays
-in Members without asserting a default protocol role. Each group is alphabetical
+**Owners**, **Admins**, **Members** and **Agents** groups with sticky headings and counts.
+Verified authority alone places someone in Owners or Admins, including agents.
+Everyone else is grouped by the same agent identity evidence used for avatar shapes:
+agent identities in Agents, other identities in Members, without asserting a default
+protocol role or treating the Bot role as agent identity. Each group is alphabetical
 by displayed name (public key breaks ties). Initial opening shows one accessible
 loading spinner inside the existing scrollport until the roster, role and member-name
 attempts settle; no provisional identity rows or groups appear. Missing names or
@@ -484,7 +486,7 @@ and all member profiles already available renders immediately. Later refreshes r
 preserve the last verified groups on failure. Visible member names request foreground
 priority; avatars, presence and manager enrichment never gate the initial list.
 Search filters
-each group, omits empty elevated groups, and preserves full group counts.
+each group, omits empty elevated and agent groups, and preserves full group counts.
 Non-member search ranking is unchanged.
 Current-member avatars and rows open the existing Profiles panel when its contribution
 is enabled; the Members dialog closes and closing the profile returns focus to the
@@ -500,10 +502,9 @@ Profiles with the same focus handoff; row-profile and owner-profile controls are
 siblings, never nested. Every current member has a separate
 ellipsis button (not nested inside profile navigation), with **View profile** first,
 then **View owner profile** for agents with verified ownership and available profile
-navigation, or **Send message** for other humans on a DM-capable connection, then **Copy npub**
-for every identity (including agents, owners and self), followed by permitted
-administration actions. Copy writes the full canonical npub, never the abbreviation,
-and reports success or clipboard failure without navigating or mutating membership.
+navigation, or **Send message** for other humans on a DM-capable connection,
+followed by permitted administration actions. Copying the full npub belongs to
+Profiles, not the member or invitation menu.
 Send message reuses the session's verified direct-message opener and the current
 conversation navigation owner; it sends no message automatically. One dialog-owned
 waiter blocks duplicate opens, shows pending/error status and allows explicit retry.
@@ -516,7 +517,11 @@ non-hover/touch input keeps the trigger visible. Right-click, Context Menu and
 Shift+F10 open the same action list through the shared context menu. The ellipsis
 uses a separate shared Menu root/trigger so each input retains its platform
 interaction owner; only one menu is open per row. The trigger owns toggling and
-outside-press dismissal. Escape returns focus to the originating row
+outside-press dismissal. Scrolling the member list dismisses either menu without
+resetting the scroll position; scrolling inside a menu does not dismiss it.
+Focus in a portaled menu is not row focus: once hover and physical row focus leave,
+the npub and its reserved space collapse together, recentering the name.
+Escape returns focus to the originating row
 control; profile navigation hands focus to the panel and returns to the external
 Channel members button when closed. Invitation rows reuse the same avatar, name,
 managed-by hint and public-key hover/focus presentation, without a channel-role
@@ -530,7 +535,7 @@ clipping it; profile targets fill the row height, with identity and actions cent
 Profile navigation stays available during an invitation; missing Profiles support
 leaves the identity static without disabling the separate Add button.
 The dialog retains its shared surface. A quiet `border-standard` outline frames
-one scrolling viewport, with Owners, Admins, Members and Not in this channel
+one scrolling viewport, with Owners, Admins, Members, Agents and Not in this channel
 separated inside it without extra boxes or fills. Every group heading sticks to the
 top of this viewport while scrolling within its own section, with an opaque matching
 surface so rows do not show through. There is no outer top padding to scroll away:

@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { npubEncode } from "nostr-tools/nip19";
 import { AgentSelection } from "../../src/bundled/channel-templates/TemplateFields";
 import { Dialog } from "../../src/shared/design-system/ui/Dialog";
 import { Button } from "../../src/shared/design-system/ui/Button";
@@ -36,7 +35,17 @@ const namesReady = new Promise<void>((resolve) => {
 let namesRequested = false;
 const additions: string[] = [];
 const channelId = "11111111-1111-4111-8111-111111111111";
-const members = [viewer.pubkey];
+// Only the scroll-dismissal journey needs an overflowing roster.
+const scrollMembers = new URLSearchParams(location.search).has("scroll")
+  ? Array.from({ length: 16 }, (_, index) => ({
+      key: keypair(),
+      name: `Member ${index + 1}`,
+    }))
+  : [];
+const members = [viewer.pubkey, ...scrollMembers.map(({ key }) => key.pubkey)];
+const scrollProfiles = scrollMembers.map(({ key, name }) =>
+  profile(key, { name }),
+);
 let clock = 1700000000;
 let publishStarted = () => {};
 let releasePublish = () => {};
@@ -73,6 +82,7 @@ const { session } = createRelaySession(
         }),
         profile(viewer, { name: "Carl" }),
         ...candidateProfiles,
+        ...scrollProfiles,
       ].filter((event) =>
         filters.some((filter) => matchesEvent(event, filter)),
       );
@@ -127,8 +137,6 @@ Object.assign(window, {
     namesRequested: () => namesRequested,
     releaseNames: () => releaseNames(),
     additions,
-    personNpub: npubEncode(person.pubkey),
-    viewerNpub: npubEncode(viewer.pubkey),
     confirm: () => releasePublish(),
   },
 });

@@ -302,6 +302,7 @@ export function ChannelMembersDialog({
   };
   return (
     <Dialog
+      dismissOnOutsideClick
       open
       onOpenChange={(open) => {
         if (!open) close();

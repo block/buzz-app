@@ -872,6 +872,195 @@ async function confirmDeletion(host = archived.normalized_host) {
   );
 }
 
+const deletionPosts = () =>
+  calls.filter(([url]) => url === "/api/builderlab/delete");
+
+async function startUncertainDeletion() {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/delete"] = () =>
+    Response.json({ error: { code: "acceptance_unknown" } }, { status: 503 });
+  const view = renderCard();
+  await confirmDeletion();
+  await screen.findByText("Deletion status is unknown");
+  const saved = JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? "");
+  expect(deletionPosts()).toEqual([["/api/builderlab/delete", saved.request]]);
+  return { view, saved };
+}
+
+async function expectSameRequestRecovery(saved: {
+  request: Record<string, string | number>;
+}) {
+  expect(JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? "")).toEqual(
+    saved,
+  );
+  expect(deletionPosts()).toEqual([["/api/builderlab/delete", saved.request]]);
+  routes["/api/builderlab/delete"] = (request) =>
+    Response.json(accepted(request), { status: 202 });
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Check deletion status" }),
+  );
+  await screen.findByText("Deletion started");
+  expect(deletionPosts()).toEqual([
+    ["/api/builderlab/delete", saved.request],
+    ["/api/builderlab/delete", saved.request],
+  ]);
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
+}
+
+it("keeps the uncertain UUID through sign-out and same-owner sign-in", async () => {
+  const { saved } = await startUncertainDeletion();
+  routes["/api/builderlab/sign-out"] = () => ({});
+  fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+  await screen.findByRole("button", { name: /Sign in with Builderlab/ });
+  expect(JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? "")).toEqual(
+    saved,
+  );
+  expect(deletionPosts()).toHaveLength(1);
+  routes["/api/builderlab/login"] = () => ({
+    auth: {
+      email: "a@example.com",
+      expiresAt: "2030",
+      capabilities: { can_delete_buzz_communities: true },
+    },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: /Sign in with Builderlab/ }),
+  );
+  await screen.findByText(saved.request.request_id);
+  await expectSameRequestRecovery(saved);
+});
+
+it("hides but retains an uncertain UUID across A to B to A", async () => {
+  const { saved } = await startUncertainDeletion();
+  routes["/api/builderlab/identity"] = () => ({
+    identity: { pubkey_hex: other },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByRole("region", { name: "Identity mismatch" });
+  expect(screen.queryByText(saved.request.request_id)).not.toBeInTheDocument();
+  expect(JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? "")).toEqual(
+    saved,
+  );
+  expect(deletionPosts()).toHaveLength(1);
+  routes["/api/builderlab/identity"] = () => ({
+    identity: { pubkey_hex: local },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByText(saved.request.request_id);
+  await expectSameRequestRecovery(saved);
+});
+
+it("retains the uncertain UUID through unpair and same-owner rebind", async () => {
+  const { saved } = await startUncertainDeletion();
+  routes["/api/builderlab/unbind"] = () => ({});
+  routes["/api/builderlab/identity"] = () => ({
+    error: { code: "missing_mapping", setup_needed: true },
+  });
+  routes["/api/builderlab/list"] = () => ({
+    error: { code: "missing_mapping", setup_needed: true },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Unpair identity" }));
+  const dialog = await screen.findByRole("alertdialog");
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Unpair identity" }),
+  );
+  await screen.findByRole("button", { name: "Connect Buzz identity" });
+  expect(deletionPosts()).toHaveLength(1);
+  expect(JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? "")).toEqual(
+    saved,
+  );
+  routes["/api/builderlab/bind"] = () => ({ identity: { pubkey_hex: local } });
+  routes["/api/builderlab/identity"] = () => ({
+    identity: { pubkey_hex: local },
+  });
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Connect Buzz identity" }),
+  );
+  await screen.findByText(saved.request.request_id);
+  await expectSameRequestRecovery(saved);
+});
+
+it.each(["setup-needed", "unauthorized"])(
+  "retains the uncertain UUID through %s and recovery",
+  async (failure) => {
+    const { saved } = await startUncertainDeletion();
+    const error =
+      failure === "setup-needed"
+        ? { code: "missing_mapping", setup_needed: true }
+        : { code: "unauthorized" };
+    routes["/api/builderlab/identity"] = () => ({
+      error,
+    });
+    routes["/api/builderlab/list"] = () => ({
+      error,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByRole("button", { name: "Connect Buzz identity" });
+    expect(
+      screen.queryByText(saved.request.request_id),
+    ).not.toBeInTheDocument();
+    expect(
+      JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? ""),
+    ).toEqual(saved);
+    expect(deletionPosts()).toHaveLength(1);
+    routes["/api/builderlab/identity"] = () => ({
+      identity: { pubkey_hex: local },
+    });
+    routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByText(saved.request.request_id);
+    await expectSameRequestRecovery(saved);
+  },
+);
+
+it("retains the uncertain UUID through Switch back to its owner", async () => {
+  const { saved } = await startUncertainDeletion();
+  routes["/api/builderlab/identity"] = () => ({
+    identity: { pubkey_hex: other },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByRole("region", { name: "Identity mismatch" });
+  routes["/api/builderlab/unbind"] = () => ({});
+  routes["/api/builderlab/bind"] = () => ({ identity: { pubkey_hex: local } });
+  routes["/api/builderlab/identity"] = () => ({
+    identity: { pubkey_hex: local },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Switch to this device’s identity" }),
+  );
+  await screen.findByText(saved.request.request_id);
+  await expectSameRequestRecovery(saved);
+});
+
+it("restores an accepted archived row only after its bound abort on Refresh", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/delete"] = (request) =>
+    Response.json(accepted(request), { status: 202 });
+  renderCard();
+  await confirmDeletion();
+  await screen.findByText("Deletion started");
+  const original = deletionPosts()[0]?.[1];
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
+  expect(deletionPosts()).toHaveLength(1);
+  routes["/api/builderlab/list"] = () => ({ communities: [] });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+  );
+  expect(deletionPosts()).toHaveLength(1);
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/delete"] = (request) =>
+    Response.json({ ...request, status: "aborted" }, { status: 202 });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(deletionPosts()).toHaveLength(2));
+  expect(deletionPosts()[1]?.[1]).toEqual(original);
+  expect(await screen.findByRole("button", { name: "Delete" })).toBeEnabled();
+  expect(
+    screen.getByText(/North\.communities\.buzz\.xyz · Archived/),
+  ).toBeVisible();
+});
+
 it.each([
   ["absent", {}],
   ["incomplete", { quota_used: 5, quota_limit: 5 }],
@@ -1131,7 +1320,7 @@ it("shows a stored request for explicit manual checking without background recov
   ]);
 });
 
-it("discards a recovery envelope bound to another owner without dispatch", async () => {
+it("retains another owner's recovery envelope without showing or dispatching it", async () => {
   localStorage.setItem(
     DELETION_PENDING_KEY,
     JSON.stringify({
@@ -1146,11 +1335,16 @@ it("discards a recovery envelope bound to another owner without dispatch", async
       },
     }),
   );
+  const original = localStorage.getItem(DELETION_PENDING_KEY);
   renderCard();
   await screen.findByText(npubEncode(local));
   await waitFor(() =>
-    expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull(),
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
   );
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
+  expect(
+    screen.queryByText("33333333-3333-4333-8333-333333333333"),
+  ).not.toBeInTheDocument();
   expect(calls.map(([url]) => url)).not.toContain("/api/builderlab/delete");
 });
 
@@ -1524,10 +1718,10 @@ it.each(["accepted", "bound abort", "definitive rejection"])(
             ? Response.json(
                 {
                   ...old.request,
-                  error: { code: "deletion_aborted" },
+                  status: "aborted",
                   correlation_id: "corr-late-abort",
                 },
-                { status: 409 },
+                { status: 202 },
               )
             : Response.json(
                 {

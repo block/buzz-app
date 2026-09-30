@@ -33,7 +33,12 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 // Real browser HTTP -> production broker. Ephemeral key; upstream I/O is entirely local.
-async function harness(respond, capabilities = {}, relayUrl = fixtureRelayUrl) {
+async function harness(
+  respond,
+  capabilities = {},
+  relayUrl = fixtureRelayUrl,
+  builderlab = {},
+) {
   const key = new Uint8Array(32);
   key[31] = 7;
   const viewer = getPublicKey(key);
@@ -51,6 +56,7 @@ async function harness(respond, capabilities = {}, relayUrl = fixtureRelayUrl) {
   });
   const plugin = relayBrokerPlugin({
     relayUrl,
+    builderlab,
     communityAliases: fixtureAliases,
     identity: () => key,
     socketFactory: socket.factory,
@@ -125,6 +131,70 @@ async function harness(respond, capabilities = {}, relayUrl = fixtureRelayUrl) {
   };
 }
 const filters = [{ kinds: [0], limit: 1 }];
+
+test.each([
+  [202, { status: "aborted" }],
+  [409, { error: { code: "must_archive" } }],
+])(
+  "Builderlab HTTP forwards structured deletion status %s",
+  async (status, result) => {
+    let openLogin;
+    const loginOpened = new Promise((resolve) => {
+      openLogin = resolve;
+    });
+    const request = {
+      community_id: "11111111-1111-4111-8111-111111111111",
+      host: "north.communities.buzz.xyz",
+      request_id: "22222222-2222-4222-8222-222222222222",
+      acknowledgement_version: 1,
+    };
+    const upstream = [];
+    const h = await harness(() => Response.json([]), {}, fixtureRelayUrl, {
+      open: async (url) => openLogin(url),
+      fetch: async (url, init) => {
+        const path = new URL(url).pathname;
+        if (path.endsWith("/v1/auth/login/exchange"))
+          return Response.json({
+            session_credential: "fixture-only",
+            expires_at: "2030",
+          });
+        if (path.endsWith("/v1/auth/me"))
+          return Response.json({
+            email: "fixture@example.com",
+            expires_at: "2030",
+          });
+        if (path.endsWith("/v1/buzz/communities/delete")) {
+          upstream.push(JSON.parse(init.body));
+          return Response.json({ ...request, ...result }, { status });
+        }
+        throw new Error(`Unexpected fixture request: ${path}`);
+      },
+    });
+    try {
+      const login = fetch(`${h.base}/api/builderlab/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const opened = new URL(await loginOpened);
+      const callback = opened.searchParams.get("returnTo");
+      expect(callback).toBeTruthy();
+      expect((await fetch(`${callback}?code=fixture`)).status).toBe(200);
+      expect((await login).status).toBe(200);
+      const response = await fetch(`${h.base}/api/builderlab/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual({ ...request, ...result });
+      expect(upstream).toEqual([request]);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
 const success = (call) =>
   Response.json(
     call.url.endsWith("/events")

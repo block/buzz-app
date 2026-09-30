@@ -89,42 +89,67 @@ export function HostedCommunities({ active }: { active(): boolean }) {
   const loginAbort = useRef<AbortController | null>(null);
   // Bumped by every operation and unmount; a read applies only if none happened since it began.
   const generation = useRef(0);
-  const acceptedDeletionIds = useRef(new Set<string>());
+  const acceptedDeletions = useRef(new Map<string, PendingDeletion>());
   const loadedOwner = useRef<string | null | undefined>(undefined);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (reconcileAccepted = false) => {
     const at = generation.current;
     const [current, list] = await Promise.all([call("identity"), call("list")]);
     if (at !== generation.current) return null;
     // An account without a linked identity is the connect state, not a failure.
     if (current.error?.code !== "unauthorized" && !current.error?.setup_needed)
       check(current, "Could not load the connected Buzz identity.");
-    if (!list.error?.setup_needed) check(list, "Could not load communities.");
+    if (list.error?.code !== "unauthorized" && !list.error?.setup_needed)
+      check(list, "Could not load communities.");
     const nextIdentity = current.identity ?? null;
     const nextOwner = boundKey(nextIdentity);
     if (
       loadedOwner.current !== undefined &&
       loadedOwner.current !== nextOwner
     ) {
-      acceptedDeletionIds.current.clear();
+      acceptedDeletions.current.clear();
       setDeletionNotice("");
     }
     loadedOwner.current = nextOwner;
     const stored = readPendingDeletion();
-    if (
-      stored &&
-      (stored.owner_pubkey !== nextOwner ||
-        stored.backend_origin !== window.location.origin)
-    ) {
-      clearPendingDeletion(stored);
-      setPendingDeletion(null);
-    } else if (stored) {
-      setPendingDeletion(stored);
-    }
+    setPendingDeletion(
+      stored?.owner_pubkey === nextOwner &&
+        stored.backend_origin === window.location.origin
+        ? stored
+        : null,
+    );
     const listed = list.communities ?? [];
+    if (
+      reconcileAccepted &&
+      nextOwner &&
+      listed.some((community) =>
+        acceptedDeletions.current.has(community.id ?? ""),
+      )
+    ) {
+      const currentAuth = await getAuth().catch(() => null);
+      if (at !== generation.current) return null;
+      if (currentAuth?.capabilities?.can_delete_buzz_communities === true)
+        for (const community of listed) {
+          const accepted = acceptedDeletions.current.get(community.id ?? "");
+          if (!accepted || accepted.owner_pubkey !== nextOwner) continue;
+          try {
+            await admitDeletion(accepted.request, "recovery");
+          } catch (reason) {
+            if (
+              at === generation.current &&
+              acceptedDeletions.current.get(accepted.request.community_id) ===
+                accepted &&
+              reason instanceof ApiFailure &&
+              reason.code === "deletion_aborted"
+            )
+              acceptedDeletions.current.delete(accepted.request.community_id);
+          }
+          if (at !== generation.current) return null;
+        }
+    }
     const nextCommunities = listed.filter(
       (community) =>
-        !community.id || !acceptedDeletionIds.current.has(community.id),
+        !community.id || !acceptedDeletions.current.has(community.id),
     );
     const nextQuota = quota(list);
     setIdentity(nextIdentity);
@@ -137,7 +162,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
     (pending: PendingDeletion, at: number) => {
       if (at !== generation.current || !active()) return false;
       clearPendingDeletion(pending);
-      acceptedDeletionIds.current.add(pending.request.community_id);
+      acceptedDeletions.current.set(pending.request.community_id, pending);
       setPendingDeletion(null);
       setCommunities((list) =>
         list.filter((item) => item.id !== pending.request.community_id),
@@ -225,11 +250,6 @@ export function HostedCommunities({ active }: { active(): boolean }) {
           `The change was saved, but the list could not be refreshed. ${message(reason)} Use Refresh to try again.`,
         ),
     );
-  };
-  const discardPendingDeletion = () => {
-    const stored = readPendingDeletion();
-    if (stored) clearPendingDeletion(stored);
-    setPendingDeletion(null);
   };
   const settleDeletion = async (
     pending: PendingDeletion,
@@ -425,7 +445,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
               onClick={() =>
                 void run("sign-out", async () => {
                   await signOut();
-                  discardPendingDeletion();
+                  setPendingDeletion(null);
                   setAuth(null);
                   setIdentity(null);
                   setCommunities([]);
@@ -497,7 +517,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
                       await call("unbind"),
                       "Could not release the previously connected Buzz identity.",
                     );
-                    discardPendingDeletion();
+                    setPendingDeletion(null);
                     // Unbound is a valid resting state; Connect recovers it.
                     setIdentity(null);
                     if (active()) await bind();
@@ -533,7 +553,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
                         await call("unbind"),
                         "Could not unpair the Buzz identity.",
                       );
-                      discardPendingDeletion();
+                      setPendingDeletion(null);
                       setIdentity(null);
                       await settle();
                     },
@@ -557,7 +577,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
               variant="ghost"
               size="sm"
               disabled={busy}
-              onClick={() => void run("refresh", load)}
+              onClick={() => void run("refresh", () => load(true))}
             >
               <ArrowsClockwiseIcon aria-hidden="true" /> Refresh
             </Button>

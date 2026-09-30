@@ -991,6 +991,7 @@ function ReadySidebar({
             <SidebarUnread listRef={sidebar.list} dmPreviews={unreadDmPreviews}>
               <SidebarNavigation>{children}</SidebarNavigation>
               <ChannelSidebarDnd
+                writable={placementWritable}
                 onMove={(channelId, sectionKey) =>
                   assignGroup(
                     channelId,
@@ -1117,7 +1118,6 @@ function ReadySidebar({
                           menuEnabled={menuEnabled}
                           sectionKey={section.key}
                           selectFrame={
-                            placementWritable &&
                             isChannelSectionKey(section.key)
                               ? DraggableChannel
                               : undefined

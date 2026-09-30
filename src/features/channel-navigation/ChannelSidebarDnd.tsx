@@ -8,9 +8,17 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { useState, type ComponentProps, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import { SidebarSection } from "../../bundled/channels/SidebarSection";
+
+const Writable = createContext(false);
 
 /**
  * Pointer moves between saved groups and Channels. A drop only reports its
@@ -18,10 +26,12 @@ import { SidebarSection } from "../../bundled/channels/SidebarSection";
  * menu remains the keyboard path.
  */
 export function ChannelSidebarDnd({
+  writable,
   onMove,
   overlay,
   children,
 }: {
+  writable: boolean;
   onMove: (channelId: string, sectionKey: string) => void;
   overlay: (channelId: string) => ReactNode;
   children: ReactNode;
@@ -45,7 +55,7 @@ export function ChannelSidebarDnd({
           onMove(String(active.id), String(over.id));
       }}
     >
-      {children}
+      <Writable.Provider value={writable}>{children}</Writable.Provider>
       {createPortal(
         // The optimistic move relocates the row, so nothing remains to settle back onto.
         <DragOverlay dropAnimation={null}>
@@ -57,7 +67,11 @@ export function ChannelSidebarDnd({
   );
 }
 
-/** Frames only a channel's select surface, so its sessions never start a move. */
+/**
+ * Frames only a channel's select surface, so its sessions never start a move.
+ * The frame stays mounted while placement is read-only: the row keeps its
+ * focus and open menu when a save starts or settles.
+ */
 export function DraggableChannel({
   channelId,
   sectionKey,
@@ -70,6 +84,7 @@ export function DraggableChannel({
   const { setNodeRef, listeners, isDragging } = useDraggable({
     id: channelId,
     data: { sectionKey },
+    disabled: !useContext(Writable),
   });
   return (
     <div

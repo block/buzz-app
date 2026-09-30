@@ -29,6 +29,8 @@ export type SidebarSync = Readonly<{
   status: SidebarStatus;
   pending: number;
   error?: string | undefined;
+  // Write health is separate: a read can neither cause nor clear it.
+  writeError?: string | undefined;
 }>;
 export const contextKey = (target: ContextQuery["target"]) =>
   `${target.channel_id}:${target.root_id ?? ""}`;
@@ -140,16 +142,17 @@ export function createSidebarState({
     revision++;
     for (const listener of listeners) notify(listener);
   }
-  function fail(error: unknown) {
+  function fail(error: unknown, write = false) {
     if (
       closed ||
       (error instanceof DOMException && error.name === "AbortError")
     )
       return;
-    publish({
-      status: "error",
-      error: error instanceof Error ? error.message : "Sidebar unavailable",
-    });
+    const message =
+      error instanceof Error ? error.message : "Sidebar unavailable";
+    publish(
+      write ? { writeError: message } : { status: "error", error: message },
+    );
   }
   function schedule<T>(
     work: (signal: AbortSignal, generation: number) => Promise<T>,
@@ -486,8 +489,9 @@ export function createSidebarState({
         if (outcomes.some((o) => o.status === "unknown"))
           throw new Error("Read acknowledgement unknown; retry available");
       }
+      if (sync.writeError) publish({ writeError: undefined });
     })()
-      .catch(fail)
+      .catch((error) => fail(error, true))
       .finally(() => {
         flushing = undefined;
       });

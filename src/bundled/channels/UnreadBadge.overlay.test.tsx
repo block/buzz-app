@@ -459,7 +459,7 @@ it("reconciles saturated applied surfaces before retry without losing the thread
     );
   });
   await waitFor(() =>
-    expect(owner.session.unread.sync().error).toContain(
+    expect(owner.session.unread.sync().writeError).toContain(
       "presentation capacity",
     ),
   );

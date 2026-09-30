@@ -18,6 +18,7 @@ export type ReadSyncSnapshot = Readonly<{
   status: "loading" | "local" | "pending" | "reconciled" | "stale" | "error";
   completeness: "unknown" | "snapshot";
   error?: string | undefined;
+  writeError?: string | undefined;
 }>;
 export type UnreadSnapshot = Readonly<{
   target: UnreadTarget;
@@ -220,6 +221,7 @@ export function createUnread({
               : value.status,
       completeness: value.status === "ready" ? "snapshot" : "unknown",
       error: value.error,
+      writeError: value.writeError,
     });
   }
   let syncSnapshot = sync();

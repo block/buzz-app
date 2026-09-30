@@ -167,7 +167,9 @@ it.each([
     );
     await attempt(refused);
     expect(calls[refused]).toHaveBeenCalledTimes(before + 1);
-    expect(h.owner.sync().error).toBe("refused");
+    expect(h.owner.sync()[refused === "read" ? "error" : "writeError"]).toBe(
+      "refused",
+    );
     await attempt(refused);
     expect(calls[refused]).toHaveBeenCalledTimes(before + 1);
     const freeBefore = calls[free].mock.calls.length;
@@ -276,6 +278,15 @@ it("fences a late fetch after clear and hides revoked state before notifying", a
   h.owner.purge();
   expect(seen).toEqual([undefined]);
 });
+const mark = (channel_id: string, createdAt: number) => ({
+  intent: {
+    type: "mark_channel_read" as const,
+    channel_id,
+    message_id: "a".repeat(64),
+  },
+  createdAt,
+});
+const unknownWrite = "Read acknowledgement unknown; retry available";
 it("unknown writes survive retry with the same operands; new arrivals are not substituted", async () => {
   const h = harness();
   await h.owner.ensure();
@@ -290,12 +301,92 @@ it("unknown writes survive retry with the same operands; new arrivals are not su
     () => false,
     () => true,
   );
-  await vi.waitFor(() => expect(h.owner.sync().status).toBe("error"));
+  await vi.waitFor(() => expect(h.owner.sync().writeError).toBe(unknownWrite));
   expect(h.journal().pending).toHaveLength(1);
   await h.owner.retry();
   expect(h.api.write.mock.calls.map((c) => c[0])).toEqual([[intent], [intent]]);
   expect(h.journal().pending).toEqual([]);
 });
+it("keeps a failed write visible after a held read succeeds", async () => {
+  const h = harness();
+  await h.owner.ensure();
+  const held = deferredSidebar<SidebarPage>();
+  h.api.sidebar.mockImplementationOnce(() => held.promise);
+  const reading = h.owner.refresh();
+  try {
+    await vi.waitFor(() => expect(h.api.sidebar).toHaveBeenCalledTimes(2));
+    h.api.write.mockResolvedValueOnce([{ status: "unknown", retryable: true }]);
+    await h.owner.enqueue(
+      [mark(channel, 1)],
+      () => false,
+      () => true,
+    );
+    await vi.waitFor(() =>
+      expect(h.owner.sync()).toEqual({
+        status: "loading",
+        pending: 1,
+        writeError: unknownWrite,
+      }),
+    );
+  } finally {
+    held.resolve(page());
+    await reading;
+  }
+  const afterRead = { status: "ready", pending: 1, writeError: unknownWrite };
+  expect(h.owner.sync()).toEqual(afterRead);
+  await h.owner.refresh();
+  expect(h.owner.sync()).toEqual(afterRead);
+});
+it.each([
+  [
+    "unknown acknowledgement",
+    unknownWrite,
+    (h: ReturnType<typeof harness>) =>
+      h.api.write.mockResolvedValueOnce([
+        { status: "unknown", retryable: true },
+      ]),
+  ],
+  [
+    "transport failure",
+    "offline",
+    (h: ReturnType<typeof harness>) =>
+      h.api.write.mockRejectedValueOnce(new Error("offline")),
+  ],
+  [
+    "acknowledgement storage failure",
+    "acknowledgement storage failed",
+    (h: ReturnType<typeof harness>) => h.rejectAcknowledgementAt(1),
+  ],
+] as const)(
+  "leaves the projection ready through a write %s and clears it on the next applied write, without a read",
+  async (_, writeError, failNextWrite) => {
+    const h = harness();
+    await h.owner.ensure();
+    failNextWrite(h);
+    await h.owner.enqueue(
+      [mark(channel, 1)],
+      () => false,
+      () => true,
+    );
+    await vi.waitFor(() =>
+      expect(h.owner.sync()).toEqual({
+        status: "ready",
+        pending: 1,
+        writeError,
+      }),
+    );
+    h.api.sidebar.mockClear();
+    await h.owner.enqueue(
+      [mark(other, 2)],
+      () => false,
+      () => true,
+    );
+    await vi.waitFor(() =>
+      expect(h.owner.sync()).toEqual({ status: "ready", pending: 0 }),
+    );
+    expect(h.api.sidebar).not.toHaveBeenCalled();
+  },
+);
 it("coalesces mounted context demand into bounded requests", async () => {
   const h = harness();
   await Promise.all(
@@ -576,7 +667,7 @@ it("saturated applied presentation retains the whole next batch and schedules re
   );
   await vi.advanceTimersByTimeAsync(0);
   expect(h.journal().pending).toHaveLength(1);
-  expect(h.owner.sync().error).toContain("reconciliation scheduled");
+  expect(h.owner.sync().writeError).toContain("reconciliation scheduled");
   held.resolve(page());
   await first;
   await vi.advanceTimersByTimeAsync(250);
@@ -626,7 +717,7 @@ it("retries already-applied IDs at capacity after failed journal acknowledgement
     () => true,
   );
   await vi.advanceTimersByTimeAsync(0);
-  expect(h.owner.sync().error).toBe("acknowledgement storage failed");
+  expect(h.owner.sync().writeError).toBe("acknowledgement storage failed");
   const pending = h.journal().pending;
   expect(pending).toHaveLength(100);
   expect(h.owner.covered(target, 1, false, "a".repeat(64))).toBe(true);
@@ -686,7 +777,7 @@ it.each(["applied", "blocked"] as const)(
       () => true,
     );
     await vi.advanceTimersByTimeAsync(0);
-    expect(h.owner.sync().error).toContain("presentation capacity");
+    expect(h.owner.sync().writeError).toContain("presentation capacity");
     expect(h.journal().pending.map((p) => p.intent)).toEqual(
       next.map((p) => p.intent),
     );

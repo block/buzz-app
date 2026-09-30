@@ -162,7 +162,9 @@ it("keeps unknown outcomes durable and retries identical operands", async () => 
     { kind: "message", channelId: channel, messageId: h.root },
     h.root,
   );
-  await vi.waitFor(() => expect(h.unread.sync().status).toBe("error"));
+  await vi.waitFor(() =>
+    expect(h.unread.sync().writeError).toContain("unknown"),
+  );
   expect(h.journal().pending).toHaveLength(1);
   const sent = h.api.write.mock.calls[0]?.[0];
   await h.unread.retrySync();

@@ -1,13 +1,11 @@
 import { expect, it } from "vitest";
 import { messageLinkParts } from "./message-link-parts";
-import { targetLink } from "../navigation/targets";
 
-it("recognizes bare and wrapped Buzz channel, message, thread and shared links", () => {
+it("recognizes bare and wrapped Buzz channel, message and thread links", () => {
   const urls = [
     "buzz://channel/general",
     `buzz://message?channel=general&id=${"a".repeat(64)}`,
     `buzz://message?channel=general&id=${"a".repeat(64)}&thread=${"b".repeat(64)}`,
-    targetLink({ version: 1, kind: "home" }),
   ];
   for (const url of urls) {
     for (const text of [url, `<${url}>`]) {
@@ -15,6 +13,19 @@ it("recognizes bare and wrapped Buzz channel, message, thread and shared links",
       expect(parts.filter((part) => part.url)).toEqual([{ text: url, url }]);
       expect(parts.map((part) => part.text).join("")).toBe(`See ${url}.`);
     }
+  }
+});
+it("leaves the retired buzz://open locator as plain text, bare or wrapped", () => {
+  const locator =
+    "buzz://open?target=%7B%22version%22%3A1%2C%22kind%22%3A%22home%22%7D";
+  for (const content of [
+    `See ${locator}.`,
+    `See <${locator}>.`,
+    `See [home](${locator}).`,
+  ]) {
+    const parts = messageLinkParts(content);
+    expect(parts.some((part) => part.url)).toBe(false);
+    expect(parts.map((part) => part.text).join("")).toBe(content);
   }
 });
 it("keeps Buzz links with unknown query parameters as links rather than plain text", () => {

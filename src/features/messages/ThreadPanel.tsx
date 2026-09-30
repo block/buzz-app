@@ -758,19 +758,14 @@ function ThreadMessages({
         className={styles.threadHistory}
         aria-label="Thread messages"
         onScroll={(event) => {
-          if (!positioned.current) return;
+          if (!positioned.current || jumpingToLatest.current) return;
           const element = event.currentTarget;
-          if (olderAnchor.current) {
-            const anchor = olderAnchor.current;
-            const row = [
-              ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
-            ].find((row) => row.dataset.messageId === anchor.id);
-            if (row) anchor.top = row.getBoundingClientRect().top;
-          }
+          // While older history is pending, the reader may choose a different
+          // visible reply. Preserve that reply, not the offscreen original anchor.
+          if (olderAnchor.current) captureOlderAnchor(element);
           const bottom =
             element.scrollHeight - element.clientHeight - element.scrollTop <
             80;
-          if (jumpingToLatest.current) return;
           follow.current = bottom;
           setShowJumpToLatest(!bottom);
           if (bottom) setNewMessageCount(0);

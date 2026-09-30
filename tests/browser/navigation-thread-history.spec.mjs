@@ -98,8 +98,9 @@ test("Back restores each thread visit before the previous channel", async ({
   ).toBe(true);
 });
 
-for (const reading of [false, true]) {
-  test(`ordinary reply-count opening ${reading ? "preserves intervening reading" : "finishes at the bottom"} after held pagination`, async ({
+for (const mode of ["bottom", "reading", "jump"]) {
+  const reading = mode === "reading";
+  test(`ordinary reply-count opening ${reading ? "preserves intervening reading" : mode === "jump" ? "preserves keyboard jump intent" : "finishes at the bottom"} after held pagination`, async ({
     page,
     app,
   }) => {
@@ -127,7 +128,9 @@ for (const reading of [false, true]) {
           .postDataJSON()
           .some(
             (filter) =>
-              filter.depth_limit && filter.thread_cursor !== undefined,
+              filter.thread_window &&
+              filter.until !== undefined &&
+              filter.until < last.created_at - 100,
           )
       ) {
         requested = true;
@@ -143,9 +146,28 @@ for (const reading of [false, true]) {
       // for input readiness before Playwright tries alternate scroll alignments.
       await expect(trigger).toHaveCSS("pointer-events", "auto");
       await trigger.click();
+      await expect(
+        region.getByText("New peer reply", { exact: true }),
+      ).toHaveCount(10);
+      const demandOlder = async () => {
+        await region.evaluate((element) => {
+          element.scrollTop = 0;
+          element.dispatchEvent(new Event("scroll"));
+        });
+        await region.hover();
+        await page.mouse.wheel(0, -300);
+      };
+      for (const count of [60, 110]) {
+        await demandOlder();
+        await expect(
+          region.getByText("New peer reply", { exact: true }),
+        ).toHaveCount(count);
+      }
+      await demandOlder();
       await expect.poll(() => requested).toBe(true);
-      // One of the 50 loaded replies is a collapsed descendant.
-      await expect(region.locator("[data-message-id]")).toHaveCount(50);
+      // The final strict page is held; opening and earlier user-demand pages
+      // already completed. Cached broadcast plus root and 110 replies mount.
+      await expect(region.locator("[data-message-id]")).toHaveCount(112);
       await expect(
         region.getByText("Broadcast descendant", { exact: true }),
       ).toHaveCount(0);
@@ -159,13 +181,60 @@ for (const reading of [false, true]) {
         )
         .toBe("opened");
       let position = 0;
-      if (reading) {
-        await region.hover();
-        await page.mouse.wheel(0, 500);
+      let anchor;
+      if (reading || mode === "jump") {
+        await region.evaluate((node) => {
+          node.scrollTop = 500;
+          node.dispatchEvent(new Event("scroll"));
+        });
         await expect
           .poll(() => region.evaluate((node) => node.scrollTop))
           .toBe(500);
-        position = await region.evaluate((node) => node.scrollTop);
+        anchor = await region.evaluate((node) => {
+          const top = node.getBoundingClientRect().top;
+          const row = [...node.querySelectorAll("ol [data-message-id]")].find(
+            (row) => row.getBoundingClientRect().bottom > top,
+          );
+          return {
+            id: row.dataset.messageId,
+            offset: row.getBoundingClientRect().top - top,
+          };
+        });
+      } else {
+        await region.evaluate((node) => {
+          node.scrollTop = node.scrollHeight;
+          node.dispatchEvent(new Event("scroll"));
+        });
+        await expect
+          .poll(() =>
+            region.evaluate(
+              (node) => node.scrollHeight - node.clientHeight - node.scrollTop,
+            ),
+          )
+          .toBeLessThan(4);
+      }
+      if (mode === "jump") {
+        // Hold history across the keyboard jump, before its completion fallback.
+        const clockStart = new Date();
+        await page.clock.install({ time: clockStart });
+        await page.clock.pauseAt(new Date(clockStart.getTime() + 1));
+        const jumpToLatest = region.locator("button[data-jump-to-latest]");
+        await expect(jumpToLatest).toHaveAccessibleName("Jump to latest");
+        await jumpToLatest.focus();
+        await page.keyboard.press("Enter");
+        await page.clock.runFor(500);
+        await expect(region).toBeFocused();
+        await expect
+          .poll(() =>
+            region.evaluate(
+              (node) => node.scrollHeight - node.clientHeight - node.scrollTop,
+            ),
+          )
+          .toBeLessThan(4);
+        // Deliver the final native-scroll notification before releasing history.
+        await region.evaluate((node) =>
+          node.dispatchEvent(new Event("scroll")),
+        );
       }
       release();
       await expect(region.locator("[data-message-id]")).toHaveCount(123);
@@ -178,7 +247,22 @@ for (const reading of [false, true]) {
         )
         .toBe("opened");
       if (reading) {
-        expect(await region.evaluate((node) => node.scrollTop)).toBe(position);
+        await expect
+          .poll(() =>
+            region.evaluate((node, anchor) => {
+              const row = node.querySelector(
+                `[data-message-id="${anchor.id}"]`,
+              );
+              // scrollTop uses whole pixels here; row layout retains fractions.
+              return Math.abs(
+                row.getBoundingClientRect().top -
+                  node.getBoundingClientRect().top -
+                  anchor.offset,
+              );
+            }, anchor),
+          )
+          .toBeLessThan(1);
+        position = await region.evaluate((node) => node.scrollTop);
         const jumpToLatest = region.locator("button[data-jump-to-latest]");
         await expect(jumpToLatest).toHaveAccessibleName("Jump to latest");
       } else {
@@ -192,9 +276,10 @@ for (const reading of [false, true]) {
         await expect(
           region.locator(`[data-message-id="${last.id}"]`),
         ).toBeInViewport();
-        await expect(
-          page.getByRole("button", { name: "Close thread", exact: true }),
-        ).toBeFocused();
+        if (mode === "bottom")
+          await expect(
+            page.getByRole("button", { name: "Close thread", exact: true }),
+          ).toBeFocused();
       }
       const live = app.reply(root.id);
       await expect(
@@ -233,6 +318,16 @@ for (const reading of [false, true]) {
         await expect(
           region.locator(`[data-message-id="${live.id}"]`),
         ).toBeInViewport();
+      }
+      if (mode === "jump") {
+        await expect
+          .poll(() =>
+            region.evaluate(
+              (node) => node.scrollHeight - node.clientHeight - node.scrollTop,
+            ),
+          )
+          .toBeLessThan(4);
+        await page.clock.runFor(500);
       }
       // Expansion changes visibility, not the loaded-history count.
       await region.getByRole("button", { name: /^View 1 reply/ }).click();

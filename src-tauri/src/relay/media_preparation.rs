@@ -357,6 +357,25 @@ mod tests {
     use super::*;
     static CONVERSIONS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+    // Match block/buzz: ffmpeg is an optional host dependency, so real
+    // conversion tests return early when the required tools are unavailable.
+    // Installed tools must still succeed; conversion failures are not skipped.
+    fn media_tool_version(name: &str) -> Option<Vec<u8>> {
+        let program =
+            crate::host_command::resolve_program(name, &crate::host_command::effective_path());
+        match std::process::Command::new(program).arg("-version").output() {
+            Ok(output) => {
+                assert!(output.status.success(), "{name} version check failed");
+                Some(output.stdout)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("skipping real conversion: {name} not found");
+                None
+            }
+            Err(error) => panic!("could not run {name}: {error}"),
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn preparation_source_stays_private_under_a_shared_temp_parent() {
@@ -377,9 +396,11 @@ mod tests {
         assert!(source.exists());
     }
     #[tokio::test]
-    #[cfg_attr(windows, ignore = "requires ffmpeg; Windows CI does not provision it")]
     async fn converts_video_with_fixed_demuxer_and_strips_input_metadata() {
         let _guard = CONVERSIONS.lock().await;
+        if media_tool_version("ffmpeg").is_none() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let input = dir.path().join("sample.avi");
         let generated = std::process::Command::new(crate::host_command::resolve_program(
@@ -416,9 +437,11 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(windows, ignore = "requires ffmpeg; Windows CI does not provision it")]
     async fn converts_legacy_mov_with_leading_free_box() {
         let _guard = CONVERSIONS.lock().await;
+        if media_tool_version("ffmpeg").is_none() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let input = dir.path().join("sample.mov");
         let generated = std::process::Command::new(crate::host_command::resolve_program(
@@ -454,9 +477,19 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(windows, ignore = "requires ffmpeg; Windows CI does not provision it")]
     async fn converts_tiled_heic_without_cropping() {
         let _guard = CONVERSIONS.lock().await;
+        let Some(version) = media_tool_version("ffmpeg") else {
+            return;
+        };
+        // The tiled fixture needs ffmpeg 8+, unlike the video fixtures.
+        if !supports_heic_grids(&version) {
+            eprintln!("skipping tiled HEIC conversion: ffmpeg 8+ required");
+            return;
+        }
+        if media_tool_version("ffprobe").is_none() {
+            return;
+        }
         let bytes = include_bytes!("../../../tests/fixtures/media/tiled.heic").to_vec();
         let (_sender, mut cancelled) = oneshot::channel();
         let (prepared, mime) = prepare(bytes, "image:mov", &mut cancelled).await.unwrap();
@@ -464,18 +497,21 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let output = directory.path().join("prepared.jpg");
         std::fs::write(&output, prepared).unwrap();
-        let dimensions = std::process::Command::new("ffprobe")
-            .args([
-                "-v",
-                "error",
-                "-show_entries",
-                "stream=width,height",
-                "-of",
-                "csv=p=0",
-            ])
-            .arg(output)
-            .output()
-            .expect("conversion tests require ffprobe");
+        let dimensions = std::process::Command::new(crate::host_command::resolve_program(
+            "ffprobe",
+            &crate::host_command::effective_path(),
+        ))
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0",
+        ])
+        .arg(output)
+        .output()
+        .expect("conversion tests require ffprobe");
         assert!(dimensions.status.success());
         assert_eq!(
             String::from_utf8(dimensions.stdout).unwrap().trim(),

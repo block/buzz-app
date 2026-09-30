@@ -120,10 +120,13 @@ an existing supported credential, live development is unavailable; shell and
 fixture tests still work.
 
 Media attachments in live development need `ffmpeg` on the server’s PATH for
-video, HEIC/HEIF, and the existing `voice-note-*.wav` exception. The repository
-pins ffmpeg and ffprobe for development and CI through Hermit; HEIC tile grids
-require ffmpeg 8 or newer. Packaged apps use the host's installed ffmpeg and reject HEIC preparation if its
-version is older than 8 or cannot be determined. The broker
+video, HEIC/HEIF, and the existing `voice-note-*.wav` exception. Install ffmpeg on the host (macOS: `brew install ffmpeg`; Linux: your
+distribution’s ffmpeg package); HEIC tile grids require ffmpeg 8 or newer.
+Like `block/buzz`, real conversion tests return early when optional host tools
+are missing; tiled-HEIC tests also require ffmpeg 8+ and ffprobe. These tools are
+not pinned through Hermit or provisioned by CI. Packaged apps use the host's
+installed ffmpeg and reject HEIC preparation if its version is older than 8 or
+cannot be determined. The broker
 prepares canonical H.264/AAC MP4 or single-frame JPEG before upload hashes/signs
 those exact bytes. Missing tools and unsupported codecs fail visibly. No generic
 audio conversion or recording UI is added.

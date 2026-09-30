@@ -1,3 +1,4 @@
+import { settleShellToggle } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -624,10 +625,7 @@ test("Inbox and Bestie pages retain companion layout across navigation and resiz
       .toBe(page.viewportSize().width);
   };
   const showNavigation = async () => {
-    if (page.viewportSize().width <= 650)
-      await expect(
-        page.locator("[data-shell-sidebar-toggle]"),
-      ).toHaveAccessibleName(/^(Show|Hide) navigation$/);
+    if (page.viewportSize().width <= 650) await settleShellToggle(page);
     const show = page.getByRole("button", {
       name: "Show navigation",
       exact: true,

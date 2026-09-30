@@ -3,6 +3,7 @@ import {
   pageChoices,
   selectPage,
   selectSettingsSection,
+  settleShellToggle,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { wheel, anchor, settle, upper, expectAnchor } from "./timeline.mjs";
@@ -99,10 +100,9 @@ async function link(page, app, target) {
   });
 }
 async function shellFits(page, width) {
-  if (width <= 650)
-    await expect(
-      page.locator("[data-shell-sidebar-toggle]"),
-    ).toHaveAccessibleName(/^(Show|Hide) navigation$/);
+  // The Projects page renders no toggle at wide widths, so settle only when
+  // the drawer is in play.
+  if (width <= 650) await settleShellToggle(page);
   const disclosure = button(page, "Show navigation");
   const collapsed = await disclosure.isVisible();
   if (collapsed) await disclosure.click();

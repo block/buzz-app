@@ -1339,6 +1339,7 @@ for (const threadRootId of [undefined, "f".repeat(64)])
         retry,
         ready: async () => {},
         recover: async () => {},
+        complete: async () => {},
         acknowledge: async () => {},
         snapshot: () => operations,
         subscribe: (fn: () => void) => {
@@ -1451,6 +1452,7 @@ it.each([false, true])(
         snapshot: () => operations,
         ready: async () => {},
         recover: async () => {},
+        complete: async () => {},
         acknowledge: async () => {},
       },
     });

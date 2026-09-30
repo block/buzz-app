@@ -52,6 +52,8 @@ export interface Outbox {
   /** Attach caller-owned recovery to an existing receipt before resuming it. */
   recover(id: string, recovery: OutboxRecovery): Promise<void>;
   acknowledge(id: string): Promise<void>;
+  /** Atomically remove a confirmed receipt and its recovery state. */
+  complete(id: string): Promise<void>;
   retry(id: string, active?: () => boolean): void;
   dismiss(id: string): Promise<void>;
 }
@@ -624,6 +626,26 @@ export function createOutbox(
       )
         throw new Error("Confirm delivery before completing this message");
       await persist(id, "acknowledge");
+    },
+    async complete(id: string) {
+      await outbox.ready();
+      const pending = dismissing.get(id);
+      if (pending) return pending;
+      const item = visible.find((item) => item.event.id === id);
+      if (!item) return;
+      if (attempts.has(id))
+        throw new Error(
+          "Wait for delivery to finish before completing this message",
+        );
+      if (item.delivery !== "accepted" && item.delivery !== "seen")
+        throw new Error("Confirm delivery before completing this message");
+      const work = persist(id, "dismiss")
+        .then(() => {
+          admissionGates.delete(id);
+        })
+        .finally(() => dismissing.delete(id));
+      dismissing.set(id, work);
+      return work;
     },
     send(
       input: Pick<EventTemplate, "kind" | "content" | "tags">,

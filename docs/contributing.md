@@ -346,14 +346,17 @@ the complete suite still runs with `pnpm test` / `just scan`:
   image or library silently falls back to downloading or skipping an engine.
   Hermit still pins Node/pnpm; setup invokes repository entry points explicitly.
   Browser containers use a consistent root home and trust only their exact
-  checked-out workspace. Functional jobs install `gcc` and `libc6-dev` for the
-  native fixture and use a commit-pinned Rust installer with the repository's
-  `bin/.rust-*.pkg` version. `HERMIT_PREPEND_PATH` keeps the minimal compiler/Cargo
-  toolchain selected through nested commands. Each runner builds the native
-  plugin-manager fixture before Playwright; its Rust cache is optional. These
-  smaller setup steps still require network access. Native jobs retain their
-  ordinary host toolchain and library setup. No measurement is repeated on shards,
-  and no retry hides a failure. Functional jobs also run when measurements fail:
+  checked-out workspace. A separate required Ubuntu job builds the real native
+  plugin-manager fixture once with the repository Rust pin. Its same-run artifact
+  preserves executable permissions, records the exact checkout revision and a
+  checksum, and is downloaded by its exact same-run artifact ID and verified
+  before browser execution. Each browser test retains
+  its own mutable fixture home. Browser containers need no compiler, Cargo or apt
+  install; local non-CI journeys keep their existing locked Cargo build fallback.
+  There is no missing-artifact build fallback in CI. The artifact producer is
+  required alongside all browser shards; measurements stay independent. Native
+  jobs retain their ordinary host toolchain and library setup. No measurement is
+  repeated on shards, and no retry hides a failure. Functional jobs also run when measurements fail:
   this spends more runner minutes for faster, independent feedback.
 - **CI required:** fails unless every automatic Linux lane and every browser shard succeeds,
   including cancellation or an unexpectedly skipped lane. Configure this status

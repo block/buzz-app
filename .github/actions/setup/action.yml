@@ -23,12 +23,6 @@ runs:
       run: |
         ./bin/node --version
         ./bin/pnpm --version
-        echo "$GITHUB_WORKSPACE/bin" >> "$GITHUB_PATH"
-        # Later entries take precedence: keep concrete minimal Rust ahead of
-        # bin/cargo, whose Hermit proxy would provision the full Rust archive.
-        if [ -n "${HERMIT_PREPEND_PATH:-}" ]; then
-          echo "$HERMIT_PREPEND_PATH" >> "$GITHUB_PATH"
-        fi
     - name: Resolve pnpm store
       id: pnpm
       shell: bash

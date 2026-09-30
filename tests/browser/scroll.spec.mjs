@@ -405,7 +405,8 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
   expect(sample.maxMountedRows).toBeLessThanOrEqual(100);
   // Structural growth guard, not a heap-leak claim. 640 unvirtualized rows
   // would exceed both limits; bounded rows must hold during movement too.
-  expect(sample.maxDomNodes).toBeLessThan(1800);
+  // The node ceiling counts the whole document, including sidebar page rows.
+  expect(sample.maxDomNodes).toBeLessThan(1850);
   app.report.measurements.push({
     scenario: "640-row-paging-and-switches",
     retainedRows: loaded,

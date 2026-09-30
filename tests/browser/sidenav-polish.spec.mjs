@@ -831,9 +831,11 @@ test("non-ready sidebar keeps page rows and Retry reachable by pointer scrolling
         const style = getComputedStyle(element);
         const extent =
           parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset);
+        // Scroll offsets snap to whole pixels while row heights can be
+        // fractional, so allow less than one pixel at the scroll end.
         return (
-          element.getBoundingClientRect().bottom + extent <=
-          element.parentElement.getBoundingClientRect().bottom
+          element.getBoundingClientRect().bottom + extent <
+          element.parentElement.getBoundingClientRect().bottom + 1
         );
       }),
     )

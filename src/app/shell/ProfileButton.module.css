@@ -18,7 +18,7 @@
 /* biome-ignore lint/correctness/noUnknownPseudoClass: Give only the top-bar fallback a visible circular fill. */
 .triggerAvatar :global(.buzz-avatar):not(:has(img[data-loaded="true"])) {
   background: white;
-  color: #525252;
+  color: var(--text-avatar-fallback);
 }
 
 .profileHeader {
@@ -51,15 +51,10 @@
   max-width: 100%;
 }
 .availability {
-  @apply interaction-availability;
+  @apply interaction-profile-availability;
   --radius-capsule: var(--radius-chip);
   --text-caption: var(--type-size-12);
-  --text-caption--font-weight: 600;
-}
-/* biome-ignore lint/correctness/noUnknownPseudoClass: Keep the online badge compact within the profile header. */
-.availability[data-status="online"] :global(.buzz-button) {
-  min-height: var(--space-5);
-  padding: 2px var(--space-2);
+  --text-caption--font-weight: var(--weight-profile-status);
 }
 .availability[data-status="online"] {
   --interaction-fill: color-mix(in srgb, var(--availability-color) 6%, white);
@@ -83,7 +78,7 @@
   --interaction-row-hover: var(--affordance-subtle);
   width: 18rem;
   padding: var(--space-3);
-  border-radius: 1.25rem;
+  border-radius: var(--radius-profile-popover);
 }
 /* biome-ignore lint/correctness/noUnknownPseudoClass: Direct profile actions match the compact sidenav rows. */
 :global(.buzz-menu-popup[data-profile-menu] > .buzz-menu-item) {
@@ -103,7 +98,7 @@
 /* biome-ignore lint/correctness/noUnknownPseudoClass: Scope the portaled availability menu to the profile flow. */
 :global(.buzz-menu-popup[data-profile-submenu]) {
   --interaction-row-hover: var(--affordance-subtle);
-  border-radius: 1.25rem;
+  border-radius: var(--radius-profile-popover);
   padding: var(--space-2);
 }
 /* biome-ignore lint/correctness/noUnknownPseudoClass: Inset row curves follow the popup corners. */

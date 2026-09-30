@@ -62,7 +62,7 @@
 }
 .calendarPopup {
   @apply floating-surface;
-  border-radius: 1.25rem;
+  border-radius: var(--radius-profile-popover);
   padding: var(--space-2);
 }
 .timeOptions {
@@ -109,7 +109,7 @@
 /* biome-ignore lint/correctness/noUnknownPseudoClass: Status-owned popup portals keep their own scoped geometry. */
 :global(.buzz-menu-popup[data-status-menu]) {
   --interaction-row-hover: var(--affordance-subtle);
-  border-radius: 1.25rem;
+  border-radius: var(--radius-profile-popover);
   padding: var(--space-2);
 }
 /* biome-ignore lint/correctness/noUnknownPseudoClass: Hover rows fit the popup's inset curve. */
@@ -118,10 +118,10 @@
 }
 /* biome-ignore lint/correctness/noUnknownPseudoClass: Identify the status dialog by its owned form. */
 :global(.buzz-dialog):has(.fields) {
-  border-radius: 1.25rem;
+  border-radius: var(--radius-profile-popover);
 }
 
 /* biome-ignore lint/correctness/noUnknownPseudoClass: The status editor supplies this ID to its emoji portal. */
 :global(.buzz-popover-popup[id^="status-emoji-"]) {
-  border-radius: 1.25rem;
+  border-radius: var(--radius-profile-popover);
 }

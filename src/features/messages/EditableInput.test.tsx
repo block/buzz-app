@@ -1208,3 +1208,176 @@ it("retains the native caret after replacing text with an unchanged suffix", asy
   expect(h.input.selectionStart).toBe(10);
   expect(h.input.selectionEnd).toBe(10);
 });
+
+/** The private-use character AppKit puts in a caret or function key's NSEvent
+ * (NSUpArrowFunctionKey U+F700 onwards), which the host's native text-input
+ * path can commit as typed text. */
+const functionKeys = [
+  ["ArrowUp", "\uF700"],
+  ["ArrowDown", "\uF701"],
+  ["ArrowLeft", "\uF702"],
+  ["ArrowRight", "\uF703"],
+  ["F1", "\uF704"],
+  ["Home", "\uF729"],
+  ["End", "\uF72B"],
+  ["PageUp", "\uF72C"],
+  ["PageDown", "\uF72D"],
+] as const;
+const caretKeys = [
+  "ArrowRight",
+  "ArrowLeft",
+  "ArrowUp",
+  "ArrowDown",
+  "Home",
+  "End",
+  "Shift",
+  "Meta",
+  "Escape",
+] as const;
+
+/** Everything the composer persists or shows: the draft with its document
+ * snapshot, and the rendered DOM. */
+function snapshot(h: ReturnType<typeof mount>) {
+  return { draft: JSON.stringify(h.draft()), html: h.input.innerHTML };
+}
+
+/** Presses a caret key: through user-event where it models the key, and as a
+ * bare keydown/keyup pair for Home and End, whose caret movement jsdom does
+ * not implement on a contenteditable element. */
+async function press(h: ReturnType<typeof mount>, key: string) {
+  if (key !== "Home" && key !== "End") {
+    await h.user.keyboard(`{${key}}`);
+    return;
+  }
+  const target = document.activeElement ?? h.input;
+  fireEvent.keyDown(target, { key, code: key });
+  fireEvent.keyUp(target, { key, code: key });
+}
+
+/** The browser's own insertion of text the host committed: a cancelable
+ * beforeinput, then the DOM change ProseMirror observes. With `beforeinput`
+ * false the change arrives as an uncancelable or unannounced one would.
+ * Returns whether the DOM was changed. */
+function nativeInsert(
+  input: ComposerInputElement,
+  text: string,
+  beforeinput = true,
+) {
+  let inserted = false;
+  act(() => {
+    input.focus();
+    if (
+      beforeinput &&
+      !input.dispatchEvent(
+        new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertText",
+          data: text,
+        }),
+      )
+    )
+      return;
+    const selection = document.getSelection();
+    const focus = selection?.focusNode;
+    if (!selection || !focus) throw new Error("DOM selection unavailable");
+    let node: Text;
+    let offset = selection.focusOffset;
+    if (focus instanceof Text) node = focus;
+    else {
+      node = document.createTextNode("");
+      focus.insertBefore(node, focus.childNodes[offset] ?? null);
+      offset = 0;
+    }
+    node.insertData(offset, text);
+    selection.collapse(node, offset + text.length);
+    inserted = true;
+  });
+  return inserted;
+}
+
+it.each(functionKeys)(
+  "refuses the %s function-key character at both native seams",
+  async (_key, character) => {
+    const h = mount("abc");
+    const before = snapshot(h);
+    // The cancelable seam: the DOM never changes.
+    expect(nativeInsert(h.input, character)).toBe(false);
+    expect(snapshot(h)).toEqual(before);
+    // The observed seam: an insertion that arrived anyway is redrawn away.
+    expect(nativeInsert(h.input, character, false)).toBe(true);
+    await waitFor(() => expect(h.input.textContent).toBe("abc"));
+    expect(snapshot(h)).toEqual(before);
+    expect(h.input.selectionStart).toBe(3);
+    expect(h.input.selectionEnd).toBe(3);
+    await h.user.keyboard("d");
+    expect(h.input).toHaveValue("abcd");
+    expect(h.markdown()).toBe("abcd");
+  },
+);
+
+it.each([
+  ["after text", async (h: ReturnType<typeof mount>) => h.input.value],
+  [
+    "on an empty trailing paragraph",
+    async (h: ReturnType<typeof mount>) => {
+      await h.user.keyboard("{Shift>}{Enter}{/Shift}");
+      expect(h.input).toHaveValue("abc\n");
+      return h.input.value;
+    },
+  ],
+  [
+    "directly after a mention chip",
+    async (h: ReturnType<typeof mount>) => {
+      act(() =>
+        h.input.insertText("", { pubkey: "a".repeat(64), name: "Honey" }),
+      );
+      expect(h.input).toHaveValue("abc@Honey ");
+      act(() => h.input.setSelectionRange(9, 9));
+      return "abc@Honey ";
+    },
+  ],
+  [
+    "inside a list item",
+    async (h: ReturnType<typeof mount>) => {
+      await h.user.keyboard("{Shift>}{Enter}{/Shift}- item");
+      expect(h.input.querySelector("ul > li")).toHaveTextContent("item");
+      return h.input.value;
+    },
+  ],
+])(
+  "keeps the document unchanged by caret keys %s, and by a Right Arrow committed as text",
+  async (_context, setup) => {
+    const h = mount("abc");
+    const value = await setup(h);
+    const before = snapshot(h);
+    const start = h.input.selectionStart;
+    for (const key of caretKeys) {
+      await press(h, key);
+      expect(snapshot(h), key).toEqual(before);
+      expect(h.input.selectionStart, key).toBe(h.input.selectionEnd);
+    }
+    act(() => h.input.setSelectionRange(start, start));
+    expect(nativeInsert(h.input, "\uF703")).toBe(false);
+    expect(snapshot(h)).toEqual(before);
+    expect(nativeInsert(h.input, "\uF703", false)).toBe(true);
+    await waitFor(() => expect(h.input.textContent).not.toContain("\uF703"));
+    expect(snapshot(h)).toEqual(before);
+    expect(h.input).toHaveValue(value);
+    expect(h.draft().recipients.map((item) => item.name)).toEqual(
+      value.includes("@Honey") ? ["Honey"] : [],
+    );
+  },
+);
+
+it("never runs a typed conversion for a function-key character", async () => {
+  const h = mount();
+  await h.user.keyboard("**a*");
+  const before = snapshot(h);
+  expect(nativeInsert(h.input, "\uF703", false)).toBe(true);
+  await waitFor(() => expect(h.input.textContent).toBe("**a*"));
+  expect(snapshot(h)).toEqual(before);
+  await h.user.keyboard("*");
+  expect(h.input.querySelector("strong")).toHaveTextContent("a");
+  expect(h.markdown()).toBe("**a**");
+});

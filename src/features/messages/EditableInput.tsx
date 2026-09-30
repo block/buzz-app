@@ -86,6 +86,16 @@ export type EditorDecoration = {
   content: ReactNode;
   editAsText?: boolean;
 };
+/** AppKit's NSEvent carries a private-use "function key" character for every
+ * caret, editing and function key (NSUpArrowFunctionKey U+F700 through
+ * NSModeSwitchFunctionKey U+F747; Right Arrow is U+F703). No font has a glyph
+ * for them and no keyboard layout types them, so text made only of these is a
+ * key the host's native text-input path committed as if typed, not prose. */
+const FUNCTION_KEY_CHARACTERS = /[\uF700-\uF747]/gu;
+/** True when a native text insertion holds only function-key characters. */
+function functionKeyText(text: string | null | undefined) {
+  return !!text && !text.replace(FUNCTION_KEY_CHARACTERS, "");
+}
 export type EditableInputProps = Omit<
   HTMLAttributes<ComposerInputElement>,
   "onChange" | "onInput"
@@ -952,6 +962,15 @@ export function EditableInput({
           },
         },
         handleTextInput(_view, from, to, text, defaultTransaction) {
+          // A caret key committed natively as its function-key character is
+          // refused: with no transaction the document stays as it was, and
+          // ProseMirror redraws the changed DOM from that state. Only the
+          // beforeinput seam can stop the DOM change itself; this seam covers
+          // an insertion that arrived without one, or one that was not
+          // cancelable. No key yields such a character beside real text, so
+          // mixed text is left alone rather than reshaped under the native
+          // selection that describes it.
+          if (functionKeyText(text)) return true;
           // Provenance is not an inheritable formatting mark. Replacing text,
           // including an identical string, revokes the identity it touches.
           const source = projection();
@@ -1132,6 +1151,18 @@ export function EditableInput({
           },
           beforeinput(_view, event) {
             if (!event.isComposing) syncNativeSelection();
+            // The host's native text-input path can commit a caret key's
+            // function-key character (Right Arrow is U+F703) as typed text.
+            // Cancel it before the DOM changes; handleTextInput refuses what
+            // arrives anyway.
+            if (
+              event.inputType === "insertText" &&
+              event.cancelable &&
+              functionKeyText(event.data)
+            ) {
+              event.preventDefault();
+              return true;
+            }
             if (event.inputType.startsWith("delete")) {
               separateHistory = true;
               // Some native deletion commands arrive without a keydown. A selected

@@ -772,6 +772,55 @@ it("sends a pasted fenced block verbatim on Enter instead of opening a block fro
   expect(h.input()).toHaveValue("");
 });
 
+it("keeps a composed message unchanged through caret keys at its end and refuses a Right Arrow committed as text", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "```");
+  expect(h.input().querySelector("pre")).not.toBeNull();
+  await h.user.keyboard(
+    "Hello!{Shift>}{Enter}{Enter}{/Shift}acascac{Shift>}{Enter}{/Shift}a**a** _a_{Shift>}{Enter}{/Shift}- acacs{Shift>}{Enter}{Enter}{/Shift}",
+  );
+  expect(h.input().querySelector("pre code")).toHaveTextContent("Hello!");
+  expect(h.input().querySelector("strong")).toHaveTextContent("a");
+  expect(h.input().querySelector("em")).toHaveTextContent("a");
+  expect(h.input().querySelector("ul > li")).toHaveTextContent("acacs");
+  expect(h.input()).toHaveValue("Hello!\nacascac\naa a\nacacs\n");
+  const html = h.input().innerHTML;
+  for (let i = 0; i < 11; i++) await h.user.keyboard("{ArrowRight}");
+  for (const key of [
+    "ArrowLeft",
+    "ArrowUp",
+    "ArrowDown",
+    "Shift",
+    "Meta",
+    "Escape",
+  ])
+    await h.user.keyboard(`{${key}}`);
+  // jsdom does not model Home and End on a contenteditable element.
+  for (const key of ["Home", "End"]) {
+    fireEvent.keyDown(h.input(), { key, code: key });
+    fireEvent.keyUp(h.input(), { key, code: key });
+  }
+  expect(h.input()).toHaveValue("Hello!\nacascac\naa a\nacacs\n");
+  expect(h.input().innerHTML).toBe(html);
+  expect(h.messages.send).not.toHaveBeenCalled();
+  let prevented = false;
+  act(() => {
+    h.input().focus();
+    prevented = !h.input().dispatchEvent(
+      new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        inputType: "insertText",
+        data: "\uF703",
+      }),
+    );
+  });
+  expect(prevented).toBe(true);
+  expect(h.input()).toHaveValue("Hello!\nacascac\naa a\nacacs\n");
+  expect(h.input().innerHTML).toBe(html);
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
 it("prefixes thread replies with the selected media time and clears it after send", async () => {
   const clearMediaTime = vi.fn();
   const h = mount({

@@ -12,6 +12,7 @@ test("ordinary thread reveals its first content already positioned at the bottom
   app,
 }) => {
   await open(page, app);
+  await page.locator('button[data-channel-id="beta"]').click();
   let release, intercepted;
   const held = new Promise((resolve) => {
     release = resolve;
@@ -53,6 +54,9 @@ test("ordinary thread reveals its first content already positioned at the bottom
       },
     );
     await seen;
+    await expect(
+      page.getByRole("tab", { name: "Thread", exact: true }),
+    ).toBeFocused();
     await expect(history).toHaveAttribute("data-positioning");
     await expect(history.getByRole("status")).toHaveText("Loading thread…");
     await expect(history.getByRole("status")).toBeInViewport();

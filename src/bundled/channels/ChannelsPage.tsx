@@ -409,6 +409,16 @@ function ChannelWorkspace({
       ? navigation.target.threadRootId
       : undefined;
   const currentId = current?.id;
+  const committedVisit = useRef<{
+    currentId: string | undefined;
+    queries: RelaySession;
+  }>(undefined);
+  const continuingVisit =
+    committedVisit.current?.currentId === currentId &&
+    committedVisit.current?.queries === queries;
+  useLayoutEffect(() => {
+    committedVisit.current = { currentId, queries };
+  }, [currentId, queries]);
   const tabState = useChannelTabState(queries, currentId);
   const { thread, setThread, settings, setSettings, entries, setEntries } =
     tabState;
@@ -423,6 +433,7 @@ function ChannelWorkspace({
   }, [currentId, composingMessage, draftParent]);
 
   const settingsTrigger = useRef<HTMLButtonElement>(null);
+  const [settingsFocus, requestSettingsFocus] = useState(0);
   const splitTrigger = useRef<HTMLButtonElement>(null);
   const showingSettings =
     tabState.paneOpen &&
@@ -575,9 +586,12 @@ function ChannelWorkspace({
   );
   const entryList = useRef<Opening[]>(entries);
   const opening = useRef<Opening | undefined>(opened);
-  const renderedChannel = useRef(currentId);
-  if (renderedChannel.current !== currentId) {
-    renderedChannel.current = currentId;
+  const renderedChannel = useRef({ currentId, queries });
+  if (
+    renderedChannel.current.currentId !== currentId ||
+    renderedChannel.current.queries !== queries
+  ) {
+    renderedChannel.current = { currentId, queries };
     entryList.current = entries;
     opening.current = opened;
   }
@@ -598,13 +612,16 @@ function ChannelWorkspace({
             )
           : undefined;
       const selected = existing || next;
-      const updated = selected
-        ? append
-          ? existing
-            ? entryList.current
-            : [...entryList.current, selected]
-          : [selected]
-        : [];
+      // Timeline actions replace transient details, never retained channel tools.
+      const retained = append
+        ? entryList.current
+        : entryList.current.filter(
+            (entry) =>
+              entry.channelContext &&
+              (!selected || panelTabId(entry) !== panelTabId(selected)),
+          );
+      const updated =
+        selected && !existing ? [...retained, selected] : retained;
       entryList.current = updated;
       setEntries(updated);
       selectOpening(selected);
@@ -1018,7 +1035,10 @@ function ChannelWorkspace({
       ? available.filter(isChannelTabTool)
       : [];
   const chooseTool = (id: string, panel: RegisteredPanel) => {
+    const connection = relay.snapshot();
     if (
+      connection.status !== "ready" ||
+      connection.session !== queries ||
       !drawerContext ||
       !tabTools.includes(panel) ||
       !panels.snapshot().includes(panel)
@@ -1177,13 +1197,14 @@ function ChannelWorkspace({
   const showingPanel = companion || showingChannelPanel;
   const split = usePanelSplit();
   useEffect(() => {
-    if (showingSettings && settings)
+    // Only an explicit settings click moves focus; restoring a visit does not.
+    if (settingsFocus)
       split.ref.current
         ?.querySelector<HTMLElement>(
           '[data-panel-workspace] [data-tab-value="settings"]',
         )
         ?.focus({ preventScroll: true });
-  }, [showingSettings, settings, split.ref]);
+  }, [settingsFocus, split.ref]);
   const settingsContent = (
     <ChannelSettingsPanel
       canvas={queries.canvas}
@@ -1420,6 +1441,7 @@ function ChannelWorkspace({
                           if (showingSettings) closeSettings();
                           else {
                             drawer.close();
+                            requestSettingsFocus((value) => value + 1);
                             setSettings({
                               channelId: currentId,
                             });
@@ -1596,6 +1618,12 @@ function ChannelWorkspace({
                   <PanelWorkspace
                     key={currentId}
                     value={selectedTab}
+                    focusOnMount={
+                      continuingVisit ||
+                      (!!requestedMessage &&
+                        (thread?.channelId !== currentId ||
+                          thread?.messageId !== requestedMessage))
+                    }
                     select={selectPanelTab}
                     add={addTab}
                     items={[
@@ -1700,6 +1728,7 @@ function ChannelWorkspace({
                               />
                             ) : usable ? (
                               <ConversationTab
+                                focusOnMount={continuingVisit}
                                 active={
                                   tabState.paneOpen && selectedTab === tab.id
                                 }

@@ -59,11 +59,14 @@ export function PanelWorkspace({
   value,
   select,
   add,
+  focusOnMount = true,
 }: {
   items: Item[];
   value: string;
   select(id: string): void;
   add?: (() => void) | undefined;
+  /** Restoring a channel visit leaves focus with its main conversation. */
+  focusOnMount?: boolean;
 }) {
   const prefix = useId();
   const panelId = (id: string) => `${prefix}-${id}`;
@@ -134,9 +137,9 @@ export function PanelWorkspace({
       .map((tab) => ({ ...tab, icon: <TerminalWindowIcon size="1rem" /> })),
   ]);
   const active = tabs.find((tab) => tab.id === selected);
-  const previous = useRef<string>(undefined);
+  const previous = useRef<string>(focusOnMount ? undefined : selected);
   const instance = items.find((item) => item.id === selected)?.instance;
-  const previousInstance = useRef<object>(undefined);
+  const previousInstance = useRef<object>(focusOnMount ? undefined : instance);
   useLayoutEffect(() => {
     if (
       previous.current !== selected ||
@@ -167,6 +170,8 @@ export function PanelWorkspace({
       onKeyDown={(event) => {
         if (
           event.key === "Escape" &&
+          !event.nativeEvent.isComposing &&
+          event.nativeEvent.keyCode !== 229 &&
           !event.defaultPrevented &&
           event.currentTarget.contains(event.target as Node)
         ) {

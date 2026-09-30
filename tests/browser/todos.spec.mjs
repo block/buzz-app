@@ -243,6 +243,37 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await expect(tool.getByRole("textbox", { name: "New todo" })).toHaveValue(
     "Tab draft",
   );
+  // Main-timeline navigation replaces details, not the channel's tool tabs.
+  const main = page.getByRole("article", { name: "Conversation", exact: true });
+  const row = main.locator("[data-message-id]").last();
+  await row.hover();
+  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  await expect(
+    workspace.getByRole("tab", { name: "Thread", exact: true }),
+  ).toBeVisible();
+  const expectToolDraft = async () => {
+    await workspace.getByRole("tab", { name: "Todos", exact: true }).click();
+    await expect(tool.getByRole("textbox", { name: "New todo" })).toHaveValue(
+      "Tab draft",
+    );
+  };
+  await expectToolDraft();
+  await row
+    .getByRole("button", { name: /View .* profile/ })
+    .first()
+    .click();
+  await expect(
+    workspace.getByRole("complementary", { name: "Profile", exact: true }),
+  ).toBeVisible();
+  await expectToolDraft();
+  await sidebar
+    .getByRole("button", { name: "New message", exact: true })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "New message", exact: true }),
+  ).toBeVisible();
+  await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+  await expectToolDraft();
   await plugins();
   await enabled.click();
   await expect(enabled).not.toBeChecked();

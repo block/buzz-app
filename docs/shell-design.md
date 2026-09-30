@@ -246,10 +246,13 @@ selecting an already-open conversation selects its existing tab. Each main chann
 keeps its own tab descriptors, selected tab, and pane visibility in memory for the
 community session, including while visiting other pages such as Settings.
 Changing the main channel unmounts its contents; returning restores those tabs and
-saved conversation drafts. Feature-local details such as logs close on that switch.
+saved conversation drafts without moving focus away from the main conversation.
+A restored thread does not replay a previous Reply focus request. Feature-local
+details such as logs close on that switch.
 Changing session or losing a contribution retires the affected tabs and callbacks.
 Tab sets are not persisted across application restarts. Opening a
-detail from the main timeline still replaces the thread. Content switches
+detail from the main timeline still replaces the thread and transient details,
+not retained channel-tool tabs. Content switches
 immediately; the shared navigation selection background identifies the active tab.
 Joined header separators meet the vertical dividers. The sidebar resize grip stays
 visible throughout a drag while its tooltip stays hidden. Desktop main/secondary

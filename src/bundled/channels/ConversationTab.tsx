@@ -21,6 +21,7 @@ import styles from "./ChannelTabs.module.css";
 export function ConversationTab({
   tab,
   active,
+  focusOnMount = true,
   channel,
   session,
   scope,
@@ -32,6 +33,7 @@ export function ConversationTab({
 }: {
   tab: Exclude<Tab, { kind: "new" }>;
   active: boolean;
+  focusOnMount?: boolean;
   channel: ChannelSummary;
   session: RelaySession;
   scope: string;
@@ -41,6 +43,8 @@ export function ConversationTab({
   openThread(messageId: string, rootId: string, intent?: "reply"): void;
   close(): void;
 }) {
+  // A saved reply intent belongs to the previous visit, not this restoration.
+  const restoredTab = useRef(focusOnMount ? undefined : tab);
   const [sent, setSent] = useState<string>();
   const [media, setMedia] = useState<{
     messageId: string;
@@ -79,7 +83,9 @@ export function ConversationTab({
             channelId={channel.id}
             channelName={channel.name}
             messageId={tab.messageId}
-            replyRequest={tab.replyRequest}
+            replyRequest={
+              tab === restoredTab.current ? undefined : tab.replyRequest
+            }
             extensions={extensions}
             close={close}
             onOpenLink={openLink}

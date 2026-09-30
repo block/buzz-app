@@ -18,8 +18,16 @@ import { ConversationTab } from "./ConversationTab";
 // Exercise the real tab recovery owner and durable outbox without mounting the
 // independent timelines/composers. Recovery must work with no editor mounted.
 vi.mock("../../features/messages/ThreadPanel", () => ({
-  ThreadPanel: ({ active }: { active: boolean }) => (
-    <aside data-active={active}>Thread content</aside>
+  ThreadPanel: ({
+    active,
+    replyRequest,
+  }: {
+    active: boolean;
+    replyRequest?: number;
+  }) => (
+    <aside data-active={active} data-reply-request={replyRequest}>
+      Thread content
+    </aside>
   ),
 }));
 vi.mock("./ChannelBody", () => ({
@@ -183,5 +191,48 @@ it.each(["thread", "conversation"] as const)(
     expect(enterChannel).toHaveBeenCalledTimes(2);
     mounted.unmount();
     expect(leaveChannel).toHaveBeenCalledTimes(2);
+  },
+);
+
+it.each([false, true])(
+  "restored Reply intent is not replayed but fresh requests are delivered (focusOnMount=%s)",
+  (focusOnMount) => {
+    const channel = { id: "beta", name: "Beta" };
+    const snapshot = { status: "ready", channels: [channel] };
+    const session = {
+      channels: { list: () => snapshot, subscribeList: () => () => {} },
+    } as unknown as RelaySession;
+    const tab = {
+      id: "thread",
+      kind: "thread" as const,
+      channelId: "beta",
+      messageId: "a".repeat(64),
+      replyRequest: 1,
+    };
+    const props = {
+      tab,
+      channel,
+      session,
+      scope: "focus-test",
+      active: true,
+      focusOnMount,
+      openLink: () => false,
+      canOpenLink: () => false,
+      openThread: () => {},
+      close: () => {},
+    };
+    const mounted = render(<ConversationTab {...props} />);
+    const thread = screen.getByText("Thread content");
+    if (focusOnMount) expect(thread).toHaveAttribute("data-reply-request", "1");
+    else expect(thread).not.toHaveAttribute("data-reply-request");
+    mounted.rerender(<ConversationTab {...props} focusOnMount />);
+    if (!focusOnMount) expect(thread).not.toHaveAttribute("data-reply-request");
+    mounted.rerender(
+      <ConversationTab {...props} tab={{ ...tab, replyRequest: undefined }} />,
+    );
+    expect(thread).not.toHaveAttribute("data-reply-request");
+    // A non-Reply opening resets the sequence; a later Reply may reuse number 1.
+    mounted.rerender(<ConversationTab {...props} tab={{ ...tab }} />);
+    expect(thread).toHaveAttribute("data-reply-request", "1");
   },
 );

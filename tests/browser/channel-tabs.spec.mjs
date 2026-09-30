@@ -80,6 +80,14 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();
+  await page.locator('button[data-channel-id="beta"]').click();
+  await page.locator('button[data-channel-id="alpha"]').click();
+  await expect(
+    workspace.getByRole("tab", { name: "Channel settings", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    main.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeFocused();
   const add = async (name) => {
     await workspace
       .getByRole("button", { name: "Add tab", exact: true })
@@ -117,6 +125,8 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
     workspace.getByRole("tab", { name: "Beta", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(betaComposer).toHaveText("Beta draft");
+  // The page palette explicitly hands focus to the main region.
+  await expect(page.locator("#main-content")).toBeFocused();
   await split.click();
   await expect(workspace).toBeHidden();
   await openPage(page, "Settings");
@@ -205,7 +215,16 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
   await expect(reply).toHaveText("Beta reply draft");
   await expect(
     main.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeFocused();
+  await expect(
+    main.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toHaveText("Alpha draft");
+  // A fresh Reply after restoration must still focus the retained draft.
+  await workspace.getByRole("tab", { name: "Beta", exact: true }).click();
+  await row.hover();
+  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  await expect(reply).toBeFocused();
+  await expect(reply).toHaveText("Beta reply draft");
   await workspace
     .getByRole("button", { name: "Close Thread · Beta tab", exact: true })
     .click();

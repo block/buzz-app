@@ -37,11 +37,18 @@ function Profile({ authorized }: { authorized: boolean }) {
     </>
   );
 }
-function Fixture({ authorized = true }: { authorized?: boolean }) {
+function Fixture({
+  authorized = true,
+  focusOnMount = true,
+}: {
+  authorized?: boolean;
+  focusOnMount?: boolean;
+}) {
   const [ids, setIds] = useState(["Thread", "Profile"]);
   const [value, select] = useState("Thread");
   return ids.length ? (
     <PanelWorkspace
+      focusOnMount={focusOnMount}
       value={value}
       select={select}
       items={ids.map((id) => ({
@@ -225,3 +232,36 @@ for (const action of ["close", "escape"]) {
     }
   });
 }
+
+test("a restored workspace leaves existing focus alone but fresh selections and local details take focus", async () => {
+  const user = userEvent.setup();
+  const view = render(<input aria-label="Main draft" />);
+  const main = screen.getByRole("textbox", { name: "Main draft" });
+  main.focus();
+  view.rerender(
+    <>
+      <input aria-label="Main draft" />
+      <StrictMode>
+        <Fixture focusOnMount={false} />
+      </StrictMode>
+    </>,
+  );
+  expect(main).toHaveFocus();
+  await user.click(tab("Ada"));
+  expect(tab("Ada")).toHaveFocus();
+  await user.click(screen.getByRole("button", { name: "Open log" }));
+  expect(tab("Harness log")).toHaveFocus();
+});
+
+test("Escape cancelling IME composition does not close the tab", () => {
+  render(<Fixture />);
+  const draft = screen.getByRole("textbox", { name: "Thread draft" });
+  draft.focus();
+  fireEvent.keyDown(draft, { key: "Escape", isComposing: true });
+  expect(draft).toHaveFocus();
+  fireEvent.keyDown(draft, { key: "Escape", keyCode: 229 });
+  expect(draft).toHaveFocus();
+  fireEvent.keyDown(draft, { key: "Escape" });
+  expect(draft).not.toBeInTheDocument();
+  expect(tab("Ada")).toHaveFocus();
+});

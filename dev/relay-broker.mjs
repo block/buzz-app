@@ -1386,6 +1386,7 @@ export function relayBrokerPlugin({
                 30078,
                 40100,
                 1984,
+                45010,
                 ...WORKFLOW_KINDS,
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
@@ -2333,6 +2334,8 @@ export function relayBrokerPlugin({
                   sent: false,
                 });
               }
+            } else if (filters?.kind === 45010) {
+              // NIP-AR artifacts; the relay enforces write permission.
             } else if (filters?.kind === 1984) {
               if (!validReport(filters))
                 return json(res, 400, {
@@ -2427,7 +2430,11 @@ export function relayBrokerPlugin({
               log.warn(
                 `${publication} stage=socket sent=${failure ? failure.sent : "unknown"} reason=${failure?.message ?? "unclassified failure"}${failure?.refusal ? ` refusal=${failure.refusal}` : ""}`,
               );
-              return json(res, 503, {
+              // Match the relay's HTTP status for a proven CAS refusal.
+              const conflict =
+                failure?.sent === false &&
+                failure.refusal?.startsWith("conflict:");
+              return json(res, conflict ? 409 : 503, {
                 error:
                   failure?.sent === false &&
                   failure.refusal?.startsWith("rate-limited:")

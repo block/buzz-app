@@ -1,3 +1,5 @@
+import { AnimatedEmoji } from "./AnimatedEmoji";
+import { notoAsset } from "./noto-playback";
 import {
   useEffect,
   useLayoutEffect,
@@ -73,17 +75,8 @@ function NativeEmojiPreview({ emoji }: { emoji: string }) {
       center();
       return;
     }
-    const nodeBounds = node.getBoundingClientRect();
-    const listBounds = list.getBoundingClientRect();
-    if (
-      nodeBounds.bottom >= listBounds.top - 96 &&
-      nodeBounds.top <= listBounds.bottom + 96
-    ) {
-      center();
-      return;
-    }
-    // The search can return the full catalog, so measure offscreen glyphs only
-    // shortly before they scroll into view.
+    // Let the browser report visibility after layout instead of forcing a
+    // synchronous layout read for every result before the menu can paint.
     const observer = new IntersectionObserver(
       (entries) => {
         if (!entries.some((entry) => entry.isIntersecting)) return;
@@ -125,7 +118,9 @@ export function EmojiCompletion({
       const counts = new Map<string, number>();
       for (const item of matches)
         counts.set(item.shortcode, (counts.get(item.shortcode) ?? 0) + 1);
-      return matches.map((item) => ({
+      // The host accepts at most 50 suggestions. Do not build artwork for
+      // lower-ranked matches that it will discard immediately.
+      return matches.slice(0, 50).map((item) => ({
         id: item.id,
         label: `:${item.shortcode}:`,
         ...((counts.get(item.shortcode) ?? 0) > 1
@@ -136,6 +131,8 @@ export function EmojiCompletion({
             emoji={{ shortcode: item.shortcode, url: item.url }}
             media={session.media}
           />
+        ) : notoAsset(item.text) ? (
+          <AnimatedEmoji text={item.text} hoverOption />
         ) : (
           <NativeEmojiPreview emoji={item.text} />
         ),

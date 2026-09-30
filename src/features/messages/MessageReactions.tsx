@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -24,6 +25,7 @@ import type { RelaySession } from "../relay/session";
 import type { OutgoingEvent } from "../relay/outbox";
 import { selectProfiles } from "../relay/profile-selection";
 import { recordReaction, useQuickReactions } from "./quick-reactions";
+import { ReactionAnimation } from "./ReactionAnimation";
 import { AnimatedReactionCount } from "./AnimatedReactionCount";
 import styles from "./Messages.module.css";
 
@@ -200,9 +202,13 @@ export function MessageReactionControls(props: Props) {
 function ReactionGlyph({
   reaction,
   session,
+  row,
+  inline,
 }: {
   reaction: MessageReaction;
   session: RelaySession;
+  row: ChannelMessage;
+  inline: ContributionReader<InlineRenderer>;
 }) {
   const source = reaction.emoji ? session.media(reaction.emoji.url) : undefined;
   const [failed, setFailed] = useState<string>();
@@ -223,12 +229,24 @@ function ReactionGlyph({
       }
       aria-hidden="true"
     >
-      {reaction.emoji ? `:${reaction.emoji.shortcode}:` : reaction.content}
+      {reaction.emoji ? (
+        `:${reaction.emoji.shortcode}:`
+      ) : (
+        <ReactionLabel
+          reaction={reaction}
+          row={row}
+          inline={inline}
+          session={session}
+        />
+      )}
     </span>
   );
 }
 
 function ReactionPill({
+  celebrate,
+  row,
+  inline,
   reaction,
   session,
   profiles,
@@ -241,6 +259,9 @@ function ReactionPill({
   previewOpen,
   onPreviewChange,
 }: {
+  celebrate: boolean;
+  row: ChannelMessage;
+  inline: ContributionReader<InlineRenderer>;
   reaction: MessageReaction;
   session: RelaySession;
   profiles?: ReadonlyMap<string, Profile> | undefined;
@@ -253,6 +274,53 @@ function ReactionPill({
   previewOpen: boolean;
   onPreviewChange(open: boolean): void;
 }) {
+  const glyph = useRef<HTMLSpanElement>(null);
+  const celebration = useRef<Animation | undefined>(undefined);
+  const startCelebration = useCallback((duration: number, gentle = false) => {
+    const node = glyph.current;
+    if (
+      !node ||
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    )
+      return;
+    const height = node.getBoundingClientRect().height;
+    if (!height || !node.animate) return;
+    celebration.current?.cancel();
+    const rotation = Math.random() * 20 - 10;
+    celebration.current = node.animate(
+      [
+        {
+          transform: "scale(1) rotate(0deg)",
+          offset: 0,
+          easing: gentle
+            ? "cubic-bezier(0.45, 0, 0.55, 1)"
+            : "cubic-bezier(0.33, 1, 0.68, 1)",
+        },
+        {
+          transform: `scale(${33.44 / height}) rotate(${rotation}deg)`,
+          offset: gentle ? 0.4 : 0.1,
+        },
+        {
+          transform: `scale(${33.44 / height}) rotate(${rotation}deg)`,
+          offset: gentle ? 0.6 : 0.9,
+          easing: gentle
+            ? "cubic-bezier(0.45, 0, 0.55, 1)"
+            : "cubic-bezier(0.32, 0, 0.67, 0)",
+        },
+        { transform: "scale(1) rotate(0deg)", offset: 1 },
+      ],
+      { duration, easing: "linear" },
+    );
+  }, []);
+  const reactionAnimation = useMemo(
+    () => ({ celebrate, start: startCelebration }),
+    [celebrate, startCelebration],
+  );
+  useLayoutEffect(() => {
+    if (celebrate && !glyph.current?.querySelector("[data-animation-duration]"))
+      startCelebration(500, true);
+  }, [celebrate, startCelebration]);
+  useLayoutEffect(() => () => celebration.current?.cancel(), []);
   const [name, setName] = useState(reaction.content);
   const authors = [...new Set(reaction.events.map((event) => event.authorId))];
   const authorIds = authors.slice().sort().join(":");
@@ -320,13 +388,27 @@ function ReactionPill({
                 onFocusedRemoval?.();
             }}
           >
-            <ReactionGlyph reaction={reaction} session={session} />
+            <span ref={glyph} className={styles.reactionAddGlyph}>
+              <ReactionAnimation.Provider value={reactionAnimation}>
+                <ReactionGlyph
+                  reaction={reaction}
+                  session={session}
+                  row={row}
+                  inline={inline}
+                />
+              </ReactionAnimation.Provider>
+            </span>
             <AnimatedReactionCount value={authors.length} />
           </button>
         }
       >
         <span className={styles.reactionPreviewEmoji}>
-          <ReactionGlyph reaction={reaction} session={session} />
+          <ReactionGlyph
+            reaction={reaction}
+            session={session}
+            row={row}
+            inline={inline}
+          />
           <span className={styles.reactionPreviewName}>{name}</span>
         </span>
         <span className={styles.reactionPreviewNames}>{users.join(", ")}</span>
@@ -344,6 +426,23 @@ export function MessageReactions(
 ) {
   const { row, session, scope, tools } = props;
   const action = useReactionAction(props);
+  const mine = new Set(
+    row.reactions
+      .filter((reaction) =>
+        reaction.events.some((event) => event.authorId === session.viewer),
+      )
+      .map((reaction) =>
+        JSON.stringify([reaction.content, reaction.emoji?.url]),
+      ),
+  );
+  const previousMine = useRef({ rowId: row.id, keys: mine });
+  const added =
+    previousMine.current.rowId === row.id
+      ? new Set([...mine].filter((key) => !previousMine.current.keys.has(key)))
+      : new Set<string>();
+  useLayoutEffect(() => {
+    previousMine.current = { rowId: row.id, keys: mine };
+  });
   const catalog = useSyncExternalStore(
     session.emoji.subscribe,
     session.emoji.snapshot,
@@ -384,6 +483,9 @@ export function MessageReactions(
         return (
           <ReactionPill
             key={key}
+            celebrate={added.has(key)}
+            row={row}
+            inline={props.inline}
             reaction={reaction}
             session={session}
             profiles={props.profiles}

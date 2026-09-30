@@ -37,6 +37,10 @@ import { keypair, metadata, roster, signed } from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
+import {
+  AnimatedEmoji,
+  animatedEmojiMatches,
+} from "../../bundled/emoji/AnimatedEmoji";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
 import type { ComposerInputElement } from "./composer-dom";
@@ -61,6 +65,7 @@ const resource = { uri: entityHref(resourceRoute), label: "Fix login" };
 
 beforeEach(() => {
   localStorage.clear();
+  vi.unstubAllGlobals();
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -245,6 +250,17 @@ function mount(
   };
   const onSend = vi.fn();
   const inline: readonly Contribution<InlineRenderer>[] = [
+    {
+      id: "animated-emoji",
+      key: "test/animated-emoji",
+      pluginId: "test",
+      revision: "1",
+      title: "Animated emoji",
+      matches: ({ text }) => animatedEmojiMatches(text),
+      component: ({ text, content }) => (
+        <AnimatedEmoji text={text} content={content} />
+      ),
+    },
     {
       id: "emoji",
       key: "test/emoji",
@@ -3161,4 +3177,29 @@ describe("project resource picker", () => {
       expect(failed.homes.mock.calls.length).toBeGreaterThan(reads),
     );
   });
+});
+
+it("renders repeated native emoji artwork in the composer and sends Unicode unchanged", () => {
+  vi.stubGlobal("matchMedia", () => ({
+    matches: true,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  const h = mount();
+  act(() => {
+    h.commands().insertText("😀😀 hello");
+  });
+  expect(h.input()).toHaveValue("😀😀 hello");
+  expect(
+    [...h.input().querySelectorAll("img")].filter(
+      (image) => image.alt === "😀",
+    ),
+  ).toHaveLength(2);
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "😀😀 hello",
+    [],
+    [],
+  );
 });

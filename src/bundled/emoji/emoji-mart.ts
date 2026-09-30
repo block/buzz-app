@@ -1,3 +1,4 @@
+import { notoAsset, notoAssets, playNoto, stopNoto } from "./noto-playback";
 import scrollbarStyles from "../../shared/design-system/styles/scrollbars.css?raw";
 import searchFieldStyles from "../../shared/design-system/styles/search-field.css?raw";
 import { pickerIcons } from "../../shared/design-system/icons/svg";
@@ -9,6 +10,23 @@ import type { CustomEmoji } from "../../features/relay/emoji";
 const resolvedTheme = (value: unknown): "light" | "dark" =>
   value === "dark" ? "dark" : "light";
 
+const previewData = structuredClone(data) as unknown as {
+  emojis: Record<string, { skins: { native: string; src?: string }[] }>;
+};
+for (const emoji of Object.values(previewData.emojis)) {
+  for (const skin of emoji.skins) {
+    const asset = notoAsset(skin.native);
+    if (asset)
+      Object.assign(skin, { src: `/emoji/noto-animated/${asset.code}.svg` });
+  }
+}
+
+const animatedCatalog = Object.entries(notoAssets).map(([native, asset]) => ({
+  id: `noto-animated/${asset.code}`,
+  name: asset.name,
+  keywords: asset.name.split("-"),
+  skins: [{ native, src: `/emoji/noto-animated/${asset.code}.svg` }],
+}));
 const prefix = "buzz-custom/";
 const categoryIcons = {
   frequent: { svg: pickerIcons.clock },
@@ -22,6 +40,7 @@ const categoryIcons = {
   flags: { svg: pickerIcons.flag },
   custom: { svg: pickerIcons.asterisk },
   "buzz-custom": { svg: pickerIcons.asterisk },
+  "noto-animated": { svg: pickerIcons.smiley },
 };
 let active: (() => void) | undefined;
 
@@ -90,10 +109,11 @@ export function mountEmojiMart({
     /* Like Mart, selection works without localStorage. */
   }
   const picker = new Picker({
-    data,
-    custom: emojis.length
-      ? [{ id: "buzz-custom", name: "Custom", emojis }]
-      : [],
+    data: previewData,
+    custom: [
+      { id: "noto-animated", name: "Animated", emojis: animatedCatalog },
+      ...(emojis.length ? [{ id: "buzz-custom", name: "Custom", emojis }] : []),
+    ],
     autoFocus: false,
     categoryIcons,
     emojiButtonSize,
@@ -141,8 +161,44 @@ export function mountEmojiMart({
   });
   // Like the legacy picker, own search focus/corrections after async shadow render.
   const root = picker.shadowRoot;
+  const animatedImages = new Set<HTMLImageElement>();
+  let hoverFrame = 0;
+  const hoverEmoji = (event: Event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const button = target.closest("button");
+    const position = button?.getAttribute("aria-posinset");
+    const label = button?.getAttribute("aria-label");
+    if (!button || !label || !notoAsset(label)) return;
+    cancelAnimationFrame(hoverFrame);
+    // Mart updates its hovered cell before playback takes ownership of the image.
+    hoverFrame = requestAnimationFrame(() => {
+      const current = button.isConnected
+        ? button
+        : root?.querySelector(
+            position
+              ? `button[aria-posinset="${position}"]`
+              : `button[aria-label="${CSS.escape(label)}"]`,
+          );
+      const image = current?.querySelector<HTMLImageElement>("img");
+      if (!image || !notoAsset(image.alt) || disposed) return;
+      image.dataset.notoPreview = "";
+      animatedImages.add(image);
+      playNoto(image, image.alt);
+    });
+  };
+  root?.addEventListener("mouseover", hoverEmoji, true);
+  root?.addEventListener("focusin", hoverEmoji, true);
   const navigationStyle = host.ownerDocument.createElement("style");
   navigationStyle.textContent = `
+    .emoji-mart-emoji img[src^="/emoji/noto-animated/"],
+    .emoji-mart-emoji img[data-noto-preview] {
+      width: 32px;
+      height: 32px;
+      object-fit: contain;
+      transform: scale(1.15);
+    }
+
     :host {
       --font-family: var(--font-sans);
       --font-size: var(--text-body-sm);
@@ -225,6 +281,8 @@ export function mountEmojiMart({
       max-height: 32px !important;
     }
     .scroll .category > :not(.sticky) > .flex {
+      display: grid;
+      grid-template-columns: repeat(${perLine}, ${emojiButtonSize}px);
       justify-content: space-between;
     }
     .scroll .category button {
@@ -388,6 +446,19 @@ export function mountEmojiMart({
   const focusSearch = () => {
     const input = root?.querySelector<HTMLInputElement>('input[type="search"]');
     if (!root || !input || disposed) return;
+    // Mart adds native title tooltips when its preview panel is hidden. Keep
+    // those names available to assistive technology without obscuring playback.
+    for (const button of root.querySelectorAll<HTMLElement>(
+      ".scroll button[title]",
+    )) {
+      const name = button.title;
+      if (name)
+        button.setAttribute(
+          button.getAttribute("aria-label") ? "aria-description" : "aria-label",
+          name,
+        );
+      button.removeAttribute("title");
+    }
     placeSkinToneInNavigation();
     root.querySelector(".scroll")?.classList.add("buzz-thin-scrollbar");
     input.parentElement?.classList.add("search-field");
@@ -411,23 +482,36 @@ export function mountEmojiMart({
     input.focus();
   };
   const observer = new MutationObserver(focusSearch);
-  if (root) observer.observe(root, { childList: true, subtree: true });
+  if (root)
+    observer.observe(root, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["title"],
+    });
   host.appendChild(picker);
   focusSearch();
   function dispose() {
     if (disposed) return;
     disposed = true;
+    cancelAnimationFrame(hoverFrame);
+    root?.removeEventListener("mouseover", hoverEmoji, true);
+    root?.removeEventListener("focusin", hoverEmoji, true);
+    for (const image of animatedImages) stopNoto(image);
     observer.disconnect();
     skinToneObserver?.disconnect();
     themeObserver.disconnect();
     picker.remove(); // unregisters Mart's document listeners and observers
     for (const id of values.keys()) delete Data?.emojis[id];
+    for (const emoji of animatedCatalog) delete Data?.emojis[emoji.id];
     if (Data) {
       Data.categories = Data.categories.filter(
-        (c: { id: string }) => c.id !== "buzz-custom",
+        (c: { id: string }) =>
+          c.id !== "buzz-custom" && c.id !== "noto-animated",
       );
       Data.originalCategories = Data.originalCategories.filter(
-        (c: { id: string }) => c.id !== "buzz-custom",
+        (c: { id: string }) =>
+          c.id !== "buzz-custom" && c.id !== "noto-animated",
       );
     }
     SearchIndex.reset();

@@ -61,7 +61,7 @@ html[data-keyboard-navigation] .input:focus-visible {
   font-size: var(--size-emoji-display);
   line-height: var(--size-emoji-line);
 }
-.input[data-single-emoji] img {
+.input[data-single-emoji] .token img {
   vertical-align: top;
   width: var(--size-emoji-display);
   height: var(--size-emoji-display);

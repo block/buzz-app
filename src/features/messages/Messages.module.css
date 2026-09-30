@@ -227,6 +227,18 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Animated artwork uses its image bounds rather than a text baseline. Allow
+   the optical size adjustment to extend beyond the fixed reaction glyph slot. */
+.reactionNativeEmoji:has(img[data-animation-duration]) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+}
+.reactionNativeEmoji img[data-animation-duration] {
+  display: block;
+  flex-shrink: 0;
+}
 .reactionFallbackEmoji {
   display: inline-block;
   min-width: 0;
@@ -2220,4 +2232,19 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 button[data-jump-to-latest] {
   pointer-events: auto;
+}
+
+.reactionAddGlyph {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transform-origin: center;
+}
+
+.reactionAddGlyph img[data-animation-duration] {
+  transform: scale(1.05);
+  transform-origin: center;
 }

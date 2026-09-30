@@ -459,3 +459,54 @@ it("rolls back a failed last-reaction removal and retries it after remount", asy
   expect(publish.mock.calls[1]?.[0]).toEqual(original);
   expect(screen.queryByRole("button", { name: /👍: 1/ })).toBeNull();
 });
+
+it("enlarges a newly added own reaction for 500ms, but not history or removal", async () => {
+  const animation = { cancel: vi.fn() };
+  const animate = vi.fn(
+    (_frames: Keyframe[], _options: KeyframeAnimationOptions) => animation,
+  );
+  const previous = HTMLElement.prototype.animate;
+  HTMLElement.prototype.animate = animate as unknown as typeof previous;
+  const bounds = vi
+    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockReturnValue({ height: 18 } as DOMRect);
+  const random = vi.spyOn(Math, "random").mockReturnValue(0.75);
+  try {
+    const h = harness([react(other)]);
+    render(<h.Controls />);
+    expect(animate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "👍: 1 person" }));
+    expect(animate).toHaveBeenCalledTimes(1);
+    expect(animate.mock.calls[0]?.[1]).toEqual({
+      duration: 500,
+      easing: "linear",
+    });
+    expect(animate.mock.calls[0]?.[0]).toEqual([
+      {
+        transform: "scale(1) rotate(0deg)",
+        offset: 0,
+        easing: "cubic-bezier(0.45, 0, 0.55, 1)",
+      },
+      { transform: `scale(${33.44 / 18}) rotate(5deg)`, offset: 0.4 },
+      {
+        transform: `scale(${33.44 / 18}) rotate(5deg)`,
+        offset: 0.6,
+        easing: "cubic-bezier(0.45, 0, 0.55, 1)",
+      },
+      { transform: "scale(1) rotate(0deg)", offset: 1 },
+    ]);
+    await act(async () => {
+      await flush();
+      await flush();
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "👍: 2 people, including you" }),
+    );
+    expect(animate).toHaveBeenCalledTimes(1);
+  } finally {
+    cleanup();
+    bounds.mockRestore();
+    random.mockRestore();
+    HTMLElement.prototype.animate = previous;
+  }
+});

@@ -67,13 +67,19 @@ type ItemProps = {
   menuFinalFocus?: (channelId: string) => HTMLElement | false;
 };
 
-function WorkingChannelSidebarItem(props: ItemProps) {
-  const { channel, session } = props;
-  // Only active rows subscribe; idle rows are numerous in large sidebars.
-  const agentKeys = useSyncExternalStore(session.agentActivity.subscribe, () =>
-    workingAgents(session.agentActivity.snapshot(), channel.id).join(","),
+// Keep the row mounted as activity starts and stops; only its subscriptions change.
+export const ChannelSidebarItem = memo(function ChannelSidebarItem(
+  props: ItemProps,
+) {
+  const { channel, session, working } = props;
+  const agentKeys = useSyncExternalStore(
+    working ? session.agentActivity.subscribe : noSubscribe,
+    () =>
+      working
+        ? workingAgents(session.agentActivity.snapshot(), channel.id).join(",")
+        : "",
   );
-  const agents = agentKeys ? agentKeys.split(",") : [];
+  const agents = agentKeys ? agentKeys.split(",") : noAgents;
   const agentProfiles = useSyncExternalStore(
     agents.length ? session.profiles.subscribe : noSubscribe,
     agents.length ? session.profiles.snapshot : () => noProfiles,
@@ -83,22 +89,6 @@ function WorkingChannelSidebarItem(props: ItemProps) {
       {...props}
       agents={agents}
       agentProfiles={agentProfiles}
-    />
-  );
-}
-
-// Own the connected row inside the memo boundary. Selecting another channel
-// must not rebuild every unchanged row's controls and subscriptions.
-export const ChannelSidebarItem = memo(function ChannelSidebarItem(
-  props: ItemProps,
-) {
-  return props.working ? (
-    <WorkingChannelSidebarItem {...props} />
-  ) : (
-    <ChannelSidebarItemCore
-      {...props}
-      agents={noAgents}
-      agentProfiles={noProfiles}
     />
   );
 });

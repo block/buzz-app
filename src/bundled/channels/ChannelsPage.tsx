@@ -577,7 +577,9 @@ function ChannelWorkspace({
     if (
       activity &&
       activity.channelId === requestedChannel &&
-      activity.rootId === requestedThread
+      activity.messageId === requestedMessage &&
+      activity.entryId === navigation?.entryId &&
+      !activity.signal.aborted
     ) {
       threadTrigger.current = activity.trigger;
       handoff.activityThread.current = undefined;
@@ -602,7 +604,6 @@ function ChannelWorkspace({
     requestedMessage,
     navigation,
     requestedChannel,
-    requestedThread,
     open,
     handoff?.activityThread,
     handoff?.activityAgent,

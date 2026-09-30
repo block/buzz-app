@@ -31,7 +31,9 @@ type State = {
 };
 type ActivityThread = {
   channelId: string;
-  rootId: string;
+  messageId: string;
+  entryId: string;
+  signal: AbortSignal;
   trigger: HTMLElement | null;
 };
 type ActivityAgent = {

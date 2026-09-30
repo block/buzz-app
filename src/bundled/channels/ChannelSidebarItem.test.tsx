@@ -463,3 +463,23 @@ it.each(["ContextMenu", "F10"])(
     expect(onSelect).toHaveBeenCalledWith("child");
   },
 );
+
+it.each(["Collapse sessions in Alpha", "Plan, session in Alpha"])(
+  "retains focused %s across idle and working transitions",
+  (name) => {
+    const props = {
+      ...itemProps(owner().session, false),
+      sessions: [
+        { id: "child", name: "Plan", channelType: "session" as const },
+      ],
+    };
+    const view = render(<ChannelSidebarItem {...props} />);
+    const control = screen.getByRole("button", { name });
+    control.focus();
+    for (const working of [true, false]) {
+      view.rerender(<ChannelSidebarItem {...props} working={working} />);
+      expect(screen.getByRole("button", { name })).toBe(control);
+      expect(control).toHaveFocus();
+    }
+  },
+);

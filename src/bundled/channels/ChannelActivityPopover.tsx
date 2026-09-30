@@ -122,7 +122,7 @@ function ActivityRow({
           icon={<EnvelopeOpenIcon />}
           aria-label={`Mark thread from ${name} as read`}
           title="Mark as read"
-          disabled={pending}
+          loading={pending}
           onClick={() => void markRead()}
         />
       </span>
@@ -202,13 +202,17 @@ export function ChannelActivityPopover({
     ),
   ) as ({ startedAt: number; messageId?: string } | null)[];
   const keyLabels = publicKeyLabels(activeAgents);
-  if (!items.length && !activeAgents.length) return trigger;
+  const hasActivity = items.length > 0 || activeAgents.length > 0;
+  useEffect(() => {
+    if (!hasActivity) setOpen(false);
+  }, [hasActivity]);
   const stale = items.length > 0 && snapshot.freshness === "stale";
   return (
     <PopoverRoot
       modal={false}
       open={open}
       onOpenChange={(next, details) => {
+        if (next && !hasActivity) return;
         if (details.reason === "trigger-press") {
           const mousePress =
             triggerPointerType.current === "mouse" &&
@@ -233,7 +237,7 @@ export function ChannelActivityPopover({
     >
       <PopoverTrigger
         render={trigger}
-        openOnHover
+        openOnHover={hasActivity}
         delay={250}
         closeDelay={150}
         onPointerDown={(event) => {

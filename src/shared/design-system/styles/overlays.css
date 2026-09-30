@@ -158,6 +158,9 @@
   .buzz-dialog-content[data-header-gap="compact"] {
     padding-block-start: var(--space-3);
   }
+  .buzz-dialog-content[data-footer-gap="compact"] {
+    padding-block-end: var(--space-2);
+  }
   .buzz-dialog-actions {
     min-width: 0;
     flex-shrink: 0;

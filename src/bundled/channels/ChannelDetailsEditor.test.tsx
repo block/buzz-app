@@ -1071,10 +1071,10 @@ it.each(["public", "private"] as const)(
         ? "Everyone in this community will be able to view this channel’s full history."
         : "Only channel members will have access.";
       expect(confirmation).toHaveAccessibleDescription(consequence);
-      expect(screen.getByText(consequence)).toBeVisible();
+      await waitFor(() => expect(screen.getByText(consequence)).toBeVisible());
       expect(
         screen.getByText(consequence).closest(".buzz-dialog-body"),
-      ).not.toBeNull();
+      ).toHaveAttribute("data-footer-gap", "compact");
       expect(
         screen.queryByText(/This change takes effect/),
       ).not.toBeInTheDocument();

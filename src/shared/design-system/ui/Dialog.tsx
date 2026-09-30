@@ -23,6 +23,8 @@ export type DialogProps = {
   actions?: ReactNode;
   /** Tighter heading-to-body spacing for compact forms. */
   headerGap?: "default" | "compact";
+  /** Keep a final body control close to its confirmation actions. */
+  footerGap?: "default" | "compact";
   /** Replace a step inside this modal; scale defines its recessed/raised position. */
   step?: { key: string; scale: number };
   leadingActions?: ReactNode;
@@ -56,6 +58,7 @@ export function Dialog({
   children,
   actions,
   headerGap = "default",
+  footerGap = "default",
   step,
   leadingActions,
   headerActions,
@@ -115,6 +118,7 @@ export function Dialog({
       <div
         className="buzz-dialog-body buzz-dialog-content"
         data-header-gap={headerGap}
+        data-footer-gap={footerGap}
       >
         {children}
       </div>

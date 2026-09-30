@@ -542,3 +542,32 @@ test("compact header spacing is opt-in and follows stepped content", () => {
     "compact",
   );
 });
+
+test("compact footer spacing is opt-in and resets when leaving confirmation", () => {
+  const view = (confirm = false) => (
+    <Dialog
+      open
+      title="Channel"
+      onOpenChange={() => {}}
+      {...(confirm ? { footerGap: "compact" as const } : {})}
+      step={{ key: confirm ? "confirmation" : "form", scale: 0.95 }}
+    >
+      <p>{confirm ? "confirmation" : "form"}</p>
+    </Dialog>
+  );
+  const { rerender } = render(view());
+  expect(screen.getByText("form").parentElement).toHaveAttribute(
+    "data-footer-gap",
+    "default",
+  );
+  rerender(view(true));
+  expect(screen.getByText("confirmation").parentElement).toHaveAttribute(
+    "data-footer-gap",
+    "compact",
+  );
+  rerender(view());
+  expect(screen.getByText("form").parentElement).toHaveAttribute(
+    "data-footer-gap",
+    "default",
+  );
+});

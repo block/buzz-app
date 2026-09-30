@@ -462,7 +462,9 @@ vertical padding matching the dialog's horizontal padding: `--space-6` (24px),
 or `--space-4` (16px) at the compact breakpoint. Do not add an outer flex gap
 on top of that body padding. Create/Edit channel forms opt into
 `headerGap="compact"` for a 12px heading-to-body gap at every breakpoint;
-the bottom body padding and other dialog compositions remain unchanged.
+other dialog compositions retain their default spacing. Their privacy confirmation
+steps also opt into `footerGap="compact"` for 8px between the final checkbox row
+and the actions; returning to the form restores the normal body-bottom padding.
 For a bounded dialog with fixed controls above a list, use `height="stable"`
 with `bodyLayout="flex"`. The body becomes a non-scrolling flex column; the
 feature supplies a `flex: 1; min-height: 0` composition with fixed controls and

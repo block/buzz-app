@@ -586,10 +586,10 @@ it("confirms both privacy directions in the same modal and preserves the entire 
         ? "Everyone in this community will be able to view this channel’s full history."
         : "Only channel members will have access.";
       expect(dialog).toHaveAccessibleDescription(consequence);
-      expect(screen.getByText(consequence)).toBeVisible();
+      await waitFor(() => expect(screen.getByText(consequence)).toBeVisible());
       expect(
         screen.getByText(consequence).closest(".buzz-dialog-body"),
-      ).not.toBeNull();
+      ).toHaveAttribute("data-footer-gap", "compact");
       expect(
         screen.queryByText(/This choice takes effect/),
       ).not.toBeInTheDocument();

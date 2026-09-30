@@ -304,6 +304,7 @@ export function ChannelDetailsEditor({
       <Dialog
         open={view.editing}
         headerGap="compact"
+        footerGap={view.privacyChoice ? "compact" : "default"}
         step={
           confirmDiscard
             ? { key: "discard", scale: 0.95 }

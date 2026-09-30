@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { RegisteredPage } from "../../features/pages/service";
 import { createServices, type AppServices } from "../services";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { AppShell } from "./AppShell";
@@ -40,13 +41,26 @@ it("hides and shows the channel sidebar without re-rendering its content", async
     );
   }
   const sidebar = (pages: ReactNode) => <Sidebar>{pages}</Sidebar>;
+  // Stable inputs, so only `selected` changes between the renders below.
+  const pages: RegisteredPage[] = [
+    {
+      id: "channels",
+      key: "buzz.channels/channels",
+      pluginId: "buzz.channels",
+      revision: "1",
+      title: "Channels",
+      component: () => null,
+      primary: true,
+    },
+  ];
+  const onSelect = () => {};
   const shell = (selected: string) => (
     <ToastProvider>
       <AppShell
-        pages={[]}
+        pages={pages}
         selected={selected}
         navigationAttempt=""
-        onSelect={() => {}}
+        onSelect={onSelect}
         tone="default"
         sidebar={sidebar}
         communities={current.communities}
@@ -60,8 +74,10 @@ it("hides and shows the channel sidebar without re-rendering its content", async
   const content = screen.getByRole("complementary", {
     name: "Channel sidebar",
   });
-  const navigation = content.parentElement;
+  const navigation = document.getElementById("shell-navigation");
   const rendered = renders.mock.calls.length;
+  const row = () => within(content).getByRole("button", { name: "Messages" });
+  expect(row()).toHaveAttribute("aria-current", "page");
 
   for (const [label, hidden] of [
     ["Hide Channel sidebar", "true"],
@@ -75,7 +91,8 @@ it("hides and shows the channel sidebar without re-rendering its content", async
   expect(content).toBeInTheDocument();
   expect(renders).toHaveBeenCalledTimes(rendered);
 
-  // Shell inputs that the sidebar receives still reach it.
+  // A selection change still reaches the page rows the sidebar renders.
   rerender(shell("buzz.agents/agents"));
   expect(renders.mock.calls.length).toBeGreaterThan(rendered);
+  expect(row()).not.toHaveAttribute("aria-current");
 });

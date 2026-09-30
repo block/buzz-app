@@ -232,7 +232,7 @@ export function AppShell({
                   }
                 }}
               >
-                {navigation}
+                <div className="shell-navigation-content">{navigation}</div>
               </div>
               <main
                 id="main-content"

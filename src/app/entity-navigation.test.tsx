@@ -16,9 +16,7 @@ import { finalizeEvent, getPublicKey } from "nostr-tools";
 import { App } from "./App";
 import { createServices, type AppServices } from "./services";
 import {
-  bindSharedTarget,
-  parseTargetLink,
-  targetLink,
+  parseOpenTarget,
   type OpenTarget,
 } from "../features/navigation/targets";
 import { bindDeepLinks } from "../features/navigation/deep-links";
@@ -413,7 +411,9 @@ it.each(["Inbox", "Bestie"])(
         route: { version: 1, params: name },
         ...(scope !== undefined ? { scope } : {}),
       };
-      const bound = bindSharedTarget(parseTargetLink(targetLink(old)), viewer);
+      // Legacy page targets remain valid navigation/history input even though
+      // main no longer accepts the retired buzz://open URL envelope.
+      const bound = parseOpenTarget(old);
       let visit = "";
       let result!: ReturnType<typeof current.navigation.open>;
       act(() => {

@@ -529,7 +529,7 @@ async fn read_response(mut response: reqwest::Response, limit: usize) -> Result<
 
     let bytes = read_bounded(
         &mut response,
-        response_limit,
+        limit,
         "Relay response was interrupted",
         "Relay response is too large",
     )

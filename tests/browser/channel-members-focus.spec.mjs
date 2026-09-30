@@ -561,3 +561,74 @@ test.describe("touch identity actions", () => {
     await expect(dialog).toBeVisible();
   });
 });
+
+// Browser-only proof: fixed scrollport/search geometry and motion preference
+// across the loading-to-content swap; completion-order matrices live in Vitest.
+for (const [width, reducedMotion] of [
+  [1280, "no-preference"],
+  [390, "reduce"],
+]) {
+  test(`initial member spinner preserves list geometry at ${width}px`, async ({
+    page,
+  }) => {
+    const { errors } = watchPageErrors(page);
+    await page.setViewportSize({ width, height: 850 });
+    await page.emulateMedia({ reducedMotion });
+    await page.goto(`${url}?loading`);
+    await page.getByRole("button", { name: "Channel members" }).click();
+    const dialog = page.getByRole("dialog", { name: "Channel members" });
+    const list = dialog.getByRole("region", { name: "Member list" });
+    const status = list.getByRole("status", { name: "Loading members" });
+    const search = dialog.getByRole("searchbox");
+    try {
+      await expect
+        .poll(() => page.evaluate(() => window.focusFixture.namesRequested()))
+        .toBe(true);
+      await expect(status).toBeVisible();
+      await expect(
+        list.getByRole("button", { name: /^Open profile for/ }),
+      ).toHaveCount(0);
+      // Only wait for finite dialog entrance animations, never the loading spin.
+      await dialog.evaluate(async (element) => {
+        await Promise.all(
+          element
+            .getAnimations({ subtree: true })
+            .filter(
+              (animation) =>
+                animation.effect?.getComputedTiming().iterations !== Infinity,
+            )
+            .map((animation) => animation.finished),
+        );
+      });
+      const before = {
+        list: await list.boundingBox(),
+        search: await search.boundingBox(),
+      };
+      const spinner = status.locator("svg");
+      const circle = await spinner.boundingBox();
+      expect(
+        Math.abs(
+          circle.x + circle.width / 2 - before.list.x - before.list.width / 2,
+        ),
+      ).toBeLessThan(2);
+      await expect(spinner).toHaveCSS(
+        "animation-name",
+        reducedMotion === "reduce" ? "none" : "spin",
+      );
+      await expect(
+        dialog
+          .getByRole("button", { name: "Refresh member data" })
+          .locator("svg"),
+      ).toHaveCSS("animation-name", "none");
+      await page.evaluate(() => window.focusFixture.releaseNames());
+      await expect(status).toHaveCount(0);
+      await expect(list.getByText("Carl (you)")).toBeVisible();
+      expect(await list.boundingBox()).toEqual(before.list);
+      expect(await search.boundingBox()).toEqual(before.search);
+      await expect(search).toBeFocused();
+      expect(errors).toEqual([]);
+    } finally {
+      await page.evaluate(() => window.focusFixture.releaseNames());
+    }
+  });
+}

@@ -30,6 +30,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import {
   ArrowsClockwiseIcon,
+  CircleNotchIcon,
   UsersIcon,
 } from "../../shared/design-system/icons";
 import {
@@ -110,6 +111,7 @@ export function ChannelMembersButton({
       />
       {open && (
         <ChannelMembersDialog
+          key={channelId}
           session={session}
           channelId={channelId}
           control={control}
@@ -171,7 +173,10 @@ export function ChannelMembersDialog({
   const [nameError, setNameError] = useState("");
   const [rosterBusy, setRosterBusy] = useState(true);
   const [refresh, setRefresh] = useState(0);
-  const [namesBusy, setNamesBusy] = useState(false);
+  const [namesSettledFor, setNamesSettledFor] = useState<{
+    session: RelaySession;
+    memberKey: string;
+  }>();
   const [agentsBusy, setAgentsBusy] = useState(false);
   const list = useSyncExternalStore(
     session.channels.subscribeList,
@@ -254,11 +259,14 @@ export function ChannelMembersDialog({
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh retries missing names with the other dialog reads.
   useEffect(() => {
     setNameError("");
-    setNamesBusy(!!memberKey);
-    if (!memberKey) return;
+    setNamesSettledFor(undefined);
+    if (!memberKey) {
+      setNamesSettledFor({ session, memberKey });
+      return;
+    }
     let current = true;
     void session.profiles
-      .ensure(memberKey.split(":"), "background")
+      .ensure(memberKey.split(":"), "foreground")
       .catch(() => {
         if (current)
           setNameError(
@@ -266,12 +274,38 @@ export function ChannelMembersDialog({
           );
       })
       .finally(() => {
-        if (current) setNamesBusy(false);
+        if (current) setNamesSettledFor({ session, memberKey });
       });
     return () => {
       current = false;
     };
   }, [session, memberKey, refresh]);
+  const namesBusy =
+    namesSettledFor?.session !== session ||
+    namesSettledFor?.memberKey !== memberKey;
+  // Reopen immediately only when the session already has a resolved presentation.
+  // This is a reveal latch, not a second roster/profile/permission cache.
+  const [revealedFor, setRevealedFor] = useState(() =>
+    channel &&
+    !channel.cached &&
+    (administration.status === "ready" || administration.status === "error") &&
+    (channel.members ?? []).every((key) => profiles.has(key))
+      ? session
+      : undefined,
+  );
+  const rolesSettled =
+    administration.status === "ready" ||
+    administration.status === "error" ||
+    !channel ||
+    channel.cached;
+  useEffect(() => {
+    // The authority hook may have started a new roster's read in this effect
+    // flush. Do not reveal using the previous render's settled role snapshot.
+    const status = session.memberAdministration.snapshot(channelId).status;
+    if (!rosterBusy && !namesBusy && rolesSettled && status !== "loading")
+      setRevealedFor(session);
+  }, [session, channelId, rosterBusy, namesBusy, rolesSettled]);
+  const initialLoading = revealedFor !== session;
   const known = new Map(
     agents.identities.map((agent) => [agent.pubkey, agent]),
   );
@@ -634,7 +668,11 @@ export function ChannelMembersDialog({
             <ArrowsClockwiseIcon
               size={16}
               aria-hidden="true"
-              className={refreshing ? "motion-safe:animate-spin" : undefined}
+              className={
+                refreshing && !initialLoading
+                  ? "motion-safe:animate-spin"
+                  : undefined
+              }
             />
           }
         />
@@ -671,28 +709,45 @@ export function ChannelMembersDialog({
             </p>
           )}
           <MemberAdministrationStatus session={session} channelId={channelId} />
-          {groups
-            .filter((group) => group.keys.length || group.name === "Members")
-            .map((group) => (
-              <section key={group.name} aria-label={group.name}>
-                <h3
-                  className={`${styles.groupHeading} px-control-inset pb-2 text-caption text-subtle`}
-                >
-                  {group.name} · {group.count}
-                </h3>
-                <ul>{group.keys.map((key) => row(key, label(key), false))}</ul>
-                {group.name === "Members" &&
-                  !groups.some((item) => item.keys.length) &&
-                  !rosterBusy && (
-                    <p className="px-control-inset text-body-sm text-subtle">
-                      {query
-                        ? "No members match your search."
-                        : "No members to show."}
-                    </p>
-                  )}
-              </section>
-            ))}
-          {canAdd && query.trim() && (
+          {initialLoading ? (
+            <div
+              className={styles.loadingMembers}
+              role="status"
+              aria-label="Loading members"
+            >
+              <CircleNotchIcon
+                size={24}
+                aria-hidden="true"
+                className="motion-safe:animate-spin"
+              />
+              <span className="sr-only">Loading members…</span>
+            </div>
+          ) : (
+            groups
+              .filter((group) => group.keys.length || group.name === "Members")
+              .map((group) => (
+                <section key={group.name} aria-label={group.name}>
+                  <h3
+                    className={`${styles.groupHeading} px-control-inset pb-2 text-caption text-subtle`}
+                  >
+                    {group.name} · {group.count}
+                  </h3>
+                  <ul>
+                    {group.keys.map((key) => row(key, label(key), false))}
+                  </ul>
+                  {group.name === "Members" &&
+                    !groups.some((item) => item.keys.length) &&
+                    !rosterBusy && (
+                      <p className="px-control-inset text-body-sm text-subtle">
+                        {query
+                          ? "No members match your search."
+                          : "No members to show."}
+                      </p>
+                    )}
+                </section>
+              ))
+          )}
+          {!initialLoading && canAdd && query.trim() && (
             <section
               className={styles.memberGroup}
               aria-label="Not in this channel"

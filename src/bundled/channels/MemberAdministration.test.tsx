@@ -47,6 +47,7 @@ async function setup(
   presence?: Presence,
   messageSupport = false,
   messageNavigation = true,
+  initialReads?: { names?: Promise<void>; roster?: Promise<void> },
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -99,8 +100,13 @@ async function setup(
           : event.tags.find(([key]) => key === "role")?.[1];
     tick++;
   });
+  let dialogReads = false;
   const query = vi.fn(async (filters: Parameters<typeof matchesEvent>[1][]) => {
     if (filters.some((filter) => filter.kinds?.includes(39001))) await roleRead;
+    if (filters.some((filter) => filter.kinds?.includes(0)))
+      await initialReads?.names;
+    if (dialogReads && filters.some((filter) => filter.kinds?.includes(39002)))
+      await initialReads?.roster;
     return events().filter((event) =>
       filters.some((filter) => matchesEvent(event, filter)),
     );
@@ -154,13 +160,17 @@ async function setup(
     </ToastProvider>,
   );
   const user = userEvent.setup();
+  dialogReads = true;
   await user.click(screen.getByRole("button", { name: "Channel members" }));
-  await screen.findByText("Morgan");
-  await vi.waitFor(() =>
-    expect(session.memberAdministration.snapshot(id).status).toBe(
-      roleRead ? "loading" : "ready",
-    ),
-  );
+  if (roleRead || initialReads)
+    await screen.findByRole("status", { name: "Loading members" });
+  else await screen.findByText("Morgan");
+  if (!initialReads)
+    await vi.waitFor(() =>
+      expect(session.memberAdministration.snapshot(id).status).toBe(
+        roleRead ? "loading" : "ready",
+      ),
+    );
   return {
     user,
     session,
@@ -230,14 +240,19 @@ it.each([
   },
 );
 
-it("uses alphabetical order until roles load, then reorders on verified role refresh", async () => {
+it("withholds initial rows until roles settle, then preserves content through refresh", async () => {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
   const t = await setup("member", "member", true, gate);
   try {
-    expect(memberOrder()).toEqual(["Carl", "Morgan", "Owner"]);
+    expect(
+      screen.getByRole("status", { name: "Loading members" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /^Open profile for/ }),
+    ).toBeNull();
   } finally {
     await act(async () => release());
   }
@@ -272,7 +287,7 @@ function memberOrder() {
 }
 
 it.each([false, true])(
-  "omits unverified roles during the initial read, then shows the result (failure: %s)",
+  "withholds rows during the initial role read, then shows the result (failure: %s)",
   async (failure) => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -289,21 +304,24 @@ it.each([false, true])(
           ),
         ).toBe(true),
       );
-      const row = screen.getByRole("button", {
-        name: /Open profile for Morgan/,
-      });
-      expect(row).toBeVisible();
-      expect(screen.queryByText("Role unverified")).not.toBeInTheDocument();
-      expect(row).not.toHaveAccessibleName(/Role unverified/);
       expect(
-        within(required(row.closest("li"))).queryByText("member"),
-      ).not.toBeInTheDocument();
+        screen.getByRole("status", { name: "Loading members" }),
+      ).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: /^Open profile for/ }),
+      ).toBeNull();
       await act(async () => release());
       await vi.waitFor(() =>
         expect(t.session.memberAdministration.snapshot(id).status).toBe(
           failure ? "error" : "ready",
         ),
       );
+      const row = await screen.findByRole("button", {
+        name: /Open profile for Morgan/,
+      });
+      expect(
+        screen.queryByRole("status", { name: "Loading members" }),
+      ).toBeNull();
       expect(row.closest("li")).not.toHaveTextContent(
         /Role unverified|^member$/,
       );
@@ -316,6 +334,120 @@ it.each([false, true])(
     }
   },
 );
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+it.each(["names", "roles", "roster"] as const)(
+  "shows only a list spinner until the last required read settles: %s",
+  async (last) => {
+    const gates = { names: deferred(), roles: deferred(), roster: deferred() };
+    try {
+      const t = await setup(
+        "member",
+        "member",
+        true,
+        gates.roles.promise,
+        false,
+        undefined,
+        false,
+        true,
+        { names: gates.names.promise, roster: gates.roster.promise },
+      );
+      const list = screen.getByRole("region", { name: "Member list" });
+      const search = screen.getByRole("searchbox");
+      await vi.waitFor(() => {
+        for (const kind of [0, 39001, 39002])
+          expect(
+            t.query.mock.calls.some(([filters]) =>
+              filters.some((filter) => filter.kinds?.includes(kind)),
+            ),
+          ).toBe(true);
+      });
+      await act(async () => {
+        for (const [key, gate] of Object.entries(gates))
+          if (key !== last) gate.resolve();
+      });
+      expect(
+        within(list).getByRole("status", { name: "Loading members" }),
+      ).toBeVisible();
+      expect(
+        within(list).queryByRole("button", { name: /^Open profile for/ }),
+      ).toBeNull();
+      expect(within(list).queryByRole("heading")).toBeNull();
+      expect(screen.getByRole("searchbox")).toBe(search);
+      await act(async () => gates[last].resolve());
+      await screen.findByText("Morgan");
+      expect(memberOrder()).toEqual(["Owner", "Carl", "Morgan"]);
+      expect(
+        screen.queryByRole("status", { name: "Loading members" }),
+      ).toBeNull();
+      expect(screen.getByRole("region", { name: "Member list" })).toBe(list);
+      expect(screen.getByRole("searchbox")).toHaveFocus();
+      expect(t.publish).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => {
+        for (const gate of Object.values(gates)) gate.resolve();
+      });
+    }
+  },
+);
+
+it("keeps resolved rows and focus while refreshing, and reopens warm without a spinner", async () => {
+  const t = await setup();
+  const refresh = screen.getByRole("button", { name: "Refresh member data" });
+  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  const gate = deferred();
+  const query = required(t.query.getMockImplementation());
+  t.query.mockImplementation(async (filters) => {
+    await gate.promise;
+    return query(filters);
+  });
+  try {
+    const row = screen.getByRole("button", { name: /Open profile for Morgan/ });
+    const list = screen.getByRole("region", { name: "Member list" });
+    list.scrollTop = 24;
+    await t.user.click(refresh);
+    expect(
+      screen.queryByRole("status", { name: "Loading members" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Open profile for Morgan/ }),
+    ).toBe(row);
+    expect(refresh).toHaveFocus();
+    expect(list.scrollTop).toBe(24);
+    await act(async () => gate.resolve());
+    await vi.waitFor(() =>
+      expect(refresh).toHaveAttribute("aria-busy", "false"),
+    );
+    await t.user.click(
+      screen.getByRole("button", { name: "Close channel members" }),
+    );
+    const reopen = deferred();
+    t.query.mockImplementation(async (filters) => {
+      await reopen.promise;
+      return query(filters);
+    });
+    try {
+      await t.user.click(
+        screen.getByRole("button", { name: "Channel members" }),
+      );
+      expect(
+        screen.queryByRole("status", { name: "Loading members" }),
+      ).toBeNull();
+      expect(memberOrder()).toEqual(["Carl", "Owner", "Morgan"]);
+    } finally {
+      await act(async () => reopen.resolve());
+    }
+  } finally {
+    await act(async () => gate.resolve());
+  }
+});
 
 it("presents verified roles, protects owners/self, and confirms a separate deliberate role intent", async () => {
   const t = await setup();

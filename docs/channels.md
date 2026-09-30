@@ -475,8 +475,15 @@ verified roles plus per-member administration. Current members appear in separat
 **Owners**, **Admins** and **Members** groups with sticky headings and counts.
 Verified authority alone places someone in Owners or Admins; everyone else stays
 in Members without asserting a default protocol role. Each group is alphabetical
-by displayed name (public key breaks ties). Before roles resolve, the roster stays
-in Members; refresh preserves the last verified groups on failure. Search filters
+by displayed name (public key breaks ties). Initial opening shows one accessible
+loading spinner inside the existing scrollport until the roster, role and member-name
+attempts settle; no provisional identity rows or groups appear. Missing names or
+failed reads settle to public-key fallback and the existing refresh recovery rather
+than blocking forever. A warm reopen with a settled role result (including an honest failure fallback)
+and all member profiles already available renders immediately. Later refreshes retain usable content and
+preserve the last verified groups on failure. Visible member names request foreground
+priority; avatars, presence and manager enrichment never gate the initial list.
+Search filters
 each group, omits empty elevated groups, and preserves full group counts.
 Non-member search ranking is unchanged.
 Current-member avatars and rows open the existing Profiles panel when its contribution
@@ -534,9 +541,10 @@ without separate fetch-retry buttons. The current search text is retained; direc
 refresh starts at page one rather than mixing old pages with fresh results. Empty
 queries and view-only membership do not trigger directory searches. Cached names
 reuse the shared profile directory; failed/missing names are retried. The separate
-roster read remains usable when role verification fails. The icon spins linearly
-until all these reads settle (except with reduced motion), exposes `aria-busy`, and
-keeps its focus target without a separate loading label or spinner. Duplicate clicks
+roster read remains usable when role verification fails. The refresh icon spins
+linearly until all these reads settle (except with reduced motion), but stays still
+while the initial list spinner is showing so only one spinner is active. It exposes
+`aria-busy` and keeps its focus target. Duplicate clicks
 and refresh during membership writes are blocked. Optional-name loading/failure does
 not disable Add once the roster is verified. Failed invitations keep their explicit
 Retry; data refresh never resubmits an invitation, role change or removal.

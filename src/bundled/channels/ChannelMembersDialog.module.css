@@ -23,6 +23,13 @@
 .memberList > * {
   flex-shrink: 0;
 }
+.loadingMembers {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  min-height: var(--size-row);
+  color: var(--text-subtle);
+}
 .groupHeading {
   position: sticky;
   top: 0;

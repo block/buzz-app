@@ -28,6 +28,12 @@ const candidates = new URLSearchParams(location.search).has("multiple")
 const candidateProfiles = candidates.map(({ key, name }) =>
   profile(key, { name }),
 );
+const holdNames = new URLSearchParams(location.search).has("loading");
+let releaseNames = () => {};
+const namesReady = new Promise<void>((resolve) => {
+  releaseNames = resolve;
+});
+let namesRequested = false;
 const additions: string[] = [];
 const channelId = "11111111-1111-4111-8111-111111111111";
 const members = [viewer.pubkey];
@@ -49,6 +55,10 @@ const { session } = createRelaySession(
     readAgentLibrary: async () => ({ definitions: [], identities: [] }),
     query: async (filters) => {
       if (filters.some((filter) => filter.search)) return candidateProfiles;
+      if (holdNames && filters.some((filter) => filter.kinds?.includes(0))) {
+        namesRequested = true;
+        await namesReady;
+      }
       return [
         roster(relay, channelId, members, clock),
         signed(relay, {
@@ -114,6 +124,8 @@ createRoot(root).render(<Fixture />);
 Object.assign(window, {
   focusFixture: {
     published,
+    namesRequested: () => namesRequested,
+    releaseNames: () => releaseNames(),
     additions,
     personNpub: npubEncode(person.pubkey),
     viewerNpub: npubEncode(viewer.pubkey),

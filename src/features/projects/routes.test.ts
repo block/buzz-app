@@ -101,6 +101,19 @@ describe("entity destinations", () => {
       expect(entityHref(route)).toBe(href);
     },
   );
+  it("drops the commit hash on a project commits link instead of rejecting it", () => {
+    // The one lax shape where the ignored value looks meaningful: `commit` is a
+    // repo-only key, so a project link opens its commits section without it.
+    const canonical = `buzz://project?owner=${owner}&d=project&tab=commits`;
+    const parsed = parseBuzzLink(`${canonical}&commit=${"a".repeat(40)}`);
+    expect(parsed).toEqual({
+      format: "entity",
+      route: { type: "project", owner, dtag: "project", tab: "commits" },
+    });
+    expect(entityHref((parsed as { route: EntityRoute }).route)).toBe(
+      canonical,
+    );
+  });
   it.each([
     `repo?owner=${owner}`,
     `repo?owner=no&d=repo`,

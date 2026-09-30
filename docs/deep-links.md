@@ -29,7 +29,8 @@ digits, `_`, `-`, or `.`, without a leading dot or `..`. Query parameters outsid
 a form's grammar are ignored, with their values and any repeats, so a link that
 another client decorated still opens; a duplicated known parameter is rejected as
 ambiguous. The `channel` forms carry everything in the path and ignore any query.
-The same forms work in message content.
+This leniency does not extend to `buzz://open?target=…` locators, which still
+require exactly one `target` key. The same forms work in message content.
 
 None carries a community, so each binds to the currently selected community and
 viewer, and fail `unavailable` when no community is selected or no identity is

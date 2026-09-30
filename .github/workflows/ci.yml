@@ -115,11 +115,15 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      HOME: /root
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Trust this container workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: ./.github/actions/setup
         with:
           browsers: "true"
@@ -161,6 +165,8 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      HOME: /root
     # Six file-level shards split the large file groups that remain together
     # with four or five shards, leaving room for setup inside the same deadline.
     timeout-minutes: 15
@@ -173,12 +179,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Trust this container workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       # The browser image already contains both engines and their libraries.
       # Its native fixture still needs a compiler/linker and the repository Rust pin.
       - name: Native fixture build prerequisites
         run: |
           apt-get update
-          apt-get install --no-install-recommends -y build-essential
+          apt-get install --no-install-recommends -y gcc libc6-dev
       - name: Resolve pinned browser Rust
         id: browser-rust
         run: |
@@ -206,6 +214,12 @@ jobs:
         with:
           browsers: "true"
           browser-engine: ${{ matrix.engine }}
+      - name: Verify native fixture tool paths
+        run: |
+          test "$(command -v cargo)" = "$HERMIT_PREPEND_PATH/cargo"
+          test "$(command -v rustc)" = "$HERMIT_PREPEND_PATH/rustc"
+          cargo --version
+          rustc --version
       # This journey uses a real native plugin-manager bridge. Provision it
       # before Playwright starts: a cold Rust install/build is test setup, not
       # browser behavior, and must not consume the journey's subprocess budget.

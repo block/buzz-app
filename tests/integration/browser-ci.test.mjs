@@ -113,7 +113,7 @@ test("browser fixture retains a validated repository Rust pin and linker before 
   );
   assert.match(
     prerequisites.run,
-    /apt-get install --no-install-recommends -y build-essential/,
+    /apt-get install --no-install-recommends -y gcc libc6-dev/,
   );
   assert.ok(steps.indexOf(resolve) < steps.indexOf(install));
   assert.ok(steps.indexOf(install) < steps.indexOf(select));
@@ -422,6 +422,20 @@ test("browser jobs use one immutable image matching the package pin, without per
     assert.equal(job.container.image, image);
     assert.equal(job.container.options, "--init --ipc=host");
     assert.equal(job.defaults.run.shell, "bash");
+    assert.equal(job.env.HOME, "/root");
+    const trust = job.steps.find(
+      (step) => step.name === "Trust this container workspace",
+    );
+    assert.equal(
+      trust.run,
+      'git config --global --add safe.directory "$GITHUB_WORKSPACE"',
+    );
+    assert.ok(
+      job.steps.indexOf(trust) <
+        job.steps.findIndex((step) => step.uses === "./.github/actions/setup"),
+    );
+    assert.equal(trust.if, undefined);
+    assert.equal(trust["continue-on-error"], undefined);
     assert.equal(job["timeout-minutes"], 15);
     assert.equal(
       job.steps.find((step) => step.uses === "./.github/actions/setup").with
@@ -444,11 +458,13 @@ test("browser jobs use one immutable image matching the package pin, without per
     verify = steps.find((step) => step.name === "Verify pinned browser image");
   assert.equal(verify.if, "inputs.browsers == 'true'");
   assert.equal(verify["continue-on-error"], undefined);
-  assert.equal(verify.run, "node scripts/check-browser-image.mjs");
+  assert.equal(verify.run, "./bin/node scripts/check-browser-image.mjs");
   assert.equal(verify.env.PLAYWRIGHT_ENGINE, `\${{ inputs.browser-engine }}`);
   assert.ok(
     steps.indexOf(verify) >
-      steps.findIndex((step) => step.run === "pnpm install --frozen-lockfile"),
+      steps.findIndex(
+        (step) => step.run === "./bin/pnpm install --frozen-lockfile",
+      ),
   );
   assert.doesNotMatch(
     read(".github/actions/setup/action.yml"),
@@ -480,4 +496,94 @@ test("image verification rejects version/image mismatch and never silently omits
     { ...info, dockerImageName: "untrusted/image" },
   ])
     assert.throws(() => imageEngines(bad, version, "all"));
+});
+
+test("setup calls pinned entry points and fails before caching an empty pnpm path", (t) => {
+  const { steps } = parse(read(".github/actions/setup/action.yml")).runs;
+  const verify = steps.find(
+    (step) => step.name === "Verify pinned tool entry points",
+  );
+  const store = steps.find((step) => step.id === "pnpm");
+  assert.ok(steps.indexOf(verify) < steps.indexOf(store));
+  assert.match(verify.run, /\.\/bin\/node --version/);
+  assert.match(verify.run, /\.\/bin\/pnpm --version/);
+  assert.match(verify.run, /GITHUB_WORKSPACE\/bin/);
+  assert.ok(
+    verify.run.indexOf('echo "$HERMIT_PREPEND_PATH"') >
+      verify.run.indexOf('echo "$GITHUB_WORKSPACE/bin"'),
+  );
+  const stepsBrowser = parse(workflow).jobs.browser.steps;
+  const nativePaths = stepsBrowser.find(
+    (step) => step.name === "Verify native fixture tool paths",
+  );
+  assert.ok(
+    stepsBrowser.indexOf(nativePaths) >
+      stepsBrowser.findIndex((step) => step.uses === "./.github/actions/setup"),
+  );
+  assert.ok(
+    stepsBrowser.indexOf(nativePaths) <
+      stepsBrowser.findIndex((step) =>
+        step.uses?.startsWith("Swatinem/rust-cache@"),
+      ),
+  );
+  assert.equal(nativePaths.if, undefined);
+  assert.equal(nativePaths["continue-on-error"], undefined);
+  const cwd = mkdtempSync(join(tmpdir(), "buzz-pnpm-path-"));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  mkdirSync(join(cwd, "bin"));
+  writeFileSync(
+    join(cwd, "bin", "pnpm"),
+    '#!/bin/sh\n[ "$1 $2 $3" = "store path --silent" ] || exit 2\nprintf "%s" "$STORE"\nexit "$RESULT"\n',
+    { mode: 0o755 },
+  );
+  mkdirSync(join(cwd, "toolchain"));
+  for (const command of ["cargo", "rustc"]) {
+    writeFileSync(join(cwd, "toolchain", command), "#!/bin/sh\nexit 0\n", {
+      mode: 0o755,
+    });
+    writeFileSync(join(cwd, "bin", command), "#!/bin/sh\nexit 99\n", {
+      mode: 0o755,
+    });
+  }
+  const checkPaths = (path) =>
+    spawnSync("bash", ["-eo", "pipefail", "-c", nativePaths.run], {
+      cwd,
+      env: {
+        ...process.env,
+        PATH: path,
+        HERMIT_PREPEND_PATH: join(cwd, "toolchain"),
+      },
+      encoding: "utf8",
+      timeout: 5000,
+    });
+  assert.equal(
+    checkPaths(`${cwd}/toolchain:${cwd}/bin:${process.env.PATH}`).status,
+    0,
+  );
+  assert.notEqual(
+    checkPaths(`${cwd}/bin:${cwd}/toolchain:${process.env.PATH}`).status,
+    0,
+    "Rust proxies must not win over concrete minimal tools",
+  );
+  const output = join(cwd, "output");
+  const execute = (path, result = "0") => {
+    writeFileSync(output, "");
+    return spawnSync("bash", ["-eo", "pipefail", "-c", store.run], {
+      cwd,
+      env: {
+        ...process.env,
+        GITHUB_OUTPUT: output,
+        STORE: path,
+        RESULT: result,
+      },
+      encoding: "utf8",
+      timeout: 5000,
+    });
+  };
+  assert.equal(execute("/pinned store").status, 0);
+  assert.equal(readFileSync(output, "utf8"), "path=/pinned store\n");
+  assert.notEqual(execute("").status, 0);
+  assert.equal(readFileSync(output, "utf8"), "");
+  assert.equal(execute("", "7").status, 7);
+  assert.equal(readFileSync(output, "utf8"), "");
 });

@@ -18,10 +18,24 @@ runs:
         # A faster JS-only job must not freeze an incomplete cache for Rust jobs.
         key: hermit-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('bin/**') }}
     - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+    - name: Verify pinned tool entry points
+      shell: bash
+      run: |
+        ./bin/node --version
+        ./bin/pnpm --version
+        echo "$GITHUB_WORKSPACE/bin" >> "$GITHUB_PATH"
+        # Later entries take precedence: keep concrete minimal Rust ahead of
+        # bin/cargo, whose Hermit proxy would provision the full Rust archive.
+        if [ -n "${HERMIT_PREPEND_PATH:-}" ]; then
+          echo "$HERMIT_PREPEND_PATH" >> "$GITHUB_PATH"
+        fi
     - name: Resolve pnpm store
       id: pnpm
       shell: bash
-      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      run: |
+        store=$(./bin/pnpm store path --silent)
+        test -n "$store"
+        echo "path=$store" >> "$GITHUB_OUTPUT"
     - name: Cache pnpm store
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
@@ -30,10 +44,10 @@ runs:
         restore-keys: pnpm-${{ runner.os }}-${{ runner.arch }}-
     - name: Install locked dependencies
       shell: bash
-      run: pnpm install --frozen-lockfile
+      run: ./bin/pnpm install --frozen-lockfile
     - name: Verify pinned browser image
       if: inputs.browsers == 'true'
       shell: bash
       env:
         PLAYWRIGHT_ENGINE: ${{ inputs.browser-engine }}
-      run: node scripts/check-browser-image.mjs
+      run: ./bin/node scripts/check-browser-image.mjs

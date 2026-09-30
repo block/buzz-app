@@ -154,7 +154,8 @@ it("decodes four self-encrypted coordinates through the narrow IPC command", asy
   expect(invoke).toHaveBeenCalledWith("relay_decode_sidebar", {
     events: [...records.values()],
   });
-  expect(transport.writer?.kinds).not.toContain(30078);
+  // Main also grants purpose-bound channel recipes (kind 30078); sidebar writes stay on narrow IPC.
+  expect(transport.writer?.kinds).toContain(30078);
 });
 
 it("creates a section, moves a channel, stars, mutes and sorts with encrypted readback", async () => {

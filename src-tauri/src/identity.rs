@@ -570,8 +570,8 @@ impl IdentityHost {
             let State::Ready(key) = &identity.state else {
                 return Err("Set up your identity first".into());
             };
-            let secret = nostr::SecretKey::from_slice(key.0.as_ref()).map_err(|_| INVALID)?;
-            let public = nostr::Keys::new(secret.clone()).public_key();
+            let secret = NostrSecretKey::from_slice(key.0.as_ref()).map_err(|_| INVALID)?;
+            let public = Keys::new(secret.clone()).public_key();
             if encrypt {
                 nostr::nips::nip44::encrypt(
                     &secret,

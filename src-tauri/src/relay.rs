@@ -342,7 +342,7 @@ async fn verify_owned_event(host: &IdentityHost, event: &serde_json::Value) -> R
 }
 
 fn verify_signature(event: &serde_json::Value) -> Result<()> {
-    let parsed: nostr::Event =
+    let parsed: nostr::event::Event =
         serde_json::from_value(event.clone()).map_err(|_| "Invalid outgoing signature")?;
     parsed
         .verify()

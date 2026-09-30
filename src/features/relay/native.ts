@@ -24,7 +24,6 @@ import {
   type ReadTransport,
   type Signer,
 } from "./transport";
-import { PublishRejected } from "./outbox";
 import { nativeSidebar } from "./native-sidebar";
 
 export const nativeWriteKinds = [

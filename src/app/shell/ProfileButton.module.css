@@ -57,12 +57,21 @@
   --text-caption--font-weight: var(--weight-profile-status);
 }
 .availability[data-status="online"] {
-  --interaction-fill: color-mix(in srgb, var(--availability-color) 6%, white);
-  --interaction-hover: color-mix(in srgb, var(--availability-color) 10%, white);
+  --text-standard: var(--text-success);
+  --interaction-fill: color-mix(
+    in srgb,
+    var(--availability-color) 6%,
+    var(--surface-popover)
+  );
+  --interaction-hover: color-mix(
+    in srgb,
+    var(--availability-color) 10%,
+    var(--surface-popover)
+  );
   --interaction-pressed: color-mix(
     in srgb,
     var(--availability-color) 14%,
-    white
+    var(--surface-popover)
   );
 }
 .statusCard {

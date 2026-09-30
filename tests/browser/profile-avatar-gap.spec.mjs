@@ -29,6 +29,63 @@ test("profile avatar cutout shows the shell through hover, press and open menu",
     // Return to an ordinary pointer state after the preceding keyboard check.
     await page.mouse.click(400, 20);
     await page.mouse.move(0, 0);
+    const readable = async (element) => {
+      const ratio = await element.evaluate(async (el) => {
+        // Flush the new interaction/theme styles before waiting for their transitions.
+        getComputedStyle(el).backgroundColor;
+        await Promise.allSettled(
+          el.getAnimations().map((animation) => animation.finished),
+        );
+        const style = getComputedStyle(el);
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 1;
+        const ctx = canvas.getContext("2d");
+        const luminance = (color) => {
+          ctx.clearRect(0, 0, 1, 1);
+          ctx.fillStyle = color;
+          ctx.fillRect(0, 0, 1, 1);
+          const rgb = [...ctx.getImageData(0, 0, 1, 1).data]
+            .slice(0, 3)
+            .map((v) => {
+              const n = v / 255;
+              return n <= 0.04045 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4;
+            });
+          return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+        };
+        const a = luminance(style.color),
+          b = luminance(style.backgroundColor);
+        return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      });
+      expect(
+        ratio,
+        `${mode}: profile foreground/fill contrast`,
+      ).toBeGreaterThanOrEqual(4.5);
+    };
+    await readable(control.locator(".buzz-avatar"));
+    await control.press("Enter");
+    const availability = page.getByRole("button", {
+      name: "Availability: Online",
+      exact: true,
+    });
+    await page.mouse.move(0, 0);
+    await readable(availability);
+    await availability.hover();
+    await availability.evaluate(async (el) => {
+      await Promise.allSettled(el.getAnimations().map((a) => a.finished));
+    });
+    await readable(availability);
+    await page.mouse.down();
+    try {
+      await availability.evaluate(async (el) => {
+        await Promise.allSettled(el.getAnimations().map((a) => a.finished));
+      });
+      await readable(availability);
+    } finally {
+      await page.mouse.up();
+    }
+    await page.keyboard.press("Escape");
+    await page.mouse.click(400, 20);
+    await page.mouse.move(0, 0);
     const bounds = await control.boundingBox();
     const clip = {
       x: bounds.x - 4,
@@ -130,11 +187,11 @@ test("profile menu highlights stay distinct in both themes", async ({
     "data-status",
     "online",
   );
-  const highlighted = async (menu) => {
+  const highlighted = async (menu, row) => {
     await menu.evaluate(async (el) => {
       await Promise.allSettled(el.getAnimations().map((a) => a.finished));
     });
-    await page.keyboard.press("ArrowDown");
+    await row.press("ArrowDown");
     await expect(menu.locator(".buzz-menu-item[data-highlighted]")).toHaveCount(
       1,
     );
@@ -144,7 +201,7 @@ test("profile menu highlights stay distinct in both themes", async ({
     await expect(
       menu.locator(".buzz-menu-item[data-highlighted]"),
     ).not.toHaveCSS("background-color", background);
-    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowUp");
     await expect(
       menu.locator(".buzz-menu-item[data-highlighted]"),
     ).not.toHaveCSS("background-color", background);

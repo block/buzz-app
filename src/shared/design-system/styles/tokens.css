@@ -303,6 +303,7 @@
   --neutral-7: #959595; /* no readers                              */
   --neutral-8: #808080; /* text-disabled                           */
   --neutral-9: #666666; /* text-tertiary                           */
+  --neutral-avatar-on-white: #525252; /* Fixed foreground for a fixed white avatar. */
   --neutral-10: #525252; /* text-secondary                         */
   --neutral-11: #191919; /* inverse fill, paired with neutral-1    */
   --neutral-action-pressed: #525252;
@@ -714,7 +715,7 @@
   /* Profile refinements: compact popovers and emphasized availability. */
   --radius-profile-popover: 1.25rem;
   --weight-profile-status: 600;
-  --text-avatar-fallback: var(--neutral-10);
+  --text-avatar-fallback: var(--neutral-avatar-on-white);
   --duration-fast: var(--time-fast);
   --duration-state: var(--time-state);
   --duration-panel-enter: var(--time-panel-enter);

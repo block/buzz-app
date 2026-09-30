@@ -178,12 +178,49 @@ describe("composer Markdown boundary", () => {
         ["blockquote"],
       ],
       [markdown(numbers(999999999, "item", "next")), ["list"]],
+      // An empty paragraph serialises to nothing, so the wire holds only blank
+      // lines between the lists and the marker must still alternate.
+      [markdown(bullets("a"), paragraph(), bullets("b")), ["list", "list"]],
+      [
+        markdown(numbers(1, "a"), paragraph(), numbers(1, "b")),
+        ["list", "list"],
+      ],
+      [
+        markdown(bullets("a"), paragraph(schema.text("text")), bullets("b")),
+        ["list", "paragraph", "list"],
+      ],
+      [
+        markdown(
+          bullets("a"),
+          schema.nodes.code_block.create(null, schema.text("code")),
+          bullets("b"),
+        ),
+        ["list", "code", "list"],
+      ],
+      [
+        markdown(
+          bullets("a"),
+          schema.nodes.blockquote.create(null, paragraph(schema.text("q"))),
+          bullets("b"),
+        ),
+        ["list", "blockquote", "list"],
+      ],
+      [
+        markdown(bullets("a"), numbers(1, "b"), bullets("c")),
+        ["list", "list", "list"],
+      ],
     ];
     expect(cases.map(([text]) => text)).toEqual([
       "- a\n\n* b\n\n- c\n\ntext\n\n- d",
       "3. third\n\n1) one\n2) two\n\n- x",
       "> - a\n>\n> * b",
       "999999999. item\n999999999. next",
+      "- a\n\n\n\n* b",
+      "1. a\n\n\n\n1) b",
+      "- a\n\ntext\n\n- b",
+      "- a\n\n```\ncode\n```\n\n- b",
+      "- a\n\n> q\n\n- b",
+      "- a\n\n1. b\n\n- c",
     ]);
     for (const [text, types] of cases)
       expect(fromMarkdown(text).children.map((node) => node.type)).toEqual(
@@ -203,6 +240,14 @@ describe("composer Markdown boundary", () => {
       start: 999999999,
       children: [{}, {}],
     });
+    expect(fromMarkdown(cases[4]?.[0] ?? "").children).toMatchObject([
+      { type: "list", ordered: false, children: [{}] },
+      { type: "list", ordered: false, children: [{}] },
+    ]);
+    expect(fromMarkdown(cases[5]?.[0] ?? "").children).toMatchObject([
+      { type: "list", ordered: true, start: 1, children: [{}] },
+      { type: "list", ordered: true, start: 1, children: [{}] },
+    ]);
   });
   it("uses syntax-aware escaping and delimiter flanking", () => {
     expect(serialize(bold("*"))).toBe("**\\***");

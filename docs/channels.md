@@ -676,11 +676,11 @@ marker of the item's own list kind, typed as the only text of an item after the 
 converts, nesting that item as Tab does. A marker typed after prose on the same line, inside
 a code block or inside pasted fenced text stays literal and renders as prose or code once
 sent. A marker on a line holding a mention, emoji or link, a quote marker or a marker of the
-other list kind typed inside a list item, and any marker typed in a list's first item also
-stay literal text in the composer but still render once sent: the timeline shows the list or
-quote, nested inside the item, where the composer shows the marker. Two lists of one kind
-typed one after the other send with alternating markers (`-` then `*`, `1.` then `1)`) so
-they stay separate lists once sent.
+other list kind typed inside a list item, and any marker typed in a list's first item or
+beside an item's prose also stay literal text in the composer but still render once sent: the
+timeline shows the list or quote, nested inside the item, where the composer shows the marker.
+Two lists of one kind typed one after the other, or separated only by empty lines, send with
+alternating markers (`-` then `*`, `1.` then `1)`) so they stay separate lists once sent.
 Typing an inline span (`**bold**` or `__bold__`, `_italic_` or `*italic*`, `~~strike~~`,
 `` `code` ``) converts it to formatting as the closing delimiter is typed, including on a
 heading line such as `# Title **bold**`, and one undo restores the typed characters. Heading

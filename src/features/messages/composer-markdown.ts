@@ -12,7 +12,7 @@ import {
 import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
 import type { Emphasis, PhrasingContent, Root, Text } from "mdast";
 import type { MentionDraft } from "./mention-draft";
-import type { Node as EditorNode } from "prosemirror-model";
+import type { Node as EditorNode, NodeType } from "prosemirror-model";
 import {
   composerSchema,
   readComposerDocument,
@@ -51,10 +51,13 @@ export function composerMarkdown(draft: MentionDraft): string {
 function blocksMarkdown(doc: EditorNode): string {
   const blocks: string[] = [];
   let previous: EditorNode | undefined;
-  // Two lists of one kind separated by a blank line read as one list, so
+  // Two lists of one kind separated only by blank lines read as one list, so
   // adjacent lists alternate their marker as mdast-util-to-markdown does: `-`
-  // then `*` for bullets, `.` then `)` for numbers. Any other block between
-  // them starts the sequence again.
+  // then `*` for bullets, `.` then `)` for numbers. A block that serialises to
+  // nothing but whitespace, such as an empty paragraph, adds only blank lines
+  // to the wire, so the sequence carries across it; any other block between
+  // two lists starts the sequence again.
+  let lastList: NodeType | undefined;
   let alternate = false;
   doc.forEach((block) => {
     // Blank separation prevents lazy quote continuation and adjacent blocks
@@ -67,34 +70,29 @@ function blocksMarkdown(doc: EditorNode): string {
       );
     const list =
       block.type.name === "bullet_list" || block.type.name === "ordered_list";
-    alternate = list && previous?.type === block.type && !alternate;
+    alternate = list && lastList === block.type && !alternate;
+    let output: string;
     if (block.type.name === "code_block") {
       const language: unknown = block.attrs.language;
-      blocks.push(
-        toMarkdown(
-          {
-            type: "root",
-            children: [
-              {
-                type: "code",
-                lang:
-                  typeof language === "string" && language
-                    ? language
-                    : undefined,
-                value: block.textContent,
-              },
-            ],
-          },
-          { fences: true },
-        ).slice(0, -1),
-      );
+      output = toMarkdown(
+        {
+          type: "root",
+          children: [
+            {
+              type: "code",
+              lang:
+                typeof language === "string" && language ? language : undefined,
+              value: block.textContent,
+            },
+          ],
+        },
+        { fences: true },
+      ).slice(0, -1);
     } else if (block.type.name === "blockquote") {
-      blocks.push(
-        blocksMarkdown(block)
-          .split("\n")
-          .map((line) => (line ? `> ${line}` : ">"))
-          .join("\n"),
-      );
+      output = blocksMarkdown(block)
+        .split("\n")
+        .map((line) => (line ? `> ${line}` : ">"))
+        .join("\n");
     } else if (list) {
       const items: string[] = [];
       block.forEach((item, _offset, index) => {
@@ -116,8 +114,11 @@ function blocksMarkdown(doc: EditorNode): string {
               .join("\n"),
         );
       });
-      blocks.push(items.join("\n"));
-    } else blocks.push(paragraphMarkdown(block));
+      output = items.join("\n");
+    } else output = paragraphMarkdown(block);
+    blocks.push(output);
+    if (list) lastList = block.type;
+    else if (/\S/.test(output)) lastList = undefined;
     previous = block;
   });
   return blocks.join("");

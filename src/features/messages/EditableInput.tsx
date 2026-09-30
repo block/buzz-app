@@ -86,15 +86,30 @@ export type EditorDecoration = {
   content: ReactNode;
   editAsText?: boolean;
 };
-/** AppKit's NSEvent carries a private-use "function key" character for every
- * caret, editing and function key (NSUpArrowFunctionKey U+F700 through
- * NSModeSwitchFunctionKey U+F747; Right Arrow is U+F703). No font has a glyph
- * for them and no keyboard layout types them, so text made only of these is a
- * key the host's native text-input path committed as if typed, not prose. */
-const FUNCTION_KEY_CHARACTERS = /[\uF700-\uF747]/gu;
-/** True when a native text insertion holds only function-key characters. */
-function functionKeyText(text: string | null | undefined) {
-  return !!text && !text.replace(FUNCTION_KEY_CHARACTERS, "");
+/** Characters a caret or function key can leave in the document when the
+ * host's native text-input path commits the key as if typed. In the desktop
+ * build every Right Arrow press at the end of a message committed U+001D, the
+ * key's raw keyboard-layout translation: the arrows translate to U+001C
+ * through U+001F, Home and End to U+0001 and U+0004, Page Up and Page Down to
+ * U+000B and U+000C. WebKit blanks a key event's text only for the private-use
+ * block U+F700 through U+F7FF, so these C0 controls survive into insertText.
+ * AppKit's own NSEvent carries that private-use "function key" character
+ * instead (NSUpArrowFunctionKey U+F700 through NSModeSwitchFunctionKey U+F747;
+ * Right Arrow is U+F703), so the block is refused as well. No font has a glyph
+ * for any of these and no layout types them as prose; the whole Unicode
+ * Control category (C0, DEL and C1) is covered, except the tab, newline and
+ * carriage return that typed text legitimately holds. */
+const CONTROL_CHARACTERS = /[\p{Cc}\uF700-\uF747]/gu;
+/** The control characters typed text holds: tab, newline and carriage return. */
+const TYPED_CONTROLS = /[\t\n\r]/u;
+/** True when a native text insertion holds only control characters. Text that
+ * mixes them with real characters is not control text and passes untouched. */
+function controlCharacterText(text: string | null | undefined) {
+  return (
+    !!text &&
+    !TYPED_CONTROLS.test(text) &&
+    !text.replace(CONTROL_CHARACTERS, "")
+  );
 }
 export type EditableInputProps = Omit<
   HTMLAttributes<ComposerInputElement>,
@@ -962,15 +977,14 @@ export function EditableInput({
           },
         },
         handleTextInput(_view, from, to, text, defaultTransaction) {
-          // A caret key committed natively as its function-key character is
-          // refused: with no transaction the document stays as it was, and
-          // ProseMirror redraws the changed DOM from that state. Only the
-          // beforeinput seam can stop the DOM change itself; this seam covers
-          // an insertion that arrived without one, or one that was not
-          // cancelable. No key yields such a character beside real text, so
-          // mixed text is left alone rather than reshaped under the native
-          // selection that describes it.
-          if (functionKeyText(text)) return true;
+          // A caret key committed natively as a control character is refused:
+          // with no transaction the document stays as it was, and ProseMirror
+          // redraws the changed DOM from that state. Only the beforeinput seam
+          // can stop the DOM change itself; this seam covers an insertion that
+          // arrived without one, or one that was not cancelable. No key yields
+          // such a character beside real text, so mixed text is left alone
+          // rather than reshaped under the native selection that describes it.
+          if (controlCharacterText(text)) return true;
           // Provenance is not an inheritable formatting mark. Replacing text,
           // including an identical string, revokes the identity it touches.
           const source = projection();
@@ -1151,14 +1165,14 @@ export function EditableInput({
           },
           beforeinput(_view, event) {
             if (!event.isComposing) syncNativeSelection();
-            // The host's native text-input path can commit a caret key's
-            // function-key character (Right Arrow is U+F703) as typed text.
-            // Cancel it before the DOM changes; handleTextInput refuses what
-            // arrives anyway.
+            // The host's native text-input path can commit a caret key as a
+            // control character (Right Arrow arrives as U+001D, or as AppKit's
+            // U+F703) typed as text. Cancel it before the DOM changes;
+            // handleTextInput refuses what arrives anyway.
             if (
               event.inputType === "insertText" &&
               event.cancelable &&
-              functionKeyText(event.data)
+              controlCharacterText(event.data)
             ) {
               event.preventDefault();
               return true;

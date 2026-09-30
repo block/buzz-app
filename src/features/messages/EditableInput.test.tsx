@@ -1209,20 +1209,37 @@ it("retains the native caret after replacing text with an unchanged suffix", asy
   expect(h.input.selectionEnd).toBe(10);
 });
 
-/** The private-use character AppKit puts in a caret or function key's NSEvent
- * (NSUpArrowFunctionKey U+F700 onwards), which the host's native text-input
- * path can commit as typed text. */
-const functionKeys = [
-  ["ArrowUp", "\uF700"],
-  ["ArrowDown", "\uF701"],
-  ["ArrowLeft", "\uF702"],
-  ["ArrowRight", "\uF703"],
-  ["F1", "\uF704"],
-  ["Home", "\uF729"],
-  ["End", "\uF72B"],
-  ["PageUp", "\uF72C"],
-  ["PageDown", "\uF72D"],
+/** A character the host's native text-input path can commit as typed text for
+ * a caret or function key. The desktop build committed U+001D on every Right
+ * Arrow press: a key's raw keyboard-layout translation is a C0 control (the
+ * arrows are U+001C through U+001F), which WebKit does not strip from a key
+ * event's text. AppKit's own NSEvent carries the private-use function-key
+ * character instead (NSUpArrowFunctionKey U+F700 onwards), which WebKit strips
+ * and the guard refuses as well. DEL and the C1 controls are as glyphless. */
+const controlKeys = [
+  ["Left Arrow's layout translation U+001C", "\u001C"],
+  ["Right Arrow's layout translation U+001D", "\u001D"],
+  ["Up Arrow's layout translation U+001E", "\u001E"],
+  ["Down Arrow's layout translation U+001F", "\u001F"],
+  ["Home's layout translation U+0001", "\u0001"],
+  ["End's layout translation U+0004", "\u0004"],
+  ["Page Up's layout translation U+000B", "\u000B"],
+  ["Page Down's layout translation U+000C", "\u000C"],
+  ["DEL U+007F", "\u007F"],
+  ["the first C1 control U+0080", "\u0080"],
+  ["the last C1 control U+009F", "\u009F"],
+  ["Up Arrow's function-key character U+F700", "\uF700"],
+  ["Down Arrow's function-key character U+F701", "\uF701"],
+  ["Left Arrow's function-key character U+F702", "\uF702"],
+  ["Right Arrow's function-key character U+F703", "\uF703"],
+  ["F1's function-key character U+F704", "\uF704"],
+  ["Home's function-key character U+F729", "\uF729"],
+  ["End's function-key character U+F72B", "\uF72B"],
+  ["Page Up's function-key character U+F72C", "\uF72C"],
+  ["Page Down's function-key character U+F72D", "\uF72D"],
 ] as const;
+/** Right Arrow committed as text in both forms the host can produce. */
+const rightArrowCharacters = ["\u001D", "\uF703"] as const;
 const caretKeys = [
   "ArrowRight",
   "ArrowLeft",
@@ -1296,9 +1313,9 @@ function nativeInsert(
   return inserted;
 }
 
-it.each(functionKeys)(
-  "refuses the %s function-key character at both native seams",
-  async (_key, character) => {
+it.each(controlKeys)(
+  "refuses %s committed as text at both native seams",
+  async (_label, character) => {
     const h = mount("abc");
     const before = snapshot(h);
     // The cancelable seam: the DOM never changes.
@@ -1315,6 +1332,23 @@ it.each(functionKeys)(
     expect(h.markdown()).toBe("abcd");
   },
 );
+
+it.each([
+  ["a tab", "\t", "abc\t"],
+  ["a newline", "\n", "abc\n"],
+  // ProseMirror's DOM parser reads a carriage return as a newline.
+  ["a carriage return", "\r", "abc\n"],
+  // No key yields a control character beside real text; such text is left
+  // alone rather than reshaped under the native selection that describes it.
+  ["a control character beside real text, whole", "a\u001D", "abca\u001D"],
+])("still inserts %s committed as text", async (_label, text, value) => {
+  const h = mount("abc");
+  expect(nativeInsert(h.input, text)).toBe(true);
+  await waitFor(() => expect(h.input).toHaveValue(value));
+  expect(h.draft().text).toBe(value);
+  expect(h.input.selectionStart).toBe(value.length);
+  expect(h.input.selectionEnd).toBe(value.length);
+});
 
 it.each([
   ["after text", async (h: ReturnType<typeof mount>) => h.input.value],
@@ -1346,7 +1380,7 @@ it.each([
     },
   ],
 ])(
-  "keeps the document unchanged by caret keys %s, and by a Right Arrow committed as text",
+  "keeps the document unchanged by caret keys %s, and by a Right Arrow committed as text in either form",
   async (_context, setup) => {
     const h = mount("abc");
     const value = await setup(h);
@@ -1357,12 +1391,14 @@ it.each([
       expect(snapshot(h), key).toEqual(before);
       expect(h.input.selectionStart, key).toBe(h.input.selectionEnd);
     }
-    act(() => h.input.setSelectionRange(start, start));
-    expect(nativeInsert(h.input, "\uF703")).toBe(false);
-    expect(snapshot(h)).toEqual(before);
-    expect(nativeInsert(h.input, "\uF703", false)).toBe(true);
-    await waitFor(() => expect(h.input.textContent).not.toContain("\uF703"));
-    expect(snapshot(h)).toEqual(before);
+    for (const character of rightArrowCharacters) {
+      act(() => h.input.setSelectionRange(start, start));
+      expect(nativeInsert(h.input, character), character).toBe(false);
+      expect(snapshot(h), character).toEqual(before);
+      expect(nativeInsert(h.input, character, false), character).toBe(true);
+      await waitFor(() => expect(h.input.textContent).not.toContain(character));
+      expect(snapshot(h), character).toEqual(before);
+    }
     expect(h.input).toHaveValue(value);
     expect(h.draft().recipients.map((item) => item.name)).toEqual(
       value.includes("@Honey") ? ["Honey"] : [],
@@ -1370,14 +1406,17 @@ it.each([
   },
 );
 
-it("never runs a typed conversion for a function-key character", async () => {
-  const h = mount();
-  await h.user.keyboard("**a*");
-  const before = snapshot(h);
-  expect(nativeInsert(h.input, "\uF703", false)).toBe(true);
-  await waitFor(() => expect(h.input.textContent).toBe("**a*"));
-  expect(snapshot(h)).toEqual(before);
-  await h.user.keyboard("*");
-  expect(h.input.querySelector("strong")).toHaveTextContent("a");
-  expect(h.markdown()).toBe("**a**");
-});
+it.each(rightArrowCharacters)(
+  "never runs a typed conversion for the control character %s",
+  async (character) => {
+    const h = mount();
+    await h.user.keyboard("**a*");
+    const before = snapshot(h);
+    expect(nativeInsert(h.input, character, false)).toBe(true);
+    await waitFor(() => expect(h.input.textContent).toBe("**a*"));
+    expect(snapshot(h)).toEqual(before);
+    await h.user.keyboard("*");
+    expect(h.input.querySelector("strong")).toHaveTextContent("a");
+    expect(h.markdown()).toBe("**a**");
+  },
+);

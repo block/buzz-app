@@ -772,7 +772,7 @@ it("sends a pasted fenced block verbatim on Enter instead of opening a block fro
   expect(h.input()).toHaveValue("");
 });
 
-it("keeps a composed message unchanged through caret keys at its end and refuses a Right Arrow committed as text", async () => {
+it("keeps a composed message unchanged through caret keys at its end and refuses a Right Arrow committed as text in either form", async () => {
   const h = mount();
   await h.user.type(h.input(), "```");
   expect(h.input().querySelector("pre")).not.toBeNull();
@@ -803,22 +803,26 @@ it("keeps a composed message unchanged through caret keys at its end and refuses
   expect(h.input()).toHaveValue("Hello!\nacascac\naa a\nacacs\n");
   expect(h.input().innerHTML).toBe(html);
   expect(h.messages.send).not.toHaveBeenCalled();
-  let prevented = false;
-  act(() => {
-    h.input().focus();
-    prevented = !h.input().dispatchEvent(
-      new InputEvent("beforeinput", {
-        bubbles: true,
-        cancelable: true,
-        inputType: "insertText",
-        data: "\uF703",
-      }),
-    );
-  });
-  expect(prevented).toBe(true);
-  expect(h.input()).toHaveValue("Hello!\nacascac\naa a\nacacs\n");
-  expect(h.input().innerHTML).toBe(html);
-  expect(h.messages.send).not.toHaveBeenCalled();
+  // The desktop build committed Right Arrow's raw keyboard-layout translation
+  // U+001D; AppKit's function-key character for the key is U+F703.
+  for (const character of ["\u001D", "\uF703"]) {
+    let prevented = false;
+    act(() => {
+      h.input().focus();
+      prevented = !h.input().dispatchEvent(
+        new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertText",
+          data: character,
+        }),
+      );
+    });
+    expect(prevented, character).toBe(true);
+    expect(h.input()).toHaveValue("Hello!\nacascac\naa a\nacacs\n");
+    expect(h.input().innerHTML).toBe(html);
+    expect(h.messages.send).not.toHaveBeenCalled();
+  }
 });
 
 it("prefixes thread replies with the selected media time and clears it after send", async () => {

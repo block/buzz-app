@@ -160,13 +160,17 @@ test("caret keys at the end of a composed message never insert a character", asy
   await page.keyboard.press("Meta");
   expect(await state()).toEqual(before);
   // The platform's own text-insertion path (WebKit's insertTextAsync, Chromium's
-  // IME commit) handing the composer Right Arrow's function-key character U+F703
-  // is refused before the DOM changes, and typing continues as before.
+  // IME commit) handing the composer Right Arrow's raw keyboard-layout
+  // translation U+001D, the character the desktop build committed on every
+  // press, or AppKit's function-key character for the key U+F703, is refused
+  // before the DOM changes, and typing continues as before.
   await input.evaluate((el) =>
     el.setSelectionRange(el.value.length, el.value.length),
   );
-  await page.keyboard.insertText("\uF703");
-  expect(await state()).toEqual(before);
+  for (const character of ["\u001D", "\uF703"]) {
+    await page.keyboard.insertText(character);
+    expect(await state(), JSON.stringify(character)).toEqual(before);
+  }
   await page.keyboard.type("!");
   await expect
     .poll(() => input.evaluate((el) => el.value))

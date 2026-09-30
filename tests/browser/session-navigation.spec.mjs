@@ -276,3 +276,49 @@ test("Sessions keeps new and selected conversations usable at 200%", async ({
   );
   await expect(composer).toBeInViewport();
 });
+
+// The same session column is also hosted by Channels, outside SessionsWorkspace.
+test("Channels session columns use their available width at 200%", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 800, height: 768 });
+  await page.goto(app.origin);
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.fixtureNavigation?.snapshot().status),
+    )
+    .toBe("opened");
+  expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
+  await page.evaluate(() =>
+    document.documentElement.style.setProperty("--buzz-text-scale", "2"),
+  );
+  const conversation = page.getByRole("article", {
+    name: "Conversation",
+    exact: true,
+  });
+  const composer = conversation.getByRole("textbox", {
+    name: "Message this session",
+    exact: true,
+  });
+  await expect
+    .poll(() =>
+      composer.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        const panel = el.closest("article").getBoundingClientRect();
+        const column = el
+          .closest('[class*="_column_"]')
+          .getBoundingClientRect();
+        return (
+          column.width > panel.width * 0.9 &&
+          r.left >= 0 &&
+          r.right <= innerWidth &&
+          r.bottom <= innerHeight
+        );
+      }),
+    )
+    .toBe(true);
+  await composer.click();
+  await page.keyboard.type("Channel session draft");
+  await expect(composer).toHaveText("Channel session draft");
+});

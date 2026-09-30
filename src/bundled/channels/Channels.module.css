@@ -32,6 +32,9 @@
   display: flex;
   flex-direction: column;
 }
+.sessionConversation {
+  container: session-conversation / inline-size;
+}
 .sidebar {
   /* Figma specifies true Semibold for unread rows, rather than the legacy 500 alias. */
   --type-weight-semibold: 600;

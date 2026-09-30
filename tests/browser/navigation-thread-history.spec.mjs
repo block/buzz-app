@@ -1,6 +1,8 @@
 import { test, expect } from "./fixture.mjs";
 import { open, virtuaIdle } from "./timeline.mjs";
 
+import { wheel } from "./timeline.mjs";
+
 test.use({
   productionBroker: true,
   readState: true,
@@ -170,11 +172,14 @@ for (const reading of [false, true]) {
       if (reading) {
         const bottom = await region.evaluate((node) => node.scrollTop);
         await region.hover();
-        await page.mouse.wheel(0, -500);
-        await expect
-          .poll(() => region.evaluate((node) => node.scrollTop))
-          .toBe(bottom - 500);
+        // A wheel request is not an exact displacement (Linux WebKit can stop
+        // short), so the reading position is wherever the completed gesture
+        // came to rest; the checks below then hold that value exactly.
+        await wheel(page, -500, region);
         position = await region.evaluate((node) => node.scrollTop);
+        expect(position, "reading gesture leaves the bottom").toBeLessThan(
+          bottom,
+        );
       }
       release();
       await expect(region.locator("[data-message-id]")).toHaveCount(123);
@@ -221,7 +226,7 @@ for (const reading of [false, true]) {
         ).toBeInViewport();
         await expect(jumpToLatest).toHaveCount(0);
         await region.hover();
-        await page.mouse.wheel(0, -500);
+        await wheel(page, -500, region);
         await expect
           .poll(() =>
             region.evaluate(

@@ -41,6 +41,7 @@ import {
   makePendingDeletion,
   persistPendingDeletion,
   quota,
+  quotaLimitMessage,
   readPendingDeletion,
   relayUrl,
   signOut,
@@ -67,6 +68,7 @@ type Confirm = {
 export function HostedCommunities({ active }: { active(): boolean }) {
   const [auth, setAuth] = useState<Account | null>();
   const [identity, setIdentity] = useState<Identity | null>(null);
+  const [identityLoadFailed, setIdentityLoadFailed] = useState(false);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [quotaState, setQuotaState] = useState<Quota | null>(null);
   // This device's key: undefined while loading, null when it could not be read.
@@ -79,6 +81,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
   const [deleteTarget, setDeleteTarget] = useState<Community | null>(null);
   const [pendingDeletion, setPendingDeletion] =
     useState<PendingDeletion | null>(null);
+  const [blockedOwner, setBlockedOwner] = useState<string | null>(null);
   const [deletionNotice, setDeletionNotice] = useState("");
   // The last address handed off for joining, and whether the clipboard took it.
   const [handoff, setHandoff] = useState<{
@@ -92,71 +95,102 @@ export function HostedCommunities({ active }: { active(): boolean }) {
   const acceptedDeletions = useRef(new Map<string, PendingDeletion>());
   const loadedOwner = useRef<string | null | undefined>(undefined);
 
-  const load = useCallback(async (reconcileAccepted = false) => {
-    const at = generation.current;
-    const [current, list] = await Promise.all([call("identity"), call("list")]);
-    if (at !== generation.current) return null;
-    // An account without a linked identity is the connect state, not a failure.
-    if (current.error?.code !== "unauthorized" && !current.error?.setup_needed)
-      check(current, "Could not load the connected Buzz identity.");
-    if (list.error?.code !== "unauthorized" && !list.error?.setup_needed)
-      check(list, "Could not load communities.");
-    const nextIdentity = current.identity ?? null;
-    const nextOwner = boundKey(nextIdentity);
-    if (
-      loadedOwner.current !== undefined &&
-      loadedOwner.current !== nextOwner
-    ) {
-      acceptedDeletions.current.clear();
-      setDeletionNotice("");
-    }
-    loadedOwner.current = nextOwner;
-    const stored = readPendingDeletion();
-    setPendingDeletion(
-      stored?.owner_pubkey === nextOwner &&
-        stored.backend_origin === window.location.origin
-        ? stored
-        : null,
-    );
-    const listed = list.communities ?? [];
-    if (
-      reconcileAccepted &&
-      nextOwner &&
-      listed.some((community) =>
-        acceptedDeletions.current.has(community.id ?? ""),
-      )
-    ) {
-      const currentAuth = await getAuth().catch(() => null);
+  const load = useCallback(
+    async (reconcileAccepted = false) => {
+      const at = generation.current;
+      const [current, list] = await Promise.all([
+        call("identity"),
+        call("list"),
+      ]);
       if (at !== generation.current) return null;
-      if (currentAuth?.capabilities?.can_delete_buzz_communities === true)
-        for (const community of listed) {
-          const accepted = acceptedDeletions.current.get(community.id ?? "");
-          if (!accepted || accepted.owner_pubkey !== nextOwner) continue;
-          try {
-            await admitDeletion(accepted.request, "recovery");
-          } catch (reason) {
-            if (
-              at === generation.current &&
-              acceptedDeletions.current.get(accepted.request.community_id) ===
-                accepted &&
-              reason instanceof ApiFailure &&
-              reason.code === "deletion_aborted"
-            )
-              acceptedDeletions.current.delete(accepted.request.community_id);
+      // A setup-needed mapping is the connect state. An upstream unauthorized
+      // response may also be an expired session (dev/builderlab.mjs forwards it).
+      if (
+        current.error?.code === "unauthorized" ||
+        list.error?.code === "unauthorized"
+      ) {
+        setIdentityLoadFailed(true);
+        setIdentity(null);
+        setCommunities([]);
+        setQuotaState(null);
+        setPendingDeletion(null);
+      }
+      if (!current.error?.setup_needed)
+        check(current, "Could not load the connected Buzz identity.");
+      if (!list.error?.setup_needed) check(list, "Could not load communities.");
+      setIdentityLoadFailed(false);
+      const nextIdentity = current.identity ?? null;
+      const nextOwner = boundKey(nextIdentity);
+      if (
+        loadedOwner.current !== undefined &&
+        loadedOwner.current !== nextOwner
+      ) {
+        acceptedDeletions.current.clear();
+        setDeletionNotice("");
+      }
+      loadedOwner.current = nextOwner;
+      const stored = readPendingDeletion();
+      setBlockedOwner(
+        stored &&
+          (stored.owner_pubkey !== nextOwner ||
+            stored.backend_origin !== window.location.origin)
+          ? stored.owner_pubkey
+          : null,
+      );
+      setPendingDeletion(
+        stored?.owner_pubkey === nextOwner &&
+          stored.backend_origin === window.location.origin
+          ? stored
+          : null,
+      );
+      const listed = list.communities ?? [];
+      if (
+        reconcileAccepted &&
+        nextOwner &&
+        listed.some((community) =>
+          acceptedDeletions.current.has(community.id ?? ""),
+        )
+      ) {
+        const currentAuth = await getAuth().catch(() => null);
+        if (at !== generation.current || !active()) return null;
+        if (currentAuth?.capabilities?.can_delete_buzz_communities === true)
+          for (const community of listed) {
+            if (at !== generation.current || !active()) return null;
+            const accepted = acceptedDeletions.current.get(community.id ?? "");
+            if (!accepted || accepted.owner_pubkey !== nextOwner) continue;
+            try {
+              await admitDeletion(accepted.request, "recovery");
+            } catch (reason) {
+              if (
+                at === generation.current &&
+                active() &&
+                acceptedDeletions.current.get(accepted.request.community_id) ===
+                  accepted &&
+                reason instanceof ApiFailure &&
+                reason.code === "deletion_aborted"
+              ) {
+                acceptedDeletions.current.delete(accepted.request.community_id);
+                if (acceptedDeletions.current.size === 0) setDeletionNotice("");
+                setError(
+                  "Deletion stopped. This community is not being deleted.",
+                );
+              }
+            }
+            if (at !== generation.current || !active()) return null;
           }
-          if (at !== generation.current) return null;
-        }
-    }
-    const nextCommunities = listed.filter(
-      (community) =>
-        !community.id || !acceptedDeletions.current.has(community.id),
-    );
-    const nextQuota = quota(list);
-    setIdentity(nextIdentity);
-    setCommunities(nextCommunities);
-    setQuotaState(nextQuota);
-    return { identity: nextIdentity, communities: nextCommunities };
-  }, []);
+      }
+      const nextCommunities = listed.filter(
+        (community) =>
+          !community.id || !acceptedDeletions.current.has(community.id),
+      );
+      const nextQuota = quota(list);
+      setIdentity(nextIdentity);
+      setCommunities(nextCommunities);
+      setQuotaState(nextQuota);
+      return { identity: nextIdentity, communities: nextCommunities };
+    },
+    [active],
+  );
 
   const markDeletionAccepted = useCallback(
     (pending: PendingDeletion, at: number) => {
@@ -457,25 +491,27 @@ export function HostedCommunities({ active }: { active(): boolean }) {
             </Button>
           </div>
           {!identity ? (
-            <div className={card}>
-              <h3 className="m-0 text-label">
-                Link this account to your Buzz identity
-              </h3>
-              <p className="text-body-sm text-muted">
-                This Builderlab account isn’t linked to a Buzz identity yet.
-                Connect this device’s key to create and own communities under it
-                — Buzz signs a one-time challenge locally, so your private key
-                never leaves this computer.
-              </p>
-              <Button
-                variant="primary"
-                loading={action === "bind"}
-                disabled={busy}
-                onClick={() => void run("bind", bind)}
-              >
-                Connect Buzz identity
-              </Button>
-            </div>
+            identityLoadFailed ? null : (
+              <div className={card}>
+                <h3 className="m-0 text-label">
+                  Link this account to your Buzz identity
+                </h3>
+                <p className="text-body-sm text-muted">
+                  This Builderlab account isn’t linked to a Buzz identity yet.
+                  Connect this device’s key to create and own communities under
+                  it — Buzz signs a one-time challenge locally, so your private
+                  key never leaves this computer.
+                </p>
+                <Button
+                  variant="primary"
+                  loading={action === "bind"}
+                  disabled={busy}
+                  onClick={() => void run("bind", bind)}
+                >
+                  Connect Buzz identity
+                </Button>
+              </div>
+            )
           ) : local === undefined && bound ? (
             <p role="status" className={card}>
               Checking this device’s Buzz identity…
@@ -616,7 +652,21 @@ export function HostedCommunities({ active }: { active(): boolean }) {
                   Check deletion status
                 </Button>
               </div>
+              {!deletionEnabled && (
+                <p className="text-body-sm text-muted">
+                  Community deletion is unavailable right now, so this request
+                  can't be checked. It stays saved on this device.
+                </p>
+              )}
             </div>
+          )}
+          {deletionEnabled && blockedOwner && (
+            <p role="status" className={`${card} text-body-sm`}>
+              A deletion request from {npub(blockedOwner)} is still pending on
+              this device. Switch to that Buzz identity and use Check deletion
+              status before starting another deletion here. If you no longer
+              have that identity, contact support.
+            </p>
           )}
           {communities.length === 0 ? (
             <p className={`${card} text-body-sm text-muted`}>
@@ -682,7 +732,11 @@ export function HostedCommunities({ active }: { active(): boolean }) {
                                 <Button
                                   variant="prominent"
                                   size="sm"
-                                  disabled={busy || Boolean(pendingDeletion)}
+                                  disabled={
+                                    busy ||
+                                    Boolean(pendingDeletion) ||
+                                    Boolean(blockedOwner)
+                                  }
                                   onClick={() => setDeleteTarget(community)}
                                 >
                                   <TrashIcon aria-hidden="true" /> Delete
@@ -766,7 +820,11 @@ export function HostedCommunities({ active }: { active(): boolean }) {
           )}
           <CreateCommunity
             enabled={ready && quotaState?.canCreate !== false}
-            atLimit={quotaState?.canCreate === false}
+            atLimit={
+              quotaState?.canCreate === false
+                ? quotaLimitMessage(quotaState.limit)
+                : null
+            }
             busy={busy}
             creating={action === "create"}
             onCreate={(name) =>
@@ -774,6 +832,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
                 const reply = check(
                   await call("create", { name }),
                   "Could not create the community.",
+                  quotaState?.limit,
                 );
                 // Hand off the address before refreshing, so a failed refresh cannot lose it.
                 const url = reply.community && relayUrl(reply.community);
@@ -791,6 +850,16 @@ export function HostedCommunities({ active }: { active(): boolean }) {
           failure={failure}
           close={() => setDeleteTarget(null)}
           onDelete={() => {
+            const occupied = readPendingDeletion();
+            if (blockedOwner || occupied) {
+              if (
+                occupied?.owner_pubkey === bound &&
+                occupied.backend_origin === window.location.origin
+              )
+                setPendingDeletion(occupied);
+              else if (occupied) setBlockedOwner(occupied.owner_pubkey);
+              return;
+            }
             let pending: PendingDeletion;
             try {
               pending = makePendingDeletion(bound, deleteTarget);
@@ -859,6 +928,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
                   transfereeNpub: recipient,
                 }),
                 "Could not transfer ownership.",
+                quotaState?.limit,
               );
               // The community is no longer owned; drop it before refreshing.
               setCommunities((list) =>
@@ -948,7 +1018,7 @@ function CreateCommunity({
   onCreate,
 }: {
   enabled: boolean;
-  atLimit: boolean;
+  atLimit: string | null;
   busy: boolean;
   creating: boolean;
   onCreate(name: string): Promise<boolean>;
@@ -993,11 +1063,7 @@ function CreateCommunity({
       <p className="mt-1 text-body-sm text-muted">
         Choose the address your team will use to connect.
       </p>
-      {atLimit && (
-        <p className="text-body-sm text-muted">
-          You've reached your community limit.
-        </p>
-      )}
+      {atLimit && <p className="text-body-sm text-muted">{atLimit}</p>}
       <Field
         label="Community address"
         labelVisibility="hidden"

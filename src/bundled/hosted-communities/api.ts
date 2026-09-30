@@ -80,8 +80,7 @@ const messages: Record<string, string> = {
     "This deletion conflicts with another community lifecycle change.",
   unsupported_acknowledgement_version:
     "This deletion confirmation version is not supported.",
-  deletion_aborted:
-    "This deletion was aborted. Refresh before starting a new request.",
+  deletion_aborted: "Deletion stopped. This community is not being deleted.",
   acceptance_unknown:
     "Deletion status is unknown. Keep this request and check its status; do not start a new deletion.",
   unknown:
@@ -99,6 +98,13 @@ export class ApiFailure extends Error {
     );
     this.name = "ApiFailure";
   }
+}
+
+export function quotaLimitMessage(limit?: number | null) {
+  if (limit === 0) return "You can't create more communities right now.";
+  return limit && Number.isSafeInteger(limit) && limit > 0
+    ? `You've reached your limit of ${limit} communities.`
+    : "You've reached your community limit.";
 }
 
 async function send<T extends object>(
@@ -165,12 +171,14 @@ export const call = (action: string, body?: Body) =>
   send<Reply>(action, body).then(({ value }) => value);
 
 /** Throws a friendly message for a structured Builderlab error. */
-export function check(reply: Reply, fallback: string) {
+export function check(reply: Reply, fallback: string, quotaLimit?: number) {
   if (!reply.error) return reply;
   const code = reply.error.code ?? "";
   throw new ApiFailure(
     code,
-    messages[code] ?? reply.error.message ?? fallback,
+    code === "limit_reached"
+      ? quotaLimitMessage(quotaLimit)
+      : (messages[code] ?? reply.error.message ?? fallback),
     reply.correlation_id,
   );
 }

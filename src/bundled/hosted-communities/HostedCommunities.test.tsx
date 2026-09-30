@@ -176,7 +176,7 @@ it("rejects invalid names and blocks create at the community limit", async () =>
   renderCard();
   expect(await screen.findByText("5 of 5 used")).toBeInTheDocument();
   expect(
-    screen.getByText("You've reached your community limit."),
+    screen.getByText("You've reached your limit of 5 communities."),
   ).toBeVisible();
   expect(screen.getByPlaceholderText("north-star")).toBeDisabled();
 });
@@ -191,7 +191,7 @@ it("honors can_create false independently of informational quota usage", async (
   renderCard();
   expect(await screen.findByText("0 of 5 used")).toBeVisible();
   expect(
-    screen.getByText("You've reached your community limit."),
+    screen.getByText("You've reached your limit of 5 communities."),
   ).toBeVisible();
   expect(screen.getByPlaceholderText("north-star")).toBeDisabled();
   expect(calls.map(([url]) => url)).not.toContain("/api/builderlab/create");
@@ -247,6 +247,21 @@ it("archives and transfers after confirmation, surfacing friendly errors", async
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "You've reached your community limit.",
   );
+});
+
+it("shows the zero-limit copy without guessing a reason from usage", async () => {
+  routes["/api/builderlab/list"] = () => ({
+    communities: [],
+    quota_used: 0,
+    quota_limit: 0,
+    can_create: false,
+  });
+  renderCard();
+  expect(await screen.findByText("0 of 0 used")).toBeVisible();
+  expect(
+    screen.getByText("You can't create more communities right now."),
+  ).toBeVisible();
+  expect(screen.getByPlaceholderText("north-star")).toBeDisabled();
 });
 
 /** A route answer the test releases by hand. */
@@ -996,7 +1011,16 @@ it.each(["setup-needed", "unauthorized"])(
       error,
     });
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    await screen.findByRole("button", { name: "Connect Buzz identity" });
+    if (failure === "setup-needed")
+      await screen.findByRole("button", { name: "Connect Buzz identity" });
+    else {
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Could not load the connected Buzz identity.",
+      );
+      expect(
+        screen.queryByRole("button", { name: "Connect Buzz identity" }),
+      ).not.toBeInTheDocument();
+    }
     expect(
       screen.queryByText(saved.request.request_id),
     ).not.toBeInTheDocument();
@@ -1013,6 +1037,37 @@ it.each(["setup-needed", "unauthorized"])(
     await expectSameRequestRecovery(saved);
   },
 );
+
+it("does not offer Connect or stale owner actions on an initial unauthorized load", async () => {
+  const bytes = JSON.stringify({
+    version: 1,
+    owner_pubkey: local,
+    backend_origin: window.location.origin,
+    request: {
+      community_id: archived.id,
+      host: archived.normalized_host,
+      request_id: "88888888-8888-4888-8888-888888888888",
+      acknowledgement_version: 1,
+    },
+  });
+  localStorage.setItem(DELETION_PENDING_KEY, bytes);
+  routes["/api/builderlab/identity"] = () => ({
+    error: { code: "unauthorized" },
+  });
+  routes["/api/builderlab/list"] = () => ({ error: { code: "unauthorized" } });
+  renderCard();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not load the connected Buzz identity.",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Connect Buzz identity" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Delete" }),
+  ).not.toBeInTheDocument();
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(bytes);
+  expect(deletionPosts()).toHaveLength(0);
+});
 
 it("retains the uncertain UUID through Switch back to its owner", async () => {
   const { saved } = await startUncertainDeletion();
@@ -1059,6 +1114,10 @@ it("restores an accepted archived row only after its bound abort on Refresh", as
   expect(
     screen.getByText(/North\.communities\.buzz\.xyz · Archived/),
   ).toBeVisible();
+  expect(
+    screen.getByText("Deletion stopped. This community is not being deleted."),
+  ).toBeVisible();
+  expect(screen.queryByText("Deletion started")).not.toBeInTheDocument();
 });
 
 it.each([
@@ -1104,6 +1163,29 @@ it("shows the server's limit_reached message when quota is absent", async () => 
   expect(alert).not.toHaveTextContent(/\d/);
   expect(alert).not.toHaveTextContent("limit of 5");
   expect(calls).toContainEqual(["/api/builderlab/create", { name: "north" }]);
+});
+
+it("uses valid projected limit for a server limit_reached create error", async () => {
+  routes["/api/builderlab/list"] = () => ({
+    communities: [],
+    quota_used: 0,
+    quota_limit: 7,
+    can_create: true,
+  });
+  routes["/api/builderlab/availability"] = () => ({ available: true });
+  routes["/api/builderlab/create"] = () =>
+    Response.json({ error: { code: "limit_reached" } }, { status: 409 });
+  renderCard();
+  const input = await screen.findByPlaceholderText("north-star");
+  await waitFor(() => expect(input).toBeEnabled());
+  vi.useFakeTimers();
+  fireEvent.change(input, { target: { value: "north" } });
+  await act(() => vi.advanceTimersByTimeAsync(500));
+  vi.useRealTimers();
+  fireEvent.click(screen.getByRole("button", { name: "Create community" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "You've reached your limit of 7 communities.",
+  );
 });
 
 it("shows deletion only for literal capability true and requires the byte-exact host plus explicit confirmation", async () => {
@@ -1205,7 +1287,7 @@ it("replays an aborted 202 with the stored UUID and restores the archived row", 
     screen.getByRole("button", { name: "Check deletion status" }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "This deletion was aborted",
+    "Deletion stopped. This community is not being deleted.",
   );
   expect(calls.filter(([url]) => url === "/api/builderlab/delete")).toEqual([
     ["/api/builderlab/delete", request],
@@ -1298,6 +1380,11 @@ it("shows a stored request for explicit manual checking without background recov
   expect(screen.getByText(request.request_id)).toHaveClass("select-all");
   expect(screen.getByText(/will not check automatically/i)).toBeVisible();
   expect(screen.getByText(/contact support/i)).toBeVisible();
+  expect(
+    screen.getByText(
+      "Community deletion is unavailable right now, so this request can't be checked. It stays saved on this device.",
+    ),
+  ).toBeVisible();
   expect(calls.map(([url]) => url)).not.toContain("/api/builderlab/delete");
   expect(
     screen.getByRole("button", { name: "Check deletion status" }),
@@ -1321,6 +1408,7 @@ it("shows a stored request for explicit manual checking without background recov
 });
 
 it("retains another owner's recovery envelope without showing or dispatching it", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
   localStorage.setItem(
     DELETION_PENDING_KEY,
     JSON.stringify({
@@ -1329,7 +1417,7 @@ it("retains another owner's recovery envelope without showing or dispatching it"
       backend_origin: window.location.origin,
       request: {
         community_id: archived.id,
-        host: archived.normalized_host,
+        host: "Private.communities.buzz.xyz",
         request_id: "33333333-3333-4333-8333-333333333333",
         acknowledgement_version: 1,
       },
@@ -1346,6 +1434,82 @@ it("retains another owner's recovery envelope without showing or dispatching it"
     screen.queryByText("33333333-3333-4333-8333-333333333333"),
   ).not.toBeInTheDocument();
   expect(calls.map(([url]) => url)).not.toContain("/api/builderlab/delete");
+  expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+  expect(
+    screen.getByText(
+      `A deletion request from ${npubEncode(other)} is still pending on this device. Switch to that Buzz identity and use Check deletion status before starting another deletion here. If you no longer have that identity, contact support.`,
+    ),
+  ).toBeVisible();
+  expect(
+    screen.queryByText("33333333-3333-4333-8333-333333333333"),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("Private.communities.buzz.xyz"),
+  ).not.toBeInTheDocument();
+});
+
+it("does not reveal another owner's blocked notice when deletion is unavailable", async () => {
+  localStorage.setItem(
+    DELETION_PENDING_KEY,
+    JSON.stringify({
+      version: 1,
+      owner_pubkey: other,
+      backend_origin: window.location.origin,
+      request: {
+        community_id: archived.id,
+        host: archived.normalized_host,
+        request_id: "33333333-3333-4333-8333-333333333333",
+        acknowledgement_version: 1,
+      },
+    }),
+  );
+  const original = localStorage.getItem(DELETION_PENDING_KEY);
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/auth"] = () => ({
+    auth: { expiresAt: "2030", capabilities: {} },
+  });
+  renderCard();
+  await screen.findByText(npubEncode(local));
+  expect(screen.queryByText(/A deletion request from/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Delete" }),
+  ).not.toBeInTheDocument();
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
+  expect(deletionPosts()).toHaveLength(0);
+});
+
+it("rejects a newly occupied slot at final confirmation without claiming a storage failure", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  renderCard();
+  const dialog = await openDeletion();
+  fireEvent.change(within(dialog).getByLabelText("Type the exact host"), {
+    target: { value: archived.normalized_host },
+  });
+  fireEvent.click(
+    within(dialog).getByRole("checkbox", {
+      name: /I understand this cannot be canceled/,
+    }),
+  );
+  const original = JSON.stringify({
+    version: 1,
+    owner_pubkey: other,
+    backend_origin: window.location.origin,
+    request: {
+      community_id: archived.id,
+      host: archived.normalized_host,
+      request_id: "33333333-3333-4333-8333-333333333333",
+      acknowledgement_version: 1,
+    },
+  });
+  localStorage.setItem(DELETION_PENDING_KEY, original);
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Start deletion" }),
+  );
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
+  expect(deletionPosts()).toHaveLength(0);
+  expect(
+    screen.queryByText(/recovery record could not be saved/),
+  ).not.toBeInTheDocument();
 });
 
 it("keeps and retries the same UUID after a wrong-status pre-admission rejection", async () => {
@@ -1471,7 +1635,7 @@ it("terminates pending recovery on a bound aborted 202", async () => {
     screen.getByRole("button", { name: "Check deletion status" }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "This deletion was aborted. Refresh before starting a new request. Correlation ID: corr-aborted",
+    "Deletion stopped. This community is not being deleted. Correlation ID: corr-aborted",
   );
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
   expect(
@@ -1667,6 +1831,139 @@ it("keeps an accepted row hidden if a stale list returns after an omission", asy
   expect(
     screen.queryByText("North.communities.buzz.xyz"),
   ).not.toBeInTheDocument();
+  const original = deletionPosts()[0]?.[1];
+  expect(deletionPosts()).toEqual([
+    ["/api/builderlab/delete", original],
+    ["/api/builderlab/delete", original],
+  ]);
+});
+
+it.each([
+  [
+    "uncertain",
+    () =>
+      Response.json({ error: { code: "acceptance_unknown" } }, { status: 503 }),
+  ],
+  [
+    "in progress",
+    (request: Record<string, string | number>) =>
+      Response.json({ ...request, status: "cache_purged" }, { status: 202 }),
+  ],
+])(
+  "retains an accepted row on a stale-list %s replay",
+  async (_label, replay) => {
+    routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+    routes["/api/builderlab/delete"] = (body) =>
+      Response.json(accepted(body), { status: 202 });
+    renderCard();
+    await confirmDeletion();
+    expect(await screen.findByText("Deletion started")).toBeVisible();
+    const original = deletionPosts()[0]?.[1];
+    routes["/api/builderlab/delete"] = replay;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(deletionPosts()).toHaveLength(2));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+    );
+    expect(deletionPosts().map(([, body]) => body)).toEqual([
+      original,
+      original,
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(deletionPosts()).toHaveLength(3));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+    );
+    expect(deletionPosts().map(([, body]) => body)).toEqual([
+      original,
+      original,
+      original,
+    ]);
+    expect(
+      screen.queryByText(/North\.communities\.buzz\.xyz · Archived/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Deletion started")).toBeVisible();
+    expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
+  },
+);
+
+it("does not replay an accepted row during Refresh when capability is off", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/delete"] = (body) =>
+    Response.json(accepted(body), { status: 202 });
+  renderCard();
+  await confirmDeletion();
+  await screen.findByText("Deletion started");
+  routes["/api/builderlab/auth"] = () => ({
+    auth: { expiresAt: "2030", capabilities: {} },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+  );
+  expect(deletionPosts()).toHaveLength(1);
+  expect(
+    screen.queryByText(/North\.communities\.buzz\.xyz · Archived/),
+  ).not.toBeInTheDocument();
+});
+
+it("stops accepted-row replay when the card retires mid-Refresh", async () => {
+  const second = {
+    ...archived,
+    id: "22222222-2222-4222-8222-222222222222",
+    name: "south",
+    normalized_host: "South.communities.buzz.xyz",
+  };
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  routes["/api/builderlab/delete"] = (body) =>
+    Response.json(accepted(body), { status: 202 });
+  let live = true;
+  render(<HostedCommunities active={() => live} />);
+  await confirmDeletion();
+  await screen.findByText("Deletion started");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+  );
+  routes["/api/builderlab/list"] = () => ({ communities: [archived, second] });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+  const secondDialog = await screen.findByRole("dialog", {
+    name: /Permanently delete south/,
+  });
+  fireEvent.change(within(secondDialog).getByLabelText("Type the exact host"), {
+    target: { value: second.normalized_host },
+  });
+  fireEvent.click(
+    within(secondDialog).getByRole("checkbox", {
+      name: /I understand this cannot be canceled/,
+    }),
+  );
+  fireEvent.click(
+    within(secondDialog).getByRole("button", { name: "Start deletion" }),
+  );
+  await waitFor(() => expect(deletionPosts()).toHaveLength(3));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+  );
+  const beforeReplay = deletionPosts().length;
+  const firstReplay = hold();
+  routes["/api/builderlab/delete"] = firstReplay.answer as Handler;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(deletionPosts()).toHaveLength(beforeReplay + 1));
+  live = false;
+  await act(async () =>
+    firstReplay.release(
+      Response.json(
+        { ...deletionPosts()[beforeReplay]?.[1], status: "aborted" },
+        { status: 202 },
+      ),
+    ),
+  );
+  expect(deletionPosts()).toHaveLength(beforeReplay + 1);
+  expect(
+    screen.queryByRole("button", { name: "Delete" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText("Deletion started")).toBeVisible();
 });
 
 it.each(["accepted", "bound abort", "definitive rejection"])(

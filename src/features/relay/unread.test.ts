@@ -757,6 +757,209 @@ it("community sweep skips grants revoked while its first save is committing", as
   ]);
 });
 
+it("community sweep captures every channel cut before the first journal save", async () => {
+  const h = setup();
+  h.grant(other);
+  const [first, second] = h.session.channels.list().channels.map((c) => c.id);
+  if (!first || !second) throw new Error("Missing sweep channels");
+  for (const [id, anchor] of [
+    [first, "a"],
+    [second, "b"],
+  ] as const)
+    h.bff.rows.set(
+      id,
+      sidebarRow(id, {
+        unread: { status: "exact", value: 1 },
+        latest_message_id: anchor.repeat(64),
+        latest_message_at: 20,
+      }),
+    );
+  await h.unread.ensure();
+  const started = deferredSidebar<void>(),
+    held = deferredSidebar<void>();
+  const update = h.bff.storage.update;
+  vi.spyOn(h.bff.storage, "update").mockImplementationOnce(async (change) => {
+    started.resolve();
+    await held.promise;
+    return update(change);
+  });
+  const sweep = h.unread.markAllChannelsRead();
+  try {
+    await started.promise;
+    h.bff.rows.set(
+      second,
+      sidebarRow(second, {
+        unread: { status: "exact", value: 2 },
+        latest_message_id: "c".repeat(64),
+        latest_message_at: 30,
+      }),
+    );
+    await h.unread.refresh();
+    expect(
+      h.unread.snapshot({ kind: "channel", channelId: second }).latestMessage
+        ?.id,
+    ).toBe("c".repeat(64));
+  } finally {
+    held.resolve();
+  }
+  await sweep;
+  await vi.waitFor(() => expect(h.bff.journal().pending).toEqual([]));
+  expect(
+    h.bff.api.write.mock.calls.flatMap(([intents]) => intents),
+  ).toContainEqual({
+    type: "mark_channel_read",
+    channel_id: second,
+    message_id: "b".repeat(64),
+  });
+});
+it.each([false, true])(
+  "community sweep preserves a newer manual choice behind the first save (empty=%s)",
+  async (empty) => {
+    const h = setup();
+    h.grant(other);
+    const [first, second] = h.session.channels.list().channels.map((c) => c.id);
+    if (!first || !second) throw new Error("Missing sweep channels");
+    for (const id of [first, second])
+      h.bff.rows.set(
+        id,
+        sidebarRow(
+          id,
+          empty
+            ? {}
+            : {
+                unread: { status: "exact", value: 1 },
+                latest_message_id: "a".repeat(64),
+                latest_message_at: 20,
+              },
+        ),
+      );
+    await h.unread.ensure();
+    for (const id of [first, second])
+      await h.unread.markUnreadLocal({ kind: "channel", channelId: id });
+    const started = deferredSidebar<void>(),
+      held = deferredSidebar<void>();
+    const update = h.bff.storage.update;
+    vi.spyOn(h.bff.storage, "update").mockImplementationOnce(async (change) => {
+      started.resolve();
+      await held.promise;
+      return update(change);
+    });
+    const sweep = h.unread.markAllChannelsRead();
+    let mark: ReturnType<typeof h.unread.markUnreadLocal> | undefined;
+    try {
+      await started.promise;
+      mark = h.unread.markUnreadLocal({ kind: "channel", channelId: second });
+      expect(
+        h.unread.snapshot({ kind: "channel", channelId: second }).manual,
+      ).toBe("local-only");
+    } finally {
+      held.resolve();
+    }
+    await Promise.all([sweep, mark]);
+    expect(h.bff.journal().manual).toEqual([
+      { kind: "channel", channelId: second },
+    ]);
+    expect(
+      h.unread.snapshot({ kind: "channel", channelId: second }).manual,
+    ).toBe("local-only");
+  },
+);
+it.each(["revoke-regrant", "clear", "dispose"])(
+  "community sweep cannot revive reserved cuts after %s",
+  async (action) => {
+    const h = setup();
+    h.grant(other);
+    for (const id of [channel, other])
+      h.bff.rows.set(
+        id,
+        sidebarRow(id, {
+          unread: { status: "exact", value: 1 },
+          latest_message_id: "a".repeat(64),
+          latest_message_at: 20,
+        }),
+      );
+    await h.unread.ensure();
+    const started = deferredSidebar<void>(),
+      held = deferredSidebar<void>();
+    const update = h.bff.storage.update;
+    vi.spyOn(h.bff.storage, "update").mockImplementationOnce(async (change) => {
+      started.resolve();
+      await held.promise;
+      return update(change);
+    });
+    const sweep = h.unread.markAllChannelsRead();
+    const finished = sweep.catch(() => {});
+    try {
+      await started.promise;
+      if (action === "revoke-regrant") {
+        h.grant(other, [], 20);
+        h.grant(other, [h.viewer.pubkey], 21);
+      } else if (action === "clear") await h.clearCache();
+      else h.dispose();
+    } finally {
+      held.resolve();
+    }
+    await finished;
+    expect(h.bff.journal().pending).toEqual([]);
+    expect(h.bff.api.write).not.toHaveBeenCalled();
+  },
+);
+it("community sweep excludes later grants and continues past an incomplete selected cut", async () => {
+  const h = setup();
+  h.grant(other);
+  const third = "21234567-89ab-cdef-0123-456789abcdef";
+  h.grant(third);
+  const [first, second, last] = h.session.channels
+    .list()
+    .channels.map((c) => c.id);
+  if (!first || !second || !last) throw new Error("Missing sweep channels");
+  for (const id of [first, second, last])
+    h.bff.rows.set(
+      id,
+      sidebarRow(id, {
+        unread: { status: "exact", value: 1 },
+        latest_message_id: id === second ? null : "a".repeat(64),
+        latest_message_at: id === second ? null : 20,
+        latest_message_complete: id !== second,
+      }),
+    );
+  await h.unread.ensure();
+  const started = deferredSidebar<void>(),
+    held = deferredSidebar<void>();
+  const update = h.bff.storage.update;
+  vi.spyOn(h.bff.storage, "update").mockImplementationOnce(async (change) => {
+    started.resolve();
+    await held.promise;
+    return update(change);
+  });
+  const sweep = h.unread.markAllChannelsRead();
+  const rejected = expect(sweep).rejects.toThrow("Latest message unknown");
+  const later = "31234567-89ab-cdef-0123-456789abcdef";
+  try {
+    await started.promise;
+    h.bff.rows.set(
+      later,
+      sidebarRow(later, {
+        unread: { status: "exact", value: 1 },
+        latest_message_id: "b".repeat(64),
+        latest_message_at: 30,
+      }),
+    );
+    h.grant(later);
+  } finally {
+    held.resolve();
+  }
+  await rejected;
+  await vi.waitFor(() => expect(h.bff.journal().pending).toEqual([]));
+  expect(h.bff.api.write.mock.calls.flatMap(([intents]) => intents)).toEqual([
+    {
+      type: "mark_channel_read",
+      channel_id: first,
+      message_id: "a".repeat(64),
+    },
+    { type: "mark_channel_read", channel_id: last, message_id: "a".repeat(64) },
+  ]);
+});
 it("community sweep sends fixed cuts only for relay unread evidence and leaves unknown quiet", async () => {
   const h = setup();
   h.grant(other);
@@ -833,6 +1036,37 @@ it.each([
     } finally {
       gate.resolve();
       await Promise.allSettled([mark, sweep]);
+    }
+  },
+);
+it.each(["cross-channel", "missing", "valid (control)"] as const)(
+  "markUnreadLocal rejects a %s message target before saving it (RED at 927f431)",
+  async (shape) => {
+    const h = setup();
+    h.grant(other);
+    const elsewhere = message(h.peer, other, "elsewhere", 11),
+      here = message(h.peer, channel, "here", 12);
+    h.emit([elsewhere, here]);
+    await h.unread.ensure();
+    const messageId =
+      shape === "cross-channel"
+        ? elsewhere.id
+        : shape === "missing"
+          ? "c".repeat(64)
+          : here.id;
+    const marking = h.unread.markUnreadLocal({
+      kind: "message",
+      channelId: channel,
+      messageId,
+    });
+    if (shape === "valid (control)") {
+      await marking;
+      expect(h.bff.journal().manual).toEqual([
+        { kind: "message", channelId: channel, messageId },
+      ]);
+    } else {
+      await expect(marking).rejects.toThrow();
+      expect(h.bff.journal().manual).toEqual([]);
     }
   },
 );

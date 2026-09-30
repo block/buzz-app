@@ -669,15 +669,18 @@ export function createUnread({
             current.unreadVisible || state.journal.hasManualInChannel(channelId)
           );
         });
+      // Reserve each fixed cut and local clear in invocation order before yielding.
+      // The journal still commits per channel through its existing serial queue.
+      const settled = await Promise.allSettled(
+        pending.map((channelId) => capability.markChannelRead(channelId)),
+      );
       const results: ReadMutationResult[] = [];
       let failure: unknown;
       let failed = false;
-      for (const channelId of pending) {
-        if (!allowed(channelId)) continue;
-        try {
-          results.push(await capability.markChannelRead(channelId));
-        } catch (error) {
-          if (!failed) failure = error;
+      for (const [index, result] of settled.entries()) {
+        if (result.status === "fulfilled") results.push(result.value);
+        else if (allowed(pending[index] ?? "")) {
+          if (!failed) failure = result.reason;
           failed = true;
         }
       }
@@ -688,6 +691,11 @@ export function createUnread({
       const generation = epoch;
       if (!allowed(target.channelId))
         throw new Error("Read target unavailable");
+      if (target.kind === "message") {
+        const message = event(target.messageId);
+        if (!message || context(message)?.channel_id !== target.channelId)
+          throw new Error("Message does not belong to the read target");
+      }
       manualRevision.set(
         target.channelId,
         (manualRevision.get(target.channelId) ?? 0) + 1,

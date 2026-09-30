@@ -66,7 +66,9 @@ too. Oversized rows that never fit fully are not auto-read.
   message and a complete row it clears only local marks; an incomplete row is an
   error rather than an invented cut. It does not fetch history or select the row.
 - `markAllChannelsRead()` sweeps accessible listed channels with visible unread
-  evidence or a local mark, one channel at a time. Already-read channels cost no
+  evidence or a local mark. It captures every selected fixed cut and local clear
+  at invocation, before yielding; the journal then commits them one channel at
+  a time. Already-read channels cost no
   writes. A revoked channel is skipped; other failures do not stop the sweep,
   and the first failure is rethrown afterwards. Newly granted channels wait for
   the next action. The community rail uses this for the selected community only.

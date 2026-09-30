@@ -1,17 +1,17 @@
 import type { Context } from "@deepseek-ai/cordis";
 import {
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
+  type ComponentProps,
 } from "react";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { buzzLinkTarget } from "../navigation/buzz-links";
 import { PanelView } from "../panels/PanelView";
 import type { RegisteredPanel } from "../panels/service";
-import type { Attachment } from "../relay/contracts";
 import { MediaReviewViewer } from "../messages/MediaReviewViewer";
+import { MessageManagement } from "../messages/MessageManagement";
 import { ThreadPanel, type ThreadPanelProps } from "../messages/ThreadPanel";
 import { messageViewKey } from "../messages/view-key";
 
@@ -24,7 +24,18 @@ type Props = EmbeddedThreadProps & {
   host: Context;
   extensions: NonNullable<ThreadPanelProps["extensions"]>;
 };
+/** At most one modal surface: opening a panel or a media review replaces the other. */
+type Overlay =
+  | { panel: RegisteredPanel; target: string; media?: undefined }
+  | {
+      media: Pick<
+        ComponentProps<typeof MediaReviewViewer>,
+        "messageId" | "attachment" | "initialTime" | "hasComments"
+      >;
+      panel?: undefined;
+    };
 
+/** Retargeting remounts, so overlays and message actions never outlive their thread. */
 export function EmbeddedThread(props: Props) {
   return (
     <OwnedEmbeddedThread
@@ -41,36 +52,30 @@ export function EmbeddedThread(props: Props) {
 
 function OwnedEmbeddedThread({ host, extensions, ...props }: Props) {
   const { session, scope, channelId, channelName } = props;
-  const available = useSyncExternalStore(
+  const viewer = scope.slice(-64);
+  const relayUrl = scope.slice(0, -65);
+  const panels = useSyncExternalStore(
     host.panels.subscribe,
     host.panels.snapshot,
-    host.panels.snapshot,
   );
-  const [panel, setPanel] = useState<{
-    contribution: RegisteredPanel;
-    target: string;
-  }>();
-  const [media, setMedia] = useState<{
-    messageId: string;
-    attachment: Attachment;
-    initialTime: number;
-    hasComments: boolean;
-  }>();
-  const mediaTrigger = useRef<HTMLElement | null>(null);
+  const { channels } = useSyncExternalStore(
+    session.channels.subscribeList,
+    session.channels.list,
+  );
+  const [overlay, setOverlay] = useState<Overlay>();
+  // A panel never outlives its contribution.
+  if (overlay?.panel && !panels.includes(overlay.panel)) setOverlay(undefined);
+  // Captured callbacks may run late: nothing acts after unmount, and a plugin
+  // panel acts only while it is still the overlay on screen.
   const mounted = useRef(false);
-  const opening = useRef(panel);
-  useLayoutEffect(() => {
-    opening.current = panel;
-  }, [panel]);
+  const shown = useRef(overlay);
   useLayoutEffect(() => {
     mounted.current = true;
+    shown.current = overlay;
     return () => {
       mounted.current = false;
     };
-  }, []);
-  useEffect(() => {
-    if (panel && !available.includes(panel.contribution)) setPanel(undefined);
-  }, [panel, available]);
+  }, [overlay]);
   const active = () => {
     const connection = host.relay.snapshot();
     return (
@@ -83,26 +88,25 @@ function OwnedEmbeddedThread({ host, extensions, ...props }: Props) {
   const canOpen = (target: string) => !!host.panels.resolve(target);
   const open = (url: string) => {
     if (!active()) return false;
-    const target = buzzLinkTarget(url, {
-      viewer: scope.slice(-64),
-      communityOrigin: scope.slice(0, -65),
-    });
+    const target = buzzLinkTarget(url, { viewer, communityOrigin: relayUrl });
     if (target) {
-      setPanel(undefined);
-      setMedia(undefined);
+      setOverlay(undefined);
       void host.navigation.open(target);
       return true;
     }
-    const contribution = host.panels.resolve(url);
-    if (!contribution) return false;
-    setPanel({ contribution, target: url });
+    const panel = host.panels.resolve(url);
+    if (!panel) return false;
+    setOverlay({ panel, target: url });
     return true;
   };
   return (
-    <>
+    <MessageManagement session={session} channelId={channelId}>
       <ThreadPanel
         {...props}
-        presentation="embedded"
+        sessionConversation={channels.some(
+          (channel) =>
+            channel.id === channelId && channel.channelType === "session",
+        )}
         extensions={extensions}
         onOpenLink={open}
         canOpenLink={canOpen}
@@ -112,62 +116,59 @@ function OwnedEmbeddedThread({ host, extensions, ...props }: Props) {
           initialTime,
           hasComments = false,
         ) => {
-          if (!active()) return;
-          mediaTrigger.current =
-            document.activeElement instanceof HTMLElement
-              ? document.activeElement
-              : null;
-          setMedia({ messageId, attachment, initialTime, hasComments });
+          if (active())
+            setOverlay({
+              media: { messageId, attachment, initialTime, hasComments },
+            });
         }}
       />
-      {panel && available.includes(panel.contribution) && (
+      {overlay?.panel && (
         <Dialog
           open
-          title={panel.contribution.title}
+          title={overlay.panel.title}
           placement="right"
           height="stable"
           onOpenChange={(next) => {
-            if (!next) setPanel(undefined);
+            if (!next) setOverlay(undefined);
           }}
         >
           <PanelView
-            panel={panel.contribution}
-            target={panel.target}
+            panel={overlay.panel}
+            target={overlay.target}
             close={() => {
-              if (opening.current === panel) setPanel(undefined);
+              if (shown.current === overlay) setOverlay(undefined);
             }}
             channelContext={{
               scope,
               channelId,
               channelName,
-              viewer: scope.slice(-64),
-              relayUrl: scope.slice(0, -65),
+              viewer,
+              relayUrl,
               threadId: props.messageId,
             }}
             context={{
               channelId,
               canOpen,
               open: (target) =>
-                opening.current === panel &&
-                host.panels.snapshot().includes(panel.contribution) &&
+                shown.current === overlay &&
+                host.panels.snapshot().includes(overlay.panel) &&
                 open(target),
             }}
           />
         </Dialog>
       )}
-      {media && (
+      {overlay?.media && (
         <MediaReviewViewer
-          {...media}
+          {...overlay.media}
           session={session}
           scope={scope}
           channelId={channelId}
           channelName={channelName}
           extensions={extensions}
-          restoreFocus={mediaTrigger}
           onOpenLink={open}
-          close={() => setMedia(undefined)}
+          close={() => setOverlay(undefined)}
         />
       )}
-    </>
+    </MessageManagement>
   );
 }

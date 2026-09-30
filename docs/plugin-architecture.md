@@ -574,12 +574,14 @@ This remains a host-matched preview, not a stable cross-version SDK. Shared sess
 ownership and trusted-plugin authority do not change.
 
 `conversation.ui.Thread({ session, scope, channelId, channelName, messageId })`
-renders the existing `ThreadPanel` in an embedded presentation without its
-side-panel header or close control. The host supplies contribution renderers, Buzz
-link navigation, registered panels in a dialog and media review. The page owns
-its surrounding header and placement and passes its current ready session and
-stable community/viewer scope; retargeting disposes the old thread and
-presentation state. The page holds no second message reader, cache or outbox.
+renders the existing `ThreadPanel` without its side-panel header, close control
+or Escape dismissal; the page owns the surrounding header and placement. The
+host supplies the rest of the Channels thread behavior: contribution renderers,
+message management (edit, delete, mark read/unread, and the channel visit those
+rely on), session-channel recipients, Buzz link navigation, and one modal at a
+time for a registered panel or media review. The page passes its current ready
+session and stable community/viewer scope; retargeting disposes the old thread
+and its modal. The page holds no second message reader, cache or outbox.
 Exact message links still navigate to Channels rather than the page's route.
 
 ### Composer ownership and mention tools

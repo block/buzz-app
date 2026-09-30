@@ -11,27 +11,72 @@ import { afterEach, expect, it, vi } from "vitest";
 import { EmbeddedThread } from "./EmbeddedThread";
 import type { Context } from "@deepseek-ai/cordis";
 import type { ComponentProps } from "react";
+import { createAgentLibrary } from "../agents/library";
+import type { MessageComposerProps } from "../messages/MessageComposer";
+import { useMessageDeletion } from "../messages/MessageManagement";
+import type { MessageRowProps } from "../messages/MessageRow";
 import type { PanelProps, RegisteredPanel } from "../panels/service";
-import type { ThreadPanelProps } from "../messages/ThreadPanel";
+import type { ChannelMessage } from "../relay/contracts";
+import type { RelaySession } from "../relay/session";
 
-vi.mock("../messages/ThreadPanel", () => ({
-  ThreadPanel: (props: ThreadPanelProps) => (
-    <button type="button" onClick={() => props.onOpenLink("fixture:one")}>
-      Open linked panel
-    </button>
+// The real ThreadPanel and MessageManagement are composed; only leaf UI with
+// its own mounted suites is reduced to the props this owner supplies.
+vi.mock("../relay/react", () => {
+  const profiles = new Map();
+  return { useRowProfiles: () => profiles };
+});
+vi.mock("../messages/MessageRow", () => ({
+  MessageRow: ({ row, onOpenLink, onOpenMediaReview }: MessageRowProps) => (
+    <article>
+      <button type="button" onClick={() => onOpenLink?.("fixture:one")}>
+        Open linked panel
+      </button>
+      <button
+        type="button"
+        // biome-ignore lint/style/noNonNullAssertion: the fixture row has one attachment.
+        onClick={() => onOpenMediaReview?.(row.id, row.attachments[0]!, 0)}
+      >
+        Open media review
+      </button>
+    </article>
+  ),
+}));
+vi.mock("../messages/MessageComposer", () => ({
+  MessageComposer: ({ sessionConversation }: MessageComposerProps) => (
+    <section
+      aria-label="Composer"
+      data-session-conversation={String(!!sessionConversation)}
+      data-deletion={String(!!useMessageDeletion())}
+    />
   ),
 }));
 vi.mock("../messages/MediaReviewViewer", () => ({
-  MediaReviewViewer: () => null,
+  MediaReviewViewer: (props: { onOpenLink(url: string): boolean }) => (
+    <section aria-label="Media review">
+      <button type="button" onClick={() => props.onOpenLink("fixture:one")}>
+        Open panel from review
+      </button>
+    </section>
+  ),
 }));
 vi.mock("../../shared/design-system/ui/Dialog", () => ({
   Dialog: ({ children }: { children: React.ReactNode }) => (
     <section>{children}</section>
   ),
 }));
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
-it("retires panel actions on contribution removal, destination change and unmount", () => {
+function fixture(channelType: "stream" | "session" = "stream") {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   let captured: PanelProps | undefined;
   const panel = {
     key: "fixture",
@@ -47,7 +92,47 @@ it("retires panel actions on contribution removal, destination change and unmoun
   } as RegisteredPanel;
   let panels = [panel];
   const listeners = new Set<() => void>();
-  const session = {} as ComponentProps<typeof EmbeddedThread>["session"];
+  const root: ChannelMessage = {
+    id: "a".repeat(64),
+    channelId: "c",
+    authorId: "b".repeat(64),
+    content: "root",
+    createdAt: 1,
+    mentions: [],
+    participants: [],
+    attachments: [{ url: "https://fixture.test/image.png", kind: "image" }],
+    reactions: [],
+    replyCount: 0,
+  };
+  const thread = {
+    status: "ready",
+    root,
+    replies: [],
+    error: undefined,
+    canLoadMore: false,
+    limited: false,
+  };
+  const channels = { channels: [{ id: "c", name: "Channel", channelType }] };
+  const session = {
+    thread: () => ({
+      snapshot: () => thread,
+      subscribe: () => () => {},
+      refresh: async () => {},
+      loadMore: async () => {},
+      dispose() {},
+    }),
+    channels: { subscribeList: () => () => {}, list: () => channels },
+    profiles: { ensure: async () => {} },
+    agentChoices: createAgentLibrary(undefined).queries,
+    messages: { retry() {} },
+    media: () => undefined,
+    unread: {
+      sync: () => ({ capability: "unsupported" }),
+      snapshot: () => undefined,
+      subscribe: () => () => {},
+      attention: () => ({ unread: false }),
+    },
+  } as unknown as RelaySession;
   const scope = `https://fixture.test:${"a".repeat(64)}`;
   const host = {
     panels: {
@@ -69,25 +154,64 @@ it("retires panel actions on contribution removal, destination change and unmoun
     scope,
     channelId: "c",
     channelName: "Channel",
-    messageId: "one",
+    messageId: root.id,
     extensions: {} as ComponentProps<typeof EmbeddedThread>["extensions"],
   };
-  const view = render(<EmbeddedThread {...props} />);
+  return {
+    props,
+    listeners,
+    panelProps: () => captured,
+    removePanels() {
+      act(() => {
+        panels = [];
+        for (const fn of listeners) fn();
+      });
+    },
+  };
+}
+
+it("retires panel actions on contribution removal, destination change and unmount", () => {
+  const h = fixture();
+  const view = render(<EmbeddedThread {...h.props} />);
   fireEvent.click(screen.getByText("Open linked panel"));
   expect(screen.getByText("Linked content")).toBeVisible();
-  const old = captured;
-  view.rerender(<EmbeddedThread {...props} messageId="two" />);
+  const old = h.panelProps();
+  view.rerender(<EmbeddedThread {...h.props} messageId={"c".repeat(64)} />);
   expect(screen.queryByText("Linked content")).not.toBeInTheDocument();
   expect(old?.context?.open("fixture:two")).toBe(false);
   fireEvent.click(screen.getByText("Open linked panel"));
-  const removed = captured;
-  act(() => {
-    panels = [];
-    for (const fn of listeners) fn();
-  });
+  const removed = h.panelProps();
+  h.removePanels();
   expect(screen.queryByText("Linked content")).not.toBeInTheDocument();
   expect(removed?.context?.open("fixture:two")).toBe(false);
   view.unmount();
   expect(removed?.context?.open("fixture:two")).toBe(false);
-  expect(listeners.size).toBe(0);
+  expect(h.listeners.size).toBe(0);
 });
+
+it("a panel opened from media review replaces the viewer, and media review replaces a panel", () => {
+  render(<EmbeddedThread {...fixture().props} />);
+  fireEvent.click(screen.getByText("Open media review"));
+  fireEvent.click(screen.getByText("Open panel from review"));
+  expect(screen.getByText("Linked content")).toBeVisible();
+  expect(screen.queryByLabelText("Media review")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText("Open media review"));
+  expect(screen.getByLabelText("Media review")).toBeVisible();
+  expect(screen.queryByText("Linked content")).not.toBeInTheDocument();
+});
+
+it.each([
+  ["stream", "false"],
+  ["session", "true"],
+] as const)(
+  "the %s-channel reply composer gets message management and session recipients=%s",
+  (channelType, sessionConversation) => {
+    render(<EmbeddedThread {...fixture(channelType).props} />);
+    const composer = screen.getByLabelText("Composer");
+    expect(composer).toHaveAttribute("data-deletion", "true");
+    expect(composer).toHaveAttribute(
+      "data-session-conversation",
+      sessionConversation,
+    );
+  },
+);

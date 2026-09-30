@@ -779,7 +779,7 @@ it("revoked ordinary presentation cannot position or complete after loading", ()
   expect(navigation.complete).not.toHaveBeenCalled();
 });
 
-it("embedded presentation keeps the thread reader without a close header or Escape dismissal", () => {
+it("without close, the embedded thread keeps its reader but has no close header or Escape dismissal", () => {
   const thread = vi.fn(() => {
     throw new Error("fixture unavailable");
   });
@@ -794,9 +794,7 @@ it("embedded presentation keeps the thread reader without a close header or Esca
   };
   const onEscape = vi.fn();
   document.addEventListener("keydown", onEscape);
-  const { rerender } = render(
-    <ThreadPanel {...props} presentation="embedded" />,
-  );
+  const { rerender } = render(<ThreadPanel {...props} />);
   expect(
     screen.queryByRole("button", { name: "Close thread" }),
   ).not.toBeInTheDocument();

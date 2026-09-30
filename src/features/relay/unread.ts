@@ -79,7 +79,6 @@ export interface UnreadCapability {
     target: UnreadTarget,
     messageId: string,
   ): Promise<ReadMutationResult>;
-  clearUnreadLocal(target: UnreadTarget): Promise<ReadMutationResult>;
   markChannelRead(channelId: string): Promise<ReadMutationResult>;
   /** Sweep the accessible listed unread channels; continue past individual failures. */
   markAllChannelsRead(): Promise<readonly ReadMutationResult[]>;
@@ -636,16 +635,6 @@ export function createUnread({
         ],
         (t) => unreadTargetKey(t) === unreadTargetKey(target),
         () => !closed && epoch === generation && allowed(target.channelId),
-      );
-    },
-    async clearUnreadLocal(target) {
-      const generation = epoch;
-      if (!allowed(target.channelId))
-        throw new Error("Read target unavailable");
-      return state.journal.enqueue(
-        [],
-        (t) => unreadTargetKey(t) === unreadTargetKey(target),
-        () => !closed && generation === epoch && allowed(target.channelId),
       );
     },
     async markChannelRead(channelId) {

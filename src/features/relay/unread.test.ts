@@ -692,8 +692,6 @@ it("a selected local unread mark does not force its reply subtree", async () => 
   await h.unread.markUnreadLocal(selected);
   expect(h.unread.attention(channel, root.id).forced).toBe(true);
   expect(h.unread.attention(channel, child.id).forced).toBe(false);
-  await h.unread.clearUnreadLocal(selected);
-  expect(h.unread.attention(channel, root.id).forced).toBe(false);
   expect(h.bff.api.write).not.toHaveBeenCalled();
 });
 

@@ -532,6 +532,8 @@ it.each([
         attention: { status: "exact", value: 0 },
       }),
     );
+    // A complete empty channel has no relay anchor: the real channel-read
+    // action clears local intent without manufacturing a relay write.
     let gate: ReturnType<typeof deferredSidebar<void>> | undefined;
     let started: ReturnType<typeof deferredSidebar<void>> | undefined;
     let saves = 0;
@@ -589,14 +591,14 @@ it.each([
         older =
           first === "mark"
             ? owner.session.unread.markUnreadLocal(target)
-            : owner.session.unread.clearUnreadLocal(target);
+            : owner.session.unread.markChannelRead(channel);
         await started?.promise;
       });
       expect(painted()).toBe(first === "mark");
       await act(async () => {
         newer =
           first === "mark"
-            ? owner.session.unread.clearUnreadLocal(target)
+            ? owner.session.unread.markChannelRead(channel)
             : owner.session.unread.markUnreadLocal(target);
       });
       expect(painted()).toBe(first === "clear");

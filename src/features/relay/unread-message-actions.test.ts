@@ -188,7 +188,7 @@ it("keeps unknown outcomes durable and retries identical operands", async () => 
   expect(h.api.write.mock.calls[1]?.[0]).toEqual(sent);
   expect(h.journal().pending).toEqual([]);
 });
-it.each(["markThrough", "clearUnreadLocal", "markChannelRead"] as const)(
+it.each(["markThrough", "markChannelRead"] as const)(
   "serializes %s after queued message read and channel unread",
   async (action) => {
     const h = setup();
@@ -203,9 +203,7 @@ it.each(["markThrough", "clearUnreadLocal", "markChannelRead"] as const)(
     const last =
       action === "markThrough"
         ? h.unread.markThrough(target, h.root)
-        : action === "clearUnreadLocal"
-          ? h.unread.clearUnreadLocal(target)
-          : h.unread.markChannelRead(channel);
+        : h.unread.markChannelRead(channel);
     held.release();
     await Promise.all([read, unread, last]);
     expect(h.journal().manual).toEqual([]);

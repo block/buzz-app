@@ -337,10 +337,14 @@ the complete suite still runs with `pnpm test` / `just scan`:
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
 - **Browser journeys:** twelve runners (Chromium and WebKit, six file-level shards
   per engine), each with two workers. They start alongside measurements on separate
-  runners; `CI required` still requires both lanes. Each runner builds the native
-  plugin-manager fixture in a separately logged setup step before starting
-  Playwright. Browser jobs install the existing `bin/.rust-*.pkg` pin through
-  the runner's rustup with the minimal compiler/Cargo/standard-library profile,
+  runners; `CI required` still requires both lanes. Each functional shard installs
+  only its selected browser engine and Linux libraries; measurements install both
+  Chromium and WebKit. Engine caches are keyed by OS, architecture, Playwright
+  version and engine selection; system-library installation still runs on cache
+  hits. Each runner builds the native plugin-manager fixture in a separately
+  logged setup step before starting Playwright. Browser jobs install the existing
+  `bin/.rust-*.pkg` pin through the runner's rustup with the minimal
+  compiler/Cargo/standard-library profile,
   avoiding Hermit's full Rust archive on cold runners. `HERMIT_PREPEND_PATH`
   keeps that toolchain selected inside Hermit-launched pnpm/Node subprocesses;
   native jobs retain Hermit's Rust, rustfmt and Clippy. The fixture's Rust cache

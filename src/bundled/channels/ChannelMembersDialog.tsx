@@ -20,6 +20,7 @@ import { useIdentityNames } from "../../features/identity-names/react";
 import { usePresenceStatus } from "../../features/presence/react";
 import { profileTarget } from "../../features/profiles/target";
 import styles from "./ChannelMembersDialog.module.css";
+import { MEMBER_SEARCH_PAGE_SIZE } from "../../features/channel-members/search";
 import { canAddMembers } from "../../features/channel-members/members";
 import {
   formatPublicKey,
@@ -399,6 +400,13 @@ export function ChannelMembersDialog({
     session.channels.get?.(channelId);
   const canAdd = canAddMembers(session, channel);
   const search = useMemberSearch(session, query, canAdd);
+  const text = query.trim();
+  const [invitationPage, setInvitationPage] = useState({
+    text,
+    size: MEMBER_SEARCH_PAGE_SIZE,
+  });
+  if (invitationPage.text !== text)
+    setInvitationPage({ text, size: MEMBER_SEARCH_PAGE_SIZE });
   // biome-ignore lint/correctness/useExhaustiveDependencies: destination changes retire addition notices.
   useEffect(() => {
     const controller = new AbortController();
@@ -560,6 +568,14 @@ export function ChannelMembersDialog({
   const available = [...candidates.values()].filter(
     (person) => !members.has(person.pubkey) && !archived.has(person.pubkey),
   );
+  // Known agents supplement the server page, not its rendering bound. Keep all
+  // matches reachable through the existing More action without mounting them all.
+  const invitationSize =
+    invitationPage.text === text
+      ? invitationPage.size
+      : MEMBER_SEARCH_PAGE_SIZE;
+  const visibleCandidates = available.slice(0, invitationSize);
+  const moreCandidates = available.length > invitationSize;
   // Keep roster ownership observed while filtering; retiring the view clears
   // valid hints and forces every retained agent row through recovery renders.
   const agentKeys = [
@@ -567,7 +583,7 @@ export function ChannelMembersDialog({
       ...currentMembers.filter(
         (key) => known.has(key) || profiles.get(key)?.isAgent,
       ),
-      ...available
+      ...visibleCandidates
         .filter(
           (person) =>
             person.isAgent ||
@@ -595,6 +611,7 @@ export function ChannelMembersDialog({
     if (refreshing || mutationPending) return;
     setRosterBusy(true);
     setRefresh((value) => value + 1);
+    setInvitationPage({ text, size: MEMBER_SEARCH_PAGE_SIZE });
     void session.memberAdministration.refresh(channelId).catch(() => {});
     // Native inventory retains ready data during refresh, so its snapshot alone
     // does not expose every in-flight read.
@@ -899,7 +916,7 @@ export function ChannelMembersDialog({
               >
                 Not in this channel
               </h3>
-              {available.map((person) =>
+              {visibleCandidates.map((person) =>
                 row(
                   person.pubkey,
                   label(person.pubkey, person.name),
@@ -929,12 +946,18 @@ export function ChannelMembersDialog({
                   {search.error}
                 </p>
               )}
-              {search.more && (
+              {(moreCandidates || search.more) && (
                 <div className="flex justify-center">
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={search.next}
+                    onClick={() => {
+                      setInvitationPage({
+                        text,
+                        size: invitationSize + MEMBER_SEARCH_PAGE_SIZE,
+                      });
+                      if (!moreCandidates) search.next();
+                    }}
                     disabled={search.loading}
                   >
                     Show more results

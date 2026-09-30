@@ -487,7 +487,13 @@ preserve the last verified groups on failure. Visible member names request foreg
 priority; avatars, presence and manager enrichment never gate the initial list.
 Search filters
 each group, omits empty elevated and agent groups, and preserves full group counts.
-Non-member search ranking is unchanged. Unchanged identity rows retain their rendered
+Non-member search ranking is unchanged. Relay matches followed by matching known
+agents share a 30-row initial invitation page after member/archive exclusion and
+identity deduplication. **Show more results** reveals 30 more already-loaded matches
+before requesting another relay page. Query changes and explicit refresh reset the
+visible page; no matches are silently discarded. Only displayed invitation agents
+join ownership observation, so the first character cannot mount/enrich the entire
+known-agent inventory. Unchanged identity rows retain their rendered
 profile/avatar/menu trees across query and loading updates; changed names, permissions,
 manager evidence, presence and invitation state still update through their existing owners.
 Current-member avatars and rows open the existing Profiles panel when its contribution
@@ -578,7 +584,7 @@ Agent runtime/access management is not added to the member menu.
 Manager attribution uses the existing NIP-OA verifier on each agent's winning
 signed kind-0 head, combining one dialog-owned live observation with retained
 profile-directory evidence. Filtering retains the current roster in that observation;
-matching non-member agents join only while offered as invitation candidates.
+matching non-member agents join only while displayed on the invitation page.
 Verification is event-bound: newer invalid or missing
 auth removes the claim; older reads cannot restore it. The dialog reuses verification
 for the same identity and signed head while filtering; a changed head is verified

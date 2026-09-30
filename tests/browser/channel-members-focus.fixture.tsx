@@ -48,6 +48,15 @@ const scrollMembers = new URLSearchParams(location.search).has("scroll")
     }))
   : [];
 // Real owner signatures for the opt-in search workload, not a mocked verifier.
+const invitationScale = new URLSearchParams(location.search).has(
+  "invitation-scale",
+);
+const inventory = invitationScale
+  ? Array.from({ length: 240 }, (_, index) => ({
+      pubkey: keypair().pubkey,
+      name: `Helper ${String(index + 1).padStart(3, "0")}`,
+    }))
+  : [];
 const searchScale = new URLSearchParams(location.search).has("search-scale");
 const managed = searchScale
   ? Array.from({ length: 60 }, (_, index) => ({
@@ -110,9 +119,14 @@ const { session: sharedSession } = createRelaySession(
       searchWork.images++;
       return undefined;
     },
-    readAgentLibrary: async () => ({ definitions: [], identities: [] }),
+    readAgentLibrary: async () => ({ definitions: [], identities: inventory }),
     query: async (filters) => {
-      if (filters.some((filter) => filter.search)) return candidateProfiles;
+      if (filters.some((filter) => filter.search)) {
+        // The roster-only workload must not introduce a new identity: random
+        // npub suffix collisions legitimately change every row's key label.
+        if (invitationScale || searchScale) return [];
+        return candidateProfiles;
+      }
       if (holdNames && filters.some((filter) => filter.kinds?.includes(0))) {
         namesRequested = true;
         await namesReady;

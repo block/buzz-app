@@ -879,3 +879,65 @@ test("member search reuses unchanged rows and owner observations", async ({
   expect(sample.searchWork.observations).toBe(workBefore.observations);
   expect(errors).toEqual([]);
 });
+
+// The live React profile mounted 240 invitation rows on the first letter. This
+// workload must keep render/effect work bounded, not only repeated verification.
+test("large known-agent searches mount only the first invitation page", async ({
+  page,
+}, testInfo) => {
+  const { errors } = watchPageErrors(page);
+  await page.goto(`${url}?invitation-scale`);
+  await page.getByRole("button", { name: "Channel members" }).click();
+  const dialog = page.getByRole("dialog", { name: "Channel members" });
+  const search = dialog.getByRole("searchbox");
+  const refresh = dialog.getByRole("button", { name: "Refresh member data" });
+  await expect(refresh).toHaveAttribute("aria-busy", "false");
+  await page.evaluate(() => {
+    window.searchFrames = [];
+    window.searchSample = true;
+    let previous = performance.now();
+    const frame = (now) => {
+      window.searchFrames.push(now - previous);
+      previous = now;
+      if (window.searchSample) requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  });
+  const counts = [];
+  for (const query of ["h", "he", "hel", "hell", "hello", ""]) {
+    await search.fill(query);
+    await expect(refresh).toHaveAttribute("aria-busy", "false");
+    counts.push(await dialog.getByRole("button", { name: /^Add / }).count());
+  }
+  const sample = await page.evaluate(() => {
+    window.searchSample = false;
+    return {
+      maxFrame: Math.max(...window.searchFrames),
+      longFrames: window.searchFrames.filter((ms) => ms > 50).length,
+    };
+  });
+  console.log("MEMBER_INVITATION_WORK", testInfo.project.name, {
+    counts,
+    ...sample,
+  });
+  await testInfo.attach("invitation-work.json", {
+    body: JSON.stringify({ counts, ...sample }),
+    contentType: "application/json",
+  });
+  expect(counts.slice(0, 3)).toEqual([30, 30, 30]);
+  // A random npub may contain "hell"; it cannot contain "hello" (no o in bech32).
+  expect(counts[3]).toBeLessThanOrEqual(30);
+  expect(counts.slice(4)).toEqual([0, 0]);
+  await search.fill("helper");
+  await expect(refresh).toHaveAttribute("aria-busy", "false");
+  const more = dialog.getByRole("button", { name: "Show more results" });
+  for (const count of [60, 90, 120, 150, 180, 210, 240]) {
+    await more.click();
+    await expect(
+      dialog.getByRole("button", { name: /^Add Helper/ }),
+    ).toHaveCount(count);
+  }
+  await expect(more).toHaveCount(0);
+  expect(await page.evaluate(() => window.focusFixture.additions)).toEqual([]);
+  expect(errors).toEqual([]);
+});

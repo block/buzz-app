@@ -153,14 +153,34 @@ async function brokerRequest<T>(
   return result;
 }
 
+/** Packaged builds have no broker to remember GIF discovery, so every search
+ * would first re-read NIP-11. Keep the broker's per-relay cache here: only the
+ * supported route is retained, because a relay can enable GIFs while the app
+ * is running and a failed read must be retried. */
+const nativeSearchPaths = new Map<string, Promise<string | null>>();
+async function nativeSearchPath(community: string, signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  let discovery = nativeSearchPaths.get(community);
+  if (!discovery) {
+    // Shared by every caller, so no single caller's signal may cancel it.
+    discovery = nativeRelayInfo(community).then(relayKlipySearchPath);
+    nativeSearchPaths.set(community, discovery);
+    const forget = () => nativeSearchPaths.delete(community);
+    discovery.then((path) => {
+      if (path !== "/gifs/search") forget();
+    }, forget);
+  }
+  const path = await discovery;
+  signal?.throwIfAborted();
+  return path;
+}
+
 export async function relaySupportsKlipy(
   community: string,
   signal?: AbortSignal,
 ) {
-  if (nativeIdentityEnabled()) {
-    const info = await nativeRelayInfo(community, signal);
-    return relayKlipySearchPath(info) === "/gifs/search";
-  }
+  if (nativeIdentityEnabled())
+    return (await nativeSearchPath(community, signal)) === "/gifs/search";
   const info = await brokerRequest<RelayGifSearchInfo>(
     community,
     "gif-info",
@@ -177,7 +197,7 @@ export async function fetchKlipyGifs(
   signal?: AbortSignal,
 ): Promise<KlipyGif[]> {
   const route = nativeIdentityEnabled()
-    ? relayKlipySearchPath(await nativeRelayInfo(community, signal))
+    ? await nativeSearchPath(community, signal)
     : "gifs";
   if (!route) throw new Error("GIF search is unavailable");
   if (nativeIdentityEnabled() && route !== "/gifs/search")

@@ -31,7 +31,8 @@ test("native GIF search follows only the advertised relay route, never the broke
     }),
   );
   const paths: string[] = [];
-  let search = "/gifs/search";
+  let status = 503;
+  let search = "https://other.test/gifs/search";
   vi.mocked(invoke).mockImplementation(async (command, args) => {
     expect(command).toBe("relay_http");
     const { community, path, body } = args as {
@@ -43,7 +44,7 @@ test("native GIF search follows only the advertised relay route, never the broke
     paths.push(path);
     if (path === "/")
       return {
-        status: 200,
+        status,
         headers: {},
         body: JSON.stringify({
           supported_extensions: ["buzz-gif"],
@@ -61,16 +62,30 @@ test("native GIF search follows only the advertised relay route, never the broke
       body: JSON.stringify({ result: true, data: { data: [] } }),
     };
   });
+  // Neither a failed read nor an unsupported route is remembered: discovery
+  // is repeated until the relay advertises its own search route.
+  await expect(relaySupportsKlipy("https://native-gifs.test")).rejects.toThrow(
+    "Community discovery failed",
+  );
+  status = 200;
+  expect(await relaySupportsKlipy("https://native-gifs.test")).toBe(false);
+  await expect(
+    fetchKlipyGifs("https://native-gifs.test", "wave"),
+  ).rejects.toThrow("unavailable");
+  expect(paths).toEqual(["/", "/", "/"]);
+  search = "/gifs/search";
   expect(await relaySupportsKlipy("https://native-gifs.test")).toBe(true);
   expect(await fetchKlipyGifs("https://native-gifs.test", " wave ")).toEqual(
     [],
   );
-  expect(paths).toEqual(["/", "/", "/gifs/search"]);
-  search = "https://other.test/gifs/search";
+  expect(await fetchKlipyGifs("https://native-gifs.test", "wave")).toEqual([]);
+  // The supported route is read once; later searches do not repeat discovery.
+  expect(paths).toEqual(["/", "/", "/", "/", "/gifs/search", "/gifs/search"]);
+  const aborted = AbortSignal.abort();
   await expect(
-    fetchKlipyGifs("https://native-gifs.test", "wave"),
-  ).rejects.toThrow("unavailable");
-  expect(paths).toEqual(["/", "/", "/gifs/search", "/"]);
+    fetchKlipyGifs("https://native-gifs.test", "wave", aborted),
+  ).rejects.toBe(aborted.reason);
+  expect(paths).toHaveLength(6);
   expect(fetch).not.toHaveBeenCalled();
 });
 

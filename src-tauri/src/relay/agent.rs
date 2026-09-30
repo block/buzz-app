@@ -867,6 +867,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(partial["partial"], true);
+        let mut tampered = memory.clone();
+        let swapped = if &tampered.content[100..101] == "A" {
+            "B"
+        } else {
+            "A"
+        };
+        tampered.content.replace_range(100..101, swapped);
+        resign(&mut tampered, &agent_secret);
+        let rejected = decode_memories_with_key(
+            &viewer_secret,
+            &viewer,
+            &viewer,
+            &agent,
+            &[Some(json!(tampered))],
+        )
+        .unwrap();
+        assert_eq!(rejected["entries"].as_array().unwrap().len(), 0);
+        assert_eq!(rejected["partial"], true);
         assert!(decode_memories_with_key(&viewer_secret, &agent, &viewer, &agent, &[]).is_err());
 
         let observer = signed_event(

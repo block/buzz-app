@@ -476,13 +476,16 @@ for (const width of [1492, 1280, 1024, 700, 390])
       .find((e) => e.content === "Thread root 0");
     let parent = root.id;
     const ids = [];
-    for (let i = 0; i < 13; i++) {
+    // Indentation stops at depth 6, or sooner in narrow panels. Nine levels
+    // cover every indented depth plus capped rows with and without an author
+    // change; deeper levels render exactly like depth 6.
+    for (let i = 0; i < 9; i++) {
       parent = app.append(
         "primary",
         "alpha",
         `Crowded reply ${i}`,
         false,
-        i < 9 ? i % 2 === 0 : true,
+        i < 6 ? i % 2 === 0 : true,
         root.id,
         parent,
       ).id;

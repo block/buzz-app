@@ -120,3 +120,28 @@ it.each(["clear", "dispose", "revoke"])(
     expect(h.latest()).toBeUndefined();
   },
 );
+it("a stale sidebar row never rolls back newer live activity", async () => {
+  const h = setup();
+  h.bff.rows.set(channel, h.row(50));
+  await h.session.unread.ensure();
+  expect(h.latest()).toBe(50);
+  const held = deferredSidebar<SidebarPage>();
+  h.bff.api.sidebar.mockImplementationOnce(() => held.promise);
+  const refreshing = h.session.unread.refresh();
+  await vi.waitFor(() => expect(h.bff.api.sidebar).toHaveBeenCalledTimes(2));
+  h.live.receive([message(keypair(), channel, "live", 90)], {
+    phase: "live",
+    channelId: channel,
+  });
+  expect(h.latest()).toBe(90);
+  held.resolve({
+    account: sidebarAccount,
+    channels: [h.row(60)],
+    next_cursor: null,
+  });
+  await refreshing;
+  expect(h.latest()).toBe(90);
+  h.bff.rows.set(channel, h.row(120));
+  await h.session.unread.refresh();
+  expect(h.latest()).toBe(120);
+});

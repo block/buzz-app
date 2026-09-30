@@ -391,6 +391,35 @@ describe("composer Markdown boundary", () => {
       });
     },
   );
+  it.each(["**Note**", "*Note*", "***Note***", "**Note***", "***Note**"])(
+    "preserves authored attention beside generated spans: %s",
+    (source) => {
+      const italic = (value: string) =>
+        schema.text(value, [schema.marks.italic.create()]);
+      const authored = renderedCharacters(fromMarkdown(source).children);
+      for (const mark of [italic]) {
+        const marked = renderedCharacters(
+          fromMarkdown(serialize(mark("x"))).children,
+        );
+        for (const [children, expected] of [
+          [
+            [schema.text(source), mark("x"), schema.text("y")],
+            [...authored, ...marked, { character: "y", marks: [] }],
+          ],
+          [
+            [schema.text("a"), mark("x"), schema.text(source)],
+            [{ character: "a", marks: [] }, ...marked, ...authored],
+          ],
+        ] as const) {
+          const output = serialize(...children);
+          expect(
+            renderedCharacters(fromMarkdown(output).children),
+            output,
+          ).toEqual(expected);
+        }
+      }
+    },
+  );
   it("keeps an unmarked recipient's exact name beside emphasis and a literal asterisk", () => {
     const honey = { pubkey: "a".repeat(64), name: "Honey" };
     const output = serialize(

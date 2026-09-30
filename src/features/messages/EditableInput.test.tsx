@@ -9,8 +9,9 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, useState } from "react";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { fromMarkdown } from "mdast-util-from-markdown";
+import { MessageMarkdown } from "./MessageMarkdown";
 import { EditableInput } from "./EditableInput";
 import type { ComposerFormat, ComposerInputElement } from "./composer-dom";
 import { composerDOMFixture } from "./composer-testing";
@@ -330,6 +331,159 @@ it("preserves toolbar italics after a typed literal asterisk", async () => {
       { type: "text", value: "y" },
     ],
   });
+});
+
+/** Render the actual send payload, including signed recipients, through the timeline. */
+function renderDraft(draft: MentionDraft) {
+  const open = vi.fn(() => true);
+  const view = render(
+    <MessageMarkdown
+      row={{
+        id: "sent",
+        channelId: "channel",
+        authorId: "author",
+        createdAt: 1,
+        content: composerMarkdown(draft),
+        mentions: draft.recipients.map(({ pubkey }) => pubkey),
+        participants: [],
+        attachments: [],
+        reactions: [],
+        replyCount: 0,
+      }}
+      participantProfiles={
+        new Map(draft.recipients.map(({ pubkey, name }) => [pubkey, { name }]))
+      }
+      media={() => undefined}
+      onOpenLink={open}
+      canOpenLink={() => true}
+    />,
+  );
+  return { ...view, open };
+}
+
+it.each([
+  ["paste", "**Note**", "strong"],
+  ["restore", "**Note**", "strong"],
+  ["paste", "*Note*", "em"],
+  ["restore", "*Note*", "em"],
+])(
+  "preserves %s authored %s on both sides of generated italics",
+  async (mode, source, tag) => {
+    const h = mount(mode === "restore" ? source : "");
+    if (mode === "paste") paste(h.input, source);
+    act(() => h.input.toggleFormat("italic"));
+    await h.user.keyboard("x");
+    expect(h.markdown()).toBe(`${source}_x_`);
+    act(() => h.input.toggleFormat("italic"));
+    await h.user.keyboard("y");
+    const after = renderDraft(h.draft());
+    expect(after.container.querySelector(tag)).toHaveTextContent("Note");
+    expect(after.container.querySelector("em:last-child")).toHaveTextContent(
+      "x",
+    );
+    expect(after.container).toHaveTextContent("Notexy");
+    after.unmount();
+    act(() => {
+      h.input.reset(mentionDraft(mode === "restore" ? source : ""));
+    });
+    if (mode === "paste") paste(h.input, source);
+    act(() => h.input.setSelectionRange(0, 0));
+    await h.user.keyboard("a");
+    act(() => h.input.toggleFormat("italic"));
+    await h.user.keyboard("x");
+    const before = renderDraft(h.draft());
+    expect(
+      before.container.querySelector(`${tag}:last-child`),
+    ).toHaveTextContent("Note");
+    expect(before.container.querySelector("em")).toHaveTextContent("x");
+    expect(before.container).toHaveTextContent("axNote");
+  },
+);
+
+it.each([
+  [false, "c "],
+  [true, "c "],
+  [false, " "],
+  [true, " "],
+])(
+  "preserves star-suffixed recipient identity beside italic punctuation (prefix collision=%s, suffix=%s)",
+  async (collision, suffix) => {
+    const h = mount();
+    const starred = { pubkey: "a".repeat(64), name: "Honey*" };
+    const shorter = { pubkey: "b".repeat(64), name: "Honey" };
+    act(() => {
+      h.input.insertText("", starred);
+      h.input.setSelectionRange(7, 8);
+      h.input.insertText("");
+      h.input.toggleFormat("italic");
+    });
+    await h.user.keyboard("!");
+    act(() => h.input.toggleFormat("italic"));
+    await h.user.keyboard(suffix);
+    if (collision) act(() => h.input.insertText("", shorter));
+    expect(h.draft().recipients.map(({ pubkey }) => pubkey)).toEqual(
+      collision ? [starred.pubkey, shorter.pubkey] : [starred.pubkey],
+    );
+    const sent = renderDraft(h.draft());
+    const starButton = sent.getByRole("button", {
+      name: "View Honey* profile",
+    });
+    fireEvent.click(starButton);
+    expect(sent.open).toHaveBeenLastCalledWith(profileTarget(starred.pubkey));
+    if (collision) {
+      fireEvent.click(sent.getByRole("button", { name: "View Honey profile" }));
+      expect(sent.open).toHaveBeenLastCalledWith(profileTarget(shorter.pubkey));
+    }
+    expect(sent.container.querySelectorAll("button")).toHaveLength(
+      collision ? 2 : 1,
+    );
+    expect(sent.container.querySelector("em")).toHaveTextContent("!");
+    expect(sent.container).toHaveTextContent(
+      `Honey*!${suffix}${collision ? "Honey" : ""}`.trim(),
+    );
+  },
+);
+
+it("keeps source offsets when a raw span has both a leading star and a star-suffixed recipient", async () => {
+  const h = mount();
+  const starred = { pubkey: "a".repeat(64), name: "Honey*" };
+  const shorter = { pubkey: "b".repeat(64), name: "Honey" };
+  await h.user.keyboard("a*b** see ");
+  act(() => {
+    h.input.insertText("", starred);
+    h.input.setSelectionRange(h.input.value.length - 1, h.input.value.length);
+    h.input.insertText("");
+    h.input.toggleFormat("italic");
+  });
+  await h.user.keyboard("!");
+  act(() => h.input.toggleFormat("italic"));
+  await h.user.keyboard("c ");
+  act(() => h.input.insertText("", shorter));
+  const sent = renderDraft(h.draft());
+  fireEvent.click(sent.getByRole("button", { name: "View Honey* profile" }));
+  expect(sent.open).toHaveBeenLastCalledWith(profileTarget(starred.pubkey));
+  fireEvent.click(sent.getByRole("button", { name: "View Honey profile" }));
+  expect(sent.open).toHaveBeenLastCalledWith(profileTarget(shorter.pubkey));
+  expect(
+    [...sent.container.querySelectorAll("em")].map((el) => el.textContent),
+  ).toEqual(["b", "!"]);
+  expect(sent.container).toHaveTextContent("ab* see Honey*!c Honey");
+});
+
+it("preserves italic punctuation immediately before a signed mention", async () => {
+  const h = mount("a");
+  const honey = { pubkey: "a".repeat(64), name: "Honey" };
+  act(() => h.input.toggleFormat("italic"));
+  await h.user.keyboard("!");
+  act(() => {
+    h.input.toggleFormat("italic");
+    h.input.insertText("", honey);
+  });
+  const sent = renderDraft(h.draft());
+  expect(sent.container.querySelector("em")).toHaveTextContent("!");
+  fireEvent.click(sent.getByRole("button", { name: "View Honey profile" }));
+  expect(sent.open).toHaveBeenLastCalledWith(profileTarget(honey.pubkey));
+  expect(sent.container).toHaveTextContent("a!Honey");
 });
 
 it("converts a span typed on a heading line, which the timeline renders as a heading", async () => {

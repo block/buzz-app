@@ -185,13 +185,46 @@ function paragraphMarkdown(block: EditorNode): string {
     return parts;
   });
   if (!literals.length && ranges.every((spans) => !spans.length)) return text;
-  const raw = new WeakSet<Text>();
+  const raw = new WeakMap<Text, SourceRange>();
   const literal = new WeakSet<Text>();
+  const attention = new WeakMap<Text, SourceRange[]>();
+  const authoredAttention = (node: Text) => {
+    let spans = attention.get(node);
+    if (spans) return spans;
+    spans = [];
+    const visit = (
+      child: Root | Root["children"][number] | PhrasingContent,
+    ) => {
+      if (child.type === "emphasis" || child.type === "strong") {
+        const start = child.position?.start.offset;
+        const end = child.position?.end.offset;
+        if (start !== undefined && end !== undefined)
+          spans.push({ start, end });
+      } else if ("children" in child) child.children.forEach(visit);
+    };
+    const range = raw.get(node);
+    let source = node.value;
+    if (range) {
+      for (const recipient of recipients) {
+        const start = Math.max(0, recipient.start - range.start);
+        const end = Math.min(source.length, recipient.end - range.start);
+        if (start < end)
+          source =
+            source.slice(0, start) +
+            "a".repeat(end - start) +
+            source.slice(end);
+      }
+    }
+    visit(fromMarkdown(source));
+    attention.set(node, spans);
+    return spans;
+  };
   // Emphasis is written with _ except in two cases that take *. The timeline
   // binds a signed mention only when the character before its @ and the one
   // after its name are not word characters, and _ is one, so a span holding a
   // recipient uses *: *@Honey* renders italic and stays a bound mention where
-  // _@Honey_ would lose the binding. Chosen over refusing the typed *@Honey*
+  // _@Honey_ would lose the binding. A touching span also uses * so its marker
+  // cannot become part of the name. Chosen over refusing the typed *@Honey*
   // conversion so toolbar italics on a chip send a bindable form too. The
   // second case, a span touching a word character on the wire, is decided in
   // the handler below from the serialized neighbours.
@@ -235,10 +268,9 @@ function paragraphMarkdown(block: EditorNode): string {
           type: "text",
           value: text.slice(from, points[index + 1]),
         };
-        (literals.some((range) => from >= range.start && from < range.end)
-          ? literal
-          : raw
-        ).add(part);
+        if (literals.some((range) => from >= range.start && from < range.end))
+          literal.add(part);
+        else raw.set(part, { start: from, end: points[index + 1] ?? end });
         return part;
       });
     }
@@ -325,7 +357,7 @@ function paragraphMarkdown(block: EditorNode): string {
         const span: PhrasingContent = { type: format.type, children: nested };
         if (
           span.type === "emphasis" &&
-          recipients.some((range) => range.start < last && range.end > first)
+          recipients.some((range) => range.start <= last && range.end >= first)
         )
           asterisk.add(span);
         children.push(span);
@@ -340,6 +372,40 @@ function paragraphMarkdown(block: EditorNode): string {
       // Escape only raw boundaries that could absorb generated delimiters;
       // unrelated authored Markdown remains byte-for-byte source.
       let value: string = node.value;
+      if (info.before.endsWith("*") || /^[*_]/.test(info.after)) {
+        const range = raw.get(node);
+        // Raw prose includes authored Markdown and exact recipient names, not
+        // just literal characters. Only text outside those spans may be escaped.
+        const protectedRanges: SourceRange[] = recipients.flatMap(
+          (recipient) =>
+            range && recipient.start < range.end && recipient.end > range.start
+              ? [
+                  {
+                    start: recipient.start - range.start,
+                    end: recipient.end - range.start,
+                  },
+                ]
+              : [],
+        );
+        protectedRanges.push(...authoredAttention(node));
+        const escapeBoundary = (part: string, offset: number) =>
+          part.replace(/\\[\\*]|\*|\\$/g, (token, index: number) =>
+            token.length === 1 &&
+            !protectedRanges.some(
+              ({ start, end }) =>
+                offset + index >= start && offset + index < end,
+            )
+              ? `\\${token}`
+              : token,
+          );
+        // Emphasis.peek advertises _ even when the handler later chooses *.
+        if (/^[*_]/.test(info.after))
+          value = value.replace(/[\\*]+$/, (tail, offset: number) =>
+            escapeBoundary(tail, offset),
+          );
+        if (info.before.endsWith("*"))
+          value = value.replace(/^\*+/, (stars) => escapeBoundary(stars, 0));
+      }
       if (info.before.endsWith("|"))
         value = value.replace(/^\|+/, (pipes) =>
           pipes.replaceAll("|", "&#124;"),
@@ -353,16 +419,6 @@ function paragraphMarkdown(block: EditorNode): string {
       if (info.after.startsWith("`"))
         value = value.replace(/[`\\]+$/, (tail) =>
           tail.replace(/[\\`]/g, "\\$&"),
-        );
-      if (info.before.endsWith("*"))
-        value = value.replace(/^\*+/, (stars) => stars.replaceAll("*", "\\*"));
-      // Emphasis.peek advertises _ even when the handler later chooses *.
-      // Keep authored escape pairs; escape bare stars and a final backslash.
-      if (/^[*_]/.test(info.after))
-        value = value.replace(/[\\*]+$/, (tail) =>
-          tail.replace(/\\[\\*]|\*|\\$/g, (part) =>
-            part.length === 1 ? `\\${part}` : part,
-          ),
         );
       return value;
     }
@@ -384,12 +440,33 @@ function paragraphMarkdown(block: EditorNode): string {
   // the CLI reading the raw event see foo*bar*baz.
   const word = (character: string) =>
     !!character && !/[\s\p{P}\p{S}]/u.test(character);
+  // A matched authored delimiter is not a literal star to escape. Use the
+  // alternate marker only at that boundary, keeping ordinary intraword source
+  // readable and leaving signed recipient spans on their bindable * form.
+  const touchesAuthored = (
+    node: Parameters<Handle>[0],
+    parent: Parameters<Handle>[1],
+  ) => {
+    if (!parent || !("children" in parent)) return false;
+    const index = parent.children.findIndex((child) => child === node);
+    return [parent.children[index - 1], parent.children[index + 1]].some(
+      (sibling, side) =>
+        sibling?.type === "text" &&
+        raw.has(sibling) &&
+        (side === 0
+          ? sibling.value.endsWith("*")
+          : sibling.value.startsWith("*")) &&
+        authoredAttention(sibling).some(({ start, end }) =>
+          side === 0 ? end === sibling.value.length : start === 0,
+        ),
+    );
+  };
   const emphasis: Handle & { peek?: Handle } = (node, parent, state, info) => {
     const previous = state.options.emphasis;
     state.options.emphasis =
       asterisk.has(node) ||
-      word(info.before.slice(-1)) ||
-      word(info.after.slice(0, 1))
+      (!touchesAuthored(node, parent) &&
+        (word(info.before.slice(-1)) || word(info.after.slice(0, 1))))
         ? "*"
         : "_";
     try {

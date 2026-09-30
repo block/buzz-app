@@ -2966,6 +2966,7 @@ it("does not offer setup recovery when an older host lacks the native capability
     "Update the desktop app to set up this imported identity.",
   );
   expect(screen.queryByRole("button", { name: "Use here" })).toBeNull();
+  expect(screen.queryByText(/Choose Use here/)).toBeNull();
   for (const start of screen.getAllByRole("button", { name: "Start" }))
     expect(start).toBeDisabled();
 });

@@ -51,6 +51,9 @@ export function ManagedAgentActions({
       details.current?.focus();
     }
   }, [imported]);
+  const canUseHere = !!(
+    state.data?.localInventoryActions && control.configureHere
+  );
   const startBlock = agentLaunchBlock(state, agent);
   const act = (action: "start" | "stop") => {
     setNotice(null);
@@ -97,21 +100,21 @@ export function ManagedAgentActions({
         <p role="status" className="m-0 text-body-sm">
           Imported, not started.{" "}
           {agent.configured === false
-            ? "Choose Use here to set up this identity in a community."
+            ? canUseHere
+              ? "Choose Use here to set up this identity in a community."
+              : ""
             : "Start it when you are ready."}
         </p>
       )}
       {agent.configured === false &&
-        (onUseHere &&
-        state.data?.localInventoryActions &&
-        control.configureHere ? (
+        (onUseHere && canUseHere ? (
           <Button
             disabled={state.busy || state.status !== "ready"}
             onClick={() => onUseHere(agent.pubkey, "use")}
           >
             Use here
           </Button>
-        ) : state.data?.localInventoryActions && control.configureHere ? (
+        ) : canUseHere ? (
           <LocalInventoryAction
             control={control}
             agent={agent}
@@ -123,9 +126,7 @@ export function ManagedAgentActions({
             onUsed={() => {}}
             onClone={() => {}}
           />
-        ) : (
-          <p>Update the desktop app to set up this imported identity.</p>
-        ))}
+        ) : null)}
       {agent.startOnAppLaunch && (
         <p className="m-0 text-body-sm text-secondary">Starts with this app.</p>
       )}

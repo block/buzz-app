@@ -286,7 +286,9 @@ export function agentLaunchBlock(
   agent: AgentView,
 ): string | null {
   if (agent.configured === false)
-    return "Choose Use here before starting this imported identity.";
+    return state.data?.localInventoryActions
+      ? "Choose Use here before starting this imported identity."
+      : "Update the desktop app to set up this imported identity.";
   if (state.status !== "ready") return "Refresh status before starting.";
   if (state.busy) return "Waiting for the current operation.";
   if (!state.data?.runtimeAvailable)

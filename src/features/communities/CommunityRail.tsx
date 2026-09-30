@@ -74,14 +74,12 @@ export function CommunityRail({
     communityFromScope(connection.scope) === selectedOrigin
       ? connection.session
       : undefined;
-  // Roles come from the relay-signed roster, as the Membership card derives them.
-  // Skip the read where no item could use it.
+  // Roles come from the relay-signed roster, as the Membership card derives
+  // them, verified against the authority the selected session already holds
+  // rather than a second session contract request. Skip the read where no
+  // item could use it.
   const invites = inviteMintingAvailable() && !!onOpenTarget;
-  const role = useCommunityRole(
-    invites ? session : undefined,
-    selectedOrigin,
-    client.viewer,
-  );
+  const role = useCommunityRole(invites ? session : undefined, client.viewer);
   const [icons, setIcons] = useState<Record<string, string>>({});
   const membershipIds = client.memberships
     .map((membership) => membership.id)

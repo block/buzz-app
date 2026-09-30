@@ -9,7 +9,6 @@ export { inviteMintingAvailable } from "../../features/communities/api";
 export {
   MEMBERSHIP_KIND,
   membersFromSnapshot,
-  relayAuthor,
   type Member,
   type Role,
 } from "../../features/communities/roster";

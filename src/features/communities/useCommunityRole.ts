@@ -10,16 +10,18 @@ const message = (reason: unknown) =>
   reason instanceof Error ? reason.message : String(reason);
 
 /** The viewer's role in one community, derived from the relay-signed roster
- * read through that community's own session, so the community rail menu can
- * gate owner/admin actions on the roles the Membership settings card reads.
+ * read through that community's own session and verified against the relay
+ * authority the session already holds, so the community rail menu can gate
+ * owner/admin actions on the roles the Membership settings card reads without
+ * asking the broker for the session contract again.
  *
  * `members` is `undefined` while the first read is pending, `null` when the
  * community publishes no member list. A failed re-read keeps the last list and
  * reports `readError`; it never erases a confirmed roster. Passing no session
- * reads nothing and reports no role. */
+ * reads nothing and reports no role; a new session starts afresh, so another
+ * community's roster never gates this one's actions. */
 export function useCommunityRole(
   session: RosterReader | undefined,
-  community: string | null,
   viewer: string | undefined,
 ) {
   const [members, setMembers] = useState<Member[] | null>();
@@ -28,14 +30,14 @@ export function useCommunityRole(
   const reading = useRef<AbortController | null>(null);
   /** Read-only roster refresh; the newest request wins and never rethrows. */
   const refresh = useCallback(async () => {
-    if (!session || !community) return;
+    if (!session) return;
     reading.current?.abort();
     const controller = new AbortController();
     reading.current = controller;
     const { signal } = controller;
     setRefreshing(true);
     try {
-      const next = await readRoster(session, community, signal);
+      const next = await readRoster(session, signal);
       if (signal.aborted) return;
       setMembers(next);
       setReadError("");
@@ -46,9 +48,8 @@ export function useCommunityRole(
     } finally {
       if (!signal.aborted) setRefreshing(false);
     }
-  }, [session, community]);
+  }, [session]);
   useEffect(() => {
-    // Another community's roster must never gate this one's actions.
     setMembers(undefined);
     setReadError("");
     void refresh();

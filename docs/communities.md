@@ -73,7 +73,9 @@ Right-click a saved community (or press the ContextMenu key or Shift+F10 on it)
 for Mark all as read, Copy community URL, Invite to community, Community
 settings and, last, Leave community. Only the selected community can be marked
 read, and only while its read state syncs; Invite shows only where the viewer
-owns or administers the selected community and this build can mint invites. The
+owns or administers the selected community and this build can mint invites,
+with the role read from the relay-signed roster through the selected
+community's existing session rather than a further session request. The
 Membership settings card applies the same gate: it stays registered in native
 builds so owners and admins can still read the relay-signed member list, but
 its Invite members button and per-member actions are absent there, with a

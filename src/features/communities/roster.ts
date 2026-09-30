@@ -2,7 +2,6 @@
 // Roles here only shape the UI; the relay decides every privileged change.
 import type { EventData, ReadFilter } from "../relay/events";
 import type { ReadOptions } from "../relay/reader";
-import { communityRequest } from "./api";
 
 export type Role = "owner" | "admin" | "member";
 export type Member = { pubkey: string; role: Role };
@@ -30,26 +29,27 @@ export function membersFromSnapshot(
   return [...members.values()];
 }
 
-/** The community's relay signing key, from the broker session contract. */
-export const relayAuthor = async (community: string) =>
-  (await communityRequest<{ relayAuthor: string }>(community, "session"))
-    .relayAuthor;
-
+/** The slice of a relay session a roster read needs: its reader, and the
+ * relay signing key its session contract already carries. */
 export type RosterReader = {
+  /** The community's relay signing key; absent while the session is offline. */
+  relayAuthor: string | undefined;
   read(
     filters: readonly ReadFilter[],
     settings?: ReadOptions,
   ): Promise<readonly EventData[]>;
 };
 
-/** One fresh roster read through the community's own session. Null means the
- * community publishes no member list, so it has no roles to derive. */
+/** One fresh roster read through the community's own session, verified
+ * against the authority that session already holds, so no second session
+ * contract request is made. Null means the community publishes no member
+ * list, so it has no roles to derive. */
 export async function readRoster(
   session: RosterReader,
-  community: string,
   signal?: AbortSignal,
 ): Promise<Member[] | null> {
-  const author = await relayAuthor(community);
+  const author = session.relayAuthor;
+  if (!author) throw new Error("Community authority unavailable");
   const events = await session.read(
     [{ kinds: [MEMBERSHIP_KIND], authors: [author], limit: 1 }],
     { fresh: true, ...(signal ? { signal } : {}) },

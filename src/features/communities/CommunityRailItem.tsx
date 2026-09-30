@@ -6,6 +6,7 @@ import {
   useState,
   useSyncExternalStore,
   type KeyboardEvent,
+  type PointerEvent,
 } from "react";
 import type { OpenTarget } from "../navigation/targets";
 import type { UnreadCapability } from "../relay/unread";
@@ -93,6 +94,18 @@ export function CommunityRailItem({
   useEffect(() => {
     if (menu) fromKeyboard.current = menu.anchor !== undefined;
   }, [menu]);
+  // Browsers focus the rail button on a right-click's mousedown, before the
+  // contextmenu event opens the menu, so Base UI's own "previous focus" is
+  // the button rather than the field the pointer interrupted. Remember that
+  // field at pointerdown, ahead of the focus move.
+  const interrupted = useRef<HTMLElement | null>(null);
+  const rememberInterrupted = (event: PointerEvent<HTMLElement>) => {
+    const active = event.currentTarget.ownerDocument.activeElement;
+    interrupted.current =
+      active instanceof HTMLElement && active !== active.ownerDocument.body
+        ? active
+        : null;
+  };
   const notify = useToastNotification();
   const { name } = membership;
   const origin = communityDestination(membership.id).url;
@@ -135,6 +148,7 @@ export function CommunityRailItem({
       <ContextMenuTrigger
         render={<div className={styles.item} />}
         onKeyDown={openFromKeyboard}
+        onPointerDown={rememberInterrupted}
       >
         <Tooltip content={name} side="right">
           <IconButton
@@ -171,10 +185,14 @@ export function CommunityRailItem({
               ? main
               : false;
           }
-          // A keyboard open came from the rail, so focus goes back there. A
-          // pointer open may have interrupted typing elsewhere; Base UI's
-          // default restores whatever was focused before.
-          return fromKeyboard.current ? (button.current ?? false) : true;
+          // A keyboard open came from the rail, so focus goes back there.
+          if (fromKeyboard.current) return button.current ?? false;
+          // A pointer open may have interrupted typing elsewhere; that field
+          // takes focus back while it is still in the document. With nothing
+          // interrupted, Base UI's default lands on the rail button the
+          // right-click focused.
+          const field = interrupted.current;
+          return field?.isConnected ? field : true;
         }}
       >
         <MarkAllReadItem

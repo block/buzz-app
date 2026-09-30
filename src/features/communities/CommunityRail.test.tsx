@@ -58,6 +58,8 @@ function harness({
   leaveResidue = [] as PurgeFailure[],
   /** The service's own failure to save the device record, before it changes. */
   leaveError = undefined as Error | undefined,
+  /** The relay signing key the session contract carries; null while offline. */
+  relayAuthor = relayKey as string | null,
 } = {}) {
   let snapshot: ClientSnapshot = {
     status: "ready",
@@ -105,6 +107,7 @@ function harness({
   ]);
   const markAllChannelsRead = vi.fn(async () => []);
   const session = {
+    relayAuthor: relayAuthor ?? undefined,
     read,
     unread: {
       sync: () => ({ capability }),
@@ -135,10 +138,10 @@ function harness({
     leave,
     relay,
   } as unknown as Communities;
+  // The broker's session contract is deliberately unanswered: the rail holds
+  // the session already and must not ask for it again.
   const fetch = vi.fn(async (url: string) => {
     const path = String(url);
-    if (path.endsWith("/session"))
-      return Response.json({ relayAuthor: relayKey });
     if (path === "/api/relay/register") return Response.json({});
     if (path.endsWith("/leave")) return leaveResponse();
     return Response.json({}, { status: 404 });
@@ -179,7 +182,9 @@ const items = (menu: HTMLElement) =>
   within(menu)
     .getAllByRole("menuitem")
     .map((item) => item.textContent);
-/** Roster lookups start with the broker session route; icon discovery is separate. */
+/** Session contract requests to the broker. The rail verifies the roster
+ * against the relay authority its session already holds, so it makes none;
+ * icon discovery is separate. */
 const sessionRequests = (fetch: ReturnType<typeof vi.fn>) =>
   fetch.mock.calls
     .map(([url]) => String(url))
@@ -238,15 +243,14 @@ it("offers the original's actions on the selected community and only reads its r
   expect(
     within(menu).getByRole("menuitem", { name: "Mark all as read" }),
   ).not.toHaveAttribute("aria-disabled");
-  // Role comes from the relay-signed roster, exactly as the Membership card reads it.
+  // Role comes from the relay-signed roster, exactly as the Membership card
+  // reads it, verified against the authority the session already carries: the
+  // read adds no session contract request to the connection.
   expect(h.read).toHaveBeenCalledWith(
     [{ kinds: [MEMBERSHIP_KIND], authors: [relayKey], limit: 1 }],
     expect.objectContaining({ fresh: true }),
   );
-  const requests = sessionRequests(h.fetch);
-  expect(requests.length).toBeGreaterThan(0);
-  for (const url of requests)
-    expect(url).toBe(`/api/relay/${encodeURIComponent(primary)}/session`);
+  expect(sessionRequests(h.fetch)).toEqual([]);
   expect(h.select).not.toHaveBeenCalled();
   fireEvent.keyDown(menu, { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
@@ -271,8 +275,27 @@ it("offers the original's actions on the selected community and only reads its r
   fireEvent.click(markAll);
   expect(h.markAllChannelsRead).not.toHaveBeenCalled();
   expect(h.read).toHaveBeenCalledTimes(reads);
-  expect(sessionRequests(h.fetch)).toEqual(requests);
+  expect(sessionRequests(h.fetch)).toEqual([]);
   expect(h.select).not.toHaveBeenCalled();
+});
+
+it("offers no Invite and reads nothing while the session carries no relay authority", async () => {
+  const h = harness({ relayAuthor: null });
+  render(
+    <CommunityRail communities={h.communities} onOpenTarget={h.onOpenTarget} />,
+  );
+  const menu = await openMenu("Primary");
+  await act(async () => {});
+  expect(items(menu)).toEqual([
+    "Mark all as read",
+    "Copy community URL",
+    "Community settings",
+    "Leave community",
+  ]);
+  // Without the session's authority there is nothing to verify a roster
+  // against, and the broker is not asked to supply one.
+  expect(h.read).not.toHaveBeenCalled();
+  expect(sessionRequests(h.fetch)).toEqual([]);
 });
 
 it.each(["ContextMenu", "F10"])(
@@ -350,27 +373,51 @@ it("re-reads the roster for a keyboard open exactly as for a pointer open", asyn
   await waitFor(() => expect(h.read).toHaveBeenCalledTimes(3));
 });
 
-it("returns focus after a pointer open to where it was, not to the rail", async () => {
+it("returns focus after a pointer open to the field the right-click interrupted, not to the rail", async () => {
   const user = userEvent.setup();
   vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
   const h = harness();
-  render(
+  const ui = (composer: boolean) => (
     <>
-      <input aria-label="Composer" />
+      {composer && <input aria-label="Composer" />}
       <CommunityRail communities={h.communities} />
-    </>,
+    </>
   );
+  const { rerender } = render(ui(true));
   const composer = screen.getByRole("textbox", { name: "Composer" });
+  const target = button("Primary");
+  // Browsers focus the rail button on the right-click's mousedown, before the
+  // contextmenu event opens the menu; jsdom only moves focus when asked to.
+  const rightClick = () => {
+    fireEvent.pointerDown(target, { button: 2 });
+    target.focus();
+    return openMenu("Primary");
+  };
   composer.focus();
-  const menu = await openMenu("Primary");
+  const menu = await rightClick();
   expect(menu).toHaveAttribute("data-side", "bottom");
+  expect(target).toHaveFocus();
   await user.click(
     within(menu).getByRole("menuitem", { name: "Copy community URL" }),
   );
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
-  // Right-clicking a community while typing must not move the caret to the rail.
+  // Right-clicking a community while typing must not leave the caret on the
+  // rail, where the click itself put focus.
   await waitFor(() => expect(composer).toHaveFocus());
-  expect(button("Primary")).not.toHaveFocus();
+  expect(target).not.toHaveFocus();
+
+  // A field gone by the time the menu closes cannot take focus back; Base UI's
+  // default then lands on the rail button the right-click focused.
+  composer.focus();
+  const reopened = await rightClick();
+  await waitFor(() =>
+    expect(reopened.contains(document.activeElement)).toBe(true),
+  );
+  rerender(ui(false));
+  expect(screen.queryByRole("textbox", { name: "Composer" })).toBeNull();
+  fireEvent.keyDown(document.activeElement ?? reopened, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(target).toHaveFocus());
 });
 
 it("copies the canonical community origin and reports the outcome", async () => {

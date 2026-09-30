@@ -131,7 +131,10 @@ elsewhere it stays visible but disabled with a note saying why. Invite to
 community appears only on the selected community, only when the relay-signed
 roster names the viewer an owner or admin (the same roles the Membership
 settings card reads), and never in native builds, which cannot mint invites; it
-opens the Membership settings card scoped to that community. That card shares the
+opens the Membership settings card scoped to that community. The rail reads
+that roster through the selected community's existing session and verifies it
+against the relay authority that session already holds, so the read adds no
+session request to the connection and opens no other session. That card shares the
 rail's gate rather than a copy of it: in native builds it stays registered as a
 read-only member list with a note, without its Invite members button or
 per-member actions, so a Settings section, history entry or `buzz://open`
@@ -163,8 +166,12 @@ scoped to a gone community. Focus
 returns to the community when it is still saved; once it is gone, focus follows
 the selection, to the still-selected community or to Personal space where a
 left selection now lands. Closing a menu opened from the keyboard returns focus to
-that community; closing one opened by pointer restores whatever had focus
-before, so a right-click while typing does not move the caret to the rail.
+that community. Closing one opened by pointer returns focus to the field the
+right-click interrupted: browsers focus the rail button on the click itself,
+before the menu opens, so the rail remembers what had focus ahead of that move
+and restores it while it is still on the page, and a right-click while typing
+does not leave the caret on the rail. With nothing interrupted, focus lands on
+that community.
 Opening a menu or running any item never acquires an inactive session, and the
 rail still claims no unread total: the unread capability provides bounded
 observed evidence, not exact community totals ([unread ownership](unread.md)).

@@ -182,22 +182,113 @@ impl HarnessEdit {
     /// Validate requirements for creating or launching this harness configuration.
     pub fn validate_launch_configuration(&self) -> Result<()> {
         self.validate_configuration()?;
-        validate_buzz_agent_model(self)
+        HarnessConfigurationPolicy::for_command(&self.command).validate(self)
     }
 }
 
-pub(crate) fn validate_buzz_agent_model(harness: &HarnessEdit) -> Result<()> {
-    if is_buzz_agent(&harness.command) && harness.model.trim().is_empty() {
-        return Err(missing_buzz_agent_model());
-    }
-    Ok(())
+/// Native-owned configuration contract for the supported harness families.
+///
+/// Legacy records (`configuration == None`) retain the harness/environment
+/// selector precedence. The policy only applies managed Default/Advanced
+/// choices, while structural validation still applies to every record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct HarnessConfigurationPolicy {
+    pub(crate) provider: ProviderPolicy,
+    pub(crate) model: ModelPolicy,
+    pub(crate) managed: ManagedConfigurationPolicy,
 }
 
-fn is_buzz_agent(command: &str) -> bool {
-    Path::new(command)
-        .file_name()
-        .and_then(|name| name.to_str())
-        == Some("buzz-agent")
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProviderPolicy {
+    /// Provider is a selector resolved from the saved field, defaults, or env.
+    Selector,
+    /// The harness owns provider configuration and the field must stay empty.
+    Forbidden,
+    /// The harness/environment owns provider configuration.
+    External,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ModelPolicy {
+    /// Managed Advanced configuration must provide a model.
+    ExplicitRequired,
+    /// Managed Default may leave model selection to the harness.
+    HarnessDefaultAllowed,
+    /// The harness/environment owns model configuration.
+    External,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ManagedConfigurationPolicy {
+    /// Buzz-managed Default is not valid; Advanced is the supported mode.
+    AdvancedOnly,
+    /// Both Buzz-managed modes are valid for this harness.
+    DefaultAndAdvanced,
+    /// Managed configuration is owned by the external harness.
+    External,
+}
+
+impl HarnessConfigurationPolicy {
+    pub(crate) fn for_command(command: &str) -> Self {
+        match Path::new(command)
+            .file_name()
+            .and_then(|name| name.to_str())
+        {
+            Some("buzz-agent") => Self {
+                provider: ProviderPolicy::Selector,
+                model: ModelPolicy::ExplicitRequired,
+                managed: ManagedConfigurationPolicy::AdvancedOnly,
+            },
+            Some("codex-acp") => Self {
+                provider: ProviderPolicy::Forbidden,
+                model: ModelPolicy::HarnessDefaultAllowed,
+                managed: ManagedConfigurationPolicy::DefaultAndAdvanced,
+            },
+            Some("goose" | "buzz-pi-acp") => Self {
+                provider: ProviderPolicy::External,
+                model: ModelPolicy::External,
+                managed: ManagedConfigurationPolicy::External,
+            },
+            _ => Self {
+                provider: ProviderPolicy::External,
+                model: ModelPolicy::External,
+                managed: ManagedConfigurationPolicy::External,
+            },
+        }
+    }
+
+    fn validate(self, harness: &HarnessEdit) -> Result<()> {
+        if matches!(self.provider, ProviderPolicy::Forbidden) && !harness.provider.trim().is_empty()
+        {
+            return Err(
+                "Codex uses its own provider configuration. Clear the Provider field.".into(),
+            );
+        }
+
+        let Some(configuration) = &harness.configuration else {
+            // Legacy/imported records intentionally keep provider/model
+            // precedence in their environment and external harnesses.
+            return Ok(());
+        };
+
+        if matches!(
+            (self.managed, configuration),
+            (
+                ManagedConfigurationPolicy::AdvancedOnly,
+                AiConfiguration::Default
+            )
+        ) {
+            return Err(missing_buzz_agent_model());
+        }
+
+        if matches!(configuration, AiConfiguration::Advanced { .. })
+            && matches!(self.model, ModelPolicy::ExplicitRequired)
+            && harness.model.trim().is_empty()
+        {
+            return Err("Choose a model for Advanced configuration".into());
+        }
+        Ok(())
+    }
 }
 
 fn missing_buzz_agent_model() -> String {
@@ -520,4 +611,112 @@ fn validate_picture(value: &str) -> Result<()> {
         }
     }
     Err("Avatar must be an HTTPS image URL without credentials".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AiConfiguration, EffortSelection, HarnessConfigurationPolicy, HarnessEdit,
+        ManagedConfigurationPolicy, ModelPolicy, ProviderPolicy,
+    };
+
+    fn harness(
+        command: &str,
+        provider: &str,
+        model: &str,
+        configuration: Option<AiConfiguration>,
+    ) -> HarnessEdit {
+        HarnessEdit {
+            command: command.into(),
+            args: Vec::new(),
+            model: model.into(),
+            configuration,
+            provider: provider.into(),
+            databricks: None,
+        }
+    }
+
+    #[test]
+    fn harness_configuration_policy_matrix() {
+        let buzz_policy = HarnessConfigurationPolicy::for_command("buzz-agent");
+        assert_eq!(
+            (buzz_policy.provider, buzz_policy.model, buzz_policy.managed),
+            (
+                ProviderPolicy::Selector,
+                ModelPolicy::ExplicitRequired,
+                ManagedConfigurationPolicy::AdvancedOnly
+            )
+        );
+        assert!(harness("buzz-agent", "openai", "", None)
+            .validate_launch_configuration()
+            .is_ok());
+        assert!(
+            harness("buzz-agent", "openai", "", Some(AiConfiguration::Default))
+                .validate_launch_configuration()
+                .unwrap_err()
+                .contains("Buzz Agent requires a model")
+        );
+        assert!(harness(
+            "buzz-agent",
+            "openai",
+            "gpt-5",
+            Some(AiConfiguration::Advanced {
+                effort: EffortSelection::Default,
+            })
+        )
+        .validate_launch_configuration()
+        .is_ok());
+
+        let codex_policy = HarnessConfigurationPolicy::for_command("codex-acp");
+        assert_eq!(
+            (
+                codex_policy.provider,
+                codex_policy.model,
+                codex_policy.managed
+            ),
+            (
+                ProviderPolicy::Forbidden,
+                ModelPolicy::HarnessDefaultAllowed,
+                ManagedConfigurationPolicy::DefaultAndAdvanced
+            )
+        );
+        assert!(harness("codex-acp", "", "", Some(AiConfiguration::Default))
+            .validate_launch_configuration()
+            .is_ok());
+        assert!(harness("codex-acp", "openai", "", None)
+            .validate_launch_configuration()
+            .unwrap_err()
+            .contains("Clear the Provider field"));
+        assert!(harness(
+            "codex-acp",
+            "",
+            "",
+            Some(AiConfiguration::Advanced {
+                effort: EffortSelection::Default,
+            })
+        )
+        .validate_launch_configuration()
+        .unwrap_err()
+        .contains("Choose a model"));
+
+        for command in [
+            "/usr/local/bin/goose",
+            "/usr/local/bin/buzz-pi-acp",
+            "/usr/local/bin/custom-agent",
+        ] {
+            let policy = HarnessConfigurationPolicy::for_command(command);
+            assert_eq!(
+                (policy.provider, policy.model, policy.managed),
+                (
+                    ProviderPolicy::External,
+                    ModelPolicy::External,
+                    ManagedConfigurationPolicy::External
+                ),
+                "{command}"
+            );
+            assert!(harness(command, "external", "", None)
+                .validate_launch_configuration()
+                .is_ok());
+        }
+    }
 }

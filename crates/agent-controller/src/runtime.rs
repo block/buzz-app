@@ -23,6 +23,7 @@ impl RuntimeBundle {
     ) -> Result<Command> {
         agent.validate()?;
         let harness = defaults.resolve(&agent.harness, &agent.environment);
+        harness.validate_launch_configuration()?;
         if key.pubkey() != agent.pubkey {
             return Err("Credential does not match the saved agent".into());
         }
@@ -209,7 +210,6 @@ impl RuntimeBundle {
             command.env("BUZZ_ACP_EFFORT_LEVEL", effort);
         }
         if let Some(configuration) = &harness.configuration {
-            harness.validate_launch_configuration()?;
             // Explicit managed configuration must not forward a previous
             // provider's key. Legacy/custom environments remain unchanged.
             if harness.command != "buzz-agent" || harness.provider != "openai" {

@@ -15,7 +15,13 @@ export const test = base.extend({
         envFile: false,
         plugins: [react()],
         logLevel: "error",
-        server: { host: "127.0.0.1", port: 0, strictPort: true },
+        server: {
+          host: "127.0.0.1",
+          port: 0,
+          strictPort: true,
+          // Match the app server: native builds must not reload an editing fixture.
+          watch: { ignored: ["**/src-tauri/**", "**/target/**"] },
+        },
       });
       try {
         await server.listen();

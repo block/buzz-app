@@ -1,6 +1,34 @@
 import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
 
+// Capture real CSS transitions at the DOM-change boundary, before rendering can
+// finish them. transitionrun is queued: a busy renderer can deliver it after the
+// animation has gone, so that event alone is not evidence of a successful hold.
+async function holdPanelMotion(page) {
+  await page.evaluate(() => {
+    new MutationObserver(() => {
+      for (const dock of document.querySelectorAll("[data-panel-dock]")) {
+        const animations = dock.getAnimations();
+        if (!animations.length) continue;
+        for (const animation of animations) animation.pause();
+        dock.dataset.motionHeld = "true";
+      }
+    }).observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["data-closing", "hidden", "style"],
+    });
+  });
+  return () =>
+    page.locator("[data-panel-dock]").evaluateAll((elements) => {
+      for (const element of elements) {
+        delete element.dataset.motionHeld;
+        for (const animation of element.getAnimations()) animation.finish();
+      }
+    });
+}
+
 // Real CSS transitions, input modality, clipping, and pseudo-elements require a browser.
 test("joined header seams, drag feedback, and pointer-only overlay motion", async ({
   page,
@@ -105,21 +133,7 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
   );
 
   await page.setViewportSize({ width: 800, height: 600 });
-  // Hold real transitions as soon as they start; never race a 180ms duration.
-  await page.evaluate(() => {
-    document.addEventListener("transitionrun", (event) => {
-      if (!event.target.matches("[data-panel-dock]")) return;
-      for (const animation of event.target.getAnimations()) animation.pause();
-      event.target.dataset.motionHeld = "true";
-    });
-  });
-  const release = () =>
-    dock.evaluateAll((elements) => {
-      for (const element of elements) {
-        delete element.dataset.motionHeld;
-        for (const animation of element.getAnimations()) animation.finish();
-      }
-    });
+  const release = await holdPanelMotion(page);
   try {
     await launch.click();
     await expect(dock).toHaveAttribute("data-motion-held", "true");
@@ -289,20 +303,7 @@ for (const destination of ["Messages", "Projects"]) {
       exact: true,
     });
     const dock = page.locator("[data-panel-dock]");
-    await page.evaluate(() =>
-      document.addEventListener("transitionrun", (event) => {
-        if (!event.target.matches("[data-panel-dock]")) return;
-        for (const animation of event.target.getAnimations()) animation.pause();
-        event.target.dataset.motionHeld = "true";
-      }),
-    );
-    const release = () =>
-      dock.evaluateAll((elements) => {
-        for (const element of elements) {
-          delete element.dataset.motionHeld;
-          for (const animation of element.getAnimations()) animation.finish();
-        }
-      });
+    const release = await holdPanelMotion(page);
     try {
       await launch.click();
       await expect(dock).toHaveAttribute("data-motion-held", "true");

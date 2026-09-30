@@ -313,6 +313,38 @@ pub fn sign_release(directory: &Path, key_text: &str, url: &str) -> Result<Strin
     )?;
     Ok(publisher)
 }
+
+/// Sign with the desktop human identity without creating or exporting a credential.
+pub fn sign_release_saved(directory: &Path, url: &str) -> Result<String> {
+    sign_release_from_store(directory, url, buzz_credential_store::read_human)
+}
+
+fn sign_release_from_store<K: AsRef<[u8]>>(
+    directory: &Path,
+    url: &str,
+    read: impl FnOnce() -> std::result::Result<K, buzz_credential_store::Error>,
+) -> Result<String> {
+    use bech32::{primitives::decode::CheckedHrpstring, Bech32};
+    use buzz_credential_store::Error;
+    let bytes = read().map_err(|error| match error {
+        Error::Absent => "Set up your Buzz human identity in the desktop app before signing",
+        Error::Denied => "Secure storage access was denied; unlock it and retry signing",
+        Error::Busy => "Secure storage is busy; retry signing shortly",
+        Error::Corrupt => "Saved Buzz human identity is malformed; nothing was changed",
+        _ => "Saved Buzz human identity could not be read from secure storage",
+    })?;
+    let text = std::str::from_utf8(bytes.as_ref())
+        .map_err(|_| "Saved Buzz human identity is malformed; nothing was changed")?
+        .trim();
+    if text.len() != 63
+        || !(text.starts_with("nsec1") || text.starts_with("NSEC1"))
+        || CheckedHrpstring::new::<Bech32>(text).is_err()
+        || SecretKey::parse(text).is_err()
+    {
+        return Err("Saved Buzz human identity is malformed; nothing was changed".into());
+    }
+    sign_release(directory, text, url)
+}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginInfo {
@@ -933,6 +965,78 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 mod tests {
     use super::{artifact_from_text, Manager, Manifest};
     use std::fs;
+
+    #[test]
+    fn saved_human_identity_signs_importable_release_without_storage_fallback() {
+        use buzz_credential_store::Error;
+        use nostr::{
+            key::{Keys, SecretKey},
+            nips::nip19::ToBech32,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("dist");
+        fs::create_dir(&source).unwrap();
+        fs::write(
+            source.join("manifest.json"),
+            r#"{"id":"example.saved","name":"Saved","apiVersion":1}"#,
+        )
+        .unwrap();
+        fs::write(source.join("plugin.js"), "export const saved = true;").unwrap();
+        let url = "https://example.test/plugin.artifact.json";
+        for (error, expected) in [
+            (Error::Absent, "Set up your Buzz human identity"),
+            (Error::Denied, "access was denied"),
+            (Error::Busy, "busy"),
+            (Error::Corrupt, "malformed"),
+            (Error::Unavailable, "could not be read"),
+        ] {
+            assert!(
+                super::sign_release_from_store(&source, url, || Err::<Vec<u8>, _>(error))
+                    .unwrap_err()
+                    .contains(expected)
+            );
+            assert!(!source.join("plugin.artifact.json").exists());
+        }
+        for invalid in [
+            b"not-an-nsec".to_vec(),
+            vec![0xff],
+            SecretKey::generate().to_secret_hex().into_bytes(),
+        ] {
+            assert!(super::sign_release_from_store(&source, url, || Ok(invalid))
+                .unwrap_err()
+                .contains("malformed"));
+            assert!(!source.join("plugin.artifact.json").exists());
+        }
+
+        let key = SecretKey::generate();
+        let nsec = key.to_bech32().unwrap();
+        let publisher =
+            super::sign_release_from_store(&source, url, || Ok(nsec.into_bytes())).unwrap();
+        assert_eq!(publisher, Keys::new(key).public_key().to_hex());
+        let prepared = crate::imports::prepare_folder(&source).unwrap();
+        assert_eq!(
+            prepared.preview.candidates[0].publisher.as_deref(),
+            Some(publisher.as_str())
+        );
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        let path = prepared.preview.candidates[0].path.clone();
+        let installed = prepared
+            .install(&manager, &prepared.preview.token, &path)
+            .unwrap();
+        let plugin = installed
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.saved")
+            .unwrap();
+        assert_eq!(plugin.publisher.as_deref(), Some(publisher.as_str()));
+        manager.change("enable", "example.saved").unwrap();
+        assert!(manager
+            .module("example.saved", &plugin.revision)
+            .unwrap()
+            .contains("saved = true"));
+    }
 
     #[test]
     fn release_requires_valid_event_and_exact_artifact_bytes() {

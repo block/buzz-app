@@ -1,5 +1,5 @@
 use buzzodz_plugins::{
-    release_manifest, sign_release, valid_id, Catalog, Manager, Manifest, Result,
+    release_manifest, sign_release_saved, valid_id, Catalog, Manager, Manifest, Result,
 };
 use serde_json::json;
 use std::{
@@ -12,7 +12,7 @@ const HELP: &str = "buzzodz [--home ABSOLUTE_PATH] [--profile NAME] plugin COMMA
 Commands:
   init DIRECTORY ID NAME   Create a page-plugin source project
   build DIRECTORY          Run the project's pnpm build script
-  sign DIRECTORY KEY_FILE URL  Package dist files and sign a NIP-94 release
+  sign DIST_DIRECTORY ARTIFACT_URL  Sign with your saved Buzz human identity
   install DIRECTORY        Install a built artifact (new plugins start disabled)
   list                     List installed pages and their enabled state
   enable ID | disable ID | remove ID | rollback ID
@@ -69,23 +69,12 @@ fn run() -> Result<()> {
             println!("Built {}", Path::new(directory).join("dist").display());
             return Ok(());
         }
-        ("sign", [directory, key_file, url]) => {
-            let metadata = std::fs::symlink_metadata(key_file).map_err(|e| e.to_string())?;
-            if !metadata.file_type().is_file() {
-                return Err("Signing key must be a regular file".into());
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if metadata.permissions().mode() & 0o077 != 0 {
-                    return Err("Signing key file must be private (mode 0600 or stricter)".into());
-                }
-            }
-            let key = std::fs::read_to_string(key_file).map_err(|e| e.to_string())?;
-            let publisher = sign_release(Path::new(directory), &key, url)?;
+        ("sign", [directory, url]) => {
+            let publisher = sign_release_saved(Path::new(directory), url)?;
             println!("Signed release in {directory} by {publisher}");
             return Ok(());
         }
+        ("sign", _) => return Err("Usage: buzzodz plugin sign DIST_DIRECTORY ARTIFACT_URL".into()),
         _ => {}
     }
     let manager = Manager::open(home, &profile, false)?;

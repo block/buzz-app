@@ -430,9 +430,10 @@ isolate a malicious plugin. Load only trusted plugin code.
 ### Loading from folders and repositories
 
 Authors can publish a signed API v1 build with `buzzodz plugin sign DIST_DIRECTORY
-KEY_FILE ARTIFACT_URL` after `buzzodz plugin build`. `KEY_FILE` contains a Nostr
-secret key (hex or nsec); keep it outside the plugin and Git repository, with
-private file permissions. The command never takes the secret on the command line.
+ARTIFACT_URL` after `buzzodz plugin build`. The command reads the saved Buzz human
+identity from the same OS credential slot as the desktop app; it never exports or
+creates a key. Set up the desktop identity first, then run the command in the same
+OS account and matching debug or release build. Missing or locked storage fails.
 It writes `plugin.artifact.json` (the exact self-contained module and manifest
 snapshot) and `plugin.signature.json` (a signed [NIP-94](https://github.com/nostr-protocol/nips/blob/master/94.md)
 kind 1063 event). The event signs the artifact SHA-256 in `x`, `application/json`

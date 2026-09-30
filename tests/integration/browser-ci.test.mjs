@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   symlinkSync,
@@ -106,7 +107,7 @@ test("browser Rust setup uses the repository pin before Hermit and fails closed"
   );
   assert.equal(pins.length, 1);
   const version = pins[0].slice(6, -4);
-  const cwd = mkdtempSync(join(tmpdir(), "buzz-browser-rust-"));
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "buzz-browser-rust-")));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
   mkdirSync(join(cwd, "bin"));
   mkdirSync(join(cwd, "toolchain"));
@@ -406,13 +407,10 @@ test("browser cache follows the installed Playwright version, not unrelated depe
   assert.ok(steps.indexOf(cache) < steps.indexOf(install));
   for (const step of [version, cache, install])
     assert.equal(step.if, "inputs.browsers == 'true'");
-  assert.equal(
-    install.run,
-    "pnpm exec playwright install --with-deps chromium webkit",
-  );
+  assert.equal(install.env.PLAYWRIGHT_ENGINE, `\${{ inputs.browser-engine }}`);
   assert.equal(
     cache.with.key,
-    `playwright-\${{ runner.os }}-\${{ runner.arch }}-\${{ steps.playwright.outputs.version }}-chromium-webkit`,
+    `playwright-\${{ runner.os }}-\${{ runner.arch }}-\${{ steps.playwright.outputs.version }}-\${{ inputs.browser-engine }}`,
   );
   assert.equal(cache.with["restore-keys"], undefined);
 
@@ -446,4 +444,78 @@ test("browser cache follows the installed Playwright version, not unrelated depe
     "missing installation must fail, not cache an empty version",
   );
   assert.equal(readFileSync(output, "utf8"), "");
+});
+
+test("functional shards install only their engine; measurements retain both and provisioning errors fail closed", (t) => {
+  const action = parse(read(".github/actions/setup/action.yml"));
+  const { jobs } = parse(workflow);
+  const setup = (name) =>
+    jobs[name].steps.find((step) => step.uses === "./.github/actions/setup");
+  assert.equal(action.inputs["browser-engine"].default, "all");
+  assert.equal(
+    setup("browser").with["browser-engine"],
+    `\${{ matrix.engine }}`,
+  );
+  assert.equal(setup("measurements").with.browsers, "true");
+  assert.equal(setup("measurements").with["browser-engine"], undefined);
+  assert.equal(jobs.browser["timeout-minutes"], 15);
+  assert.equal(jobs.measurements["timeout-minutes"], 15);
+  const install = action.runs.steps.find(
+    (step) => step.name === "Install pinned browser engines and libraries",
+  );
+  assert.equal(install.if, "inputs.browsers == 'true'");
+  assert.equal(install["continue-on-error"], undefined);
+  assert.doesNotMatch(install.run, /eval|continue-on-error|\|\| true/);
+  const cwd = mkdtempSync(join(tmpdir(), "buzz-browser-engine-"));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  writeFileSync(
+    join(cwd, "pnpm"),
+    '#!/bin/sh\nprintf "%s\\n" "$@" > "$PWD/args"\nexit "$INSTALL_STATUS"\n',
+    { mode: 0o755 },
+  );
+  const execute = (engine, status = "0") => {
+    writeFileSync(join(cwd, "args"), "");
+    return spawnSync("bash", ["-eo", "pipefail", "-c", install.run], {
+      cwd,
+      env: {
+        ...process.env,
+        PATH: `${cwd}:${process.env.PATH}`,
+        PLAYWRIGHT_ENGINE: engine,
+        INSTALL_STATUS: status,
+      },
+      encoding: "utf8",
+      timeout: 5000,
+    });
+  };
+  for (const [engine, expected] of [
+    ["all", ["chromium", "webkit"]],
+    ["chromium", ["chromium"]],
+    ["webkit", ["webkit"]],
+  ]) {
+    const result = execute(engine);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(
+      readFileSync(join(cwd, "args"), "utf8").trim().split("\n"),
+      ["exec", "playwright", "install", "--with-deps", ...expected],
+    );
+    assert.equal(
+      execute(engine, "7").status,
+      7,
+      "installer errors must propagate",
+    );
+  }
+  for (const engine of [
+    "",
+    "firefox",
+    "chromium webkit",
+    "chromium; touch unexpected",
+    "$(touch unexpected)",
+  ]) {
+    assert.notEqual(execute(engine).status, 0);
+    assert.equal(
+      readFileSync(join(cwd, "args"), "utf8"),
+      "",
+      "invalid input must not run an installer",
+    );
+  }
 });

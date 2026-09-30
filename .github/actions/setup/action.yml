@@ -2,8 +2,11 @@ name: Setup pinned tools and dependencies
 description: Hermit and frozen pnpm install; optionally provision pinned browsers.
 inputs:
   browsers:
-    description: Install Chromium and WebKit plus Linux system libraries
+    description: Install selected Playwright engines plus their Linux system libraries
     default: "false"
+  browser-engine:
+    description: Browser engine to provision (all, chromium or webkit)
+    default: "all"
 runs:
   using: composite
   steps:
@@ -38,8 +41,16 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.cache/ms-playwright
-        key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}-chromium-webkit
+        key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}-${{ inputs.browser-engine }}
     - name: Install pinned browser engines and libraries
       if: inputs.browsers == 'true'
       shell: bash
-      run: pnpm exec playwright install --with-deps chromium webkit
+      env:
+        PLAYWRIGHT_ENGINE: ${{ inputs.browser-engine }}
+      run: |
+        case "$PLAYWRIGHT_ENGINE" in
+          all) engines=(chromium webkit) ;;
+          chromium|webkit) engines=("$PLAYWRIGHT_ENGINE") ;;
+          *) echo "Unsupported browser engine: $PLAYWRIGHT_ENGINE" >&2; exit 1 ;;
+        esac
+        pnpm exec playwright install --with-deps "${engines[@]}"

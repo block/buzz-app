@@ -177,9 +177,12 @@ jobs:
           test -x "$toolchain_bin/cargo"
           echo "RUSTUP_TOOLCHAIN=$version" >> "$GITHUB_ENV"
           echo "HERMIT_PREPEND_PATH=$toolchain_bin" >> "$GITHUB_ENV"
+      # Each functional shard runs one engine; avoid installing the other
+      # engine's Linux media/system libraries inside this job's deadline.
       - uses: ./.github/actions/setup
         with:
           browsers: "true"
+          browser-engine: ${{ matrix.engine }}
       # This journey uses a real native plugin-manager bridge. Provision it
       # before Playwright starts: a cold Rust install/build is test setup, not
       # browser behavior, and must not consume the journey's subprocess budget.

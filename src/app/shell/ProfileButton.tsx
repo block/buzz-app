@@ -302,7 +302,7 @@ export function ProfileButton({
                       }
                     />
                   </span>
-                  <MenuPopup align="start">
+                  <MenuPopup align="start" data-profile-submenu>
                     <MenuRadioGroup
                       value={observed === "unknown" ? "" : observed}
                       onValueChange={(value) => {

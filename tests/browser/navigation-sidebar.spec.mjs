@@ -479,13 +479,8 @@ test("channel navigation preserves sidebar DOM, group state and scroll", async (
   );
 });
 
-for (const destination of [
-  "Projects",
-  "Agents",
-  "Workflows",
-  "Settings",
-  "Back/Forward",
-]) {
+// Back/Forward leaves through Projects, so Projects needs no case of its own.
+for (const destination of ["Agents", "Workflows", "Settings", "Back/Forward"]) {
   test(`sidebar state survives Messages → ${destination} → Messages`, async ({
     page,
     app,

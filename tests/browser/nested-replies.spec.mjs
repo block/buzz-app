@@ -470,7 +470,9 @@ test.describe("touch branch controls", () => {
 });
 
 // Real pointer hit testing and focus cannot be verified in jsdom.
-for (const width of [1492, 1280, 1024, 700, 390])
+// One viewport per indentation tier of the thread panel: six levels (1492),
+// four (700) and three on each side of the 640px action-bar branch (1024, 390).
+for (const width of [1492, 1024, 700, 390])
   test(`crowded capped branches expand once with readable actions at ${width}`, async ({
     page,
     app,

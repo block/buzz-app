@@ -162,10 +162,12 @@ it("retains mounted rows through a deferred real-session page and profile noise"
       request !== initial && request !== page && !request.signal?.aborted,
   );
   if (!continuation) throw new Error("Final continuation was not requested");
-  await act(async () => continuation.respond([]));
+  // The legacy request also revalidates the root: no more replies still returns it.
+  await act(async () => continuation.respond([root]));
   await waitFor(() =>
     expect(screen.queryByText("Loading thread…")).not.toBeInTheDocument(),
   );
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(
     screen.getByRole("region", { name: "Thread messages" }),
   ).not.toHaveAttribute("data-positioning");

@@ -193,10 +193,6 @@ function ActiveHuddle({
               </MenuIcon>
               {copied ? "Link copied" : "Copy link"}
             </MenuItem>
-            <MenuNote>
-              People need to belong to this chat. The link opens it; use the
-              headphone button to join.
-            </MenuNote>
             {error && (
               <MenuNote role="alert">
                 Couldn’t copy. You can copy this link manually: {link}

@@ -175,7 +175,7 @@ test("connected Huddles keep compact controls beside the default window", async 
     left: 0,
     right: 0,
     inset: ["4px", "4px", "4px", "8px"],
-    gaps: [4, 0, 0],
+    gaps: [4, 0, 0, 0],
   });
   const leaveButton = capsule.getByRole("button", {
     name: "Leave huddle",
@@ -187,7 +187,7 @@ test("connected Huddles keep compact controls beside the default window", async 
   await expect(
     capsule.getByRole("button", { name: "Unmute", exact: true }),
   ).toHaveAttribute("data-icon-variant", "ghost");
-  await expect(capsule.getByRole("button")).toHaveCount(3);
+  await expect(capsule.getByRole("button")).toHaveCount(4);
   await expect(
     capsule.getByRole("button", { name: "Microphone options" }),
   ).toHaveCount(0);
@@ -1184,6 +1184,11 @@ test("DM requests share window and capsule controls without capturing audio unti
     page.getByRole("group", { name: "Active Huddle", exact: true }),
   ).toBeVisible();
   await expect(request).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("group", { name: "Active Huddle", exact: true })
+      .getByRole("button", { name: "Mute", exact: true }),
+  ).toBeFocused();
   expect(
     await page.evaluate(() => window.huddleFixture.stats.audioOpened),
   ).toBe(1);
@@ -1209,6 +1214,9 @@ test("window Join and compact Decline operate on the same incoming request", asy
   await capsule.getByRole("button", { name: "Decline", exact: true }).click();
   await expect(request).toHaveCount(0);
   await expect(capsule).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Search Buzz", exact: true }),
+  ).toBeFocused();
   expect(
     await page.evaluate(() => window.huddleFixture.stats.audioOpened),
   ).toBe(0);
@@ -1219,9 +1227,45 @@ test("window Join and compact Decline operate on the same incoming request", asy
     page.getByRole("group", { name: "Active Huddle", exact: true }),
   ).toBeVisible();
   await expect(request).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("complementary", { name: "Huddle window preview" })
+      .getByRole("button", { name: "Mute", exact: true }),
+  ).toBeFocused();
   expect(
     await page.evaluate(() => window.huddleFixture.stats.audioOpened),
   ).toBe(1);
+  // Real focus teardown: both request surfaces must retain a usable target when
+  // a pending microphone connection is cancelled or fails.
+  for (const surface of [request, capsule]) {
+    for (const outcome of ["cancel", "error"]) {
+      await page.goto(
+        `${origin}/tests/fixtures/huddles.html?chrome&deferConnection`,
+      );
+      await trigger.click();
+      await surface
+        .getByRole("button", { name: "Join", exact: true })
+        .press("Enter");
+      const cancel = surface.getByRole("button", {
+        name: "Cancel",
+        exact: true,
+      });
+      await expect(cancel).toBeFocused();
+      await expect
+        .poll(() => page.evaluate(() => window.huddleFixture.stats.opens))
+        .toBe(1);
+      if (outcome === "cancel") await cancel.press("Enter");
+      else
+        await page.evaluate(() =>
+          window.huddleFixture.disconnect("Microphone disconnected"),
+        );
+      await expect(request).toHaveCount(0);
+      await expect(capsule).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "Search Buzz", exact: true }),
+      ).toBeFocused();
+    }
+  }
 });
 
 // Real media decoding and autoplay need a browser; fake-clock unit tests cover the exact gap.
@@ -1254,6 +1298,7 @@ test("incoming ring plays the Pow clip repeatedly and stops on decline", async (
 test("accepting preserves both request avatars until connected, then moves them into the call", async ({
   page,
 }) => {
+  await page.clock.install();
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.goto(
     `${origin}/tests/fixtures/huddles.html?chrome&deferConnection`,
@@ -1266,10 +1311,22 @@ test("accepting preserves both request avatars until connected, then moves them 
     name: "Huddle request",
     exact: true,
   });
+  await expect
+    .poll(() =>
+      request
+        .locator("[data-huddle-avatar]")
+        .evaluate((el) => getComputedStyle(el).transform),
+    )
+    .toBe("none");
   const originBox = await request
     .getByRole("img", { name: "Alex", exact: true })
     .boundingBox();
-  await capsule.getByRole("button", { name: "Join", exact: true }).click();
+  await capsule
+    .getByRole("button", { name: "Join", exact: true })
+    .press("Enter");
+  await expect(
+    capsule.getByRole("button", { name: "Cancel", exact: true }),
+  ).toBeFocused();
   await expect(request).toBeVisible();
   await expect(capsule).toBeVisible();
   await expect(
@@ -1281,11 +1338,11 @@ test("accepting preserves both request avatars until connected, then moves them 
   await expect
     .poll(() => page.evaluate(() => window.huddleFixture.stats.opens))
     .toBe(1);
-  const frames = await page.evaluate(async () => {
-    const frames = [];
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  await page.evaluate(() => {
+    window.huddleMotionFrames = [];
     window.huddleFixture.connect();
-    for (let i = 0; i < 40; i++) {
-      await new Promise(requestAnimationFrame);
+    const sample = () => {
       const portraits = [
         ...document.querySelectorAll(
           `[data-huddle-avatar="${"cd".repeat(32)}"]`,
@@ -1300,14 +1357,22 @@ test("accepting preserves both request avatars until connected, then moves them 
           compact: !!el.closest("#huddle-capsule"),
         };
       });
-      frames.push(positions);
-    }
-    return frames;
+      window.huddleMotionFrames.push(positions);
+      if (window.huddleMotionFrames.length < 40) requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
   });
+  for (let i = 0; i < 40; i++) await page.clock.runFor(16);
+  const frames = await page.evaluate(() => window.huddleMotionFrames);
   await expect(
     page.getByRole("group", { name: "Active Huddle", exact: true }),
   ).toBeVisible();
   await expect(request).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("group", { name: "Active Huddle", exact: true })
+      .getByRole("button", { name: "Mute", exact: true }),
+  ).toBeFocused();
   // The window portrait travels and resizes rather than appearing at its final spot.
   const compactFrames = frames
     .map((frame) => frame.find((r) => r.compact))
@@ -1328,6 +1393,7 @@ test("accepting preserves both request avatars until connected, then moves them 
     Math.abs(windowFrames.at(-1).x - originBox.x),
   );
   await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.clock.resume();
   await page.reload();
   await page
     .getByRole("button", { name: "Simulate incoming DM Huddle" })
@@ -1348,4 +1414,49 @@ test("accepting preserves both request avatars until connected, then moves them 
         avatars.every((el) => getComputedStyle(el).transform === "none"),
       ),
   ).toBe(true);
+});
+
+// Browser proof: the shared popover/Select portals work in each surface and
+// companion actions update the main-owned selection without moving the call.
+test("audio settings mirror device choices between compact and window controls", async ({
+  page,
+}) => {
+  await page.goto(`${origin}/tests/fixtures/huddles.html`);
+  await page
+    .getByRole("button", { name: /Start or join a huddle|Join active huddle/ })
+    .click();
+  const capsule = page.getByRole("group", {
+    name: "Active Huddle",
+    exact: true,
+  });
+  const companion = page.getByRole("complementary", {
+    name: "Huddle window preview",
+  });
+  await capsule.getByRole("button", { name: "Audio settings" }).click();
+  await page.getByRole("combobox", { name: "Microphone", exact: true }).click();
+  await page
+    .getByRole("option", { name: "USB microphone", exact: true })
+    .click();
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("dialog", { name: "Audio settings", exact: true }),
+  ).toHaveCount(0);
+  await companion.getByRole("button", { name: "Audio settings" }).click();
+  await expect(
+    page.getByRole("combobox", { name: "Microphone", exact: true }),
+  ).toContainText("USB microphone");
+  await page.getByRole("combobox", { name: "Speakers", exact: true }).click();
+  await page.getByRole("option", { name: "Headphones", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("dialog", { name: "Audio settings", exact: true }),
+  ).toHaveCount(0);
+  await capsule.getByRole("button", { name: "Audio settings" }).click();
+  await expect(
+    page.getByRole("combobox", { name: "Speakers", exact: true }),
+  ).toContainText("Headphones");
+  await page.keyboard.press("Escape");
+  await expect(
+    capsule.getByRole("button", { name: "Audio settings" }),
+  ).toBeFocused();
 });

@@ -1,3 +1,5 @@
+import type { ChannelSummary } from "../relay/contracts";
+import type { AudioSettingsState } from "./audio-settings";
 import { createHuddleRequests } from "./requests";
 import { discoverHuddles } from "./discovery";
 import type { RelayData, RelaySnapshot } from "../relay/service";
@@ -7,6 +9,7 @@ import type { HuddleAudio, OpenHuddleAudio } from "./audio";
 export type HuddleSnapshot = Readonly<{
   id?: string;
   level?: number;
+  audioSettings?: AudioSettingsState;
   speakers?: Readonly<Record<string, number>>;
   requester?: string;
   phase: "idle" | "incoming" | "connecting" | "connected" | "leaving" | "error";
@@ -24,6 +27,7 @@ type Attempt = {
   opening?: Promise<void>;
   heartbeat?: ReturnType<typeof setInterval>;
   stopAccess?: () => void;
+  stopAudioSettings?: () => void;
   sending: boolean;
 };
 const idle: HuddleSnapshot = { phase: "idle", muted: false, participants: [] };
@@ -121,6 +125,7 @@ export function createHuddles(
     current = undefined;
     resetActivity();
     previous?.abort.abort();
+    previous?.stopAudioSettings?.();
     previous?.audio?.close();
     clearInterval(previous?.heartbeat);
     previous?.stopAccess?.();
@@ -173,23 +178,32 @@ export function createHuddles(
     const connection = relay.snapshot();
     // The originating DM stays private. Explicit room members can join using
     // its verified parent marker without access to the original conversation.
+    const member = (channel: ChannelSummary | undefined) =>
+      !!channel &&
+      !channel.archived &&
+      !channel.readOnly &&
+      !channel.cached &&
+      !!channel.members?.includes(destination.viewer);
+    // Admission through a parent must never become room-only admission merely
+    // because the audio join subsequently adds the viewer to the temporary room.
+    const parentAdmission = member(
+      connection.session.channels
+        .list()
+        .channels.find((channel) => channel.id === destination.channelId),
+    );
     const accessible = () => {
       const channels = connection.session.channels.list().channels;
       const parent = channels.find((c) => c.id === destination.channelId);
       const invited = room ? channels.find((c) => c.id === room) : undefined;
       if (parent?.archived || invited?.archived) return "denied";
-      if (
-        parent ||
-        (invited &&
-          !invited.archived &&
-          !invited.readOnly &&
-          !invited.cached &&
-          invited.huddle &&
-          invited.parentChannelId === destination.channelId &&
-          invited.members?.includes(destination.viewer))
-      )
-        return "allowed";
-      return invited ? "denied" : "unknown";
+      if (parentAdmission)
+        return parent ? (member(parent) ? "allowed" : "denied") : "unknown";
+      if (!invited) return "unknown";
+      return member(invited) &&
+        invited.huddle &&
+        invited.parentChannelId === destination.channelId
+        ? "allowed"
+        : "denied";
     };
     if (
       !bridge.available ||
@@ -328,6 +342,15 @@ export function createHuddles(
         return;
       }
       attempt.audio = audio;
+      if (audio.settings) {
+        const settings = audio.settings;
+        const syncSettings = () => {
+          if (valid(attempt))
+            update({ ...snapshot, audioSettings: settings.snapshot() });
+        };
+        attempt.stopAudioSettings = settings.subscribe(syncSettings);
+        syncSettings();
+      }
       attempt.opening = bridge.open(attempt.id, destination, room, receive);
       await attempt.opening;
       if (valid(attempt))
@@ -383,6 +406,14 @@ export function createHuddles(
       if (muted && snapshot.destination)
         speakers.delete(snapshot.destination.viewer);
       update({ ...snapshot, muted, ...activitySnapshot() });
+    },
+    refreshAudioSettings() {
+      if (snapshot.phase === "connected")
+        void current?.audio?.settings?.refresh();
+    },
+    selectAudioDevice(kind: "input" | "output", id: string) {
+      if (snapshot.phase === "connected")
+        void current?.audio?.settings?.select(kind, id);
     },
     leave,
     async dispose() {

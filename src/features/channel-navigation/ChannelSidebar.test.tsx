@@ -383,6 +383,8 @@ it("keeps Huddle rooms out of the sidebar before and after metadata arrives", as
   const parent = "22222222-2222-4222-8222-222222222222";
   const discovery = new DiscoveryState(viewer.pubkey, relay.pubkey);
   discovery.accept(roster(relay, room, [viewer.pubkey]));
+  discovery.accept(roster(relay, "legacy", [viewer.pubkey]));
+  discovery.accept(metadata(relay, "legacy", "Legacy channel"));
   let list: ChannelList = {
     ...h.list,
     channels: [
@@ -411,12 +413,13 @@ it("keeps Huddle rooms out of the sidebar before and after metadata arrives", as
   list = {
     ...list,
     channels: [
-      ...list.channels.filter((c) => c.id !== room),
+      ...list.channels.filter((c) => c.id !== room && c.id !== "legacy"),
       ...discovery.channels(),
     ],
   };
   mounted.rerender(h.view("alpha"));
   expect(screen.getByRole("button", { name: "alpha" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Legacy channel" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Private project" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "Call room" })).toBeNull();
 });

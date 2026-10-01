@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { expect, it, vi } from "vitest";
+import { assert, expect, it, vi } from "vitest";
 import {
   createHuddleWindow,
   type HuddleWindowAction,
@@ -36,11 +36,13 @@ function harness() {
     join: async () => {},
     start: async () => {},
     mute: vi.fn(),
+    refreshAudioSettings: vi.fn(),
+    selectAudioDevice: vi.fn(),
     leave: vi.fn(async () => {}),
     dispose: async () => {},
   };
   const relay = { snapshot: () => ({ session: store.session }) } as RelayData;
-  let action = (_id: string, _action: HuddleWindowAction) => {};
+  let action = (_id: string, _action: HuddleWindowAction, _text?: string) => {};
   let release = () => {};
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -58,7 +60,8 @@ function harness() {
     bridge,
     call,
     release,
-    action: (id: string, a: HuddleWindowAction) => action(id, a),
+    action: (id: string, a: HuddleWindowAction, text?: string) =>
+      action(id, a, text),
     set(next: HuddleSnapshot) {
       snapshot = next;
       for (const fn of listeners) fn();
@@ -401,6 +404,31 @@ it("surfaces a failed native chat update and lets the next chat action retry", a
       expect(h.companion.snapshot().error).toBeUndefined(),
     );
     expect(h.call.leave).not.toHaveBeenCalled();
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("routes audio settings only from the current companion call", async () => {
+  const h = harness();
+  try {
+    h.release();
+    await h.companion.open();
+    const id = h.call.snapshot().id;
+    assert.exists(id);
+    h.action(id, "refreshAudio");
+    h.action(id, "inputDevice", "microphone");
+    h.action(id, "outputDevice", "speakers");
+    expect(h.call.refreshAudioSettings).toHaveBeenCalledOnce();
+    expect(h.call.selectAudioDevice).toHaveBeenCalledWith(
+      "input",
+      "microphone",
+    );
+    expect(h.call.selectAudioDevice).toHaveBeenCalledWith("output", "speakers");
+    h.action("previous-call", "inputDevice", "wrong");
+    h.set({ phase: "idle", participants: [], muted: false });
+    h.action(id, "outputDevice", "wrong");
+    expect(h.call.selectAudioDevice).toHaveBeenCalledTimes(2);
   } finally {
     await h.dispose();
   }

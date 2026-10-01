@@ -16,9 +16,29 @@ pub(crate) struct View {
     dark: bool,
     participants: Vec<Person>,
     #[serde(default)]
+    audio_settings: Option<AudioSettings>,
+    #[serde(default)]
     discussion: Option<Discussion>,
     #[serde(default)]
     discussion_open: bool,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AudioSettings {
+    inputs: Vec<AudioDevice>,
+    outputs: Vec<AudioDevice>,
+    input: String,
+    output: String,
+    output_supported: bool,
+    loading: bool,
+    busy: bool,
+    error: Option<String>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AudioDevice {
+    id: String,
+    label: String,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -60,6 +80,9 @@ struct Person {
 pub(crate) enum Action {
     Join,
     Decline,
+    RefreshAudio,
+    InputDevice,
+    OutputDevice,
     Mute,
     Leave,
     Minimize,
@@ -101,6 +124,17 @@ fn validate(view: &View) -> Result<()> {
         || !view.level.is_finite()
         || !(0.0..=1.0).contains(&view.level)
         || view.participants.len() > 256
+        || view.audio_settings.as_ref().is_some_and(|a| {
+            a.inputs.len() > 128
+                || a.outputs.len() > 128
+                || a.input.len() > 4096
+                || a.output.len() > 4096
+                || a.error.as_ref().is_some_and(|e| e.len() > 8192)
+                || a.inputs
+                    .iter()
+                    .chain(&a.outputs)
+                    .any(|d| d.id.len() > 4096 || d.label.len() > 4096)
+        })
         || view.discussion.as_ref().is_some_and(|d| {
             d.composer
                 .as_ref()
@@ -329,6 +363,10 @@ pub(crate) fn huddle_window_action<R: tauri::Runtime>(
         {
             return Err("Invalid Huddle message".into());
         }
+    } else if matches!(action, Action::InputDevice | Action::OutputDevice) {
+        if text.as_ref().is_none_or(|id| id.len() > 4096) {
+            return Err("Invalid audio device".into());
+        }
     } else if text.is_some() {
         return Err("Unexpected Huddle message".into());
     }
@@ -403,7 +441,31 @@ mod tests {
             participants: vec![],
             discussion: None,
             discussion_open: false,
+            audio_settings: None,
         }
+    }
+    #[test]
+    fn audio_settings_survive_the_native_dto_and_limit_device_data() {
+        let mut presentation = view("00000000-0000-4000-8000-000000000001");
+        presentation.audio_settings = Some(AudioSettings {
+            inputs: vec![AudioDevice {
+                id: "mic".into(),
+                label: "USB mic".into(),
+            }],
+            outputs: vec![],
+            input: "mic".into(),
+            output: "".into(),
+            output_supported: true,
+            loading: false,
+            busy: false,
+            error: None,
+        });
+        assert!(validate(&presentation).is_ok());
+        let encoded = serde_json::to_value(&presentation).unwrap();
+        assert_eq!(encoded["audioSettings"]["input"], "mic");
+        assert!(serde_json::from_value::<View>(encoded).is_ok());
+        presentation.audio_settings.as_mut().unwrap().inputs[0].id = "x".repeat(4097);
+        assert!(validate(&presentation).is_err());
     }
     #[test]
     fn discussion_delivery_survives_the_native_dto() {

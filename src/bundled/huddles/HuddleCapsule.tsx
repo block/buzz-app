@@ -1,3 +1,5 @@
+import { useHuddleRequestFocus } from "./useHuddleRequestFocus";
+import { HuddleAudioSettings } from "./HuddleAudioSettings";
 import { LayoutGroup } from "motion/react";
 import { useId } from "react";
 import { formatPublicKey } from "../../shared/identity/public-key";
@@ -66,6 +68,7 @@ function HuddleCapsuleContent({
     companion.snapshot,
   );
   const [error, setError] = useState<string>();
+  const focus = useHuddleRequestFocus(call.phase === "connected");
   const audioUnavailable = call.error
     ?.toLowerCase()
     .includes("huddle audio unavailable in this deployment");
@@ -102,6 +105,7 @@ function HuddleCapsuleContent({
         id="huddle-capsule"
         tabIndex={-1}
         className={`${styles.capsule} glass-primary`}
+        ref={focus.requestRef}
         aria-label="Huddle request"
       >
         <Button
@@ -129,6 +133,7 @@ function HuddleCapsuleContent({
             data-huddle-join=""
             disabled={call.phase === "connecting"}
             onClick={() => {
+              focus.cancel.current?.focus({ preventScroll: true });
               void huddles.join(destination, room);
             }}
           >
@@ -137,6 +142,7 @@ function HuddleCapsuleContent({
           <Button
             size="xs"
             variant="destructive"
+            ref={focus.cancel}
             onClick={() => {
               void huddles.leave();
             }}
@@ -187,6 +193,7 @@ function HuddleCapsuleContent({
         <IconButton
           size="toolbar"
           variant="ghost"
+          ref={focus.mute}
           aria-label={call.muted ? "Unmute" : "Mute"}
           title={call.muted ? "Unmute" : "Mute"}
           aria-pressed={call.muted}
@@ -198,6 +205,12 @@ function HuddleCapsuleContent({
               <MicrophoneIcon size={16} />
             )
           }
+        />
+        <HuddleAudioSettings
+          compact
+          state={call.audioSettings}
+          refresh={huddles.refreshAudioSettings}
+          select={huddles.selectAudioDevice}
         />
         <span className={styles.capsuleDivider} aria-hidden="true" />
         <Button

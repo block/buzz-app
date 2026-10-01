@@ -624,3 +624,61 @@ it("does not commit a roster read that lands after the list stopped being ready"
     test.store.dispose();
   }
 });
+
+it("adds Huddle lifecycle cards to an already open parent window", async () => {
+  let receive!: (events: readonly import("./events").RelayEvent[]) => void;
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.top_level))
+        return [
+          bounds(relay, "parent", "head", {
+            has_more: false,
+            next_cursor: null,
+          }),
+        ];
+      return [
+        roster(relay, "parent", [viewer.pubkey]),
+        metadata(relay, "parent", "Parent"),
+      ].filter((event) =>
+        filters.some((filter) => filter.kinds?.includes(event.kind)),
+      );
+    },
+    subscribe(callbacks) {
+      receive = callbacks.receive;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  try {
+    const channels = owner.session.channels;
+    channels.ensureList();
+    await vi.waitFor(() => expect(channels.list().status).toBe("ready"));
+    channels.ensure("parent");
+    await vi.waitFor(() =>
+      expect(channels.window("parent").status).toBe("ready"),
+    );
+    for (const [kind, state] of [
+      [48100, "started"],
+      [48103, "ended"],
+    ] as const) {
+      const event = signed(relay, {
+        kind,
+        tags: [["h", "parent"]],
+        content: JSON.stringify({
+          ephemeral_channel_id: "00000000-0000-4000-8000-000000000002",
+        }),
+      });
+      receive([event]);
+      expect(channels.window("parent").rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: event.id,
+            huddle: expect.objectContaining({ state }),
+          }),
+        ]),
+      );
+    }
+  } finally {
+    owner.dispose();
+  }
+});

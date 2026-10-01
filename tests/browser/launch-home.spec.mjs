@@ -26,7 +26,30 @@ test("launch opens Messages without exposing Home across responsive navigation, 
     }
     requestAnimationFrame(observe);
   });
+  // Hold the metadata read after roster discovery, reproducing a cold start.
+  let releaseMetadata;
+  const metadataGate = new Promise((resolve) => {
+    releaseMetadata = resolve;
+  });
+  let metadataHeld = false;
+  await page.route("**/api/relay/**/query", async (route) => {
+    if (
+      route
+        .request()
+        .postDataJSON()
+        .some((filter) => filter.kinds?.includes(39000))
+    ) {
+      metadataHeld = true;
+      await metadataGate;
+    }
+    await route.continue();
+  });
   await page.goto(app.origin);
+  await expect.poll(() => metadataHeld).toBe(true);
+  expect(
+    await page.evaluate(() => window.fixtureNavigation.snapshot().status),
+  ).toBe("opening");
+  releaseMetadata();
   await expect(messages(page)).toBeVisible();
   for (const width of [390, 820, 1440]) {
     await page.setViewportSize({ width, height: 950 });
@@ -60,9 +83,19 @@ test("launch opens Messages without exposing Home across responsive navigation, 
       )
       .toBe(true);
   }
+  await page
+    .getByRole("button", { name: "Channel members", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Channel members", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.screenshot({ path: testInfo.outputPath("launch-messages.png") });
   await page.getByRole("button", { name: "Search Buzz" }).click();
   const dialog = page.getByRole("dialog", { name: "Search Buzz" });
+  await expect(
+    dialog.getByRole("group", { name: "This conversation" }),
+  ).toBeVisible();
   await expect(
     dialog.getByRole("option", { name: "Messages", exact: true }),
   ).toBeVisible();

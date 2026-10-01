@@ -1810,8 +1810,9 @@ export function createChannelStore(
         for (const event of events) {
           if (
             incomingIds.has(event.id) ||
-            ![9, 40002, 40008, 40099, 40003, 5, 9005, 7, 39005].includes(
-              event.kind,
+            !(
+              channelRowKind(event.kind) ||
+              [40003, 5, 9005, 7, 39005].includes(event.kind)
             )
           )
             continue;

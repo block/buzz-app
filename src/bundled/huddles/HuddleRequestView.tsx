@@ -1,3 +1,4 @@
+import type { useHuddleRequestFocus } from "./useHuddleRequestFocus";
 import { HuddleAvatarMotion } from "./HuddleAvatarMotion";
 import type { HuddleAction, HuddleView } from "../../features/huddle/window";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -10,14 +11,20 @@ export function HuddleRequestView({
   view,
   act,
   error,
+  focus,
 }: {
+  focus: ReturnType<typeof useHuddleRequestFocus>;
   view: HuddleView;
   act(action: HuddleAction): void;
   error?: string | undefined;
 }) {
   const caller = view.participants[0];
   return (
-    <main className={styles.window} aria-label="Incoming Huddle request">
+    <main
+      ref={focus.requestRef}
+      className={styles.window}
+      aria-label="Incoming Huddle request"
+    >
       <header className={styles.windowHeader}>
         <div className={styles.windowMinimize}>
           <IconButton
@@ -61,13 +68,17 @@ export function HuddleRequestView({
             variant="subtle"
             data-huddle-join=""
             disabled={view.phase === "connecting"}
-            onClick={() => act("join")}
+            onClick={() => {
+              focus.cancel.current?.focus({ preventScroll: true });
+              act("join");
+            }}
           >
             Join
           </Button>
           <Button
             size="lg"
             variant="destructive"
+            ref={focus.cancel}
             onClick={() => act("decline")}
           >
             {view.phase === "connecting" ? "Cancel" : "Decline"}

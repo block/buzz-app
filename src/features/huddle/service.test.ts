@@ -23,7 +23,11 @@ function deferred<T>() {
 }
 function harness(
   initialChannels: ChannelSummary[] = [
-    { id: destination.channelId, name: "Design" },
+    {
+      id: destination.channelId,
+      name: "Design",
+      members: [destination.viewer],
+    },
   ],
 ) {
   let channels = initialChannels;
@@ -389,3 +393,63 @@ it("leaves immediately for an archived parent even while discovery is partial", 
   await vi.waitFor(() => expect(h.audio.close).toHaveBeenCalled());
   await h.dispose();
 });
+
+it.each(["readOnly", "cached", "not-member", "missing"])(
+  "does not replace revoked %s parent access with automatic room membership",
+  async (reason) => {
+    const room = "00000000-0000-4000-8000-000000000002";
+    const h = harness();
+    await h.service.join(destination, room);
+    h.receive({ type: "connected", room, participants: [] });
+    const parent = {
+      id: destination.channelId,
+      name: "Design",
+      members: [destination.viewer],
+    };
+    const invited = {
+      id: room,
+      name: "Huddle",
+      huddle: true as const,
+      parentChannelId: destination.channelId,
+      members: [destination.viewer],
+    };
+    h.access([parent, invited]);
+    expect(h.audio.close).not.toHaveBeenCalled();
+    h.access(
+      reason === "missing"
+        ? [invited]
+        : [
+            invited,
+            {
+              ...parent,
+              ...(reason === "not-member"
+                ? { members: [] }
+                : { [reason]: true }),
+            },
+          ],
+      reason !== "missing",
+    );
+    await vi.waitFor(() => expect(h.audio.close).toHaveBeenCalledOnce());
+    await h.dispose();
+  },
+);
+it.each([
+  { readOnly: true as const },
+  { cached: true as const },
+  { members: [] },
+])(
+  "rejects invalid parent admission before microphone capture: %j",
+  async (invalid) => {
+    const h = harness([
+      {
+        id: destination.channelId,
+        name: "Design",
+        members: [destination.viewer],
+        ...invalid,
+      },
+    ]);
+    await h.service.join(destination);
+    expect(h.openAudio).not.toHaveBeenCalled();
+    await h.dispose();
+  },
+);

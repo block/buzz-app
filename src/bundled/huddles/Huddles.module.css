@@ -81,6 +81,10 @@
   gap: var(--space-2);
   text-align: center;
 }
+.windowSettings {
+  grid-area: 1 / 1;
+  justify-self: start;
+}
 .windowMinimize {
   grid-area: 1 / 1;
   justify-self: end;
@@ -367,6 +371,10 @@
   --interaction-hover: var(--affordance-subtle-pressed);
 }
 @media (hover: hover) and (pointer: fine) {
+  .capsule > button:hover + .capsuleDivider,
+  .capsuleDivider:has(+ button:hover) {
+    opacity: 0;
+  }
   .capsule [data-huddle-leave]:hover {
     background: var(--affordance-danger-pressed);
   }

@@ -1,3 +1,4 @@
+import type { AudioSettingsState } from "../../src/features/huddle/audio-settings";
 import { createHuddleRing, HUDDLE_RING } from "../../src/features/huddle/ring";
 // Local presentation/capture fixture. No identity, relay connection, or remote write.
 import type { UploadedAttachment } from "../../src/features/relay/attachments";
@@ -317,9 +318,50 @@ const bridge: HuddleBridge = {
 const realAudio = new URLSearchParams(location.search).has("audio");
 const huddles = createHuddles(relay, bridge, async (...args) => {
   stats.audioOpened++;
+  let deviceState: AudioSettingsState = {
+    inputs: [
+      { id: "built-in", label: "MacBook microphone" },
+      { id: "usb", label: "USB microphone" },
+    ],
+    outputs: [
+      { id: "built-in", label: "MacBook speakers" },
+      { id: "headphones", label: "Headphones" },
+    ],
+    input: "",
+    output: "",
+    outputSupported: true,
+    busy: false,
+    loading: false,
+  };
+  const deviceListeners = new Set<() => void>();
+  const settings = {
+    snapshot: () => deviceState,
+    subscribe(fn: () => void) {
+      deviceListeners.add(fn);
+      return () => {
+        deviceListeners.delete(fn);
+      };
+    },
+    async refresh() {},
+    async select(kind: "input" | "output", id: string) {
+      deviceState = { ...deviceState, [kind]: id };
+      for (const fn of deviceListeners) fn();
+    },
+    close() {
+      deviceListeners.clear();
+    },
+  };
   const audio = realAudio
     ? await openHuddleAudio(...args)
-    : { mute() {}, play() {}, participants() {}, close() {} };
+    : {
+        settings,
+        mute() {},
+        play() {},
+        participants() {},
+        close() {
+          settings.close();
+        },
+      };
   return {
     ...audio,
     close() {

@@ -32,15 +32,18 @@ initial signed roster did not include the viewer; it also emits the relay's norm
 member-joined notice. A failed confirmation reports an incomplete join instead of
 granting local chat write access from audio participation alone. The audio
 relay remains authoritative for creator linkage and current admission. Explicit
-access revocation ends the call even during an incomplete roster refresh.
+access revocation ends the call even during an incomplete roster refresh. Admission
+retains its original authority: a parent-admitted call still requires current parent
+membership after automatic room admission; a room-only invite retains room authority.
 
 The mini player matches the neighboring 28px shell controls, with matching internal
 buttons, 16px regular-weight icons and 20px avatars. Its end buttons sit flush
-against the outer edges, with 4px before the microphone and no gap on either side of the microphone/Leave divider. Waveform and avatar content has
+against the outer edges, with 4px before the microphone and no gap on either side of the Audio settings/Leave divider. Waveform and avatar content has
 4px padding, with an extra 4px on the waveform’s left side. It uses the shared
 primary glass material from the shell controls and offers audio activity, an
 avatar stack of actual participants, mute, and a text-only Leave button. Leave keeps its Red 10 label with a muted red
-fill on hover and is separated from mute by a subtle divider flush against both button containers.
+fill on hover and is separated from Audio settings by a subtle divider flush against both button containers.
+The divider hides while either adjacent button is hovered.
 The neutral glass controls use the white chrome hover in light mode and its dark-mode counterpart.
 The proposed `text-call-leave` role preserves the requested Red 10 in both themes.
 It is a documented contrast exception for these controls: the light-mode Leave
@@ -80,6 +83,21 @@ activation when the relay says it is inaccessible or ended; the generic admissio
 response does not reveal whether it was archived. Incoming lifecycle discovery runs while a conversation header is visible. A green
 headphone offers Join for a recent remote Huddle, and clears on end, expiry, or
 conversation/community changes. Microphone capture still requires an explicit click.
+
+## Audio settings
+
+The gear beside the compact microphone (before the Leave divider) and the matching
+button opposite minimize in the companion open the same Audio settings popover.
+Choose a microphone or speakers, or follow the system default. Choices apply to the
+current call and update both views; changing the microphone preserves mute. Device
+lists refresh when hardware changes and whenever the popover opens. If switching
+fails, the previous device remains selected and the popover reports the error.
+
+Capture and playback routing stay in the main window. The companion sends only
+call-scoped selection actions. Speaker selection uses WebKit's media-element output
+routing; hosts without that API retain system-selected speakers and explain this in
+the picker. Leaving releases pending and active device resources. No push-to-talk
+or gain controls are included. Physical device switching still needs a native tryout.
 
 ## Incoming DM requests
 
@@ -175,7 +193,7 @@ may already have joined, so existing relay socket/TTL cleanup owns it.
 
 The macOS bundle includes the microphone purpose string and audio-input entitlement.
 Browser-only, Linux and Windows hosts do not expose the launcher in this slice.
-Agent voices, transcription generation, screen sharing, device selection and automatic reconnect
+Agent voices, transcription generation, screen sharing and automatic reconnect
 are outside this first version.
 
 ## Checks and tryout

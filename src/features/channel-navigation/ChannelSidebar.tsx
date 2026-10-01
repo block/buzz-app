@@ -279,7 +279,9 @@ function ReadySidebar({
       (channel) =>
         // Wait for metadata so temporary rooms never flash as unnamed channels.
         !channel.huddle &&
-        (channel.visibility !== undefined || channel.channelType !== undefined),
+        (channel.visibility !== undefined ||
+          channel.channelType !== undefined ||
+          channel.description !== undefined),
     )
     .filter(
       (channel) =>

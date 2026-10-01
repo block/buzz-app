@@ -1,3 +1,5 @@
+import { useHuddleRequestFocus } from "./useHuddleRequestFocus";
+import { HuddleAudioSettings } from "./HuddleAudioSettings";
 import { LayoutGroup } from "motion/react";
 import { useId } from "react";
 import { HuddleRequestView } from "./HuddleRequestView";
@@ -29,6 +31,7 @@ export function HuddleWindowView(props: WindowProps) {
   );
 }
 function HuddleWindowContent({ view, act, error }: WindowProps) {
+  const focus = useHuddleRequestFocus(view.phase === "connected");
   const incoming = useRef(false);
   if (view.phase === "incoming") incoming.current = true;
   else if (view.phase !== "connecting") incoming.current = false;
@@ -50,7 +53,9 @@ function HuddleWindowContent({ view, act, error }: WindowProps) {
     view.phase === "incoming" ||
     (view.phase === "connecting" && incoming.current)
   )
-    return <HuddleRequestView view={view} act={act} error={error} />;
+    return (
+      <HuddleRequestView view={view} act={act} error={error} focus={focus} />
+    );
   const toggleChat = () => {
     if (call.current && layout.current)
       setHold({
@@ -72,6 +77,15 @@ function HuddleWindowContent({ view, act, error }: WindowProps) {
         style={hold ? { flex: "0 0 auto", width: hold.width } : undefined}
       >
         <header className={styles.windowHeader}>
+          <div className={styles.windowSettings}>
+            <HuddleAudioSettings
+              state={view.audioSettings}
+              refresh={() => act("refreshAudio")}
+              select={(kind, id) =>
+                act(kind === "input" ? "inputDevice" : "outputDevice", id)
+              }
+            />
+          </div>
           <div className={styles.windowMinimize}>
             <IconButton
               size="large"
@@ -104,6 +118,7 @@ function HuddleWindowContent({ view, act, error }: WindowProps) {
             <IconButton
               size="large"
               variant="subtle"
+              ref={focus.mute}
               aria-label={view.muted ? "Unmute" : "Mute"}
               title={view.muted ? "Unmute" : "Mute"}
               aria-pressed={view.muted}

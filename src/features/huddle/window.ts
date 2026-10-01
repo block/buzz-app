@@ -1,3 +1,4 @@
+import type { AudioSettingsState } from "./audio-settings";
 import type { ComposerReader } from "./composer-contract";
 import { createHuddleComposerOwner } from "./composer-owner";
 import { Channel, invoke } from "@tauri-apps/api/core";
@@ -14,6 +15,7 @@ export type HuddleView = {
   level: number;
   dark: boolean;
   discussion?: HuddleDiscussion | undefined;
+  audioSettings?: AudioSettingsState | undefined;
   participants: {
     key: string;
     name: string;
@@ -25,6 +27,9 @@ export type HuddleView = {
 export type HuddleAction =
   | "join"
   | "decline"
+  | "refreshAudio"
+  | "inputDevice"
+  | "outputDevice"
   | "mute"
   | "leave"
   | "minimize"
@@ -132,6 +137,7 @@ export function createHuddleWindow(
       title: call.destination.channelName,
       phase: call.phase as HuddleView["phase"],
       muted: call.muted,
+      audioSettings: call.audioSettings,
       level: call.level ?? 0,
       dark: document.documentElement.classList.contains("dark"),
       discussion: discussion
@@ -268,6 +274,15 @@ export function createHuddleWindow(
           } else if (action === "mute") huddles.mute();
           else if (action === "leave" || (accepting && action === "decline"))
             void huddles.leave();
+          else if (action === "refreshAudio") huddles.refreshAudioSettings();
+          else if (
+            (action === "inputDevice" || action === "outputDevice") &&
+            typeof text === "string"
+          )
+            huddles.selectAudioDevice(
+              action === "inputDevice" ? "input" : "output",
+              text,
+            );
           else if (action === "thread") {
             publish(true);
             try {

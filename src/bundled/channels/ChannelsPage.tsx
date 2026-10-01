@@ -283,10 +283,18 @@ function ChannelWorkspace({
       (channel) =>
         // Wait for metadata so temporary rooms never flash as unnamed channels.
         !channel.huddle &&
-        (channel.visibility !== undefined || channel.channelType !== undefined),
+        (channel.visibility !== undefined ||
+          channel.channelType !== undefined ||
+          channel.description !== undefined),
     ),
     queries.profiles,
     queries.names,
+  );
+  const metadataPending = list.channels.some(
+    (channel) =>
+      channel.visibility === undefined &&
+      channel.channelType === undefined &&
+      channel.description === undefined,
   );
   const requestedChannel =
     draftParent ??
@@ -384,7 +392,12 @@ function ChannelWorkspace({
       !current
     )
       navigation?.complete({ status: "failed", reason: "unavailable" });
-    if (!requestedChannel && !current && list.status === "ready")
+    if (
+      !requestedChannel &&
+      !current &&
+      list.status === "ready" &&
+      (!metadataPending || emptyDestination)
+    )
       navigation?.complete({ status: "opened" });
     if (!requestedChannel && current && navigation && viewer) {
       // Resolve the saved default within this attempt, keeping its caller and deadline.
@@ -401,6 +414,8 @@ function ChannelWorkspace({
   }, [
     cached,
     composingMessage,
+    metadataPending,
+    emptyDestination,
     requestedChannel,
     resolving,
     current,

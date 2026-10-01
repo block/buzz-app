@@ -460,3 +460,63 @@ it("does not announce conversation enrichment over retained search choices", () 
     owner.dispose();
   }
 });
+
+it("excludes marked Huddle message hits on receipt and when metadata changes", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    viewer = keypair();
+  let live: LiveCallbacks | undefined;
+  const marker = (id: string, time: number) =>
+    metadata(relay, id, id, time, [
+      ["private"],
+      [
+        "about",
+        "Buzz Huddle (buzz.huddles/v1)\nparent:00000000-0000-4000-8000-000000000001",
+      ],
+    ]);
+  const discovery = [
+    marker("hidden", 1700000000),
+    metadata(relay, "later", "later"),
+    roster(relay, "hidden", [viewer.pubkey]),
+    roster(relay, "later", [viewer.pubkey]),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      return filters.some((filter) => filter.search)
+        ? [
+            message(viewer, "hidden", "hidden match", 1700000001),
+            message(viewer, "later", "later match", 1700000001),
+          ]
+        : discovery.filter((event) =>
+            filters.some((filter) => filter.kinds?.includes(event.kind)),
+          );
+    },
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="match"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180);
+    });
+    expect(screen.queryByRole("option", { name: /hidden match/ })).toBeNull();
+    expect(screen.getByRole("option", { name: /later match/ })).toBeVisible();
+    act(() => live?.receive([marker("later", 1700000002)]));
+    expect(screen.queryByRole("option", { name: /later match/ })).toBeNull();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});

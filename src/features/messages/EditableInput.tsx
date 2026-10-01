@@ -828,7 +828,16 @@ export function EditableInput({
       (forward ? redo : undo)(editor.state, editor.dispatch);
       editor.focus();
     };
-    const syncNativeSelection = (scroll = false) => {
+    /** Adopts the DOM selection as the editor's. A range spanning the whole
+     * document becomes AllSelection, so deleting a DOM select-all also clears
+     * block structure, unless `directional`: a Shift move that has just
+     * reached both document edges keeps its anchor and head, so reversing it
+     * shrinks the range from its head rather than from AllSelection's fixed
+     * start. */
+    const syncNativeSelection = ({
+      scroll = false,
+      directional = false,
+    } = {}) => {
       const selection = editor.dom.ownerDocument.getSelection();
       if (
         !selection?.anchorNode ||
@@ -862,7 +871,7 @@ export function EditableInput({
       // A Shift+Arrow range covering all inline content still has a direction.
       // Do not turn an already-synchronized editor range into AllSelection.
       if (text.eq(editor.state.selection)) return;
-      const next = all ? new AllSelection(doc) : text;
+      const next = all && !directional ? new AllSelection(doc) : text;
       if (next.eq(editor.state.selection)) return;
       const tr = editor.state.tr.setSelection(next);
       editor.dispatch(scroll ? tr.scrollIntoView() : tr);
@@ -888,7 +897,9 @@ export function EditableInput({
           : backward
             ? $head.nodeBefore
             : $head.nodeAfter;
-        if ((empty || extend) && leaf && !leaf.isText) {
+        // Only an inline leaf is stepped over in document terms. A block beside
+        // the head, as after select-all, is left to the browser's caret motion.
+        if ((empty || extend) && leaf?.isInline && !leaf.isText) {
           const head = backward
             ? $head.pos - leaf.nodeSize
             : $head.pos + leaf.nodeSize;
@@ -931,7 +942,7 @@ export function EditableInput({
           key === "Home" ? "backward" : "forward",
           mac ? "documentboundary" : "lineboundary",
         );
-      syncNativeSelection(true);
+      syncNativeSelection({ scroll: true, directional: true });
       return true;
     };
     const adjacent = (backward: boolean, arrow: boolean, extend: boolean) => {

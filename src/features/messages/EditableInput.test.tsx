@@ -399,27 +399,85 @@ function nativeInsert(
 }
 
 /** jsdom has no `Selection.modify`. This stand-in records the browser caret
- * motion the composer asks for and performs the one-character moves itself, so
- * the editor's selection sync after the move is exercised too. */
+ * motion the composer asks for and performs the moves it can without layout,
+ * so the editor's selection sync after the move is exercised too: a character
+ * within a text node, a line as the editor's text between newlines at the
+ * nearest column (the document's end past the last line, as in a browser),
+ * and the document boundaries. A focus at an element boundary, as ProseMirror
+ * places it after select-all, first resolves into the text ending there. */
 function stubSelectionModify() {
+  const texts = (node: Node) => {
+    if (node instanceof Text) return [node];
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    const found: Text[] = [];
+    while (walker.nextNode()) found.push(walker.currentNode as Text);
+    return found;
+  };
+  const resolve = (node: Node, offset: number): [Text, number] | null => {
+    if (node instanceof Text) return [node, offset];
+    const before = node.childNodes[offset - 1];
+    const after = node.childNodes[offset];
+    const end = before && texts(before).at(-1);
+    if (end) return [end, end.length];
+    const start = after && texts(after)[0];
+    return start ? [start, 0] : null;
+  };
   const modify = vi.fn(function (
     this: Selection,
     alter: string,
     direction: string,
     granularity: string,
   ) {
-    if (granularity !== "character") return;
-    const node = this.focusNode;
-    if (!(node instanceof Text)) return;
-    const offset = Math.max(
-      0,
-      Math.min(
-        node.length,
-        this.focusOffset + (direction === "right" ? 1 : -1),
-      ),
-    );
-    if (alter === "extend") this.extend(node, offset);
-    else this.collapse(node, offset);
+    const focus = this.focusNode && resolve(this.focusNode, this.focusOffset);
+    const root = focus?.[0].parentElement?.closest('[role="textbox"]');
+    if (!focus || !root) return;
+    const [text, offset] = focus;
+    const forward = direction === "right" || direction === "forward";
+    let target: [Text, number] | undefined;
+    if (granularity === "character")
+      target = [
+        text,
+        Math.max(0, Math.min(text.length, offset + (forward ? 1 : -1))),
+      ];
+    else if (granularity === "line" || granularity === "documentboundary") {
+      const all = texts(root);
+      const value = all.map((node) => node.data).join("");
+      const at = all
+        .slice(0, all.indexOf(text))
+        .reduce((sum, node) => sum + node.length, offset);
+      const lineStart = (pos: number) =>
+        pos ? value.lastIndexOf("\n", pos - 1) + 1 : 0;
+      const lineEnd = (pos: number) => {
+        const end = value.indexOf("\n", pos);
+        return end === -1 ? value.length : end;
+      };
+      let next: number;
+      if (granularity === "documentboundary") next = forward ? value.length : 0;
+      else {
+        const start = lineStart(at);
+        const end = lineEnd(at);
+        if (forward)
+          next =
+            end === value.length
+              ? end
+              : Math.min(end + 1 + (at - start), lineEnd(end + 1));
+        else
+          next =
+            start === 0
+              ? 0
+              : Math.min(lineStart(start - 1) + (at - start), start - 1);
+      }
+      for (const node of all) {
+        if (next <= node.length) {
+          target = [node, next];
+          break;
+        }
+        next -= node.length;
+      }
+    }
+    if (!target) return;
+    if (alter === "extend") this.extend(...target);
+    else this.collapse(...target);
   });
   Object.defineProperty(Selection.prototype, "modify", {
     configurable: true,
@@ -585,6 +643,78 @@ it("steps over a mention chip for an arrow reported as a control character, as t
   expect(modify).not.toHaveBeenCalled();
   expect(h.input).toHaveValue("abc@Honey ");
   expect(h.draft().recipients.map((item) => item.name)).toEqual(["Honey"]);
+});
+
+/** The editor selection's anchor and head in source offsets, with the text
+ * between them. `selectionDirection` reads the editor's own anchor and head,
+ * so a backward range here is a TextSelection that kept its direction: an
+ * AllSelection always reports its anchor at the start. */
+function range(h: ReturnType<typeof mount>) {
+  const { selectionStart: start, selectionEnd: end } = h.input;
+  const backward = h.input.selectionDirection === "backward";
+  return {
+    anchor: backward ? end : start,
+    head: backward ? start : end,
+    text: h.input.value.slice(start, end),
+  };
+}
+
+it("keeps a Shift move reported as a control character directional when it reaches both document edges, so reversing it shrinks the selection", () => {
+  setPlatform("MacIntel");
+  const h = mount("abc\ndef");
+  const modify = stubSelectionModify();
+  const before = snapshot(h);
+  expect(range(h)).toEqual({ anchor: 7, head: 7, text: "" });
+  // Cmd+Shift+Up from the end selects everything, anchored at the end: not
+  // the AllSelection a DOM select-all becomes, whose anchor is the start.
+  act(() => {
+    fireEvent.keyDown(
+      h.input,
+      mangled("ArrowUp", { metaKey: true, shiftKey: true }),
+    );
+  });
+  expect(modify).toHaveBeenLastCalledWith(
+    "extend",
+    "backward",
+    "documentboundary",
+  );
+  expect(range(h)).toEqual({ anchor: 7, head: 0, text: "abc\ndef" });
+  // Shift+Down then shrinks the selection from its head, and again back to
+  // the anchor, instead of extending from the start.
+  act(() => {
+    fireEvent.keyDown(h.input, mangled("ArrowDown", { shiftKey: true }));
+  });
+  expect(modify).toHaveBeenLastCalledWith("extend", "forward", "line");
+  expect(range(h)).toEqual({ anchor: 7, head: 4, text: "def" });
+  act(() => {
+    fireEvent.keyDown(h.input, mangled("ArrowDown", { shiftKey: true }));
+  });
+  expect(range(h)).toEqual({ anchor: 7, head: 7, text: "" });
+  expect(snapshot(h)).toEqual(before);
+});
+
+it("shrinks a select-all by one character for a Shift+Left reported as a control character, instead of collapsing it", () => {
+  setPlatform("MacIntel");
+  const h = mount("abc");
+  const modify = stubSelectionModify();
+  const before = snapshot(h);
+  act(() => {
+    fireEvent.keyDown(h.input, { key: "a", code: "KeyA", metaKey: true });
+  });
+  expect(range(h)).toEqual({ anchor: 0, head: 3, text: "abc" });
+  // The whole-document selection's head sits after the paragraph, not after
+  // an inline leaf: the move is the browser's, one character at a time.
+  let prevented = false;
+  act(() => {
+    prevented = !fireEvent.keyDown(
+      h.input,
+      mangled("ArrowLeft", { shiftKey: true }),
+    );
+  });
+  expect(prevented).toBe(true);
+  expect(modify).toHaveBeenCalledExactlyOnceWith("extend", "left", "character");
+  expect(range(h)).toEqual({ anchor: 0, head: 2, text: "ab" });
+  expect(snapshot(h)).toEqual(before);
 });
 
 it.each([

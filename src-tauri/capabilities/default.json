@@ -77,6 +77,7 @@
     "allow-terminal-resize",
     "allow-terminal-close",
     "allow-terminal-close-owner",
+    "allow-mesh-compute-inventory",
     "allow-mesh-compute-status",
     "allow-mesh-compute-stop",
     "allow-mesh-compute-start",

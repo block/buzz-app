@@ -36,11 +36,15 @@ test("enabling Mesh compute opens Settings Compute", async ({ page, app }) => {
   await expect(
     page
       .getByRole("region", { name: "Compute consumer", exact: true })
-      .getByRole("status"),
+      .getByRole("status")
+      .filter({ hasText: "Open Buzz desktop to use shared compute." }),
   ).toHaveText("Open Buzz desktop to use shared compute.");
   await expect(
     page.getByText("Shared compute for Primary", { exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Community mesh", exact: true }),
+  ).toContainText("Open Buzz desktop to see community mesh.");
   await expect(button("Connect to community compute")).toHaveCount(0);
   await expect(page.getByText("This destination couldn’t open")).toHaveCount(0);
 });

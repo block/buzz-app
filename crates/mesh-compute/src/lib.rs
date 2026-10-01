@@ -42,3 +42,6 @@ pub mod discovery;
 pub mod discovery_query;
 #[cfg(feature = "mesh")]
 pub mod discovery_types;
+
+#[cfg(feature = "mesh")]
+pub mod inventory;

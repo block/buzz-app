@@ -1,11 +1,13 @@
 // Consumer presentation adapted from feat/community-compute-plugin @ b4a910e.
 // Host lifecycle/leases remain owned by this plugin, not the donor's sharing service.
+import type { ReactNode } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import styles from "./Compute.module.css";
 
 export function ConsumerComputeView({
   communityName,
+  children,
   active,
   starting,
   disabled,
@@ -16,6 +18,7 @@ export function ConsumerComputeView({
   refresh,
 }: {
   communityName: string | undefined;
+  children?: ReactNode;
   active: boolean;
   starting: boolean;
   disabled: boolean;
@@ -40,6 +43,7 @@ export function ConsumerComputeView({
             app does not download or serve a local model. Your prompts run on
             other members’ machines.
           </p>
+          {children}
           {active && (
             <Button onClick={connect} disabled={disabled}>
               {starting ? "Cancel connection" : "Disconnect"}

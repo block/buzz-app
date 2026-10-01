@@ -175,3 +175,21 @@ mod queue_tests {
         assert_eq!(calls, 2);
     }
 }
+
+/// Signed relay advertisements, not live node health. Does not start Mesh.
+#[tauri::command]
+pub async fn mesh_compute_inventory(
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
+    community: String,
+) -> Result<serde_json::Value, String> {
+    #[cfg(feature = "mesh")]
+    {
+        let inventory = discovery::inventory(identity.inner(), &community).await?;
+        serde_json::to_value(inventory).map_err(|error| error.to_string())
+    }
+    #[cfg(not(feature = "mesh"))]
+    {
+        let _ = (identity, community);
+        Err("Mesh native runtime is not included in this build".into())
+    }
+}

@@ -106,6 +106,7 @@ fn main() {
             "browser_navigate",
             "browser_action",
             "browser_status",
+            "mesh_compute_inventory",
             "mesh_compute_status",
             "mesh_compute_stop",
             "mesh_compute_start",

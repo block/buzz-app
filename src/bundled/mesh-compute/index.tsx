@@ -3,6 +3,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
 
 import { CpuIcon } from "../../shared/design-system/icons";
+import { CommunityMesh } from "./CommunityMesh";
 import { ConsumerComputeView } from "./ConsumerComputeView";
 
 type MeshStatus = {
@@ -190,7 +191,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
         refreshDisabled={busy || !isTauri()}
         connect={() => void run(enabled ? "stop" : "start")}
         refresh={() => void run("status")}
-      />
+      >
+        {community && (
+          <CommunityMesh
+            key={community.id}
+            community={community.id}
+            relay={ctx.relay}
+          />
+        )}
+      </ConsumerComputeView>
     );
   }
   ctx.settingsCards.register({

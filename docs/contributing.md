@@ -367,6 +367,10 @@ the complete suite still runs with `pnpm test` / `just scan`:
   browsers and Linux libraries without per-job apt provisioning. Follow the
   [CI container guidance](https://playwright.dev/docs/ci#via-containers).
   Update both image references and digests when upgrading `@playwright/test`.
+  The WebKit page-error watcher (`tests/browser/page-errors.mjs`) also reads
+  Playwright's private `frame._eventEmitter` `"navigated"` event
+  (`newDocument.request._object`); if an upgrade changes it, WebKit browser
+  tests fail with a report naming it, and `committedNavigation` must be updated.
 - **CI required:** fails unless every automatic Linux lane and every browser shard succeeds,
   including cancellation or an unexpectedly skipped lane. Configure this status
   as a required repository check; the workflow does not change branch protection.

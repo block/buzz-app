@@ -94,6 +94,15 @@ export function PluginImport({
   const existing = catalog.plugins.find(
     (p) => p.manifest.id === candidate?.manifest.id,
   );
+  const rollbackNotice =
+    candidate?.publisher && existing && !existing.hasSignature
+      ? "You cannot roll back to the unsigned revision after this update."
+      : candidate?.revision === existing?.revision &&
+          existing?.rollbackBlockedReason
+        ? `${existing.rollbackBlockedReason}.`
+        : existing?.previous || existing?.revision !== candidate?.revision
+          ? "You can still roll back."
+          : "There is no earlier revision to roll back to.";
   const declaredGrants = candidate ? hostGrants(candidate.manifest) : [];
   const previousGrants = existing ? hostGrants(existing.manifest) : [];
   return (
@@ -263,7 +272,7 @@ export function PluginImport({
           {candidate && (
             <p className="m-0 text-body-sm">
               {existing
-                ? `This replaces ${existing.manifest.name} (${existing.manifest.id}). ${existing.enabled ? "It stays on and may run immediately unless this launch is in safe mode." : "It stays off."} You can still roll back.`
+                ? `This replaces ${existing.manifest.name} (${existing.manifest.id}). ${existing.enabled ? "It stays on and may run immediately unless this launch is in safe mode." : "It stays off."} ${rollbackNotice}`
                 : "This plugin starts off. Turn it on in the list when you’re ready."}
             </p>
           )}

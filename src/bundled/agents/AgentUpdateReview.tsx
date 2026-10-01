@@ -125,7 +125,10 @@ export function AgentUpdateReview({
       />
     );
   }
-  if (controlState.status === "error") {
+  if (
+    controlState.status === "error" &&
+    refreshedRequestId !== request.value.requestId
+  ) {
     return (
       <ToastNotice
         title="Could not load personal agents"
@@ -141,7 +144,7 @@ export function AgentUpdateReview({
     );
   }
   if (
-    controlState.status !== "ready" ||
+    (controlState.status !== "ready" && controlState.status !== "error") ||
     refreshedRequestId !== request.value.requestId
   )
     return null;

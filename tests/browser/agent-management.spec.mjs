@@ -13,24 +13,25 @@ test.use({
   agentPeers: true,
 });
 
+const request = (requestId, model) => ({
+  kind: "agent_management_request",
+  channelId: "alpha",
+  payload: {
+    type: "agent_management_request",
+    action: "update",
+    requestId,
+    request: {
+      channelId: "alpha",
+      agentName: "Fixture agent",
+      model,
+    },
+  },
+});
+
 test("dismisses without saving, persists on save, and queues a second request", async ({
   page,
   app,
 }) => {
-  const request = (requestId, model) => ({
-    kind: "agent_management_request",
-    channelId: "alpha",
-    payload: {
-      type: "agent_management_request",
-      action: "update",
-      requestId,
-      request: {
-        channelId: "alpha",
-        agentName: "Fixture agent",
-        model,
-      },
-    },
-  });
   const editor = page.getByRole("dialog", {
     name: "Edit agent",
     exact: true,
@@ -88,4 +89,42 @@ test("dismisses without saving, persists on save, and queues a second request", 
   await expect(editor).toHaveCount(0);
   expect(await savedCalls()).toHaveLength(1);
   expect(await savedModel()).toBe("gpt-6-sol");
+});
+
+test("keeps reviewer edits through a failed save and status recovery", async ({
+  page,
+  app,
+}) => {
+  const editor = page.getByRole("dialog", {
+    name: "Edit agent",
+    exact: true,
+  });
+  const model = editor.getByRole("combobox", { name: "Model" });
+  await open(page, app);
+  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
+  expect(app.managementKey).toBeDefined();
+
+  app.observer(request("save-error", "gpt-6-sol"), app.managementKey);
+  await expect(editor).toBeVisible();
+  await model.fill("reviewer-choice");
+  await model.press("Tab");
+  await page.evaluate(() => window.agentManagementFixture.failSave(true));
+  await editor.getByRole("button", { name: "Save changes" }).click();
+
+  await expect(editor).toBeVisible();
+  await expect(model).toHaveValue("reviewer-choice");
+  await expect(editor.getByRole("alert")).toContainText(
+    "The host could not save settings.",
+  );
+  await page.evaluate(() => window.agentManagementFixture.failSave(false));
+  await editor.getByRole("button", { name: "Retry status" }).click();
+  await expect(
+    editor.getByRole("button", { name: "Save changes" }),
+  ).toBeEnabled();
+  await editor.getByRole("button", { name: "Save changes" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.agentManagementFixture.agent.harness.model),
+    )
+    .toBe("reviewer-choice");
 });

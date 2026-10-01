@@ -182,7 +182,22 @@ for (const reading of [false, true]) {
         );
       }
       release();
-      await expect(region.locator("[data-message-id]")).toHaveCount(123);
+      // Virtualization bounds the DOM, not the loaded history. Inspect a
+      // no-refresh view seeded from this session's real verified cache.
+      await expect
+        .poll(() =>
+          page.evaluate((id) => {
+            const view = window.fixtureRelay
+              .snapshot()
+              .session.thread("alpha", id);
+            try {
+              return view.snapshot().replies.length;
+            } finally {
+              view.dispose();
+            }
+          }, root.id),
+        )
+        .toBe(123);
       await expect(
         region.getByText("Loading thread…", { exact: true }),
       ).toHaveCount(0);
@@ -210,10 +225,39 @@ for (const reading of [false, true]) {
           page.getByRole("tab", { name: "Thread", exact: true }),
         ).toBeFocused();
       }
+      if (!reading) {
+        // Pointer and downward input at the bottom need not emit a scroll event.
+        // Neither may disable live follow when the next reply arrives.
+        await region.click({ position: { x: 10, y: 20 } });
+        await page.mouse.wheel(0, 100);
+        await region.focus();
+        await page.keyboard.press("End");
+        await expect
+          .poll(() =>
+            region.evaluate(
+              (node) => node.scrollHeight - node.clientHeight - node.scrollTop,
+            ),
+          )
+          .toBeLessThan(4);
+      }
       const live = app.reply(root.id);
-      await expect(
-        region.locator(`[data-message-id="${live.id}"]`),
-      ).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            ({ rootId, id }) => {
+              const view = window.fixtureRelay
+                .snapshot()
+                .session.thread("alpha", rootId);
+              try {
+                return view.snapshot().replies.some((row) => row.id === id);
+              } finally {
+                view.dispose();
+              }
+            },
+            { rootId: root.id, id: live.id },
+          ),
+        )
+        .toBe(true);
       if (reading) {
         expect(await region.evaluate((node) => node.scrollTop)).toBe(position);
         const jumpToLatest = region.locator("button[data-jump-to-latest]");
@@ -248,12 +292,30 @@ for (const reading of [false, true]) {
           region.locator(`[data-message-id="${live.id}"]`),
         ).toBeInViewport();
       }
+      // Bring the oldest branch into the virtual window before expanding it.
+      await region.focus();
+      await page.keyboard.press("Home");
       // Expansion changes visibility, not the loaded-history count.
       await region.getByRole("button", { name: /^View 1 reply/ }).click();
       await expect(
         region.getByText("Broadcast descendant", { exact: true }),
       ).toBeInViewport();
-      await expect(region.locator("[data-message-id]")).toHaveCount(
+      await expect
+        .poll(() =>
+          page.evaluate((id) => {
+            const view = window.fixtureRelay
+              .snapshot()
+              .session.thread("alpha", id);
+            try {
+              return view.snapshot().replies.length;
+            } finally {
+              view.dispose();
+            }
+          }, root.id),
+        )
+        .toBe(reading ? 125 : 124);
+      // Expanded content is reachable without mounting all loaded branches.
+      expect(await region.locator("[data-message-id]").count()).toBeLessThan(
         reading ? 126 : 125,
       );
     } finally {

@@ -8,7 +8,7 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import { StrictMode } from "react";
+import { StrictMode, type ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
@@ -22,6 +22,20 @@ import { createMemoryHistory } from "../navigation/history";
 import type { ThreadSnapshot, ThreadView } from "../relay/threads";
 import type { ChannelMessage } from "../relay/contracts";
 
+// Model only Virtua's layout boundary; real windowing/geometry is covered by
+// thread-window and navigation-thread-history in both browser engines.
+vi.mock("virtua", async () => {
+  const { forwardRef, useImperativeHandle } = await import("react");
+  return {
+    Virtualizer: forwardRef(function Virtualizer(
+      { children }: { children: ReactNode },
+      ref,
+    ) {
+      useImperativeHandle(ref, () => ({ scrollToIndex: vi.fn() }));
+      return <ol>{children}</ol>;
+    }),
+  };
+});
 // Real React owns effects, refs and subscriptions. Only independent child UI is
 // reduced here; MessageRow/MessageComposer retain their own mounted suites.
 vi.mock("../relay/react", () => {
@@ -202,6 +216,7 @@ function messagesHarness(
   // Install before mount so the first real layout effect sees the same geometry.
   let height = 4000,
     top = 0;
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
   vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(
     () => height,
@@ -213,6 +228,21 @@ function messagesHarness(
       top = Math.max(0, Math.min(value, height - 600));
     },
   });
+  const frames = new Map<number, FrameRequestCallback>();
+  let frameId = 0;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frames.set(++frameId, callback);
+    return frameId;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+  const frame = () => {
+    act(() => {
+      for (const [id, callback] of [...frames]) {
+        frames.delete(id);
+        callback(0);
+      }
+    });
+  };
   const close = vi.fn(),
     bubble = vi.fn();
   const props = {
@@ -247,7 +277,8 @@ function messagesHarness(
     get element() {
       return element;
     },
-    render(strict = false) {
+    frame,
+    render(strict = false, runFrame = true) {
       act(() => {
         published = { ...snapshot };
         for (const view of views)
@@ -263,6 +294,7 @@ function messagesHarness(
       }
       element =
         screen.queryByRole("region", { name: "Thread messages" }) ?? element;
+      if (runFrame) frame();
       return element;
     },
     rerenderProps() {
@@ -526,9 +558,9 @@ it.each([false, true])(
     (document.activeElement as HTMLElement).blur();
     h.snapshot.targetStatus = "ready";
     h.snapshot.target = row;
-    h.render();
+    h.render(false, false);
     h.snapshot.status = "ready";
-    h.render();
+    h.render(false, false);
     if (deactivateBeforeReveal) {
       expect(navigation.complete).not.toHaveBeenCalled();
       // Props alone complete the background visit; the snapshot is unchanged.
@@ -649,6 +681,22 @@ it("positions after successful history loading, then follows live replies withou
   expect(h.view.refresh).toHaveBeenCalledTimes(1); // Initial open only.
   expect(h.view.loadMore).not.toHaveBeenCalled();
 });
+it.each(["wheel", "pointerDown", "keyDown"] as const)(
+  "keeps following after %s input at the bottom without a scroll event",
+  (handler) => {
+    const h = messagesHarness();
+    h.render();
+    expect(h.element.scrollTop).toBe(3400);
+    fireEvent[handler](h.element, { deltaY: 100, key: "End" });
+    h.snapshot.replies = [{ ...row, id: "live", content: "Live at bottom" }];
+    h.resize(4800);
+    h.render();
+    expect(h.element.scrollTop).toBe(4200);
+    expect(
+      screen.queryByRole("button", { name: /Jump to latest|new message/ }),
+    ).toBeNull();
+  },
+);
 it("preserves reading above the bottom through live updates and refresh, then resumes following on return", () => {
   const h = messagesHarness();
   h.render();
@@ -780,15 +828,35 @@ it.each([
   { gap: 79, follows: true },
   { gap: 80, follows: false },
 ])(
-  "uses the main timeline's near-bottom threshold: gap=$gap",
+  "reattaches when scrolling back toward the bottom: gap=$gap",
   ({ gap, follows }) => {
     const h = messagesHarness();
     h.render();
+    h.scroll(500);
     h.scroll(3400 - gap);
     h.snapshot.replies = [{ ...row, id: "new" }];
     h.resize(4800);
     h.render();
     expect(h.element.scrollTop).toBe(follows ? 4200 : 3400 - gap);
+  },
+);
+it.each([2, 40, 79])(
+  "detaches on an upward scroll of %ipx and indicates a live reply",
+  (gap) => {
+    const h = messagesHarness();
+    h.render();
+    h.scroll(3400 - gap);
+    expect(
+      screen.getByRole("button", { name: "Jump to latest" }),
+    ).toBeVisible();
+    h.snapshot.replies = [
+      ...h.snapshot.replies,
+      { ...row, id: "live", createdAt: 1000 },
+    ];
+    h.resize(4800);
+    h.render();
+    expect(h.element.scrollTop).toBe(3400 - gap);
+    expect(screen.getByRole("button", { name: "1 new message" })).toBeVisible();
   },
 );
 it("finishes automatic pages before initial positioning and preserves a reader’s intervening scroll", () => {

@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, settle } from "./timeline.mjs";
 
 test.use({
   productionBroker: true,
@@ -520,6 +520,11 @@ for (const width of [1492, 1280, 1024, 700, 390])
       }
     };
     await page.setViewportSize({ width, height: 950 });
+    // press() does not wait for inert to clear. Exercise the expansion only
+    // after the ordinary thread has exposed its positioned, interactive rows.
+    await expect(
+      panel.getByRole("region", { name: "Thread messages" }),
+    ).not.toHaveAttribute("data-positioning");
     await expandAll();
     // Retain the existing continuation-clock contract on a real same-parent
     // sibling now that crossing a branch deliberately repeats the author.
@@ -557,8 +562,29 @@ for (const width of [1492, 1280, 1024, 700, 390])
           history.getBoundingClientRect().top -
           history.clientHeight / 2;
       });
+      // Scroll delivery is asynchronous. Wait for the setup scroll to settle
+      // and Virtua to restore hit testing before starting the pointer journey.
+      await settle(
+        page,
+        panel.getByRole("region", { name: "Thread messages" }),
+      );
+      await expect(panel.locator("[data-thread-rows] > ol")).not.toHaveCSS(
+        "pointer-events",
+        "none",
+      );
       const restingHeight = (await row.boundingBox()).height;
-      await row.hover();
+      // The row is already positioned. locator.hover() scrolls it again on
+      // each hit-test retry, keeping Virtua's during-scroll pointer suppression
+      // alive in WebKit. Move the real pointer without issuing another scroll.
+      await expect
+        .poll(async () => {
+          const box = await row
+            .locator('[class*="_text_"], [class*="_plainText_"]')
+            .boundingBox();
+          await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+          return row.evaluate((node) => node.matches(":hover"));
+        })
+        .toBe(true);
       expect((await row.boundingBox()).height).toBe(restingHeight);
       // Every reply, nested or not, exposes the same full bar. Revealing it must
       // not reflow the row.

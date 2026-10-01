@@ -864,7 +864,8 @@ On a supporting relay, the panel opens at the newest 10 replies and loads older
 pages of 50 when you scroll upward; there is no Load more replies button. It validates
 signed NIP-CW thread bounds on every page. A prior scroll gesture wins over initial
 bottom placement. New replies arrive through the existing session and the panel
-follows near the bottom, preserving reading position above it. Sending a reply is
+follows at the bottom. Scrolling upward leaves follow mode and shows Jump to
+latest; scrolling back within 80px of the end resumes following. Sending a reply is
 explicit navigation intent and reveals the new local row.
 
 **Bounded history:** strict mode retains at most ten pages (10 initial replies

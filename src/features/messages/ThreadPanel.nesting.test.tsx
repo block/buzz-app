@@ -7,7 +7,9 @@ import {
   render,
   screen,
   within,
+  waitFor,
 } from "@testing-library/react";
+import { Children, type ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createAgentLibrary } from "../agents/library";
@@ -18,6 +20,16 @@ import type { MessageComposerProps } from "./MessageComposer";
 import type { MessageRowProps } from "./MessageRow";
 import { ThreadPanel } from "./ThreadPanel";
 
+// Nesting/focus policy uses real React; browser tests own virtual row layout.
+vi.mock("virtua", () => ({
+  Virtualizer: ({ children }: { children: ReactNode }) => (
+    <ol>
+      {Children.map(children, (child) => (
+        <li>{child}</li>
+      ))}
+    </ol>
+  ),
+}));
 vi.mock("./use-reading", () => ({
   Reading: () => null,
   readingPositioned: () => {},
@@ -58,9 +70,20 @@ vi.mock("./MessageComposer", () => ({
 }));
 beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = vi.fn();
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
 });
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
 function row(id: string, replyParentId?: string): ChannelMessage {
@@ -79,6 +102,20 @@ function row(id: string, replyParentId?: string): ChannelMessage {
   };
 }
 function setup(messageId = "root") {
+  const frames = new Map<number, FrameRequestCallback>();
+  let nextFrame = 0;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frames.set(++nextFrame, callback);
+    return nextFrame;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+  const frame = () =>
+    act(() => {
+      for (const [id, callback] of [...frames]) {
+        frames.delete(id);
+        callback(0);
+      }
+    });
   let snapshot: ThreadSnapshot = {
     root: row("root"),
     replies: [
@@ -125,18 +162,21 @@ function setup(messageId = "root") {
       onOpenLink={() => false}
     />,
   );
+  frame();
   return {
     setRoot(root: ChannelMessage | undefined) {
       act(() => {
         snapshot = { ...snapshot, root };
         for (const fn of listeners) fn();
       });
+      frame();
     },
     update(replies: ChannelMessage[]) {
       act(() => {
         snapshot = { ...snapshot, replies };
         for (const fn of listeners) fn();
       });
+      frame();
     },
   };
 }
@@ -176,7 +216,7 @@ it("retains expansion and parent identity through live zero-to-one child transit
     screen.queryByRole("button", { name: "View 1 reply" }),
   ).not.toBeInTheDocument();
 });
-it("targets a child, cancels on repeated Reply, resets after send and reveals the own branch", () => {
+it("targets a child, cancels on repeated Reply, resets after send and reveals the own branch", async () => {
   const h = setup();
   fireEvent.click(screen.getByRole("button", { name: "Reply to parent" }));
   const composer = screen.getByLabelText("Composer");
@@ -191,7 +231,9 @@ it("targets a child, cancels on repeated Reply, resets after send and reveals th
   h.update([row("parent", "root"), row("new", "parent")]);
   expect(screen.getByText("new")).toBeVisible();
   expect(composer).not.toHaveAttribute("data-parent");
-  expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
+  await waitFor(() =>
+    expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled(),
+  );
 });
 it("reveals all available ancestors for a selected descendant, including late history", () => {
   const h = setup("grandchild");
@@ -274,14 +316,16 @@ it("keeps ordinary replies flat and visible when nested branches open or new rep
     expect(screen.getByText(id)).toBeVisible();
   expect(screen.getByLabelText("Composer")).toBeVisible();
 });
-it("an own ordinary reply stays visible without opening a nested branch", () => {
+it("an own ordinary reply stays visible without opening a nested branch", async () => {
   const h = setup();
   fireEvent.click(screen.getByRole("button", { name: "Send fixture reply" }));
   h.update([row("parent", "root"), row("child", "parent"), row("new", "root")]);
   expect(screen.getByText("new")).toBeVisible();
   expect(screen.getByText("parent")).toBeVisible();
   expect(screen.queryByText("child")).not.toBeInTheDocument();
-  expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
+  await waitFor(() =>
+    expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled(),
+  );
 });
 
 it("does not offer collapse controls for an empty thread", () => {

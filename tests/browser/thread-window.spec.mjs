@@ -93,7 +93,13 @@ test("older-page retry repeats the failed continuation at the scrollback cue", a
     await expect(replies).toHaveCount(10);
     await history.hover();
     await page.mouse.wheel(0, -4000);
-    await expect(replies).toHaveCount(60);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => window.messagesFixture.threadSnapshot().replies.length,
+        ),
+      )
+      .toBe(60);
     await page.evaluate(() => window.messagesFixture.failOlderPages(2));
     // Re-establish the scrollback boundary after the first page settles. One
     // wheel step alone can stop mid-history in WebKit's hosted viewport.
@@ -121,7 +127,13 @@ test("older-page retry repeats the failed continuation at the scrollback cue", a
         page.evaluate(() => window.messagesFixture.report.filters.length),
       )
       .toBe(5);
-    await expect(replies).toHaveCount(110);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => window.messagesFixture.threadSnapshot().replies.length,
+        ),
+      )
+      .toBe(110);
     await expect(retry).toHaveCount(0);
     const filters = await page.evaluate(
       () => window.messagesFixture.report.filters,
@@ -154,15 +166,26 @@ test("legacy continuation failure exposes recovery after retained replies", asyn
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?failLegacyContinuation=1`,
     );
     const history = page.getByRole("region", { name: "Thread messages" });
-    const replies = history.locator("ol [data-message-id]");
     // The first page is started on mount; the next page is a separate read.
-    await expect(replies).toHaveCount(50);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => window.messagesFixture.threadSnapshot().replies.length,
+        ),
+      )
+      .toBe(50);
     const error = history.getByRole("alert");
     const retry = history.getByRole("button", { name: "Retry thread" });
     await expect(error).toContainText("Legacy continuation failed");
     await expect(retry).toBeVisible();
     await retry.click();
-    await expect(replies).toHaveCount(61);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => window.messagesFixture.threadSnapshot().replies.length,
+        ),
+      )
+      .toBe(61);
     await expect(error).toHaveCount(0);
   } finally {
     await server.close();
@@ -222,7 +245,13 @@ test("older-page loading adds no row or layout shift while the request is held",
     ).toEqual(before);
     expect(await replies.count()).toBe(10);
     await page.evaluate(() => window.messagesFixture.releaseOlderPage());
-    await expect(replies).toHaveCount(60);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => window.messagesFixture.threadSnapshot().replies.length,
+        ),
+      )
+      .toBe(60);
     await expect(cue).toHaveCount(0);
   } finally {
     await page
@@ -308,23 +337,42 @@ test("newest window positions immediately; scrollback preserves the visible repl
       return reading.dataset.messageId;
     });
     await page.evaluate(() => window.messagesFixture.releaseOlderPage());
-    await expect(replies).toHaveCount(60);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => window.messagesFixture.threadSnapshot().replies.length,
+        ),
+      )
+      .toBe(60);
     await expect(history.getByText("Loading older replies…")).toHaveCount(0);
     const readingReply = history.locator(`ol [data-message-id="${readingId}"]`);
     await expect(readingReply).toBeInViewport();
     // The page was prepended, not substituted for the reply being read.
     expect(
-      await replies.evaluateAll(
-        (rows, id) => rows.findIndex((row) => row.dataset.messageId === id),
+      await page.evaluate(
+        (id) =>
+          window.messagesFixture
+            .threadSnapshot()
+            .replies.findIndex((row) => row.id === id),
         readingId,
       ),
     ).toBeGreaterThanOrEqual(50);
     await page.evaluate(() => window.messagesFixture.live());
-    await expect(replies).toHaveCount(61);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => window.messagesFixture.threadSnapshot().replies.length,
+        ),
+      )
+      .toBe(61);
     await expect(readingReply).toBeInViewport();
-    await expect(
-      history.getByText("Live reply", { exact: true }),
-    ).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => window.messagesFixture.threadSnapshot().replies.at(-1)?.content,
+        ),
+      )
+      .toBe("Live reply");
     // Demand each remaining older page. No automatic full-history waterfall.
     for (const count of [111, 161, 211, 261, 305]) {
       await history.evaluate((el) => {
@@ -333,12 +381,19 @@ test("newest window positions immediately; scrollback preserves the visible repl
       });
       await history.hover();
       await page.mouse.wheel(0, -300);
-      await expect(replies).toHaveCount(count);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => window.messagesFixture.threadSnapshot().replies.length,
+          ),
+        )
+        .toBe(count);
     }
-    expect(await history.locator("ol [data-message-id]").count()).toBe(305);
-    const ids = await history
-      .locator("ol [data-message-id]")
-      .evaluateAll((rows) => rows.map((r) => r.dataset.messageId));
+    const ids = await page.evaluate(() =>
+      window.messagesFixture.threadSnapshot().replies.map((row) => row.id),
+    );
+    expect(ids).toHaveLength(305);
+    expect(await replies.count()).toBeLessThan(150);
     expect(new Set(ids).size).toBe(305);
     expect(
       (await page.evaluate(() => window.messagesFixture.report.filters)).every(
@@ -391,13 +446,22 @@ test("older-page retry reparents a visible reply under its late parent", async (
       .toBe(3);
     await child.scrollIntoViewIfNeeded();
     await expect(child).toBeInViewport();
+    const childTop = (await child.boundingBox()).y;
     await page.evaluate(() => window.messagesFixture.releaseOlderPage());
     const parent = history.getByText("First root reply 292", { exact: true });
     await expect(parent).toBeVisible();
     await expect(child).toBeInViewport();
-    await expect(replies).toHaveCount(60);
-    // The missing parent must reparent this child without losing it from the
-    // reader's viewport; the exact Y coordinate is not the user contract.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => window.messagesFixture.threadSnapshot().replies.length,
+        ),
+      )
+      .toBe(60);
+    await expect
+      .poll(async () => Math.abs((await child.boundingBox()).y - childTop))
+      .toBeLessThan(2);
+    // A large virtual buffer must not conceal a displaced reading anchor.
     expect(
       await parent.evaluate((el) =>
         el.closest("li")?.textContent.includes("Nested window child"),
@@ -452,11 +516,15 @@ test("older page reparents a visible reply under its late parent", async ({
       .toBe(2);
     await child.scrollIntoViewIfNeeded();
     await expect(child).toBeInViewport();
+    const childTop = (await child.boundingBox()).y;
     await page.evaluate(() => window.messagesFixture.releaseOlderPage());
     const parent = history.getByText("First root reply 292", { exact: true });
     await expect(parent).toBeVisible();
     await expect(child).toBeVisible();
     await expect(child).toBeInViewport();
+    await expect
+      .poll(async () => Math.abs((await child.boundingBox()).y - childTop))
+      .toBeLessThan(2);
     // Verify the reply moved under its real parent, not just that it remained flat.
     expect(
       await parent.evaluate((el) =>

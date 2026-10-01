@@ -371,9 +371,18 @@ const owner = createRelaySession({
   },
 });
 owner.session.channels.ensureList();
+let currentThread: ReturnType<typeof owner.session.thread> | undefined;
+const threadSession = {
+  ...owner.session,
+  thread(...args: Parameters<typeof owner.session.thread>) {
+    currentThread = owner.session.thread(...args);
+    return currentThread;
+  },
+};
 Object.assign(window, {
   messagesFixture: {
     report,
+    threadSnapshot: () => currentThread?.snapshot(),
     holdOlderPage() {
       holdOlderPage = true;
     },
@@ -419,8 +428,8 @@ Object.assign(window, {
       events.push(event);
       incoming([event]);
     },
-    live() {
-      const event = message(viewer, channelOne, "Live reply", 1000, [
+    live(content = "Live reply") {
+      const event = message(viewer, channelOne, content, 1000, [
         ["e", roots[0].id, "", "reply"],
       ]);
       events.push(event);
@@ -509,7 +518,7 @@ function Fixture() {
         {!review && (
           <ThreadPanel
             extensions={extensions}
-            session={owner.session}
+            session={threadSession}
             scope={scope}
             channelId={channelId}
             channelName={channelId}

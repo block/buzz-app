@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, settle } from "./timeline.mjs";
 
 test.use({
   productionBroker: true,
@@ -237,7 +237,7 @@ test.describe("large thread opening", () => {
     threadUnread: true,
     presenceThreadAuthors: 300,
   });
-  test("300-author thread opening retains bounded traversal and measures cold/reopened rendering", async ({
+  test("300-author thread windows cold/reopened rendering and returns warm without fresh responses", async ({
     page,
     app,
   }) => {
@@ -250,68 +250,115 @@ test.describe("large thread opening", () => {
       name: "Thread messages",
       exact: true,
     });
-    for (const phase of ["cold", "reopened"]) {
-      const timing = await trigger.evaluate(async (button) => {
-        const start = performance.now();
-        button.click();
-        let firstPaint;
-        await new Promise((resolve, reject) => {
-          const deadline = setTimeout(
-            () => reject(new Error("thread did not finish traversal")),
-            10000,
-          );
-          const check = () => {
-            const panel = document.querySelector(
-              '[aria-label="Thread messages"]',
-            );
-            const rows = panel?.querySelectorAll("[data-message-id]");
-            const rect = panel?.getBoundingClientRect();
-            const visible =
-              rect &&
-              [...rows].some((row) => {
-                const bounds = row.getBoundingClientRect();
-                return (
-                  bounds.height > 0 &&
-                  bounds.bottom > rect.top &&
-                  bounds.top < rect.bottom
-                );
-              });
-            if (visible && firstPaint === undefined)
-              firstPaint = performance.now() - start;
-            if (
-              !visible ||
-              rows.length !== 301 ||
-              panel.textContent.includes("Loading thread…")
-            )
-              return requestAnimationFrame(check);
-            requestAnimationFrame(() => {
-              clearTimeout(deadline);
-              resolve();
-            });
-          };
-          requestAnimationFrame(check);
+    const lastId = app.presenceThread.replies.at(-1).id;
+    for (const phase of ["cold", "reopened", "warm-return"]) {
+      let target = trigger;
+      const gate = Promise.withResolvers();
+      let held = 0;
+      if (phase === "warm-return") {
+        await page.locator('button[data-channel-id="beta"]').click();
+        await expect(history).toHaveCount(0);
+        await expect(
+          page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+        ).toBeVisible();
+        await settle(page);
+        // Returning must present the cached window even if every refresh stalls.
+        await page.route("**/api/relay/**/query", async (route) => {
+          held++;
+          await gate.promise;
+          await route.fallback();
         });
-        return {
-          firstVisibleMs: firstPaint,
-          fullTraversalPaintMs: performance.now() - start,
-        };
-      });
-      app.report.measurements.push({
-        scenario: "300-author-thread",
-        phase,
-        ...timing,
-      });
-      await expect(history.locator("[data-message-id]")).toHaveCount(301);
-      await expect(
-        history.getByText("Distinct author reply 299", { exact: true }),
-      ).toBeInViewport();
-      await page
-        .getByRole("button", {
-          name: /^Close (?:thread|Thread tab)$/,
-          exact: true,
-        })
-        .click();
-      await expect(history).toHaveCount(0);
+        target = page.locator('button[data-channel-id="alpha"]');
+      }
+      try {
+        const timing = await target.evaluate(async (button, lastId) => {
+          const start = performance.now();
+          button.click();
+          let firstVisibleMs;
+          let mountedRows;
+          await new Promise((resolve, reject) => {
+            const deadline = setTimeout(
+              () =>
+                reject(
+                  new Error("thread did not present its newest virtual window"),
+                ),
+              10000,
+            );
+            const check = () => {
+              const panel = document.querySelector(
+                'section[aria-label="Thread messages"]',
+              );
+              const last = panel?.querySelector(
+                `[data-message-id="${lastId}"]`,
+              );
+              const box = panel?.getBoundingClientRect();
+              const row = last?.getBoundingClientRect();
+              const ready =
+                box &&
+                row &&
+                row.height > 0 &&
+                row.bottom > box.top &&
+                row.top < box.bottom &&
+                !panel.hasAttribute("data-positioning") &&
+                getComputedStyle(last).visibility !== "hidden";
+              if (!ready) return requestAnimationFrame(check);
+              firstVisibleMs = performance.now() - start;
+              mountedRows = panel.querySelectorAll("[data-message-id]").length;
+              requestAnimationFrame(() => {
+                clearTimeout(deadline);
+                resolve();
+              });
+            };
+            requestAnimationFrame(check);
+          });
+          return {
+            firstVisibleMs,
+            presentationFrameMs: performance.now() - start,
+            mountedRows,
+          };
+        }, lastId);
+        app.report.measurements.push({
+          scenario: "300-author-thread",
+          phase,
+          ...timing,
+        });
+        expect(timing.mountedRows).toBeLessThan(80);
+        await expect(
+          history.locator(`[data-message-id="${lastId}"]`),
+        ).toBeInViewport();
+        // Windowing changes presentation, not the complete legacy traversal.
+        await expect
+          .poll(() =>
+            page.evaluate((id) => {
+              const view = window.fixtureRelay
+                .snapshot()
+                .session.thread("alpha", id);
+              try {
+                return view.snapshot().replies.length;
+              } finally {
+                view.dispose();
+              }
+            }, root.id),
+          )
+          .toBe(300);
+        if (phase === "warm-return") {
+          await expect.poll(() => held).toBeGreaterThan(0);
+          expect(timing.presentationFrameMs).toBeLessThan(400);
+        }
+      } finally {
+        gate.resolve();
+        if (phase === "warm-return")
+          await page.unrouteAll({ behavior: "wait" });
+      }
+      if (phase === "cold") {
+        await page
+          .getByRole("button", {
+            name: /^Close (?:thread|Thread tab)$/,
+            exact: true,
+          })
+          .click();
+        await expect(history).toHaveCount(0);
+      }
     }
   });
 });

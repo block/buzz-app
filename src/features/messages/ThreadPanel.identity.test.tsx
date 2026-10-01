@@ -8,8 +8,8 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { StrictMode } from "react";
-import { afterAll, afterEach, expect, it, vi } from "vitest";
+import { StrictMode, type ReactNode } from "react";
+import { afterAll, afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ChannelMessage } from "../relay/contracts";
 import { createRelaySession } from "../relay/session";
 import type { LiveCallbacks } from "../relay/live";
@@ -22,6 +22,15 @@ import {
 } from "../relay/testing";
 import { ThreadPanel } from "./ThreadPanel";
 
+// Identity is checked with small mounted branches; real windowing and scroll
+// geometry are exercised by browser journeys, not this jsdom lifecycle suite.
+vi.mock("virtua", () => ({
+  Virtualizer: ({ children }: { children: ReactNode }) => <ol>{children}</ol>,
+}));
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+});
 const bodyRender = vi.fn();
 vi.mock("./MessageMarkdown", () => ({
   MessageMarkdown: ({ row }: { row: ChannelMessage }) => {
@@ -49,6 +58,7 @@ afterAll(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
 });
 
 it("retains mounted rows through a deferred real-session page and profile noise", async () => {
@@ -117,7 +127,9 @@ it("retains mounted rows through a deferred real-session page and profile noise"
     (request) => request !== initial && !request.signal?.aborted,
   );
   if (!page) throw new Error("Deferred thread page was not requested");
-  expect(screen.queryByText("Loading thread…")).not.toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.queryByText("Loading thread…")).not.toBeInTheDocument(),
+  );
   bodyRender.mockClear();
 
   // An unrelated signed profile preserves the selected map, but the shared

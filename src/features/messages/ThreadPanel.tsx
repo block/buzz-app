@@ -19,6 +19,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { XIcon } from "../../shared/design-system/icons/index";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage } from "../relay/contracts";
@@ -288,14 +289,72 @@ function ThreadMessages({
   const profiles = useRowProfiles(session.profiles, rows);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
+  const virtualizer = useRef<VirtualizerHandle>(null);
+  const intro = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ width: 0, height: 0, introHeight: 0 });
+  const [focusedId, setFocusedId] = useState<string>();
+  const [pinnedIds, setPinnedIds] = useState<ReadonlySet<string>>(new Set());
+  const keepRowMounted = useCallback((id: string) => {
+    setPinnedIds((ids) => new Set(ids).add(id));
+    return () =>
+      setPinnedIds((ids) => {
+        const next = new Set(ids);
+        next.delete(id);
+        return next;
+      });
+  }, []);
+  const branches = tree.children.get(undefined) ?? [];
+  const previousBranches = useRef(branches);
+  const prepend =
+    branches.length > previousBranches.current.length &&
+    previousBranches.current.length > 0 &&
+    previousBranches.current.every(
+      (row, index) =>
+        branches[branches.length - previousBranches.current.length + index]
+          ?.id === row.id,
+    );
+  useLayoutEffect(() => {
+    previousBranches.current = branches;
+  }, [branches]);
+  const branchIndex = (id: string | undefined) => {
+    if (!id) return -1;
+    if (id === snapshot.root?.id) return -1;
+    const ancestors = tree.ancestors(id);
+    const index = branches.findIndex(
+      (row) => row.id === id || ancestors.includes(row.id),
+    );
+    return index;
+  };
+  const intent = useRef(0);
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (!element) return;
+    const measure = () => {
+      const next = {
+        width: element.clientWidth,
+        height: element.clientHeight,
+        introHeight: intro.current?.getBoundingClientRect().height ?? 0,
+      };
+      setSize((current) =>
+        current.width === next.width &&
+        current.height === next.height &&
+        current.introHeight === next.introHeight
+          ? current
+          : next,
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    if (intro.current) observer.observe(intro.current);
+    return () => observer.disconnect();
+  }, []);
   const positioned = useRef(false);
+  const positioningStarted = useRef<number | undefined>(undefined);
   const readingSettled = useRef(false);
   const [initialPositioned, setInitialPositioned] = useState(false);
   const follow = useRef(true);
-  const jumpingToLatest = useRef(false);
-  const jumpTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined,
-  );
+  const measuredPosition = useRef({ offset: 0, height: 0 });
   const previousReplies = useRef({
     ids: new Set(snapshot.replies.map((reply) => reply.id)),
     latestCreatedAt: Math.max(
@@ -306,12 +365,6 @@ function ThreadMessages({
   });
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
-  useEffect(
-    () => () => {
-      if (jumpTimer.current !== undefined) clearTimeout(jumpTimer.current);
-    },
-    [],
-  );
   const olderAnchor = useRef<
     { id: string; top: number; ancestors: readonly string[] } | undefined
   >(undefined);
@@ -330,7 +383,7 @@ function ThreadMessages({
   // within this commit/layout expansion; a later user expansion must not restore it.
   const selectedBranchRef = useMemo(() => {
     let restore = false;
-    return (branch: HTMLLIElement | null) => {
+    return (branch: HTMLElement | null) => {
       if (!branch) return;
       const row = branch.querySelector<HTMLElement>("[data-message-id]");
       if (
@@ -360,9 +413,7 @@ function ThreadMessages({
     const row = selectedRow();
     const container = scroller.current;
     return row && container
-      ? row.getBoundingClientRect().top -
-          container.getBoundingClientRect().top +
-          container.scrollTop
+      ? row.getBoundingClientRect().top - container.getBoundingClientRect().top
       : undefined;
   }, [selectedRow]);
   const completeTarget = useCallback(() => {
@@ -374,6 +425,7 @@ function ThreadMessages({
     navigation?.complete({ status: "opened" });
   }, [navigation, selectedOffset]);
   const prepareTarget = useCallback(() => {
+    intent.current++;
     follow.current = false;
   }, []);
   const revealedAncestors = useRef(new Set<string>());
@@ -420,7 +472,10 @@ function ThreadMessages({
     messageId,
     signal: rootTarget || !active ? undefined : navigation?.signal,
     ready:
-      snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
+      !!size.width &&
+      !!size.height &&
+      snapshot.targetStatus === "ready" &&
+      snapshot.target?.id === messageId,
     complete: completeTarget,
     prepare: prepareTarget,
   });
@@ -575,12 +630,17 @@ function ThreadMessages({
           (snapshot.direction !== "older" && snapshot.canLoadMore)))
     )
       return;
+    if (!size.width || !size.height) return;
+    // Virtua owns measuring and retaining the requested destination. Thread
+    // code supplies reading intent, not a second scroll-height correction.
+    const scheduledIntent = intent.current;
+    if (!positioned.current) positioningStarted.current ??= performance.now();
     if (olderAnchor.current) {
       const anchor = olderAnchor.current;
       const added = tree
         .ancestors(anchor.id)
         .filter((id) => !anchor.ancestors.includes(id));
-      if (added.every((id) => expanded.has(id))) {
+      if (!prepend && added.length && added.every((id) => expanded.has(id))) {
         const row = [
           ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
         ].find((row) => row.dataset.messageId === anchor.id);
@@ -589,34 +649,103 @@ function ThreadMessages({
             element,
             row.getBoundingClientRect().top - anchor.top,
           );
-        if (snapshot.status !== "loading") olderAnchor.current = undefined;
       }
+      if (
+        snapshot.status !== "loading" &&
+        added.every((id) => expanded.has(id))
+      )
+        olderAnchor.current = undefined;
     }
     if (targetAnchor.current !== undefined) {
+      // Ordinary prepends belong exclusively to Virtua. A late ancestor can
+      // reparent an exact reply; preserve its viewport position only until the
+      // remaining history is exhausted (or newer input retires it).
       const offset = selectedOffset();
-      if (offset !== undefined) {
+      if (!prepend && offset !== undefined)
         correctScrollTop(element, offset - targetAnchor.current);
-        targetAnchor.current = offset;
-        follow.current = false;
-      }
       if (snapshot.status !== "loading" && !snapshot.canLoadMore)
         targetAnchor.current = undefined;
     }
-    // Initial positioning waits for one strict page or the legacy bounded walk.
-    // subsequent live changes follow only while the reader is at the bottom.
-    if (follow.current) element.scrollTop = element.scrollHeight;
-    positioned.current = true;
-    setInitialPositioned(true);
-    readingPositioned(element);
-    if (jumpingToLatest.current) {
-      setShowJumpToLatest(false);
-    } else {
+    let frame = 0;
+    const revealPosition = () => {
+      if (positioned.current || intent.current !== scheduledIntent) return;
+      if (follow.current && branches.length) {
+        const last = element.querySelector<HTMLElement>(
+          `[data-message-id="${branches.at(-1)?.id}"]`,
+        );
+        if (
+          !last ||
+          getComputedStyle(last).visibility === "hidden" ||
+          Math.abs(
+            element.scrollHeight - element.clientHeight - element.scrollTop,
+          ) > 1
+        )
+          return;
+      }
+      reveal();
+    };
+    const reveal = () => {
+      if (positioned.current) return;
+      positioned.current = true;
+      setInitialPositioned(true);
+      measuredPosition.current = {
+        offset: element.scrollTop,
+        height: element.scrollHeight,
+      };
+      readingPositioned(element);
       const bottom =
         element.scrollHeight - element.clientHeight - element.scrollTop < 80;
       setShowJumpToLatest(!bottom);
       if (bottom) setNewMessageCount(0);
-    }
+    };
+    const followLatest = () => {
+      if (!follow.current || !branches.length) return;
+      virtualizer.current?.scrollToIndex(branches.length - 1, {
+        align: "end",
+        offset: Number.parseFloat(getComputedStyle(element).paddingBottom) || 0,
+      });
+    };
+    // Virtua's imperative target expires after measurement settles. Media can
+    // grow later: renew bottom intent on committed extent changes, not on
+    // scroll events. Measurement and prepend corrections remain Virtua-owned.
+    const list = element.querySelector<HTMLOListElement>(
+      "[data-thread-rows] > ol",
+    );
+    let height = list?.style.height;
+    const observer = new MutationObserver(() => {
+      if (list?.style.height === height) return;
+      height = list?.style.height;
+      followLatest();
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(revealPosition);
+    });
+    if (list)
+      observer.observe(list, { attributes: true, attributeFilter: ["style"] });
+    followLatest();
+    frame = requestAnimationFrame(revealPosition);
+    // Geometry must never leave an otherwise usable thread invisible forever.
+    // This releases presentation only; it does not claim the bottom was reached.
+    const deadline = !positioned.current
+      ? setTimeout(
+          () => {
+            if (intent.current === scheduledIntent) reveal();
+          },
+          Math.max(
+            0,
+            1000 -
+              (performance.now() -
+                (positioningStarted.current ?? performance.now())),
+          ),
+        )
+      : undefined;
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(deadline);
+      observer.disconnect();
+    };
   }, [
+    size,
+    prepend,
     active,
     snapshot.status,
     snapshot.targetStatus,
@@ -653,47 +782,43 @@ function ThreadMessages({
       readingSettled.current = true;
       readingPositioned(scroller.current);
     }
-  }, [active, navigation, rootTarget, revealed, snapshot]);
+  }, [active, navigation, rootTarget, revealed, snapshot, initialPositioned]);
   // An own send can land in the middle of a branch, not at the list bottom.
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry DOM lookup after history or branch visibility changes.
   useLayoutEffect(() => {
     if (!sent) return;
-    const row = [
-      ...(scroller.current?.querySelectorAll<HTMLElement>(
-        "[data-message-id]",
-      ) ?? []),
-    ].find((element) => element.dataset.messageId === sent);
-    if (row) {
-      row.scrollIntoView({ block: "nearest" });
-      setSent(undefined);
-    }
+    const frame = requestAnimationFrame(() => {
+      const row = [
+        ...(scroller.current?.querySelectorAll<HTMLElement>(
+          "[data-message-id]",
+        ) ?? []),
+      ].find((element) => element.dataset.messageId === sent);
+      if (row) {
+        row.scrollIntoView({ block: "nearest" });
+        setSent(undefined);
+      }
+    });
+    return () => cancelAnimationFrame(frame);
   }, [sent, snapshot.replies, expanded]);
   const jumpToLatest = () => {
     const element = scroller.current;
     if (!element) return;
+    intent.current++;
+    olderAnchor.current = undefined;
     targetAnchor.current = undefined;
     positioned.current = true;
     follow.current = true;
-    jumpingToLatest.current = true;
     element.focus({ preventScroll: true });
     setShowJumpToLatest(false);
     setNewMessageCount(0);
-    element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
-    if (jumpTimer.current !== undefined) clearTimeout(jumpTimer.current);
-    jumpTimer.current = setTimeout(() => {
-      jumpTimer.current = undefined;
-      const current = scroller.current;
-      if (!current || !jumpingToLatest.current) return;
-      current.scrollTop = current.scrollHeight;
-      jumpingToLatest.current = false;
-    }, 1000);
+    virtualizer.current?.scrollToIndex(branches.length - 1, {
+      align: "end",
+      offset: Number.parseFloat(getComputedStyle(element).paddingBottom) || 0,
+    });
   };
   const keepReadingPosition = () => {
-    jumpingToLatest.current = false;
-    if (jumpTimer.current !== undefined) {
-      clearTimeout(jumpTimer.current);
-      jumpTimer.current = undefined;
-    }
+    intent.current++;
+    olderAnchor.current = undefined;
     olderDemand.current = true;
     targetAnchor.current = undefined;
     setInitialPositioned(true);
@@ -739,18 +864,21 @@ function ThreadMessages({
           layout={continuation ? "continuation" : "thread"}
           compactAvatar={depth > 0}
           retry={session.messages.retry}
+          keepMounted={keepRowMounted}
           {...(canSeekVideo ? { onMediaTime: handleMediaTime } : {})}
           {...(onOpenMediaReview && rootId
             ? { onOpenMediaReview: openRootMedia }
             : {})}
         />
       );
+      const Item = depth === 0 ? "div" : "li";
       return (
-        <li
+        <Item
           key={row.id}
           ref={row.id === messageId ? selectedBranchRef : undefined}
           className={styles.replyItem}
           data-layout={continuation ? "continuation" : "thread"}
+          data-reply-id={row.id}
         >
           {!parent && row.replyParentId && row.replyParentId !== rootId && (
             <p className={styles.threadNote}>
@@ -780,7 +908,10 @@ function ThreadMessages({
             depth={depth}
             open={expanded.has(row.id)}
             onExpand={() => {
+              setFocusedId(row.id);
+              intent.current++;
               follow.current = false;
+              olderAnchor.current = undefined;
               targetAnchor.current = undefined;
               setExpanded((current) => new Set([...current, row.id]));
             }}
@@ -789,7 +920,7 @@ function ThreadMessages({
               <ol>{renderReplies(row.id, depth + 1)}</ol>
             )}
           </ReplyBranch>
-        </li>
+        </Item>
       );
     });
   }
@@ -827,6 +958,19 @@ function ThreadMessages({
     captureOlderAnchor(element);
     void view.loadMore();
   };
+  const keptIndices = [
+    ...new Set([
+      ...[
+        focusedId,
+        sent,
+        olderAnchor.current?.id,
+        ...(navigation && !rootTarget ? [messageId] : []),
+        ...pinnedIds,
+      ]
+        .map(branchIndex)
+        .filter((index) => index >= 0),
+    ]),
+  ];
   const showOlderPageStatus =
     snapshot.direction === "older" &&
     snapshot.readKind === "older" &&
@@ -874,14 +1018,34 @@ function ThreadMessages({
             ].find((row) => row.dataset.messageId === anchor.id);
             if (row) anchor.top = row.getBoundingClientRect().top;
           }
-          const bottom =
-            element.scrollHeight - element.clientHeight - element.scrollTop <
-            80;
-          if (jumpingToLatest.current) return;
-          follow.current = bottom;
-          setShowJumpToLatest(!bottom);
-          if (bottom) setNewMessageCount(0);
+          const distance =
+            element.scrollHeight - element.clientHeight - element.scrollTop;
+          const previous = measuredPosition.current;
+          const movedUp =
+            element.scrollTop < previous.offset &&
+            element.scrollHeight >= previous.height;
+          // An upward gesture leaves follow mode immediately. Only movement back
+          // toward the end may use the near-bottom reattachment threshold.
+          follow.current = movedUp
+            ? distance <= 1
+            : follow.current || distance < 80;
+          measuredPosition.current = {
+            offset: element.scrollTop,
+            height: element.scrollHeight,
+          };
+          setShowJumpToLatest(!follow.current);
+          if (follow.current) setNewMessageCount(0);
           loadOlder();
+        }}
+        onFocus={(event) =>
+          setFocusedId(
+            event.target.closest<HTMLElement>("[data-reply-id]")?.dataset
+              .replyId,
+          )
+        }
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget))
+            setFocusedId(undefined);
         }}
         onWheel={(event) => {
           keepReadingPosition();
@@ -921,47 +1085,60 @@ function ThreadMessages({
           />
         )}
         <div data-thread-rows="" inert={positioning}>
-          {snapshot.root ? (
-            <MessageRow
-              extensions={extensions}
-              session={session}
-              scope={scope}
-              onReply={focusReply}
-              row={snapshot.root}
-              profile={profiles.get(snapshot.root.authorId)}
-              participantProfiles={profiles}
-              agentPubkeys={agentPubkeys}
-              media={session.media}
-              onOpenLink={onOpenLink}
-              canOpenLink={canOpenLink}
-              day={true}
-              layout="thread"
-              retry={session.messages.retry}
-              mediaMode="thread"
-              {...(mediaSeek
-                ? {
-                    mediaSeekTo: mediaSeek.seconds,
-                    mediaSeekRequest: mediaSeek.request,
-                  }
-                : {})}
-              {...(onOpenMediaReview
-                ? { onOpenMediaReview: openRootMedia }
-                : {})}
-            />
-          ) : snapshot.status !== "loading" ? (
-            <p className={styles.empty}>Original message unavailable.</p>
-          ) : null}
-          <ol>
+          <div ref={intro}>
+            {snapshot.root ? (
+              <MessageRow
+                extensions={extensions}
+                session={session}
+                scope={scope}
+                onReply={focusReply}
+                row={snapshot.root}
+                profile={profiles.get(snapshot.root.authorId)}
+                participantProfiles={profiles}
+                agentPubkeys={agentPubkeys}
+                media={session.media}
+                onOpenLink={onOpenLink}
+                canOpenLink={canOpenLink}
+                day={true}
+                layout="thread"
+                retry={session.messages.retry}
+                mediaMode="thread"
+                {...(mediaSeek
+                  ? {
+                      mediaSeekTo: mediaSeek.seconds,
+                      mediaSeekRequest: mediaSeek.request,
+                    }
+                  : {})}
+                {...(onOpenMediaReview
+                  ? { onOpenMediaReview: openRootMedia }
+                  : {})}
+              />
+            ) : snapshot.status !== "loading" ? (
+              <p className={styles.empty}>Original message unavailable.</p>
+            ) : null}
             {showOlderPageStatus && snapshot.error && (
-              <li className={styles.threadHistoryPageStatus}>
+              <div className={styles.threadHistoryPageStatus}>
                 <p role="alert">{snapshot.error}</p>
                 <Button type="button" onClick={retryThread}>
                   Retry thread
                 </Button>
-              </li>
+              </div>
             )}
-            {renderReplies(undefined)}
-          </ol>
+          </div>
+          {size.width > 0 && size.height > 0 && (
+            <Virtualizer
+              ref={virtualizer}
+              scrollRef={scroller}
+              shift={prepend}
+              bufferSize={1600}
+              keepMounted={keptIndices}
+              startMargin={size.introHeight}
+              as="ol"
+              item="li"
+            >
+              {renderReplies(undefined)}
+            </Virtualizer>
+          )}
         </div>
         {positioning || (snapshot.status === "loading" && !rows.length) ? (
           <p role="status">Loading thread…</p>
@@ -1035,6 +1212,8 @@ function ThreadMessages({
           onOpenLink={onOpenLink}
           canOpenLink={canOpenLink}
           onSend={(id) => {
+            intent.current++;
+            olderAnchor.current = undefined;
             targetAnchor.current = undefined;
             positioned.current = true;
             follow.current = !selectedParent;

@@ -7,7 +7,7 @@ import { cpus, hostname, loadavg, release } from "node:os";
 import { Session } from "node:inspector/promises";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { it, vi } from "vitest";
+import { afterEach, beforeEach, it, vi } from "vitest";
 import { ThreadPanel } from "./ThreadPanel";
 import {
   threadData,
@@ -25,6 +25,103 @@ vi.mock("./use-reading", () => ({
   Reading: () => null,
   readingPositioned: () => {},
 }));
+
+// Fixed geometry drives the real virtualizer. This remains a jsdom DOM-commit
+// profile, not a browser layout measurement; do not compare it to the old
+// all-rows-mounted harness. Browser warm-switch measurements cover real layout.
+const geometry = { width: 800, height: 600, rowHeight: 96 };
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(
+    geometry.width,
+  );
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(
+    geometry.height,
+  );
+  vi.spyOn(HTMLElement.prototype, "offsetParent", "get").mockImplementation(
+    function (this: HTMLElement) {
+      return this.parentElement;
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      return new DOMRect(
+        0,
+        0,
+        geometry.width,
+        this.matches("[data-message-scroller]")
+          ? geometry.height
+          : geometry.rowHeight,
+      );
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(
+    function (this: HTMLElement) {
+      const list = this.querySelector<HTMLElement>("[data-thread-rows] > ol");
+      return Math.max(
+        geometry.height,
+        geometry.rowHeight + Number.parseFloat(list?.style.height ?? "0"),
+      );
+    },
+  );
+  HTMLElement.prototype.scrollTo = function (options) {
+    if (typeof options === "object")
+      this.scrollTop = options.top ?? this.scrollTop;
+  };
+  HTMLElement.prototype.scrollBy = function (options) {
+    if (typeof options === "object") this.scrollTop += options.top ?? 0;
+  };
+  const offsets = new WeakMap<HTMLElement, number>();
+  vi.spyOn(HTMLElement.prototype, "scrollTop", "get").mockImplementation(
+    function (this: HTMLElement) {
+      return offsets.get(this) ?? 0;
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "scrollTop", "set").mockImplementation(
+    function (this: HTMLElement, value) {
+      const next = Math.max(
+        0,
+        Math.min(value, this.scrollHeight - geometry.height),
+      );
+      if (next === (offsets.get(this) ?? 0)) return;
+      offsets.set(this, next);
+      queueMicrotask(() => this.dispatchEvent(new Event("scroll")));
+    },
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      targets = new Set<Element>();
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) {
+        this.targets.add(target);
+        queueMicrotask(() => {
+          if (this.targets.has(target))
+            this.callback(
+              [
+                {
+                  target,
+                  contentRect: target.getBoundingClientRect(),
+                } as ResizeObserverEntry,
+              ],
+              this,
+            );
+        });
+      }
+      unobserve(target: Element) {
+        this.targets.delete(target);
+      }
+      disconnect() {
+        this.targets.clear();
+      }
+    },
+  );
+});
+afterEach(() => {
+  delete (HTMLElement.prototype as Partial<HTMLElement>).scrollTo;
+  delete (HTMLElement.prototype as Partial<HTMLElement>).scrollBy;
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 function mount(session: RelaySession, channelId: string, messageId: string) {
   const container = document.createElement("div");
@@ -58,17 +155,32 @@ function mount(session: RelaySession, channelId: string, messageId: string) {
     view: owned,
     async rendered() {
       const ready = () => {
-        const rows = container.querySelectorAll("[data-message-id]");
-        const expected = [owned.snapshot().root, ...owned.snapshot().replies];
-        if (rows.length !== expected.length) return false;
-        if (
-          !expected.every(
-            (row, i) =>
-              row && rows[i]?.getAttribute("data-message-id") === row.id,
-          )
-        )
-          return false;
-        return container.textContent?.includes("Author 7") === true;
+        const rows = [
+          ...container.querySelectorAll<HTMLElement>("[data-message-id]"),
+        ];
+        const snapshot = owned.snapshot();
+        const expected = [snapshot.root, ...snapshot.replies].filter(
+          (row) => !!row,
+        );
+        const ids = expected.map((row) => row.id);
+        const mounted = rows.map((row) => row.dataset.messageId);
+        // Full loaded history is checked by threadSample, not by DOM cardinality.
+        // Require the real virtual window to reach the newest reply and preserve
+        // canonical order without rendering the complete loaded history.
+        return (
+          rows.length > 1 &&
+          rows.length < expected.length &&
+          mounted[0] === snapshot.root?.id &&
+          mounted.at(-1) === snapshot.replies.at(-1)?.id &&
+          mounted.every(
+            (id, i) =>
+              id &&
+              ids.includes(id) &&
+              (i === 0 || ids.indexOf(id) > ids.indexOf(mounted[i - 1] ?? "")),
+          ) &&
+          !container.querySelector("[data-positioning]") &&
+          container.textContent?.includes("Author 7") === true
+        );
       };
       if (ready()) return;
       await new Promise<void>((resolve, reject) => {
@@ -87,6 +199,7 @@ function mount(session: RelaySession, channelId: string, messageId: string) {
           subtree: true,
           childList: true,
           characterData: true,
+          attributes: true,
         });
       });
     },
@@ -156,8 +269,12 @@ it("profiles the unchanged mounted app thread over signed HTTP, cold then reopen
   if (!output || !source) return;
   assert.deepEqual(provenance(), source, "source changed during measurement");
   const artifact = {
-    schema: 1,
+    schema: 2,
     workload,
+    presentation: {
+      geometry,
+      readiness: "root-and-newest-virtual-window-dom-commit",
+    },
     source,
     compatibility: {
       fixtureHash: data.hash,

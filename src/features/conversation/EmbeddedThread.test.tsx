@@ -6,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { EmbeddedThread } from "./EmbeddedThread";
@@ -68,6 +69,7 @@ vi.mock("../../shared/design-system/ui/Dialog", () => ({
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 function fixture(
@@ -81,6 +83,8 @@ function fixture(
       disconnect() {}
     },
   );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
   let captured: PanelProps | undefined;
   const panel = {
     key: "fixture",
@@ -252,7 +256,7 @@ it("keeps one channel visit while the thread is retargeted within a channel", ()
   expect(h.unread.enterChannel).toHaveBeenLastCalledWith("d");
 });
 
-it("offers recovery for a failed edit left in the outbox", () => {
+it("offers recovery for a failed edit left in the outbox", async () => {
   const h = fixture("stream", [
     {
       event: {
@@ -269,6 +273,9 @@ it("offers recovery for a failed edit left in the outbox", () => {
     } as unknown as OutgoingEvent,
   ]);
   render(<EmbeddedThread {...h.props} />);
+  await waitFor(() =>
+    expect(screen.queryByText("Loading thread…")).not.toBeInTheDocument(),
+  );
   expect(screen.getByRole("status")).toHaveTextContent(
     "Message edit: Relay refused the edit.",
   );

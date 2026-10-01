@@ -36,12 +36,19 @@ reporting that its process could not run. During Create, Start, or profile setup
 **Close** leaves the operation running and exposes the existing cards' recovery
 Stop. Late completion never closes a subsequently opened dialog. If an operation
 cannot be confirmed, refresh status before repeating it.
+
 Create is blocked with an explanation if this app’s runtime is unavailable;
 existing agents and profile retry remain intact.
 Without the dev broker, the native identity signs the owner authorization only
 for the key this host prepared for the pending Create. Native owner-scoped
 community resolution is also available; other broker-only helpers remain
 unavailable. Packaged support still requires attended native acceptance.
+
+New agents, including clones and duplicates, start with `BUZZ_ACP_AGENTS=10` in
+the existing **Environment** overrides. Replace or remove it there to choose the
+worker count. With **Each thread** conversation context, separate threads can
+use different workers while retaining separate histories. Existing saved agents
+keep their settings; add the variable and restart them to enable more workers.
 
 **Not imported from old Buzz** is a separate collapsible section. Expanding it
 loads installed identities for the connected community; already-managed exact
@@ -186,11 +193,10 @@ installation guidance and device-wide defaults.
 The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
 
 - **Buzz Agent** is bundled and shows **Ready**.
-- **Goose** shows **Ready** or **CLI needed**, with **Install** when needed.
-  Install runs upstream `download_cli.sh` with `CONFIGURE=false`, as old Buzz
-  did; Goose then uses built-in `goose acp`. One install runs at a time.
-  Afterward Buzz re-detects, writes an install log, and restarts agents that
-  were waiting for Goose.
+- **Goose** is bundled and always shows **Ready**. Buzz launches `goose-acp`
+  directly, with no CLI installation or ACP subcommand. Provider credentials
+  and inference readiness remain separate from executable availability.
+  Buzz Agent remains the default; existing selections are preserved.
 - **Pi** shows **Ready**, **CLI needed**, or **Adapter needed**. On macOS/Linux,
   **Install** downloads checksum-verified Node v24.18.0 into app-data, then uses
   that Node/npm to install Pi and `buzz-pi-acp` into an app-owned npm prefix.
@@ -230,7 +236,7 @@ update so new sessions load it.
 Add/Edit links to Settings → Agents for setup instead of telling people to reopen
 the app. The ACP tooltip says:
 
-> Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose supports it natively. Pi needs a small adapter, `buzz-pi-acp`. Your existing CLI setup and sign-in are left untouched.
+> Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose ships with Buzz and supports ACP natively. Pi needs a small adapter, `buzz-pi-acp`. Your existing CLI setup and sign-in are left untouched.
 
 ### Global agent defaults and saving
 
@@ -476,12 +482,10 @@ Settings says **Shell setup not verified**; Buzz does not check it before Start.
   offers only OpenAI, which a new agent without a default uses, and explains an
   inherited or saved Databricks provider as unsupported. OpenAI
   uses the masked key field below as `OPENAI_COMPAT_API_KEY`, per agent or from
-  Agent defaults. Goose appears with an
-  absolute executable path when the local CLI is installed, and offers common
-  Goose providers plus a custom ID. A missing CLI leaves Goose disabled; the
-  **Check again** action re-detects it after installation without an app
-  restart. Switching into or out of Goose supplies ACP
-  arguments and clears the previous provider/model; selecting a Goose provider clears the
+  Agent defaults. Goose is one logical harness choice, resolved to the verified
+  bundled `goose-acp` executable, and offers common Goose providers plus a custom
+  ID. Switching into Goose supplies no subcommand arguments and clears the
+  previous provider/model; selecting a Goose provider clears the
   previous model. For Goose, an explicit Browse asks Goose ACP for the selected
   provider's supported-model list and searches it in the existing picker. The
   exact returned ID is saved; an unlisted ID remains possible but is flagged
@@ -509,18 +513,26 @@ Settings says **Shell setup not verified**; Buzz does not check it before Start.
 - For Goose, a blank Model resolves the selected provider's `defaultModel`
   through Goose ACP provider metadata. Buzz keeps no default-model mapping.
   A nonblank explicit model or effective `GOOSE_MODEL` override is tested as entered.
-  **Test connection** runs one
-  `goose run --text` turn without a saved session or extensions in the agent
-  workspace using the effective draft provider,
-  model, and write-only environment. Goose keeps its own output and thinking
-  defaults. Success requires nonempty assistant text and reported token usage
-  in Goose's JSON output; Goose can exit successfully with synthetic assistant
-  text after a provider error. Providers that omit usage cannot confirm success
-  through this CLI check.
-  The result does not verify Buzz relay readiness or launch the agent. A failed
-  or timed-out test leaves the draft unchanged. Success reports the canonical
-  provider/model that was tested, except that write-only environment overrides
-  keep their values hidden. A provider without a default asks for a model;
+  **Test connection** sends one small request in the agent workspace using the
+  effective draft provider, model, and write-only environment. Goose keeps its
+  own output and thinking defaults.
+  Bundled `goose-acp` uses a hidden temporary session in chat mode with extensions
+  disabled. Buzz checks its recorded conversation for a nonempty assistant reply
+  and rejects error content: ACP can render provider errors and empty token-limit
+  fallbacks as ordinary text notifications. Buzz then deletes only that temporary
+  session before returning, including on inference failure or timeout. Cancellation
+  schedules bounded cleanup, also handling an in-flight session creation. If deletion
+  fails, Buzz reports that the session may remain in Goose history; a crash or
+  unresponsive sidecar can interrupt cleanup. The test consumes a small amount of
+  provider quota.
+  An external full Goose CLI pin retains `goose run --text --no-session --no-profile`
+  without saving a session. Success requires nonempty assistant text and reported
+  token usage in its JSON output; Goose can exit successfully with synthetic text
+  after a provider error. Providers that omit usage cannot confirm success through
+  this CLI check. Model browsing does not create a session or fall back to the CLI.
+  Neither check verifies Buzz relay readiness, launches the agent, or changes the
+  draft. Success reports the canonical provider/model tested, except that write-only
+  overrides keep their values hidden. A provider without a default asks for a model;
   Buzz never substitutes another provider.
 - For Pi, with Model blank, Pi chooses from
   the selected provider's `--models provider/*` scope. Buzz checks Pi's actual
@@ -531,6 +543,7 @@ Settings says **Shell setup not verified**; Buzz does not check it before Start.
   alone does not verify the API key or inference access. Tests use the agent's
   effective environment and existing Pi sign-in, create no saved Pi session,
   and stop on cancellation or timeout.
+
 - Environment values never arrive in snapshots. Inputs are masked write-only
   patches: missing key preserves; string replaces (including empty); null removes.
   Undo omits a patch again. Successful save clears entered values from UI state.
@@ -618,16 +631,20 @@ bin/pnpm build
 bin/cargo build -p buzz-foundation
 ```
 
-[`runtime/agent-runtime.json`](../runtime/agent-runtime.json) pins the five tools
-to the same immutable source revision as the native library. The build script fetches
-that revision and uses pinned Cargo for one `cargo build --release --locked` of all
-five tools outside the checkout, scrubs injected Buzz/provider environment and
+[`runtime/agent-runtime.json`](../runtime/agent-runtime.json) pins five Buzz tools
+to the same immutable source revision as the native library, plus an independent
+Goose revision for `goose-acp`. The build script fetches both revisions and uses
+pinned Cargo with locked dependencies: a release build of the Buzz tools and a
+lean Goose build without default features. Builds happen outside the checkout,
+scrub injected Buzz/provider environment and
 per-shell compiler overrides (`RUSTFLAGS`, `RUSTC_*`, `CARGO_PROFILE_*`, …), and stages binaries plus
-revision/target/SHA256 manifest in `src-tauri/resources/agent-runtime`. Worktrees
+revision/Goose source and build settings/target/SHA256 manifest in
+`src-tauri/resources/agent-runtime`. Worktrees
 of one clone reuse a verified bundle cached under the Git common directory, keyed
 by the pin, tool list, build arguments and `rustc -vV`. Native build copies them to
 `target/debug/agent-runtime`. Generated binaries/manifest are not committed.
-Startup verifies the exact tool set, target, revision and file hashes. Packaged
+Startup verifies all six tools, target, both source pins, Goose build settings
+and file hashes. Packaged
 macOS apps may accept signing-induced hash changes only when the runtime belongs
 to the running app and its resource seal verifies under Block's Developer ID.
 The final hashes are retained in memory; required launch tools are rehashed before spawn. No PATH/old-bundle fallback or runtime
@@ -642,6 +659,13 @@ Update the library pin in `src-tauri/Cargo.toml` and the bundle pin in
 dependency upgrades. The runtime integration test checks that both pins name the
 same repository and immutable revision; the native synthetic manifest reads the
 runtime spec rather than carrying another copy of the pin.
+
+Goose upgrades change only the `goose` source/build settings in the runtime spec;
+they do not require changing the Buzz library or tool revision. Logical
+`goose` selections use the bundled sidecar, including saved legacy selections
+with a leading `acp` argument. Explicit absolute paths remain external harness
+pins and retain their launch arguments. Model browsing resolves the same verified
+sidecar; it never searches PATH for a CLI.
 
 Re-run the resource preparation and native build commands above, then validate:
 

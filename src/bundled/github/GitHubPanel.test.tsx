@@ -160,3 +160,60 @@ it("links branch labels to their own repositories and preserves unavailable bran
     screen.queryByRole("link", { name: "contributor:deleted" }),
   ).not.toBeInTheDocument();
 });
+
+it("links the author login to their external GitHub profile", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          title: "A small improvement",
+          user: { login: "tellaho" },
+        }),
+      ),
+    ),
+  );
+  render(
+    <GitHubPanel
+      target="https://github.com/example/project/pull/1"
+      close={() => {}}
+    />,
+  );
+  const author = await screen.findByRole("link", {
+    name: "tellaho",
+    exact: true,
+  });
+  expect(author).toHaveAttribute("href", "https://github.com/tellaho");
+  expect(author).toHaveAttribute("target", "_blank");
+  expect(author).toHaveAttribute("rel", "noreferrer");
+  expect(author.parentElement).toHaveTextContent("by tellaho");
+});
+
+it.each([
+  [
+    {
+      commit: { message: "A commit", author: { name: "Sample Author" } },
+      owner: { login: "someone-else" },
+    },
+    "Sample Author",
+  ],
+  [{ user: { login: "invalid/profile" } }, "invalid/profile"],
+])(
+  "does not invent a profile for raw or invalid authors",
+  async (data, name) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(JSON.stringify(data))),
+    );
+    render(
+      <GitHubPanel
+        target="https://github.com/example/project/commit/abcdef1"
+        close={() => {}}
+      />,
+    );
+    await screen.findByText(`by ${name}`);
+    expect(
+      screen.queryByRole("link", { name, exact: true }),
+    ).not.toBeInTheDocument();
+  },
+);

@@ -152,6 +152,7 @@ test("PR state, changes and branch links use shared roles in both themes", async
   app,
 }, testInfo) => {
   for (const url of [
+    "https://github.com/sample-author",
     "https://github.com/block/buzz/tree/main",
     "https://github.com/block/buzz/tree/small-improvement",
   ]) {
@@ -197,6 +198,12 @@ test("PR state, changes and branch links use shared roles in both themes", async
   await expect(
     panel.getByRole("heading", { name: "A small improvement" }),
   ).toBeVisible();
+  expect(
+    await popup(
+      page,
+      panel.getByRole("link", { name: "sample-author", exact: true }),
+    ),
+  ).toBe("https://github.com/sample-author");
   const changes = panel.getByText("Changes", { exact: true }).locator("..");
   expect(
     await popup(page, panel.getByRole("link", { name: "main", exact: true })),
@@ -233,6 +240,9 @@ test("PR state, changes and branch links use shared roles in both themes", async
       probe.remove();
       return result;
     });
+    await expect(
+      panel.getByRole("link", { name: "sample-author", exact: true }),
+    ).toHaveCSS("color", colors.link);
     expect(colors.success).not.toBe(colors.standard);
     expect(colors.danger).not.toBe(colors.standard);
     await expect(panel.getByText("open", { exact: true })).toHaveCSS(

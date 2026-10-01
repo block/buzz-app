@@ -8,6 +8,7 @@ export type GitHubDetails = {
   bodyHtml?: string | undefined;
   state: string;
   author: string;
+  authorUrl?: string | undefined;
   facts: [
     string,
     (
@@ -117,6 +118,10 @@ export async function loadGitHubDetails(
   if (data.language) facts.push(["Language", data.language]);
   if (data.default_branch) facts.push(["Default branch", data.default_branch]);
   const [commitTitle, ...commitBody] = data.commit?.message.split("\n") ?? [];
+  const accountLogin =
+    data.user?.login ??
+    data.author?.login ??
+    (data.commit?.author.name === undefined ? data.owner?.login : undefined);
   return {
     title: data.title ?? commitTitle ?? reference.repository,
     body: data.body ?? data.description ?? commitBody.join("\n").trim(),
@@ -128,6 +133,10 @@ export async function loadGitHubDetails(
       data.commit?.author.name ??
       data.owner?.login ??
       "",
+    authorUrl:
+      accountLogin && /^[a-z0-9-]+$/i.test(accountLogin)
+        ? `https://github.com/${encodeURIComponent(accountLogin)}`
+        : undefined,
     facts,
   };
 }

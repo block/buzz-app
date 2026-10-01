@@ -12,6 +12,7 @@ import type { PanelProps } from "../../features/panels/service";
 import { parseGitHubReference, type GitHubReference } from "./references";
 import { loadGitHubDetails, type GitHubDetails } from "./data";
 import styles from "./GitHub.module.css";
+import inlineStyles from "../../shared/InlineReference.module.css";
 import { GitHubBody } from "./GitHubBody";
 
 export const inject = ["panels"];
@@ -120,7 +121,23 @@ function ObjectPanel({
                 {result.state}
               </span>
             )}
-            {result.author && <span>by {result.author}</span>}
+            {result.author && (
+              <span>
+                by{" "}
+                {result.authorUrl ? (
+                  <a
+                    className={inlineStyles.link}
+                    href={result.authorUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {result.author}
+                  </a>
+                ) : (
+                  result.author
+                )}
+              </span>
+            )}
           </div>
           <h2>{result.title}</h2>
           {!!result.facts.length && (

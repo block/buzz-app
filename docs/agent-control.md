@@ -554,8 +554,9 @@ Settings says **Shell setup not verified**; Buzz does not check it before Start.
   effective environment and existing Pi sign-in, create no saved Pi session,
   and stop on cancellation or timeout.
 
-- Environment values never arrive in snapshots. Inputs are masked write-only
-  patches: missing key preserves; string replaces (including empty); null removes.
+- Environment values never arrive in snapshots. Inputs are write-only patches:
+  missing key preserves; string replaces (including empty); null removes.
+  Draft `BUZZ_ACP_AGENTS` values are readable; other inputs stay masked.
   Undo omits a patch again. Successful save clears entered values from UI state.
   Browser strings cannot promise zeroization. Unknown native fields stay native.
   Saved `BUZZ_AGENT_MODEL`/`BUZZ_AGENT_PROVIDER` (buzz-agent) and

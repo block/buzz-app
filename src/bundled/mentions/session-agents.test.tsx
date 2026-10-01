@@ -247,7 +247,7 @@ it("focuses search on open and supports clear, Escape, and outside dismissal", a
   const search = screen.getByRole("searchbox", {
     name: "Search community people and agents",
   });
-  expect(search).toHaveFocus();
+  await waitFor(() => expect(search).toHaveFocus());
   await user.type(search, "no matching name");
   expect(screen.getByText("No matching channel members.")).toBeVisible();
   await user.click(

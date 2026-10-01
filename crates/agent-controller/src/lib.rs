@@ -36,3 +36,6 @@ pub use runtime::{installed, managed_tool, Action, Controller, GooseModelContext
 pub use secret::{Credentials, Secret};
 pub use store::{ParkedIdentity, Store};
 type Result<T> = std::result::Result<T, String>;
+
+mod mesh;
+pub use mesh::MeshLaunch;

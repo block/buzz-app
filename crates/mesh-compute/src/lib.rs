@@ -45,3 +45,9 @@ pub mod discovery_types;
 
 #[cfg(feature = "mesh")]
 pub mod inventory;
+
+#[cfg(feature = "mesh")]
+pub mod model_context;
+
+#[cfg(feature = "mesh")]
+pub mod consumers;

@@ -350,6 +350,7 @@ pub enum Action {
 }
 struct Running {
     process: Supervised,
+    _mesh: Option<crate::MeshLaunch>,
     revision: u64,
     /// Native-only: holds environment values and is never serialized.
     spawned: serde_json::Value,
@@ -360,6 +361,11 @@ struct Running {
 impl Drop for Running {
     fn drop(&mut self) {
         let _ = self.process.stop();
+        if !self.process.stopped() {
+            if let Some(mesh) = self._mesh.as_mut() {
+                mesh.retain_unconfirmed();
+            }
+        }
     }
 }
 /// Deliberately not serializable: only the native connection owner consumes it.
@@ -760,6 +766,18 @@ impl Controller {
         key: &crate::Secret,
         replay_floor: Option<u64>,
     ) -> Result<()> {
+        self.action_with_mesh(id, action, revision, key, replay_floor, None)
+    }
+    /// Start with an acquired native Mesh grant, retaining it through process ownership.
+    pub fn action_with_mesh(
+        &mut self,
+        id: &str,
+        action: Action,
+        revision: u64,
+        key: &crate::Secret,
+        replay_floor: Option<u64>,
+        mesh: Option<crate::MeshLaunch>,
+    ) -> Result<()> {
         if self.credential_request(id)?.2 != revision {
             return Err("Saved settings changed while opening credentials; retry Start".into());
         }
@@ -770,7 +788,7 @@ impl Controller {
                 return Ok(());
             }
         }
-        match self.start_with_key(id, Some(key), replay_floor) {
+        match self.start_with_key(id, Some(key), replay_floor, mesh) {
             Ok(()) => {
                 self.errors.remove(id);
             }
@@ -793,13 +811,14 @@ impl Controller {
             .collect())
     }
     fn start(&mut self, id: &str) -> Result<()> {
-        self.start_with_key(id, None, None)
+        self.start_with_key(id, None, None, None)
     }
     fn start_with_key(
         &mut self,
         id: &str,
         supplied: Option<&crate::Secret>,
         replay_floor: Option<u64>,
+        mesh: Option<crate::MeshLaunch>,
     ) -> Result<()> {
         if let Some(run) = self.running.get_mut(id) {
             if run.process.alive()? {
@@ -842,7 +861,8 @@ impl Controller {
             .prefix("agent-")
             .tempdir_in(&runs)
             .map_err(|_| "Could not create private runtime directory")?;
-        let mut command = bundle.command(&agent, key)?;
+        let runtime_agent = mesh.as_ref().map(|grant| grant.apply(&agent)).transpose()?;
+        let mut command = bundle.command(runtime_agent.as_ref().unwrap_or(&agent), key)?;
         // Per-send startup input, never saved configuration or inherited environment.
         if let Some(floor) = replay_floor {
             command.env("BUZZ_ACP_REPLAY_FLOOR", floor.to_string());
@@ -875,6 +895,7 @@ impl Controller {
             id.into(),
             Running {
                 process,
+                _mesh: mesh,
                 revision: agent.revision,
                 spawned: crate::restart::spawn_config(&agent),
                 databricks_host: settings.map(|s| s.host),

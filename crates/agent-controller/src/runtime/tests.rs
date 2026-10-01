@@ -2541,3 +2541,90 @@ fn use_here_exhausted_revision_preserves_the_saved_import() {
     assert_eq!(fs::read(path).unwrap(), before);
     assert!(!store.snapshot().unwrap().agents[0].configured);
 }
+
+#[test]
+fn mesh_launch_is_bound_and_runtime_only_and_releases_on_drop() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut saved = agent(dir.path());
+    saved.harness.provider = "relay-mesh".into();
+    saved.environment.insert(
+        "OPENAI_COMPAT_BASE_URL".into(),
+        "https://wrong.example".into(),
+    );
+    saved
+        .environment
+        .insert("BUZZ_AGENT_MAX_OUTPUT_TOKENS".into(), "8192".into());
+    let (release, released) = std::sync::mpsc::channel();
+    let grant = crate::MeshLaunch::new(
+        saved.id.clone(),
+        saved.revision,
+        saved.relay_url.clone(),
+        "shared-model".into(),
+        (19337, 65536),
+        (release, "unique-acquisition".into()),
+    )
+    .unwrap();
+    let runtime = grant.apply(&saved).unwrap();
+    assert_eq!(
+        runtime.environment["OPENAI_COMPAT_BASE_URL"],
+        "http://127.0.0.1:19337/v1"
+    );
+    assert_eq!(runtime.environment["BUZZ_AGENT_MODEL"], "shared-model");
+    assert_eq!(saved.harness.provider, "relay-mesh");
+    let mut changed = saved.clone();
+    changed.revision += 1;
+    assert!(grant.apply(&changed).is_err());
+    changed = saved.clone();
+    changed.relay_url = "wss://other.example".into();
+    assert!(grant.apply(&changed).is_err());
+    changed = saved.clone();
+    changed.harness.command = "goose".into();
+    assert!(grant.apply(&changed).is_err());
+    assert!(released.try_recv().is_err());
+    drop(grant);
+    assert_eq!(released.try_recv().unwrap(), "unique-acquisition");
+    assert!(released.try_recv().is_err());
+}
+
+#[test]
+fn mesh_output_budget_is_runtime_only_and_explicit_invalid_values_fail() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut saved = agent(dir.path());
+    saved.harness.provider = "relay-mesh".into();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut grant = crate::MeshLaunch::new(
+        saved.id.clone(),
+        saved.revision,
+        saved.relay_url.clone(),
+        "mesh".into(),
+        (19337, 16384),
+        (tx, "pending".into()),
+    )
+    .unwrap();
+    let runtime = grant.apply(&saved).unwrap();
+    assert_eq!(runtime.environment["BUZZ_AGENT_MAX_OUTPUT_TOKENS"], "4096");
+    assert_eq!(
+        runtime.environment["BUZZ_AGENT_MAX_CONTEXT_TOKENS"],
+        "16384"
+    );
+    assert_eq!(runtime.environment["BUZZ_AGENT_LLM_TIMEOUT_SECS"], "660");
+    assert!(!saved
+        .environment
+        .contains_key("BUZZ_AGENT_MAX_OUTPUT_TOKENS"));
+    saved
+        .environment
+        .insert("BUZZ_AGENT_MAX_OUTPUT_TOKENS".into(), "2048".into());
+    assert_eq!(
+        grant.apply(&saved).unwrap().environment["BUZZ_AGENT_MAX_OUTPUT_TOKENS"],
+        "2048"
+    );
+    for value in ["16384", "20000", "0", "not-a-number"] {
+        saved
+            .environment
+            .insert("BUZZ_AGENT_MAX_OUTPUT_TOKENS".into(), value.into());
+        assert!(grant.apply(&saved).is_err());
+    }
+    grant.retain_unconfirmed();
+    drop(grant);
+    assert!(rx.try_recv().is_err());
+}

@@ -405,6 +405,43 @@ function renderDraft(draft: MentionDraft) {
 }
 
 it.each([
+  ["paste", "`a*b`", "inlineCode"],
+  ["restore", "`a*b`", "inlineCode"],
+  ["paste", "<https://example.com/a*b>", "link"],
+  ["restore", "<https://example.com/a*b>", "link"],
+])(
+  "preserves %s authored %s before toolbar bold",
+  async (mode, authored, type) => {
+    const source = `${authored} then `;
+    const h = mount(mode === "restore" ? source : "");
+    if (mode === "paste") paste(h.input, source);
+    act(() => h.input.toggleFormat("bold"));
+    await h.user.keyboard("c");
+    expect(h.input.querySelector("strong")).toHaveTextContent("c");
+    expect(h.markdown()).toBe(`${source}**c**`);
+    expect(fromMarkdown(h.markdown()).children[0]).toMatchObject({
+      type: "paragraph",
+      children: [
+        type === "inlineCode"
+          ? { type, value: "a*b" }
+          : { type, url: "https://example.com/a*b" },
+        { type: "text", value: " then " },
+        { type: "strong", children: [{ type: "text", value: "c" }] },
+      ],
+    });
+    const sent = renderDraft(h.draft());
+    if (type === "inlineCode")
+      expect(sent.container.querySelector("code")?.textContent).toBe("a*b");
+    else
+      expect(sent.container.querySelector("a")).toHaveAttribute(
+        "href",
+        "https://example.com/a*b",
+      );
+    expect(sent.container.querySelector("strong")?.textContent).toBe("c");
+  },
+);
+
+it.each([
   ["paste", "**Note**", "strong"],
   ["restore", "**Note**", "strong"],
   ["paste", "*Note*", "em"],

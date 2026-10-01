@@ -51,6 +51,7 @@ export function composerMarkdown(draft: MentionDraft): string {
 function blocksMarkdown(doc: EditorNode): string {
   const blocks: string[] = [];
   let previous: EditorNode | undefined;
+  const authored = authoredLiteralRanges(doc);
   // Two lists of one kind separated only by blank lines read as one list, so
   // adjacent lists alternate their marker as mdast-util-to-markdown does: `-`
   // then `*` for bullets, `.` then `)` for numbers. A block that serialises to
@@ -59,7 +60,7 @@ function blocksMarkdown(doc: EditorNode): string {
   // unchanged; any other block between two lists starts the sequence again.
   let lastList: NodeType | undefined;
   let alternate = false;
-  doc.forEach((block) => {
+  doc.forEach((block, offset) => {
     // Blank separation prevents lazy quote continuation and adjacent blocks
     // merging on send; ordinary authored paragraph newlines remain unchanged.
     if (previous)
@@ -115,7 +116,7 @@ function blocksMarkdown(doc: EditorNode): string {
         );
       });
       output = items.join("\n");
-    } else output = paragraphMarkdown(block);
+    } else output = paragraphMarkdown(block, authored.get(offset));
     blocks.push(output);
     if (list) lastList = block.type;
     else if (/\S/.test(output)) {
@@ -127,7 +128,71 @@ function blocksMarkdown(doc: EditorNode): string {
   return blocks.join("");
 }
 
-function paragraphMarkdown(block: EditorNode): string {
+/** Parse each contiguous paragraph run once, lazily. Rich text is masked so
+ * only authored source defines code, links and HTML; offsets stay unchanged. */
+function authoredLiteralRanges(doc: EditorNode) {
+  const ranges = new Map<number, () => SourceRange[]>();
+  let run: { source: string; ranges?: SourceRange[] } | undefined;
+  doc.forEach((block, offset) => {
+    if (block.type.name !== "paragraph") {
+      run = undefined;
+      return;
+    }
+    run ??= { source: "" };
+    const context = run;
+    const start = context.source.length;
+    block.forEach((node) => {
+      const value: string = node.isText
+        ? node.textContent
+        : node.type.name === "hard_break"
+          ? "\n"
+          : node.attrs.source;
+      context.source +=
+        node.marks.length || node.attrs.recipient
+          ? value.replace(/\S/g, "a")
+          : value;
+    });
+    const end = context.source.length;
+    context.source += "\n";
+    ranges.set(offset, () => {
+      if (!context.ranges) {
+        context.ranges = [];
+        const visit = (
+          node: Root | Root["children"][number] | PhrasingContent,
+        ) => {
+          if (
+            node.type === "inlineCode" ||
+            node.type === "code" ||
+            node.type === "link" ||
+            node.type === "linkReference" ||
+            node.type === "image" ||
+            node.type === "imageReference" ||
+            node.type === "definition" ||
+            node.type === "html"
+          ) {
+            const from = node.position?.start.offset;
+            const to = node.position?.end.offset;
+            if (from !== undefined && to !== undefined)
+              context.ranges?.push({ start: from, end: to });
+          } else if ("children" in node) node.children.forEach(visit);
+        };
+        visit(fromMarkdown(context.source));
+      }
+      return context.ranges
+        .filter((range) => range.start < end && range.end > start)
+        .map((range) => ({
+          start: range.start - start,
+          end: range.end - start,
+        }));
+    });
+  });
+  return ranges;
+}
+
+function paragraphMarkdown(
+  block: EditorNode,
+  authoredLiterals?: () => SourceRange[],
+): string {
   let text = "";
   const formats = [
     { mark: composerSchema.marks.spoiler, type: "spoiler" },
@@ -394,6 +459,13 @@ function paragraphMarkdown(block: EditorNode): string {
               : [],
         );
         protectedRanges.push(...authoredAttention(node));
+        if (range)
+          for (const span of authoredLiterals?.() ?? [])
+            if (span.start < range.end && span.end > range.start)
+              protectedRanges.push({
+                start: span.start - range.start,
+                end: span.end - range.start,
+              });
         const unprotected = (index: number) =>
           !protectedRanges.some(
             ({ start, end }) => index >= start && index < end,

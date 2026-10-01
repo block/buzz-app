@@ -15,7 +15,7 @@ import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
 import { EditorState, TextSelection } from "prosemirror-state";
 import { toggleMark } from "prosemirror-commands";
 import { history, undo, redo, closeHistory } from "prosemirror-history";
-import type { RootContent } from "mdast";
+import type { Nodes, RootContent } from "mdast";
 import type { InlineFormat } from "./composer-dom";
 
 const paragraph = (...children: ReturnType<typeof schema.text>[]) =>
@@ -401,6 +401,142 @@ describe("composer Markdown boundary", () => {
       });
     },
   );
+  it.each([
+    ["`a*b` then ", "inlineCode", "a*b"],
+    ["``a`*b`` then ", "inlineCode", "a`*b"],
+    ["`a\\*b` then ", "inlineCode", "a\\*b"],
+    ["`a*b\nc*d` then ", "inlineCode", "a*b\nc*d"],
+    ["```\na*b\n```\n\nthen ", "code", "a*b"],
+    ["    a*b\n\nthen ", "code", "a*b"],
+  ])(
+    "preserves authored code before generated emphasis: %s",
+    (source, type, value) => {
+      for (const [mark, delimiter] of [
+        [schema.marks.bold, "**"],
+        [schema.marks.italic, "_"],
+      ] as const) {
+        const output = serialize(
+          schema.text(source),
+          schema.text("c", [mark.create()]),
+        );
+        expect(output).toBe(`${source}${delimiter}c${delimiter}`);
+        const tree = fromMarkdown(output);
+        const nodes = tree.children.flatMap<Nodes>((node) =>
+          "children" in node ? node.children : [node],
+        );
+        expect(nodes).toContainEqual(expect.objectContaining({ type, value }));
+        expect(nodes.at(-1)).toMatchObject({
+          type: mark === schema.marks.bold ? "strong" : "emphasis",
+          children: [{ type: "text", value: "c" }],
+        });
+      }
+    },
+  );
+  it.each([
+    "<https://example.com/a*b>",
+    "[a*b](https://example.com/c*d)",
+    "![a*b](https://example.com/c*d)",
+    '<span title="a*b">text</span>',
+    "[a*b][ref]\n\n[ref]: https://example.com/c*d\n\n",
+    "![a*b][ref]\n\n[ref]: https://example.com/c*d\n\n",
+  ])("keeps authored non-prose source unchanged: %s", (source) => {
+    const output = serialize(schema.text(`${source} then `), bold("c"));
+    expect(output).toBe(`${source} then **c**`);
+  });
+  it.each(["    a*b", "```a*b", "<div> a*b"])(
+    "does not mistake mid-line authored prose for a block: %s",
+    (source) => {
+      const output = serialize(
+        bold("c"),
+        schema.text(source),
+        schema.text("d", [schema.marks.italic.create()]),
+      );
+      expect(output).toBe(`**c**${source.replace("*", "\\*")}*d*`);
+      expect(fromMarkdown(output).children[0]).toMatchObject({
+        type: "paragraph",
+        children: expect.arrayContaining([
+          expect.objectContaining({
+            type: "emphasis",
+            children: [expect.objectContaining({ value: "d" })],
+          }),
+        ]),
+      });
+    },
+  );
+  it("retains authored block context across serialized paragraph boundaries", () => {
+    const italic = (value: string) =>
+      schema.text(value, [schema.marks.italic.create()]);
+    const markdown = (...blocks: ReturnType<typeof paragraph>[]) =>
+      composerMarkdown(projectComposerDocument(doc(...blocks)).draft);
+    const output = markdown(
+      paragraph(schema.text("x")),
+      paragraph(schema.text("    a*b"), italic("d")),
+    );
+    expect(output).toBe("x\n    a\\*b*d*");
+    expect(fromMarkdown(output).children[0]).toMatchObject({
+      type: "paragraph",
+      children: [
+        { type: "text", value: "x\na*b" },
+        { type: "emphasis", children: [{ type: "text", value: "d" }] },
+      ],
+    });
+    for (const blocks of [
+      [
+        paragraph(schema.text("x")),
+        paragraph(schema.text("```\na*b\n```\n\nthen "), bold("c")),
+      ],
+      [
+        paragraph(schema.text("x")),
+        paragraph(),
+        paragraph(schema.text("    a*b\n\nthen "), bold("c")),
+      ],
+      [
+        paragraph(schema.text("    first")),
+        paragraph(schema.text("    a*b\n\nthen "), bold("c")),
+      ],
+      [
+        paragraph(schema.text("```\nfirst")),
+        paragraph(schema.text("a*b\n```\n\nthen "), bold("c")),
+      ],
+    ]) {
+      const wire = markdown(...blocks);
+      expect(wire).not.toContain("\\*");
+      expect(fromMarkdown(wire).children).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "code",
+            value: expect.stringContaining("a*b"),
+          }),
+        ]),
+      );
+    }
+  });
+  it("keeps UTF-16 source offsets after rich astral text and recipients", () => {
+    for (const before of [
+      bold("🎉🎉🎉"),
+      schema.nodes.token.create({
+        source: "@🎉🎉🎉",
+        recipient: { pubkey: "a".repeat(64), name: "🎉🎉🎉" },
+      }),
+    ]) {
+      const prefix = serialize(before);
+      for (const mark of [schema.marks.bold, schema.marks.italic]) {
+        const output = serialize(
+          before,
+          schema.text(" `a*b` then "),
+          schema.text("c", [mark.create()]),
+        );
+        expect(output).toBe(
+          `${prefix} \`a*b\` then ${mark === schema.marks.bold ? "**c**" : "_c_"}`,
+        );
+        expect(fromMarkdown(output).children[0]).toMatchObject({
+          children: expect.arrayContaining([
+            expect.objectContaining({ type: "inlineCode", value: "a*b" }),
+          ]),
+        });
+      }
+    }
+  });
   it.each(["**Note**", "*Note*", "***Note***", "**Note***", "***Note**"])(
     "preserves authored attention beside generated spans: %s",
     (source) => {

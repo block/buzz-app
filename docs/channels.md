@@ -470,15 +470,20 @@ No dismissal saves, retries, replaces setup or confirms a destructive action.
 
 Channel Settings shows the signed name, description and explicit visibility for
 ordinary channels; missing visibility stays **Not available**, not implicitly
-Public. The centered title opens the same editor, revealing a pencil on hover or
-keyboard focus (always visible on touch). The pencil follows the final text line;
-balanced side padding keeps the text centered and lets long titles wrap without clipping it. Description and Visibility
-have a trailing link-colored **Edit** action;
+Public. The centered title opens the same editor, revealing a pencil with a short
+left-to-right fade on hover or keyboard focus (always visible on touch, no animation
+for reduced motion). The pencil follows the final text line;
+balanced side padding keeps the text centered and lets long titles wrap without clipping it.
+Description and Visibility have small pencils immediately after their labels,
+revealed with a short left-to-right fade on whole-row hover or keyboard focus
+(always visible on touch, no animation for reduced motion) without shifting layout;
 each whole row opens the shared Dialog with one Name/Description/Duration/Private draft.
 Only authorized editors get the interactive rows; other viewers retain plain metadata.
 Members has a right chevron and opens the existing member list. Channel ID has a
-**Copy** action; selecting its row copies the exact ID and shows success or retryable
-failure feedback in a tooltip without growing the row. The redundant standalone
+small inline copy icon with the same hover/focus/touch behavior; selecting its row
+copies the exact ID. Only a successful copy opens a confirmation tooltip, without
+growing the row; hovering or focusing does not open a hint or replay old feedback.
+Clipboard failure shows an inline error and leaves the row available to retry. The redundant standalone
 Edit details button, header-menu Edit details entry and informational Channel type
 row are omitted.
 Duration uses Create's Ongoing/Temporary cards, and Private uses the same

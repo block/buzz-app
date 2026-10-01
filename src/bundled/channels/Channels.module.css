@@ -603,6 +603,10 @@
   height: 1em;
   vertical-align: middle;
   opacity: 0;
+  transform: translateX(calc(-1 * var(--space-1)));
+  transition:
+    opacity var(--duration-state) var(--easing-state),
+    transform var(--duration-state) var(--easing-state);
 }
 .settingsTitlePencil > svg {
   position: absolute;
@@ -613,10 +617,12 @@
 .settingsTitleAction:hover .settingsTitlePencil,
 .settingsTitleAction:focus-visible .settingsTitlePencil {
   opacity: 1;
+  transform: translateX(0);
 }
 @media (hover: none) {
   .settingsTitlePencil {
     opacity: 1;
+    transform: none;
   }
 }
 .settingsIcon {
@@ -663,6 +669,42 @@
   font: inherit;
   text-align: start;
   cursor: pointer;
+}
+.settingsDetailLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.settingsDetailIcon {
+  display: inline-flex;
+  color: var(--text-subtle);
+  opacity: 0;
+  transform: translateX(calc(-1 * var(--space-1)));
+  transition:
+    opacity var(--duration-state) var(--easing-state),
+    transform var(--duration-state) var(--easing-state);
+}
+.settingsDetailAction:hover .settingsDetailIcon,
+.settingsDetailAction:focus-visible .settingsDetailIcon {
+  opacity: 1;
+  transform: translateX(0);
+}
+@media (hover: none) {
+  .settingsDetailIcon {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settingsTitlePencil,
+  .settingsTitleAction:hover .settingsTitlePencil,
+  .settingsTitleAction:focus-visible .settingsTitlePencil,
+  .settingsDetailIcon,
+  .settingsDetailAction:hover .settingsDetailIcon,
+  .settingsDetailAction:focus-visible .settingsDetailIcon {
+    transform: none;
+    transition: none;
+  }
 }
 .settingsDetailAction:focus-visible {
   outline: none;

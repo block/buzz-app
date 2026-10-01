@@ -118,6 +118,50 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await expect(
     settings.getByRole("button", { name: "Edit details", exact: true }),
   ).toHaveCount(0);
+  const checkInlineIcon = async (action) => {
+    const row = action.locator("xpath=../..");
+    const icon = action.locator("svg");
+    const affordance = icon.locator("..");
+    await action.scrollIntoViewIfNeeded();
+    await page.mouse.move(0, 0);
+    await expect(affordance).toHaveCSS("opacity", "0");
+    await expect(affordance).toHaveCSS(
+      "transform",
+      "matrix(1, 0, 0, 1, -4, 0)",
+    );
+    await expect(affordance).toHaveAttribute("aria-hidden", "true");
+    await expect(icon).toHaveAttribute("width", "14");
+    await expect(action.getByText(/^(Edit|Copy)$/)).toHaveCount(0);
+    const before = await row.boundingBox();
+    // Hover the value/padding, not just the label or the icon itself.
+    await page.mouse.move(
+      before.x + before.width / 2,
+      before.y + before.height - 8,
+    );
+    await expect(affordance).toHaveCSS("opacity", "1");
+    await expect(affordance).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 0)");
+    expect(await row.boundingBox()).toEqual(before);
+    const geometry = await action.evaluate((node) => {
+      // Measure the flex item's box, not a text Range's engine-specific glyph bounds.
+      const label =
+        node.firstElementChild.firstElementChild.getBoundingClientRect();
+      const artwork = node.querySelector("svg").getBoundingClientRect();
+      return {
+        gap: artwork.left - label.right,
+        centerOffset:
+          artwork.y + artwork.height / 2 - (label.y + label.height / 2),
+      };
+    });
+    expect(geometry.gap).toBe(8);
+    expect(Math.abs(geometry.centerOffset)).toBeLessThan(2);
+    await page.mouse.move(0, 0);
+    await expect(affordance).toHaveCSS("opacity", "0");
+    // Establish keyboard modality without assuming macOS WebKit's Tab policy.
+    await page.keyboard.press("Tab");
+    await action.focus();
+    await expect(action).toBeFocused();
+    await expect(affordance).toHaveCSS("opacity", "1");
+  };
   for (const label of ["Edit description", "Edit visibility", "View members"]) {
     const action = settings.getByRole("button", { name: label, exact: true });
     const row = action.locator("xpath=../..");
@@ -143,7 +187,7 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
         "true",
       );
     } else {
-      await expect(action.getByText("Edit", { exact: true })).toBeVisible();
+      await checkInlineIcon(action);
     }
     await page.mouse.click(box.x + box.width / 2, box.y + box.height - 8);
     const dialog = page.getByRole("dialog", {
@@ -173,8 +217,12 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   const pencil = title.locator("svg").locator("..");
   await page.mouse.move(0, 0);
   await expect(pencil).toHaveCSS("opacity", "0");
+  await expect(pencil).toHaveCSS("transform", "matrix(1, 0, 0, 1, -4, 0)");
+  const titleBefore = await title.boundingBox();
   await title.hover();
   await expect(pencil).toHaveCSS("opacity", "1");
+  await expect(pencil).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 0)");
+  expect(await title.boundingBox()).toEqual(titleBefore);
   const checkTitleGeometry = async () => {
     const geometry = await title.evaluate((node) => {
       const textNode = node.querySelector("span");
@@ -230,10 +278,12 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     name: "Copy channel id",
     exact: true,
   });
-  await expect(copy.getByText("Copy", { exact: true })).toBeVisible();
+  await checkInlineIcon(copy);
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
   const idRow = copy.locator("xpath=../..");
   const rowHeight = (await idRow.boundingBox()).height;
-  await copy.click();
+  const idBox = await idRow.boundingBox();
+  await page.mouse.click(idBox.x + idBox.width / 2, idBox.y + idBox.height - 8);
   await expect(page.getByRole("tooltip")).toHaveText("Channel ID copied");
   expect((await idRow.boundingBox()).height).toBe(rowHeight);
   await expect(settings.getByText("Channel ID copied")).toHaveCount(0);
@@ -242,7 +292,21 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
       channelId,
     );
   }
-  await title.hover();
+  // Once dismissed, a previous copy result must not reopen on hover/focus.
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  await page.mouse.move(0, 0);
+  await copy.hover();
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  const descriptionAction = settings.getByRole("button", {
+    name: "Edit description",
+    exact: true,
+  });
+  await descriptionAction.hover();
+  await expect(descriptionAction.locator("svg").locator("..")).toHaveCSS(
+    "opacity",
+    "1",
+  );
   await settings.screenshot({
     path: testInfo.outputPath("channel-details-actions.png"),
   });
@@ -253,6 +317,20 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await settings.screenshot({
     path: testInfo.outputPath("channel-details-title-narrow.png"),
   });
+  // Reduced-motion users get immediate reveal without translation or fading.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const descriptionIcon = descriptionAction.locator("svg").locator("..");
+  await expect(descriptionIcon).toHaveCSS("transition-duration", "0s");
+  await expect(descriptionIcon).toHaveCSS("transform", "none");
+  await descriptionAction.hover();
+  await expect(descriptionIcon).toHaveCSS("opacity", "1");
+  await expect(descriptionIcon).toHaveCSS("transform", "none");
+  await expect(pencil).toHaveCSS("transition-duration", "0s");
+  await expect(pencil).toHaveCSS("transform", "none");
+  await title.hover();
+  await expect(pencil).toHaveCSS("opacity", "1");
+  await expect(pencil).toHaveCSS("transform", "none");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.setViewportSize({ width: 1440, height: 950 });
   await page
     .getByRole("button", { name: "Close Channel settings tab", exact: true })

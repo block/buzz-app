@@ -1580,15 +1580,15 @@ it.each(["description", "visibility", "channel name"])(
     );
     const row = await screen.findByRole("button", { name: `Edit ${field}` });
     expect(row).toHaveAttribute("aria-haspopup", "dialog");
-    if (field === "channel name") {
-      expect(row).not.toHaveTextContent("Edit");
-      expect(row.querySelector("svg")?.parentElement).toHaveAttribute(
-        "aria-hidden",
-        "true",
-      );
-    } else {
-      expect(row).toHaveTextContent("Edit");
-    }
+    expect(row).not.toHaveTextContent("Edit");
+    expect(row.querySelector("svg")?.parentElement).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(row.querySelector("svg")).toHaveAttribute(
+      "width",
+      field === "channel name" ? "16" : "14",
+    );
     expect(
       screen.queryByRole("button", { name: "Edit details" }),
     ).not.toBeInTheDocument();

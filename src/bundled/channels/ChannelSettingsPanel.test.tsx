@@ -33,6 +33,7 @@ it("shows known channel details with diagnostics collapsed until requested", asy
   ).toBeVisible();
   expect(screen.getByRole("heading", { name: "Alpha" })).toBeVisible();
   expect(screen.getByText("alpha")).toBeVisible();
+  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   expect(screen.getByText("2")).toBeVisible();
   expect(screen.getByRole("tab", { name: "Channel settings" })).toHaveFocus();
   expect(screen.getByText("Refresh messages")).not.toBeVisible();
@@ -350,8 +351,16 @@ it("copies the exact channel ID with keyboard access and reports success", async
   render(idPanel());
   const copy = screen.getByRole("button", { name: "Copy channel id" });
   expect(copy).toHaveAttribute("aria-haspopup", "false");
-  expect(copy).toHaveTextContent("Copy");
+  expect(copy).toHaveTextContent(/^Channel ID$/);
+  expect(copy.querySelector("svg")?.parentElement).toHaveAttribute(
+    "aria-hidden",
+    "true",
+  );
+  expect(copy.querySelector("svg")).toHaveAttribute("width", "14");
+  await user.hover(copy);
+  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   copy.focus();
+  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   await user.keyboard("{Enter}");
   expect(write).toHaveBeenCalledExactlyOnceWith(
     "11111111-1111-4111-8111-111111111111",
@@ -360,6 +369,13 @@ it("copies the exact channel ID with keyboard access and reports success", async
     "Channel ID copied",
   );
   expect(copy).toHaveFocus();
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+  );
+  await user.unhover(copy);
+  await user.hover(copy);
+  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 });
 
 it("keeps the ID visible after clipboard denial and supports retry", async () => {
@@ -371,16 +387,17 @@ it("keeps the ID visible after clipboard denial and supports retry", async () =>
   render(idPanel("alpha"));
   const copy = screen.getByRole("button", { name: "Copy channel id" });
   await user.click(copy);
-  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+  expect(await screen.findByRole("alert")).toHaveTextContent(
     "Couldn’t copy channel ID. Try again.",
   );
   expect(screen.getByText("alpha")).toBeVisible();
+  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   expect(copy).toBeEnabled();
   await user.click(copy);
   expect(await screen.findByRole("tooltip")).toHaveTextContent(
     "Channel ID copied",
   );
-  expect(screen.getByRole("tooltip")).not.toHaveTextContent("Couldn’t");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(write).toHaveBeenCalledTimes(2);
 });
 
@@ -395,7 +412,7 @@ it("reports an unavailable clipboard without throwing", async () => {
   try {
     render(idPanel());
     await user.click(screen.getByRole("button", { name: "Copy channel id" }));
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    expect(await screen.findByRole("alert")).toHaveTextContent(
       "Couldn’t copy channel ID.",
     );
   } finally {

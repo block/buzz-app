@@ -16,6 +16,7 @@ import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import {
   GearIcon,
   CaretRightIcon,
+  CopyIcon,
   FileTextIcon,
   PencilSimpleIcon,
 } from "../../shared/design-system/icons/index";
@@ -210,7 +211,9 @@ export function ChannelSettingsPanel({
                   <SettingsDetail
                     label="Members"
                     value={String(channel.members.length)}
-                    icon={<CaretRightIcon size={16} aria-hidden="true" />}
+                    trailingIcon={
+                      <CaretRightIcon size={16} aria-hidden="true" />
+                    }
                     onOpen={openMembers}
                   />
                 )}
@@ -279,8 +282,10 @@ function SettingsDetail({
   label,
   value,
   valueClassName,
+  feedback,
   actionLabel,
-  icon,
+  actionIcon = <PencilSimpleIcon size={14} />,
+  trailingIcon,
   onOpen,
   hasPopup = "dialog",
   disabled = false,
@@ -289,8 +294,10 @@ function SettingsDetail({
   label: string;
   value: string;
   valueClassName?: string | undefined;
+  feedback?: ReactNode;
   actionLabel?: string | undefined;
-  icon?: ReactNode;
+  actionIcon?: ReactNode;
+  trailingIcon?: ReactNode;
   hasPopup?: "dialog" | false;
   disabled?: boolean;
   renderAction?(action: ReactElement<ComponentProps<"button">>): ReactNode;
@@ -316,13 +323,26 @@ function SettingsDetail({
                   if (!disabled) onOpen(event.currentTarget);
                 }}
               >
-                <span>{label}</span>
-                {icon ?? <span className="text-link">{actionLabel}</span>}
+                <span className={styles.settingsDetailLabel}>
+                  <span>{label}</span>
+                  {!trailingIcon && (
+                    <span
+                      className={styles.settingsDetailIcon}
+                      aria-hidden="true"
+                    >
+                      {actionIcon}
+                    </span>
+                  )}
+                </span>
+                {trailingIcon}
               </button>,
             )
           : label}
       </dt>
-      <dd className={valueClassName}>{value}</dd>
+      <dd className={valueClassName}>
+        {value}
+        {feedback}
+      </dd>
     </div>
   );
 }
@@ -333,39 +353,42 @@ function ChannelIdDetail({ id }: { id: string }) {
   );
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   async function copy() {
+    setFeedbackOpen(false);
     setState("copying");
     try {
       await navigator.clipboard.writeText(id);
       setState("copied");
+      setFeedbackOpen(true);
     } catch {
       setState("failed");
     }
-    setFeedbackOpen(true);
   }
   return (
     <SettingsDetail
       label="Channel ID"
       value={id}
       valueClassName={styles.settingsId}
+      feedback={
+        state === "failed" && (
+          <p role="alert" className="text-danger">
+            Couldn’t copy channel ID. Try again.
+          </p>
+        )
+      }
       actionLabel="Copy"
+      actionIcon={<CopyIcon size={14} />}
       hasPopup={false}
       disabled={state === "copying"}
       onOpen={() => void copy()}
       renderAction={(action) => (
         <Tooltip
-          open={feedbackOpen}
+          open={state === "copied" && feedbackOpen}
           closeOnClick={false}
-          onOpenChange={setFeedbackOpen}
+          onOpenChange={(open) => {
+            if (!open) setFeedbackOpen(false);
+          }}
           disableHoverablePopup
-          content={
-            <span role="status">
-              {state === "copied"
-                ? "Channel ID copied"
-                : state === "failed"
-                  ? "Couldn’t copy channel ID. Try again."
-                  : "Copy channel ID"}
-            </span>
-          }
+          content={<span role="status">Channel ID copied</span>}
         >
           {action}
         </Tooltip>

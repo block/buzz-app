@@ -803,7 +803,7 @@ it.each([
   ["Pi", "/local/buzz-pi-acp"],
   ["Goose", "/local/goose"],
 ])(
-  "tests a %s provider below its API key before choosing a model without changing the draft",
+  "tests a %s provider before choosing a model and can browse again after cancelling lookup",
   async (label, command) => {
     const f = controlFixture();
     f.data.harnessOptions = [
@@ -816,7 +816,7 @@ it.each([
     ];
     const catalog: ModelCatalog = {
       host: "",
-      models: [],
+      models: [{ id: "openai/gpt", name: "Test model" }],
       modelOverridden: false,
       disconnected: false,
     };
@@ -856,10 +856,8 @@ it.each([
       const button = screen.getByRole("button", { name: "Test connection" });
       const key = screen.getByLabelText("OpenAI API key");
       const model = screen.getByRole("combobox", { name: "Model" });
-      if (label === "Goose")
-        await userEvent
-          .setup()
-          .click(screen.getByRole("button", { name: "Browse models" }));
+      const browse = screen.getByRole("button", { name: "Browse models" });
+      if (label === "Goose") await userEvent.setup().click(browse);
       await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
       expect(model).toHaveAttribute("aria-busy", "true");
       expect(button).toBeEnabled();
@@ -886,6 +884,17 @@ it.each([
       );
       expect(model).toHaveValue("");
       expect(model).not.toHaveAttribute("aria-busy", "true");
+      expect(onChange).not.toHaveBeenCalled();
+      await userEvent.setup().click(browse);
+      await waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+      expect(
+        await screen.findByRole("option", { name: /Test model/ }),
+      ).toBeVisible();
+      expect(run).toHaveBeenLastCalledWith(
+        1,
+        expect.objectContaining({ action: "connect" }),
+      );
+      expect(model).toHaveValue("");
       expect(onChange).not.toHaveBeenCalled();
     } finally {
       releaseLookup();

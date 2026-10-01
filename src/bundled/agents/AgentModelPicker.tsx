@@ -135,6 +135,7 @@ export function AgentModelPicker({
     if (!control.models || testing.current) return;
     pending.current?.abort();
     pending.current = null;
+    attempted.current = null;
     setBusy(false);
     setStatus("");
     setOpen(false);

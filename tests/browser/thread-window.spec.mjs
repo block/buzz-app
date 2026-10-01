@@ -3,6 +3,7 @@ import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { watchPageErrors } from "./page-errors.mjs";
+import { settle } from "./timeline.mjs";
 
 test("reconnect repair failure keeps retry reachable at the newest replies", async ({
   page,
@@ -353,24 +354,23 @@ test("newest window positions immediately; scrollback preserves the visible repl
       history.getByText("Reply with image", { exact: true }),
     ).toBeInViewport();
     // Walk the virtualized range: every loaded reply mounts, none twice.
+    // Each step waits for its mounted rows, so runner speed cannot skip any.
     const seen = new Set();
-    await expect
-      .poll(
-        async () => {
-          const ids = await history.evaluate((el) => {
-            const ids = [...el.querySelectorAll("ol [data-message-id]")].map(
-              (row) => row.dataset.messageId,
-            );
-            el.scrollTop += el.clientHeight / 2;
-            return ids;
-          });
-          expect(new Set(ids).size).toBe(ids.length);
-          for (const id of ids) seen.add(id);
-          return seen.size;
-        },
-        { intervals: [50] },
-      )
-      .toBe(305);
+    for (let end = false; !end; ) {
+      await settle(page, history);
+      const step = await history.evaluate((el) => {
+        const ids = [...el.querySelectorAll("ol [data-message-id]")].map(
+          (row) => row.dataset.messageId,
+        );
+        const end = el.scrollHeight - el.clientHeight - el.scrollTop <= 1;
+        el.scrollTop += el.clientHeight;
+        return { ids, end };
+      });
+      expect(new Set(step.ids).size).toBe(step.ids.length);
+      for (const id of step.ids) seen.add(id);
+      end = step.end;
+    }
+    expect(seen.size).toBe(305);
     expect(
       (await page.evaluate(() => window.messagesFixture.report.filters)).every(
         (f) => f.thread_window && f.thread_cursor === undefined,

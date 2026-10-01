@@ -39,7 +39,7 @@ it("revokes a pending selection on disposal and never starts it", async () => {
     effect: (setup: () => () => void) => {
       dispose = setup();
     },
-    settingsCards: {
+    pages: {
       register: (card: { component: React.ComponentType }) => {
         Component = card.component;
       },
@@ -54,13 +54,15 @@ it("revokes a pending selection on disposal and never starts it", async () => {
   );
   await waitFor(() =>
     expect(
-      screen.getByRole("switch", { name: "Use shared compute" }),
-    ).not.toHaveAttribute("aria-disabled", "true"),
+      screen.getByRole("button", { name: "Connect to community compute" }),
+    ).not.toBeDisabled(),
   );
-  fireEvent.click(screen.getByRole("switch", { name: "Use shared compute" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Connect to community compute" }),
+  );
   expect(
-    screen.getByRole("switch", { name: "Use shared compute" }),
-  ).toHaveAttribute("aria-disabled", "true");
+    screen.getByRole("button", { name: "Connect to community compute" }),
+  ).toBeDisabled();
   dispose();
   await act(async () => {
     resolve("old-lease");
@@ -105,7 +107,7 @@ it("preserves the running lease through reconnect and revokes on identity change
     effect: (setup: () => () => void) => {
       dispose = setup();
     },
-    settingsCards: {
+    pages: {
       register: (card: { component: React.ComponentType }) => {
         Component = card.component;
       },
@@ -115,10 +117,12 @@ it("preserves the running lease through reconnect and revokes on identity change
   render(<Component />);
   await waitFor(() =>
     expect(
-      screen.getByRole("switch", { name: "Use shared compute" }),
-    ).not.toHaveAttribute("aria-disabled", "true"),
+      screen.getByRole("button", { name: "Connect to community compute" }),
+    ).not.toBeDisabled(),
   );
-  fireEvent.click(screen.getByRole("switch", { name: "Use shared compute" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Connect to community compute" }),
+  );
   await waitFor(() =>
     expect(native.invoke).toHaveBeenCalledWith("mesh_compute_start", {
       lease: "stable-lease",
@@ -126,8 +130,8 @@ it("preserves the running lease through reconnect and revokes on identity change
   );
   await waitFor(() =>
     expect(
-      screen.getByRole("switch", { name: "Use shared compute" }),
-    ).not.toHaveAttribute("aria-disabled", "true"),
+      screen.getByRole("button", { name: "Connect to community compute" }),
+    ).not.toBeDisabled(),
   );
   await act(async () => {
     snapshot = { ...snapshot, status: "connecting" };
@@ -147,10 +151,12 @@ it("preserves the running lease through reconnect and revokes on identity change
   ).toBe(false);
   await waitFor(() =>
     expect(
-      screen.getByRole("switch", { name: "Use shared compute" }),
-    ).not.toHaveAttribute("aria-disabled", "true"),
+      screen.getByRole("button", { name: "Connect to community compute" }),
+    ).not.toBeDisabled(),
   );
-  fireEvent.click(screen.getByRole("switch", { name: "Use shared compute" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Connect to community compute" }),
+  );
   await waitFor(() =>
     expect(
       native.invoke.mock.calls.filter(
@@ -197,7 +203,7 @@ it("renders Running without claiming connectivity, stops by lease, and separates
     effect: (setup: () => () => void) => {
       dispose = setup();
     },
-    settingsCards: {
+    pages: {
       register: (card: { component: React.ComponentType }) => {
         Component = card.component;
       },
@@ -206,8 +212,8 @@ it("renders Running without claiming connectivity, stops by lease, and separates
   render(<Component />);
   await screen.findByText("Running");
   expect(screen.queryByText("Connected")).not.toBeInTheDocument();
-  expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "true");
-  fireEvent.click(screen.getByRole("switch"));
+  expect(screen.getByRole("button", { name: "Disconnect" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
   await screen.findByText("Off");
   expect(native.invoke).toHaveBeenCalledWith("mesh_compute_release", {
     lease: "lease",
@@ -219,4 +225,78 @@ it("renders Running without claiming connectivity, stops by lease, and separates
   );
   expect(screen.getByRole("status")).toHaveTextContent("Off");
   dispose();
+});
+
+it("polls transient states serially, stops at Running, and cancels on unmount", async () => {
+  vi.useFakeTimers();
+  let state = "starting";
+  native.invoke.mockImplementation((command) =>
+    Promise.resolve(
+      command === "mesh_compute_select"
+        ? "lease"
+        : { available: true, lifecycle: { state } },
+    ),
+  );
+  const snapshot = {
+    status: "ready",
+    viewer: "viewer",
+    scope: "https://fixture.example:viewer",
+  };
+  let Component!: React.ComponentType;
+  let dispose!: () => void;
+  apply({
+    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+    effect: (setup: () => () => void) => {
+      dispose = setup();
+    },
+    pages: {
+      register: (page: { component: React.ComponentType }) => {
+        Component = page.component;
+      },
+    },
+  } as unknown as Parameters<PluginModule["apply"]>[0]);
+  try {
+    await act(async () => {
+      render(<Component />);
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Starting…");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Starting…");
+    state = "ready";
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Running");
+    const count = native.invoke.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(native.invoke).toHaveBeenCalledTimes(count);
+    state = "stopping";
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Stopping…");
+    state = "stopped";
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Off");
+    state = "starting";
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    });
+    cleanup();
+    const finalCount = native.invoke.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(native.invoke).toHaveBeenCalledTimes(finalCount);
+  } finally {
+    cleanup();
+    dispose();
+    vi.useRealTimers();
+  }
 });

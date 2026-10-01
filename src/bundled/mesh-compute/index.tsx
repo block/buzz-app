@@ -2,9 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
 
-import { Button } from "../../shared/design-system/ui/Button";
-import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
-import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
+import { ConsumerComputeView } from "./ConsumerComputeView";
 
 type MeshStatus = {
   available: boolean;
@@ -22,7 +20,7 @@ const phaseLabels = {
   failed: "Needs attention",
 };
 
-export const inject = ["relay", "settingsCards"];
+export const inject = ["relay", "pages"];
 export const apply: PluginModule["apply"] = (ctx) => {
   let lease: Promise<string> | undefined;
   let scope: string | undefined;
@@ -73,7 +71,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     lease = undefined;
   });
 
-  function Settings() {
+  function CommunityComputePage() {
     const snapshot = useSyncExternalStore(
       ctx.relay.subscribe,
       ctx.relay.snapshot,
@@ -133,61 +131,67 @@ export const apply: PluginModule["apply"] = (ctx) => {
       }
     };
     const phase = status?.lifecycle?.state;
+    useEffect(() => {
+      if (
+        busy ||
+        error ||
+        (status?.lifecycle?.state !== "starting" &&
+          status?.lifecycle?.state !== "stopping")
+      )
+        return;
+      let active = true;
+      const timer = setTimeout(() => {
+        void invoke<MeshStatus>("mesh_compute_status").then(
+          (result) => {
+            if (active && !disposed && snapshot === ctx.relay.snapshot())
+              setStatus(result);
+          },
+          (reason) => {
+            if (active && !disposed && snapshot === ctx.relay.snapshot())
+              setError(String(reason));
+          },
+        );
+      }, 1000);
+      return () => {
+        active = false;
+        clearTimeout(timer);
+      };
+    }, [status, busy, error, snapshot]);
     const enabled =
       phase === "starting" || phase === "ready" || phase === "stopping";
-    const message = error ?? status?.lifecycle?.reason ?? status?.reason;
     return (
-      <section aria-label="Mesh compute">
-        <SwitchPreferenceRow
-          label="Use shared compute"
-          description="Use compute shared by members of this community. Your prompts run on their machines."
-          checked={enabled}
-          disabled={
-            busy ||
-            !isTauri() ||
-            !status?.available ||
-            !phase ||
-            phase === "stopping" ||
-            (!enabled && snapshot.status !== "ready")
-          }
-          onCheckedChange={(checked) => void run(checked ? "start" : "stop")}
-        />
-        <PreferenceRow
-          title="Status"
-          subtitle={
-            <span role="status">
-              {!isTauri()
-                ? "Open Buzz desktop to use shared compute."
-                : phase
-                  ? phaseLabels[phase]
-                  : status?.available === false
-                    ? "Unavailable"
-                    : "Checking status…"}
-            </span>
-          }
-          trailing={
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={busy || !isTauri()}
-              onClick={() => void run("status")}
-            >
-              Refresh
-            </Button>
-          }
-        />
-        {message && (
-          <p role="alert" className="text-body-sm text-danger">
-            {message}
-          </p>
-        )}
-      </section>
+      <ConsumerComputeView
+        active={enabled}
+        starting={phase === "starting"}
+        disabled={
+          busy ||
+          !isTauri() ||
+          !status?.available ||
+          !phase ||
+          phase === "stopping" ||
+          (!enabled && snapshot.status !== "ready")
+        }
+        status={
+          !isTauri()
+            ? "Open Buzz desktop to use shared compute."
+            : phase
+              ? phaseLabels[phase]
+              : status?.available === false
+                ? "Unavailable"
+                : "Checking status…"
+        }
+        error={error ?? status?.lifecycle?.reason ?? status?.reason}
+        refreshDisabled={busy || !isTauri()}
+        connect={() => void run(enabled ? "stop" : "start")}
+        refresh={() => void run("status")}
+      />
     );
   }
-  ctx.settingsCards.register({
+  ctx.pages.register({
     id: "mesh",
-    title: "Mesh compute",
-    group: "Compute",
-    component: Settings,
+    title: "Compute",
+    layout: "workspace",
+    primary: true,
+    component: CommunityComputePage,
   });
 };

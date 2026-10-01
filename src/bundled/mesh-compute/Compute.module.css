@@ -1,0 +1,7 @@
+/* Consumer content layout from feat/community-compute-plugin @ b4a910e. */
+.content {
+  max-width: 60rem;
+  margin-inline: auto;
+  display: grid;
+  gap: var(--space-control-inset);
+}

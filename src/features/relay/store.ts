@@ -1189,6 +1189,10 @@ export function createChannelStore(
       if (!disposed && generation === epoch) outcome = { state: "verified" };
     } catch (error) {
       if (disposed || generation !== epoch) return;
+      // A refused roster has not fulfilled this pass's writer requirement.
+      // Retain it for deliberate retry without scheduling more work.
+      if (readingRoster && consistency.consistency === "strong")
+        strongListAgain = true;
       outcome = isAbort(error)
         ? { state: "deferred" }
         : { state: "error", error: describe(error) };

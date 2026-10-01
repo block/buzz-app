@@ -78,13 +78,16 @@ confirmation retries are unchanged.
 
 Channel discovery accepts an explicit consistency option for post-write exact
 reads and the full-roster fallback. A queued writer-backed refresh survives an
-older in-flight pass or quota pause, then reverts to ordinary routing. Signed
+older in-flight pass or quota pause. If the writer-backed roster pass itself
+fails, its explicit retry retains writer routing and the existing cooldown;
+a successful pass returns later refreshes to ordinary routing. Signed
 membership hints request that same full writer-backed pass, including metadata;
 ordinary startup, browsing, reconnect, and DM visibility refresh stay replica-
-eligible. Details/member-admin dialogs use writer-backed state for their shared
-load/preflight/confirmation reads. Work-session membership preflights (including
-session sends and canvas saves) also use the writer, so a just-added member does
-not fail the next operation.
+eligible. The details editor and member-administration capability use writer-backed
+state for their shared load/preflight/confirmation reads; the member dialog's
+separate display-roster load remains replica-eligible. Work-session membership
+preflights (including session sends and canvas saves) also use the writer, so a
+just-added member does not fail the next operation.
 Template setup also confirms exact Canvas/member events and selected Canvas heads
 against the writer without replaying accepted commands. Agent deletion discovers
 member channels and confirms each removal with writer-backed rosters; unreadable

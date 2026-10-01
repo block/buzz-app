@@ -289,6 +289,78 @@ it("queued membership hints and reconnect cannot bypass a learned roster pause",
   }
 });
 
+it.each([
+  { name: "rate-limited", retryAfterMs: 60_000 },
+  { name: "refused without a cooldown", retryAfterMs: undefined },
+])(
+  "a $name strong roster pass keeps writer routing for explicit retry",
+  async ({ retryAfterMs }) => {
+    const h = setup();
+    try {
+      h.connected();
+      h.live.established();
+      await flush();
+      h.wire.next().respond([]);
+      await flush();
+      h.live.receive([
+        signed(h.relay, {
+          kind: 44100,
+          content: "",
+          tags: [["p", h.viewer.pubkey]],
+        }),
+      ]);
+      await flush();
+      const refused = h.wire.next();
+      expect(refused.filters[0]?.consistency).toBe("strong");
+      refused.fail(
+        new ReadError(
+          "unavailable",
+          "Read refused",
+          retryAfterMs === undefined ? undefined : 429,
+          retryAfterMs,
+        ),
+      );
+      await flush();
+      expect(h.owner.session.live.snapshot().roster.state).toBe("error");
+      expect(h.wire.pending).toHaveLength(0);
+      if (retryAfterMs !== undefined) {
+        h.owner.session.live.retry();
+        await flush();
+        expect(h.wire.pending).toHaveLength(0);
+        vi.spyOn(performance, "now").mockReturnValue(
+          performance.now() + retryAfterMs + 1,
+        );
+      }
+      h.owner.session.live.retry();
+      await flush();
+      const retry = h.wire.next();
+      expect(retry.filters[0]?.consistency).toBe("strong");
+      const granted = [
+        roster(h.relay, "new", [h.viewer.pubkey]),
+        metadata(h.relay, "new", "New channel"),
+      ];
+      // Only the writer has the newly granted membership; no live roster echo.
+      retry.respond(retry.filters[0]?.consistency === "strong" ? granted : []);
+      await flush();
+      expect(h.owner.session.channels.list().channels.map((c) => c.id)).toEqual(
+        ["new"],
+      );
+      expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+      expect(h.wire.pending).toHaveLength(0);
+      h.owner.session.channels.refreshList?.();
+      await flush();
+      const ordinary = h.wire.next();
+      expect(ordinary.filters[0]).not.toHaveProperty("consistency");
+      ordinary.respond(granted);
+      await flush();
+      expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+      expect(h.wire.pending).toHaveLength(0);
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
+
 it.each(["unavailable", "denied"] as const)(
   "a %s metadata read retains roster authority and remains recoverable",
   async (kind) => {

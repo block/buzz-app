@@ -106,6 +106,11 @@ fn main() {
             "browser_navigate",
             "browser_action",
             "browser_status",
+            "mesh_compute_status",
+            "mesh_compute_stop",
+            "mesh_compute_start",
+            "mesh_compute_select",
+            "mesh_compute_release",
         ])),
     )
     .expect("Could not build Tauri resources")

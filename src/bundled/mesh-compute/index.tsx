@@ -94,13 +94,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     return (
       <section>
         <p>
-          Consume compute shared by members of the connected community. Provider
-          sharing is not available in this preview.
+          Use compute shared by members of this community. Your prompts run on
+          their machines.
         </p>
-        <p>
-          Native build with the Mesh feature required. Starting does not prove a
-          peer or model is available.
-        </p>
+        <p>This preview uses shared compute; it does not share your machine.</p>
+        <p>{!isTauri() && "Open Buzz desktop to connect to shared compute."}</p>
         <button
           type="button"
           disabled={busy || !isTauri() || snapshot.status !== "ready"}

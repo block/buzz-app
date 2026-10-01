@@ -71,3 +71,8 @@ pub fn advertised_endpoint_tokens(payload: &serde_json::Value) -> Option<Vec<Str
         })
         .collect()
 }
+
+/// Resolve the same SDK-owned path as legacy Desktop.
+pub fn default_owner_path() -> anyhow::Result<std::path::PathBuf> {
+    Ok(mesh_llm_host_runtime::crypto::default_keystore_path()?)
+}

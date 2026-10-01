@@ -99,6 +99,10 @@ pub fn valid_id(id: &str) -> Result<()> {
 }
 pub fn bundled_manifests() -> Vec<Manifest> {
     vec![
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/mesh-compute/manifest.json"
+        ))
+        .expect("mesh manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/todos/manifest.json"))
             .expect("todos manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/diffs/manifest.json"))
@@ -354,7 +358,7 @@ impl Manager {
                         .copied()
                         .unwrap_or(!matches!(
                             manifest.id.as_str(),
-                            "buzz.channel-templates" | "buzz.todos"
+                            "buzz.channel-templates" | "buzz.todos" | "buzz.mesh-compute"
                         ));
                 PluginInfo {
                     manifest,

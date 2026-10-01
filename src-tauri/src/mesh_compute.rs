@@ -103,20 +103,18 @@ pub async fn mesh_compute_start(
                 mesh_name: Some(buzz_mesh_compute::config::mesh_name_for_relay(&community)),
             })
             .map_err(|error| error.to_string())?;
-        for token in targets {
+        queue_targets(targets, |token| {
             host.lifecycle
-                .dial(&token)
-                .map_err(|error| error.to_string())?;
-        }
+                .dial(token)
+                .map_err(|error| error.to_string())
+        });
         Ok(())
     })
 }
 
 #[cfg(feature = "mesh")]
 fn mesh_owner_path() -> Result<std::path::PathBuf, String> {
-    std::env::var_os("HOME")
-        .map(|home| std::path::PathBuf::from(home).join(".mesh-llm/owner-keystore.json"))
-        .ok_or_else(|| "Home directory unavailable".into())
+    buzz_mesh_compute::identity::default_owner_path().map_err(|error| error.to_string())
 }
 #[cfg(feature = "mesh")]
 fn mesh_port(name: &str, fallback: u16) -> Result<u16, String> {
@@ -149,4 +147,33 @@ pub fn mesh_compute_release(host: tauri::State<'_, MeshHost>, lease: String) -> 
         host.lifecycle.stop();
     }
     Ok(())
+}
+
+#[cfg(feature = "mesh")]
+fn queue_targets(
+    targets: impl IntoIterator<Item = String>,
+    mut dial: impl FnMut(&str) -> Result<(), String>,
+) {
+    for token in targets {
+        if dial(&token).is_err() {
+            eprintln!("Mesh discovery target could not be queued; client remains started");
+        }
+    }
+}
+
+#[cfg(all(test, feature = "mesh"))]
+mod queue_tests {
+    #[test]
+    fn rejected_secondary_target_does_not_fail_the_started_operation() {
+        let mut calls = 0;
+        super::queue_targets(["first".into(), "second".into()], |_| {
+            calls += 1;
+            if calls == 2 {
+                Err("fixture rejection".into())
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(calls, 2);
+    }
 }

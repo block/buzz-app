@@ -1,3 +1,5 @@
+import meshManifest from "./mesh-compute/manifest.json";
+import * as mesh from "./mesh-compute";
 import todosManifest from "./todos/manifest.json";
 import * as todos from "./todos";
 import diffsManifest from "./diffs/manifest.json";
@@ -43,6 +45,11 @@ import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...meshManifest, apiVersion: 1 },
+    module: mesh,
+    enabledByDefault: false,
+  },
   { manifest: { ...feedbackManifest, apiVersion: 1 }, module: feedback },
   {
     manifest: { ...todosManifest, apiVersion: 1 },

@@ -229,3 +229,41 @@ it("publishes sidebar actions to a sibling menu and retires them with the sessio
   act(() => view.result.current.handoff?.menuActions.publish(undefined));
   expect(view.result.current.actions).toBeUndefined();
 });
+
+it("retires only the originating header confirmation and rejects its deferred reopening", () => {
+  const h = fixture();
+  const view = mount(h.relay);
+  const channel = { id: "channel", name: "Channel" };
+  const origin = new AbortController();
+  act(() =>
+    view.result.current.openLifecycle(
+      channel,
+      "delete",
+      undefined,
+      origin.signal,
+    ),
+  );
+  expect(view.result.current.lifecycleDialog?.origin).toBe(origin.signal);
+  act(() => origin.abort());
+  expect(view.result.current.lifecycleDialog).toBeUndefined();
+  act(() =>
+    view.result.current.openLifecycle(
+      channel,
+      "delete",
+      undefined,
+      origin.signal,
+    ),
+  );
+  expect(view.result.current.lifecycleDialog).toBeUndefined();
+  const old = new AbortController();
+  act(() =>
+    view.result.current.openLifecycle(channel, "delete", undefined, old.signal),
+  );
+  act(() => view.result.current.closeLifecycle());
+  act(() => view.result.current.openLifecycle(channel, "archive"));
+  act(() => old.abort());
+  expect(view.result.current.lifecycleDialog).toEqual({
+    channel,
+    action: "archive",
+  });
+});

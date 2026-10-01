@@ -33,6 +33,7 @@ import { ChannelLifecycleMenu } from "./ChannelLifecycleMenu";
 export function ChannelHeaderMenu({
   channel,
   session,
+  origin: lifetime,
   providers,
   templateProvider,
   trigger,
@@ -41,6 +42,7 @@ export function ChannelHeaderMenu({
 }: {
   channel: ChannelSummary | undefined;
   session: RelaySession;
+  origin?: AbortSignal | undefined;
   providers: TemplateProviders;
   templateProvider: Contribution<TemplateProvider> | undefined;
   trigger: RefObject<HTMLButtonElement | null>;
@@ -56,13 +58,15 @@ export function ChannelHeaderMenu({
   const origin = trigger.current;
   const actions = channel
     ? menuActions?.(channel, {
+        signal: lifetime,
         close: (focus) => {
           finalFocus.current = focus;
           readAction.reset();
           setOpen(false);
         },
         focus: () => {
-          if (origin?.isConnected) origin.focus({ preventScroll: true });
+          if (!lifetime?.aborted && origin?.isConnected)
+            origin.focus({ preventScroll: true });
         },
         pending: readAction.state?.pending ?? false,
         runRead: (action) =>
@@ -177,7 +181,12 @@ export function ChannelHeaderMenu({
           disabled={!!handoff.lifecycleDialog}
           separator
           choose={(action) =>
-            handoff.openLifecycle(channel, action, trigger.current ?? undefined)
+            handoff.openLifecycle(
+              channel,
+              action,
+              trigger.current ?? undefined,
+              lifetime,
+            )
           }
           render={withTemplate}
         />

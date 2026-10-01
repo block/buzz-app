@@ -1,6 +1,7 @@
 import {
   createContext,
   useCallback,
+  useLayoutEffect,
   useContext,
   useMemo,
   useState,
@@ -18,6 +19,8 @@ import { readView, writeView } from "../../shared/view-state";
 
 /** The persistent sidebar owns writes/recovery; each menu owns its focus and read status. */
 export type ChannelMenuSurface = {
+  /** Navigation presentation lifetime, not the session-owned write lifetime. */
+  signal?: AbortSignal | undefined;
   close(finalFocus?: () => HTMLElement | false): void;
   focus(): void;
   pending: boolean;
@@ -66,6 +69,7 @@ type State = {
         action: ChannelLifecycleAction;
         trigger?: HTMLElement;
         focusFallback?: HTMLElement | undefined;
+        origin?: AbortSignal;
       }
     | undefined;
 };
@@ -92,6 +96,7 @@ type Handoff = State & {
     channel: ChannelSummary,
     action: ChannelLifecycleAction,
     trigger?: HTMLElement,
+    origin?: AbortSignal,
   ): void;
   closeLifecycle(): void;
 };
@@ -136,6 +141,19 @@ export function ChannelNavigationProvider({
       previous.preparingDm ? { ...previous, preparingDm: undefined } : previous,
     );
   }, [update]);
+  const lifecycleOrigin = state.lifecycleDialog?.origin;
+  useLayoutEffect(() => {
+    if (!lifecycleOrigin) return;
+    const retire = () =>
+      update((previous) =>
+        previous.lifecycleDialog?.origin === lifecycleOrigin
+          ? { ...previous, lifecycleDialog: undefined }
+          : previous,
+      );
+    if (lifecycleOrigin.aborted) retire();
+    else lifecycleOrigin.addEventListener("abort", retire, { once: true });
+    return () => lifecycleOrigin.removeEventListener("abort", retire);
+  }, [lifecycleOrigin, update]);
   const value = useMemo<Handoff>(
     () => ({
       ...state,
@@ -164,9 +182,9 @@ export function ChannelNavigationProvider({
           },
         }));
       },
-      openLifecycle(channel, action, trigger) {
+      openLifecycle(channel, action, trigger, origin) {
         update((previous) =>
-          previous.lifecycleDialog
+          origin?.aborted || previous.lifecycleDialog
             ? previous
             : {
                 ...previous,
@@ -186,6 +204,7 @@ export function ChannelNavigationProvider({
                       ?.closest("aside")
                       ?.querySelector<HTMLElement>("button") ??
                     undefined,
+                  ...(origin ? { origin } : {}),
                 },
               },
         );

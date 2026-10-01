@@ -334,6 +334,18 @@ function ReadySidebar({
     surface?: ChannelMenuSurface;
   }>();
 
+  const createOrigin = creatingFor?.surface?.signal;
+  useLayoutEffect(() => {
+    if (!createOrigin) return;
+    const retire = () =>
+      setCreatingFor((previous) =>
+        previous?.surface?.signal === createOrigin ? undefined : previous,
+      );
+    if (createOrigin.aborted) retire();
+    else createOrigin.addEventListener("abort", retire, { once: true });
+    return () => createOrigin.removeEventListener("abort", retire);
+  }, [createOrigin]);
+
   const [initialGroup, setInitialGroup] = useState("");
   const pendingChannelCreation = useSyncExternalStore(
     queries.channelCreation.subscribe,
@@ -771,7 +783,11 @@ function ReadySidebar({
                 if (surface) {
                   surface.close(() => false);
                   requestAnimationFrame(() => {
-                    if (mounted.current && relay.snapshot().session === queries)
+                    if (
+                      mounted.current &&
+                      !surface.signal?.aborted &&
+                      relay.snapshot().session === queries
+                    )
                       setCreatingFor({ channel, surface });
                   });
                 } else pendingCreate.current = channel;
@@ -986,7 +1002,7 @@ function ReadySidebar({
   useLayoutEffect(() => () => menuActions?.publish(undefined), [menuActions]);
   return (
     <>
-      {lifecycleDialog && (
+      {lifecycleDialog && !lifecycleDialog.origin?.aborted && (
         <ChannelLifecycleDialog
           channelId={lifecycleDialog.channel.id}
           channelName={lifecycleDialog.channel.name}
@@ -1037,7 +1053,7 @@ function ReadySidebar({
           }}
         />
       )}
-      {creatingFor && (
+      {creatingFor && !creatingFor.surface?.signal?.aborted && (
         <CreateSidebarSection
           channelName={creatingFor.channel.name}
           maxLength={preferences.data?.groupSource === "personal" ? 120 : 256}
@@ -1047,7 +1063,11 @@ function ReadySidebar({
           create={(section) => {
             // The modal can outlive the snapshot that admitted its menu. Check
             // the live gate before handing its draft to the optimistic store.
-            if (!queries.sidebarPreferences.writable) return false;
+            if (
+              creatingFor.surface?.signal?.aborted ||
+              !queries.sidebarPreferences.writable
+            )
+              return false;
             moveChannel(
               creatingFor.channel.id,
               () =>

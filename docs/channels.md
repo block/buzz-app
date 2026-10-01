@@ -311,7 +311,10 @@ to the ellipsis, while session creation hands focus to its composer. Read-only, 
 with the existing capabilities. Opening the menu reads permissions, never publishes
 a lifecycle command. Menu Escape/outside dismissal returns to the header; Canvas, template
 and lifecycle confirmation cancellation also return there. Dialog owners outlive menu dismissal,
-while channel/session navigation retires them. The redundant Canvas card and saved-content
+while channel/session navigation retires header-origin dialogs. Canvas is bound to
+its opening channel and visit, so navigation never mounts another channel’s editor.
+The sidebar’s own dialogs and session-owned writes/recovery keep their existing
+lifetime; retiring a header does not undo a command already sent. The redundant Canvas card and saved-content
 preview are omitted from Channel Settings; opening details does not read Canvas.
 
 ## Channel lifecycle

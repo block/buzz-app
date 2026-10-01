@@ -557,4 +557,54 @@ test.describe("dialog origin retirement", () => {
       .click();
     expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
   });
+  for (const entrance of ["header", "sidebar"]) {
+    for (const action of ["create", "delete"]) {
+      test(`${entrance} ${action} keeps only sidebar-origin dialogs on browser Back`, async ({
+        page,
+        app,
+      }) => {
+        await start(page, app);
+        if (entrance === "header")
+          await page
+            .getByRole("button", { name: "Channel actions", exact: true })
+            .click();
+        else
+          await page
+            .locator(`button[data-channel-id="${channelId}"]`)
+            .click({ button: "right" });
+        if (action === "create") {
+          await page
+            .getByRole("menuitem", { name: "Move channel", exact: true })
+            .focus();
+          await page.keyboard.press("ArrowRight");
+          await page
+            .getByRole("menuitem", { name: "Create new…", exact: true })
+            .click();
+        } else
+          await page
+            .getByRole("menuitem", { name: "Delete channel", exact: true })
+            .click();
+        const dialog = page.getByRole("dialog", {
+          name: action === "create" ? "Create new section" : /Delete channel:/,
+        });
+        await expect(dialog).toBeVisible();
+        await back(page);
+        if (entrance === "header") {
+          await expect(dialog).toHaveCount(0);
+          await page.goForward();
+          await expect(
+            page.getByRole("tab", { name: channelName, exact: true }),
+          ).toBeVisible();
+          await expect(dialog).toHaveCount(0);
+        } else {
+          await expect(dialog).toBeVisible();
+          await dialog
+            .getByRole("button", { name: "Cancel", exact: true })
+            .click();
+        }
+        expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
+        expect(app.report.unexpected).toEqual([]);
+      });
+    }
+  }
 });

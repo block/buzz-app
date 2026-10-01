@@ -1526,6 +1526,7 @@ function ChannelWorkspace({
                         key={`channel-actions:${currentId ?? "empty"}`}
                         channel={current}
                         session={queries}
+                        origin={navigation?.signal}
                         providers={providers}
                         templateProvider={templateProvider}
                         trigger={settingsTrigger}

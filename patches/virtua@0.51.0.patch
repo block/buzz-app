@@ -26,7 +26,18 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..d960e2ea2a9435296756a64fe3a3773b
                  x && (n = a(n, x[0]), o = u(o, x[1]));
              }
              return [ u(n, 0), a(o, l() - 1) ];
-@@ -173,15 +179,37 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -78,7 +84,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+                     if (!e.length) break;
+                     L(e.reduce((e, [t, n]) => {
+                         let r;
+-                        if (2 === y) r = !0; else if (x && 1 === y) r = t < x[0]; else {
++                        // A shift corrects rows above the viewport end; buffered rows
++                        // wholly below it cannot move the reading position.
++                        if (2 === y) r = E(t) < M() + S; else if (x && 1 === y) r = t < x[0]; else {
+                             const e = M(), n = E(t), i = o(t);
+                             r = 1 !== I && 0 === y ? n + i <= e : n < e && n + i < e + S;
+                         }
+@@ -173,15 +181,37 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
          q: () => [ l.slice(), o ]
      };
  }, C = e => {
@@ -66,7 +77,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..d960e2ea2a9435296756a64fe3a3773b
              t && t.disconnect();
          }
      };
-@@ -249,10 +277,28 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -249,10 +279,28 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
          o && o();
      } ];
  }, E = (e, t) => {
@@ -97,7 +108,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..d960e2ea2a9435296756a64fe3a3773b
              behavior: t ? "smooth" : "instant"
          });
      }), u = t ? "width" : "height", d = /* @__PURE__ */ new WeakMap, h = C(t => {
-@@ -263,10 +309,15 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -263,10 +311,15 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
          }
          o.length && e.W(3, o);
      });
@@ -114,7 +125,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..d960e2ea2a9435296756a64fe3a3773b
                      const e = u.style, t = e[c];
                      e[c] = "hidden", p(() => {
                          e[c] = t;
-@@ -274,7 +325,7 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -274,7 +327,7 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
                  }
                  const r = e.T() + t;
                  r <= 0 || r >= e.O() + e.t() - e.o() ? u.scrollTo({
@@ -123,7 +134,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..d960e2ea2a9435296756a64fe3a3773b
                      behavior: "instant"
                  }) : u.scrollBy({
                      [l]: T(t, i),
-@@ -283,7 +334,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -283,7 +336,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
              }), r[1](!0);
          },
          _() {
@@ -134,7 +145,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..d960e2ea2a9435296756a64fe3a3773b
          },
          P: (e, t) => (d.set(e, t), h.A(e), () => {
              d.delete(e), h.B(e);
-@@ -797,4 +850,3 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -797,4 +852,3 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
  });
 -
 +

@@ -30,7 +30,12 @@ keep it frozen: a downward flick after an upward prepend renders no rows below t
 viewport, and React commits one frame behind, so the leading edge stays blank for
 the rest of the gesture. The range therefore buffers both sides while the
 direction is frozen, as it already does when idle. Native directional buffering
-is unchanged, and the mounted range never exceeds the idle range.
+is unchanged, and the extra buffer is no larger than the idle buffer.
+
+A shift otherwise counts every row resize as an anchoring correction. Rows wholly
+below the viewport are excluded, so a newly buffered row there that resizes (a
+video loading, say) cannot move the reading position. Rows above and in the
+viewport, including prepended history, are still corrected.
 
 In an isolated WKWebView over real channel history (images, video, live relay),
 fast alternating flicks were measured per frame. In two instrumented runs, all 46

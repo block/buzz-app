@@ -1,5 +1,5 @@
 import { openPage, pageChoices } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open, edge, settle } from "./timeline.mjs";
 
 test.use({ pluginFixtures: true, historyCounts: { alpha: 1, beta: 0 } });
@@ -359,7 +359,7 @@ test.describe("scaled history", () => {
     ).toHaveCount(0);
     await expect(
       history.locator(
-        `[data-message-id="${app.histories.get("primary/alpha")[0].id}"]`,
+        `[data-message-id="${app.histories.get(`primary/${ids.alpha}`)[0].id}"]`,
       ),
     ).toBeVisible();
   });

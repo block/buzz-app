@@ -553,18 +553,18 @@ test.describe("DM preview wiring", () => {
     dmLabels: true,
     agentPeers: true,
     channelIds: [
-      "alpha",
-      "beta",
-      ...Array.from({ length: 12 }, (_, i) => `padding-${i}`),
+      ids.alpha,
+      ids.beta,
+      ...Array.from({ length: 12 }, (_, i) => ids[`padding-${i}`]),
     ],
     historyCounts: { alpha: 1, beta: 1 },
     dmMembers: {
-      "dm-a": [0],
-      "dm-b": [1],
-      "dm-c": [2],
-      "dm-d": [0],
-      "dm-group": [0, 1],
-      "dm-self": [],
+      [ids["dm-a"]]: [0],
+      [ids["dm-b"]]: [1],
+      [ids["dm-c"]]: [2],
+      [ids["dm-d"]]: [0],
+      [ids["dm-group"]]: [0, 1],
+      [ids["dm-self"]]: [],
     },
   });
   test("production sidebar wires only 1:1 avatars and preserves their shape and overlap", async ({
@@ -573,13 +573,22 @@ test.describe("DM preview wiring", () => {
   }) => {
     await page.setViewportSize({ width: 1440, height: 500 });
     await open(page, app);
-    for (const id of ["dm-a", "dm-b", "dm-c", "dm-d", "dm-group", "dm-self"])
+    for (const id of [
+      "dm-a",
+      "dm-b",
+      "dm-c",
+      "dm-d",
+      "dm-group",
+      "dm-self",
+    ].map((label) => ids[label]))
       await expect(
         row(page, id).locator("[data-channel-unread]"),
       ).toBeAttached();
     const below = cue(page, "below");
     await expect(below.locator("[data-unread-dm]")).toHaveCount(3);
-    const eligible = new Set(["dm-a", "dm-b", "dm-c", "dm-d"]);
+    const eligible = new Set(
+      ["dm-a", "dm-b", "dm-c", "dm-d"].map((label) => ids[label]),
+    );
     for (const edge of ["below", "above"]) {
       if (edge === "above")
         await list(page).evaluate((el) => {
@@ -620,8 +629,12 @@ test.describe("DM preview wiring", () => {
       }
     }
     await scroll(page, 0);
-    const human = below.locator('[data-unread-dm="dm-a"] [data-avatar-shape]');
-    const agent = below.locator('[data-unread-dm="dm-b"] [data-avatar-shape]');
+    const human = below.locator(
+      `[data-unread-dm="${ids["dm-a"]}"] [data-avatar-shape]`,
+    );
+    const agent = below.locator(
+      `[data-unread-dm="${ids["dm-b"]}"] [data-avatar-shape]`,
+    );
     await expect(human).toHaveAttribute("data-avatar-shape", "circle");
     await expect(human).toHaveCSS("border-radius", "50%");
     await expect(agent).toHaveAttribute("data-avatar-shape", "squircle");

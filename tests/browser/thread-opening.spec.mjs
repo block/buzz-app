@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 // Real scroll geometry and the first painted frame cannot be proven in jsdom.
@@ -12,7 +12,7 @@ test("ordinary thread reveals its first content already positioned at the bottom
   app,
 }) => {
   await open(page, app);
-  await page.locator('button[data-channel-id="beta"]').click();
+  await page.locator(`button[data-channel-id="${ids.beta}"]`).click();
   let release, intercepted;
   const held = new Promise((resolve) => {
     release = resolve;
@@ -44,7 +44,7 @@ test("ordinary thread reveals its first content already positioned at the bottom
       {
         version: 1,
         kind: "conversation",
-        channelId: "alpha",
+        channelId: ids.alpha,
         messageId: app.exact.root.id,
         threadRootId: app.exact.root.id,
         scope: {

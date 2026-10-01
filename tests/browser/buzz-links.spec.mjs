@@ -170,12 +170,12 @@ test("thread and detail tabs preserve drafts, scroll, focus and local-detail lif
 }) => {
   await open(page, app);
   const target = app.histories
-    .get("primary/alpha")
+    .get(`primary/${ids.alpha}`)
     .find((row) => row.content === "Broadcast reply");
   await page.evaluate((target) => window.fixtureNavigation.open(target), {
     version: 1,
     kind: "conversation",
-    channelId: "alpha",
+    channelId: ids.alpha,
     messageId: target.id,
     threadRootId: target.tags.find(
       (tag) => tag[0] === "e" && tag[3] === "root",
@@ -297,11 +297,11 @@ test("thread and detail tabs preserve drafts, scroll, focus and local-detail lif
   await expect(threadTab).toHaveCount(1);
   await page.setViewportSize({ width: 1440, height: 900 });
   // Sidebar navigation must preserve the complete set, including the routed thread.
-  await page.locator('button[data-channel-id="beta"]').click();
+  await page.locator(`button[data-channel-id="${ids.beta}"]`).click();
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
-  await page.locator('button[data-channel-id="alpha"]').click();
+  await page.locator(`button[data-channel-id="${ids.alpha}"]`).click();
   await expect(details).toHaveCount(1);
   await expect(threadTab).toHaveCount(1);
   await expect(details).toHaveAttribute("aria-selected", "true");

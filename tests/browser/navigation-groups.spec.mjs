@@ -279,7 +279,7 @@ test("dragging a channel between a group and Channels saves, reloads, and rolls 
   await expect(ungrouped).toHaveCount(0);
   await saved(page, app, 2);
   expect(app.report.sidebarPublications[1].blob.assignments).toEqual({
-    beta: "work",
+    [ids.beta]: "work",
   });
   await page.reload();
   await expect(beta).toBeVisible();
@@ -325,8 +325,8 @@ test("dragging a channel between a group and Channels saves, reloads, and rolls 
 // Sessions sit outside their channel's drag surface, as they sit outside its menu.
 const sessionParent = "11111111-1111-4111-8111-111111111111";
 const sessionSidebar = test.extend({
-  sessionChannels: ["alpha"],
-  sessionParents: { alpha: sessionParent },
+  sessionChannels: [ids.alpha],
+  sessionParents: { [ids.alpha]: sessionParent },
 });
 sessionSidebar(
   "dragging a session or a session draft leaves its channel in place, while the channel still moves",
@@ -338,7 +338,7 @@ sessionSidebar(
         `[data-sidebar-section="${section}"] [data-channel-id="${sessionParent}"]`,
       );
     const parent = parentIn("channels");
-    const child = sidebar(page).locator('[data-channel-id="alpha"]');
+    const child = sidebar(page).locator(`[data-channel-id="${ids.alpha}"]`);
     await expect(parent).toBeVisible();
     await expect(child).toBeVisible();
     await expect(
@@ -374,12 +374,12 @@ sessionSidebar(
     await expect(parent).toHaveCount(0);
     await expect(
       page.locator(
-        '[data-sidebar-section="group:work"] [data-channel-id="alpha"]',
+        `[data-sidebar-section="group:work"] [data-channel-id="${ids.alpha}"]`,
       ),
     ).toBeVisible();
     await saved(page, app, 1);
     expect(app.report.sidebarPublications[0].blob.assignments).toEqual({
-      beta: "work",
+      [ids.beta]: "work",
       [sessionParent]: "work",
     });
   },

@@ -293,6 +293,89 @@ it("offers a masked Pi API key for model lookup and saves it write-only", async 
   );
 });
 
+it("offers a Goose default API key for model lookup and saves it write-only", async () => {
+  const user = userEvent.setup();
+  const requests: ModelRequest[] = [];
+  const { fixture, control } = setup(0, 0, (f) => {
+    f.data.defaultSettings = {
+      harness: "goose",
+      provider: "google",
+      model: "gemini-2.5-pro",
+      effort: "",
+      sessionPolicy: "channel",
+      environmentKeys: [],
+    };
+    f.data.harnessOptions?.push({
+      command: "/usr/local/bin/goose",
+      label: "Goose",
+      available: true,
+      providers: [{ value: "google", label: "Google Gemini" }],
+    });
+    f.host.models = {
+      begin: async () => 1,
+      cancel: async () => {},
+      run: async (_ticket, request) => {
+        requests.push(request);
+        return {
+          host: "",
+          models: [{ id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" }],
+          modelOverridden: false,
+          disconnected: false,
+        };
+      },
+    };
+  });
+  await control.refresh();
+  const card = await screen.findByRole("region", { name: "Agent defaults" });
+  const key = within(card).getByLabelText("Google Gemini API key");
+  expect(key).toHaveAttribute("type", "password");
+  await user.type(key, "goose-key");
+  await user.click(within(card).getByRole("button", { name: "Browse models" }));
+  expect(await within(card).findByText(/Model choices loaded/)).toBeVisible();
+  expect(requests[0]?.edit?.environment).toEqual({
+    GOOGLE_API_KEY: "goose-key",
+  });
+  await user.click(within(card).getByRole("button", { name: "Save defaults" }));
+  expect(await within(card).findByText("Saved.")).toBeVisible();
+  expect(
+    fixture.calls.find((call) => call.action === "saveDefaults"),
+  ).toMatchObject({
+    payload: { edit: { environment: { GOOGLE_API_KEY: "goose-key" } } },
+  });
+  expect(within(card).getByLabelText("Google Gemini API key")).toHaveValue("");
+  expect(within(card).getByLabelText("Google Gemini API key")).toHaveAttribute(
+    "placeholder",
+    "Saved key unchanged",
+  );
+});
+
+it("waits for a hidden Goose provider override to be removed before offering its key", async () => {
+  const user = userEvent.setup();
+  const { control } = setup(0, 0, (f) => {
+    f.data.defaultSettings = {
+      harness: "goose",
+      provider: "openai",
+      model: "",
+      effort: "",
+      sessionPolicy: "channel",
+      environmentKeys: ["GOOSE_PROVIDER"],
+    };
+  });
+  await control.refresh();
+  const card = await screen.findByRole("region", { name: "Agent defaults" });
+  expect(within(card).queryByLabelText("OpenAI API key")).toBeNull();
+  expect(
+    within(card).getByText(/saved GOOSE_PROVIDER override has a hidden value/),
+  ).toBeVisible();
+  await user.click(
+    within(card).getByRole("button", { name: "Remove GOOSE_PROVIDER" }),
+  );
+  expect(within(card).getByLabelText("OpenAI API key")).toHaveAttribute(
+    "type",
+    "password",
+  );
+});
+
 it("drops an unsaved Pi key when its provider changes", async () => {
   const user = userEvent.setup();
   const { fixture, control } = setup(0, 0, (f) => {

@@ -8,14 +8,17 @@ import {
   type AgentEdit,
 } from "../features/agents/control";
 import type { ModelCatalog } from "../features/agents/models";
-import { PI_API_KEYS, harnessKind } from "../bundled/agents/agent-edit";
+import {
+  effectiveGooseProvider,
+  gooseApiKey,
+  PI_API_KEYS,
+  harnessKind,
+} from "../bundled/agents/agent-edit";
+import { ProviderApiKeyField } from "../bundled/agents/ProviderApiKeyField";
 import { Button } from "../shared/design-system/ui/Button";
 import { Field } from "../shared/design-system/ui/Field";
 import { Input } from "../shared/design-system/ui/Input";
-import { InputGroup } from "../shared/design-system/ui/InputGroup";
-import { IconButton } from "../shared/design-system/ui/IconButton";
 import { Select } from "../shared/design-system/ui/Select";
-import { EyeIcon, EyeSlashIcon } from "../shared/design-system/icons/index";
 import styles from "./AgentSettings.module.css";
 
 const harnesses = [
@@ -183,79 +186,15 @@ function ProviderChoice({
   );
 }
 
-function PiApiKeyField({
-  provider,
-  current,
-  savedKeys,
-  disabled,
-  onChange,
-}: {
-  provider: string;
-  current: AgentDefaultsEdit;
-  savedKeys: string[];
-  disabled: boolean;
-  onChange(environment: AgentDefaultsEdit["environment"]): void;
-}) {
-  const [revealed, setRevealed] = useState(false);
-  const apiKey = PI_API_KEYS[provider];
-  if (!apiKey) return null;
-  const typed = !!current.environment[apiKey.env];
-  return (
-    <div className="space-y-2">
-      <Field label={`${apiKey.label} API key`}>
-        <InputGroup
-          trailing={
-            typed ? (
-              <IconButton
-                aria-label={revealed ? "Hide API key" : "Show API key"}
-                icon={
-                  revealed ? (
-                    <EyeSlashIcon size={16} aria-hidden="true" />
-                  ) : (
-                    <EyeIcon size={16} aria-hidden="true" />
-                  )
-                }
-                size="sm"
-                disabled={disabled}
-                onClick={() => setRevealed(!revealed)}
-              />
-            ) : undefined
-          }
-        >
-          <Input
-            type={revealed && typed ? "text" : "password"}
-            autoComplete="new-password"
-            spellCheck={false}
-            disabled={disabled}
-            value={current.environment[apiKey.env] ?? ""}
-            placeholder={
-              current.environment[apiKey.env] === null
-                ? "Will remove on save"
-                : savedKeys.includes(apiKey.env)
-                  ? "Saved key unchanged"
-                  : "Paste API key or use an existing Pi sign-in"
-            }
-            onChange={(event) => {
-              const environment = { ...current.environment };
-              if (event.target.value)
-                environment[apiKey.env] = event.target.value;
-              else {
-                delete environment[apiKey.env];
-                setRevealed(false);
-              }
-              onChange(environment);
-            }}
-          />
-        </InputGroup>
-      </Field>
-      <p className="m-0 text-body-sm text-secondary">
-        {apiKey.env} is used for model lookup and every local agent without its
-        own value, including other harnesses. Leave blank to keep a saved key or
-        use your Pi sign-in. Saved keys remain after provider changes; remove
-        them under Environment variables. Saved values are never shown again.
-      </p>
-    </div>
+function defaultsApiKey(current: AgentDefaultsEdit, savedKeys: string[]) {
+  if (current.harness === "pi") return PI_API_KEYS[current.provider];
+  if (current.harness !== "goose") return undefined;
+  const provider = effectiveGooseProvider(
+    current.provider,
+    current.environment,
+    savedKeys,
   );
+  return provider ? gooseApiKey(provider) : undefined;
 }
 
 function ModelChoice({
@@ -511,6 +450,15 @@ export function AgentDefaultsCard({
   if (!saved || !control.saveDefaults) return null;
   const current = draft ?? draftFrom(saved);
   const disabled = state.busy || state.status !== "ready";
+  const apiKey = defaultsApiKey(current, saved.environmentKeys);
+  const gooseProvider =
+    current.harness === "goose"
+      ? effectiveGooseProvider(
+          current.provider,
+          current.environment,
+          saved.environmentKeys,
+        )
+      : undefined;
   const change = (patch: Partial<AgentDefaultsEdit>) => {
     setNotice("");
     setDraft({ ...current, ...patch });
@@ -556,16 +504,13 @@ export function AgentDefaultsCard({
         groups={[{ label: "", options: harnesses }]}
         onValueChange={(harness) => {
           const environment = { ...current.environment };
-          const piKey =
-            current.harness === "pi"
-              ? PI_API_KEYS[current.provider]?.env
-              : null;
+          const previousKey = apiKey?.env;
           if (
-            harness !== "pi" &&
-            piKey &&
-            typeof environment[piKey] === "string"
+            harness !== current.harness &&
+            previousKey &&
+            typeof environment[previousKey] === "string"
           )
-            delete environment[piKey];
+            delete environment[previousKey];
           change({
             harness: harness as AgentDefaultsEdit["harness"],
             // Keep the provider, but clear values tied to the old harness.
@@ -581,14 +526,13 @@ export function AgentDefaultsCard({
         disabled={disabled}
         editSession={editSession}
         onChange={(provider) => {
-          const previousKey =
-            current.harness === "pi"
-              ? PI_API_KEYS[current.provider]?.env
-              : null;
+          const previousKey = apiKey?.env;
           const environment = { ...current.environment };
           if (
             previousKey &&
-            previousKey !== PI_API_KEYS[provider]?.env &&
+            previousKey !==
+              defaultsApiKey({ ...current, provider }, saved.environmentKeys)
+                ?.env &&
             typeof environment[previousKey] === "string"
           )
             delete environment[previousKey];
@@ -599,15 +543,41 @@ export function AgentDefaultsCard({
           });
         }}
       />
-      {current.harness === "pi" && (
-        <PiApiKeyField
-          key={`${current.provider}-${editSession}`}
-          provider={current.provider}
-          current={current}
-          savedKeys={saved.environmentKeys}
-          disabled={disabled}
-          onChange={(environment) => change({ environment })}
-        />
+      {gooseProvider === null && (
+        <p role="status" className="m-0 text-body-sm text-secondary">
+          A saved GOOSE_PROVIDER override has a hidden value. Replace or remove
+          it under Environment variables to enter the matching API key here.
+        </p>
+      )}
+      {apiKey && (
+        <div className="space-y-2">
+          <ProviderApiKeyField
+            key={`${current.harness}-${current.provider}-${gooseProvider ?? ""}-${editSession}`}
+            apiKey={apiKey}
+            value={current.environment[apiKey.env]}
+            saved={saved.environmentKeys.includes(apiKey.env)}
+            disabled={disabled}
+            emptyPlaceholder={
+              current.harness === "pi"
+                ? "Paste API key or use an existing Pi sign-in"
+                : "Paste API key or use existing Goose credentials"
+            }
+            onChange={(value) => {
+              const environment = { ...current.environment };
+              if (value) environment[apiKey.env] = value;
+              else delete environment[apiKey.env];
+              change({ environment });
+            }}
+          />
+          <p className="m-0 text-body-sm text-secondary">
+            {apiKey.env} is used for model lookup and every local agent without
+            its own value, including other harnesses. Leave blank to keep a
+            saved key or use your{" "}
+            {current.harness === "pi" ? "Pi sign-in" : "Goose credentials"}.
+            Saved keys remain after provider changes; remove them under
+            Environment variables. Saved values are never shown again.
+          </p>
+        </div>
       )}
       <ModelChoice
         control={control}

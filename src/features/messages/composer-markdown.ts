@@ -367,12 +367,18 @@ function paragraphMarkdown(block: EditorNode): string {
     children.push(...content(offset, end, depth + 1, marked, linked));
     return children;
   };
+  const word = (character: string) =>
+    !!character && !/[\s\p{P}\p{S}]/u.test(character);
+  const punctuation = (character: string) => /[\p{P}\p{S}]/u.test(character);
   const rawText: Handle = (node, parent, state, info) => {
     if (node.type === "text" && raw.has(node)) {
-      // Escape only raw boundaries that could absorb generated delimiters;
+      // Escape only raw asterisks that could pair with generated delimiters;
       // unrelated authored Markdown remains byte-for-byte source.
       let value: string = node.value;
-      if (info.before.endsWith("*") || /^[*_]/.test(info.after)) {
+      const starBefore = info.before.endsWith("*");
+      // Emphasis.peek advertises _ even when the handler later chooses *.
+      const delimiterAfter = /^[*_]/.test(info.after);
+      if (starBefore || delimiterAfter) {
         const range = raw.get(node);
         // Raw prose includes authored Markdown and exact recipient names, not
         // just literal characters. Only text outside those spans may be escaped.
@@ -388,23 +394,52 @@ function paragraphMarkdown(block: EditorNode): string {
               : [],
         );
         protectedRanges.push(...authoredAttention(node));
-        const escapeBoundary = (part: string, offset: number) =>
-          part.replace(/\\[\\*]|\*|\\$/g, (token, index: number) =>
-            token.length === 1 &&
-            !protectedRanges.some(
-              ({ start, end }) =>
-                offset + index >= start && offset + index < end,
+        const unprotected = (index: number) =>
+          !protectedRanges.some(
+            ({ start, end }) => index >= start && index < end,
+          );
+        // The run touching a generated delimiter is escaped whole. So is any
+        // earlier unmatched run that could open emphasis, because the parser
+        // pairs it with the generated delimiter that follows: `a*b` before
+        // *x* reads as emphasis("b"), and micromark lets a run preceded by a
+        // star close, so `a*b**` before *x* reads as emphasis("b**") once
+        // only its trailing run is escaped. A run that cannot open, such as
+        // a list marker or `5 * 3`, stays as authored. Left-flanking follows
+        // micromark: a word or delimiter after the run, or punctuation after
+        // it with whitespace or punctuation before.
+        const opens = (start: number, end: number) => {
+          const after = value[end] ?? "";
+          const before = start
+            ? (value[start - 1] ?? "")
+            : info.before.slice(-1);
+          return (
+            word(after) ||
+            /[*_]/.test(after) ||
+            (punctuation(after) && !word(before))
+          );
+        };
+        const tail = delimiterAfter
+          ? value.length - (/[\\*]+$/.exec(value)?.[0].length ?? 0)
+          : Number.POSITIVE_INFINITY;
+        value = value.replace(/\\[\\*]|\*+|\\$/g, (token, offset: number) => {
+          // Authored escape pairs stay; a trailing backslash is doubled so it
+          // cannot swallow the generated delimiter.
+          if (token.startsWith("\\"))
+            return token.length === 1 && offset >= tail && unprotected(offset)
+              ? "\\\\"
+              : token;
+          if (
+            offset < tail &&
+            !(starBefore && offset === 0) &&
+            !(delimiterAfter && opens(offset, offset + token.length))
+          )
+            return token;
+          return [...token]
+            .map((star, index) =>
+              unprotected(offset + index) ? `\\${star}` : star,
             )
-              ? `\\${token}`
-              : token,
-          );
-        // Emphasis.peek advertises _ even when the handler later chooses *.
-        if (/^[*_]/.test(info.after))
-          value = value.replace(/[\\*]+$/, (tail, offset: number) =>
-            escapeBoundary(tail, offset),
-          );
-        if (info.before.endsWith("*"))
-          value = value.replace(/^\*+/, (stars) => escapeBoundary(stars, 0));
+            .join("");
+        });
       }
       if (info.before.endsWith("|"))
         value = value.replace(/^\|+/, (pipes) =>
@@ -438,8 +473,6 @@ function paragraphMarkdown(block: EditorNode): string {
   // the stock handler would encode both neighbours as character references
   // (fo&#x6F;_&#x62;a&#x72;_&#x62;az); * forms there as typed, so agents and
   // the CLI reading the raw event see foo*bar*baz.
-  const word = (character: string) =>
-    !!character && !/[\s\p{P}\p{S}]/u.test(character);
   // A matched authored delimiter is not a literal star to escape. Use the
   // alternate marker only at that boundary, keeping ordinary intraword source
   // readable and leaving signed recipient spans on their bindable * form.

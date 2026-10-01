@@ -121,7 +121,11 @@ function protectInlineContent(
   const token = (part: InlinePart) => {
     parts.push(part);
     // Mention edges must keep their punctuation class for emphasis flanking:
-    // @Honey* beside italic ! is punctuation on both sides, not a word.
+    // @Honey* beside italic ! is punctuation on both sides, not a word. The
+    // wire itself holds no emphasis there for a parser that does not split
+    // out the mention first, since the name's star and the delimiter merge
+    // into one run; the exact signed name was kept over italics that other
+    // clients could read.
     // U+FFFC is a Unicode symbol, not Markdown syntax. Keep it inside the
     // nonce-protected token so restoration removes only generated characters.
     const start = part.target ? `\uFFFC${nonce}\uE001` : prefix;

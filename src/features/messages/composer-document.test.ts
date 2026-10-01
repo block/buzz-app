@@ -346,11 +346,21 @@ describe("composer Markdown boundary", () => {
     ["5*", "x", "y", "5\\**x*y"],
     ["a**", "b", "c", "a\\*\\**b*c"],
     ["a", "b", "**c", "a*b*\\*\\*c"],
+    // An unmatched authored run that could open emphasis is escaped wherever
+    // it sits before the span; left alone, the parser pairs it with the
+    // generated delimiter (a*b\*\**x*y reads as emphasis("b**")). The
+    // mirrored run after the span never pairs, so it stays as authored.
+    ["a*b**", "x", "y", "a\\*b\\*\\**x*y"],
+    ["a*b", "x", "y", "a\\*b*x*y"],
+    ["*a", "x", "y", "\\*a*x*y"],
+    ["2*3 is", "x", "y", "2\\*3 is*x*y"],
+    ["a", "x", "**b*c", "a*x*\\*\\*b*c"],
+    ["", "x", "**b*c", "_x_**b*c"],
   ])(
     "preserves emphasis beside literal asterisks in %s / %s / %s",
     (before, inner, after, wire) => {
       const output = serialize(
-        schema.text(before),
+        ...(before ? [schema.text(before)] : []),
         schema.text(inner, [schema.marks.italic.create()]),
         schema.text(after),
       );
@@ -358,7 +368,7 @@ describe("composer Markdown boundary", () => {
       expect(fromMarkdown(output).children[0]).toMatchObject({
         type: "paragraph",
         children: [
-          { type: "text", value: before },
+          ...(before ? [{ type: "text", value: before }] : []),
           { type: "emphasis", children: [{ type: "text", value: inner }] },
           { type: "text", value: after },
         ],
@@ -452,6 +462,10 @@ describe("composer Markdown boundary", () => {
     for (const children of [
       [schema.text("a"), italic("b"), bold("c")],
       [bold("a"), italic("b"), schema.text("c")],
+      // An unmatched authored run before generated strong is escaped too, so
+      // a**b**c** no longer reads as strong("b") followed by a literal c**.
+      [schema.text("a**b"), bold("c")],
+      [schema.text("a*b"), bold("c"), italic("x"), schema.text("y")],
     ]) {
       const output = serialize(...children);
       expect(output).not.toContain("&#");

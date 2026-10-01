@@ -333,6 +333,49 @@ it("preserves toolbar italics after a typed literal asterisk", async () => {
   });
 });
 
+it.each(["paste", "restore"])(
+  "preserves toolbar italics after an unmatched authored asterisk run arrived by %s",
+  async (mode) => {
+    const h = mount(mode === "restore" ? "a*b**" : "");
+    if (mode === "paste") paste(h.input, "a*b**");
+    act(() => h.input.toggleFormat("italic"));
+    await h.user.keyboard("x");
+    act(() => h.input.toggleFormat("italic"));
+    await h.user.keyboard("y");
+    expect(h.input).toHaveValue("a*b**xy");
+    expect(h.input.querySelector("em")).toHaveTextContent("x");
+    // The literal run after a can open emphasis, so with only the trailing
+    // run escaped the parser read a*b\*\**x*y as emphasis("b**") then x*y.
+    expect(h.markdown()).toBe("a\\*b\\*\\**x*y");
+    expect(fromMarkdown(h.markdown()).children[0]).toMatchObject({
+      type: "paragraph",
+      children: [
+        { type: "text", value: "a*b**" },
+        { type: "emphasis", children: [{ type: "text", value: "x" }] },
+        { type: "text", value: "y" },
+      ],
+    });
+  },
+);
+
+it("keeps an unmatched asterisk run pasted after generated italics literal", async () => {
+  const h = mount();
+  act(() => h.input.toggleFormat("italic"));
+  await h.user.keyboard("x");
+  act(() => h.input.toggleFormat("italic"));
+  paste(h.input, "**b*c");
+  expect(h.input).toHaveValue("x**b*c");
+  expect(h.input.querySelectorAll("em")).toHaveLength(1);
+  expect(h.markdown()).toBe("_x_**b*c");
+  expect(fromMarkdown(h.markdown()).children[0]).toMatchObject({
+    type: "paragraph",
+    children: [
+      { type: "emphasis", children: [{ type: "text", value: "x" }] },
+      { type: "text", value: "**b*c" },
+    ],
+  });
+});
+
 /** Render the actual send payload, including signed recipients, through the timeline. */
 function renderDraft(draft: MentionDraft) {
   const open = vi.fn(() => true);
@@ -382,6 +425,15 @@ it.each([
       "x",
     );
     expect(after.container).toHaveTextContent("Notexy");
+    const type = tag === "em" ? "emphasis" : tag;
+    expect(fromMarkdown(h.markdown()).children[0]).toMatchObject({
+      type: "paragraph",
+      children: [
+        { type, children: [{ type: "text", value: "Note" }] },
+        { type: "emphasis", children: [{ type: "text", value: "x" }] },
+        { type: "text", value: "y" },
+      ],
+    });
     after.unmount();
     act(() => {
       h.input.reset(mentionDraft(mode === "restore" ? source : ""));
@@ -397,6 +449,14 @@ it.each([
     ).toHaveTextContent("Note");
     expect(before.container.querySelector("em")).toHaveTextContent("x");
     expect(before.container).toHaveTextContent("axNote");
+    expect(fromMarkdown(h.markdown()).children[0]).toMatchObject({
+      type: "paragraph",
+      children: [
+        { type: "text", value: "a" },
+        { type: "emphasis", children: [{ type: "text", value: "x" }] },
+        { type, children: [{ type: "text", value: "Note" }] },
+      ],
+    });
   },
 );
 

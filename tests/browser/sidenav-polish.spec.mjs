@@ -1,6 +1,6 @@
 import { settleShellToggle } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, wheel } from "./timeline.mjs";
 
 test.use({ savedSidebar: true });
 
@@ -258,7 +258,7 @@ test("section disclosure toggles content and honors reduced motion", async ({
 });
 
 // Browser layout verifies the header contract, including inline icon sizing.
-test("top bar keeps unboxed 28px controls, 16px icons and no Bestie launcher", async ({
+test("top bar keeps ghost navigation and glass Search and Bestie controls", async ({
   page,
   app,
 }, info) => {
@@ -280,7 +280,13 @@ test("top bar keeps unboxed 28px controls, 16px icons and no Bestie launcher", a
     const box = await icon.boundingBox();
     expect([box.width, box.height]).toEqual([16, 16]);
   }
-  await expect(header.locator('img[src="/bestie.png"]')).toHaveCount(0);
+  const bestie = header.getByRole("button", { name: "Bestie", exact: true });
+  await expect(bestie.locator('img[src="/bestie.png"]')).toBeVisible();
+  for (const control of [
+    bestie,
+    header.getByRole("button", { name: "Search Buzz", exact: true }),
+  ])
+    await expect(control).toHaveAttribute("data-icon-variant", "chrome");
   await page.mouse.move(700, 500);
   for (const control of await header
     .locator('[data-icon-variant="ghost"]')
@@ -324,6 +330,16 @@ test("top bar keeps unboxed 28px controls, 16px icons and no Bestie launcher", a
     path: info.outputPath("top-bar.png"),
     clip: { x: 0, y: 0, width: 1440, height: 100 },
   });
+  await bestie.click();
+  await expect(bestie).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    page.getByRole("heading", { name: "Meet your Bestie" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Close Bestie panel", exact: true })
+    .click();
+  await expect(bestie).toHaveAttribute("aria-expanded", "false");
+  await expect(bestie).toBeFocused();
 });
 
 // Real responsive layout owns the Settings overlay and the desktop sidebar.
@@ -872,28 +888,31 @@ test("non-ready sidebar keeps page rows and Retry reachable by pointer scrolling
     exact: true,
   });
   await expect(retry).toBeAttached();
+  const scroller = sidebar.locator('[class*="sidebarScroll"]');
   const scrollToBottom = async (target) => {
     await sidebar.hover();
-    await page.mouse.wheel(0, 800);
+    // Visibility is not input completion: focusing early interrupts WebKit's
+    // smooth wheel at a visible-but-not-fully-scrolled Retry button. The shared
+    // helper observes scrollend before dispatch; an already-reached edge needs
+    // no gesture (and would emit no scrollend).
+    if (
+      await scroller.evaluate(
+        (el) => el.scrollHeight - el.clientHeight - el.scrollTop > 1,
+      )
+    )
+      await wheel(page, 800, scroller);
+    await expect
+      .poll(() =>
+        scroller.evaluate(
+          (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+        ),
+      )
+      .toBeLessThanOrEqual(1);
     await expect
       .poll(async () => {
         const bounds = await sidebar.boundingBox();
         const row = await target.boundingBox();
-        // A visible row is not the end of WebKit's asynchronous wheel gesture.
-        // Focusing early can stop it before the bottom padding clears the ring.
-        const atEnd = await target.evaluate((element) => {
-          let scroll = element.parentElement;
-          while (scroll && getComputedStyle(scroll).overflowY !== "auto")
-            scroll = scroll.parentElement;
-          return (
-            !!scroll &&
-            Math.abs(
-              scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop,
-            ) <= 1
-          );
-        });
         return (
-          atEnd &&
           !!bounds &&
           !!row &&
           row.y >= bounds.y &&

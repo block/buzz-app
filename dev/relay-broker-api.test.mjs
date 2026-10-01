@@ -2490,6 +2490,21 @@ test("lifecycle uses dedicated shape-limited host routes, never the message writ
       400,
     );
     expect(h.publications).toHaveLength(1);
+    const unarchive = {
+      ...template,
+      kind: 9002,
+      tags: [
+        ["h", id],
+        ["archived", "false"],
+      ],
+    };
+    expect((await h.post("sign", unarchive)).status).toBe(400);
+    const restore = await transport.channelLifecycle.sign(unarchive, signal);
+    expect(verifyEvent(restore)).toBe(true);
+    expect(restore).toMatchObject(unarchive);
+    expect((await h.post("publish", restore)).status).toBe(400);
+    await transport.channelLifecycle.publish(restore, signal);
+    expect(h.publications).toHaveLength(2);
   } finally {
     live?.dispose();
     await h.close();
@@ -2858,9 +2873,14 @@ test("details routes are narrow, require the live owner, and do not widen lifecy
       { ...template, kind: 9001 },
       { ...template, content: "extra" },
       { ...template, tags: [...template.tags, ["archived", "true"]] },
+      ...["0", "-1", "1.5", "2147483648"].map((ttl) => ({
+        ...template,
+        tags: [...template.tags, ["ttl", ttl]],
+      })),
+      { ...template, tags: [...template.tags, ["ttl", "60"], ["ttl", "60"]] },
       {
         ...template,
-        tags: [...template.tags.slice(0, 3), ["visibility", "open"]],
+        tags: [...template.tags.slice(0, 3), ["visibility", "public"]],
       },
       { ...template, tags: [template.tags[0], ["topic", "x"]] },
       {
@@ -2883,12 +2903,33 @@ test("details routes are narrow, require the live owner, and do not widen lifecy
     live = await openBrokerSocket(transport);
     await transport.channelDetails.publish(event, signal);
     expect(h.publications).toHaveLength(1);
+    for (const ttl of ["604800", ""]) {
+      const change = { ...template, tags: [...template.tags, ["ttl", ttl]] };
+      expect((await h.post("sign", change)).status).toBe(400);
+      expect((await h.post("channel-lifecycle-sign", change)).status).toBe(400);
+      const signed = await transport.channelDetails.sign(change, signal);
+      expect(signed).toMatchObject(change);
+      await transport.channelDetails.publish(signed, signal);
+    }
+    const reopening = {
+      ...template,
+      tags: [...template.tags.slice(0, 3), ["visibility", "open"]],
+    };
+    expect((await h.post("sign", reopening)).status).toBe(400);
+    expect((await h.post("channel-lifecycle-sign", reopening)).status).toBe(
+      400,
+    );
+    const reopened = await transport.channelDetails.sign(reopening, signal);
+    expect(reopened).toMatchObject(reopening);
+    expect((await h.post("publish", reopened)).status).toBe(400);
+    await transport.channelDetails.publish(reopened, signal);
+    expect(h.publications).toHaveLength(4);
     const foreign = finalizeEvent(
       structuredClone(template),
       new Uint8Array(32).fill(5),
     );
     expect((await h.post("channel-details-publish", foreign)).status).toBe(400);
-    expect(h.publications).toHaveLength(1);
+    expect(h.publications).toHaveLength(4);
   } finally {
     live?.dispose();
     await h.close();

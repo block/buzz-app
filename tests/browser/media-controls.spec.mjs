@@ -239,6 +239,14 @@ test("media popovers support hover and keyboard without stealing playback focus"
     exact: true,
   });
   const mute = review.getByRole("button", { name: "Mute video", exact: true });
+  await expect(
+    review.getByRole("slider", { name: "Video timeline" }),
+  ).toBeEnabled();
+  // Enter the video before its controls: autoplay can hide chrome during startup.
+  await review
+    .locator("[data-review-stage]")
+    .hover({ position: { x: 8, y: 8 } });
+  await expect(mute.locator("..")).toHaveCSS("opacity", "1");
   await mute.hover();
   const volumePopup = page.getByRole("dialog", {
     name: "Video volume controls",
@@ -250,6 +258,13 @@ test("media popovers support hover and keyboard without stealing playback focus"
   await expect(volumePopup).toBeVisible();
   const geometry = await volume.boundingBox();
   expect(geometry.height).toBeGreaterThan(geometry.width);
+  const popupGeometry = await volumePopup.boundingBox();
+  expect(popupGeometry.width).toBeLessThanOrEqual(44);
+  expect(
+    await volumePopup.evaluate((el) =>
+      Number.parseFloat(getComputedStyle(el).borderTopLeftRadius),
+    ),
+  ).toBeGreaterThanOrEqual(popupGeometry.width / 2);
   // Native vertical input: the upper part raises volume and the lower part lowers it.
   await volume.click({
     position: { x: geometry.width / 2, y: 4 + (geometry.height - 8) * 0.2 },

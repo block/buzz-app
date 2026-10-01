@@ -163,6 +163,7 @@
 }
 .volumePopup {
   width: max-content;
+  border-radius: var(--radius-pill);
 }
 .speed {
   position: relative;
@@ -177,7 +178,7 @@
     calc(var(--space-8) * 3),
     calc(var(--available-height) - var(--space-4) - 2px)
   );
-  margin: var(--space-1);
+  margin: var(--space-1) 0;
 }
 .volumeSlider input[type="range"] {
   position: relative;

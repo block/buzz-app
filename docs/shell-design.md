@@ -102,7 +102,9 @@ handler, plus scoped HTTP(S) opening for
 [Tauri window customization](https://v2.tauri.app/learn/window-customization/).
 
 The top-right group contains enabled plugin launchers (Bestie supplies the snake),
-a page finder, and the local avatar. `ProfileButton.tsx` subscribes to the community
+a page finder, and the local avatar. Search and plugin launchers use the shared
+glass icon-button style; sidebar and history controls remain ghost buttons.
+`ProfileButton.tsx` subscribes to the community
 service's local default profile and opens an anchored account dropdown containing
 local presence controls and Settings; there is no separate top-bar Settings button.
 The avatar dot shows local intent (Online/Away/Offline). The shared account menu

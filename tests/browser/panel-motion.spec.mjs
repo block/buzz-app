@@ -1,7 +1,7 @@
 import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
 
-// Exercise generic panel motion independently of the hidden Bestie launcher.
+// Exercise generic panel motion independently of the bundled Bestie content.
 test.use({ companionFixture: true });
 
 // Real CSS transitions, input modality, clipping, and pseudo-elements require a browser.

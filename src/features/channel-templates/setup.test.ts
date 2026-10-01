@@ -119,6 +119,10 @@ it("opens after confirmed creation, before Canvas completes; places independentl
   await reached.promise;
   expect(f.opts.place).toHaveBeenCalledWith(id, "work", undefined);
   expect(f.events.map((e) => e.event.kind)).toEqual([9007, 40100]);
+  expect(f.events[1]?.event.tags).toEqual([
+    ["h", id],
+    ["expected-revision", "none"],
+  ]);
   expect(receipts()).toHaveLength(1);
   gate.release();
   await run.completion;
@@ -201,6 +205,48 @@ it("Canvas failure does not lose group placement or turn admission into failure"
   expect(f.events.map((e) => e.event.kind)).toEqual([9007, 40100]);
   expect(receipts()).toHaveLength(1);
 });
+
+it.each(["failed", "unknown"] as const)(
+  "keeps seed recovery observe-only and dismisses only a proven conflict (%s)",
+  async (delivery) => {
+    const f = fixture();
+    f.opts.confirm.mockImplementation(async (id) => {
+      const index = f.events.findIndex((item) => item.event.id === id);
+      assert.exists(f.events[index]);
+      f.events[index] = {
+        ...f.events[index],
+        delivery,
+        error: "conflict: the relay state changed",
+      };
+      f.setCanvas("other-editor");
+      throw new Error("conflict: the relay state changed");
+    });
+    const run = f.setup.run(input, viewer.pubkey);
+    const failure = expect(run.completion).rejects.toThrow(
+      delivery === "failed"
+        ? /Canvas changed.*no agents were added/
+        : /conflict:/,
+    );
+    await run.admission;
+    await failure;
+    expect(f.opts.canvasHead).toHaveBeenCalledTimes(1);
+    expect(await f.opts.canvasHead()).toBe("other-editor");
+    expect(f.outbox.retry).not.toHaveBeenCalled();
+    expect(
+      vi.mocked(f.outbox.send).mock.calls.map(([event]) => event.kind),
+    ).toEqual([9007, 40100]);
+    expect(f.events.map((item) => item.event.kind)).toEqual(
+      delivery === "failed" ? [9007] : [9007, 40100],
+    );
+    expect(f.outbox.dismiss).toHaveBeenCalledTimes(
+      delivery === "failed" ? 1 : 0,
+    );
+    const saved = JSON.parse(localStorage.getItem(firstReceipt()) ?? "null");
+    expect(saved.created).toBe(true);
+    expect(saved.canvasDone).toBe(false);
+    expect(saved.added).toEqual([]);
+  },
+);
 
 it("group failure does not skip Canvas and members; retains the incomplete destination", async () => {
   const f = fixture();

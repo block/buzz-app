@@ -12,6 +12,9 @@ import {
   type KitValue,
 } from "./model";
 
+const canvasConflict =
+  "Canvas changed since you opened it. Your draft is kept; load the current document before replacing it.";
+
 export const selectedHead = (events: readonly RelayEvent[]) =>
   [...events].sort(
     (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
@@ -130,18 +133,48 @@ export function createChannelKit({
     return pending;
   }
   async function confirm(id: string) {
-    if ((await fresh([{ ids: [id], limit: 1 }])).some((e) => e.id === id))
-      return;
-    const saved = local?.snapshot().find((e) => e.event.id === id);
-    if (!saved || Date.now() / 1000 - saved.event.created_at >= 15 * 60)
-      throw new Error(
-        "This operation could not be confirmed and is too old to replay. Keep your draft and inspect the current result before making a new save.",
-      );
-    await delivered(id);
-    if (!(await fresh([{ ids: [id], limit: 1 }])).some((e) => e.id === id))
-      throw new Error(
-        "Save is awaiting exact relay confirmation; your draft is kept",
-      );
+    try {
+      if (
+        (await fresh([{ ids: [id], limit: 1, consistency: "strong" }])).some(
+          (e) => e.id === id,
+        )
+      )
+        return;
+      const saved = local?.snapshot().find((e) => e.event.id === id);
+      if (!saved || Date.now() / 1000 - saved.event.created_at >= 15 * 60)
+        throw new Error(
+          "This operation could not be confirmed and is too old to replay. Keep your draft and inspect the current result before making a new save.",
+        );
+      // A proven Canvas CAS refusal cannot become valid by replaying these bytes.
+      if (
+        saved.event.kind === 40100 &&
+        saved.delivery === "failed" &&
+        saved.error?.startsWith("conflict:")
+      )
+        throw new Error(saved.error);
+      await delivered(id);
+      if (
+        !(await fresh([{ ids: [id], limit: 1, consistency: "strong" }])).some(
+          (e) => e.id === id,
+        )
+      )
+        throw new Error(
+          "Save is awaiting exact relay confirmation; your draft is kept",
+        );
+    } catch (error) {
+      const failed = local?.snapshot().find((item) => item.event.id === id);
+      if (
+        outbox &&
+        failed?.event.kind === 40100 &&
+        failed.delivery === "failed" &&
+        failed.error?.startsWith("conflict:")
+      ) {
+        // Refused before mutation. Release the pending gate, not uncertain saves.
+        await outbox.dismiss(id);
+        throw new Error(canvasConflict);
+      }
+      throw error;
+    }
   }
   const capability = Object.freeze({
     available: !!host && !!outbox?.supports(30078),
@@ -232,7 +265,9 @@ export function createChannelKit({
       if (!canWrite(channel))
         throw new Error("Canvas is unavailable after channel access changed");
       return selectedHead(
-        await fresh([{ kinds: [40100], "#h": [channel], limit: 1 }]),
+        await fresh([
+          { kinds: [40100], "#h": [channel], limit: 1, consistency: "strong" },
+        ]),
       );
     },
     async save(channel: string, content: string, expected: string | undefined) {
@@ -244,10 +279,7 @@ export function createChannelKit({
       await ready;
       signal.throwIfAborted();
       const head = await canvas.read(channel);
-      if (head?.id !== expected)
-        throw new Error(
-          "Canvas changed since you opened it. Your draft is kept; load the current document before replacing it.",
-        );
+      if (head?.id !== expected) throw new Error(canvasConflict);
       const pending = local
         ?.snapshot()
         .find(
@@ -263,7 +295,14 @@ export function createChannelKit({
       if (head && head.created_at >= Math.floor(Date.now() / 1000))
         throw new Error("Please wait a second before saving Canvas again");
       if (!canWrite(channel)) throw new Error("Channel access changed");
-      const id = outbox.send({ kind: 40100, content, tags: [["h", channel]] });
+      const id = outbox.send({
+        kind: 40100,
+        content,
+        tags: [
+          ["h", channel],
+          ["expected-revision", expected ?? "none"],
+        ],
+      });
       await confirm(id);
       const selected = await canvas.read(channel);
       if (selected?.id !== id)

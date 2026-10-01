@@ -5,7 +5,12 @@ import { coordinate, KIT_TAG, type KitRecord } from "./model";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import { matchesEvent } from "../relay/projection";
 import type { ReadFilter, RelayEvent } from "../relay/events";
-import type { Outbox, OutgoingEvent } from "../relay/outbox";
+import {
+  createOutbox,
+  PublishRejected,
+  type Outbox,
+  type OutgoingEvent,
+} from "../relay/outbox";
 import type { RelayWriter } from "../relay/transport";
 import type { RelayReader } from "../relay/reader";
 
@@ -204,7 +209,10 @@ it("keeps drafts safe from stale Canvas, unresolved writes and access loss", asy
   expect(saved.content).toBe("New");
   expect(f.outbox.send).toHaveBeenCalledWith({
     kind: 40100,
-    tags: [["h", channel]],
+    tags: [
+      ["h", channel],
+      ["expected-revision", "none"],
+    ],
     content: "New",
   });
 });
@@ -331,6 +339,155 @@ it.each(["recipe", "Canvas"])(
     } finally {
       hydrate([]);
       owner.dispose();
+    }
+  },
+);
+
+it.each([false, true])(
+  "carries a strong-read revision precondition for existing=%s",
+  async (existing) => {
+    const f = fixture();
+    const before = signed(viewer, {
+      kind: 40100,
+      tags: [["h", channel]],
+      content: "Before",
+      created_at: 100,
+    });
+    if (existing) f.events.push(before);
+    const base = await f.canvas.read(channel);
+    const saved = await f.canvas.save(channel, "After", base?.id);
+    expect(saved.tags).toContainEqual([
+      "expected-revision",
+      existing ? before.id : "none",
+    ]);
+    for (const [filters] of vi.mocked(f.reader.read).mock.calls)
+      expect(filters.every((filter) => filter.consistency === "strong")).toBe(
+        true,
+      );
+  },
+);
+
+it.each(["failed", "unknown"] as const)(
+  "cleans up only proven CAS refusal, not %s uncertainty",
+  async (delivery) => {
+    const f = fixture();
+    vi.mocked(f.outbox.send).mockImplementation((value) => {
+      const event = signed(viewer, {
+        ...value,
+        created_at: Math.floor(Date.now() / 1000),
+      });
+      f.pending.push({
+        event,
+        delivery,
+        error: "conflict: the relay state changed",
+      });
+      return event.id;
+    });
+    f.delivered.mockRejectedValue(
+      new Error("conflict: the relay state changed"),
+    );
+    const save = f.canvas.save(channel, "Draft", undefined);
+    await expect(save).rejects.toThrow(
+      delivery === "failed" ? /Canvas changed.*draft is kept/ : /conflict:/,
+    );
+    if (delivery === "failed") {
+      expect(f.outbox.dismiss).toHaveBeenCalledWith(f.pending[0]?.event.id);
+      expect(f.delivered).not.toHaveBeenCalled();
+    } else expect(f.outbox.dismiss).not.toHaveBeenCalled();
+  },
+);
+
+it.each([false, true])(
+  "an intervening relay head survives a stale save (existing=%s), then a reviewed save succeeds",
+  async (existing) => {
+    const f = fixture();
+    let head: RelayEvent | undefined = existing
+      ? signed(viewer, {
+          kind: 40100,
+          tags: [["h", channel]],
+          content: "Before",
+          created_at: 100,
+        })
+      : undefined;
+    const before = head;
+    const winner = signed(viewer, {
+      kind: 40100,
+      tags: [["h", channel]],
+      content: "Other editor",
+      created_at: 101,
+    });
+    let race = true;
+    const filtersSeen: ReadFilter[][] = [];
+    const reader: RelayReader = {
+      read: vi.fn(async (filters: readonly ReadFilter[]) => {
+        filtersSeen.push([...filters]);
+        return head &&
+          filters.some((filter) => matchesEvent(head as RelayEvent, filter))
+          ? [head]
+          : [];
+      }),
+    };
+    const publish = vi.fn(async (event: RelayEvent) => {
+      if (race) {
+        head = winner;
+        race = false;
+      }
+      if (
+        event.tags.find(([name]) => name === "expected-revision")?.[1] !==
+        (head?.id ?? "none")
+      )
+        throw new PublishRejected("conflict: the relay state changed");
+      head = event;
+    });
+    const owner = createOutbox(
+      viewer.pubkey,
+      {
+        kinds: [40100],
+        sign: async (event) => signed(viewer, event),
+        publish,
+      },
+      { load: () => [], save() {} },
+    );
+    const kit = createChannelKit({
+      host: undefined,
+      reader,
+      outbox: owner.outbox,
+      local: owner.local,
+      ready: owner.outbox.ready(),
+      viewer: viewer.pubkey,
+      community,
+      signal: f.controller.signal,
+      canWrite: () => true,
+      delivered: async (id) => {
+        await vi.waitFor(() =>
+          expect(
+            owner.outbox.snapshot().find((item) => item.event.id === id)
+              ?.delivery,
+          ).not.toBe("sending"),
+        );
+        const item = owner.outbox
+          .snapshot()
+          .find((item) => item.event.id === id);
+        if (item?.delivery === "failed" || item?.delivery === "unknown")
+          throw new Error(item.error);
+      },
+    });
+    try {
+      await expect(
+        kit.canvas.save(channel, "Stale draft", before?.id),
+      ).rejects.toThrow(/Canvas changed.*draft is kept/);
+      expect(head).toBe(winner);
+      expect(owner.outbox.snapshot()).toEqual([]);
+      const saved = await kit.canvas.save(channel, "Reviewed draft", winner.id);
+      expect(saved.content).toBe("Reviewed draft");
+      expect(head?.id).toBe(saved.id);
+      expect(publish).toHaveBeenCalledTimes(2);
+      expect(
+        filtersSeen.flat().every((filter) => filter.consistency === "strong"),
+      ).toBe(true);
+    } finally {
+      owner.dispose();
+      f.controller.abort();
     }
   },
 );

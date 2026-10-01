@@ -262,7 +262,10 @@ export function VideoControls({
                 min={0}
                 max={1}
                 step={0.05}
-                value={audibleVolume}
+                value={
+                  // Native media can report float32 noise beyond the .05 step's precision.
+                  Number(audibleVolume.toFixed(2))
+                }
                 onChange={(event) => {
                   if (!videoRef.current) return;
                   setVolumeMotion(false);

@@ -239,6 +239,20 @@ test("mute glides the volume knob and keyboard changes stay immediate", async ({
 test("media popovers support hover and keyboard without stealing playback focus", async ({
   page,
 }) => {
+  // Linux media backends return float32 volume values (0.8 becomes 0.8000000119).
+  // Keep that precision boundary covered on every runner, including macOS.
+  await page.addInitScript(() => {
+    const volume = Object.getOwnPropertyDescriptor(
+      HTMLMediaElement.prototype,
+      "volume",
+    );
+    Object.defineProperty(HTMLMediaElement.prototype, "volume", {
+      ...volume,
+      get() {
+        return Math.fround(volume.get.call(this));
+      },
+    });
+  });
   await page.goto("/tests/fixtures/media-review.html?review");
   const review = page.getByRole("dialog", {
     name: "Video review",
@@ -277,7 +291,9 @@ test("media popovers support hover and keyboard without stealing playback focus"
   });
   await expect.poll(() => volume.inputValue()).toBe("0.8");
   await volume.press("ArrowDown");
+  await expect(volume).toBeFocused();
   await expect(volume).toHaveValue("0.75");
+  await expect(review.locator("video")).toHaveJSProperty("volume", 0.75);
   await volume.press("Escape");
   await expect(volumePopup).toBeHidden();
   await expect(review).toBeVisible();

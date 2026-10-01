@@ -68,10 +68,9 @@ test("dismisses without saving, persists on save, and queues a second request", 
   app.observer(request("save", "gpt-6-sol"), app.managementKey);
   await expect(editor).toBeVisible();
   await editor.getByRole("button", { name: "Save changes" }).click();
-  await expect(editor.getByText("Saved.", { exact: true })).toBeVisible();
+  await expect(editor).toHaveCount(0);
   await expect.poll(savedModel).toBe("gpt-6-sol");
   expect(await savedCalls()).toHaveLength(1);
-  await editor.getByRole("button", { name: "Close editor" }).click();
 
   app.observer(request("queue-one", "queued-first"), app.managementKey);
   await expect(editor.getByRole("combobox", { name: "Model" })).toHaveValue(
@@ -122,6 +121,7 @@ test("keeps reviewer edits through a failed save and status recovery", async ({
     editor.getByRole("button", { name: "Save changes" }),
   ).toBeEnabled();
   await editor.getByRole("button", { name: "Save changes" }).click();
+  await expect(editor).toHaveCount(0);
   await expect
     .poll(() =>
       page.evaluate(() => window.agentManagementFixture.agent.harness.model),

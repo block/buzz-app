@@ -1,3 +1,4 @@
+import { ActivityStream } from "./ActivityStream";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { useIdentityNames } from "../../features/identity-names/react";
 import {
@@ -225,23 +226,34 @@ export function ActivityDetails({
                   agent telemetry appears; there is no history backfill.
                 </p>
               )}
+              <ActivityStream key={`${agent}:${channelId}`} records={records} />
               <Accordion
-                value={expanded}
-                onValueChange={expand}
-                items={records.map((row) => ({
-                  value: row.id,
-                  title: `${row.kind} · ${new Date(row.receivedAt).toLocaleTimeString()}`,
-                  content: (
-                    <div className="min-w-0">
-                      <p className="break-all text-body-sm text-secondary">
-                        Event {row.envelopeId}
-                      </p>
-                      <pre className="max-h-96 overflow-auto bg-inset p-3 font-mono text-mono">
-                        <code>{row.plaintext}</code>
-                      </pre>
-                    </div>
-                  ),
-                }))}
+                items={[
+                  {
+                    value: "raw-records",
+                    title: `Raw records (${records.length})`,
+                    content: (
+                      <Accordion
+                        value={expanded}
+                        onValueChange={expand}
+                        items={records.map((row) => ({
+                          value: row.id,
+                          title: `${row.kind} · ${new Date(row.receivedAt).toLocaleTimeString()}`,
+                          content: (
+                            <div className="min-w-0">
+                              <p className="break-all text-body-sm text-secondary">
+                                Event {row.envelopeId}
+                              </p>
+                              <pre className="max-h-96 overflow-auto bg-inset p-3 font-mono text-mono">
+                                <code>{row.plaintext}</code>
+                              </pre>
+                            </div>
+                          ),
+                        }))}
+                      />
+                    ),
+                  },
+                ]}
               />
             </>
           )}

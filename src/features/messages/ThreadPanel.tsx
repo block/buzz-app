@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { LoadedThreadMessages } from "./loaded-thread-messages";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
 import { MessageEditScope } from "./MessageEditScope";
 import { ReplySummary } from "./ReplySummary";
@@ -1056,6 +1057,7 @@ function ThreadMessages({
         (!requireReadyRoot ||
           (snapshot.root.id === messageId &&
             snapshot.targetStatus === "ready")) && (
+          <LoadedThreadMessages.Provider value={rows}>
           <MessageComposer
             sessionConversation={sessionConversation}
             key={`${scope}:${channelId}:${snapshot.root.id}`}
@@ -1127,6 +1129,7 @@ function ThreadMessages({
               setSent(id);
             }}
           />
+          </LoadedThreadMessages.Provider>
         )}
     </MessageEditScope>
   );

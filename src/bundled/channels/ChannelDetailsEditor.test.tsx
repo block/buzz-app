@@ -1001,6 +1001,59 @@ it.each([false, true])(
   },
 );
 
+it.each([
+  [3600, 7200],
+  [undefined, 7200],
+  [3600, undefined],
+] as const)(
+  "adopts untouched remote duration after a failed reload (%s → %s)",
+  async (originalTtl, remoteTtl) => {
+    const h = harness();
+    const user = userEvent.setup();
+    const original = { ...base, ttlSeconds: originalTtl };
+    h.load.mockResolvedValue(original);
+    h.save.mockRejectedValueOnce(new Error("Channel details changed"));
+    render(
+      <ChannelDetailsEditor
+        scope="community:viewer"
+        capability={h.capability}
+        channel={channel}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Edit details" }),
+    );
+    await user.type(screen.getByRole("textbox", { name: "Name" }), " edited");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByRole("alert");
+    h.load.mockRejectedValueOnce(new Error("Offline"));
+    await user.click(screen.getByRole("button", { name: "Reload details" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Offline");
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Name" })).toBeDisabled();
+    const reloaded = { ...base, version: "v2", ttlSeconds: remoteTtl };
+    const reload = deferred<ChannelDetails>();
+    h.load.mockReturnValueOnce(reload.promise);
+    await user.click(screen.getByRole("button", { name: "Reload details" }));
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    await act(async () => reload.resolve(reloaded));
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Alpha edited",
+    );
+    expect(
+      screen.getByRole("radio", {
+        name: remoteTtl === undefined ? "Ongoing" : "Temporary",
+      }),
+    ).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(h.save).toHaveBeenLastCalledWith(
+      reloaded,
+      { ...original, name: "Alpha edited", ttlSeconds: remoteTtl },
+      expect.any(AbortSignal),
+    );
+  },
+);
+
 it("retains an explicit change to Ongoing through a failed conflict reload", async () => {
   const h = harness();
   const user = userEvent.setup();

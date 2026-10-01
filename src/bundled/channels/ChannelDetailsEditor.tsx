@@ -52,6 +52,8 @@ export function ChannelDetailsEditor({
     confirmDiscard: false,
     pending: false,
     temporaryTtl: undefined as number | undefined,
+    // Comparison only: retained through failed reads, never used as authority.
+    baselineTtl: undefined as number | undefined,
     privacyChoice: undefined as ChannelDetailsDraft["visibility"] | undefined,
     error: "",
     base: undefined as ChannelDetails | undefined,
@@ -111,6 +113,7 @@ export function ChannelDetailsEditor({
         if (!signal.aborted)
           patch((old) => ({
             base,
+            baselineTtl: base.ttlSeconds,
             // Preserve explicit choices, but adopt remote visibility/lifetime
             // for untouched fields. Unknown prior privacy must never reopen.
             draft: old.draft
@@ -121,7 +124,7 @@ export function ChannelDetailsEditor({
                       ? old.draft.visibility
                       : base.visibility,
                   ttlSeconds:
-                    old.base && old.draft.ttlSeconds === old.base.ttlSeconds
+                    old.draft.ttlSeconds === old.baselineTtl
                       ? base.ttlSeconds
                       : old.draft.ttlSeconds,
                 }

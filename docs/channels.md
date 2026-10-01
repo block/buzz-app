@@ -554,9 +554,13 @@ concurrent writers can still race after the last read.
 
 A definitive rejection keeps the editable draft. **Reload details** rechecks the
 base without discarding text edits. Untouched visibility and duration follow the
-reloaded base; explicit choices stay in the draft. If a failed reload has lost the
-prior base, privacy adopts the fresh value conservatively: a stale public text draft
-must not become reopening intent. Choose visibility again after that recovery. Inspect the retained edits before
+reloaded base; explicit choices stay in the draft. A duration-only comparison baseline
+survives failed reloads, so an untouched duration follows the next successful read
+while an explicit change to Ongoing remains staged. This baseline never grants
+editing authority: a failed read still clears the current base and disables Save.
+If a failed reload has lost the prior base, privacy adopts the fresh value
+conservatively: a stale public text draft must not become reopening intent. Choose
+visibility again after that recovery. Inspect the retained edits before
 saving again. A lost publication response or failed/mismatched readback locks the submitted draft and
 offers **Check save status**, which only reads and never republishes. Uncertain
 intent survives panel close/reopen and cache clear within the same session; no

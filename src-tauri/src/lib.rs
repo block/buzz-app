@@ -11,6 +11,8 @@ mod deep_links;
 mod dock;
 mod host_command;
 mod host_request;
+mod mesh_compute;
+use mesh_compute::mesh_compute_status;
 mod identity;
 mod notifications;
 mod os_idle;
@@ -375,6 +377,7 @@ async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
 }
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
+        mesh_compute_status,
         identity_restore,
         identity_import,
         identity_create,

@@ -651,6 +651,7 @@ dependencies = [
  "buzz-agent",
  "buzz-agent-controller",
  "buzz-credential-store",
+ "buzz-mesh-compute",
  "buzzodz-plugins",
  "futures-lite",
  "getrandom 0.3.4",
@@ -692,6 +693,13 @@ dependencies = [
  "wry",
  "zbus 5.19.0",
  "zeroize",
+]
+
+[[package]]
+name = "buzz-mesh-compute"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

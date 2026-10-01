@@ -1,0 +1,28 @@
+//! Native Mesh lifecycle owner. The application retains credentials and relay authority.
+//!
+//! Initial integration checkpoint: no runtime is launched until the SDK adapter lands.
+
+use serde::Serialize;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Status {
+    pub available: bool,
+    pub reason: &'static str,
+}
+
+/// Explicitly unavailable during bring-up; compilation is not runtime readiness.
+pub fn status() -> Status {
+    Status {
+        available: false,
+        reason: "Mesh runtime integration is not complete",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn scaffold_never_claims_runtime_readiness() {
+        assert!(!super::status().available);
+    }
+}

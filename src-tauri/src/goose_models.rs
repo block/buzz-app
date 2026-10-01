@@ -23,7 +23,27 @@ impl Drop for CheckChild {
 /// Run one Goose turn through its normal session path without saving a session
 /// or loading extensions. Databricks rejects `info --check`'s empty system prompt.
 /// The selected draft and write-only overrides are resolved by the controller.
-pub(super) async fn test(context: GooseModelContext) -> Result<(), String> {
+pub(super) async fn test(mut context: GooseModelContext) -> Result<String, String> {
+    if context.model_id.is_empty() {
+        // Goose owns defaults for built-in and dynamically registered providers.
+        // Resolve only the requested provider, never a saved model from another.
+        let response = rpc(
+            &context,
+            "_goose/unstable/providers/list",
+            json!({"providerIds":[context.provider_id]}),
+        )
+        .await?;
+        if response.get("error").is_some() {
+            return Err(TEST_FAILURE.into());
+        }
+        context.model_id = response["result"]["entries"]
+            .as_array()
+            .and_then(|entries| entries.iter().find(|entry| entry["providerId"] == context.provider_id))
+            .and_then(|entry| entry["defaultModel"].as_str())
+            .filter(|model| !model.trim().is_empty())
+            .ok_or("Goose has no default test model for this provider. Choose a model, then test again.")?
+            .to_owned();
+    }
     if context.model_id.trim().is_empty()
         || context.model_id.len() > 512
         || context.model_id.chars().any(char::is_control)
@@ -33,6 +53,7 @@ pub(super) async fn test(context: GooseModelContext) -> Result<(), String> {
     if !context.workspace.is_absolute() || !context.workspace.is_dir() {
         return Err("Choose an existing absolute workspace before testing Goose".into());
     }
+    let tested_model = format!("{}/{}", context.provider_id, context.model_id);
     let mut command = tokio::process::Command::new(context.command);
     command
         .args([
@@ -71,9 +92,7 @@ pub(super) async fn test(context: GooseModelContext) -> Result<(), String> {
         .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
     command
         .env("GOOSE_PROVIDER", context.provider_id)
-        .env("GOOSE_MODEL", context.model_id)
-        .env("GOOSE_MAX_TOKENS", "10")
-        .env("GOOSE_THINKING_EFFORT", "off");
+        .env("GOOSE_MODEL", context.model_id);
     #[cfg(unix)]
     command.process_group(0);
     let mut child = CheckChild(
@@ -95,7 +114,7 @@ pub(super) async fn test(context: GooseModelContext) -> Result<(), String> {
         let status = child.0.wait().await.map_err(|_| TEST_FAILURE)?;
         let response: Value = serde_json::from_slice(&output).map_err(|_| TEST_FAILURE)?;
         if status.success() && successful_reply(&response) {
-            Ok(())
+            Ok(tested_model)
         } else {
             Err(TEST_FAILURE.into())
         }
@@ -108,6 +127,14 @@ pub(super) async fn test(context: GooseModelContext) -> Result<(), String> {
 
 fn successful_reply(response: &Value) -> bool {
     if response["metadata"]["status"] != "completed" {
+        return false;
+    }
+    // Goose also emits local provider errors as assistant text and exits zero.
+    // A fresh one-turn test needs usage evidence from an actual model response.
+    if !response["metadata"]["total_tokens"]
+        .as_u64()
+        .is_some_and(|tokens| tokens > 0)
+    {
         return false;
     }
     let Some(messages) = response["messages"].as_array() else {
@@ -135,8 +162,13 @@ fn successful_reply(response: &Value) -> bool {
 }
 
 pub(super) async fn fetch(context: GooseModelContext) -> Result<Vec<String>, String> {
-    let provider_id = context.provider_id.clone();
-    let mut command = tokio::process::Command::new(context.command);
+    let response = rpc(&context, METHOD, json!({"providerId":context.provider_id})).await?;
+    parse_response(&response, &context.provider_id)
+}
+
+/// Shared one-shot ACP lookup for the live model list and provider metadata.
+async fn rpc(context: &GooseModelContext, method: &str, params: Value) -> Result<Value, String> {
+    let mut command = tokio::process::Command::new(&context.command);
     command
         .arg("acp")
         .env_clear()
@@ -158,26 +190,32 @@ pub(super) async fn fetch(context: GooseModelContext) -> Result<Vec<String>, Str
         }
     }
     command
-        .envs(context.environment)
+        .envs(&context.environment)
         .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
-    let mut child = command
-        .spawn()
-        .map_err(|_| "Could not start Goose to list models".to_owned())?;
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = CheckChild(
+        command
+            .spawn()
+            .map_err(|_| "Could not start Goose to list models".to_owned())?,
+    );
     let mut stdin = child
+        .0
         .stdin
         .take()
         .ok_or("Goose catalog input unavailable")?;
     let request = json!({
         "jsonrpc": "2.0",
         "id": 1,
-        "method": METHOD,
-        "params": { "providerId": provider_id }
+        "method": method,
+        "params": params
     });
     stdin
         .write_all(format!("{request}\n").as_bytes())
         .await
         .map_err(|_| "Could not request Goose models".to_owned())?;
     let stdout = child
+        .0
         .stdout
         .take()
         .ok_or("Goose catalog output unavailable")?;
@@ -196,7 +234,7 @@ pub(super) async fn fetch(context: GooseModelContext) -> Result<Vec<String>, Str
             let value: Value = serde_json::from_str(&line)
                 .map_err(|_| "Goose returned an invalid model response")?;
             if value.get("id") == Some(&json!(1)) {
-                return parse_response(&value, &provider_id);
+                return Ok(value);
             }
         }
         Err("Goose did not return a model list".to_owned())
@@ -204,8 +242,7 @@ pub(super) async fn fetch(context: GooseModelContext) -> Result<Vec<String>, Str
     .await
     .map_err(|_| "Goose model lookup timed out; retry explicitly".to_owned())?;
     drop(stdin);
-    let _ = child.kill().await;
-    let _ = child.wait().await;
+    drop(child);
     response
 }
 
@@ -248,6 +285,80 @@ fn parse_response(value: &Value, provider_id: &str) -> Result<Vec<String>, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires installed Goose and a signed-in BUZZ_TEST_GOOSE_PROVIDER; sends tiny live requests"]
+    async fn installed_goose_provider_test_uses_production_context() {
+        use buzz_agent_controller::{AgentEdit, Controller, HarnessEdit};
+        let command =
+            std::env::var("BUZZ_TEST_GOOSE_COMMAND").expect("set BUZZ_TEST_GOOSE_COMMAND");
+        let provider =
+            std::env::var("BUZZ_TEST_GOOSE_PROVIDER").expect("set BUZZ_TEST_GOOSE_PROVIDER");
+        let dir = tempfile::tempdir().unwrap();
+        let context = |provider: &str, environment| {
+            Controller::draft_goose_model_context(AgentEdit {
+                name: "Probe".into(),
+                picture: None,
+                system_prompt: String::new(),
+                session_policy: Some(None),
+                workspace: dir.path().display().to_string(),
+                harness: HarnessEdit {
+                    command: command.clone(),
+                    args: vec!["acp".into()],
+                    provider: provider.into(),
+                    model: String::new(),
+                    databricks: None,
+                },
+                environment,
+            })
+            .unwrap()
+        };
+        let providers = [
+            "openai",
+            "anthropic",
+            "google",
+            "openrouter",
+            "databricks_v2",
+        ];
+        let metadata = rpc(
+            &context(&provider, Default::default()),
+            "_goose/unstable/providers/list",
+            json!({"providerIds":providers}),
+        )
+        .await
+        .unwrap();
+        let entries = metadata["result"]["entries"].as_array().unwrap();
+        for id in providers {
+            let entry = entries
+                .iter()
+                .find(|entry| entry["providerId"] == id)
+                .expect("requested provider metadata");
+            assert!(entry["defaultModel"]
+                .as_str()
+                .is_some_and(|model| !model.is_empty()));
+            println!("Goose {id} default: {}", entry["defaultModel"]);
+        }
+        let tested = test(context(&provider, Default::default())).await.unwrap();
+        assert!(tested.starts_with(&format!("{provider}/")));
+        println!("Goose provider-only test replied using {tested}");
+        for (provider, key) in [
+            ("openai", "OPENAI_API_KEY"),
+            ("anthropic", "ANTHROPIC_API_KEY"),
+            ("google", "GOOGLE_API_KEY"),
+            ("openrouter", "OPENROUTER_API_KEY"),
+        ] {
+            let result = test(context(
+                provider,
+                [(key.to_owned(), Some("buzz-invalid-key".to_owned()))].into(),
+            ))
+            .await;
+            assert!(
+                result.is_err(),
+                "invalid {provider} credential must not succeed"
+            );
+            assert!(!result.unwrap_err().contains("buzz-invalid-key"));
+        }
+    }
 
     #[test]
     fn accepts_only_bounded_model_names() {

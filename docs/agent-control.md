@@ -494,14 +494,34 @@ Settings says **Shell setup not verified**; Buzz does not check it before Start.
   model browsing. A Goose catalog entry does not establish caller EXECUTE permission
   or successful inference. Advanced arguments remain a literal JSON array. Old native hosts
   without this metadata fall back to custom entry.
-- With a Goose provider and model selected, **Test connection** runs one
+- For Goose and Pi, **Test connection** appears below the provider/API key and
+  above Model, including before a model is chosen. The shared form and native
+  request lane own cancellation and result display; tests never fill Model.
+- For Goose, a blank Model resolves the selected provider's `defaultModel`
+  through Goose ACP provider metadata. Buzz keeps no default-model mapping.
+  A nonblank explicit model or effective `GOOSE_MODEL` override is tested as entered.
+  **Test connection** runs one
   `goose run --text` turn without a saved session or extensions in the agent
   workspace using the effective draft provider,
-  model, and write-only environment. Buzz requests a ten-token output limit
-  and sets thinking effort to off. Success requires a nonempty assistant text
-  reply in Goose's JSON output; Goose can exit successfully after a provider error.
+  model, and write-only environment. Goose keeps its own output and thinking
+  defaults. Success requires nonempty assistant text and reported token usage
+  in Goose's JSON output; Goose can exit successfully with synthetic assistant
+  text after a provider error. Providers that omit usage cannot confirm success
+  through this CLI check.
   The result does not verify Buzz relay readiness or launch the agent. A failed
-  or timed-out test leaves the draft unchanged.
+  or timed-out test leaves the draft unchanged. Success reports the canonical
+  provider/model that was tested, except that write-only environment overrides
+  keep their values hidden. A provider without a default asks for a model;
+  Buzz never substitutes another provider.
+- For Pi, with Model blank, Pi chooses from
+  the selected provider's `--models provider/*` scope. Buzz checks Pi's actual
+  selection through RPC before sending a short prompt; if Pi falls back to
+  another provider, Buzz stops and asks for credentials. With a model selected,
+  Buzz tests that exact provider/model. Success requires an assistant text reply
+  and reports its canonical model ID without changing the draft. Listing models
+  alone does not verify the API key or inference access. Tests use the agent's
+  effective environment and existing Pi sign-in, create no saved Pi session,
+  and stop on cancellation or timeout.
 - Environment values never arrive in snapshots. Inputs are masked write-only
   patches: missing key preserves; string replaces (including empty); null removes.
   Undo omits a patch again. Successful save clears entered values from UI state.

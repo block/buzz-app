@@ -143,18 +143,30 @@ fn goose_connection_test_uses_the_draft_model_and_environment() {
     let (dir, _, _app, view) = fixture();
     let goose = dir.path().join("goose");
     let script = r#"#!/bin/sh
+if [ "$1" = acp ]; then
+  read request
+  case "$request" in *providers/list*) ;; *) exit 1;; esac
+  case "$TEST_DEFAULT" in
+    missing) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"entries":[]}}';;
+    mismatch) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"entries":[{"providerId":"anthropic","defaultModel":"other-model"}]}}';;
+    invalid) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"entries":[{"providerId":"openai","defaultModel":"bad\nmodel"}]}}';;
+    *) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"entries":[{"providerId":"openai","defaultModel":"provider-default"}]}}';;
+  esac
+  exit
+fi
 [ "$1 $2 $3" = 'run --text Reply OK.' ] || exit 1
 [ "$4 $5 $6 $7 $8 $9" = '--no-session --no-profile --max-turns 1 --quiet --output-format' ] || exit 1
 [ "${10}" = 'json' ] || exit 1
 [ "$GOOSE_PROVIDER" = 'openai' ] || exit 1
-[ "$GOOSE_MODEL" = 'effective-model' ] || exit 1
-[ "$GOOSE_MAX_TOKENS" = '10' ] || exit 1
-[ "$GOOSE_THINKING_EFFORT" = 'off' ] || exit 1
+case "$GOOSE_MODEL" in effective-model|provider-default) ;; *) exit 1;; esac
 [ "$(pwd)" = '__WORKSPACE__' ] || exit 1
+printf '%s\n' 'prompt' >> prompts
 if [ "$OPENAI_API_KEY" = 'draft-key' ]; then
-  printf '%s\n' '{"metadata":{"status":"completed"},"messages":[{"role":"assistant","content":[{"type":"text","text":"OK"}]}]}'
+  printf '%s\n' '{"metadata":{"status":"completed","total_tokens":4},"messages":[{"role":"assistant","content":[{"type":"text","text":"OK"}]}]}'
+elif [ "$BAD_STYLE" = text ]; then
+  printf '%s\n' '{"metadata":{"status":"completed","total_tokens":0},"messages":[{"role":"assistant","content":[{"type":"text","text":"Ran into this error: API key not valid."}]}]}'
 else
-  printf '%s\n' '{"metadata":{"status":"completed"},"messages":[{"role":"assistant","content":[{"type":"error","error":"authentication failed"}]}]}'
+  printf '%s\n' '{"metadata":{"status":"completed","total_tokens":4},"messages":[{"role":"assistant","content":[{"type":"error","error":"authentication failed"}]}]}'
 fi
 "#
     .replace(
@@ -174,19 +186,65 @@ fi
             "host":"","filter":"","action":"test","edit":edit
         }}),
     );
-    assert_eq!(result.unwrap()["models"], json!([]));
-    let mut bad = edit;
-    bad["environment"]["OPENAI_API_KEY"] = json!("bad-key");
+    let result = result.unwrap();
+    assert_eq!(result["models"], json!([]));
+    assert!(result.get("testedModel").is_none());
+    assert!(!result.to_string().contains("effective-model"));
+    let mut automatic = edit.clone();
+    automatic["harness"]["model"] = json!("");
+    automatic["environment"]
+        .as_object_mut()
+        .unwrap()
+        .remove("GOOSE_MODEL");
     let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
-    let error = invoke(
+    let result = invoke(
         &view,
         "agent_models_run",
         json!({"ticket":ticket,"request":{
-            "host":"","filter":"","action":"test","edit":bad
+            "host":"","filter":"","action":"test","edit":automatic
         }}),
     )
-    .unwrap_err();
-    assert!(error.to_string().contains("could not complete a request"));
+    .unwrap();
+    assert_eq!(result["testedModel"], "openai/provider-default");
+    let prompts = std::fs::read_to_string(dir.path().join("prompts")).unwrap();
+    for case in ["missing", "mismatch", "invalid"] {
+        let mut unavailable = automatic.clone();
+        unavailable["environment"]["TEST_DEFAULT"] = json!(case);
+        let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+        assert!(
+            invoke(
+                &view,
+                "agent_models_run",
+                json!({"ticket":ticket,"request":{
+                    "host":"","filter":"","action":"test","edit":unavailable
+                }})
+            )
+            .is_err(),
+            "{case}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("prompts")).unwrap(),
+            prompts
+        );
+    }
+    let mut bad = automatic;
+    bad["environment"]["OPENAI_API_KEY"] = json!("bad-key");
+    for style in ["error-content", "text"] {
+        bad["environment"]["BAD_STYLE"] = json!(style);
+        let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+        let error = invoke(
+            &view,
+            "agent_models_run",
+            json!({"ticket":ticket,"request":{
+                "host":"","filter":"","action":"test","edit":bad
+            }}),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("could not complete a request"),
+            "{style}"
+        );
+    }
 }
 #[test]
 fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {

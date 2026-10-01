@@ -18,6 +18,7 @@ export function ReplyBranch({
   open,
   depth,
   onExpand,
+  restoringFocus,
   children,
 }: {
   message: ReactNode;
@@ -28,6 +29,8 @@ export function ReplyBranch({
   open: boolean;
   depth: number;
   onExpand(): void;
+  /** Virtual measurement may still own focus after synchronous reparenting. */
+  restoringFocus?: (() => boolean) | undefined;
   children: ReactNode;
 }) {
   const panelId = useId();
@@ -43,28 +46,36 @@ export function ReplyBranch({
       row.scrollIntoView({ block: "nearest" });
     }
   }, [open]);
-  const messageRef = useCallback((element: HTMLDivElement | null) => {
-    if (!element) return;
-    return () => {
-      const row = element.querySelector<HTMLElement>("[data-message-id]");
-      if (!row?.contains(document.activeElement)) return;
-      const parent = element.parentElement?.parentElement
-        ?.closest("[data-depth]")
-        ?.querySelector<HTMLElement>("[data-message-id]");
-      const history = element.closest<HTMLElement>(
-        '[aria-label="Thread messages"]',
-      );
-      queueMicrotask(() => {
-        // Exact-link reparenting restores focus during layout; never override it
-        // or a user who has deliberately moved elsewhere.
-        if (row.isConnected || document.activeElement !== document.body) return;
-        const target = parent?.isConnected ? parent : history;
-        if (!target?.isConnected || target.closest("[inert]")) return;
-        if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
-        target.focus({ preventScroll: true });
-      });
-    };
-  }, []);
+  const messageRef = useCallback(
+    (element: HTMLDivElement | null) => {
+      if (!element) return;
+      return () => {
+        const row = element.querySelector<HTMLElement>("[data-message-id]");
+        if (!row?.contains(document.activeElement)) return;
+        const parent = element.parentElement?.parentElement
+          ?.closest("[data-depth]")
+          ?.querySelector<HTMLElement>("[data-message-id]");
+        const history = element.closest<HTMLElement>(
+          '[aria-label="Thread messages"]',
+        );
+        queueMicrotask(() => {
+          // Exact-link reparenting restores focus during layout; never override it
+          // or a user who has deliberately moved elsewhere.
+          if (
+            row.isConnected ||
+            restoringFocus?.() ||
+            document.activeElement !== document.body
+          )
+            return;
+          const target = parent?.isConnected ? parent : history;
+          if (!target?.isConnected || target.closest("[inert]")) return;
+          if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
+          target.focus({ preventScroll: true });
+        });
+      };
+    },
+    [restoringFocus],
+  );
   return (
     <div
       className={styles.replyBranch}

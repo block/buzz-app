@@ -89,14 +89,7 @@ test("ordinary thread reveals its first content already positioned at the bottom
   await expect(history.locator("[data-message-id]")).not.toHaveCount(0);
   await expect
     .poll(() =>
-      page.evaluate((id) => {
-        const view = window.fixtureRelay.snapshot().session.thread("alpha", id);
-        try {
-          return view.snapshot().replies.length;
-        } finally {
-          view.dispose();
-        }
-      }, app.exact.root.id),
+      page.evaluate(() => window.fixtureThreadSnapshot().replies.length),
     )
     .toBe(80);
   await expect

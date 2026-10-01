@@ -255,6 +255,7 @@ test.describe("large thread opening", () => {
       let target = trigger;
       const gate = Promise.withResolvers();
       let held = 0;
+      let released = 0;
       if (phase === "warm-return") {
         await page.locator('button[data-channel-id="beta"]').click();
         await expect(history).toHaveCount(0);
@@ -266,7 +267,8 @@ test.describe("large thread opening", () => {
         await page.route("**/api/relay/**/query", async (route) => {
           held++;
           await gate.promise;
-          await route.fallback();
+          await route.continue();
+          released++;
         });
         target = page.locator('button[data-channel-id="alpha"]');
       }
@@ -329,16 +331,7 @@ test.describe("large thread opening", () => {
         // Windowing changes presentation, not the complete legacy traversal.
         await expect
           .poll(() =>
-            page.evaluate((id) => {
-              const view = window.fixtureRelay
-                .snapshot()
-                .session.thread("alpha", id);
-              try {
-                return view.snapshot().replies.length;
-              } finally {
-                view.dispose();
-              }
-            }, root.id),
+            page.evaluate(() => window.fixtureThreadSnapshot().replies.length),
           )
           .toBe(300);
         if (phase === "warm-return") {
@@ -347,8 +340,10 @@ test.describe("large thread opening", () => {
         }
       } finally {
         gate.resolve();
-        if (phase === "warm-return")
+        if (phase === "warm-return") {
+          await expect.poll(() => released === held).toBe(true);
           await page.unrouteAll({ behavior: "wait" });
+        }
       }
       if (phase === "cold") {
         await page

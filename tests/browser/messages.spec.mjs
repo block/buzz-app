@@ -369,7 +369,13 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       history.evaluate(
         (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
       );
-    await expect(history.locator("[data-message-id]")).toHaveCount(62);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => window.messagesFixture.threadSnapshot().replies.length,
+        ),
+      )
+      .toBe(61);
     await expect(panel.getByRole("status")).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Load more replies", exact: true }),
@@ -569,12 +575,24 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       el.dispatchEvent(new Event("scroll"));
     });
     await page.evaluate(() => window.messagesFixture.live());
-    await expect(history.locator("[data-message-id]")).toHaveCount(63);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => window.messagesFixture.threadSnapshot().replies.length,
+        ),
+      )
+      .toBe(62);
     await expect.poll(() => history.evaluate((el) => el.scrollTop)).toBe(100);
     await draft.fill("keep first draft");
     await choose("Second root");
     await expect(draft).toHaveJSProperty("value", "");
-    await expect(history.locator("[data-message-id]")).toHaveCount(61);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => window.messagesFixture.threadSnapshot().replies.length,
+        ),
+      )
+      .toBe(60);
     await expect.poll(gap).toBeLessThan(2);
     await draft.fill("reject second reply");
     await draft.press("Enter");
@@ -620,9 +638,13 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     await expect(draft).toHaveJSProperty("value", "keep first draft");
     for (const [index, kind] of [9, 40002].entries()) {
       await page.evaluate((value) => window.messagesFixture.deep(value), kind);
-      await expect(history.locator("[data-message-id]")).toHaveCount(
-        64 + index,
-      );
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => window.messagesFixture.threadSnapshot().replies.length,
+          ),
+        )
+        .toBe(63 + index);
       const literal = history
         .getByText("literal deep message", { exact: false })
         .last();

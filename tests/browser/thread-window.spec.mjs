@@ -3,6 +3,7 @@ import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { watchPageErrors } from "./page-errors.mjs";
+import { settle, wheel } from "./timeline.mjs";
 
 test("reconnect repair failure keeps retry reachable at the newest replies", async ({
   page,
@@ -92,7 +93,7 @@ test("older-page retry repeats the failed continuation at the scrollback cue", a
     const replies = history.locator("ol [data-message-id]");
     await expect(replies).toHaveCount(10);
     await history.hover();
-    await page.mouse.wheel(0, -4000);
+    await wheel(page, -4000, history);
     await expect
       .poll(() =>
         page.evaluate(
@@ -100,6 +101,9 @@ test("older-page retry repeats the failed continuation at the scrollback cue", a
         ),
       )
       .toBe(60);
+    // The fold can publish before Virtua commits its shift and measures rows.
+    // Do not overwrite scrollTop while that correction still owns the viewport.
+    await settle(page, history);
     await page.evaluate(() => window.messagesFixture.failOlderPages(2));
     // Re-establish the scrollback boundary after the first page settles. One
     // wheel step alone can stop mid-history in WebKit's hosted viewport.
@@ -336,17 +340,29 @@ test("newest window positions immediately; scrollback preserves the visible repl
       if (!reading) throw new Error("No complete reply in the viewport");
       return reading.dataset.messageId;
     });
-    await page.evaluate(() => window.messagesFixture.releaseOlderPage());
+    const readingReply = history.locator(`ol [data-message-id="${readingId}"]`);
+    // Ordinary keyboard focus, not an exact-link pin, must survive index changes.
+    await readingReply.evaluate((row) => {
+      row.tabIndex = -1;
+      row.focus({ preventScroll: true });
+    });
+    await expect(readingReply).toBeFocused();
+    // Deliver a live append while history is held, then release the older page.
+    // Both owners are real; this is overlap, not a fabricated combined snapshot.
+    await page.evaluate(() => {
+      window.messagesFixture.live("Live during history");
+      window.messagesFixture.releaseOlderPage();
+    });
     await expect
       .poll(() =>
         page.evaluate(
           () => window.messagesFixture.threadSnapshot().replies.length,
         ),
       )
-      .toBe(60);
+      .toBe(61);
     await expect(history.getByText("Loading older replies…")).toHaveCount(0);
-    const readingReply = history.locator(`ol [data-message-id="${readingId}"]`);
     await expect(readingReply).toBeInViewport();
+    await expect(readingReply).toBeFocused();
     // The page was prepended, not substituted for the reply being read.
     expect(
       await page.evaluate(
@@ -364,7 +380,7 @@ test("newest window positions immediately; scrollback preserves the visible repl
           () => window.messagesFixture.threadSnapshot().replies.length,
         ),
       )
-      .toBe(61);
+      .toBe(62);
     await expect(readingReply).toBeInViewport();
     await expect
       .poll(() =>
@@ -374,7 +390,8 @@ test("newest window positions immediately; scrollback preserves the visible repl
       )
       .toBe("Live reply");
     // Demand each remaining older page. No automatic full-history waterfall.
-    for (const count of [111, 161, 211, 261, 305]) {
+    for (const count of [112, 162, 212, 262, 306]) {
+      await settle(page, history);
       await history.evaluate((el) => {
         el.scrollTop = 0;
         el.dispatchEvent(new Event("scroll"));
@@ -392,9 +409,9 @@ test("newest window positions immediately; scrollback preserves the visible repl
     const ids = await page.evaluate(() =>
       window.messagesFixture.threadSnapshot().replies.map((row) => row.id),
     );
-    expect(ids).toHaveLength(305);
+    expect(ids).toHaveLength(306);
     expect(await replies.count()).toBeLessThan(150);
-    expect(new Set(ids).size).toBe(305);
+    expect(new Set(ids).size).toBe(306);
     expect(
       (await page.evaluate(() => window.messagesFixture.report.filters)).every(
         (f) => f.thread_window && f.thread_cursor === undefined,

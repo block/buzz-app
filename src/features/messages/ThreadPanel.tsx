@@ -10,6 +10,9 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  Component,
+  createContext,
+  useContext,
   type ReactNode,
   useCallback,
   useEffect,
@@ -19,7 +22,11 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { Virtualizer, type VirtualizerHandle } from "virtua";
+import {
+  Virtualizer,
+  type VirtualizerHandle,
+  type CustomItemComponentProps,
+} from "virtua";
 import { XIcon } from "../../shared/design-system/icons/index";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage } from "../relay/contracts";
@@ -61,6 +68,75 @@ export type ThreadPanelProps = {
   ): void;
   canOpenLink?: ((target: string) => boolean) | undefined;
 };
+
+type PendingThreadFocus = {
+  current: HTMLElement | undefined;
+  signal: AbortSignal | undefined;
+};
+const ThreadFocus = createContext<PendingThreadFocus>({
+  current: undefined,
+  signal: undefined,
+});
+
+/** Capture before Virtua hides an unmeasured index; restore after measurement.
+ * Ancestry transfer uses the same pending owner, never a second focus attempt.
+ */
+class MeasuredThreadItem extends Component<
+  Omit<CustomItemComponentProps, "ref"> & {
+    itemRef: CustomItemComponentProps["ref"];
+    focus: PendingThreadFocus;
+  }
+> {
+  private element: HTMLLIElement | null = null;
+  getSnapshotBeforeUpdate() {
+    const focused = document.activeElement;
+    if (
+      this.props.style.visibility === "hidden" &&
+      focused instanceof HTMLElement &&
+      this.element?.contains(focused)
+    )
+      this.props.focus.current = focused;
+    return null;
+  }
+  componentDidMount() {
+    this.restoreFocus();
+  }
+  componentDidUpdate() {
+    this.restoreFocus();
+  }
+  private restoreFocus() {
+    const owner = this.props.focus;
+    const pending = owner.current;
+    if (
+      this.props.style.visibility !== "hidden" &&
+      pending?.isConnected &&
+      this.element?.contains(pending) &&
+      !pending.closest("[inert]") &&
+      !owner.signal?.aborted
+    ) {
+      owner.current = undefined;
+      if (document.activeElement === document.body)
+        pending.focus({ preventScroll: true });
+    }
+  }
+  private setElement = (element: HTMLLIElement | null) => {
+    this.element = element;
+    const ref = this.props.itemRef;
+    if (typeof ref === "function") return ref(element);
+    if (ref) ref.current = element;
+  };
+  render() {
+    return (
+      <li ref={this.setElement} style={this.props.style}>
+        {this.props.children}
+      </li>
+    );
+  }
+}
+function ThreadItem({ ref, ...props }: CustomItemComponentProps) {
+  const focus = useContext(ThreadFocus);
+  return <MeasuredThreadItem {...props} itemRef={ref} focus={focus} />;
+}
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
@@ -379,36 +455,65 @@ function ThreadMessages({
       ].find((row) => row.dataset.messageId === messageId),
     [messageId],
   );
+  const pendingFocus = useMemo<PendingThreadFocus>(
+    () => ({ current: undefined, signal: navigation?.signal }),
+    [navigation?.signal],
+  );
+  useLayoutEffect(() => {
+    const cancel = () => {
+      if (!pendingFocus.current) return;
+      pendingFocus.current = undefined;
+      if (!scroller.current?.contains(document.activeElement))
+        setFocusedId(undefined);
+    };
+    if (!active) cancel();
+    document.addEventListener("focusin", cancel);
+    document.addEventListener("pointerdown", cancel, true);
+    document.addEventListener("keydown", cancel, true);
+    navigation?.signal.addEventListener("abort", cancel);
+    return () => {
+      pendingFocus.current = undefined;
+      document.removeEventListener("focusin", cancel);
+      document.removeEventListener("pointerdown", cancel, true);
+      document.removeEventListener("keydown", cancel, true);
+      navigation?.signal.removeEventListener("abort", cancel);
+    };
+  }, [active, navigation?.signal, pendingFocus]);
   // A late ancestor reparents the exact row. Transfer only focus owned at detach,
-  // within this commit/layout expansion; a later user expansion must not restore it.
-  const selectedBranchRef = useMemo(() => {
-    let restore = false;
-    return (branch: HTMLElement | null) => {
+  // within this commit/layout expansion; measurement then restores it when visible.
+  const selectedBranchRef = useCallback(
+    (branch: HTMLElement | null) => {
       if (!branch) return;
       const row = branch.querySelector<HTMLElement>("[data-message-id]");
       if (
-        restore &&
         row &&
-        !navigation?.signal.aborted &&
-        !branch.closest("[inert]") &&
-        document.activeElement === document.body
+        pendingFocus.current?.dataset.messageId === messageId &&
+        !pendingFocus.current.isConnected
       ) {
         row.tabIndex = -1;
-        row.focus({ preventScroll: true });
+        pendingFocus.current = row;
       }
-      restore = false;
       return () => {
-        restore =
-          row?.dataset.messageId === messageId &&
-          document.activeElement === row;
-        // Ancestor expansion happens synchronously in a layout effect. Do not
-        // retain focus intent after this update (deletion or unmount).
+        if (
+          row?.dataset.messageId !== messageId ||
+          document.activeElement !== row
+        )
+          return;
+        pendingFocus.current = row;
+        // Only synchronous ancestry expansion may inherit detached focus. Deletion
+        // must not leave an intent that a later user expansion could revive.
         queueMicrotask(() => {
-          restore = false;
+          if (pendingFocus.current === row && !row.isConnected)
+            pendingFocus.current = undefined;
         });
       };
-    };
-  }, [messageId, navigation?.signal]);
+    },
+    [messageId, pendingFocus],
+  );
+  const restoringFocus = useCallback(
+    () => !!pendingFocus.current?.isConnected,
+    [pendingFocus],
+  );
   const selectedOffset = useCallback(() => {
     const row = selectedRow();
     const container = scroller.current;
@@ -621,6 +726,7 @@ function ThreadMessages({
     if (
       (navigation && !rootTarget && revealed.current !== navigation.signal) ||
       (!positioned.current &&
+        positioningStarted.current === undefined &&
         ((snapshot.status !== "ready" &&
           !(
             snapshot.status === "loading" &&
@@ -895,6 +1001,7 @@ function ThreadMessages({
           )}
 
           <ReplyBranch
+            restoringFocus={restoringFocus}
             message={message}
             hasReplies={!!children?.length}
             layout={continuation ? "continuation" : "thread"}
@@ -1052,7 +1159,10 @@ function ThreadMessages({
           )
         }
         onBlur={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget))
+          if (
+            !pendingFocus.current &&
+            !event.currentTarget.contains(event.relatedTarget)
+          )
             setFocusedId(undefined);
         }}
         onWheel={(event) => {
@@ -1134,18 +1244,20 @@ function ThreadMessages({
             )}
           </div>
           {size.width > 0 && size.height > 0 && (
-            <Virtualizer
-              ref={virtualizer}
-              scrollRef={scroller}
-              shift={prepend}
-              bufferSize={1600}
-              keepMounted={keptIndices}
-              startMargin={size.introHeight}
-              as="ol"
-              item="li"
-            >
-              {renderReplies(undefined)}
-            </Virtualizer>
+            <ThreadFocus value={pendingFocus}>
+              <Virtualizer
+                ref={virtualizer}
+                scrollRef={scroller}
+                shift={prepend}
+                bufferSize={1600}
+                keepMounted={keptIndices}
+                startMargin={size.introHeight}
+                as="ol"
+                item={ThreadItem}
+              >
+                {renderReplies(undefined)}
+              </Virtualizer>
+            </ThreadFocus>
           )}
         </div>
         {positioning || (snapshot.status === "loading" && !rows.length) ? (

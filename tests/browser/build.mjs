@@ -24,6 +24,21 @@ export async function buildApp(
       logLevel: "error",
       plugins: [
         react(),
+        {
+          name: "fixture-thread-observation",
+          transform(code, id) {
+            if (id !== join(root, "src/features/messages/ThreadPanel.tsx"))
+              return;
+            // Observe the panel-owned reader, not a new recent-cache seed that
+            // can omit loaded history. This transform exists only in test builds.
+            if (!code.includes("setView(owned);"))
+              throw new Error("Thread observation injection point changed");
+            return code.replace(
+              "setView(owned);",
+              "setView(owned); window.fixtureThreadSnapshot = owned.snapshot;",
+            );
+          },
+        },
         ...(pluginFixtures || companionFixture
           ? [
               {

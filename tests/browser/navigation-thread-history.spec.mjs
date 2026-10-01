@@ -182,20 +182,10 @@ for (const reading of [false, true]) {
         );
       }
       release();
-      // Virtualization bounds the DOM, not the loaded history. Inspect a
-      // no-refresh view seeded from this session's real verified cache.
+      // Virtualization bounds the DOM, not the history retained by this panel.
       await expect
         .poll(() =>
-          page.evaluate((id) => {
-            const view = window.fixtureRelay
-              .snapshot()
-              .session.thread("alpha", id);
-            try {
-              return view.snapshot().replies.length;
-            } finally {
-              view.dispose();
-            }
-          }, root.id),
+          page.evaluate(() => window.fixtureThreadSnapshot().replies.length),
         )
         .toBe(123);
       await expect(
@@ -244,17 +234,11 @@ for (const reading of [false, true]) {
       await expect
         .poll(() =>
           page.evaluate(
-            ({ rootId, id }) => {
-              const view = window.fixtureRelay
-                .snapshot()
-                .session.thread("alpha", rootId);
-              try {
-                return view.snapshot().replies.some((row) => row.id === id);
-              } finally {
-                view.dispose();
-              }
-            },
-            { rootId: root.id, id: live.id },
+            (id) =>
+              window
+                .fixtureThreadSnapshot()
+                .replies.some((row) => row.id === id),
+            live.id,
           ),
         )
         .toBe(true);
@@ -302,16 +286,7 @@ for (const reading of [false, true]) {
       ).toBeInViewport();
       await expect
         .poll(() =>
-          page.evaluate((id) => {
-            const view = window.fixtureRelay
-              .snapshot()
-              .session.thread("alpha", id);
-            try {
-              return view.snapshot().replies.length;
-            } finally {
-              view.dispose();
-            }
-          }, root.id),
+          page.evaluate(() => window.fixtureThreadSnapshot().replies.length),
         )
         .toBe(reading ? 125 : 124);
       // Expanded content is reachable without mounting all loaded branches.

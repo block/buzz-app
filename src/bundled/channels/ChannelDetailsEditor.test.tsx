@@ -1587,7 +1587,7 @@ it.each(["description", "visibility", "channel name"])(
     );
     expect(row.querySelector("svg")).toHaveAttribute(
       "width",
-      field === "channel name" ? "16" : "14",
+      field === "channel name" ? "1rem" : "0.875rem",
     );
     expect(
       screen.queryByRole("button", { name: "Edit details" }),

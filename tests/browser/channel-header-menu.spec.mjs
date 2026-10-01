@@ -133,7 +133,7 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
       "matrix(1, 0, 0, 1, -4, 0)",
     );
     await expect(affordance).toHaveAttribute("aria-hidden", "true");
-    await expect(icon).toHaveAttribute("width", "14");
+    await expect(icon).toHaveAttribute("width", "0.875rem");
     await expect(action.getByText(/^(Edit|Copy)$/)).toHaveCount(0);
     const before = await row.boundingBox();
     // Hover the value/padding, not just the label or the icon itself.

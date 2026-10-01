@@ -375,3 +375,144 @@ export function ChannelDetailsEditor({
                 ref={keepEditing}
                 onClick={() => patch({ confirmDiscard: false })}
               >
+                Keep editing
+              </Button>
+              <Button variant="destructive" onClick={close}>
+                Discard changes
+              </Button>
+            </>
+          ) : view.privacyChoice ? (
+            <>
+              <Button
+                ref={privacyCancel}
+                onClick={() => patch({ privacyChoice: undefined })}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="prominent"
+                disabled={locked || !canEdit}
+                onClick={() => {
+                  if (draft && view.privacyChoice && !locked && canEdit) {
+                    if (view.skipWarning) rememberPrivacyConfirmation(scope);
+                    patch({
+                      draft: { ...draft, visibility: view.privacyChoice },
+                      privacyChoice: undefined,
+                    });
+                  }
+                }}
+              >
+                Continue
+              </Button>
+            </>
+          ) : (
+            <>
+              {draft && (
+                <span className={styles.detailsPrivate}>
+                  <Switch
+                    id={privateControlId}
+                    ref={privateSwitch}
+                    aria-label="Private"
+                    checked={draft.visibility === "private"}
+                    disabled={locked || !canEdit}
+                    onCheckedChange={(checked) => {
+                      if (locked || !canEdit) return;
+                      const visibility = checked ? "private" : "public";
+                      if (skipPrivacyConfirmation(scope))
+                        patch({ draft: { ...draft, visibility } });
+                      else
+                        patch({
+                          privacyChoice: visibility,
+                          skipWarning: false,
+                        });
+                    }}
+                  />
+                  <label className="text-label-sm" htmlFor={privateControlId}>
+                    Private
+                  </label>
+                </span>
+              )}
+              <Button disabled={pending} onClick={close}>
+                {attempt ? "Close" : "Cancel"}
+              </Button>
+              {attempt?.status === "unconfirmed" ? (
+                <Button
+                  variant="prominent"
+                  loading={view.pending}
+                  disabled={view.loading}
+                  onClick={() => void check()}
+                >
+                  Check save status
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  form={formId}
+                  variant="prominent"
+                  loading={pending}
+                  disabled={!canSave}
+                >
+                  Save changes
+                </Button>
+              )}
+            </>
+          )
+        }
+      >
+        {confirmDiscard ? null : view.privacyChoice ? (
+          <ChannelPrivacyConfirmation
+            visibility={view.privacyChoice}
+            checked={view.skipWarning}
+            onCheckedChange={(skipWarning) => patch({ skipWarning })}
+          />
+        ) : (
+          <form
+            id={formId}
+            className={styles.detailsEditor}
+            aria-describedby={status ? statusId : undefined}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void save();
+            }}
+          >
+            {draft && (
+              <>
+                <ChannelTextField
+                  field="name"
+                  inputRef={nameInput}
+                  value={draft.name}
+                  error={errors?.name}
+                  disabled={locked || !canEdit}
+                  onChange={(name) => patch({ draft: { ...draft, name } })}
+                />
+                <ChannelTextField
+                  field="description"
+                  inputRef={descriptionInput}
+                  value={draft.description}
+                  error={errors?.description}
+                  disabled={locked || !canEdit}
+                  onChange={(description) =>
+                    patch({ draft: { ...draft, description } })
+                  }
+                />
+                <ChannelDurationField
+                  temporary={draft.ttlSeconds !== undefined}
+                  ttlSeconds={temporaryTtl}
+                  error={errors?.lifetime}
+                  disabled={locked || !canEdit}
+                  onChange={(ttlSeconds) =>
+                    patch({
+                      draft: { ...draft, ttlSeconds },
+                      temporaryTtl: ttlSeconds ?? temporaryTtl,
+                    })
+                  }
+                />
+              </>
+            )}
+            {view.editing && status}
+          </form>
+        )}
+      </Dialog>
+    </>
+  );
+}

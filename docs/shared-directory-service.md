@@ -22,7 +22,8 @@ required consumers depend on its service registration.
 
 **Build the provider and first consumer integration. Extract no built-in Buzz
 service.** This PR proposes the design only. Organization charts, directory writes,
-multiple simultaneous providers and Nostr naming changes are out of scope.
+multiple simultaneous providers, Nostr naming changes and resolving Buzz recipients
+for notifications or mentions are out of scope.
 
 Diagram labels: **BUILD** = new code; **REUSE** = existing owner; **EXTERNAL** =
 existing data source outside this project; **LATER** = outside the first delivery.
@@ -220,7 +221,8 @@ failed loads, stale data and missing mappings without logging people or credenti
 A review plugin shows `lookup("github.com/login", authorLogin)`’s name or the
 GitHub login. One subscription updates names after refresh without refetching
 GitHub. Its priority-account (VIP) picker calls
-`search(query, 20, "github.com/login")`, so unusable accounts do not occupy result
+`search(query, 20, "github.com/login")`. At the cap, show “Refine your search”;
+the API supplies no total for a numeric remainder. Unusable accounts do not occupy result
 slots. The user selects a person; the plugin saves their GitHub login in its
 existing list. Directory neither owns that list nor its meaning. Disabling it
 preserves saved accounts and manual entry.

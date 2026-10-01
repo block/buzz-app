@@ -22,6 +22,7 @@ vi.mock("./use-reading", () => ({
   Reading: () => null,
   readingPositioned: () => {},
 }));
+vi.mock("virtua", () => import("./virtua.testing"));
 vi.mock("../relay/react", () => {
   const profiles = new Map();
   return { useRowProfiles: () => profiles };
@@ -58,9 +59,17 @@ vi.mock("./MessageComposer", () => ({
 }));
 beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = vi.fn();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
 });
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
 function row(id: string, replyParentId?: string): ChannelMessage {

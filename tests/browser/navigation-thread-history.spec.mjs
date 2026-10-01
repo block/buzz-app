@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open, virtuaIdle } from "./timeline.mjs";
+import { edge, open, virtuaIdle } from "./timeline.mjs";
 
 import { wheel } from "./timeline.mjs";
 
@@ -181,8 +181,12 @@ for (const reading of [false, true]) {
           bottom,
         );
       }
+      // Offscreen replies are virtualized; the applied page extends the scroll range.
+      const height = await region.evaluate((node) => node.scrollHeight);
       release();
-      await expect(region.locator("[data-message-id]")).toHaveCount(123);
+      await expect
+        .poll(() => region.evaluate((node) => node.scrollHeight))
+        .toBeGreaterThan(height);
       await expect(
         region.getByText("Loading thread…", { exact: true }),
       ).toHaveCount(0);
@@ -211,13 +215,11 @@ for (const reading of [false, true]) {
         ).toBeFocused();
       }
       const live = app.reply(root.id);
-      await expect(
-        region.locator(`[data-message-id="${live.id}"]`),
-      ).toBeVisible();
       if (reading) {
-        expect(await region.evaluate((node) => node.scrollTop)).toBe(position);
+        // The arrival is below the virtualized range; its count is the barrier.
         const jumpToLatest = region.locator("button[data-jump-to-latest]");
         await expect(jumpToLatest).toHaveAccessibleName("1 new message");
+        expect(await region.evaluate((node) => node.scrollTop)).toBe(position);
         await jumpToLatest.focus();
         await page.keyboard.press("Space");
         await expect(region).toBeFocused();
@@ -268,14 +270,12 @@ for (const reading of [false, true]) {
           region.locator(`[data-message-id="${live.id}"]`),
         ).toBeInViewport();
       }
-      // Expansion changes visibility, not the loaded-history count.
+      // The collapsed branch is in the oldest page, unmounted at the bottom.
+      await edge(page, -1, region);
       await region.getByRole("button", { name: /^View 1 reply/ }).click();
       await expect(
         region.getByText("Broadcast descendant", { exact: true }),
       ).toBeInViewport();
-      await expect(region.locator("[data-message-id]")).toHaveCount(
-        reading ? 126 : 125,
-      );
     } finally {
       release();
       await page.unroute(routePattern);

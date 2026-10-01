@@ -114,12 +114,9 @@ still responds to measurements. The browser navigation case exercises real wheel
 input and late row growth, asserting position as well as arrival count. These are
 not native momentum/compositor acceptance, and do not change the limits above.
 
-The element scroller also returns its existing cancel function and the
-`Virtualizer` handle exposes it as `cancelScrollToIndex`, declared in the React
-typings. `ChannelTimeline` calls it from its reader-gesture handler alongside its
-own intent counter. Window scrolling, prepend cancellation and the loop's timing
-are unchanged. The installed-driver regression shows a size update re-applying
-the target until the explicit cancel runs and never afterwards.
+Cancellation stays owned by those native capture listeners; the timeline does not
+need a second imperative cancellation API. The installed-driver controls cover
+all four input events plus already-queued replays and disposal/remount.
 
 ## Corrections after a browser clamp
 
@@ -161,7 +158,8 @@ resize batch that measures them ends the shift. A shift whose prepended rows
 are not mounted ends at scroll-end as before, a batch inside the window is
 unchanged, and a visible row that grows after the shift (an image loading)
 keeps the viewport start as before. Installed-store regressions cover the late
-batch, the stock window and an unmounted prepend.
+batch, unrelated/partial batches before completion, the stock window and an
+unmounted prepend.
 
 ## Automated checks
 

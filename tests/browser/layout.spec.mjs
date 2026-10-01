@@ -6,9 +6,11 @@ import {
   settleShellToggle,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
+import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { wheel, anchor, settle, upper, expectAnchor } from "./timeline.mjs";
 
 const scroll = test.extend({ historyCounts: { alpha: 20, beta: 1 } });
+const companionTest = test.extend({ companionFixture: true });
 // Resize tests must not enter the fixture’s deliberately held paging path.
 const readingTest = test.extend({
   tallMessages: true,
@@ -44,6 +46,7 @@ const sidebarDestinations = (page, options = {}) =>
     .getByRole("complementary", { name: "Channel sidebar", ...options })
     .getByRole("navigation", { name: "Pages", ...options })
     .getByRole("button", options);
+const companionReadingTest = readingTest.extend({ companionFixture: true });
 const box = async (locator) => {
   const bounds = await locator.boundingBox();
   expect(bounds).not.toBeNull();
@@ -593,177 +596,184 @@ readingTest(
   },
 );
 
-test("Bestie owns the launcher and the reusable companion card across pages and disable", async ({
-  page,
-  app,
-}, testInfo) => {
-  await page.setViewportSize({ width: 1280, height: 832 });
-  await page.goto(app.origin);
-  const bestie = page.getByRole("complementary", {
-    name: "Bestie",
-    exact: true,
-  });
-  const launch = companionLauncher(page, "Bestie");
-  await expect(launch).toBeVisible();
-  await expect(bestie).toHaveCount(0);
-  await launch.click();
-  await expect(bestie).toBeVisible();
-  await expect(bestie).toContainText("Agent chat isn’t connected yet");
-  await expect(launch).toHaveAttribute("aria-expanded", "true");
-  await launch.click();
-  await expect(bestie).toHaveCount(0);
-  await expect(launch).toHaveAttribute("aria-expanded", "false");
-  await expect(launch).toBeFocused();
-  await launch.click();
-  await button(page, "Close Bestie panel").click();
-  await expect(launch).toBeFocused();
-  await launch.click();
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await selectSettingsSection(page, "Plugins");
-  await expect(bestie).toHaveCount(1);
-  const enabled = page.getByRole("switch", {
-    name: "Enable Bestie",
-    exact: true,
-  });
-  await enabled.click();
-  await expect(launch).toHaveCount(0);
-  await expect(bestie).toHaveCount(0);
-  await expect(enabled).toBeFocused();
-  await enabled.click();
-  await expect(launch).toBeVisible();
-  await expect(bestie).toHaveCount(0);
-  await launch.click();
-  await openPage(page, "Messages");
-  const composer = page.getByRole("textbox", {
-    name: "Message #Alpha",
-    exact: true,
-  });
-  await expect(composer).toBeVisible();
-  await composer.fill("Companion draft");
-  const conversation = page.getByRole("article", {
-    name: "Conversation",
-    exact: true,
-  });
-  near((await box(bestie)).height, (await box(conversation)).height);
-  await link(page, app, "https://github.com/block/buzz/pull/5");
-  const top = await box(page.locator("[data-panel-workspace]")),
-    bottom = await box(bestie),
-    main = await box(conversation);
-  near(top.height, bottom.height);
-  near(top.y, main.y);
-  near(bottom.y - top.y - top.height, 1);
-  near(bottom.y + bottom.height, main.y + main.height);
-  near(top.x, bottom.x);
-  await page.screenshot({ path: testInfo.outputPath("bestie-two-panels.png") });
-  // Simulate a management update observed while Messages remains mounted.
-  await page.evaluate(() => {
-    const key = "buzzodz.plugins.v1";
-    const settings = JSON.parse(localStorage.getItem(key));
-    settings.enabled["buzz.bestie"] = false;
-    localStorage.setItem(key, JSON.stringify(settings));
-  });
-  await expect(launch).toHaveCount(0);
-  await expect(bestie).toHaveCount(0);
-  await expect(panel(page)).toHaveCount(1);
-  near(
-    (await box(page.locator("[data-panel-workspace]"))).height,
-    (await box(conversation)).height,
-  );
-  await page.evaluate(() => {
-    const key = "buzzodz.plugins.v1";
-    const settings = JSON.parse(localStorage.getItem(key));
-    settings.enabled["buzz.bestie"] = true;
-    localStorage.setItem(key, JSON.stringify(settings));
-  });
-  await expect(launch).toBeVisible();
-  await expect(bestie).toHaveCount(0);
-  await launch.click();
-  await expect(composer).toHaveJSProperty("value", "Companion draft");
-  await button(page, "Close Bestie panel").click();
-  near(
-    (await box(page.locator("[data-panel-workspace]"))).height,
-    (await box(conversation)).height,
-  );
-  await launch.click();
-  await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
-  near((await box(bestie)).height, (await box(conversation)).height);
-  await button(page, "Beta").click();
-  await expect(bestie).toHaveCount(1);
-  await button(page, "Alpha").click();
-  await expect(composer).toHaveJSProperty("value", "Companion draft");
-  await button(page, "Personal space").click();
-  await expect(
-    page.getByRole("heading", { name: "Your channels, one conversation." }),
-  ).toBeVisible();
-  await expect(bestie).toHaveCount(1);
-  await button(page, "Close Bestie panel").click();
-  await launch.click();
-  await expect(bestie).toHaveCount(1);
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await selectSettingsSection(page, "Plugins");
-  await expect(bestie).toHaveCount(1);
-  for (const [width, height] of [
-    [800, 600],
-    [480, 400],
-    [390, 844],
-    [390, 400],
-  ]) {
-    await page.setViewportSize({ width, height });
-    await shellFits(page, width);
-    await expect(button(page, "Close Bestie panel")).toBeInViewport();
-  }
-  await button(page, "Close Bestie panel").click();
-  await expect(bestie).toHaveCount(0);
-  await expect(launch).toHaveAttribute("aria-expanded", "false");
-  await expect(launch).toBeFocused();
-
-  // Plugin catalogs can outgrow the viewport. Closing restores the launcher,
-  // not a Settings row: reach the toggle with real input, not scrollIntoView.
-  // Settings details own scrolling independently of the sidebar.
-  const settingsPage = page
-    .getByRole("region", { name: "Settings", exact: true })
-    .locator(":scope > div");
-  await expect(enabled).not.toBeInViewport();
-  const viewport = await box(settingsPage);
-  await page.mouse.move(
-    viewport.x + viewport.width / 2,
-    viewport.y + viewport.height / 2,
-  );
-  const visibleTop = Math.max(viewport.y, 0);
-  const visibleBottom = Math.min(viewport.y + viewport.height, 400);
-  for (let gesture = 0; gesture < 30; gesture++) {
-    const toggle = await box(enabled);
-    if (
-      toggle.y >= visibleTop + 8 &&
-      toggle.y + toggle.height <= visibleBottom - 8
-    )
-      break;
-    const distance =
-      toggle.y < visibleTop + 8
-        ? toggle.y - visibleTop - 8
-        : toggle.y + toggle.height - visibleBottom + 8;
-    const before = await settingsPage.evaluate((el) => el.scrollTop);
-    await wheel(
-      page,
-      Math.sign(distance) * Math.max(Math.abs(distance), 24),
-      settingsPage,
+companionTest(
+  "A plugin owns the launcher and the reusable companion card across pages and disable",
+  async ({ page, app }, testInfo) => {
+    await page.setViewportSize({ width: 1280, height: 832 });
+    await page.goto(app.origin);
+    const companion = page.getByRole("complementary", {
+      name: "Companion fixture",
+      exact: true,
+    });
+    const launch = companionLauncher(page, "Companion fixture");
+    await expect(launch).toBeVisible();
+    await expect(companion).toHaveCount(0);
+    await launch.click();
+    await expect(companion).toBeVisible();
+    await expect(companion).toContainText("Companion fixture content");
+    await expect(launch).toHaveAttribute("aria-expanded", "true");
+    await launch.click();
+    await expect(companion).toHaveCount(0);
+    await expect(launch).toHaveAttribute("aria-expanded", "false");
+    await expect(launch).toBeFocused();
+    await launch.click();
+    await button(page, "Close Companion fixture panel").click();
+    await expect(launch).toBeFocused();
+    await launch.click();
+    await button(page, "Your profile").click();
+    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    await selectSettingsSection(page, "Plugins");
+    await expect(companion).toHaveCount(1);
+    const enabled = page.getByRole("switch", {
+      name: "Enable Companion fixture",
+      exact: true,
+    });
+    await enabled.click();
+    await expect(launch).toHaveCount(0);
+    await expect(companion).toHaveCount(0);
+    await expect(enabled).toBeFocused();
+    await enabled.click();
+    await expect(launch).toBeVisible();
+    await expect(companion).toHaveCount(0);
+    await launch.click();
+    await openPage(page, "Messages");
+    const composer = page.getByRole("textbox", {
+      name: "Message #Alpha",
+      exact: true,
+    });
+    await expect(composer).toBeVisible();
+    await composer.fill("Companion draft");
+    const conversation = page.getByRole("article", {
+      name: "Conversation",
+      exact: true,
+    });
+    near((await box(companion)).height, (await box(conversation)).height);
+    await link(page, app, "https://github.com/block/buzz/pull/5");
+    const top = await box(page.locator("[data-panel-workspace]")),
+      bottom = await box(companion),
+      main = await box(conversation);
+    near(top.height, bottom.height);
+    near(top.y, main.y);
+    near(bottom.y - top.y - top.height, 1);
+    near(bottom.y + bottom.height, main.y + main.height);
+    near(top.x, bottom.x);
+    await page.screenshot({
+      path: testInfo.outputPath("companion-two-panels.png"),
+    });
+    // Simulate a management update observed while Messages remains mounted.
+    await page.evaluate(() => {
+      const key = "buzzodz.plugins.v1";
+      const settings = JSON.parse(localStorage.getItem(key));
+      settings.enabled["fixture.companion"] = false;
+      localStorage.setItem(key, JSON.stringify(settings));
+    });
+    await expect(launch).toHaveCount(0);
+    await expect(companion).toHaveCount(0);
+    await expect(panel(page)).toHaveCount(1);
+    near(
+      (await box(page.locator("[data-panel-workspace]"))).height,
+      (await box(conversation)).height,
     );
-    await expect
-      .poll(() => settingsPage.evaluate((el) => el.scrollTop), {
-        message: "Settings wheel input makes progress toward the plugin toggle",
-      })
-      .toBeGreaterThan(before);
-  }
-  await expect(enabled).toBeInViewport({ ratio: 1 });
-  await enabled.click();
-  await expect(enabled).toHaveAttribute("aria-checked", "false");
-  await expect(enabled).toBeFocused();
-  await expect(launch).toHaveCount(0);
-});
+    await page.evaluate(() => {
+      const key = "buzzodz.plugins.v1";
+      const settings = JSON.parse(localStorage.getItem(key));
+      settings.enabled["fixture.companion"] = true;
+      localStorage.setItem(key, JSON.stringify(settings));
+    });
+    await expect(launch).toBeVisible();
+    await expect(companion).toHaveCount(0);
+    await launch.click();
+    await expect(composer).toHaveJSProperty("value", "Companion draft");
+    await button(page, "Close Companion fixture panel").click();
+    near(
+      (await box(page.locator("[data-panel-workspace]"))).height,
+      (await box(conversation)).height,
+    );
+    await launch.click();
+    await page
+      .getByRole("button", { name: /^Close (?!Thread).* tab$/ })
+      .click();
+    near((await box(companion)).height, (await box(conversation)).height);
+    await button(page, "Beta").click();
+    await expect(companion).toHaveCount(1);
+    await button(page, "Alpha").click();
+    await expect(composer).toHaveJSProperty("value", "Companion draft");
+    await button(page, "Personal space").click();
+    await expect(
+      page.getByRole("heading", { name: "Your channels, one conversation." }),
+    ).toBeVisible();
+    await expect(companion).toHaveCount(1);
+    await button(page, "Close Companion fixture panel").click();
+    await launch.click();
+    await expect(companion).toHaveCount(1);
+    await button(page, "Your profile").click();
+    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    await selectSettingsSection(page, "Plugins");
+    await expect(companion).toHaveCount(1);
+    for (const [width, height] of [
+      [800, 600],
+      [480, 400],
+      [390, 844],
+      [390, 400],
+    ]) {
+      await page.setViewportSize({ width, height });
+      await shellFits(page, width);
+      await expect(
+        button(page, "Close Companion fixture panel"),
+      ).toBeInViewport();
+    }
+    await button(page, "Close Companion fixture panel").click();
+    await expect(companion).toHaveCount(0);
+    await expect(launch).toHaveAttribute("aria-expanded", "false");
+    await expect(launch).toBeFocused();
 
-const todosOverlapTest = test.extend({
+    // Plugin catalogs can outgrow the viewport. Closing restores the launcher,
+    // not a Settings row: reach the toggle with real input, not scrollIntoView.
+    // Settings details own scrolling independently of the sidebar.
+    const settingsPage = page
+      .getByRole("region", { name: "Settings", exact: true })
+      .locator(":scope > div");
+    await expect(enabled).not.toBeInViewport();
+    const viewport = await box(settingsPage);
+    await page.mouse.move(
+      viewport.x + viewport.width / 2,
+      viewport.y + viewport.height / 2,
+    );
+    const visibleTop = Math.max(viewport.y, 0);
+    const visibleBottom = Math.min(viewport.y + viewport.height, 400);
+    for (let gesture = 0; gesture < 30; gesture++) {
+      const toggle = await box(enabled);
+      if (
+        toggle.y >= visibleTop + 8 &&
+        toggle.y + toggle.height <= visibleBottom - 8
+      )
+        break;
+      const distance =
+        toggle.y < visibleTop + 8
+          ? toggle.y - visibleTop - 8
+          : toggle.y + toggle.height - visibleBottom + 8;
+      const before = await settingsPage.evaluate((el) => el.scrollTop);
+      await wheel(
+        page,
+        Math.sign(distance) * Math.max(Math.abs(distance), 24),
+        settingsPage,
+      );
+      await expect
+        .poll(() => settingsPage.evaluate((el) => el.scrollTop), {
+          message:
+            "Settings wheel input makes progress toward the plugin toggle",
+        })
+        .toBeGreaterThan(before);
+    }
+    await expect(enabled).toBeInViewport({ ratio: 1 });
+    await enabled.click();
+    await expect(enabled).toHaveAttribute("aria-checked", "false");
+    await expect(enabled).toBeFocused();
+    await expect(launch).toHaveCount(0);
+  },
+);
+
+const todosOverlapTest = companionTest.extend({
   threadUnread: true,
   readState: true,
   historyCounts: { alpha: 3, beta: 1 },
@@ -794,8 +804,8 @@ todosOverlapTest(
       name: "Channel settings",
       exact: true,
     });
-    const bestie = page.getByRole("complementary", {
-      name: "Bestie",
+    const companion = page.getByRole("complementary", {
+      name: "Companion fixture",
       exact: true,
     });
     const stacked = async (primary) => {
@@ -863,34 +873,34 @@ todosOverlapTest(
     await expect(todos).toHaveCount(0); // Settings intentionally retires the drawer.
     await button(page, "Close Channel settings tab").click();
     await expect(linked).toBeVisible();
-    await companionLauncher(page, "Bestie").click();
-    await expect(bestie).toBeVisible();
+    await companionLauncher(page, "Companion fixture").click();
+    await expect(companion).toBeVisible();
     await expect(linked).toBeVisible();
     near(
-      (await box(bestie)).y -
+      (await box(companion)).y -
         (await box(linked)).y -
         (await box(linked)).height,
       1,
     );
-    await button(page, "Close Bestie panel").click();
+    await button(page, "Close Companion fixture panel").click();
   },
 );
 
-readingTest(
+companionReadingTest(
   "companion resize preserves the timeline anchor and both cards at narrow sizes",
   async ({ page, app }) => {
     await open(page, app);
     await settle(page);
     const saved = await upper(page);
     await expectNonPaging(page, app);
-    await companionLauncher(page, "Bestie").click();
+    await companionLauncher(page, "Companion fixture").click();
     await settle(page);
     await expectAnchor(page, saved);
-    await button(page, "Close Bestie panel").click();
+    await button(page, "Close Companion fixture panel").click();
     await settle(page);
     await expectAnchor(page, saved);
     await link(page, app, "https://github.com/block/buzz/pull/6");
-    await companionLauncher(page, "Bestie").click();
+    await companionLauncher(page, "Companion fixture").click();
     for (const [width, height] of [
       [1440, 950],
       [800, 600],
@@ -900,14 +910,19 @@ readingTest(
       await page.setViewportSize({ width, height });
       const top = await box(page.locator("[data-panel-workspace]"));
       const bottom = await box(
-        page.getByRole("complementary", { name: "Bestie", exact: true }),
+        page.getByRole("complementary", {
+          name: "Companion fixture",
+          exact: true,
+        }),
       );
       near(top.height, bottom.height);
       near(bottom.y - top.y - top.height, 1);
       await expect(
         page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }),
       ).toBeInViewport();
-      await expect(button(page, "Close Bestie panel")).toBeInViewport();
+      await expect(
+        button(page, "Close Companion fixture panel"),
+      ).toBeInViewport();
       await page
         .getByRole("button", { name: "Channel settings", exact: true })
         .evaluate((element) => element.click());
@@ -918,7 +933,10 @@ readingTest(
       await expect(settings).toBeVisible();
       const covered = await box(page.locator("[data-panel-workspace]"));
       const retainedCompanion = await box(
-        page.getByRole("complementary", { name: "Bestie", exact: true }),
+        page.getByRole("complementary", {
+          name: "Companion fixture",
+          exact: true,
+        }),
       );
       near(covered.height, top.height);
       near(retainedCompanion.height, bottom.height);
@@ -931,13 +949,13 @@ readingTest(
   },
 );
 
-readingTest(
+companionReadingTest(
   "panel restoration yields to a new wheel reading position",
   async ({ page, app }) => {
     await open(page, app);
     await settle(page);
     const original = await upper(page);
-    await companionLauncher(page, "Bestie").click();
+    await companionLauncher(page, "Companion fixture").click();
     await settle(page);
     const history = page.getByRole("region", {
       name: "Channel message history",
@@ -968,7 +986,7 @@ readingTest(
     await expect(
       history.locator(`[data-message-id="${original.id}"]`),
     ).toBeInViewport();
-    await button(page, "Close Bestie panel").click();
+    await button(page, "Close Companion fixture panel").click();
     await settle(page);
     await expectAnchor(page, reading);
     await expectNonPaging(page, app);
@@ -1089,7 +1107,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
 
 // Real App navigation must retire page-local targets, without closing the
 // independently owned companion intent. Each return stays in Channels.
-const sidebarActions = test.extend({
+const sidebarActions = companionTest.extend({
   productionBroker: true,
   readState: true,
   threadUnread: true,
@@ -1101,12 +1119,12 @@ sidebarActions(
   "sidebar activity retains channel tabs while compose routes retire them and preserve companion intent",
   async ({ page, app }) => {
     await open(page, app);
-    const bestie = page.getByRole("complementary", {
-      name: "Bestie",
+    const companion = page.getByRole("complementary", {
+      name: "Companion fixture",
       exact: true,
     });
-    await companionLauncher(page, "Bestie").click();
-    await expect(bestie).toBeVisible();
+    await companionLauncher(page, "Companion fixture").click();
+    await expect(companion).toBeVisible();
     const alpha = page.locator('button[data-channel-id="alpha"]');
     for (const [index, action] of [
       "activity",
@@ -1153,10 +1171,9 @@ sidebarActions(
         ).toBeVisible();
       }
       await expect(panel(page)).toHaveCount(0);
-      await expect(companionLauncher(page, "Bestie")).toHaveAttribute(
-        "aria-expanded",
-        "true",
-      );
+      await expect(
+        companionLauncher(page, "Companion fixture"),
+      ).toHaveAttribute("aria-expanded", "true");
       await button(page, "Go back").click();
       await expect(
         page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
@@ -1166,7 +1183,216 @@ sidebarActions(
         await page
           .getByRole("button", { name: /^Close (?!Thread).* tab$/ })
           .click();
-      await expect(bestie).toBeVisible();
+      await expect(companion).toBeVisible();
     }
   },
 );
+
+// Probe the platform's native default separately from the app: Linux and macOS
+// WebKit differ for Control+Home and keyboard chaining through CSS containment.
+// The app must preserve native behavior, not invent a cross-platform shortcut.
+async function nativeUpwardScroll(context, key, containment) {
+  const probe = await context.newPage();
+  try {
+    await probe.setContent(`
+      <div id="outer" style="height:400px;overflow:auto">
+        <div style="height:1600px"></div>
+        <div id="inner" style="${containment ? `height:160px;overflow:auto;overscroll-behavior-y:${containment}` : ""}">
+          <a id="control" href="#">Message link</a>
+          ${containment ? '<div style="height:1600px"></div>' : ""}
+        </div>
+      </div>`);
+    const outer = probe.locator("#outer");
+    await outer.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    await probe
+      .locator("#control")
+      .evaluate((el) => el.focus({ preventScroll: true }));
+    await settle(probe, outer);
+    const before = await outer.evaluate((el) => el.scrollTop);
+    await probe.keyboard.press(key);
+    await settle(probe, outer);
+    return await outer.evaluate(
+      (el, start) => el.scrollTop < start - 80,
+      before,
+    );
+  } finally {
+    await probe.close();
+  }
+}
+
+// Native default keyboard scrolling from a focused descendant is browser-owned;
+// deterministic same-shrink ordering is covered in ChannelTimeline.restore.test.
+for (const [control, key] of [
+  ["link", "PageUp"],
+  ["button", "PageUp"],
+  ["link", process.platform === "darwin" ? "Meta+ArrowUp" : "Control+Home"],
+  ...(process.platform === "darwin" ? [["link", "Alt+ArrowUp"]] : []),
+]) {
+  readingTest(
+    `${key} from a message ${control} preserves native scroll ownership`,
+    async ({ page, app, context }) => {
+      const nativeScroll = await nativeUpwardScroll(context, key);
+      await open(page, app);
+      await settle(page);
+      const target = "https://example.com/keyboard-reading";
+      const added = app.append(
+        "primary",
+        "alpha",
+        `Read ${target}`,
+        true,
+        false,
+      );
+      const row = page.locator(`[data-message-id="${added.id}"]`);
+      await expect(row).toBeInViewport();
+      await settle(page);
+      const history = page.getByRole("region", {
+        name: "Channel message history",
+      });
+      const focused =
+        control === "link"
+          ? row.getByRole("link", { name: target, exact: true })
+          : row.getByRole("button", { name: /^View .* profile$/ }).first();
+      await focused.evaluate((element) =>
+        element.focus({ preventScroll: true }),
+      );
+      await expect(focused).toBeFocused();
+      const before = await history.evaluate((element) => element.scrollTop);
+      await page.keyboard.press(key);
+      if (!nativeScroll) {
+        await settle(page);
+        expect(await history.evaluate((element) => element.scrollTop)).toBe(
+          before,
+        );
+        const arrival = app.append(
+          "primary",
+          "alpha",
+          "Still following after a native no-op key",
+        );
+        await expect(
+          page.locator(`[data-message-id="${arrival.id}"]`),
+        ).toBeInViewport();
+        await settle(page);
+        await expect
+          .poll(() =>
+            history.evaluate(
+              (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+            ),
+          )
+          .toBeLessThan(2);
+        return;
+      }
+      await expect
+        .poll(() => history.evaluate((element) => element.scrollTop))
+        .toBeLessThan(before - 80);
+      await settle(page);
+      const reading = await anchor(page);
+      app.append("primary", "alpha", "Do not steal the reader's position");
+      await expect(
+        history.locator("[data-jump-to-latest]"),
+      ).toHaveAccessibleName(/new message/i);
+      await settle(page);
+      await expectAnchor(page, reading);
+      await expect(history.locator("[data-jump-to-latest]")).toBeVisible();
+    },
+  );
+}
+
+// Exercise both propagation and no-op lifecycle against the same engine's
+// native baseline, rather than imposing macOS behavior on Linux WebKit.
+for (const containment of ["auto", "contain"])
+  readingTest(
+    `Page Up respects the raw diff ${containment} scroll boundary`,
+    async ({ page, app, context }) => {
+      const nativeScroll = await nativeUpwardScroll(
+        context,
+        "PageUp",
+        containment,
+      );
+      const historyEvents = app.histories.get("primary/alpha");
+      historyEvents.push(
+        finalizeEvent(
+          {
+            kind: 40008,
+            created_at: historyEvents.at(-1).created_at + 1,
+            tags: [
+              ["h", "alpha"],
+              ["file", "reading.txt"],
+            ],
+            content: "Raw, unparseable patch line\n".repeat(100),
+          },
+          generateSecretKey(),
+        ),
+      );
+      await open(page, app);
+      const raw = page.getByRole("region", { name: "Raw diff", exact: true });
+      await expect(raw).toBeVisible();
+      // The enabled diff renderer owns vertical overflow in its preview wrapper.
+      const inner = page.getByRole("region", {
+        name: "Diff preview: reading.txt",
+      });
+      await expect(inner).toBeVisible();
+      await settle(page);
+      const history = page.getByRole("region", {
+        name: "Channel message history",
+      });
+      const before = await history.evaluate((el) => el.scrollTop);
+      await inner.evaluate((el) => {
+        el.scrollTop = 100;
+      });
+      await raw.evaluate((el) => el.focus({ preventScroll: true }));
+      await expect(raw).toBeFocused();
+      await page.keyboard.press("PageUp");
+      await expect.poll(() => inner.evaluate((el) => el.scrollTop)).toBe(0);
+      await settle(page);
+      expect(await history.evaluate((el) => el.scrollTop)).toBe(before);
+
+      await inner.evaluate((el, value) => {
+        el.style.overscrollBehaviorY = value;
+      }, containment);
+      await page.keyboard.press("PageUp");
+      if (nativeScroll) {
+        await expect
+          .poll(() => history.evaluate((el) => el.scrollTop))
+          .toBeLessThan(before - 80);
+        await settle(page);
+        const reading = await anchor(page);
+        app.append("primary", "alpha", "Keep the reader above the diff");
+        await expect(
+          history.locator("[data-jump-to-latest]"),
+        ).toHaveAccessibleName(/new message/i);
+        await settle(page);
+        await expectAnchor(page, reading);
+      } else {
+        await settle(page);
+        expect(await history.evaluate((el) => el.scrollTop)).toBe(before);
+        // No outer scrollend will retire this key. A later real layout contraction
+        // must retain bottom follow, including the next incoming message.
+        const height = await history.evaluate((el) => el.scrollHeight);
+        await inner.evaluate((el) => {
+          el.style.maxHeight = "80px";
+        });
+        await expect
+          .poll(() => history.evaluate((el) => el.scrollHeight))
+          .toBeLessThan(height);
+        await settle(page);
+        const arrival = app.append(
+          "primary",
+          "alpha",
+          "Still following after an unconsumed Page Up",
+        );
+        await expect(
+          page.locator(`[data-message-id="${arrival.id}"]`),
+        ).toBeInViewport();
+        await settle(page);
+        await expect
+          .poll(() =>
+            history.evaluate(
+              (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+            ),
+          )
+          .toBeLessThan(2);
+      }
+    },
+  );

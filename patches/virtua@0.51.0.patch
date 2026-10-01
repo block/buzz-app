@@ -1,5 +1,5 @@
 diff --git a/lib/index.js b/lib/index.js
-index a183cc7b1669aab25467840540ce3bd1c025fb47..bfc72b2ab4d2fa65fbf2a3b67cfed948e36d3d33 100644
+index a183cc7b1669aab25467840540ce3bd1c025fb47..3a27c9b6c4967e5330569b6be492d43bd5184a84 100644
 --- a/lib/index.js
 +++ b/lib/index.js
 @@ -6,6 +6,10 @@ import { jsx as c } from "react/jsx-runtime";
@@ -196,7 +196,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..bfc72b2ab4d2fa65fbf2a3b67cfed948
                      behavior: "instant"
                  }) : u.scrollBy({
                      [l]: T(t, i),
-@@ -283,12 +359,17 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -283,7 +359,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
              }), r[1](!0);
          },
          _() {
@@ -207,42 +207,9 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..bfc72b2ab4d2fa65fbf2a3b67cfed948
          },
          P: (e, t) => (d.set(e, t), h.A(e), () => {
              d.delete(e), h.B(e);
-         }),
-         V: f,
-+        // Reader input retires a pending imperative scroll, whose loop would
-+        // otherwise re-apply the old target on any size update for 150ms.
-+        cancel: a,
-         J() {
-             o && o.Y();
-         },
-@@ -544,6 +625,7 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
-         getItemOffset: O.u,
-         getItemSize: O.h,
-         scrollToIndex: (e, t) => q(H, O, e, t),
-+        cancelScrollToIndex: H.cancel,
-         scrollTo: e => W(H, e),
-         scrollBy: e => ((e, t, n) => {
-             W(e, n + t.T());
-@@ -797,4 +879,3 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -797,4 +875,3 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
  });
 -
 +
  export { G as VList, j as Virtualizer, U as WindowVirtualizer, N as experimental_VGrid };
 -//# sourceMappingURL=index.js.map
-\ No newline at end of file
-diff --git a/lib/react/Virtualizer.d.ts b/lib/react/Virtualizer.d.ts
-index 766ff2a7c7408c6ee6cb12f2ea377938c1f87505..2fe21f39cbc99d80e7b5408ea3f975e649aa984c 100644
---- a/lib/react/Virtualizer.d.ts
-+++ b/lib/react/Virtualizer.d.ts
-@@ -42,6 +42,11 @@ export interface VirtualizerHandle {
-      * @param opts options
-      */
-     scrollToIndex(index: number, opts?: ScrollToIndexOpts): void;
-+    /**
-+     * Cancel a pending {@link VirtualizerHandle.scrollToIndex}, {@link VirtualizerHandle.scrollTo} or {@link VirtualizerHandle.scrollBy},
-+     * so later size updates no longer re-apply its target. Call it when reader input must win.
-+     */
-+    cancelScrollToIndex(): void;
-     /**
-      * Scroll to the given offset.
-      * @param offset offset from start

@@ -7,6 +7,10 @@ import { npubEncode } from "nostr-tools/nip19";
 import { verifyEvent } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 
+// Configure the modeled session at its HTTP owner instead of proxying it through
+// route.fetch(), so session setup needs only the browser's original request.
+test.use({ sessionWriteKinds: [9, 9007, 40100] });
+
 // Browser-only boundary: real plugin Settings/launcher/panel wiring, Canvas
 // outbox -> signed HTTP receipt -> readback, native focus and drawer geometry.
 // Markdown/recovery permutations belong in colocated Vitest tests.
@@ -23,12 +27,6 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     created_at: 1700000000,
   });
   const writes = [];
-  await page.route("**/api/relay/primary/session", async (route) => {
-    const response = await route.fetch();
-    await route.fulfill({
-      json: { ...(await response.json()), writeKinds: [9, 9007, 40100] },
-    });
-  });
   await page.route("**/api/relay/primary/query", async (route) => {
     const filters = route.request().postDataJSON();
     if (

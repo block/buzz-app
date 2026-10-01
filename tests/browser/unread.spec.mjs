@@ -245,7 +245,8 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
   await page.clock.runFor(299);
   await park(page);
   await page.clock.runFor(900);
-  await page.clock.resume();
+  // Keep policy time paused through the durable action and UI round trips;
+  // runner delays must not overtake a later fixed pause target.
   await options(page);
   await page
     .getByRole("button", { name: "Mark unread on this device", exact: true })
@@ -264,7 +265,6 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
     }),
   ).toBeVisible();
   await park(page);
-  await page.clock.pauseAt(base + 40_000);
   await history(page).focus();
   await page.clock.runFor(1000);
   expect((await journal(page)).localUnread[alphaId]).toBeGreaterThan(0);
@@ -306,7 +306,6 @@ test("a surviving window publishes a closed window's durable read intent", async
   context,
   app,
 }) => {
-  await page.clock.install();
   await holdReadingFocus(page);
   await open(page, app);
   await park(page);
@@ -329,7 +328,11 @@ test("a surviving window publishes a closed window's durable read intent", async
       await window.evaluate(() =>
         window.fixtureRelay.snapshot().session.unread.ensure(),
       );
-    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+    // Both windows are parked and their durable owners are ready before the
+    // context-wide clock is installed. No ticking startup interval to overtake.
+    const base = Date.now();
+    await page.clock.install({ time: base });
+    await page.clock.pauseAt(base + 20_000);
     expect((await journal(page)).state.frontiers).toEqual({});
     await page.bringToFront();
     const ids = await visible(page);

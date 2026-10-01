@@ -45,7 +45,6 @@ vi.mock("virtua", async () => {
         viewportSize: 0,
         scrollTo() {},
         scrollToIndex() {},
-        cancelScrollToIndex() {},
       }));
       return (
         <ol>

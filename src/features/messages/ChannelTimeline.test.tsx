@@ -227,7 +227,6 @@ function setup({
     cache: [],
     scrollTo: vi.fn(),
     scrollToIndex: vi.fn(),
-    cancelScrollToIndex: vi.fn(),
   };
   blocked ??= freshness === "cached";
   let accepted = false;
@@ -263,7 +262,8 @@ function setup({
     ref: { current: unknown };
     children: unknown[];
     onScroll: (event: unknown) => void;
-    onWheel: () => void;
+    onPointerDown: () => void;
+    onWheel: (event: { deltaY: number; ctrlKey: boolean }) => void;
     onFocus: (event: unknown) => void;
     onBlur: (event: unknown) => void;
   }>;
@@ -400,8 +400,9 @@ function setup({
       styleChanged();
       flush();
     },
-    gesture() {
-      section.props.onWheel();
+    gesture(upward = false) {
+      if (upward) section.props.onWheel({ deltaY: -300, ctrlKey: false });
+      else section.props.onPointerDown();
     },
     dispatchScroll() {
       section.props.onScroll({ currentTarget: element });
@@ -409,7 +410,7 @@ function setup({
     scroll(user = true) {
       resized(element);
       render();
-      if (user) section.props.onWheel();
+      if (user) section.props.onPointerDown();
       section.props.onScroll({ currentTarget: element });
     },
     edit(runFrames = true) {
@@ -533,11 +534,9 @@ it("reader input retires a pending jump so a live append cannot pull the reader 
   });
   h.element.scrollTop = 3038;
   h.dispatchScroll();
-  h.handle.cancelScrollToIndex.mockClear();
   // The reader wheels back up while Virtua could still re-apply the jump.
   h.element.scrollTop = 2538;
   h.scroll();
-  expect(h.handle.cancelScrollToIndex).toHaveBeenCalledOnce();
   h.handle.scrollToIndex.mockClear();
   h.append();
   h.render();
@@ -1497,6 +1496,47 @@ it("list shrinkage clamps the offset without revoking bottom follow", () => {
   expect(h.saved().bottom).toBe(true);
 });
 
+it("virtualizer correction plus native shrink clamping retains bottom follow", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.gesture(); // The link-opening click did not scroll the reader.
+  h.append();
+  // A wider panel layout contracts measured rows. WebKit clamps scrollTop,
+  // then Virtua applies its own resize correction before native scroll delivery.
+  h.element.scrollHeight -= 640;
+  h.element.scrollTop -= 1279;
+  h.measureRows(false);
+  h.dispatchScroll();
+  h.handle.scrollToIndex.mockClear();
+  h.flush();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(2, {
+    align: "end",
+  });
+  h.unmount();
+  expect(h.saved().bottom).toBe(true);
+});
+
+it("reader movement after a shrink correction still stops bottom follow", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.append();
+  h.element.scrollHeight -= 640;
+  h.element.scrollTop -= 1279;
+  h.measureRows(false);
+  h.gesture();
+  h.element.scrollTop -= 200;
+  h.dispatchScroll();
+  h.handle.scrollToIndex.mockClear();
+  h.flush();
+  h.append();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  h.unmount();
+  expect(h.saved().bottom).toBe(false);
+});
+
 it("input saves pending DOM movement even if navigation precedes its scroll event", () => {
   const h = setup();
   h.element.scrollTop = 3038;
@@ -1573,7 +1613,7 @@ it.each([false, true])(
     // height observer before Virtua measures the rows at their new width.
     h.element.clientWidth = 1400;
     h.resize();
-    if (gesture) h.gesture();
+    if (gesture) h.gesture(true);
     // Rows above the viewport shrink by 300. The browser clamps to the new
     // bottom before Virtua's relative correction reads the offset, so the
     // shrink lands twice; the height commit is observed before its scroll event.

@@ -431,6 +431,38 @@ it("a prepend whose rows measure after scroll-end still keeps the former first r
   c.driver._();
 });
 
+it("a deferred shift waits through unrelated and partial measurement batches", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 0 });
+  openHistory(c);
+  c.prepend(40);
+  c.viewport.dispatchEvent(new Event("scroll"));
+  vi.advanceTimersByTime(150);
+  c.calls.length = 0;
+  // An unrelated visible row does not satisfy the prepended measurement debt.
+  c.store.W(3, [[21, 150]]);
+  c.driver.J();
+  expect(c.calls.at(-1).options).toEqual({ top: 50, behavior: "instant" });
+  // Only part of the mounted prepend measures; visible growth still shifts.
+  c.store.W(3, [
+    ...Array.from({ length: 19 }, (_, index) => [index, 110]),
+    [21, 170],
+  ]);
+  c.driver.J();
+  expect(c.calls.at(-1).options).toEqual({ top: 210, behavior: "instant" });
+  // The completing batch must itself receive shift policy, then retire it.
+  c.store.W(3, [
+    [19, 110],
+    [21, 190],
+  ]);
+  c.driver.J();
+  expect(c.calls.at(-1).options).toEqual({ top: 30, behavior: "instant" });
+  c.calls.length = 0;
+  c.store.W(3, [[22, 150]]);
+  c.driver.J();
+  expect(c.calls).toEqual([]);
+  c.driver._();
+});
+
 it("a prepend measured inside the scroll-end window keeps stock shift policy and then returns to native policy", () => {
   const c = setup({ platform: "Linux x86_64", offset: 0 });
   const paragraph = openHistory(c);
@@ -477,30 +509,6 @@ it("a prepend whose rows are not mounted ends its shift at scroll-end as before"
   c.store.W(3, [[19, 110]]);
   c.driver.J();
   expect(c.calls.at(-1).options).toEqual({ top: 10, behavior: "instant" });
-  c.driver._();
-});
-
-it("cancels a pending imperative scroll so later size updates stop re-applying it", async () => {
-  const c = setup({ platform: "Linux x86_64", offset: 0 });
-  c.store.W(
-    3,
-    Array.from({ length: 20 }, (_, index) => [index, 100]),
-  );
-  await c.driver.V(() => 1500, false);
-  await vi.advanceTimersByTimeAsync(0);
-  expect(c.calls).toHaveLength(1);
-  expect(vi.getTimerCount()).toBe(1); // the 150ms re-apply window
-  // Stock policy: a row measured inside that window re-applies the target.
-  c.store.W(3, [[19, 140]]);
-  await vi.advanceTimersByTimeAsync(0);
-  expect(c.calls).toHaveLength(2);
-  expect(c.calls.at(-1).options).toEqual({ top: 1500, behavior: "instant" });
-  c.driver.cancel();
-  expect(vi.getTimerCount()).toBe(0);
-  c.store.W(3, [[18, 140]]);
-  await vi.advanceTimersByTimeAsync(200);
-  expect(c.calls).toHaveLength(2);
-  c.driver.cancel(); // idle cancel is safe
   c.driver._();
 });
 

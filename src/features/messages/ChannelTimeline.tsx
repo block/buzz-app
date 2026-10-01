@@ -5,7 +5,14 @@ import { MembershipRow } from "./MembershipRow";
 import { membershipRows } from "./membership-rows";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
@@ -20,6 +27,44 @@ import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
+
+// Native upward scrolling can start on a focused message link or button.
+// Inner scrollports own the key while they can move. At their top boundary,
+// native keyboard chaining differs by engine/OS, even with CSS containment.
+// Admit a candidate there; only observed history movement can leave follow.
+function scrollsHistoryUp(event: KeyboardEvent<HTMLElement>): boolean {
+  if (event.defaultPrevented) return false;
+  const modified = event.altKey || event.ctrlKey || event.metaKey;
+  // ArrowUp includes native Command/Option/Control+Up variants; Control+Home
+  // is the Windows/Linux start chord. These are intent candidates: only an
+  // observed upward history scroll can actually leave bottom follow.
+  const upward =
+    event.key === "ArrowUp" ||
+    (!modified &&
+      (["PageUp", "Home"].includes(event.key) ||
+        (event.key === " " && event.shiftKey))) ||
+    (event.key === "Home" && event.ctrlKey && !event.altKey && !event.metaKey);
+  if (!upward) return false;
+  let target = event.target instanceof HTMLElement ? event.target : null;
+  if (!target || !event.currentTarget.contains(target)) return false;
+  while (target && target !== event.currentTarget) {
+    if (
+      target.matches(
+        "input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox'], [role='combobox'], [role='listbox'], [role='slider'], [role='spinbutton']",
+      ) ||
+      (event.key === " " && target.matches("button, [role='button']"))
+    )
+      return false;
+    const style = getComputedStyle(target);
+    if (
+      ["auto", "scroll", "overlay"].includes(style.overflowY) &&
+      target.scrollTop > 0
+    )
+      return false;
+    target = target.parentElement;
+  }
+  return target === event.currentTarget;
+}
 
 type ReadingPosition = {
   offset: number;
@@ -167,6 +212,9 @@ function Timeline({
     ids: ReadonlySet<string>;
   }>({ ids: new Set() });
   const intent = useRef(0);
+  const upwardGesture = useRef<false | "candidate" | "moving">(false);
+  const gestureFrame = useRef<number | undefined>(undefined);
+  const touchY = useRef<number | undefined>(undefined);
   const measuredPosition = useRef<{
     offset: number;
     height: number;
@@ -176,8 +224,7 @@ function Timeline({
   const olderDemand = useRef(false);
   const settled = useRef(false),
     userScrolled = useRef(false),
-    follow = useRef(true),
-    gestured = useRef(false);
+    follow = useRef(true);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const recordPosition = useCallback(
@@ -225,28 +272,23 @@ function Timeline({
       )
         return;
       const previous = measuredPosition.current;
-      const shrink = previous
-        ? Math.min(0, element.scrollHeight - previous.height)
-        : 0;
-      // List shrinkage can clamp scrollTop upward without reader movement. An
-      // upward offset beyond that clamp is input, including later events from
-      // one smooth keyboard scroll / scrollbar drag. Layout growth alone is not.
+      // Reflow can move the offset twice: the browser clamps a shrinking list,
+      // then Virtua corrects its measured rows. That combined movement can exceed
+      // the height delta, so a contracting list is not evidence of reader input.
+      // Explicit upward input wins even when shrink and reader movement share
+      // one observation. A link-opening click is not directional scroll intent.
       const movedUp =
         previous &&
-        element.clientWidth === previous.width &&
-        element.clientHeight === previous.viewport &&
-        element.scrollTop < previous.offset + shrink;
-      // A shrink can also carry the offset past its clamp with no input at all
-      // when a correction lands after the browser has already clamped. While
-      // following, only a gesture since the last record makes that reader
-      // movement; otherwise the bottom stays followed and is re-pinned.
-      const input = gestured.current;
-      gestured.current = false;
-      if (
-        follow.current &&
-        (!movedUp || (shrink < 0 && !input)) &&
-        (previous || !userScrolled.current)
-      )
+        (upwardGesture.current ||
+          (element.clientWidth === previous.width &&
+            element.clientHeight === previous.viewport &&
+            element.scrollHeight >= previous.height)) &&
+        element.scrollTop < previous.offset;
+      // One smooth key scroll or scrollbar drag can cross several frames.
+      // Keep observed upward movement until scrollend or a newer intent, even
+      // when its first event has not left the near-bottom threshold yet.
+      if (movedUp) upwardGesture.current = "moving";
+      if (follow.current && !movedUp && (previous || !userScrolled.current))
         position.bottom = true;
       // Restoration can scroll before Virtua measures rows beneath the anchor,
       // briefly reaching the estimated bottom. Only reader input may follow.
@@ -274,6 +316,7 @@ function Timeline({
     follow.current = true;
     restoredAnchor.current = undefined;
     userScrolled.current = false;
+    upwardGesture.current = false;
     scroller.current?.focus({ preventScroll: true });
     setShowJumpToLatest(false);
     setNewMessageCount(0);
@@ -290,6 +333,7 @@ function Timeline({
     if (!handle.current) return;
     intent.current++;
     follow.current = false;
+    upwardGesture.current = false;
     restoredAnchor.current = undefined;
     settled.current = false;
     handle.current.scrollToIndex(targetIndex, { align: "center" });
@@ -299,6 +343,10 @@ function Timeline({
   }, [navigation]);
   const exactRevealed = useMessageReveal({
     scroller,
+    focus: !(
+      navigation?.target.kind === "conversation" &&
+      navigation.target.panel === "members"
+    ),
     settled,
     messageId: targetId,
     signal: navigation?.signal,
@@ -348,6 +396,10 @@ function Timeline({
     observer.observe(element);
     if (edge.current) observer.observe(edge.current);
     return () => {
+      if (gestureFrame.current !== undefined)
+        cancelAnimationFrame(gestureFrame.current);
+      gestureFrame.current = undefined;
+      upwardGesture.current = false;
       olderDemand.current = false;
       settled.current = false;
       writeView(scope, `scroll:${channelId}`, savedPosition.current);
@@ -425,6 +477,7 @@ function Timeline({
       savedPosition.current = { offset: 0, bottom: true };
       measuredPosition.current = null;
       userScrolled.current = false;
+      upwardGesture.current = false;
     }
     // virtua attaches its scroller in an effect; wait through the StrictMode probe.
     // A new gesture wins over restoration queued before that gesture.
@@ -575,16 +628,27 @@ function Timeline({
     if (olderDemand.current && scroller.current)
       loadNearTop(scroller.current, true);
   }, [loadNearTop]);
-  const gesture = () => {
+  const gesture = (upward = false) => {
     restoredAnchor.current = undefined;
     intent.current++;
-    // Virtua re-applies a pending imperative scroll on size updates for 150ms.
-    // Reader input retires it so a live append cannot pull the reader back.
-    handle.current?.cancelScrollToIndex();
     userScrolled.current = true;
     if (scroller.current) recordPosition(scroller.current);
-    // Movement this input causes reaches recordPosition through later events.
-    gestured.current = true;
+    upwardGesture.current = upward ? "candidate" : false;
+    if (gestureFrame.current !== undefined)
+      cancelAnimationFrame(gestureFrame.current);
+    gestureFrame.current = undefined;
+    if (upward)
+      gestureFrame.current = requestAnimationFrame(() => {
+        gestureFrame.current = undefined;
+        // Input is only a candidate: an inner scrollport can consume it without
+        // moving history or emitting scrollend. Sample native movement before
+        // retiring the candidate so input+shrink still wins in this observation,
+        // even when the browser has not delivered its scroll event yet.
+        if (upwardGesture.current && scroller.current)
+          recordPosition(scroller.current);
+        if (upwardGesture.current === "candidate")
+          upwardGesture.current = false;
+      });
     // At a restored top edge, input cannot move the DOM and emits no scroll.
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
@@ -595,10 +659,24 @@ function Timeline({
       data-message-scroller
       className={styles.feed}
       data-channel-timeline={channelId}
-      onWheel={gesture}
-      onTouchMove={gesture}
-      onKeyDown={gesture}
-      onPointerDown={gesture}
+      onWheel={(event) => gesture(event.deltaY < 0 && !event.ctrlKey)}
+      onTouchStart={(event) => {
+        touchY.current = event.touches[0]?.clientY;
+      }}
+      onTouchMove={(event) => {
+        const next = event.touches[0]?.clientY;
+        gesture(
+          next !== undefined &&
+            touchY.current !== undefined &&
+            next > touchY.current,
+        );
+        touchY.current = next;
+      }}
+      onKeyDown={(event) => gesture(scrollsHistoryUp(event))}
+      onPointerDown={() => gesture()}
+      onScrollEnd={() => {
+        upwardGesture.current = false;
+      }}
       onFocus={(event) => {
         setFocusedMessageId(
           event.target.closest<HTMLElement>("[data-message-id]")?.dataset

@@ -69,6 +69,7 @@ export function AgentCard({
 }) {
   const Heading = headingLevel === 4 ? "h4" : "h3";
   const trigger = useRef<HTMLButtonElement>(null);
+  const profileHandoff = useRef(false);
   const presence = usePresenceStatus(
     session?.presence,
     identities.length === 1 ? identities[0]?.pubkey : undefined,
@@ -118,7 +119,11 @@ export function AgentCard({
     >
       {(onEdit || onViewProfile) && (
         <div className="absolute right-2 top-2">
-          <MenuRoot>
+          <MenuRoot
+            onOpenChange={(open) => {
+              if (open) profileHandoff.current = false;
+            }}
+          >
             <MenuTrigger
               ref={trigger}
               render={
@@ -129,13 +134,19 @@ export function AgentCard({
                 />
               }
             />
-            <MenuPopup align="end" size="wide">
+            <MenuPopup
+              align="end"
+              size="wide"
+              finalFocus={() => !profileHandoff.current}
+            >
               {onViewProfile && (
                 <MenuItem
                   onClick={() => {
                     const button = trigger.current;
-                    if (button)
+                    if (button) {
+                      profileHandoff.current = true;
                       requestAnimationFrame(() => onViewProfile(button));
+                    }
                   }}
                 >
                   View profile

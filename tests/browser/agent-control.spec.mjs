@@ -43,6 +43,51 @@ async function openEditor(page, name = "Fixture agent") {
   return dialog;
 }
 
+test("agent menu leaves focus in Profile after its close animation", async ({
+  page,
+}) => {
+  const server = await createServer({
+    ...config,
+    configFile: false,
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  const errors = watchPageErrors(page);
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html?profile-panel`,
+    );
+    const card = page
+      .getByRole("article", { name: "Agent Fixture agent" })
+      .first();
+    const trigger = card.getByRole("button", {
+      name: "Actions for Fixture agent",
+    });
+    await trigger.click();
+    await page.getByRole("menuitem", { name: "View profile" }).click();
+    const profile = page.getByRole("complementary", { name: "Profile" });
+    await expect(profile).toBeVisible();
+    await expect(
+      profile.getByRole("button", {
+        name: `Profile for buzz:agent-profile:${"ab".repeat(32)}`,
+      }),
+    ).toBeVisible();
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect
+      .poll(() =>
+        profile.evaluate((element) => element.contains(document.activeElement)),
+      )
+      .toBe(true);
+    await profile.getByRole("button", { name: "Close Profile panel" }).click();
+    await expect(profile).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    expect(errors.unexplained()).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});
+
 test("local controls preserve drafts, confirm operations and distinguish disabled from sleeping", async ({
   page,
 }) => {

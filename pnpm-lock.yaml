@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@base-ui/react@1.8.0': 7fa81e73a79e25bc6cddeeb432a4609fbc8f1795141fbd0cfebacbfbaa02757f
-  virtua@0.51.0: c33adef30b15298d2e11487f9e887ea2dfdd2e7781e1d1633c6bd49da29a5676
+  virtua@0.51.0: d0bde6c75cc1fa9277f38c34854e4351f567f65c74e89a12a59261c803c3d2bf
 
 importers:
 
@@ -137,7 +137,7 @@ importers:
         version: 4.0.1
       virtua:
         specifier: 0.51.0
-        version: 0.51.0(patch_hash=c33adef30b15298d2e11487f9e887ea2dfdd2e7781e1d1633c6bd49da29a5676)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        version: 0.51.0(patch_hash=d0bde6c75cc1fa9277f38c34854e4351f567f65c74e89a12a59261c803c3d2bf)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       yaml:
         specifier: 2.9.1
         version: 2.9.1
@@ -3776,7 +3776,7 @@ snapshots:
       '@types/unist': 3.0.3
       vfile-message: 4.0.3
 
-  virtua@0.51.0(patch_hash=c33adef30b15298d2e11487f9e887ea2dfdd2e7781e1d1633c6bd49da29a5676)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+  virtua@0.51.0(patch_hash=d0bde6c75cc1fa9277f38c34854e4351f567f65c74e89a12a59261c803c3d2bf)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     optionalDependencies:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)

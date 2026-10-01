@@ -99,8 +99,11 @@ function setup({
     style,
     axis,
     calls,
-    prepend(length = 40) {
+    // Render computes the mounted range between the length change and the
+    // layout effect that flushes the jump; ChannelTimeline's buffer is 1600.
+    prepend(length = 40, buffer = 1600) {
       store.W(5, [length, true]);
+      store.i(buffer);
       driver.J();
     },
   };
@@ -369,6 +372,113 @@ it.each([
     c.driver._();
   },
 );
+
+// Twenty measured rows; the first carries 88px of day divider and author
+// header above its paragraph, the content a reader at the top of history is
+// looking at. Returns that paragraph's viewport position for a row and header.
+function openHistory(c) {
+  c.store.W(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, index ? 100 : 188]),
+  );
+  c.driver.J();
+  expect(c.calls).toEqual([]);
+  return (index, header) => c.store.u(index) + header - c.viewport.scrollTop;
+}
+
+// A shift compensates every resize until scroll-end, a 150ms timer from its
+// jump's own scroll event, but the rows it prepended measure in the frame after
+// that jump, together with the former first row, which the same render turned
+// into a continuation without its day divider and author header. A late frame
+// lets the timer fire first, and native policy keeps the viewport start: the
+// former first row sits at that start, so its shrink is dropped, and so is the
+// growth of a prepended row whose estimated bottom WebKit's integer offset
+// reads short of. live.spec.mjs:194 lost 76px this way on Linux WebKit.
+it("a prepend whose rows measure after scroll-end still keeps the former first row's content in place", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 0 });
+  const paragraph = openHistory(c);
+  expect(paragraph(0, 88)).toBe(88);
+  c.prepend(40); // 20 older rows at the 100px estimate: the shift jumps 2000
+  expect(c.viewport.scrollTop).toBe(2000);
+  c.viewport.dispatchEvent(new Event("scroll"));
+  vi.advanceTimersByTime(150);
+  c.calls.length = 0;
+  // The frame measures the prepended rows at 110 (+200 in total) and the former
+  // first row, index 20 now, without its header (188 → 100).
+  c.store.W(3, [
+    ...Array.from({ length: 20 }, (_, index) => [index, 110]),
+    [20, 100],
+  ]);
+  c.driver.J();
+  expect(c.calls).toEqual([
+    {
+      method: "scrollBy",
+      options: { top: 112, behavior: "instant" },
+      overflow: "",
+      priority: "",
+    },
+  ]);
+  expect(paragraph(20, 0)).toBe(88);
+  // That batch ended the shift. A visible row growing afterwards (an image
+  // loading) keeps the viewport start as before; a row above it is compensated.
+  c.calls.length = 0;
+  c.store.W(3, [[21, 150]]);
+  c.driver.J();
+  expect(c.calls).toEqual([]);
+  c.store.W(3, [[3, 120]]);
+  c.driver.J();
+  expect(c.calls.at(-1).options).toEqual({ top: 10, behavior: "instant" });
+  c.driver._();
+});
+
+it("a prepend measured inside the scroll-end window keeps stock shift policy and then returns to native policy", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 0 });
+  const paragraph = openHistory(c);
+  c.prepend(40);
+  c.viewport.dispatchEvent(new Event("scroll"));
+  c.calls.length = 0;
+  c.store.W(3, [
+    ...Array.from({ length: 20 }, (_, index) => [index, 110]),
+    [20, 100],
+  ]);
+  c.driver.J();
+  expect(c.calls.at(-1).options).toEqual({ top: 112, behavior: "instant" });
+  expect(paragraph(20, 0)).toBe(88);
+  // Still shifting until scroll-end: a visible row's growth is compensated.
+  c.store.W(3, [[21, 150]]);
+  c.driver.J();
+  expect(c.calls.at(-1).options).toEqual({ top: 50, behavior: "instant" });
+  vi.advanceTimersByTime(150);
+  c.calls.length = 0;
+  c.store.W(3, [[22, 150]]);
+  c.driver.J();
+  expect(c.calls).toEqual([]);
+  c.driver._();
+});
+
+it("a prepend whose rows are not mounted ends its shift at scroll-end as before", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 1500 });
+  c.store.W(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, 100]),
+  );
+  c.driver.J();
+  // Virtua's default 200px buffer starts inside the old rows, so no prepended
+  // row is mounted and nothing is awaited.
+  c.prepend(40, 200);
+  expect(c.viewport.scrollTop).toBe(3500);
+  c.viewport.dispatchEvent(new Event("scroll"));
+  vi.advanceTimersByTime(150);
+  c.calls.length = 0;
+  c.store.W(3, [[35, 150]]);
+  c.driver.J();
+  expect(c.calls).toEqual([]);
+  // Prepended rows measured later, above the viewport, follow native policy.
+  c.store.W(3, [[19, 110]]);
+  c.driver.J();
+  expect(c.calls.at(-1).options).toEqual({ top: 10, behavior: "instant" });
+  c.driver._();
+});
 
 it("cancels a pending imperative scroll so later size updates stop re-applying it", async () => {
   const c = setup({ platform: "Linux x86_64", offset: 0 });

@@ -204,10 +204,11 @@
   }
 }
 
-/* Sidebar destinations and their session children share a quiet selection.
-   Keep the composite channel-row paint and shared NavigationItem in agreement. */
+/* Sidebar destinations and their session children share persistent selection,
+   distinct from quieter control fills and hover. Keep composite channel-row
+   paint and shared NavigationItem in agreement. */
 @utility interaction-navigation {
-  --interaction-selected: var(--affordance-subtle);
+  --interaction-selected: var(--affordance-selected);
 }
 
 /* The profile's compact availability badge retains the shared status colors. */

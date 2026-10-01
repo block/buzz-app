@@ -657,10 +657,7 @@ export function createRelaySession(
           restored: (events) => unread.accept(events),
           demand: (channelId) => demandChannel(channelId),
           rosterChanged: () => {
-            // A starting full pass supersedes exact hint confirmations issued
-            // before it; its complete roster is the newer authority.
-            if (channels.roster().state === "pending")
-              retireHintConfirmations();
+            settleHintConfirmations();
             publishLive();
           },
         }
@@ -1835,18 +1832,21 @@ export function createRelaySession(
         .finally(publishLive);
     }
   }
-  /** Named member-added hints awaiting one exact read, and the confirmation in
-   * flight for each channel. Transports deliver one event per call, so hints
-   * coalesce across deliveries until the next timer turn; a channel whose
+  /** Named member-added hints awaiting one exact read, the confirmation in
+   * flight for each channel, and whether the running full pass inherited grants
+   * from confirmations it superseded. Transports deliver one event per call, so
+   * hints coalesce across deliveries until the next timer turn; a channel whose
    * confirmation is still pending is not read again, because resolve never
    * merges its fresh reads. */
   const hintQueue = new Set<string>();
   const hintReads = new Map<string, AbortController>();
+  let rosterOwesGrants = false;
   let hintTimer: ReturnType<typeof setTimeout> | undefined;
   let rosterTimer: ReturnType<typeof setTimeout> | undefined;
   function refreshRoster() {
     if (closed) return;
     // The full pass covers every grant still waiting for its exact read.
+    rosterOwesGrants ||= hintQueue.size > 0;
     hintQueue.clear();
     if (rosterTimer) return;
     const timer = setTimeout(() => {
@@ -1861,18 +1861,40 @@ export function createRelaySession(
     const summary = channels.queries.get?.(id);
     return !!summary && !summary.readOnly;
   };
-  /** A full pass that starts after an exact read was issued, or a list that
-   * leaves ready, supersedes that confirmation: a delayed grant must not land
-   * on a roster a newer complete read already settled, and a ready commit must
-   * not hide a failed discovery. Retirement is intentional, so unlike a failed
-   * lookup it schedules no fallback; the full pass or Retry owns recovery. */
+  /** Retire every queued and in-flight exact confirmation. Retirement is
+   * intentional, so unlike a failed lookup it schedules no fallback; the
+   * superseding full pass, establishment or Retry owns recovery. */
   function retireHintConfirmations() {
     hintQueue.clear();
     for (const controller of new Set(hintReads.values())) controller.abort();
     hintReads.clear();
   }
+  /** A cache clear, a disconnect or a list that leaves ready drops hints with
+   * the rest of the session's reader work, before a queued batch's timer can
+   * dispatch it into the new epoch, and releases any inherited grants: a ready
+   * commit must not hide a failed discovery, and the next establishment's full
+   * pass or Retry owns recovery. */
+  function dropHintConfirmations() {
+    rosterOwesGrants = false;
+    retireHintConfirmations();
+  }
+  /** A full pass that starts after an exact read was issued supersedes that
+   * confirmation: a delayed grant must not land on a roster a newer complete
+   * read already settled. The pass inherits the grants it retired. A verified
+   * roster settles them and a failed one keeps its error for deliberate Retry,
+   * but a pass interrupted by a concurrent revocation ends deferred having
+   * settled nothing, so it reruns instead of leaving those grants to Retry,
+   * another hint or a reconnect. */
+  function settleHintConfirmations() {
+    const { state } = channels.roster();
+    if (state === "pending") {
+      rosterOwesGrants ||= hintQueue.size > 0 || hintReads.size > 0;
+      retireHintConfirmations();
+    } else if (state === "deferred" && rosterOwesGrants) refreshRoster();
+    else rosterOwesGrants = false;
+  }
   const stopHintGuard = channels.queries.subscribeList(() => {
-    if (channels.queries.list().status !== "ready") retireHintConfirmations();
+    if (channels.queries.list().status !== "ready") dropHintConfirmations();
   });
   function confirmMembershipHints(hints: readonly RelayEvent[]) {
     for (const hint of hints) {
@@ -2195,6 +2217,7 @@ export function createRelaySession(
         activityRosterKey = undefined;
         catchups.clear();
         catchupQueue.clear();
+        dropHintConfirmations();
         requests.invalidate();
         agentLibrary.clear();
         archives.clear();
@@ -2330,6 +2353,7 @@ export function createRelaySession(
         accessEpoch++;
         cancelUploads();
         cacheClearEpoch++;
+        dropHintConfirmations();
         activity.clear();
         memories.clear();
         presence.clear();

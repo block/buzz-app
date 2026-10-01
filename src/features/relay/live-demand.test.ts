@@ -632,6 +632,48 @@ it("disconnect retires an exact membership confirmation until new establishment"
   }
 });
 
+it.each(["cache-clear", "disconnect"])(
+  "a %s before a queued hint dispatches retires it without an exact or fallback read",
+  async (reset) => {
+    const h = setup();
+    try {
+      await readyRoster(h);
+      // The broker drains traffic before connection state in one loop, so the
+      // hint is still queued behind its timer when the reset arrives. The reset
+      // leaves the list ready; only the queue itself can stop the dispatch.
+      h.live.receive([membershipHint(h, "a")]);
+      if (reset === "cache-clear") await h.owner.clearCache();
+      else h.live.state({ status: "retrying", routes: [] });
+      await flush();
+      await flush();
+      expect(h.wire.pending).toHaveLength(0);
+      expect(h.owner.session.channels.get?.("a")).toBeUndefined();
+      expect(h.owner.session.channels.list().status).toBe("ready");
+      if (reset === "disconnect") {
+        h.connected();
+        h.live.established();
+        await flush();
+        const full = h.wire.next();
+        expect(full.filters[0]?.kinds).toEqual([39002]);
+        expect(full.filters[0]?.["#d"]).toBeUndefined();
+        full.respond([
+          metadata(h.relay, "a", "Alpha"),
+          roster(h.relay, "a", [h.viewer.pubkey]),
+        ]);
+        await flush();
+        expect(h.owner.session.channels.list()).toMatchObject({
+          status: "ready",
+          channels: [{ id: "a", name: "Alpha" }],
+        });
+      }
+      expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+      expect(h.wire.pending).toHaveLength(0);
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
+
 it("an exact membership confirmation cannot overwrite a concurrent roster error", async () => {
   const h = setup();
   try {
@@ -827,6 +869,84 @@ it.each([
         channels: [],
       });
       expect(h.owner.session.channels.get?.("a")).toBeUndefined();
+      expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+      expect(h.wire.pending).toHaveLength(0);
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
+
+it.each(["interrupted", "failed"])(
+  "a superseding full pass that is %s keeps the grant it inherited from a retired confirmation",
+  async (outcome) => {
+    const h = setup();
+    try {
+      h.connected();
+      h.live.established();
+      await flush();
+      h.wire
+        .next()
+        .respond([
+          metadata(h.relay, "b", "Beta"),
+          roster(h.relay, "b", [h.viewer.pubkey]),
+        ]);
+      await flush();
+      expect(h.owner.session.channels.list()).toMatchObject({
+        status: "ready",
+        channels: [{ id: "b", name: "Beta" }],
+      });
+      expect(h.wire.pending).toHaveLength(0);
+      h.live.receive([membershipHint(h, "a")]);
+      await flush();
+      const exact = h.wire.next();
+      expect(exact.filters).toEqual(exactFilters(h, ["a"]));
+      h.live.receive([membershipHint(h, "b", 44101)]);
+      await flush();
+      const full = h.wire.next();
+      expect(full.filters[0]?.kinds).toEqual([39002]);
+      expect(full.filters[0]?.["#d"]).toBeUndefined();
+      expect(exact.signal?.aborted).toBe(true);
+      const grant = [
+        metadata(h.relay, "a", "Alpha"),
+        roster(h.relay, "a", [h.viewer.pubkey]),
+      ];
+      if (outcome === "interrupted") {
+        // B's route closes as a non-member while the pass runs. The denial
+        // revokes B and invalidates the pass, which settles nothing and ends
+        // deferred; the grant it inherited from A's retired confirmation must
+        // not wait for Retry, another hint or a reconnect.
+        h.live.denied("b", "restricted: not a channel member");
+        await flush();
+        await flush();
+        expect(full.signal?.aborted).toBe(true);
+        expect(h.owner.session.channels.get?.("b")).toBeUndefined();
+        expect(h.wire.pending).toHaveLength(1);
+        const rerun = h.wire.next();
+        expect(rerun.filters[0]?.kinds).toEqual([39002]);
+        expect(rerun.filters[0]?.["#d"]).toBeUndefined();
+        rerun.respond(grant);
+        await flush();
+      } else {
+        full.fail(new ReadError("unavailable", "Roster failed", 503));
+        await flush();
+        await flush();
+        // A failed pass keeps its error for deliberate Retry, as before.
+        expect(h.owner.session.live.snapshot().roster).toEqual({
+          state: "error",
+          error: "Roster failed",
+        });
+        expect(h.wire.pending).toHaveLength(0);
+        h.owner.session.live.retry();
+        await flush();
+        expect(h.wire.pending).toHaveLength(1);
+        h.wire.next().respond(grant);
+        await flush();
+      }
+      expect(h.owner.session.channels.list()).toMatchObject({
+        status: "ready",
+        channels: [{ id: "a", name: "Alpha" }],
+      });
       expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
       expect(h.wire.pending).toHaveLength(0);
     } finally {

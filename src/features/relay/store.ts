@@ -1226,14 +1226,16 @@ export function createChannelStore(
   }
   /** Resolve only returned/demanded nonmember channels, through the verified reader.
    *
-   * Two properties here carry the create-channel path in work-sessions.ts
-   * `refresh`, which guards them with real-store tests in work-sessions.test.ts
-   * rather than through this store's own suite:
+   * Search, work-sessions.ts `refresh`, and session.ts membership hints rely on
+   * these properties. The create-channel path guards them with real-store tests
+   * in work-sessions.test.ts rather than through this store's own suite:
    * - The id filter keeps every channel the store does not yet authorize, so a
    *   just-created channel is confirmed by one exact `#d` read instead of the
    *   full viewer-roster rediscovery. Skipping such ids would send every create
-   *   back through the full pass. See "admits a created ... channel through the
-   *   store's exact read without rediscovering the roster".
+   *   back through the full pass. Session hints route held channels to the full
+   *   pass because this filter skips them (including unarchive triggers). See
+   *   "admits a created ... channel through the store's exact read without
+   *   rediscovering the roster".
    * - Events apply through `applyDiscovery`, which always commits the list as
    *   `ready`. Only resolve into a list discovery has already made ready; on an
    *   idle, loading or error list this would publish a ready list holding just

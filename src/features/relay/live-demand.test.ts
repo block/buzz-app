@@ -19,11 +19,12 @@ function setup() {
     viewer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let live!: LiveCallbacks;
+  const interests = vi.fn();
   const owner = createRelaySession({
     ...wire.transport,
     subscribe(callbacks) {
       live = callbacks;
-      return { update() {}, prioritize() {}, retry() {}, dispose() {} };
+      return { update: interests, prioritize() {}, retry() {}, dispose() {} };
     },
   });
   const connected = () =>
@@ -39,6 +40,7 @@ function setup() {
     viewer,
     wire,
     owner,
+    interests,
     get live() {
       return live;
     },
@@ -240,6 +242,465 @@ it("coalesces hints during a busy roster without letting retry clicks create wor
     h.wire.next().respond([]);
     await flush();
     expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+    expect(h.wire.pending).toHaveLength(0);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+async function readyRoster(h: ReturnType<typeof setup>) {
+  h.connected();
+  h.live.established();
+  await flush();
+  h.wire.next().respond([]);
+  await flush();
+  expect(h.owner.session.channels.list().status).toBe("ready");
+  expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+  expect(h.wire.pending).toHaveLength(0);
+}
+function membershipHint(h: ReturnType<typeof setup>, id: string, kind = 44100) {
+  return signed(h.relay, {
+    kind,
+    content: "",
+    tags: [
+      ["p", h.viewer.pubkey],
+      ["h", id],
+    ],
+  });
+}
+function exactFilters(h: ReturnType<typeof setup>, ids: string[]) {
+  return [
+    {
+      kinds: [39000],
+      authors: [h.relay.pubkey],
+      "#d": [...ids].sort(),
+      limit: ids.length + 1,
+    },
+    {
+      kinds: [39002],
+      authors: [h.relay.pubkey],
+      "#d": [...ids].sort(),
+      "#p": [h.viewer.pubkey],
+      limit: ids.length + 1,
+    },
+  ];
+}
+
+it("a named member-added hint confirms only that channel and preserves verified roster state", async () => {
+  const h = setup();
+  try {
+    await readyRoster(h);
+    const changes: string[] = [];
+    h.owner.session.live.subscribe(() => {
+      changes.push(h.owner.session.live.snapshot().roster.state);
+    });
+    h.live.receive([membershipHint(h, "a")]);
+    await flush();
+    await flush();
+    expect(h.wire.pending).toHaveLength(1);
+    const exact = h.wire.next();
+    expect(exact.filters).toEqual(exactFilters(h, ["a"]));
+    exact.respond([
+      metadata(h.relay, "a", "Alpha"),
+      roster(h.relay, "a", [h.viewer.pubkey]),
+    ]);
+    await flush();
+    await flush();
+    expect(h.owner.session.channels.list()).toMatchObject({
+      status: "ready",
+      channels: [{ id: "a", name: "Alpha" }],
+    });
+    expect(h.owner.session.channels.get?.("a")?.readOnly).toBeUndefined();
+    expect(h.interests).toHaveBeenLastCalledWith(["a"], ["a"]);
+    expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+    expect(changes).not.toContain("pending");
+    expect(h.wire.pending).toHaveLength(0);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it.each(["removal", "held", "empty", "ambiguous"])(
+  "a %s membership hint keeps the full roster refresh",
+  async (scenario) => {
+    const h = setup();
+    try {
+      await readyRoster(h);
+      if (scenario === "held")
+        h.live.receive([
+          metadata(h.relay, "a", "Alpha"),
+          roster(h.relay, "a", [h.viewer.pubkey]),
+        ]);
+      const hint =
+        scenario === "ambiguous"
+          ? signed(h.relay, {
+              kind: 44100,
+              content: "",
+              tags: [
+                ["p", h.viewer.pubkey],
+                ["h", "a"],
+                ["h", "b"],
+              ],
+            })
+          : membershipHint(
+              h,
+              scenario === "empty" ? "" : "a",
+              scenario === "removal" ? 44101 : 44100,
+            );
+      h.live.receive([hint]);
+      await flush();
+      await flush();
+      expect(h.wire.pending).toHaveLength(1);
+      const full = h.wire.next();
+      expect(full.filters).toEqual([
+        { kinds: [39002], "#p": [h.viewer.pubkey], limit: 500 },
+      ]);
+      full.respond([]);
+      await flush();
+      expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+      expect(h.wire.pending).toHaveLength(0);
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
+
+it("a named hint during initial discovery queues a full pass without prematurely readying the list", async () => {
+  const h = setup();
+  try {
+    h.connected();
+    h.live.established();
+    await flush();
+    const initial = h.wire.next();
+    expect(h.owner.session.channels.list().status).toBe("loading");
+    h.live.receive([membershipHint(h, "a")]);
+    await flush();
+    await flush();
+    expect(h.owner.session.channels.list().status).toBe("loading");
+    expect(h.wire.pending).toHaveLength(0);
+    initial.respond([]);
+    await flush();
+    expect(h.wire.pending).toHaveLength(1);
+    const followup = h.wire.next();
+    expect(followup.filters[0]?.kinds).toEqual([39002]);
+    expect(followup.filters[0]?.["#d"]).toBeUndefined();
+    followup.respond([
+      metadata(h.relay, "a", "Alpha"),
+      roster(h.relay, "a", [h.viewer.pubkey]),
+    ]);
+    await flush();
+    expect(h.owner.session.channels.list().channels).toMatchObject([
+      { id: "a", name: "Alpha" },
+    ]);
+    expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+    expect(h.wire.pending).toHaveLength(0);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it.each(["failed", "empty", "nonmember"])(
+  "a %s exact membership confirmation falls back to a full pass",
+  async (outcome) => {
+    const h = setup();
+    try {
+      await readyRoster(h);
+      h.live.receive([membershipHint(h, "a")]);
+      await flush();
+      const exact = h.wire.next();
+      expect(exact.filters).toEqual(exactFilters(h, ["a"]));
+      if (outcome === "failed")
+        exact.fail(new ReadError("unavailable", "Read failed"));
+      else
+        exact.respond(
+          outcome === "empty"
+            ? []
+            : [metadata(h.relay, "a", "Alpha", undefined, [["public"]])],
+        );
+      await flush();
+      await flush();
+      expect(h.wire.pending).toHaveLength(1);
+      const full = h.wire.next();
+      expect(full.filters[0]?.kinds).toEqual([39002]);
+      expect(full.filters[0]?.["#d"]).toBeUndefined();
+      full.respond([
+        metadata(h.relay, "a", "Alpha", 1700000001),
+        roster(h.relay, "a", [h.viewer.pubkey]),
+      ]);
+      await flush();
+      expect(h.owner.session.channels.get?.("a")).toMatchObject({
+        id: "a",
+        name: "Alpha",
+      });
+      expect(h.owner.session.channels.get?.("a")?.readOnly).toBeUndefined();
+      expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+      expect(h.wire.pending).toHaveLength(0);
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
+
+it.each([
+  { mixed: false, path: "one exact read" },
+  { mixed: true, path: "only a full pass when a removal is mixed in" },
+])("member-added hints in one delivery use $path", async ({ mixed }) => {
+  const h = setup();
+  try {
+    await readyRoster(h);
+    h.live.receive([
+      membershipHint(h, "a"),
+      membershipHint(h, "b"),
+      membershipHint(h, "a"),
+      ...(mixed ? [membershipHint(h, "c", 44101)] : []),
+    ]);
+    await flush();
+    await flush();
+    expect(h.wire.pending).toHaveLength(1);
+    const read = h.wire.next();
+    if (mixed) {
+      expect(read.filters[0]?.kinds).toEqual([39002]);
+      expect(read.filters[0]?.["#d"]).toBeUndefined();
+    } else expect(read.filters).toEqual(exactFilters(h, ["a", "b"]));
+    read.respond([
+      metadata(h.relay, "a", "Alpha"),
+      roster(h.relay, "a", [h.viewer.pubkey]),
+      metadata(h.relay, "b", "Beta"),
+      roster(h.relay, "b", [h.viewer.pubkey]),
+    ]);
+    await flush();
+    await flush();
+    expect(
+      h.owner.session.channels
+        .list()
+        .channels.map((c) => c.name)
+        .sort(),
+    ).toEqual(["Alpha", "Beta"]);
+    expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+    expect(h.wire.pending).toHaveLength(0);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it.each(["preview", "denied"])(
+  "a named hint confirms fresh membership for a %s channel",
+  async (state) => {
+    const h = setup();
+    try {
+      await readyRoster(h);
+      h.live.receive([
+        metadata(h.relay, "a", "Alpha", undefined, [["public"]]),
+      ]);
+      if (state === "denied")
+        h.live.denied("a", "restricted: not a channel member");
+      expect(h.owner.session.channels.get?.("a")?.readOnly).toBe(
+        state === "preview" ? true : undefined,
+      );
+      h.live.receive([membershipHint(h, "a")]);
+      await flush();
+      const exact = h.wire.next();
+      expect(exact.filters).toEqual(exactFilters(h, ["a"]));
+      exact.respond([
+        metadata(h.relay, "a", "Alpha"),
+        roster(h.relay, "a", [h.viewer.pubkey]),
+      ]);
+      await flush();
+      await flush();
+      expect(h.owner.session.channels.get?.("a")).toMatchObject({
+        id: "a",
+        name: "Alpha",
+      });
+      expect(h.owner.session.channels.get?.("a")?.readOnly).toBeUndefined();
+      expect(h.wire.pending).toHaveLength(0);
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
+
+it("membership hint batches respect the exact-read channel cap", async () => {
+  const h = setup();
+  try {
+    await readyRoster(h);
+    const ids = Array.from({ length: 129 }, (_, index) => `channel-${index}`);
+    h.live.receive(ids.map((id) => membershipHint(h, id)));
+    await flush();
+    expect(h.wire.pending).toHaveLength(2);
+    for (const batch of [ids.slice(0, 128), ids.slice(128)]) {
+      const exact = h.wire.next();
+      expect(exact.filters).toEqual(exactFilters(h, batch));
+      exact.respond(
+        batch.flatMap((id) => [
+          metadata(h.relay, id, id),
+          roster(h.relay, id, [h.viewer.pubkey]),
+        ]),
+      );
+    }
+    await flush();
+    await flush();
+    expect(h.owner.session.channels.list().channels).toHaveLength(129);
+    expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+    expect(h.wire.pending).toHaveLength(0);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("membership hints from another signer or for another viewer do not read discovery", async () => {
+  const h = setup();
+  try {
+    await readyRoster(h);
+    h.live.receive([
+      signed(h.viewer, {
+        kind: 44100,
+        content: "",
+        tags: [
+          ["p", h.viewer.pubkey],
+          ["h", "a"],
+        ],
+      }),
+      signed(h.relay, {
+        kind: 44100,
+        content: "",
+        tags: [
+          ["p", h.relay.pubkey],
+          ["h", "a"],
+        ],
+      }),
+    ]);
+    await flush();
+    await flush();
+    expect(h.wire.pending).toHaveLength(0);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("cache-clear retires an exact membership confirmation without automatic recovery", async () => {
+  const h = setup();
+  try {
+    await readyRoster(h);
+    h.live.receive([membershipHint(h, "a")]);
+    await flush();
+    const exact = h.wire.next();
+    expect(exact.filters).toEqual(exactFilters(h, ["a"]));
+    await h.owner.clearCache();
+    exact.respond([
+      metadata(h.relay, "a", "Alpha"),
+      roster(h.relay, "a", [h.viewer.pubkey]),
+    ]);
+    await flush();
+    await flush();
+    expect(exact.signal?.aborted).toBe(true);
+    expect(h.owner.session.channels.get?.("a")).toBeUndefined();
+    expect(h.wire.pending).toHaveLength(0);
+    expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("disconnect retires an exact membership confirmation until new establishment", async () => {
+  const h = setup();
+  try {
+    await readyRoster(h);
+    h.live.receive([membershipHint(h, "a")]);
+    await flush();
+    const exact = h.wire.next();
+    h.live.state({ status: "retrying", routes: [] });
+    exact.respond([
+      metadata(h.relay, "a", "Alpha"),
+      roster(h.relay, "a", [h.viewer.pubkey]),
+    ]);
+    await flush();
+    await flush();
+    expect(exact.signal?.aborted).toBe(true);
+    expect(h.owner.session.channels.get?.("a")).toBeUndefined();
+    expect(h.wire.pending).toHaveLength(0);
+    h.connected();
+    h.live.established();
+    await flush();
+    const full = h.wire.next();
+    expect(full.filters[0]?.["#d"]).toBeUndefined();
+    full.respond([]);
+    await flush();
+    expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+    expect(h.wire.pending).toHaveLength(0);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("an exact membership confirmation cannot overwrite a concurrent roster error", async () => {
+  const h = setup();
+  try {
+    await readyRoster(h);
+    h.owner.session.channels.refreshList?.();
+    const full = h.wire.next();
+    h.live.receive([membershipHint(h, "a")]);
+    await flush();
+    const exact = h.wire.next();
+    expect(exact.filters).toEqual(exactFilters(h, ["a"]));
+    full.fail(new ReadError("unavailable", "Roster paused", 429, 60000));
+    await flush();
+    expect(h.owner.session.channels.list().status).toBe("error");
+    exact.respond([
+      metadata(h.relay, "a", "Alpha"),
+      roster(h.relay, "a", [h.viewer.pubkey]),
+    ]);
+    await flush();
+    await flush();
+    expect(exact.signal?.aborted).toBe(true);
+    expect(h.owner.session.channels.list()).toMatchObject({
+      status: "error",
+      error: "Roster paused",
+      channels: [],
+    });
+    expect(h.owner.session.live.snapshot().roster.state).toBe("error");
+    expect(h.wire.pending).toHaveLength(0);
+    vi.spyOn(performance, "now").mockReturnValue(performance.now() + 61000);
+    h.owner.session.live.retry();
+    await flush();
+    h.wire
+      .next()
+      .respond([
+        metadata(h.relay, "a", "Alpha"),
+        roster(h.relay, "a", [h.viewer.pubkey]),
+      ]);
+    await flush();
+    expect(h.owner.session.channels.list()).toMatchObject({
+      status: "ready",
+      channels: [{ id: "a", name: "Alpha" }],
+    });
+    expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+    expect(h.wire.pending).toHaveLength(0);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("disposing an exact membership confirmation aborts the read and prevents its fallback", async () => {
+  const h = setup();
+  try {
+    await readyRoster(h);
+    h.live.receive([membershipHint(h, "a")]);
+    await flush();
+    const exact = h.wire.next();
+    expect(exact.filters).toEqual(exactFilters(h, ["a"]));
+    const changed = vi.fn();
+    h.owner.session.live.subscribe(changed);
+    h.owner.dispose();
+    const snapshot = h.owner.session.live.snapshot();
+    exact.respond([
+      metadata(h.relay, "a", "Alpha"),
+      roster(h.relay, "a", [h.viewer.pubkey]),
+    ]);
+    await flush();
+    await flush();
+    expect(exact.signal?.aborted).toBe(true);
+    expect(changed).not.toHaveBeenCalled();
+    expect(h.owner.session.live.snapshot()).toBe(snapshot);
     expect(h.wire.pending).toHaveLength(0);
   } finally {
     h.owner.dispose();

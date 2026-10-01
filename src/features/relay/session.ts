@@ -1840,6 +1840,58 @@ export function createRelaySession(
     rosterTimer = timer;
     timers.add(timer);
   }
+  function confirmMembershipHints(hints: readonly RelayEvent[]) {
+    const held = (id: string) => {
+      const summary = channels.queries.get?.(id);
+      return !!summary && !summary.readOnly;
+    };
+    const ids = new Set<string>();
+    for (const hint of hints) {
+      const destinations = hint.tags.filter(([name]) => name === "h");
+      const id = destinations[0]?.[1];
+      // Held channels include unarchive/re-add hints; resolve skips them.
+      // An exact lookup may extend a ready list, never certify initial discovery.
+      if (
+        hint.kind !== 44100 ||
+        destinations.length !== 1 ||
+        !id ||
+        channels.queries.list().status !== "ready" ||
+        held(id)
+      ) {
+        refreshRoster();
+        return;
+      }
+      ids.add(id);
+    }
+    const wanted = [...ids];
+    const cleared = cacheClearEpoch;
+    const generation = liveGeneration;
+    const current = () =>
+      !closed && cleared === cacheClearEpoch && generation === liveGeneration;
+    for (let start = 0; start < wanted.length; start += 128) {
+      const batch = wanted.slice(start, start + 128);
+      const controller = new AbortController();
+      // A concurrent full pass may fail while this read is pending. Do not let
+      // resolve's ready commit hide that error; leave recovery to the full pass.
+      const stop = channels.queries.subscribeList(() => {
+        if (channels.queries.list().status !== "ready") controller.abort();
+      });
+      void channels.queries
+        .resolve?.(batch, {
+          signal: AbortSignal.any([lifetime.signal, controller.signal]),
+        })
+        .then(() => {
+          if (current() && !batch.every(held)) refreshRoster();
+        })
+        .catch(() => {
+          if (current()) refreshRoster();
+        })
+        .finally(() => {
+          stop();
+          if (current()) publishLive();
+        });
+    }
+  }
   const updateInterests = () => {
     if (closed) return;
     const joined = channels.queries
@@ -2003,17 +2055,16 @@ export function createRelaySession(
       );
       // Signed membership notifications are hints, not roster authority. Schedule
       // before visibility filtering, because a newly granted channel may be denied locally.
-      if (
-        events.some(
+      confirmMembershipHints(
+        events.filter(
           (event) =>
             [44100, 44101].includes(event.kind) &&
             event.pubkey === transport.relayAuthor &&
             event.tags.some(
               ([name, value]) => name === "p" && value === transport.viewer,
             ),
-        )
-      )
-        refreshRoster();
+        ),
+      );
       const epoch = accessEpoch;
       const generation = liveGeneration;
       const visible = accept(events);

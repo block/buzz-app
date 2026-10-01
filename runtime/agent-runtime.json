@@ -1,11 +1,18 @@
 {
   "repository": "https://github.com/block/buzz.git",
-  "revision": "48884848f566d02c42ce07636636c4ad5f164c27",
+  "revision": "95b018c8713be9beebbd2517ace48529e3c0e6ed",
   "tools": [
     "buzz-acp",
     "buzz-agent",
     "buzz-dev-mcp",
     "buzz",
-    "git-credential-nostr"
-  ]
+    "git-credential-nostr",
+    "goose-acp"
+  ],
+  "goose": {
+    "repository": "https://github.com/aaif-goose/goose.git",
+    "revision": "4dea9b483efbd2541d43500b8ed3c044c65e6d2f",
+    "profile": "lean",
+    "features": "native-tls,system-keyring,online-model-meta,openssl/vendored"
+  }
 }

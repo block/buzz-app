@@ -110,8 +110,11 @@ fn production_environment_probe() {
     let mut context = context();
     context.channel_name = "$(touch bad); fake".into();
     context.thread_id = None;
-    let id = state.spawn(&owner, context.clone(), 80, 24).unwrap();
-    // The real login-shell command and real spawn path above must fence parent
+    let plain = std::env::var("BUZZ_TERMINAL_PLAIN_SHELL_PROBE").as_deref() == Ok("1");
+    let id = state
+        .spawn(&owner, context.clone(), 80, 24, !plain)
+        .unwrap();
+    // The real shell command and real spawn path above must fence parent
     // credentials. Do not rebuild/fence a separate command in this regression.
     state
         .with_session(&owner, &id, |s| {
@@ -119,7 +122,10 @@ fn production_environment_probe() {
         })
         .unwrap();
     let output = String::from_utf8(read_all(&state, &owner, &id)).unwrap();
-    assert!(output.contains("LOGIN=-sh"), "{output}");
+    assert!(
+        output.contains(if plain { "LOGIN=/bin/sh" } else { "LOGIN=-sh" }),
+        "{output}"
+    );
     for secret in [
         "TOP_SECRET_PRIVATE",
         "TOP_SECRET_AUTH",
@@ -166,6 +172,38 @@ fn real_spawn_fences_secrets_and_preserves_login_context() {
         .output()
         .unwrap();
     std::fs::remove_dir_all(dir).unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn plain_shell_bypasses_configured_shell_and_startup_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let configured_shell = dir.path().join("configured-shell");
+    std::fs::write(&configured_shell, "#!/bin/sh\nexit 97\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&configured_shell, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(dir.path().join(".profile"), "exit 98\n").unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "terminal::tests::production_environment_probe",
+            "--nocapture",
+        ])
+        .env("BUZZ_TERMINAL_PROBE", "1")
+        .env("BUZZ_TERMINAL_PLAIN_SHELL_PROBE", "1")
+        .env("BUZZ_PRIVATE_KEY", "TOP_SECRET_PRIVATE")
+        .env("BUZZ_AUTH_TAG", "TOP_SECRET_AUTH")
+        .env("UNKNOWN_NEW_SECRET", "FUTURE_SECRET")
+        .env("PATH", "BAD_HERMIT_PATH")
+        .env("SHELL", &configured_shell)
+        .env("HOME", dir.path())
+        .output()
+        .unwrap();
     assert!(
         output.status.success(),
         "{}\n{}",
@@ -282,7 +320,7 @@ fn close_revokes_pending_and_future_spawns() {
     let id = spawn.join().unwrap().unwrap();
     close.join().unwrap().unwrap();
     assert!(state.with_session(&owner, &id, Session::read).is_err());
-    assert!(state.spawn(&owner, context(), 80, 24).is_err());
+    assert!(state.spawn(&owner, context(), 80, 24, true).is_err());
     assert!(state.lock().unwrap().owners.is_empty());
     state.shutdown().unwrap();
     assert!(state.create_owner().is_err());

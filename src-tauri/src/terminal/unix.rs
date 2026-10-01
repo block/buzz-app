@@ -12,10 +12,21 @@ fn error() -> String {
     io::Error::last_os_error().to_string()
 }
 
-pub(super) fn command(context: &TerminalContext, id: &str) -> Result<CommandBuilder, String> {
+pub(super) fn command(
+    context: &TerminalContext,
+    id: &str,
+    login_shell: bool,
+) -> Result<CommandBuilder, String> {
     context.validate()?;
-    let shell = resolve_shell(std::env::var("SHELL").ok().as_deref());
-    let mut cmd = CommandBuilder::new_default_prog();
+    // Background helpers must not wait for the user's interactive startup files.
+    let (mut cmd, shell) = if login_shell {
+        (
+            CommandBuilder::new_default_prog(),
+            resolve_shell(std::env::var("SHELL").ok().as_deref()),
+        )
+    } else {
+        (CommandBuilder::new("/bin/sh"), "/bin/sh".into())
+    };
     // This is the production spawn fence, not a blacklist of known credentials.
     cmd.env_clear();
     for key in [

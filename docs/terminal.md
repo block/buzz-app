@@ -86,6 +86,10 @@ its Hermit build PATH are not inherited. This is **not a sandbox** against your 
 startup files or commands you choose to execute, and it does not authenticate the
 Buzz CLI on your behalf.
 
+Native `terminal_spawn` accepts an optional `loginShell` boolean (default `true`).
+Passing `false` starts plain `/bin/sh`, bypassing the configured shell and its
+login startup files while retaining the same environment fence and public context.
+
 ## Ownership and bounds
 
 Terminal UI/emulation and retained session controllers are plugin-owned. Native

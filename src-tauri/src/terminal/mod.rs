@@ -73,16 +73,22 @@ impl Terminals {
         context: TerminalContext,
         cols: u16,
         rows: u16,
+        login_shell: bool,
     ) -> Result<String, String> {
         context.validate()?;
         dimensions(cols, rows)?;
         #[cfg(unix)]
         {
-            self.spawn_with(owner, |id| unix::command(&context, id), cols, rows)
+            self.spawn_with(
+                owner,
+                |id| unix::command(&context, id, login_shell),
+                cols,
+                rows,
+            )
         }
         #[cfg(not(unix))]
         {
-            let _ = owner;
+            let _ = (owner, login_shell);
             Err("Local terminals require macOS or Linux".into())
         }
     }
@@ -225,11 +231,14 @@ pub(crate) async fn terminal_spawn(
     context: TerminalContext,
     cols: u16,
     rows: u16,
+    login_shell: Option<bool>,
 ) -> Result<String, String> {
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || state.spawn(&owner, context, cols, rows))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        state.spawn(&owner, context, cols, rows, login_shell.unwrap_or(true))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 pub(crate) async fn terminal_read(

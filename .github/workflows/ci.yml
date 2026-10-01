@@ -23,7 +23,8 @@ jobs:
     if: github.event_name != 'workflow_dispatch'
     name: JavaScript
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # Vitest can take over nine minutes on hosted runners; allow setup and reporting to finish.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

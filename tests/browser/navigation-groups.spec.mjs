@@ -705,7 +705,10 @@ test("Create new supports cancel, moves before publication, and retries the same
   try {
     await openMove(page, destination);
     await page.getByRole("menuitem", { name: "Create new…" }).click();
+    await expect(field).toBeFocused();
+    await expect(page.getByRole("menu")).toHaveCount(0);
     await field.fill("Follow-up");
+    await expect(field).toHaveValue("Follow-up");
     await dialog.getByRole("button", { name: "Create and move" }).click();
     await nextStarted.promise;
     const nextGroup = sidebar(page)

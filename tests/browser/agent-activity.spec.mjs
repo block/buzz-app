@@ -542,7 +542,9 @@ it("profile activity opens the exact agent and originating channel before its fi
       kind: 9,
       tags: [["h", profileChannelId]],
       content: "Contextual agent entry",
-      created_at: Math.floor(Date.now() / 1000),
+      // Dwell anchors on the newest visible message and a tie keeps the first
+      // one seen, so only a strictly later second makes this message the anchor.
+      created_at: personMessage.created_at + 1,
     },
     agentKey,
   );
@@ -711,6 +713,12 @@ it("profile activity opens the exact agent and originating channel before its fi
     }, mode);
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
+      // The shell applies its media-query change in React; measure after it,
+      // or the first read sees the sidebar still squeezing the profile.
+      await expect(page.locator("[data-shell-sidebar-toggle]")).toHaveAttribute(
+        "aria-label",
+        width <= 650 ? "Show navigation" : "Hide Channel sidebar",
+      );
       await expect(preview).toBeVisible();
       await expect(
         preview.getByRole("button", { name: "View activity" }),

@@ -89,9 +89,14 @@ too. Oversized rows that never fit fully are not auto-read.
   device-local mark; it does not force descendants or the channel.
 - `refresh()` re-reads the sidebar; `retrySync()` flushes pending writes, then
   refreshes. `ReadMutationResult.durability === "saved"` means the local journal
-  transaction committed, not that the relay accepted it. Relay-derived unread
-  styling clears only after acknowledgement and the debounced targeted refresh;
-  offline reading saves intent but does not optimistically clear the badge.
+  transaction committed, not that the relay accepted it. Saving, pending and
+  applied read intents can optimistically clear covered unread/attention styling
+  before local save or relay acknowledgement, including while offline; they do
+  not change the relay-derived counts. A failed local save or a `blocked`/`invalid`
+  relay outcome removes that intent's coverage, so unread styling can return.
+  Pending intent survives transport failures or `unknown` outcomes for retry;
+  applied coverage bridges acknowledgement until each surface receives applicable
+  relay evidence and reconciles its presentation.
 
 The sidebar separates ordinary unread from directed attention. Any unread state,
 including activity that exists only in a relevant thread, strengthens the channel

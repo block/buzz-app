@@ -330,7 +330,11 @@ async fn run(
     pcm: mpsc::Receiver<Vec<f32>>,
     touched: Arc<AtomicU64>,
 ) -> Result<()> {
-    let room_membership_confirmed = admit_membership(host, call).await?;
+    check_cancelled(&stop, &touched)?;
+    let room_membership_confirmed = tokio::select! {
+        _ = stop.changed() => return Err("Huddle cancelled".into()),
+        result = admit_membership(host, call) => result?,
+    };
     check_cancelled(&stop, &touched)?;
     let room = call
         .room
@@ -442,6 +446,42 @@ pub(crate) fn huddle_pcm(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn cancellation_interrupts_initial_membership_read() {
+        // Accept the TLS connection without answering: admission must be pending
+        // when cancellation arrives, rather than racing a completed request.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = IdentityHost::fixture();
+        let call = Call {
+            id: uuid::Uuid::new_v4().to_string(),
+            community: format!("https://{}", listener.local_addr().unwrap()),
+            viewer: host.viewer().await.unwrap(),
+            parent: uuid::Uuid::new_v4().to_string(),
+            room: None,
+        };
+        let updates = Channel::new(|_| panic!("Cancelled admission must not connect"));
+        let (stop, cancelled) = watch::channel(false);
+        let (_pcm, receiver) = mpsc::channel(1);
+        let pending = run(
+            &host,
+            &call,
+            &updates,
+            cancelled,
+            receiver,
+            Arc::new(AtomicU64::new(lease_time())),
+        );
+        tokio::pin!(pending);
+        let (_socket, _) = tokio::select! {
+            connection = listener.accept() => connection.unwrap(),
+            result = &mut pending => panic!("Admission ended before cancellation: {result:?}"),
+        };
+        stop.send(true).unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(1), pending)
+            .await
+            .expect("Cancellation must not wait for the relay timeout");
+        assert_eq!(result.unwrap_err(), "Huddle cancelled");
+    }
+
     #[tokio::test]
     async fn existing_room_membership_does_not_require_parent_access() {
         let host = IdentityHost::fixture();

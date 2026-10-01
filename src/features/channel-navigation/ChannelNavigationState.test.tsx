@@ -8,6 +8,7 @@ import { PanelWorkspace } from "../panels/PanelWorkspace";
 import {
   ChannelNavigationProvider,
   useChannelNavigation,
+  useChannelMenuActions,
 } from "./ChannelNavigationState";
 
 afterEach(() => {
@@ -197,4 +198,34 @@ it("retains the settings tab close control when an archive action remounts", () 
   expect(trigger.isConnected).toBe(false);
   expect(view.result.current.lifecycleDialog?.focusFallback).toBe(close);
   expect(close.isConnected).toBe(true);
+});
+
+it("publishes sidebar actions to a sibling menu and retires them with the session", () => {
+  const h = fixture();
+  const view = renderHook(
+    () => ({
+      handoff: useChannelNavigation(),
+      actions: useChannelMenuActions(),
+    }),
+    {
+      wrapper: ({ children }) => (
+        <ChannelNavigationProvider relay={h.relay}>
+          {children}
+        </ChannelNavigationProvider>
+      ),
+    },
+  );
+  const retired = view.result.current.handoff?.menuActions;
+  if (!retired) throw new Error("Missing navigation provider");
+  const actions = () => ["Mute"];
+  act(() => retired.publish(actions));
+  expect(view.result.current.actions).toBe(actions);
+  act(() => h.replace());
+  expect(view.result.current.actions).toBeUndefined();
+  act(() => retired.publish(() => ["stale"]));
+  expect(view.result.current.actions).toBeUndefined();
+  act(() => view.result.current.handoff?.menuActions.publish(actions));
+  expect(view.result.current.actions).toBe(actions);
+  act(() => view.result.current.handoff?.menuActions.publish(undefined));
+  expect(view.result.current.actions).toBeUndefined();
 });

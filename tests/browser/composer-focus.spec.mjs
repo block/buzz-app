@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -30,11 +31,7 @@ test("selecting a channel or DM focuses its composer and retains drafts", async 
       await expect(input).toHaveText(`Draft for ${name} continued`);
     }
   }
-  const settings = page.getByRole("button", {
-    name: "Channel settings",
-    exact: true,
-  });
-  await settings.click();
+  await openChannelDetails(page);
   await expect(
     page.getByRole("tab", { name: "Channel settings", exact: true }),
   ).toBeFocused();

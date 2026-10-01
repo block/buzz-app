@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -103,9 +104,7 @@ for (const cold of [false, true]) {
       app.omitChannel("beta");
       // The deployed deletion trigger is not under test. Exercise the real
       // refresh -> roster omission -> session purge -> page/hook recovery path.
-      await page
-        .getByRole("button", { name: "Channel settings", exact: true })
-        .click();
+      await openChannelDetails(page);
       await page.getByText("Diagnostics", { exact: true }).click();
       await page
         .getByRole("button", { name: "Refresh channels", exact: true })
@@ -122,7 +121,10 @@ for (const cold of [false, true]) {
       await expect(dm).toBeVisible();
       await expect(fallback).toHaveCount(0);
       await page
-        .getByRole("button", { name: "Channel settings", exact: true })
+        .getByRole("button", {
+          name: "Close Channel settings tab",
+          exact: true,
+        })
         .click();
       await dm.click();
       await expect(

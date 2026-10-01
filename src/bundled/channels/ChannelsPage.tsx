@@ -29,6 +29,7 @@ import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useChannelPanels } from "./useChannelPanels";
+import { ChannelHeaderMenu } from "./ChannelHeaderMenu";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
 import { ChannelLifecycleActions } from "./ChannelLifecycleActions";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -1233,22 +1234,23 @@ function ChannelWorkspace({
         )
         ?.focus({ preventScroll: true });
   }, [settingsFocus, split.ref]);
+  const openCanvas = (trigger: HTMLButtonElement) => {
+    canvasTrigger.current = trigger;
+    setCanvasOpen(true);
+  };
   const settingsContent = (
     <ChannelSettingsPanel
       scope={scope}
       canvas={queries.canvas}
       canvasOpen={canvasOpen}
-      openCanvas={(trigger) => {
-        canvasTrigger.current = trigger;
-        setCanvasOpen(true);
-      }}
+      openCanvas={openCanvas}
       key={settings?.id}
       setupTools={
         current && (
           <div style={{ display: "grid", gap: "var(--space-3)" }}>
             {templateProvider && (
               <OwnedContribution
-                key={current.id}
+                key={`template:${current.id}`}
                 entry={templateProvider}
                 registry={providers}
               >
@@ -1501,24 +1503,19 @@ function ChannelWorkspace({
                         />
                       )}
                       {drawer.launchers}
-                      <IconButton
-                        ref={settingsTrigger}
-                        size="toolbar"
-                        aria-label="Channel settings"
-                        data-highlight-expanded="false"
-                        title="Channel settings"
-                        aria-expanded={showingSettings}
-                        onClick={() => {
-                          if (showingSettings) closeSettings();
-                          else {
-                            drawer.close();
-                            requestSettingsFocus((value) => value + 1);
-                            setSettings({
-                              channelId: currentId,
-                            });
-                          }
+                      <ChannelHeaderMenu
+                        key={`channel-actions:${currentId ?? "empty"}`}
+                        channel={current}
+                        session={queries}
+                        providers={providers}
+                        templateProvider={templateProvider}
+                        trigger={settingsTrigger}
+                        openDetails={() => {
+                          drawer.close();
+                          requestSettingsFocus((value) => value + 1);
+                          setSettings({ channelId: currentId });
                         }}
-                        icon={<GearIcon size="1rem" aria-hidden="true" />}
+                        openCanvas={openCanvas}
                       />
                       {current && (
                         <IconButton

@@ -294,6 +294,25 @@ Focused coverage lives in `NewMessage.test.tsx`, `direct-messages.test.ts`,
 The browser journey uses the production app and broker with ephemeral identities
 and modeled upstream I/O; it does not send messages to a live community.
 
+## Channel header actions
+
+The conversation header’s **Channel actions** ellipsis opens the shared, default-size
+(non-compact) menu. **Channel details** is first and opens or focuses the existing
+Channel Settings tab; selecting it again never closes the pane. **Canvas**, eligible
+**Edit details** / **Review pending changes**, optional **Save as template…** and
+**New session**, **Move channel**, **Mute/Unmute**, and **Mark as Read/Unread**
+reuse the sidebar’s action composition and persistent mutation/recovery owners.
+Move replaces the redundant Personal group shortcut. Permission-gated lifecycle
+actions follow in **Leave → Archive → Delete** order, with Delete in the shared
+danger tone. DMs retain Hide conversation and the separate Remove from Messages
+action; their permissions are not inferred from stream channels. Members retains its adjacent button and Diagnostics remains inside Settings.
+Session headings are unchanged. Header moves and dialog cancellation return focus
+to the ellipsis, while session creation hands focus to its composer. Read-only, cached, archived and DM eligibility stays
+with the existing capabilities. Opening the menu reads permissions, never publishes
+a lifecycle command. Menu Escape/outside dismissal returns to the header; editor and
+confirmation cancellation also return there. Dialog owners outlive menu dismissal,
+while channel/session navigation retires them.
+
 ## Channel lifecycle
 
 Lifecycle actions extend the persistent sidebar’s existing context popup after

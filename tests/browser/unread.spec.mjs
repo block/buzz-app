@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
@@ -43,12 +44,16 @@ async function visible(page) {
   });
 }
 async function options(page) {
-  const trigger = page.getByRole("button", {
+  const panel = page.getByRole("complementary", {
     name: "Channel settings",
     exact: true,
   });
-  const opening = (await trigger.getAttribute("aria-expanded")) === "false";
-  await trigger.click();
+  const opening = !(await panel.isVisible());
+  if (opening) await openChannelDetails(page);
+  else
+    await page
+      .getByRole("button", { name: "Close Channel settings tab", exact: true })
+      .click();
   if (opening) {
     // The details and lifecycle readers finish independently. Observe both before
     // checking diagnostics so a late details alert cannot escape the assertion.

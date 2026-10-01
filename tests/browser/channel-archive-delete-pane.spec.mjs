@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
@@ -427,9 +428,7 @@ test.describe("owner-role agent without direct ownership", () => {
     await expect(row).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .click();
+    await openChannelDetails(page);
     const panel = panelFor(page);
     await expect(
       panel.getByRole("button", { name: "Archive channel", exact: true }),
@@ -558,11 +557,14 @@ test.describe("owner-profile retry focus", () => {
       // Keyboard activation can reopen during exit without racing the
       // header's position as the main conversation expands.
       const trigger = page.getByRole("button", {
-        name: "Channel settings",
+        name: "Channel actions",
         exact: true,
       });
       await trigger.focus();
       await trigger.press("Enter");
+      await page
+        .getByRole("menuitem", { name: "Channel details", exact: true })
+        .click();
       await expect(retry).toBeVisible();
     };
     const attempt = async (result, moveFocus = false) => {

@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, edge, settle } from "./timeline.mjs";
 
@@ -195,9 +196,7 @@ test("reload restores the selected conversation/groups before handshake and upda
       "Fetched by successor refresh",
       false,
     );
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .click();
+    await openChannelDetails(page);
     await page.getByText("Diagnostics", { exact: true }).click();
     await page
       .getByRole("button", { name: "Refresh messages", exact: true })

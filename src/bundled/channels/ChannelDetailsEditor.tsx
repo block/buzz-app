@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
@@ -15,6 +16,8 @@ import {
   type ChannelDetails,
   type ChannelDetailsDraft,
 } from "../../features/relay/channel-details-protocol";
+import { MenuItem, MenuNote } from "../../shared/design-system/ui/Menu";
+import type { DialogProps } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import {
@@ -33,10 +36,16 @@ export function ChannelDetailsEditor({
   capability,
   channel,
   scope,
+  menu,
 }: {
   scope: string;
   capability: ChannelDetailsCapability;
   channel: ChannelSummary;
+  menu?: {
+    open: boolean;
+    finalFocus: DialogProps["finalFocus"];
+    render(items: ReactNode): ReactNode;
+  };
 }) {
   const id = channel.id;
   const attempt = useSyncExternalStore(capability.subscribe, () =>
@@ -142,7 +151,12 @@ export function ChannelDetailsEditor({
     },
     [capability, id, patch],
   );
+  const active = !menu || menu.open || view.editing;
   useEffect(() => {
+    if (!active) {
+      patch({ base: undefined, loading: true });
+      return;
+    }
     const controller = new AbortController();
     lifetime.current = controller;
     busy.current = false;
@@ -151,7 +165,7 @@ export function ChannelDetailsEditor({
       controller.abort();
     };
     // The owner and destination, not metadata updates, define this editor lifetime.
-  }, [load]);
+  }, [load, active, patch]);
   const draft = attempt?.draft ?? view.draft;
   const pending = view.pending || attempt?.status === "saving";
   const locked = view.loading || pending || !!attempt;
@@ -286,12 +300,27 @@ export function ChannelDetailsEditor({
         )}
       </div>
     ) : null;
-  return (
-    <section
-      className={styles.detailsEditor}
-      aria-label="Edit channel details"
-      aria-busy={view.loading}
-    >
+  const label = "Edit details";
+  const trigger = menu ? (
+    <>
+      {(canEdit || attempt) && <MenuItem disabled={pending} onClick={edit}>{label}</MenuItem>}
+      {!attempt && view.error && (
+        <>
+          <MenuNote role="alert">Channel details unavailable</MenuNote>
+          <MenuItem
+            closeOnClick={false}
+            disabled={view.loading}
+            onClick={() => {
+              if (lifetime.current) void load(lifetime.current.signal);
+            }}
+          >
+            Reload details
+          </MenuItem>
+        </>
+      )}
+    </>
+  ) : (
+    <section className={styles.detailsEditor} aria-label="Edit channel details" aria-busy={view.loading}>
       {(canEdit || attempt) && (
         <Button
           ref={editButton}
@@ -303,6 +332,11 @@ export function ChannelDetailsEditor({
         </Button>
       )}
       {!view.editing && status}
+    </section>
+  );
+  return (
+    <>
+      {menu ? menu.render(trigger) : trigger}
       <Dialog
         open={view.editing}
         headerGap="compact"
@@ -339,7 +373,7 @@ export function ChannelDetailsEditor({
         }
         preventClose={pending}
         initialFocus={attempt ? undefined : nameInput}
-        finalFocus={editButton}
+        finalFocus={menu ? menu.finalFocus : editButton}
         actions={
           confirmDiscard ? (
             <>
@@ -484,6 +518,6 @@ export function ChannelDetailsEditor({
           </form>
         )}
       </Dialog>
-    </section>
+    </>
   );
 }

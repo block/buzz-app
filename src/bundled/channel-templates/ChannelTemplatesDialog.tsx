@@ -16,7 +16,7 @@ import {
   type Template,
 } from "../../features/channel-templates/model";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Dialog, type DialogProps } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { AgentSelection, TemplateFields } from "./TemplateFields";
@@ -31,8 +31,10 @@ export function ChannelTemplatesDialog({
   initial,
   notice,
   active,
+  finalFocus,
 }: {
   session?: RelaySession | undefined;
+  finalFocus?: DialogProps["finalFocus"];
   active(): boolean;
   open: boolean;
   onOpenChange(open: boolean): void;
@@ -95,6 +97,7 @@ export function ChannelTemplatesDialog({
     <Dialog
       dismissOnOutsideClick
       open={open}
+      finalFocus={finalFocus}
       onOpenChange={onOpenChange}
       preventClose={busy}
       title={

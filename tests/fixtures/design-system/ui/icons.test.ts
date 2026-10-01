@@ -95,3 +95,9 @@ it("renders every Tabler glyph with the existing size and color contract", () =>
     expect(markup).not.toContain("weight=");
   }
 });
+
+it("renders the formatting icon as Tabler letter-case Aa", () => {
+  expect(
+    renderToStaticMarkup(createElement(gatewayIcons.TextAaIcon)),
+  ).toContain("tabler-icon-letter-case");
+});

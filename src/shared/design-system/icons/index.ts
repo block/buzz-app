@@ -263,7 +263,7 @@ export const BestieIcon = defineIcon("custom", BestieMarkArtwork, {
 import TablerCircleNotchIcon from "@tabler/icons-react/dist/esm/icons/IconLoader2.mjs";
 export const CircleNotchIcon = defineIcon("tabler", TablerCircleNotchIcon);
 
-import TablerTextAaIcon from "@tabler/icons-react/dist/esm/icons/IconTypography.mjs";
+import TablerTextAaIcon from "@tabler/icons-react/dist/esm/icons/IconLetterCase.mjs";
 export const TextAaIcon = defineIcon("tabler", TablerTextAaIcon);
 
 import TablerTextBIcon from "@tabler/icons-react/dist/esm/icons/IconBold.mjs";

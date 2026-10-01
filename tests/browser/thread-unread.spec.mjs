@@ -417,91 +417,258 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
   }
 });
 
-// Browser-only contract: fitting rows generate no scroll/resize when an empty
-// legacy continuation finishes. Opening alone must still earn reading dwell.
-test("opening a fitting thread reads after unchanged-row continuation without another gesture", async ({
-  page,
-  app,
-}) => {
-  await page.clock.install();
-  await open(page, app);
-  const root = app.histories
-    .get(`primary/${ids.alpha}`)
-    .find((row) => row.content === "Thread root 1");
-  const button = page
-    .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-    .getByRole("button", { name: /^View thread:/ });
-  await expect(button).toHaveAccessibleName(/\d+ unread replies/);
-  let release;
-  const gate = new Promise((resolve) => {
-    release = resolve;
-  });
-  let continuation = false;
-  await page.route("**/query", async (route) => {
-    const filters = route.request().postDataJSON();
-    if (
-      filters.some(
-        (filter) =>
-          filter.depth_limit &&
-          filter["#e"]?.[0] === root.id &&
-          filter.thread_cursor !== undefined,
-      )
-    ) {
-      continuation = true;
-      await gate;
-    }
-    await route.continue();
-  });
-  const panel = page.getByRole("complementary", {
-    name: "Thread",
-    exact: true,
-  });
-  const history = panel.getByRole("region", { name: "Thread messages" });
-  try {
-    await button.click();
-    await expect.poll(() => continuation).toBe(true);
-    await expect(
-      panel.getByText("Unread reply 1", { exact: true }),
-    ).toBeInViewport();
-    await expect(
-      page.getByRole("tab", { name: "Thread", exact: true }),
-    ).toBeFocused();
-    expect(
-      await history.evaluate(
-        (element) => element.scrollHeight <= element.clientHeight,
-      ),
-    ).toBe(true);
-    await page.clock.runFor(300);
-    await expect(button).toHaveAccessibleName(/\d+ unread replies/);
-  } finally {
-    release();
-  }
-  await expect(button).not.toHaveAccessibleName(/\d+ unread replies/);
-  // An explicit retarget of the still-open panel also transfers reading focus.
-  const otherRoot = app.histories
-    .get(`primary/${ids.alpha}`)
-    .find((row) => row.content === "Thread root 0");
-  const other = page
-    .locator(`[data-channel-timeline] [data-message-id="${otherRoot.id}"]`)
-    .getByRole("button", { name: /^View thread:/ });
-  await other.click();
-  await expect(panel).toHaveCount(1);
-  await expect(
-    page.getByRole("tab", { name: "Thread", exact: true }),
-  ).toBeFocused();
-  const reply = panel
-    .locator("[data-message-id]")
-    .filter({ hasText: "Unread reply 0" });
-  await expect(reply).toBeInViewport();
-  const id = await reply.getAttribute("data-message-id");
-  await expect
-    .poll(() =>
-      page.evaluate(
-        ({ id, channelId }) =>
-          window.fixtureRelay.snapshot().session.unread.attention(channelId, id)
-            .unread,
-        { id, channelId: ids.alpha },
-      ),
-    )
-    .toBe(false);
-});
+// Browser-only: readiness must wake dwell without another focus/geometry gesture.
+// Strict completes its first window; legacy completes an empty forward continuation.
+for (const legacy of [false, true]) {
+  test(
+    legacy
+      ? "UUID fallback reads fitting unchanged rows after the empty legacy continuation"
+      : "strict fitting thread reads after its held initial window without another gesture",
+    async ({ page, app }, testInfo) => {
+      await page.clock.install();
+      const root = app.histories
+        .get(`primary/${ids.alpha}`)
+        .find((row) => row.content === "Thread root 1");
+      // Keep the original uppercase-reference reply; add legitimate canonical
+      // signed evidence for the missing-bounds fallback's exact-reference check.
+      const canonical = legacy ? app.reply(root.id, false, false) : undefined;
+      const replies = app.threadReplies.get(root.id);
+      const newest = replies.at(-1);
+      await open(page, app);
+      const button = page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ });
+      await expect(button).toHaveAccessibleName(/\d+ unread replies/);
+      let release;
+      const gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      let pending = false;
+      const exchanges = [];
+      const routes = [];
+      const owns = (filter) =>
+        filter.depth_limit && filter["#e"]?.[0] === root.id;
+      await page.route("**/query", (route) => {
+        const task = (async () => {
+          const filters = route.request().postDataJSON();
+          const filter = filters.find(owns);
+          if (!filter) return route.continue();
+          if (
+            legacy
+              ? filter.thread_cursor !== undefined
+              : filter.thread_window && filter.until === undefined
+          ) {
+            pending = true;
+            await gate;
+          }
+          if (legacy && !filter.thread_window) {
+            // The broker fixture models strict windows, not legacy batches.
+            // Model this root's fallback locally using untouched signed events;
+            // this is browser fallback coverage, not broker-transport coverage.
+            expect(filters).toHaveLength(2);
+            expect(filters[0]).toEqual({
+              ids: [root.id],
+              "#h": [ids.alpha],
+              limit: 1,
+            });
+            expect(filter).toMatchObject({
+              "#h": [ids.alpha],
+              "#e": [root.id],
+              depth_limit: 100,
+              include_aux: true,
+              limit: 50,
+            });
+            expect(filter.kinds.toSorted((a, b) => a - b)).toEqual([
+              9, 40002, 40008,
+            ]);
+            for (const key of ["thread_window", "until", "before_id"])
+              expect(filter[key]).toBeUndefined();
+            const continuation = filter.thread_cursor !== undefined;
+            if (continuation) {
+              expect(filter.thread_cursor).toBe(newest.created_at);
+              expect(filter.thread_cursor_id).toBe(newest.id);
+            } else expect(filter.thread_cursor_id).toBeUndefined();
+            const events = continuation ? [root] : [root, ...replies];
+            exchanges.push({ filters, events });
+            return route.fulfill({ json: events });
+          }
+          const response = await route.fetch();
+          const original = await response.json();
+          const events =
+            legacy && filter.thread_window && filter.until === undefined
+              ? original.filter((event) => event.kind !== 39007)
+              : original;
+          exchanges.push({ filters, events });
+          await route.fulfill({ response, json: events });
+        })();
+        routes.push(task);
+        return task;
+      });
+      const panel = page.getByRole("complementary", {
+        name: "Thread",
+        exact: true,
+      });
+      const history = panel.getByRole("region", { name: "Thread messages" });
+      const applied = () =>
+        app.report.readWrites.some(({ intents, outcomes }) =>
+          intents.some(
+            (intent, i) =>
+              replies.some((reply) => reply.id === intent.message_id) &&
+              outcomes[i].status === "applied",
+          ),
+        );
+      const geometry = () =>
+        history.evaluate((element) => ({
+          ids: [...element.querySelectorAll("[data-message-id]")].map(
+            (row) => row.dataset.messageId,
+          ),
+          height: element.scrollHeight,
+          clientHeight: element.clientHeight,
+          top: element.scrollTop,
+        }));
+      let before;
+      try {
+        await button.click();
+        await expect.poll(() => pending).toBe(true);
+        await expect(
+          page.getByRole("tab", { name: "Thread", exact: true }),
+        ).toBeFocused();
+        await expect(history.locator("[data-thread-rows]")).not.toHaveAttribute(
+          "inert",
+        );
+        await expect(
+          history.locator(`[data-message-id="${root.id}"]`),
+        ).toBeVisible();
+        await expect(history.locator("[data-message-id]")).toHaveCount(
+          legacy ? 3 : 1,
+        );
+        if (legacy) {
+          await expect(
+            panel.getByText("Unread reply 1", { exact: true }),
+          ).toBeInViewport();
+          await expect(
+            panel.getByText("New peer reply", { exact: true }),
+          ).toBeInViewport();
+          expect(exchanges).toHaveLength(2);
+          const probe = exchanges[0];
+          expect(probe.filters.find(owns)).toMatchObject({
+            thread_window: true,
+            limit: 10,
+          });
+          expect(probe.events.some((event) => event.id === canonical.id)).toBe(
+            true,
+          );
+          expect(probe.events.some((event) => event.kind === 39007)).toBe(
+            false,
+          );
+          const restart = exchanges[1].filters;
+          expect(restart.some((filter) => filter.ids?.includes(root.id))).toBe(
+            true,
+          );
+          expect(restart.find(owns)).toMatchObject({ limit: 50 });
+          for (const key of [
+            "thread_window",
+            "until",
+            "before_id",
+            "thread_cursor",
+            "thread_cursor_id",
+          ])
+            expect(restart.find(owns)[key]).toBeUndefined();
+        }
+        before = await geometry();
+        expect(before.height).toBeLessThanOrEqual(before.clientHeight);
+        await page.clock.runFor(300);
+        await expect(button).toHaveAccessibleName(/\d+ unread replies/);
+        expect(applied()).toBe(false);
+        release();
+        await expect.poll(() => exchanges.length).toBe(legacy ? 3 : 1);
+        await expect(history.locator("[data-message-id]")).toHaveCount(
+          replies.length + 1,
+        );
+        await expect(
+          panel.getByText("Unread reply 1", { exact: true }),
+        ).toBeInViewport();
+        const completed = exchanges.at(-1);
+        if (legacy) {
+          expect(completed.filters.find(owns)).toMatchObject({
+            thread_cursor: newest.created_at,
+            thread_cursor_id: newest.id,
+          });
+          expect(
+            completed.events.filter(
+              (event) => event.kind === 9 && event.id !== root.id,
+            ),
+          ).toEqual([]);
+          expect(await geometry()).toEqual(before);
+        } else {
+          expect(
+            completed.events
+              .filter((event) => event.kind === 39007)
+              .map((event) => JSON.parse(event.content)),
+          ).toMatchObject([{ has_more: false, next_cursor: null }]);
+          expect(
+            app.report.queries.filter(
+              ({ filter }) =>
+                owns(filter) && filter.thread_cursor !== undefined,
+            ),
+          ).toEqual([]);
+          const fitted = await geometry();
+          expect(fitted.height).toBeLessThanOrEqual(fitted.clientHeight);
+        }
+        // No gesture after release. React's readiness notification, not a test
+        // focus/scroll event, must start the dwell. Badge refresh is separately debounced.
+        await page.clock.runFor(300);
+        await expect.poll(applied, { timeout: 12000 }).toBe(true);
+        await expect(button).not.toHaveAccessibleName(/\d+ unread replies/);
+        await testInfo.attach("fitting-thread-readiness", {
+          body: JSON.stringify(
+            {
+              legacy,
+              before,
+              after: await geometry(),
+              exchanges,
+              readWrites: app.report.readWrites,
+            },
+            null,
+            2,
+          ),
+          contentType: "application/json",
+        });
+        // An explicit retarget of the still-open panel also transfers reading focus.
+        const otherRoot = app.histories
+          .get(`primary/${ids.alpha}`)
+          .find((row) => row.content === "Thread root 0");
+        const other = page
+          .locator(
+            `[data-channel-timeline] [data-message-id="${otherRoot.id}"]`,
+          )
+          .getByRole("button", { name: /^View thread:/ });
+        await other.click();
+        await expect(panel).toHaveCount(1);
+        await expect(
+          page.getByRole("tab", { name: "Thread", exact: true }),
+        ).toBeFocused();
+        const reply = panel
+          .locator("[data-message-id]")
+          .filter({ hasText: "Unread reply 0" });
+        await expect(reply).toBeInViewport();
+        const id = await reply.getAttribute("data-message-id");
+        await expect
+          .poll(() =>
+            page.evaluate(
+              ({ id, channelId }) =>
+                window.fixtureRelay
+                  .snapshot()
+                  .session.unread.attention(channelId, id).unread,
+              { id, channelId: ids.alpha },
+            ),
+          )
+          .toBe(false);
+      } finally {
+        release();
+        await Promise.all(routes);
+        await page.unroute("**/query");
+      }
+    },
+  );
+}

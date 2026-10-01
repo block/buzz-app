@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 import { createAgentControl } from "../features/agents/control";
@@ -226,81 +226,110 @@ it("looks up Pi models only on Browse, then recovers from failure using the draf
   ).toBeDisabled();
 });
 
-it("offers a masked Pi API key for model lookup and saves it write-only", async () => {
-  const user = userEvent.setup();
-  const requests: ModelRequest[] = [];
-  const { fixture, control } = setup(0, 0, (f) => {
-    f.data.defaultSettings = {
-      harness: "pi",
-      provider: "openai",
-      model: "gpt-5",
-      effort: "",
-      sessionPolicy: "channel",
-      environmentKeys: ["OPENAI_API_KEY"],
-    };
-    f.data.harnessOptions?.push({
-      command: "/usr/local/bin/buzz-pi-acp",
-      label: "Pi",
-      available: true,
-      providers: [],
+it.each([
+  {
+    harness: "pi" as const,
+    command: "/usr/local/bin/buzz-pi-acp",
+    label: "Pi",
+    provider: "google",
+    env: "GEMINI_API_KEY",
+    id: "google/gemini-2.5-pro",
+  },
+  {
+    harness: "goose" as const,
+    command: "/usr/local/bin/goose",
+    label: "Goose",
+    provider: "google",
+    env: "GOOGLE_API_KEY",
+    id: "gemini-2.5-pro",
+  },
+])(
+  "offers a masked $harness default key for lookup and saves it write-only",
+  async ({ harness, command, label, provider, env, id }) => {
+    const user = userEvent.setup();
+    const requests: ModelRequest[] = [];
+    const { fixture, control } = setup(0, 0, (f) => {
+      f.data.defaultSettings = {
+        harness,
+        provider,
+        model: "gemini-2.5-pro",
+        effort: "",
+        sessionPolicy: "channel",
+        environmentKeys: [env],
+      };
+      f.data.harnessOptions?.push({
+        command,
+        label,
+        available: true,
+        providers: [{ value: provider, label: "Google Gemini" }],
+      });
+      f.host.models = {
+        begin: async () => 1,
+        cancel: async () => {},
+        run: async (_ticket, request) => {
+          requests.push(request);
+          return {
+            host: "",
+            models: [{ id, name: "Gemini 2.5 Pro" }],
+            modelOverridden: false,
+            disconnected: false,
+          };
+        },
+      };
     });
-    f.host.models = {
-      begin: async () => 1,
-      cancel: async () => {},
-      run: async (_ticket, request) => {
-        requests.push(request);
-        return {
-          host: "",
-          models: [{ id: "openai/gpt-5", name: "GPT-5" }],
-          modelOverridden: false,
-          disconnected: false,
-        };
-      },
-    };
-  });
-  await control.refresh();
-  const card = await screen.findByRole("region", { name: "Agent defaults" });
-  const key = within(card).getByLabelText("OpenAI API key");
-  expect(key).toHaveAttribute("type", "password");
-  expect(key).toHaveValue("");
-  expect(key).toHaveAttribute("placeholder", "Saved key unchanged");
-  await user.type(key, "replacement-key");
-  expect(key).toHaveAttribute("type", "password");
-  await user.click(within(card).getByRole("button", { name: "Show API key" }));
-  expect(key).toHaveAttribute("type", "text");
-  await user.click(within(card).getByRole("button", { name: "Browse models" }));
-  expect(await within(card).findByText(/Model choices loaded/)).toBeVisible();
-  expect(requests[0]?.edit?.environment).toEqual({
-    OPENAI_API_KEY: "replacement-key",
-  });
-  await user.click(within(card).getByRole("button", { name: "Save defaults" }));
-  expect(await within(card).findByText("Saved.")).toBeVisible();
-  expect(
-    fixture.calls.find((call) => call.action === "saveDefaults"),
-  ).toMatchObject({
-    payload: { edit: { environment: { OPENAI_API_KEY: "replacement-key" } } },
-  });
-  expect(within(card).getByLabelText("OpenAI API key")).toHaveValue("");
-  expect(within(card).getByLabelText("OpenAI API key")).toHaveAttribute(
-    "placeholder",
-    "Saved key unchanged",
-  );
-  expect(card).not.toHaveTextContent("replacement-key");
-  await user.type(within(card).getByLabelText("OpenAI API key"), "next-key");
-  expect(within(card).getByLabelText("OpenAI API key")).toHaveAttribute(
-    "type",
-    "password",
-  );
-});
+    await control.refresh();
+    const card = await screen.findByRole("region", { name: "Agent defaults" });
+    const key = within(card).getByLabelText("Google Gemini API key");
+    expect(key).toHaveAttribute("type", "password");
+    expect(key).toHaveValue("");
+    expect(key).toHaveAttribute("placeholder", "Saved key unchanged");
+    await user.type(key, "replacement-key");
+    expect(key).toHaveAttribute("type", "password");
+    await user.click(
+      within(card).getByRole("button", { name: "Show API key" }),
+    );
+    expect(key).toHaveAttribute("type", "text");
+    await user.click(
+      within(card).getByRole("button", { name: "Browse models" }),
+    );
+    expect(await within(card).findByText(/Model choices loaded/)).toBeVisible();
+    expect(requests[0]?.edit?.environment).toEqual({
+      [env]: "replacement-key",
+    });
+    await user.click(
+      within(card).getByRole("button", { name: "Save defaults" }),
+    );
+    expect(await within(card).findByText("Saved.")).toBeVisible();
+    expect(
+      fixture.calls.find((call) => call.action === "saveDefaults"),
+    ).toMatchObject({
+      payload: { edit: { environment: { [env]: "replacement-key" } } },
+    });
+    expect(within(card).getByLabelText("Google Gemini API key")).toHaveValue(
+      "",
+    );
+    expect(
+      within(card).getByLabelText("Google Gemini API key"),
+    ).toHaveAttribute("placeholder", "Saved key unchanged");
+    expect(card).not.toHaveTextContent("replacement-key");
+    await user.type(
+      within(card).getByLabelText("Google Gemini API key"),
+      "next-key",
+    );
+    expect(
+      within(card).getByLabelText("Google Gemini API key"),
+    ).toHaveAttribute("type", "password");
+  },
+);
 
-it("offers a Goose default API key for model lookup and saves it write-only", async () => {
+it("searches the full catalog by ID while bounding choices and distinguishing duplicate names", async () => {
   const user = userEvent.setup();
   const requests: ModelRequest[] = [];
   const { fixture, control } = setup(0, 0, (f) => {
     f.data.defaultSettings = {
       harness: "goose",
-      provider: "google",
-      model: "gemini-2.5-pro",
+      provider: "openai",
+      model: "",
       effort: "",
       sessionPolicy: "channel",
       environmentKeys: [],
@@ -309,7 +338,7 @@ it("offers a Goose default API key for model lookup and saves it write-only", as
       command: "/usr/local/bin/goose",
       label: "Goose",
       available: true,
-      providers: [{ value: "google", label: "Google Gemini" }],
+      providers: [{ value: "openai", label: "OpenAI" }],
     });
     f.host.models = {
       begin: async () => 1,
@@ -318,7 +347,10 @@ it("offers a Goose default API key for model lookup and saves it write-only", as
         requests.push(request);
         return {
           host: "",
-          models: [{ id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" }],
+          models: Array.from({ length: 12 }, (_, index) => ({
+            id: `model-${index}`,
+            name: "Same name",
+          })),
           modelOverridden: false,
           disconnected: false,
         };
@@ -327,27 +359,76 @@ it("offers a Goose default API key for model lookup and saves it write-only", as
   });
   await control.refresh();
   const card = await screen.findByRole("region", { name: "Agent defaults" });
-  const key = within(card).getByLabelText("Google Gemini API key");
-  expect(key).toHaveAttribute("type", "password");
-  await user.type(key, "goose-key");
   await user.click(within(card).getByRole("button", { name: "Browse models" }));
   expect(await within(card).findByText(/Model choices loaded/)).toBeVisible();
-  expect(requests[0]?.edit?.environment).toEqual({
-    GOOGLE_API_KEY: "goose-key",
-  });
+  await user.click(
+    within(card).getByRole("combobox", { name: "Default model" }),
+  );
+  expect(
+    await screen.findByRole("option", { name: "Same name · model-0" }),
+  ).toBeVisible();
+  expect(screen.getAllByRole("option")).toHaveLength(12); // Ten models, default, custom.
+  await user.keyboard("{Escape}");
+  await user.type(
+    within(card).getByRole("textbox", { name: "Search models" }),
+    "model-11",
+  );
+  await user.click(
+    within(card).getByRole("combobox", { name: "Default model" }),
+  );
+  await user.click(
+    await screen.findByRole("option", { name: "Same name · model-11" }),
+  );
+  await user.clear(
+    within(card).getByRole("textbox", { name: "Search models" }),
+  );
+  await user.type(
+    within(card).getByRole("textbox", { name: "Search models" }),
+    "no-match",
+  );
+  expect(
+    within(card).getByRole("combobox", { name: "Default model" }),
+  ).toHaveTextContent("model-11");
+  expect(requests).toHaveLength(1);
+  await user.type(within(card).getByLabelText("OpenAI API key"), "draft-key");
+  expect(
+    within(card).getByRole("textbox", { name: "Custom default model ID" }),
+  ).toHaveValue("model-11");
   await user.click(within(card).getByRole("button", { name: "Save defaults" }));
   expect(await within(card).findByText("Saved.")).toBeVisible();
+  expect(fixture.data.defaultSettings?.model).toBe("model-11");
   expect(
-    fixture.calls.find((call) => call.action === "saveDefaults"),
-  ).toMatchObject({
-    payload: { edit: { environment: { GOOGLE_API_KEY: "goose-key" } } },
-  });
-  expect(within(card).getByLabelText("Google Gemini API key")).toHaveValue("");
-  expect(within(card).getByLabelText("Google Gemini API key")).toHaveAttribute(
-    "placeholder",
-    "Saved key unchanged",
-  );
+    within(card).getByRole("textbox", { name: "Custom default model ID" }),
+  ).toHaveValue("model-11");
 });
+
+it.each([
+  { harness: "buzz-agent" as const, override: "BUZZ_AGENT_MODEL" },
+  { harness: "goose" as const, override: "GOOSE_MODEL" },
+])(
+  "warns about $override before browsing and respects its draft removal",
+  async ({ harness, override }) => {
+    const user = userEvent.setup();
+    const { control } = setup(0, 0, (f) => {
+      if (!f.data.defaultSettings) throw Error("Missing defaults");
+      f.data.defaultSettings.harness = harness;
+      f.data.defaultSettings.environmentKeys = [override];
+    });
+    await control.refresh();
+    const card = await screen.findByRole("region", { name: "Agent defaults" });
+    expect(
+      within(card).getByText(
+        `${override} overrides this model selection. Replace or remove it under Environment variables.`,
+      ),
+    ).toBeVisible();
+    await user.click(
+      within(card).getByRole("button", { name: `Remove ${override}` }),
+    );
+    expect(
+      within(card).queryByText(/overrides this model selection/),
+    ).toBeNull();
+  },
+);
 
 it("waits for a hidden Goose provider override to be removed before offering its key", async () => {
   const user = userEvent.setup();
@@ -359,6 +440,19 @@ it("waits for a hidden Goose provider override to be removed before offering its
       effort: "",
       sessionPolicy: "channel",
       environmentKeys: ["GOOSE_PROVIDER"],
+    };
+    f.data.harnessOptions?.push({
+      command: "/usr/local/bin/goose",
+      label: "Goose",
+      available: true,
+      providers: [],
+    });
+    f.host.models = {
+      begin: async () => 1,
+      cancel: async () => {},
+      run: async () => {
+        throw "Unexpected lookup";
+      },
     };
   });
   await control.refresh();
@@ -374,6 +468,14 @@ it("waits for a hidden Goose provider override to be removed before offering its
     "type",
     "password",
   );
+  expect(
+    within(card).getByRole("button", { name: "Browse models" }),
+  ).toBeDisabled();
+  expect(
+    within(card).getByText(
+      "Save environment removals before browsing models so lookup uses the updated settings.",
+    ),
+  ).toBeVisible();
 });
 
 it("drops an unsaved Pi key when its provider changes", async () => {
@@ -478,6 +580,14 @@ it("keeps a custom effort editable and clears it on harness changes", async () =
 
 it("cancels an in-flight lookup without losing the editable defaults draft", async () => {
   const user = userEvent.setup();
+  let started!: () => void;
+  const start = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let finished!: () => void;
+  const finish = new Promise<void>((resolve) => {
+    finished = resolve;
+  });
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -487,7 +597,9 @@ it("cancels an in-flight lookup without losing the editable defaults draft", asy
       begin: async () => 1,
       cancel: async () => {},
       run: async () => {
+        started();
         await gate;
+        finished();
         return {
           host: "",
           models: [{ id: "late-model", name: "Late model" }],
@@ -503,6 +615,7 @@ it("cancels an in-flight lookup without losing the editable defaults draft", asy
     await user.click(
       within(card).getByRole("button", { name: "Browse models" }),
     );
+    await start;
     expect(
       await within(card).findByRole("button", { name: "Cancel model lookup" }),
     ).toBeVisible();
@@ -524,6 +637,24 @@ it("cancels an in-flight lookup without losing the editable defaults draft", asy
       within(card).getByRole("textbox", { name: "Custom default model ID" }),
     ).toHaveValue("manual-model");
     expect(fixture.data.defaultSettings?.model).toBe("old-model");
+    await act(async () => {
+      release();
+      await finish;
+    });
+    expect(
+      within(card).getByRole("button", { name: "Retry models" }),
+    ).toBeEnabled();
+    await user.click(
+      within(card).getByRole("combobox", { name: "Default model" }),
+    );
+    expect(
+      await screen.findByRole("option", { name: "Custom ID" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("option", { name: /Late model/ })).toBeNull();
+    await user.keyboard("{Escape}");
+    expect(
+      within(card).getByRole("textbox", { name: "Custom default model ID" }),
+    ).toHaveValue("manual-model");
   } finally {
     release();
   }
@@ -615,6 +746,10 @@ it("keeps the uncertain-write explanation when Stop overtakes a committed save",
   await control.refresh();
   const commit = fixture.host.saveDefaults;
   if (!commit) throw Error("Missing fixture");
+  let committed!: () => void;
+  const written = new Promise<void>((resolve) => {
+    committed = resolve;
+  });
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -622,6 +757,7 @@ it("keeps the uncertain-write explanation when Stop overtakes a committed save",
   // Native commits the defaults, then waits on a restart credential prompt.
   fixture.host.saveDefaults = async (edit) => {
     const saved = await commit(edit);
+    committed();
     await gate;
     return saved;
   };
@@ -634,9 +770,15 @@ it("keeps the uncertain-write explanation when Stop overtakes a committed save",
     "committed",
   );
   await user.keyboard("{Enter}");
-  await user.click(within(card).getByRole("button", { name: "Save defaults" }));
-  await control.action(fixture.agent.id, "stop");
-  release();
+  try {
+    await user.click(
+      within(card).getByRole("button", { name: "Save defaults" }),
+    );
+    await written;
+    await control.action(fixture.agent.id, "stop");
+  } finally {
+    release();
+  }
   const alert = await within(card).findByRole("alert");
   expect(alert).toHaveTextContent("Could not confirm the operation");
   expect(alert).toHaveTextContent("Check current status and saved settings");

@@ -33,6 +33,8 @@ const effortChoices = {
   pi: ["off", "minimal", "low", "medium", "high", "xhigh"],
 } as const;
 
+const VISIBLE_MODEL_LIMIT = 10;
+
 function defaultLabel(harness: AgentDefaultsEdit["harness"], value: string) {
   return value && harness === "buzz-agent"
     ? `Use build default (${value})`
@@ -69,6 +71,9 @@ function DefaultsChoice({
   return (
     <div className="space-y-3">
       <Select
+        // A removed catalog option becomes editable text; retire the old
+        // Select so its option-removal fallback cannot clear the chosen ID.
+        key={showInput ? "custom" : "choice"}
         label={label}
         variant="field"
         disabled={disabled}
@@ -161,7 +166,11 @@ function ProviderChoice({
       : current.harness === "buzz-agent"
         ? "BUZZ_AGENT_PROVIDER"
         : null;
-  const change = (provider: string) => onChange(provider);
+  const providerOverridden =
+    !!overrideKey &&
+    (typeof current.environment[overrideKey] === "string" ||
+      (current.environment[overrideKey] === undefined &&
+        !!state.data?.defaultSettings?.environmentKeys.includes(overrideKey)));
   return (
     <div className="space-y-2">
       <DefaultsChoice
@@ -173,15 +182,15 @@ function ProviderChoice({
         ]}
         disabled={disabled}
         resetKey={`${current.harness}-${editSession}`}
-        onSelect={change}
-        onCustom={change}
+        onSelect={onChange}
+        onCustom={onChange}
       />
-      {overrideKey &&
-        state.data?.defaultSettings?.environmentKeys.includes(overrideKey) && (
-          <p className="m-0 text-body-sm text-warning">
-            A saved {overrideKey} environment value can override this provider.
-          </p>
-        )}
+      {providerOverridden && (
+        <p className="m-0 text-body-sm text-warning">
+          {overrideKey} overrides this provider selection. Replace or remove it
+          under Environment variables.
+        </p>
+      )}
     </div>
   );
 }
@@ -225,6 +234,7 @@ function ModelChoice({
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [attempted, setAttempted] = useState(false);
+  const [query, setQuery] = useState("");
   const pending = useRef<AbortController | null>(null);
   const key = JSON.stringify([
     current.harness,
@@ -233,9 +243,13 @@ function ModelChoice({
     harness?.defaultArgs,
     current.environment,
     state.data?.defaultWorkspace,
+    state.data?.databricksDefaults,
+    state.data?.defaultSettings?.environmentKeys,
   ]);
   const currentKey = useRef(key);
   currentKey.current = key;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: search text belongs to this provider and editing session.
+  useEffect(() => setQuery(""), [current.provider, editSession]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: key is the lookup context; a changed context retires native work.
   useEffect(() => {
     pending.current?.abort();
@@ -243,6 +257,7 @@ function ModelChoice({
     setBusy(false);
     setAttempted(false);
     setStatus("");
+    setQuery("");
     onModels([]);
     return () => {
       pending.current?.abort();
@@ -257,6 +272,26 @@ function ModelChoice({
     pi && current.provider && current.model
       ? `${current.provider}/${current.model}`
       : current.model;
+  const matching = entries
+    .filter((model) =>
+      `${model.name} ${model.id}`.toLowerCase().includes(query.toLowerCase()),
+    )
+    .slice(0, VISIBLE_MODEL_LIMIT);
+  // Filtering must not turn the current catalog choice into a custom ID.
+  const selected = entries.find((model) => model.id === selectedId);
+  if (selected && !matching.some((model) => model.id === selected.id))
+    matching.unshift(selected);
+  const modelKey = {
+    "buzz-agent": "BUZZ_AGENT_MODEL",
+    goose: "GOOSE_MODEL",
+    pi: "",
+  }[current.harness];
+  const modelOverridden =
+    !!modelKey &&
+    (typeof current.environment[modelKey] === "string" ||
+      (current.environment[modelKey] === undefined &&
+        !!state.data?.defaultSettings?.environmentKeys.includes(modelKey)));
+  const removingEnvironment = Object.values(current.environment).includes(null);
   const choices: Choice[] = [
     {
       value: "",
@@ -265,7 +300,10 @@ function ModelChoice({
         state.data?.agentDefaults?.model ?? "",
       ),
     },
-    ...entries.map((model) => ({ value: model.id, label: model.name })),
+    ...matching.map((model) => ({
+      value: model.id,
+      label: model.name === model.id ? model.id : `${model.name} · ${model.id}`,
+    })),
   ];
   const choose = (value: string) => {
     if (pi && !value) onChange({ provider: "", model: "" });
@@ -282,6 +320,7 @@ function ModelChoice({
       !control.models ||
       !harness ||
       harness.available === false ||
+      removingEnvironment ||
       pending.current
     )
       return;
@@ -350,6 +389,19 @@ function ModelChoice({
   };
   return (
     <div className="space-y-2">
+      {entries.length > VISIBLE_MODEL_LIMIT && (
+        <Field
+          label="Search models"
+          description={`Search all ${entries.length} models by name or ID. Up to ${VISIBLE_MODEL_LIMIT} matches are shown, plus the selected model.`}
+        >
+          <Input
+            disabled={disabled}
+            value={query}
+            spellCheck={false}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </Field>
+      )}
       <DefaultsChoice
         label="Default model"
         value={selectedId}
@@ -360,6 +412,12 @@ function ModelChoice({
         onSelect={choose}
         onCustom={(model) => onChange({ model })}
       />
+      {modelOverridden && (
+        <p className="m-0 text-body-sm text-warning">
+          {modelKey} overrides this model selection. Replace or remove it under
+          Environment variables.
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         {busy ? (
           <Button
@@ -380,6 +438,7 @@ function ModelChoice({
               !control.models ||
               !harness ||
               harness.available === false ||
+              removingEnvironment ||
               (current.harness === "goose" && !current.provider)
             }
             onClick={() => void browse()}
@@ -416,10 +475,10 @@ function ModelChoice({
           defaults.
         </p>
       )}
-      {Object.keys(current.environment).length > 0 && (
+      {removingEnvironment && (
         <p className="m-0 text-body-sm text-secondary">
-          Saved environment values can still affect lookup until these edits are
-          saved.
+          Save environment removals before browsing models so lookup uses the
+          updated settings.
         </p>
       )}
     </div>

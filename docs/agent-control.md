@@ -236,6 +236,9 @@ provider, model, effort and environment variables.
   A key entered there is a write-only
   global environment override, used by model lookup and inherited by agents
   without their own key. Switching provider or harness drops an unsaved key.
+- Model choices include exact IDs. Catalogs over ten models have a local search
+  by name or ID; filtering does not change the selection. Environment removals
+  must be saved before browsing because lookup still inherits saved values.
 
 The store is `defaults.json` under app-data `agent-controller/`, not
 localStorage, written atomically with owner-only permissions (0600).

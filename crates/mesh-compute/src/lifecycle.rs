@@ -3,6 +3,9 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+pub const MESH_STOP_TIMEOUT: Duration = Duration::from_secs(12);
 use tokio::sync::{mpsc, watch};
 
 use crate::config::ClientConfig;
@@ -23,7 +26,8 @@ impl Node for mesh_llm_sdk::EmbeddedNodeHandle {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "state", content = "reason", rename_all = "camelCase")]
 pub enum Phase {
     Stopped,
     Starting,
@@ -106,8 +110,11 @@ impl Lifecycle {
                     }
                 }
             }
-            // Keep the slot occupied until the real SDK stop settles. No timeout drops it.
-            let result = node.stop().await;
+            // A timeout is not proof of shutdown: retain Failed and reject replacement.
+            let result = match tokio::time::timeout(MESH_STOP_TIMEOUT, node.stop()).await {
+                Ok(result) => result,
+                Err(_) => Err(anyhow::anyhow!("Mesh shutdown timed out; restart Buzz before starting another runtime")),
+            };
             let mut slot = shared.lock().expect("mesh slot poisoned");
             slot.phase = match result {
                 Ok(()) => Phase::Stopped,
@@ -134,6 +141,22 @@ impl Lifecycle {
             .ok_or_else(|| anyhow::anyhow!("Mesh worker is unavailable"))?
             .try_send(token)
             .map_err(|_| anyhow::anyhow!("Mesh dial queue is full or unavailable"))
+    }
+
+    /// Caller timeout never cancels startup or changes the slot to Stopped.
+    pub async fn stop_and_wait(&self) -> anyhow::Result<()> {
+        self.stop();
+        tokio::time::timeout(MESH_STOP_TIMEOUT, async {
+            loop {
+                match self.phase() {
+                    Phase::Stopped => return Ok(()),
+                    Phase::Failed(reason) => anyhow::bail!(reason),
+                    _ => tokio::time::sleep(Duration::from_millis(25)).await,
+                }
+            }
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("Finishing stop; restart Buzz if this persists"))?
     }
 
     pub fn stop(&self) {
@@ -259,6 +282,23 @@ mod tests {
         })
         .await
         .unwrap();
+        let (next, _, _, _) = fixture();
+        assert!(owner.launch(async { Ok(next) }).is_err());
+    }
+    #[tokio::test(start_paused = true)]
+    async fn ready_stop_timeout_never_permits_replacement() {
+        let owner = Lifecycle::default();
+        let (node, stopped, _release, mut joined) = fixture();
+        owner.launch(async { Ok(node) }).unwrap();
+        owner.enqueue("barrier".into()).unwrap();
+        joined.recv().await.unwrap();
+        assert_eq!(owner.phase(), Phase::Ready);
+        owner.stop();
+        stopped.await.unwrap();
+        tokio::time::advance(MESH_STOP_TIMEOUT).await;
+        while !matches!(owner.phase(), Phase::Failed(_)) {
+            tokio::task::yield_now().await;
+        }
         let (next, _, _, _) = fixture();
         assert!(owner.launch(async { Ok(next) }).is_err());
     }

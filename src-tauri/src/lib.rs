@@ -12,7 +12,7 @@ mod dock;
 mod host_command;
 mod host_request;
 mod mesh_compute;
-use mesh_compute::mesh_compute_status;
+use mesh_compute::{mesh_compute_status, mesh_compute_stop, MeshHost};
 mod identity;
 mod notifications;
 mod os_idle;
@@ -378,6 +378,7 @@ async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         mesh_compute_status,
+        mesh_compute_stop,
         identity_restore,
         identity_import,
         identity_create,
@@ -520,6 +521,7 @@ pub fn run() {
     };
     builder
         .manage(IdentityHost::default())
+        .manage(MeshHost::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())
@@ -577,6 +579,7 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<MeshHost>().shutdown();
                 app.state::<HarnessSetup>().shutdown();
                 browser::shutdown();
                 if let Err(error) = app.state::<Terminals>().shutdown() {

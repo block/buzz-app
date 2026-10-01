@@ -100,75 +100,65 @@ it.each([null, "primary"])(
   },
 );
 
-it.each(["primary", null])(
-  "uses contributed icons and personal opt-in with selection %s",
-  (selected) => {
-    const client = {
-      selected,
-      memberships: [{ id: "primary", name: "Primary" }],
-    };
-    const connection = { scope: "icon-test" };
-    const entries = [
-      {
-        id: "compute",
-        key: "mesh/compute",
-        pluginId: "mesh",
-        revision: "one",
-        title: "Compute",
-        component: () => null,
-        icon: CpuIcon,
-        showInPersonalSpace: true,
-      },
-      {
-        id: "other",
-        key: "other/card",
-        pluginId: "other",
-        revision: "one",
-        title: "Other",
-        component: () => null,
-      },
-    ];
-    render(
-      <SettingsSidebar
-        communities={
-          {
-            snapshot: () => client,
-            subscribe: () => () => {},
-            relay: { snapshot: () => connection, subscribe: () => () => {} },
-          } as unknown as Communities
-        }
-        cards={
-          {
-            snapshot: () => entries,
-            subscribe: () => () => {},
-          } as unknown as SettingsCards
-        }
-        onBack={() => {}}
-        onSection={() => {}}
-      />,
-    );
-    const reference = render(
-      <>
-        <CpuIcon data-testid="cpu-reference" />
-        <ChatCircleIcon data-testid="chat-reference" />
-      </>,
-    );
-    expect(
-      screen.getByRole("button", { name: "Compute" }).querySelector("svg")
-        ?.innerHTML,
-    ).toBe(reference.getByTestId("cpu-reference").innerHTML);
-    if (selected) {
-      expect(
-        screen.getByRole("button", { name: "Other" }).querySelector("svg")
-          ?.innerHTML,
-      ).toBe(reference.getByTestId("chat-reference").innerHTML);
-    } else {
-      expect(
-        screen.queryByRole("button", { name: "Other" }),
-      ).not.toBeInTheDocument();
-    }
-    expect(
-      screen.getByRole("button", { name: "Compute" }).closest("section"),
-    ).toHaveTextContent(selected ? "Primary" : "App");
-  },
-);
+it("uses a contributed icon and preserves the chat fallback", () => {
+  const client = {
+    selected: "primary",
+    memberships: [{ id: "primary", name: "Primary" }],
+  };
+  const connection = { scope: "icon-test" };
+  const entries = [
+    {
+      id: "compute",
+      key: "mesh/compute",
+      pluginId: "mesh",
+      revision: "one",
+      title: "Compute",
+      component: () => null,
+      icon: CpuIcon,
+    },
+    {
+      id: "other",
+      key: "other/card",
+      pluginId: "other",
+      revision: "one",
+      title: "Other",
+      component: () => null,
+    },
+  ];
+  render(
+    <SettingsSidebar
+      communities={
+        {
+          snapshot: () => client,
+          subscribe: () => () => {},
+          relay: { snapshot: () => connection, subscribe: () => () => {} },
+        } as unknown as Communities
+      }
+      cards={
+        {
+          snapshot: () => entries,
+          subscribe: () => () => {},
+        } as unknown as SettingsCards
+      }
+      onBack={() => {}}
+      onSection={() => {}}
+    />,
+  );
+  const reference = render(
+    <>
+      <CpuIcon data-testid="cpu-reference" />
+      <ChatCircleIcon data-testid="chat-reference" />
+    </>,
+  );
+  expect(
+    screen.getByRole("button", { name: "Compute" }).querySelector("svg")
+      ?.innerHTML,
+  ).toBe(reference.getByTestId("cpu-reference").innerHTML);
+  expect(
+    screen.getByRole("button", { name: "Other" }).querySelector("svg")
+      ?.innerHTML,
+  ).toBe(reference.getByTestId("chat-reference").innerHTML);
+  expect(
+    screen.getByRole("button", { name: "Compute" }).closest("section"),
+  ).toHaveTextContent("Primary");
+});

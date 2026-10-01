@@ -72,11 +72,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     lease = undefined;
   });
 
-  function CommunityComputePage({
-    community,
-  }: {
-    community?: { id: string; name: string };
-  }) {
+  function CommunityComputePage() {
     const snapshot = useSyncExternalStore(
       ctx.relay.subscribe,
       ctx.relay.snapshot,
@@ -170,7 +166,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
         starting={phase === "starting"}
         disabled={
           busy ||
-          (!community && !enabled) ||
           !isTauri() ||
           !status?.available ||
           !phase ||
@@ -178,15 +173,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
           (!enabled && snapshot.status !== "ready")
         }
         status={
-          !community
-            ? "Select a community to use shared compute."
-            : !isTauri()
-              ? "Open Buzz desktop to use shared compute."
-              : phase
-                ? phaseLabels[phase]
-                : status?.available === false
-                  ? "Unavailable"
-                  : "Checking status…"
+          !isTauri()
+            ? "Open Buzz desktop to use shared compute."
+            : phase
+              ? phaseLabels[phase]
+              : status?.available === false
+                ? "Unavailable"
+                : "Checking status…"
         }
         error={error ?? status?.lifecycle?.reason ?? status?.reason}
         refreshDisabled={busy || !isTauri()}
@@ -199,7 +192,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "mesh",
     title: "Compute",
     icon: CpuIcon,
-    showInPersonalSpace: true,
     component: CommunityComputePage,
   });
 };

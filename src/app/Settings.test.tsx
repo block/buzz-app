@@ -100,7 +100,6 @@ it("keeps grouped cards available without a selected community", () => {
   const { cards } = registry([
     card("hosted", "Hosted communities", "Communities"),
     card("groups", "Personal groups"),
-    { ...card("compute", "Compute"), showInPersonalSpace: true },
   ]);
   const noCommunityState = { ...communityState, selected: null };
   render(
@@ -126,8 +125,6 @@ it("keeps grouped cards available without a selected community", () => {
     screen.getByRole("button", { name: "Hosted communities" }),
   ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Personal groups" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Compute" }));
-  expect(screen.getByText("Compute body")).toBeVisible();
 });
 
 it("shows administration only within a selected community", () => {

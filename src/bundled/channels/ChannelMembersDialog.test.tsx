@@ -789,7 +789,16 @@ it("shares the identity presentation with invitation rows without assigning a ch
   expect(
     (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
   ).toEqual(["View profile"]);
+  // Menu content mounts before its queued initial focus transfers keyboard ownership.
+  await vi.waitFor(() =>
+    expect(screen.getByRole("menu").contains(document.activeElement)).toBe(
+      true,
+    ),
+  );
   await t.user.keyboard("{Escape}");
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+  );
   expect(row.querySelector("[title]")).not.toBeInTheDocument();
   expect(within(row).queryByText("Role unverified")).not.toBeInTheDocument();
   expect(within(add).getByText("Add", { exact: true })).toBeVisible();

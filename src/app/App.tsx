@@ -23,6 +23,7 @@ import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
+import { profileTarget } from "../features/profiles/target";
 
 export function App({ services }: { services: AppServices }) {
   return services.identity ? (
@@ -73,11 +74,16 @@ function ConnectedApp({ services }: { services: AppServices }) {
   const selectedPanel = launcher.selected;
   const companion = selectedPanel && (
     <PanelCard
+      key={launcher.openingId}
+      ref={launcher.panelRef}
       panel={selectedPanel}
-      target={selectedPanel.launcher?.target ?? ""}
+      target={launcher.target ?? ""}
       close={launcher.close}
     />
   );
+  // Personal space has no community profile to view; the panel needs a session.
+  const ownProfile =
+    client.selected && client.viewer ? profileTarget(client.viewer) : undefined;
   const pageOwnsCompanion = !!route.page?.companion;
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
@@ -90,7 +96,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
     <ToastProvider>
       <ChannelNavigationProvider relay={services.relay}>
         <AppShell
-          sidebar={() =>
+          sidebar={(pageNavigation) =>
             settings ? (
               <SettingsSidebar
                 cards={services.settingsCards}
@@ -127,10 +133,9 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 sessionsEnabled={route.pages.some(
                   (page) => page.pluginId === "buzz.sessions",
                 )}
-                agentsEnabled={route.pages.some(
-                  (page) => page.key === "buzz.agents/agents",
-                )}
-              />
+              >
+                {pageNavigation}
+              </ChannelSidebar>
             )
           }
           navigationControls={
@@ -143,8 +148,15 @@ function ConnectedApp({ services }: { services: AppServices }) {
             services.communities.select(id);
             if (!recovering) select("buzz.channels/channels");
           }}
+          // A scoped Settings target selects its community on the way.
+          onOpenTarget={(target) => void services.navigation.open(target)}
           communities={services.communities}
           accountActions={services.accountActions}
+          onProfile={
+            ownProfile && launcher.canOpen(ownProfile)
+              ? (trigger) => launcher.open(ownProfile, trigger)
+              : undefined
+          }
           searchServices={services}
           launchers={
             <PanelLaunchers

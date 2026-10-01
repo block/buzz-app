@@ -36,6 +36,7 @@ export type {
   ComposerCompletion,
   ComposerAccessory,
   ComposerAccessoryProps,
+  ComposerResource,
   ComposerToolProps,
   ComposerTool,
   InlineContent,
@@ -74,7 +75,6 @@ export type {
 } from "../features/navigation/controller";
 export type {
   OpenTarget,
-  SharedTarget,
   NavigationScope,
   JsonValue,
 } from "../features/navigation/targets";
@@ -96,3 +96,10 @@ export type {
   AgentImportPreview,
   ImportSource,
 } from "../features/agents/control";
+
+export type {
+  AgentSecurity,
+  SecurityBinding,
+  SecuritySnapshot,
+  SecurityProvider,
+} from "../features/agents/security";

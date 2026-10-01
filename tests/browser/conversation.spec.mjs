@@ -51,21 +51,22 @@ test("independent packed author consumer and native-installed contribution survi
     run("pnpm", ["build"], source);
     const code = await readFile(join(source, "dist/plugin.js"), "utf8");
     expect(code).not.toMatch(/^import\s|^export.*from\s/m);
-    run("cargo", [
-      "build",
-      "--locked",
-      "-p",
-      "buzzodz-plugins",
-      "--example",
-      "fixture-bridge",
-    ]);
-    const metadata = JSON.parse(
-      run("cargo", ["metadata", "--no-deps", "--format-version=1"]),
-    );
-    const binary = join(
-      metadata.target_directory,
-      "debug/examples/fixture-bridge",
-    );
+    // CI supplies the Ubuntu-built bridge; local runs retain the Cargo build.
+    let binary = process.env.BUZZ_BROWSER_FIXTURE;
+    if (!binary) {
+      run("cargo", [
+        "build",
+        "--locked",
+        "-p",
+        "buzzodz-plugins",
+        "--example",
+        "fixture-bridge",
+      ]);
+      const metadata = JSON.parse(
+        run("cargo", ["metadata", "--no-deps", "--format-version=1"]),
+      );
+      binary = join(metadata.target_directory, "debug/examples/fixture-bridge");
+    }
     const home = join(temp, "home");
     const native = (op, ...args) =>
       JSON.parse(run(binary, [home, op, ...args]));
@@ -205,7 +206,11 @@ test("independent packed author consumer and native-installed contribution survi
     await expect
       .poll(() => draft.evaluate((element) => element.value))
       .toMatch(/T.*Z/);
-    await draft.fill("base");
+    // Select through the editor after plugin insertion; WebKit fill can retain
+    // the inserted content when its DOM selection has been lost.
+    await draft.press("ControlOrMeta+A");
+    await draft.pressSequentially("base");
+    await expect(draft).toHaveJSProperty("value", "base");
     await draft.evaluate((el) => el.setSelectionRange(1, 3));
     await page
       .getByRole("button", { name: "Insert twice", exact: true })

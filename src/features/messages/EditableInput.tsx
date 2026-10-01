@@ -39,14 +39,26 @@ import {
   projectComposerDocument,
   composerMarkdownContext,
   markdownRanges,
+  composerResource,
+  brokenResources,
+  resourceBlockingMarks,
 } from "./composer-document";
+import { scanMarkdown } from "../relay/message-content";
+import type { ComposerResource } from "../conversation/contracts";
 import {
   activeBlockFormats,
   toggleComposerBlock,
   composerBlockLineBreak,
+  composerBlockPrefix,
+  composerCodeFence,
+  composerFenceDelimiters,
+  composerPrefixDelimiters,
 } from "./composer-blocks";
 import { composerLinkLabel } from "./composer-link-label";
-import { applyComposerCodeInput } from "./composer-code-input";
+import {
+  applyComposerInlineInput,
+  composerInlineDelimiters,
+} from "./composer-inline-input";
 import { composerMarkdown } from "./composer-markdown";
 import {
   mentionDraft,
@@ -74,6 +86,62 @@ export type EditorDecoration = {
   content: ReactNode;
   editAsText?: boolean;
 };
+/** Characters a caret or function key leaves in the document when the host's
+ * native text-input path commits the key as if typed. In the desktop build a
+ * Right Arrow press can reach WebKit as a key event whose text is the key's raw
+ * keyboard-layout translation, U+001D, rather than AppKit's function-key
+ * character U+F703: the arrows translate to U+001C through U+001F, Home and End
+ * to U+0001 and U+0004, Page Up and Page Down to U+000B and U+000C. WebKit
+ * blanks a key event's text only for the private-use block U+F700 through
+ * U+F7FF, so such an event types the control character and never moves the
+ * caret. The private-use block is refused as well (NSUpArrowFunctionKey U+F700
+ * through NSModeSwitchFunctionKey U+F747). No font has a glyph for any of these
+ * and no layout types them as prose; the whole Unicode Control category (C0,
+ * DEL and C1) is covered, except the tab, newline and carriage return that
+ * typed text legitimately holds. */
+const CONTROL_CHARACTERS = /[\p{Cc}\uF700-\uF747]/gu;
+/** The control characters typed text holds: tab, newline and carriage return. */
+const TYPED_CONTROLS = /[\t\n\r]/u;
+/** True when a native text insertion holds only control characters. Text that
+ * mixes them with real characters is not control text and passes untouched. */
+function controlCharacterText(text: string | null | undefined) {
+  return (
+    !!text &&
+    !TYPED_CONTROLS.test(text) &&
+    !text.replace(CONTROL_CHARACTERS, "")
+  );
+}
+/** Caret keys by physical code and by legacy key code, the two identities WebKit
+ * still derives from the hardware key when it reports a layout translation as
+ * `key`. Pressing such a key must move the caret, not type the character. */
+const CARET_KEYS = new Map<string | number, string>([
+  ["ArrowLeft", "ArrowLeft"],
+  ["ArrowRight", "ArrowRight"],
+  ["ArrowUp", "ArrowUp"],
+  ["ArrowDown", "ArrowDown"],
+  ["Home", "Home"],
+  ["End", "End"],
+  ["PageUp", "PageUp"],
+  ["PageDown", "PageDown"],
+  [33, "PageUp"],
+  [34, "PageDown"],
+  [35, "End"],
+  [36, "Home"],
+  [37, "ArrowLeft"],
+  [38, "ArrowUp"],
+  [39, "ArrowRight"],
+  [40, "ArrowDown"],
+]);
+/** The key a keydown names, restoring a caret key the host reported as a control
+ * character (Right Arrow arrives as U+001D) from its code. */
+function keyboardKey(
+  event: Pick<globalThis.KeyboardEvent, "key" | "code" | "keyCode">,
+) {
+  if (!controlCharacterText(event.key)) return event.key;
+  return (
+    CARET_KEYS.get(event.code) ?? CARET_KEYS.get(event.keyCode) ?? event.key
+  );
+}
 export type EditableInputProps = Omit<
   HTMLAttributes<ComposerInputElement>,
   "onChange" | "onInput"
@@ -129,7 +197,14 @@ export function EditableInput({
     placeholder,
   };
   const hosts = useRef(
-    new Map<HTMLElement, { source: string; position(): number | undefined }>(),
+    new Map<
+      HTMLElement,
+      {
+        source: string;
+        resource: ComposerResource | null;
+        position(): number | undefined;
+      }
+    >(),
   );
   const [, refresh] = useState(0);
   const scrollAfterTokens = useRef(false);
@@ -280,6 +355,14 @@ export function EditableInput({
             composerSchema.text(token.node.attrs.source, token.node.marks),
           );
         }
+        // Adjacent edits (a leading `!`, surrounding backticks) can change what
+        // a resource sends. Demote it to that text, in the same history event.
+        for (const token of brokenResources(tr.doc).reverse())
+          tr.replaceWith(
+            token.from,
+            token.to,
+            composerSchema.text(token.node.attrs.source, token.node.marks),
+          );
         if (!tr.docChanged) return;
         if (state.storedMarks) tr.setStoredMarks(state.storedMarks);
         return tr.setMeta("composer-normalized", true);
@@ -413,6 +496,73 @@ export function EditableInput({
       editor.focus();
       return true;
     };
+    /** True, or the reason shown by the host. The link must survive its context. */
+    const insertResource = (value: ComposerResource): true | string => {
+      if (!editable() || composing.current || editor.composing)
+        return "The message can't be edited right now";
+      const resource = composerResource(value);
+      if (!resource) return "This link can't be added";
+      const { from, to, $from } = editor.state.selection;
+      const stored = editor.state.storedMarks ?? $from.marks();
+      const { code } = composerSchema.marks;
+      if (
+        $from.parent.type.spec.code ||
+        code.isInSet(stored) ||
+        editor.state.doc.rangeHasMark(from, to, code)
+      )
+        return "Links can't be added inside code";
+      const marks = $from.parent.type
+        .allowedMarks(stored)
+        .filter((mark) => !resourceBlockingMarks().includes(mark.type));
+      const source = projection();
+      // Markdown links cannot nest: never split or break an existing link.
+      const { doc } = editor.state;
+      const start = source.source(from),
+        end = source.source(to);
+      if (
+        composerSchema.marks.link
+          .isInSet(doc.resolve(from).nodeBefore?.marks ?? [])
+          ?.isInSet(doc.resolve(to).nodeAfter?.marks ?? []) ||
+        scanMarkdown(composerMarkdownContext(doc, source).text).links.some(
+          ({ position }) => {
+            const first = position?.start.offset ?? 0,
+              last = position?.end.offset ?? 0;
+            return (
+              first < end && last > start && !(start <= first && end >= last)
+            );
+          },
+        )
+      )
+        return "Links can't be added inside another link";
+      // A preceding `!` would make an image; `\` would escape the bracket.
+      const gap = /[!\\]$/.test(source.draft.text.slice(0, start));
+      const tr = closeHistory(editor.state.tr).replaceWith(
+        from,
+        to,
+        Fragment.fromArray([
+          ...(gap ? [composerSchema.text(" ", marks)] : []),
+          composerSchema.nodes.token.create(
+            { source: resource.source, resource: resource.resource },
+            null,
+            marks,
+          ),
+          composerSchema.text(" ", marks),
+        ]),
+      );
+      tr.setSelection(
+        Selection.near(tr.doc.resolve(tr.mapping.map(to, 1)), -1),
+      );
+      const next = projectComposerDocument(tr.doc);
+      if (next.tokens.filter((token) => token.node.attrs.resource).length > 32)
+        return "Add at most 32 links to one message";
+      if (composerMarkdown(next.draft).length > current.current.maxLength)
+        return "Message is too long to add this link";
+      if (brokenResources(tr.doc, next).length)
+        return "Links can't be added inside code or other Markdown here";
+      editor.dispatch(tr.scrollIntoView());
+      editor.focus();
+      return true;
+    };
     const toggleFormat = (format: ComposerFormat) => {
       if (!editable() || composing.current || editor.composing) return;
       // Formatting operates on textblock contents, not the document's outer edges.
@@ -459,7 +609,7 @@ export function EditableInput({
       const source = projection();
       const { from, to } = editor.state.selection;
       // Existing Markdown code stays literal for other formats. Explicit inline
-      // code treats the selected characters literally, with no fence input rule.
+      // code treats the selected characters literally.
       if (
         format !== "code" &&
         markdownRanges(
@@ -582,6 +732,11 @@ export function EditableInput({
           (block) => block.code && from < block.to && to > block.from,
         ) ||
         doc.rangeHasMark(from, to, composerSchema.marks.code) ||
+        // Markdown links cannot nest; a resource keeps its own destination.
+        source.tokens.some(
+          (token) =>
+            token.node.attrs.resource && token.from <= to && token.to >= from,
+        ) ||
         (from === to &&
           composerSchema.marks.code.isInSet(
             editor.state.storedMarks ?? doc.resolve(from).marks(),
@@ -680,7 +835,16 @@ export function EditableInput({
       (forward ? redo : undo)(editor.state, editor.dispatch);
       editor.focus();
     };
-    const syncNativeSelection = () => {
+    /** Adopts the DOM selection as the editor's. A range spanning the whole
+     * document becomes AllSelection, so deleting a DOM select-all also clears
+     * block structure, unless `directional`: a Shift move that has just
+     * reached both document edges keeps its anchor and head, so reversing it
+     * shrinks the range from its head rather than from AllSelection's fixed
+     * start. */
+    const syncNativeSelection = ({
+      scroll = false,
+      directional = false,
+    } = {}) => {
       const selection = editor.dom.ownerDocument.getSelection();
       if (
         !selection?.anchorNode ||
@@ -714,9 +878,79 @@ export function EditableInput({
       // A Shift+Arrow range covering all inline content still has a direction.
       // Do not turn an already-synchronized editor range into AllSelection.
       if (text.eq(editor.state.selection)) return;
-      const next = all ? new AllSelection(doc) : text;
-      if (!next.eq(editor.state.selection))
-        editor.dispatch(editor.state.tr.setSelection(next));
+      const next = all && !directional ? new AllSelection(doc) : text;
+      if (next.eq(editor.state.selection)) return;
+      const tr = editor.state.tr.setSelection(next);
+      editor.dispatch(scroll ? tr.scrollIntoView() : tr);
+    };
+    /** Moves the caret for a caret key the host reported as a control character.
+     * Left unhandled, such a keydown types the character instead of moving, so
+     * the move happens here: in document terms across an inline leaf, where
+     * WebKit offers extra caret positions around uneditable nodes, and otherwise
+     * through the browser's own caret motion with the platform's modifier
+     * meanings (word and line ends sideways, paragraph and document ends
+     * vertically). Page keys scroll without moving the caret, and Home and End
+     * do so too on Apple platforms unless extending the selection. */
+    const moveCaret = (key: string, event: globalThis.KeyboardEvent) => {
+      const mac = isApplePlatform(navigator.platform);
+      const boundary = mac ? event.metaKey : event.ctrlKey;
+      const extend = event.shiftKey;
+      const sideways = key === "ArrowLeft" || key === "ArrowRight";
+      if (sideways && !event.altKey && !boundary) {
+        const { $head, anchor, empty } = editor.state.selection;
+        const backward = key === "ArrowLeft";
+        const leaf = $head.textOffset
+          ? null
+          : backward
+            ? $head.nodeBefore
+            : $head.nodeAfter;
+        // Only an inline leaf is stepped over in document terms. A block beside
+        // the head, as after select-all, is left to the browser's caret motion.
+        if ((empty || extend) && leaf?.isInline && !leaf.isText) {
+          const head = backward
+            ? $head.pos - leaf.nodeSize
+            : $head.pos + leaf.nodeSize;
+          editor.dispatch(
+            editor.state.tr
+              .setSelection(
+                TextSelection.create(
+                  editor.state.doc,
+                  extend ? anchor : head,
+                  head,
+                ),
+              )
+              .scrollIntoView(),
+          );
+          return true;
+        }
+      }
+      const selection = editor.dom.ownerDocument.getSelection();
+      if (!selection || typeof selection.modify !== "function") return true;
+      const alter = extend ? "extend" : "move";
+      if (sideways)
+        selection.modify(
+          alter,
+          key === "ArrowLeft" ? "left" : "right",
+          boundary ? "lineboundary" : event.altKey ? "word" : "character",
+        );
+      else if (key === "ArrowUp" || key === "ArrowDown")
+        selection.modify(
+          alter,
+          key === "ArrowUp" ? "backward" : "forward",
+          boundary
+            ? "documentboundary"
+            : event.altKey
+              ? "paragraphboundary"
+              : "line",
+        );
+      else if ((key === "Home" || key === "End") && (extend || !mac))
+        selection.modify(
+          alter,
+          key === "Home" ? "backward" : "forward",
+          mac ? "documentboundary" : "lineboundary",
+        );
+      syncNativeSelection({ scroll: true, directional: true });
+      return true;
     };
     const adjacent = (backward: boolean, arrow: boolean, extend: boolean) => {
       const { from, to, head, anchor, empty } = editor.state.selection;
@@ -840,6 +1074,7 @@ export function EditableInput({
             dom.dataset.source = node.attrs.source;
             hosts.current.set(dom, {
               source: node.attrs.source,
+              resource: node.attrs.resource,
               position: getPos,
             });
             return {
@@ -852,6 +1087,14 @@ export function EditableInput({
           },
         },
         handleTextInput(_view, from, to, text, defaultTransaction) {
+          // A caret key committed natively as a control character is refused:
+          // with no transaction the document stays as it was, and ProseMirror
+          // redraws the changed DOM from that state. Only the beforeinput seam
+          // can stop the DOM change itself; this seam covers an insertion that
+          // arrived without one, or one that was not cancelable. No key yields
+          // such a character beside real text, so mixed text is left alone
+          // rather than reshaped under the native selection that describes it.
+          if (controlCharacterText(text)) return true;
           // Provenance is not an inheritable formatting mark. Replacing text,
           // including an identical string, revokes the identity it touches.
           const source = projection();
@@ -884,15 +1127,40 @@ export function EditableInput({
             composerSchema.marks.code.isInSet(editor.state.storedMarks ?? [])
           )
             tr.setStoredMarks(marks);
-          const codeInput =
-            text === "`" &&
+          const previous = editor.state;
+          editor.dispatch(tr.scrollIntoView());
+          // A typed delimiter converts in a second transaction: the third
+          // character of a lone ``` or ~~~ line opens a code block at once, the
+          // space after a lone list or quote marker opens that block, and a
+          // closing delimiter converts its inline span. One undo restores the
+          // typed source, that character included, and the next keystroke never
+          // merges into the conversion. Near maxLength the typed character
+          // itself can be filtered out; then nothing converts. Completions
+          // claim Space on keydown when a result has a spaceId, so that Space
+          // never reaches this rule; a marker line has no completion trigger.
+          if (
             from === to &&
+            (composerFenceDelimiters.has(text) ||
+              composerPrefixDelimiters.has(text) ||
+              composerInlineDelimiters.has(text)) &&
             !composing.current &&
             !editor.composing &&
-            applyComposerCodeInput(tr);
-          if (codeInput) closeHistory(tr);
-          editor.dispatch(tr.scrollIntoView());
-          if (codeInput) separateHistory = true;
+            editor.state !== previous
+          ) {
+            const block =
+              composerCodeFence(editor.state, text) ??
+              composerBlockPrefix(editor.state, text);
+            const conversion = block ?? editor.state.tr;
+            if (block || applyComposerInlineInput(conversion, text)) {
+              const unconverted = editor.state;
+              editor.dispatch(closeHistory(conversion).scrollIntoView());
+              // Generated delimiters or escapes in the serialized form can
+              // carry the conversion past maxLength, and the normalize filter
+              // then drops it. Only a conversion that landed is its own undo
+              // step; otherwise the next keystroke must not start a new group.
+              if (editor.state !== unconverted) separateHistory = true;
+            }
+          }
           return true;
         },
         handleKeyDown(_view, event) {
@@ -902,7 +1170,8 @@ export function EditableInput({
           const primary = isApplePlatform(navigator.platform)
             ? event.metaKey && !event.ctrlKey
             : event.ctrlKey && !event.metaKey;
-          const key = event.key.toLowerCase();
+          const named = keyboardKey(event);
+          const key = named.toLowerCase();
           if (primary && !event.altKey && !event.shiftKey && key === "a")
             return selectAll(editor.state, editor.dispatch);
           const format =
@@ -935,14 +1204,17 @@ export function EditableInput({
             historyCommand(event.shiftKey || key === "y");
             return true;
           }
-          if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+          if (named === "ArrowLeft" || named === "ArrowRight") {
             if (
               !event.altKey &&
               !primary &&
-              adjacent(event.key === "ArrowLeft", true, event.shiftKey)
+              adjacent(named === "ArrowLeft", true, event.shiftKey)
             )
               return true;
           }
+          // A caret key reported as a control character would be typed as that
+          // character by the native path. Move the caret here instead.
+          if (named !== event.key) return moveCaret(named, event);
           if (
             event.key === "Tab" &&
             !event.altKey &&
@@ -1007,6 +1279,18 @@ export function EditableInput({
           },
           beforeinput(_view, event) {
             if (!event.isComposing) syncNativeSelection();
+            // The host's native text-input path can commit a caret key as a
+            // control character (Right Arrow arrives as U+001D, or as AppKit's
+            // U+F703) typed as text. Cancel it before the DOM changes;
+            // handleTextInput refuses what arrives anyway.
+            if (
+              event.inputType === "insertText" &&
+              event.cancelable &&
+              controlCharacterText(event.data)
+            ) {
+              event.preventDefault();
+              return true;
+            }
             if (event.inputType.startsWith("delete")) {
               separateHistory = true;
               // Some native deletion commands arrive without a keydown. A selected
@@ -1177,6 +1461,7 @@ export function EditableInput({
       },
       setSelectionRange: { configurable: true, value: setRange },
       insertText: { configurable: true, value: insert },
+      insertResource: { configurable: true, value: insertResource },
       toggleFormat: { configurable: true, value: toggleFormat },
       insertLineBreak: {
         configurable: true,
@@ -1355,7 +1640,18 @@ export function EditableInput({
             item.start === source &&
             item.end === (source ?? 0) + host.source.length,
         );
-        return createPortal(decoration?.content ?? host.source, element);
+        return createPortal(
+          host.resource ? (
+            // Host-owned artwork: restore never depends on the providing plugin.
+            <>
+              <span className="sr-only">Resource: </span>
+              <span className={styles.resource}>{host.resource.label}</span>
+            </>
+          ) : (
+            (decoration?.content ?? host.source)
+          ),
+          element,
+        );
       })}
     </>
   );

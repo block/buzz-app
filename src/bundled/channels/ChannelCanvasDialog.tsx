@@ -3,7 +3,7 @@ import type { ChannelCanvas } from "../../features/channel-templates/capability"
 import type { RelayEvent } from "../../features/relay/events";
 import { readView, writeView } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Dialog, type DialogProps } from "../../shared/design-system/ui/Dialog";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import styles from "./ChannelTemplates.module.css";
 
@@ -14,12 +14,14 @@ export function ChannelCanvasDialog({
   channelId,
   open,
   onOpenChange,
+  finalFocus,
 }: {
   canvas: ChannelCanvas;
   scope: string;
   channelId: string;
   open: boolean;
   onOpenChange(open: boolean): void;
+  finalFocus?: DialogProps["finalFocus"];
 }) {
   const key = `canvas-draft-v1:${channelId}`;
   const [saved] = useState(() => {
@@ -38,6 +40,8 @@ export function ChannelCanvasDialog({
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const operation = useRef(0);
+  const [confirmReload, setConfirmReload] = useState(false);
+  const cancelReload = useRef<HTMLButtonElement>(null);
   useEffect(
     () => () => {
       operation.current++;
@@ -97,8 +101,10 @@ export function ChannelCanvasDialog({
   };
   return (
     <Dialog
+      dismissOnOutsideClick
       open={open}
       onOpenChange={onOpenChange}
+      finalFocus={finalFocus}
       preventClose={busy}
       title="Channel Canvas"
       closeLabel="Close Canvas"
@@ -109,12 +115,7 @@ export function ChannelCanvasDialog({
               disabled={busy}
               onClick={() => {
                 if (!loaded) void load();
-                else if (
-                  window.confirm(
-                    "Discard your draft and reload the saved Canvas?",
-                  )
-                )
-                  void load(true);
+                else setConfirmReload(true);
               }}
             >
               {loaded ? "Reload saved Canvas" : "Retry loading"}
@@ -155,6 +156,31 @@ export function ChannelCanvasDialog({
           </p>
         )}
       </div>
+      <Dialog
+        open={open && confirmReload}
+        onOpenChange={setConfirmReload}
+        dismissOnOutsideClick
+        initialFocus={cancelReload}
+        title="Reload saved Canvas?"
+        actions={
+          <>
+            <Button ref={cancelReload} onClick={() => setConfirmReload(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setConfirmReload(false);
+                void load(true);
+              }}
+            >
+              Discard and reload
+            </Button>
+          </>
+        }
+      >
+        Discard your draft and reload the saved Canvas?
+      </Dialog>
     </Dialog>
   );
 }

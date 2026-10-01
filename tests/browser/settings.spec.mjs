@@ -1,3 +1,4 @@
+import { settleShellToggle } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
@@ -54,7 +55,7 @@ test("Settings replaces the channel sidenav and Back restores the prior view", a
   await expect(communityRail).toBeVisible();
 });
 
-test("short narrow Settings keeps full plugin rows usable at 200% text size", async ({
+test("short narrow Settings keeps full plugin rows usable at 200% interface size", async ({
   page,
   app,
 }, testInfo) => {
@@ -238,6 +239,10 @@ confirmedPresence(
       name: "Settings",
       exact: true,
     });
+    const viewProfile = account.getByRole("menuitem", {
+      name: "View your profile",
+      exact: true,
+    });
     const statusEntry = account.getByRole("menuitem", {
       name: "Set a status",
       exact: true,
@@ -290,21 +295,23 @@ confirmedPresence(
       // Click the lower content area, genuinely outside the popup.
       const main = page.getByRole("main");
       const bounds = await main.boundingBox();
-      await main.click({ position: { x: 5, y: bounds.height - 5 } });
+      await main.click({ position: { x: 24, y: bounds.height - 5 } });
       await expect(account).toBeHidden();
       await avatar.focus();
       await page.keyboard.press("Enter");
-      await expect(availability).toBeFocused();
+      await expect(viewProfile).toBeFocused();
       await page.keyboard.press("End");
       await expect(settings).toBeFocused();
       await page.keyboard.press("Home");
+      await expect(viewProfile).toBeFocused();
+      await page.keyboard.press("ArrowDown");
       await expect(statusEntry).toBeFocused();
       await page.keyboard.press("ArrowDown");
       await expect(feedback).toBeFocused();
       await page.keyboard.press("ArrowDown");
       await expect(settings).toBeFocused();
       await page.keyboard.press("Home");
-      await expect(statusEntry).toBeFocused();
+      await expect(viewProfile).toBeFocused();
       await tab(true);
       await expect(account).toBeHidden();
       await expect(avatar).toBeFocused();
@@ -314,7 +321,7 @@ confirmedPresence(
     await page.setViewportSize({ width: 1280, height: 844 });
     await avatar.focus();
     await page.keyboard.press("Enter");
-    await expect(availability).toBeFocused();
+    await expect(viewProfile).toBeFocused();
     await page.keyboard.press("End");
     await expect(settings).toBeFocused();
     await page.keyboard.press("Enter");
@@ -324,6 +331,9 @@ confirmedPresence(
       name: "Settings sidebar",
       includeHidden: true,
     });
+    // The toggle keeps the 390 px label until the resize's media-query change
+    // renders; guard only once it reads the 1280 px one.
+    await settleShellToggle(page);
     if (await button(page, "Show navigation").isVisible())
       await button(page, "Show navigation").click();
     await expect(settingsSidebar).toBeVisible();
@@ -390,8 +400,14 @@ confirmedPresence(
     await profile.click();
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
-      if (await button(page, "Show navigation").isVisible())
+      // The narrow toggle appears only after the resize's media-query change renders.
+      if (width === 390) {
         await button(page, "Show navigation").click();
+        // A mis-toggle fails here, at the toggle, not at the sidebar below.
+        await expect(
+          page.locator("[data-shell-sidebar-toggle]"),
+        ).toHaveAccessibleName("Hide navigation");
+      }
       await expect(settingsSidebar).toBeVisible();
       await profile.focus();
       await tab();
@@ -423,7 +439,11 @@ confirmedPresence(
         "background-color",
         "rgb(255, 255, 255)",
       );
-      await expect(settingsRegion).toHaveCSS("border-radius", "24px");
+      await expect(settingsRegion).toHaveCSS("border-radius", "0px");
+      await expect(page.locator(".shell-body > [data-joined]")).toHaveCSS(
+        "border-radius",
+        "24px",
+      );
       const frame = await settingsRegion.boundingBox();
       expect(frame.height).toBeGreaterThan(700);
       if (width === 1280) {
@@ -433,7 +453,7 @@ confirmedPresence(
         expect(navigation).not.toBeNull();
         expect(content).not.toBeNull();
         expect(navigation.x + navigation.width).toBeLessThan(content.x);
-        expect(content.y - frame.y).toBe(25);
+        expect(content.y - frame.y).toBe(24);
       } else {
         await expect(settingsSidebar).toBeHidden();
         expect(

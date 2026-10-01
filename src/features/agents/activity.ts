@@ -31,6 +31,8 @@ type Typing = Readonly<{
   channelId: string;
   threadRootId: string | undefined;
   timestamp: number;
+  /** First observed working signal in this uninterrupted typing run. */
+  startedAt: number;
   working: boolean;
   expiresAt: number;
 }>;
@@ -428,6 +430,10 @@ export function createAgentActivity(
             channelId,
             threadRootId,
             timestamp,
+            startedAt:
+              previous?.working && now < previous.expiresAt
+                ? previous.startedAt
+                : timestamp,
             working: event.kind === 20002,
             expiresAt: Math.min(timestamp, now) + TYPING_FRESH_MS,
           }),

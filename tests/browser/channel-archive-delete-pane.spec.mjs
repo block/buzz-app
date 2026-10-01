@@ -12,7 +12,7 @@ test.use({
 });
 
 // Two distinct browser boundaries: archive changes visibility while retaining
-// membership; delete purges access while the pane unmounts. Both reuse the native
+// membership; delete purges access while the pane unmounts. Both reuse the shared
 // modal/focus handoff. Permission and recovery matrices stay below the browser.
 for (const action of ["archive", "delete"]) {
   test.describe(`management ${action}`, () => {
@@ -31,7 +31,16 @@ for (const action of ["archive", "delete"]) {
       await page.addInitScript(() => {
         localStorage.setItem("buzz-appearance.v1", "dark");
       });
+      const presenceAccepted = () =>
+        page.waitForResponse(
+          async (response) =>
+            response.url().endsWith("/stream-presence") &&
+            (await response.json()).accepted === true,
+        );
+      // Establish startup before observing the publication restarted by deletion.
+      const initialPresence = presenceAccepted();
       await page.goto(app.origin);
+      await initialPresence;
       await openPage(page, "Messages");
       const sidebar = page.getByRole("navigation", {
         name: "Subscribed channels",
@@ -98,6 +107,7 @@ for (const action of ["archive", "delete"]) {
           await route.continue();
         },
       );
+      const republished = action === "delete" ? presenceAccepted() : undefined;
       try {
         await trigger.click();
         const confirm = dialog.getByRole("button", {
@@ -115,7 +125,9 @@ for (const action of ["archive", "delete"]) {
         await page.keyboard.press("Escape");
         await expect(page.getByRole("dialog")).toHaveCount(1);
         await expect(dialog).toBeVisible();
-        await expect(row).toBeVisible();
+        await expect(
+          page.locator(`[data-channel-id="${channelId}"]`),
+        ).toBeVisible();
         expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
       } finally {
         release();
@@ -138,6 +150,9 @@ for (const action of ["archive", "delete"]) {
           page.getByRole("textbox", { name: /^Message #/ }),
         ).toHaveCount(0);
       }
+      // Revocation restarts presence asynchronously. Wait through any admission
+      // retry until accepted before reloading; visible UI is not that boundary.
+      await republished;
       await page.reload();
       await expect(destination).toBeVisible();
       await expect(row).toHaveCount(0);
@@ -243,7 +258,9 @@ test.describe("owner-role agent without direct ownership", () => {
     await expect(dialog.getByRole("alert")).toHaveText(
       "Only the channel owner can delete",
     );
-    await expect(row).toBeVisible();
+    await expect(
+      page.locator(`[data-channel-id="${channelId}"]`),
+    ).toBeVisible();
     await expect(
       dialog.getByRole("button", { name: "Delete channel", exact: true }),
     ).toBeEnabled();
@@ -319,16 +336,21 @@ test.describe("owner-profile retry focus", () => {
       name: "Retry Delete check",
       exact: true,
     });
-    const close = panel.getByRole("button", {
-      name: "Close channel settings",
+    const close = page.getByRole("button", {
+      name: "Close Channel settings tab",
       exact: true,
     });
     const open = async () => {
       outcome = "failure";
       gate = undefined;
-      await page
-        .getByRole("button", { name: "Channel settings", exact: true })
-        .click();
+      // Keyboard activation can reopen during exit without racing the
+      // header's position as the main conversation expands.
+      const trigger = page.getByRole("button", {
+        name: "Channel settings",
+        exact: true,
+      });
+      await trigger.focus();
+      await trigger.press("Enter");
       await expect(retry).toBeVisible();
     };
     const attempt = async (result, moveFocus = false) => {

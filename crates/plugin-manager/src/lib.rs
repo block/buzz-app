@@ -129,6 +129,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("channels manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/github/manifest.json"))
             .expect("github manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/inbox/manifest.json"))
+            .expect("valid Inbox manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/bestie/manifest.json"))
             .expect("bestie manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/projects/manifest.json"))
@@ -246,6 +248,11 @@ pub struct Manager {
     safe_mode: bool,
 }
 impl Manager {
+    /// Host control-plane location that protected workers must not modify.
+    pub fn storage_root(&self) -> &std::path::Path {
+        &self.root
+    }
+
     pub fn open(home: Option<PathBuf>, profile: &str, safe_mode: bool) -> Result<Self> {
         valid_id(profile)?;
         let home = home

@@ -39,6 +39,7 @@ export const test = base.extend({
   exactMessages: [false, { option: true }],
   openSearch: [false, { option: true }],
   sessionChannels: [[], { option: true }],
+  sessionWriteKinds: [null, { option: true }],
   sessionParents: [{}, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
@@ -55,6 +56,7 @@ export const test = base.extend({
   largeSidebar: [false, { option: true }],
   iconCongestion: [false, { option: true }],
   dmLabels: [false, { option: true }],
+  dmMembers: [{}, { option: true }],
   agentPeers: [false, { option: true }],
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
@@ -63,6 +65,7 @@ export const test = base.extend({
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
   agentManagement: [false, { option: true, scope: "worker" }],
+  companionFixture: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   app: async (
     {
@@ -80,6 +83,7 @@ export const test = base.extend({
       exactMessages,
       openSearch,
       sessionChannels,
+      sessionWriteKinds,
       sessionParents,
       sidebarUnread,
       savedSidebar,
@@ -96,6 +100,7 @@ export const test = base.extend({
       largeSidebar,
       iconCongestion,
       dmLabels,
+      dmMembers,
       agentPeers,
       tallMessages,
       membershipActivity,
@@ -205,14 +210,16 @@ export const test = base.extend({
           ...peerKeys.map(getPublicKey),
           ...(managementKey ? [getPublicKey(managementKey)] : []),
         ];
-    const dmIds = largeSidebar
-      ? Array.from(
-          { length: 128 },
-          (_, i) => `dm-${i.toString().padStart(3, "0")}`,
-        )
-      : dmLabels
-        ? ["dm-peer", "dm-group"]
-        : [];
+    const dmIds = Object.keys(dmMembers).length
+      ? Object.keys(dmMembers)
+      : largeSidebar
+        ? Array.from(
+            { length: 128 },
+            (_, i) => `dm-${i.toString().padStart(3, "0")}`,
+          )
+        : dmLabels
+          ? ["dm-peer", "dm-group"]
+          : [];
     const personalChannel = "11111111-1111-4111-8111-111111111111";
     const sortingIds = sortingSidebar ? ["cedar", "maple", "willow"] : [];
     const renamedChannels = new Map();
@@ -462,7 +469,9 @@ export const test = base.extend({
       );
     }
     if (sidebarUnread) {
-      for (const id of ["dm-030", "dm-090"])
+      for (const id of Object.keys(dmMembers).length
+        ? Object.keys(dmMembers)
+        : ["dm-030", "dm-090"])
         histories.set(`primary/${id}`, [
           sign(9, [["h", id]], `Unread in ${id}`, peerKey, 1700000900),
         ]);
@@ -689,7 +698,15 @@ export const test = base.extend({
         return [sign(13534, [["member", viewer, "member"]])];
       }
       if (filter.kinds?.includes(30617) || filter.kinds?.includes(30621)) {
-        expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
+        if ("#buzz-channel" in filter) {
+          // A channel's project-home read: one kind per filter, one channel.
+          expect([[30617], [30621]]).toContainEqual(filter.kinds);
+          expect(filter).toEqual({
+            kinds: filter.kinds,
+            "#buzz-channel": [expect.any(String)],
+            limit: 100,
+          });
+        } else expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
         return [];
       }
       if (personalSidebar && filter.ids)
@@ -769,18 +786,30 @@ export const test = base.extend({
               ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
                 ? [["p", ownerAgent, "", "owner"]]
                 : []),
-              ...(agentPeers && channels.includes(id)
-                ? participants.map((pubkey) => ["p", pubkey, "", "member"])
-                : dmLabels && id === "dm-peer"
-                  ? [["p", participants[0], "", "member"]]
-                  : dmLabels && id === "dm-group"
-                    ? participants.map((pubkey) => ["p", pubkey, "", "member"])
-                    : participants
-                        .slice(
-                          dmIds.indexOf(id) * 8,
-                          (dmIds.indexOf(id) + 1) * 8,
-                        )
-                        .map((pubkey) => ["p", pubkey, "", "member"])),
+              ...(dmMembers[id]
+                ? dmMembers[id].map((index) => [
+                    "p",
+                    participants[index],
+                    "",
+                    "member",
+                  ])
+                : agentPeers && channels.includes(id)
+                  ? participants.map((pubkey) => ["p", pubkey, "", "member"])
+                  : dmLabels && id === "dm-peer"
+                    ? [["p", participants[0], "", "member"]]
+                    : dmLabels && id === "dm-group"
+                      ? participants.map((pubkey) => [
+                          "p",
+                          pubkey,
+                          "",
+                          "member",
+                        ])
+                      : participants
+                          .slice(
+                            dmIds.indexOf(id) * 8,
+                            (dmIds.indexOf(id) + 1) * 8,
+                          )
+                          .map((pubkey) => ["p", pubkey, "", "member"])),
             ]),
           );
       if (filter.kinds?.includes(39000))
@@ -1331,7 +1360,9 @@ export const test = base.extend({
           return send(response, {
             viewer,
             relayAuthor: getPublicKey(relayKey),
-            writeKinds: sessionChannels.length ? [9, 9007, 30315] : [9, 30315],
+            writeKinds:
+              sessionWriteKinds ??
+              (sessionChannels.length ? [9, 9007, 30315] : [9, 30315]),
             relayUrl: JSON.parse(fixtureAliases)[community],
             live: true,
           });
@@ -1355,6 +1386,14 @@ export const test = base.extend({
           )
         ) {
           const owner = streamOwners.get(body.streamId);
+          // Reload may retire the SSE owner after a control was dispatched.
+          // Match the broker for that exact known stream; unknown IDs still fail.
+          if (!owner && retiredStreams.has(body.streamId))
+            return send(
+              response,
+              { error: "Live stream no longer available" },
+              404,
+            );
           expect(owner?.community).toBe(community);
           if (route === "stream-interests") {
             expect(body.interestRevision).toBeGreaterThan(
@@ -1406,6 +1445,7 @@ export const test = base.extend({
             clearInterval(heartbeat);
             clients.delete(owner);
             streamOwners.delete(streamId);
+            retiredStreams.add(streamId);
           });
           return;
         }

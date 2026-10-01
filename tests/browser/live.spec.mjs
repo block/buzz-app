@@ -1,6 +1,14 @@
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
-import { open, settle, upper, expectAnchor, end, anchor } from "./timeline.mjs";
+import {
+  open,
+  settle,
+  upper,
+  expectAnchor,
+  end,
+  edge,
+  anchor,
+} from "./timeline.mjs";
 
 test.use({
   productionBroker: true,
@@ -27,8 +35,28 @@ async function crossCooldown(page, app) {
   await page.clock.runFor(app.relay.rejected[0].retryAfterMs);
   await expect.poll(() => app.relay.brokerCooldownOver()).toBe(true);
 }
+/** Cross a quota cooldown in real time, for a page whose timeline must keep
+ * the browser's own clock. The app arms its deadline when it consumes the
+ * refusal, after the broker paused its lane and the fixture stamped the
+ * response, so the broker's reopening is the earliest useful moment and only
+ * the page knows the last one. Clicks before it are ignored, as asserted
+ * before the crossing, so click Retry until the catch-up reaches the relay.
+ * The button leaves only once a request already counted there has answered,
+ * so a click that finds it is one the app can still act on, and a click
+ * while that request is in flight only promotes it. */
+async function retryAfterCooldown(page, app, sent) {
+  await expect.poll(() => app.relay.brokerCooldownOver()).toBe(true);
+  await expect
+    .poll(
+      async () => {
+        if (!sent()) await retry(page).click();
+        return sent();
+      },
+      { message: "Retry after the quota cooldown sends the catch-up" },
+    )
+    .toBe(true);
+}
 async function ready(page, app) {
-  await page.clock.install();
   await open(page, app);
   await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
   // The first head may already start after stream establishment; a duplicate
@@ -43,6 +71,23 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
   page,
   app,
 }) => {
+  // The first roster renews the activity observer and retires presence, which
+  // re-subscribes after its read gate. Either control may wait behind one in
+  // flight until that fetch's own continuation sends it, so count controls in
+  // the page: settlement and any resend fall in one microtask checkpoint.
+  await page.addInitScript(() => {
+    const native = window.fetch;
+    window.liveControls = 0;
+    window.fetch = (input, init) => {
+      const result = native(input, init);
+      if (/\/stream-(observer|presence-authors)$/.test(String(input))) {
+        const settled = () => window.liveControls--;
+        window.liveControls++;
+        result.then(settled, settled);
+      }
+      return result;
+    };
+  });
   await ready(page, app);
   const live = app.append("primary", "alpha", "Policy-realistic live delivery");
   await expect(
@@ -52,6 +97,30 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .fill("Keep my draft");
+  const established = (kind) =>
+    app.relay.sockets.some(
+      ({ community, readyState, routes }) =>
+        community === "primary" &&
+        readyState === 1 &&
+        [...routes].some(
+          ([id, filters]) =>
+            filters.some((filter) => filter.kinds.includes(kind)) &&
+            app.report.wireFrames.some(
+              (frame) => frame[0] === "EOSE" && frame[1] === id,
+            ),
+        ),
+    );
+  // The broker applies each control before it responds. Once the page has
+  // handled every response, live observer and presence routes that reached
+  // EOSE belong to the latest generations.
+  await expect
+    .poll(
+      async () =>
+        !(await page.evaluate(() => window.liveControls)) &&
+        established(24200) &&
+        established(20001),
+    )
+    .toBe(true);
   const socketCount = app.relay.sockets.length;
   const globalRequests = app.relay.requests.filter(({ filters }) =>
     filters.every((filter) => !filter["#h"]),
@@ -104,8 +173,7 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
     ),
   ).toHaveLength(globalRequests);
   await expectAnchor(page, reading);
-  await crossCooldown(page, app);
-  await retry(page).click();
+  await retryAfterCooldown(page, app, () => heads(app, "alpha").length > calls);
   await expect(retry(page)).toHaveCount(0);
   await expect.poll(() => heads(app, "alpha").length).toBe(calls + 1);
   await settle(page);
@@ -128,8 +196,7 @@ test("post-reconnect finite catch-up keeps paged history, cursor and reading pos
   app,
 }) => {
   await ready(page, app);
-  await history(page).hover();
-  await page.mouse.wheel(0, -100000);
+  await edge(page, -1);
   await expect.poll(() => app.pending.length).toBe(1);
   await settle(page);
   const before = await anchor(page);
@@ -153,8 +220,7 @@ test("post-reconnect finite catch-up keeps paged history, cursor and reading pos
   await expect(retry(page)).toHaveCount(0);
   await settle(page);
   await expectAnchor(page, reading);
-  await history(page).hover();
-  await page.mouse.wheel(0, -100000);
+  await edge(page, -1);
   await expect.poll(() => app.pending.length).toBe(1);
   const pageTwo = app.pending.shift();
   expect(pageTwo.filter.until).toBeLessThan(pageOne.filter.until);

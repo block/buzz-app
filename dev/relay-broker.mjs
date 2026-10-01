@@ -13,6 +13,7 @@ import { prepareMedia } from "./media-preparation.mjs";
 import { assertSidebarSortIntent, mutateSidebarSort } from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import { parseGitRead } from "../src/features/projects/git.ts";
+import { validateMemberAdministrationTemplate } from "../src/features/channel-members/administration-protocol.ts";
 import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
 import { validateDetailsTemplate } from "../src/features/relay/channel-details-protocol.ts";
 import { validateArchiveRequestTemplate } from "../src/features/relay/identity-archive-protocol.ts";
@@ -31,6 +32,10 @@ import {
   inviteRequest,
   memberCommand,
 } from "./community-admin.mjs";
+import {
+  leaveRefusal,
+  leaveRequestTemplate,
+} from "../src/features/communities/leave-protocol.ts";
 import {
   directMessageEvent,
   directMessageReceipt,
@@ -61,6 +66,8 @@ import {
   readSnapshotText,
   readSnapshotCommunity,
 } from "../src/features/relay/read-state-snapshot.ts";
+import { readRelayLibrary } from "../src/features/agents/relay-library.ts";
+import { eventDto } from "../src/features/relay/events.ts";
 import { readAgentLibrary } from "./agent-library.mjs";
 import { createBuilderlab } from "./builderlab.mjs";
 import {
@@ -68,11 +75,12 @@ import {
   assertSidebarAssignmentIntent,
   mutateSidebarAssignment,
   SIDEBAR_REQUEST_BYTES,
+  SIDEBAR_HEAD_BYTES,
   SIDEBAR_UPLOAD_MS,
   SIDEBAR_UPLOAD_SLOTS,
 } from "./sidebar-preferences.mjs";
 import { createHostAdmission } from "../src/features/relay/host-admission.ts";
-import { relayKlipySearchPath } from "../src/features/relay/gifs.ts";
+import { relayKlipySearchPath } from "../src/features/relay/gif-capability.ts";
 import {
   validEmojiSetTemplate,
   validReactionContent,
@@ -127,7 +135,6 @@ function validProfilePicture(value) {
 const MAX_FILTERS = 4,
   MAX_LIMIT = 500,
   MAX_INFLIGHT = 6,
-  SIDEBAR_HEAD_BYTES = SIDEBAR_REQUEST_BYTES + 4096,
   UPSTREAM_TIMEOUT_MS = 20000,
   KEEPALIVE_MS = 60000;
 
@@ -1422,11 +1429,13 @@ export function relayBrokerPlugin({
                 30078,
                 40100,
                 1984,
+                45010,
                 ...WORKFLOW_KINDS,
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
               channelLifecycle: true,
               channelDetails: true,
+              memberAdministration: true,
               identityArchives: true,
               workflowReads: true,
               projectGit: true,
@@ -1934,6 +1943,8 @@ export function relayBrokerPlugin({
               "/api/relay/sign",
               "/api/relay/channel-details-sign",
               "/api/relay/channel-details-publish",
+              "/api/relay/member-administration-sign",
+              "/api/relay/member-administration-publish",
               "/api/relay/channel-lifecycle-sign",
               "/api/relay/channel-lifecycle-publish",
               "/api/relay/identity-archive-sign",
@@ -1947,10 +1958,12 @@ export function relayBrokerPlugin({
               "/api/relay/authorize-agent",
               "/api/relay/agent-log-proof",
               "/api/relay/resolve-agent-community",
+              "/api/relay/agent-inventory",
               "/api/relay/claim",
               "/api/relay/accept-policy",
               "/api/relay/invite",
               "/api/relay/member",
+              "/api/relay/leave",
               "/api/relay/gifs",
               "/api/relay/workflow-runs",
               "/api/relay/project-git",
@@ -2079,31 +2092,105 @@ export function relayBrokerPlugin({
             ).toString("hex");
             return json(res, 200, { signature });
           }
-          if (route === "/api/relay/resolve-agent-community") {
+          if (
+            [
+              "/api/relay/resolve-agent-community",
+              "/api/relay/agent-inventory",
+            ].includes(route)
+          ) {
+            const inspecting = route === "/api/relay/agent-inventory";
             if (
-              !scoped ||
-              filters?.owner !== viewer ||
-              !/^[0-9a-f]{64}$/.test(filters?.pubkey ?? "") ||
-              filters.pubkey === viewer ||
-              filters?.confirmed !== true ||
-              Object.keys(filters).length !== 3
+              inspecting
+                ? !scoped ||
+                  !filters ||
+                  typeof filters !== "object" ||
+                  Array.isArray(filters) ||
+                  Object.keys(filters).length !== 0
+                : !scoped ||
+                  filters?.owner !== viewer ||
+                  !/^[0-9a-f]{64}$/.test(filters?.pubkey ?? "") ||
+                  filters.pubkey === viewer ||
+                  filters?.confirmed !== true ||
+                  Object.keys(filters).length !== 3
             )
               return json(res, 400, {
                 error: "Explicit owner community resolution required",
               });
+            cancel.signal.throwIfAborted();
             // The signed account confirms setup intent. Native verifies it against
             // retained source-owner authorization; inventory is not permission.
-            cancel.signal.throwIfAborted();
-            const relayUrl = relay.replace(/^https:/, "wss:");
-            const digest = createHash("sha256")
-              .update(`nostr:agent-community:${filters.pubkey}:${relayUrl}`)
-              .digest();
-            return json(res, 200, {
-              pubkey: filters.pubkey,
-              relayUrl,
-              owner: viewer,
-              signature: Buffer.from(schnorr.sign(digest, key)).toString("hex"),
-            });
+            if (!inspecting) {
+              cancel.signal.throwIfAborted();
+              const relayUrl = relay.replace(/^https:/, "wss:");
+              const digest = createHash("sha256")
+                .update(`nostr:agent-community:${filters.pubkey}:${relayUrl}`)
+                .digest();
+              return json(res, 200, {
+                pubkey: filters.pubkey,
+                relayUrl,
+                owner: viewer,
+                signature: Buffer.from(schnorr.sign(digest, key)).toString(
+                  "hex",
+                ),
+              });
+            }
+            // Discovery is independent of setup and local credential import.
+            let inventory;
+            try {
+              inventory = await readRelayLibrary(
+                {
+                  read: async (filters, { signal }) => {
+                    const body = JSON.stringify(filters);
+                    const url = `${relay}/query`;
+                    const auth = finalizeEvent(
+                      {
+                        kind: 27235,
+                        created_at: Math.floor(Date.now() / 1000),
+                        content: "",
+                        tags: [
+                          ["u", url],
+                          ["method", "POST"],
+                          [
+                            "payload",
+                            createHash("sha256").update(body).digest("hex"),
+                          ],
+                          ["nonce", randomBytes(16).toString("hex")],
+                        ],
+                      },
+                      key,
+                    );
+                    const response = await fetchUpstream(url, {
+                      method: "POST",
+                      body,
+                      redirect: "error",
+                      headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Nostr ${Buffer.from(JSON.stringify(auth)).toString("base64")}`,
+                      },
+                      signal,
+                    });
+                    if (!response.ok) throw new Error("Inventory read failed");
+                    const text = await response.text();
+                    if (Buffer.byteLength(text) > 8 * 1024 * 1024)
+                      throw new Error("Inventory evidence is too large");
+                    const events = JSON.parse(text);
+                    if (!Array.isArray(events))
+                      throw new Error("Invalid inventory page");
+                    return events.map(eventDto);
+                  },
+                },
+                viewer,
+                AbortSignal.any([cancel.signal, AbortSignal.timeout(10000)]),
+              );
+            } catch {
+              return json(res, 409, {
+                error: "Community inventory could not be read",
+              });
+            }
+            const identities = inventory.identities.map(
+              (identity) => identity.pubkey,
+            );
+            return json(res, 200, { identities });
           }
           if (route === "/api/relay/authorize-agent") {
             if (
@@ -2157,18 +2244,29 @@ export function relayBrokerPlugin({
           const policy = route === "/api/relay/accept-policy";
           const invite = route === "/api/relay/invite";
           const member = route === "/api/relay/member";
+          const leave = route === "/api/relay/leave";
           const gifs = route === "/api/relay/gifs";
           // Only these routes may surface an exact, allowed relay refusal.
           const refusal =
-            invite || member ? adminReason : claim ? claimReason : undefined;
-          if (invite || member) {
+            invite || member
+              ? adminReason
+              : claim
+                ? claimReason
+                : leave
+                  ? leaveRefusal
+                  : undefined;
+          if (invite || member || leave) {
             // Community-bound only; the relay remains the authority for roles.
             if (!scoped)
               return json(res, 400, { error: "Select a community first" });
             try {
+              // The viewer's own leave request has one shape; the body carries nothing.
               filters = invite
                 ? inviteRequest(filters)
-                : finalizeEvent(memberCommand(filters), key);
+                : finalizeEvent(
+                    leave ? leaveRequestTemplate() : memberCommand(filters),
+                    key,
+                  );
             } catch (error) {
               return json(res, 400, { error: error.message, sent: false });
             }
@@ -2278,6 +2376,9 @@ export function relayBrokerPlugin({
           const details =
             route === "/api/relay/channel-details-sign" ||
             route === "/api/relay/channel-details-publish";
+          const administration =
+            route === "/api/relay/member-administration-sign" ||
+            route === "/api/relay/member-administration-publish";
           const lifecycle =
             route === "/api/relay/channel-lifecycle-sign" ||
             route === "/api/relay/channel-lifecycle-publish";
@@ -2287,15 +2388,26 @@ export function relayBrokerPlugin({
           const signing =
             route === "/api/relay/sign" ||
             route === "/api/relay/channel-details-sign" ||
+            route === "/api/relay/member-administration-sign" ||
             route === "/api/relay/channel-lifecycle-sign" ||
             route === "/api/relay/identity-archive-sign";
           const publishing =
             route === "/api/relay/publish" ||
             route === "/api/relay/channel-details-publish" ||
+            route === "/api/relay/member-administration-publish" ||
             route === "/api/relay/channel-lifecycle-publish" ||
             route === "/api/relay/identity-archive-publish";
           if (signing || publishing) {
-            if (archive) {
+            if (administration) {
+              try {
+                validateMemberAdministrationTemplate(filters, viewer);
+              } catch {
+                return json(res, 400, {
+                  error: "Invalid member administration command",
+                  sent: false,
+                });
+              }
+            } else if (archive) {
               try {
                 validateArchiveRequestTemplate(filters);
                 if (!(await getAuthority(relay)).archiveAuthority)
@@ -2380,6 +2492,8 @@ export function relayBrokerPlugin({
                   sent: false,
                 });
               }
+            } else if (filters?.kind === 45010) {
+              // NIP-AR artifacts; the relay enforces write permission.
             } else if (filters?.kind === 1984) {
               if (!validReport(filters))
                 return json(res, 400, {
@@ -2435,6 +2549,7 @@ export function relayBrokerPlugin({
             !policy &&
             !invite &&
             !member &&
+            !leave &&
             !gifs &&
             !workflowPath &&
             !readPublishing &&
@@ -2475,7 +2590,11 @@ export function relayBrokerPlugin({
               log.warn(
                 `${publication} stage=socket sent=${failure ? failure.sent : "unknown"} reason=${failure?.message ?? "unclassified failure"}${failure?.refusal ? ` refusal=${failure.refusal}` : ""}`,
               );
-              return json(res, 503, {
+              // Match the relay's HTTP status for a proven CAS refusal.
+              const conflict =
+                failure?.sent === false &&
+                failure.refusal?.startsWith("conflict:");
+              return json(res, conflict ? 409 : 503, {
                 error:
                   failure?.sent === false &&
                   failure.refusal?.startsWith("rate-limited:")
@@ -2499,7 +2618,7 @@ export function relayBrokerPlugin({
             workflowPath ??
             (gifs
               ? gifSearchPath
-              : profile || directMessage || member
+              : profile || directMessage || member || leave
                 ? "/events"
                 : claim
                   ? "/api/invites/claim"
@@ -2663,16 +2782,18 @@ export function relayBrokerPlugin({
                 });
               }
             }
-            if (profile || member) {
+            if (profile || member || leave) {
               const receipt = JSON.parse(text);
               if (
                 receipt.event_id !== filters.id ||
                 typeof receipt.accepted !== "boolean"
               )
                 return json(res, 502, {
-                  error: member
-                    ? "Member change could not be confirmed"
-                    : "Profile publication could not be confirmed",
+                  error: leave
+                    ? "Leave request could not be confirmed"
+                    : member
+                      ? "Member change could not be confirmed"
+                      : "Profile publication could not be confirmed",
                 });
             }
             res.writeHead(200, {

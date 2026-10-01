@@ -3,6 +3,7 @@ import {
   createIdentity,
   nativeIdentityEnabled,
 } from "../features/identity/service";
+import { AgentSecurityService } from "../features/agents/security";
 import { SettingsCardsService } from "../features/settings/service";
 import { TemplateProvidersService } from "../features/channel-templates/provider";
 import { IdentityNamesService } from "../features/identity-names/service";
@@ -43,6 +44,7 @@ export function createServices() {
     bundled: bundledPlugins,
   });
   const agentControl = provideAgentControl(ctx);
+  new AgentSecurityService(ctx);
   const navigationHost = provideNavigation(ctx);
   const navigation = navigationHost.navigation;
   const browser = new BrowserService(ctx);
@@ -64,6 +66,10 @@ export function createServices() {
     identity?.ready,
     identity ? connectNativeTransport : undefined,
   );
+  ctx.provide("communityReader", {
+    snapshot: communities.snapshot,
+    subscribe: communities.subscribe,
+  });
   const relay = communities.relay;
   ctx.effect(() => bindAgentMentions(agentControl, communities));
   const notifications = new NotificationsService(

@@ -1,4 +1,5 @@
 import { defineIcon } from "./createDecorativeIcon";
+import { BestieMarkArtwork } from "./BestieMark";
 import { GitHubIssueArtwork } from "./GitHubIssue";
 import { OneDriveLogoArtwork } from "./OneDriveLogo";
 import { ArrowClockwiseIcon as PhosphorArrowClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
@@ -22,6 +23,16 @@ import { ArrowLeftIcon as PhosphorArrowLeftIcon } from "@phosphor-icons/react/di
 export const ArrowLeftIcon = defineIcon("phosphor", PhosphorArrowLeftIcon);
 import { ArrowRightIcon as PhosphorArrowRightIcon } from "@phosphor-icons/react/dist/csr/ArrowRight";
 export const ArrowRightIcon = defineIcon("phosphor", PhosphorArrowRightIcon);
+import { ArrowSquareLeftIcon as PhosphorArrowSquareLeftIcon } from "@phosphor-icons/react/dist/csr/ArrowSquareLeft";
+export const ArrowSquareLeftIcon = defineIcon(
+  "phosphor",
+  PhosphorArrowSquareLeftIcon,
+);
+import { ArrowSquareRightIcon as PhosphorArrowSquareRightIcon } from "@phosphor-icons/react/dist/csr/ArrowSquareRight";
+export const ArrowSquareRightIcon = defineIcon(
+  "phosphor",
+  PhosphorArrowSquareRightIcon,
+);
 import { ArrowSquareOutIcon as PhosphorArrowSquareOutIcon } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
 export const ArrowSquareOutIcon = defineIcon(
   "phosphor",
@@ -63,6 +74,10 @@ import { ChatsCircleIcon as PhosphorChatsCircleIcon } from "@phosphor-icons/reac
 export const ChatsCircleIcon = defineIcon("phosphor", PhosphorChatsCircleIcon);
 import { CheckIcon as PhosphorCheckIcon } from "@phosphor-icons/react/dist/csr/Check";
 export const CheckIcon = defineIcon("phosphor", PhosphorCheckIcon);
+import { ChecksIcon as PhosphorChecksIcon } from "@phosphor-icons/react/dist/csr/Checks";
+export const ChecksIcon = defineIcon("phosphor", PhosphorChecksIcon);
+import { TicketIcon as PhosphorTicketIcon } from "@phosphor-icons/react/dist/csr/Ticket";
+export const TicketIcon = defineIcon("phosphor", PhosphorTicketIcon);
 import { CopyIcon as PhosphorCopyIcon } from "@phosphor-icons/react/dist/csr/Copy";
 export const CopyIcon = defineIcon("phosphor", PhosphorCopyIcon);
 import { CrownIcon as PhosphorCrownIcon } from "@phosphor-icons/react/dist/csr/Crown";
@@ -188,6 +203,11 @@ export const SmileyStickerIcon = defineIcon(
   "phosphor",
   PhosphorSmileyStickerIcon,
 );
+import { SlidersHorizontalIcon as PhosphorSlidersHorizontalIcon } from "@phosphor-icons/react/dist/csr/SlidersHorizontal";
+export const SlidersHorizontalIcon = defineIcon(
+  "phosphor",
+  PhosphorSlidersHorizontalIcon,
+);
 import { SquaresFourIcon as PhosphorSquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
 export const SquaresFourIcon = defineIcon("phosphor", PhosphorSquaresFourIcon);
 import { StopIcon as PhosphorStopIcon } from "@phosphor-icons/react/dist/csr/Stop";
@@ -242,6 +262,16 @@ export const GitHubIssueIcon = defineIcon("custom", GitHubIssueArtwork, {
   provenance:
     "Buzz-owned mark based on GitHub’s issue symbol and Phosphor Circle geometry.",
   intendedSizes: [{ width: 22, height: 22 }],
+});
+export const BestieIcon = defineIcon("custom", BestieMarkArtwork, {
+  meaning: "Bestie page",
+  category: "Product mark",
+  provenance:
+    "Buzz-owned Bestie artwork from public/bestie.png, framed as an SVG image for icon slots.",
+  intendedSizes: [
+    { width: 15, height: 15 },
+    { width: 17, height: 17 },
+  ],
 });
 
 import { CircleNotchIcon as PhosphorCircleNotchIcon } from "@phosphor-icons/react/dist/csr/CircleNotch";
@@ -332,3 +362,9 @@ export const SpeakerSlashIcon = defineIcon(
   "phosphor",
   PhosphorSpeakerSlashIcon,
 );
+
+import { ThumbsUpIcon as PhosphorThumbsUpIcon } from "@phosphor-icons/react/dist/csr/ThumbsUp";
+export const ThumbsUpIcon = defineIcon("phosphor", PhosphorThumbsUpIcon);
+
+import { ColumnsIcon as PhosphorColumnsIcon } from "@phosphor-icons/react/dist/csr/Columns";
+export const ColumnsIcon = defineIcon("phosphor", PhosphorColumnsIcon);

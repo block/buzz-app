@@ -9,10 +9,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 
-const script = new URL("../../scripts/preview-feed.mjs", import.meta.url)
-  .pathname;
+const script = fileURLToPath(
+  new URL("../../scripts/preview-feed.mjs", import.meta.url),
+);
 
 function run(...args) {
   return spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
@@ -196,4 +198,12 @@ test("successful preview publication promotes automatically; manual recovery byp
     promotionStep.run.indexOf("scripts/preview-feed.mjs verify") <
       promotionStep.run.indexOf("gh release upload preview-feed"),
   );
+  const cleanupStep = promotion.steps.at(-1);
+  assert.equal(
+    cleanupStep.run,
+    "node scripts/prune-preview-releases.mjs --apply",
+  );
+  assert.equal(cleanupStep.if, "success()");
+  assert.equal(cleanupStep.env.GH_REPO, `\${{ github.repository }}`);
+  assert.equal(cleanupStep.env.GH_TOKEN, `\${{ github.token }}`);
 });

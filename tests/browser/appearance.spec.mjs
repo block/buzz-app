@@ -1,4 +1,4 @@
-import { selectSettingsSection } from "./navigation.mjs";
+import { selectSettingsSection, settleShellToggle } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, anchor, expectAnchor } from "./timeline.mjs";
 
@@ -27,6 +27,7 @@ async function expectMode(page, mode, inSettings = false) {
     "background-image",
     /linear-gradient/,
   );
+  await settleShellToggle(page);
   const disclosure = button(page, "Show navigation");
   const collapsed = await disclosure.isVisible();
   if (collapsed) await disclosure.click();
@@ -114,7 +115,7 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS(
       "background-color",
-      mode === "dark" ? "rgb(51, 51, 51)" : "rgb(255, 255, 255)",
+      mode === "dark" ? "rgb(40, 40, 40)" : "rgb(255, 255, 255)",
     );
     await page.keyboard.press("Escape");
   }

@@ -2,9 +2,12 @@
 
 The shell is owned by `src/app/shell`, independently of relay operations and page
 content. `App.tsx` composes startup/recovery, built-in Settings, and the
-existing contributed-page lifecycle. Messages is the landing page; legacy Home
-targets resolve to Messages in the same visit. Channels is required, including
-when older preferences saved it disabled. Navigation removes disabled optional plugins
+existing contributed-page lifecycle. Messages is the default destination at
+startup; legacy Home targets resolve to Messages in the same visit. Old version-1
+Channels Inbox/Bestie routes resolve to their standalone pages in that same visit,
+preserving community scope and normal plugin availability checks. Channels is
+required, including when older preferences saved it disabled. Navigation removes
+disabled optional plugins
 from page choices; a retained destination whose provider is unavailable displays
 an explicit failure with retry instead of silently selecting another page.
 Browser controls, host shortcuts and toolbar arrows traverse the same visit history.
@@ -23,23 +26,29 @@ semantic tokens, UI authoring rules and the local component reference.
   styles live in Tailwind's base layer, so utilities can override them normally.
   Existing feature CSS variables remain available for incremental adoption.
 - `src/app/shell/presentation.ts` owns page labels, icons and navigation ordering.
-  Messages comes first, then Projects; other contributed pages follow by
-  displayed label with a full contribution-key tie-breaker. Sidebar navigation and
-  page search share this policy, independent of plugin activation/re-enable order.
+  Messages comes first, then Inbox, Bestie and Projects; other contributed pages
+  follow by displayed label with a full contribution-key tie-breaker. Sidebar
+  navigation and page search share this ordering, independent of plugin
+  activation/re-enable order. Sidebar navigation lists only pages registered with
+  `primary: true` (Inbox, Bestie, Projects, Agents and Workflows among the bundled
+  plugins); page search lists every active page. Inbox and Bestie are placeholder
+  pages of their own plugins, so disabling Bestie removes its row along with its
+  launcher. Channels and Sessions are vended without rows: Messages opens by default,
+  from any channel row and from search; Sessions opens from Messages and search.
   Channels is presented as Messages. Legacy tone props are retained for
   compatibility; all pages share the supplied gradient and repeating CSS dots.
   Add recognized page presentation here without changing plugin contracts.
 - `AppShell.tsx` owns the 48px header, vertical page navigation, contributed panel
   launchers, Settings access, community rail, and page frames. Page navigation sits
   above the channel list outside Settings, using its saved sidebar width
-  and resize behavior. Settings replaces that card with `SettingsSidebar.tsx`,
+  and resize behavior. Settings replaces that region with `SettingsSidebar.tsx`,
   preserving the same width (220px minimum) and returning to the previous view
   with Back. `App.tsx` composes `features/channel-navigation/ChannelSidebar`
   through an ordinary render prop; there is no portal or plugin contract expansion.
   Sidebar session state resets on scope/connection generation without remounting
   unrelated pages. Its own error boundary keeps page navigation and Settings usable.
   Page buttons use shared navigation rows and focus the main region on selection.
-  A scrollable page list leaves room for channels at short heights.
+  At short heights page rows scroll with the channel list rather than in their own list.
   At widths up to 650px, every page collapses navigation behind the header’s
   Show navigation button to preserve readable content at 200% text size. The
   220px disclosure overlays content, supports Escape, and keeps sidebar state
@@ -49,9 +58,11 @@ semantic tokens, UI authoring rules and the local component reference.
   the sidebar preserves its mounted state and saved width. Reduced motion disables
   the transition. Other desktop pages retain the visible sidebar.
   The header keeps history and account/search actions, with no second navigation row.
-  Full-height pages get a 16px outer gutter (8px on narrow screens) and own their
-  card surfaces. The shell adds no white backing behind them. Document pages
-  scroll inside the remaining viewport.
+  The shell owns one joined Panel around navigation and page content, with a
+  16px outer gutter (8px on narrow screens). Nested Panels keep their opaque
+  fill and clipping but drop individual borders, radii, and shadows. Layout
+  owners add one-pixel semantic dividers. Document pages scroll inside the
+  remaining viewport.
 - `SettingsSidebar.tsx` presents community and app sections in the shell's
   replacement sidebar. `Settings.tsx` renders the selected detail pane and retains
   drafts across section changes. The detail pane scrolls independently and keeps
@@ -100,7 +111,11 @@ Enter/Space selects without closing the menu. See
 [presence ownership and limitations](presence.md). Escape, outside click and Tab
 leaving dismiss the menu; Escape returns focus to the avatar. Selecting Settings
 focuses the main region after the menu finishes closing, unless focus has already
-moved into the page.
+moved into the page. With a community selected, the avatar inside the menu is a
+menu item that opens the viewer's own profile in the shell companion slot, using
+the same `profile` panel as other profile links; the panel takes focus, and
+closing it returns focus to the header avatar. Personal space has no community
+profile, so its menu avatar stays presentational.
 The avatar does not display the selected community's profile. It uses a configured
 HTTPS picture directly, with the name's first letter on a missing/failed picture
 or a person icon when unnamed. No sample person's photo is used as the user's
@@ -116,9 +131,61 @@ The rail reads saved-community NIP-11 icons through the same-origin broker with 
 most two concurrent optional reads, including inactive communities without
 opening sessions; slow icon responses cannot occupy all foreground connections.
 Unavailable or unsupported images fall back to a saved icon or name initial.
-The rail does not acquire inactive sessions or claim an unread total: the unread
-capability provides bounded observed evidence, not exact community totals
-([unread ownership](unread.md)).
+Each saved community has a context menu (right-click, the ContextMenu key or
+Shift+F10, labelled “Actions for <name>”) built from the shared context-menu
+primitives, in the original's order: Mark all as read, then Copy community URL,
+Invite to community and Community settings, then a separator and the destructive
+Leave community. Copy writes the canonical HTTPS
+origin and reports through the host toast stack. Mark all as read acts only on
+the selected community's ready session and only while its read state can sync;
+elsewhere it stays visible but disabled with a note saying why. Invite to
+community appears only on the selected community, only when the relay-signed
+roster names the viewer an owner or admin (the same roles the Membership
+settings card reads) in both development and native builds; it opens the
+Membership settings card scoped to that community. The rail reads
+that roster through the selected community's existing session and verifies it
+against the relay authority that session already holds, so the read adds no
+session request to the connection and opens no other session. That card applies
+the same role gate: in native builds it stays registered with its member list
+and Invite members button, but hides direct additions and per-member actions.
+A Settings section, history entry or `buzz://open` locator naming it still opens
+instead of reporting unavailable. Community settings is
+on every community and opens Settings scoped to that community's origin, which
+selects it on the way. Leave community is on every community and opens an alert
+dialog owned by the rail (“Leave <name>?”) whose destructive confirm shows a
+pending state while the request runs; the menu item itself is disabled and reads
+“Leaving…” for that community until the relay answers. The rail publishes the
+NIP-43 leave request to the community's relay by origin, then asks the
+communities service to forget it. The relay's acceptance or its "not a member"
+answer removes the community and purges its device state; its banned answer
+removes the community and disposes the session but keeps the device state,
+because the relay still holds the membership while the ban lasts, and the
+informational notice says the viewer is currently banned and the community can
+be added again by its URL if access is restored, without promising permanence.
+Any other refusal or an unreachable relay keeps the membership and reports the
+reason. A failure after the relay has answered is the device's own and reads
+that way: the community was left but this device could not finish cleaning up,
+with the storage error's own words in parentheses, and leaving it again
+finishes. Only the service call can produce that message; the host's selection
+callback and the success notice run outside it, so a host that throws while
+navigating is logged as its own error and the leave still reports success.
+Saved data the purge could not clear is logged by store and adds a line to the
+success notice. When the left community was selected, the rail routes the
+fallback to Personal space through the host's selection callback so navigation
+and ingress recovery match a click on Personal space, rather than leaving a page
+scoped to a gone community. Focus
+returns to the community when it is still saved; once it is gone, focus follows
+the selection, to the still-selected community or to Personal space where a
+left selection now lands. Closing a menu opened from the keyboard returns focus to
+that community. Closing one opened by pointer returns focus to the field the
+right-click interrupted: browsers focus the rail button on the click itself,
+before the menu opens, so the rail remembers what had focus ahead of that move
+and restores it while it is still on the page, and a right-click while typing
+does not leave the caret on the rail. With nothing interrupted, focus lands on
+that community.
+Opening a menu or running any item never acquires an inactive session, and the
+rail still claims no unread total: the unread capability provides bounded
+observed evidence, not exact community totals ([unread ownership](unread.md)).
 
 Visible copy uses Buzz, never “workspace.” The legacy `workspace` layout identifier
 and CSS variable are implementation details retained for plugin compatibility.
@@ -143,13 +210,65 @@ access in a built app.
 
 ## Messages
 
-The host owns the persistent rounded sidebar card; Messages owns conversation
-and contributed panel cards, with 16px gutters. A single right panel fills the conversation height;
+The host owns the single rounded outer surface and sidebar divider. Messages
+owns flush conversation and contributed-panel regions separated by one-pixel
+dividers. A single right panel fills the conversation height;
 the right-column grid splits available height evenly between a local link card
 and the launched companion card. Below 1000px
 the right column overlays the conversation; it also overlays when the content
 pane is too narrow for two columns. Below 650px it fills the page area.
-Each card contains its own overflow, keeping the composer and close control visible.
+Each region contains its own overflow, keeping the composer and close control visible.
+Ordinary thread opens show a loading status until bounded history and initial
+bottom positioning finish; the first painted replies are already in place.
+Exact-message links reveal their requested row independently. A reader’s scroll
+gesture takes over immediately, and loading failures keep recovery visible.
+Opening a linked detail from inside a thread adds a closable tab to the same
+secondary pane. Profile activity, managed-instance, and owner-profile links use
+`PanelContext.push` to select an existing target or add a tab; `open` retains its
+replacement semantics. A shared 2.5rem header uses 12rem tabs composed from the sidebar's NavigationItem,
+with profile avatars or detail icons and a trailing close button.
+Switching retains mounted content, scroll position, and drafts. Each tab has a
+close control; Delete on a tab and Escape in its content close that tab. Closing
+the selected tab selects a neighbor, and closing the last tab dismisses the pane.
+Feature-local details such as harness logs remain tied to their owning profile;
+closing that profile or losing authorization also removes its log tab.
+The main-header split control toggles the tab pane without closing its tabs or
+resetting their contents. Opening an empty pane creates one new tab.
+The plus control appears on header hover or keyboard focus (always on touch) and
+opens a picker with Channels, Direct messages, and Channel tools categories,
+each with searchable choices. Enabled Todos and native-desktop Terminal reuse
+their registered components and channel context. Opening a tool in a tab replaces
+its drawer; its launcher then toggles that tab's pane without a second mount.
+Terminal sessions remain plugin-owned when their tabs close, and Escape in the
+terminal input remains a shell key.
+Conversation tabs reuse the timeline, composer, draft and message-management owners;
+selecting an already-open conversation selects its existing tab. Each main channel
+keeps its own tab descriptors, selected tab, and pane visibility in memory for the
+community session, including while visiting other pages such as Settings.
+Changing the main channel unmounts its contents; returning restores those tabs and
+saved conversation drafts without moving focus away from the main conversation.
+A restored thread does not replay a previous Reply focus request. Feature-local
+details such as logs close on that switch.
+Changing session or losing a contribution retires the affected tabs and callbacks.
+Tab sets are not persisted across application restarts. Opening a
+detail from the main timeline still replaces the thread and transient details,
+not retained channel-tool tabs. Content switches
+immediately; the shared navigation selection background identifies the active tab.
+Joined header separators meet the vertical dividers. The sidebar resize grip stays
+visible throughout a drag while its tooltip stays hidden. Desktop main/secondary
+dividers share that grip and support dragging, arrow keys (Shift for larger
+steps), Home/End, and double-click to reset. Each page retains its chosen split
+while the panel closes and reopens; widths clamp to the available space. Narrow
+overlay layouts hide this divider and keep their normal responsive sizing.
+
+Pointer-opened secondary panels fade and slide in over 180ms and out over 120ms
+with the shared strong ease-out curve. Desktop panels travel 12px; overlays travel
+their full width. The desktop split stays in place until the exit finishes, so
+closing content never collapses mid-transition. Keyboard actions stay immediate;
+reduced motion uses only a fade. Resizing remains immediate.
+`features/panels/PanelDock` retains inert, accessibility-hidden closing content until
+its CSS transitions finish, cancels stale cleanup on reopening, and leaves selection
+and focus restoration with the existing owners. It adds no timer or resize observer.
 Channels opts into the reusable companion prop and owns both cards, including a
 companion-only view without a selected channel or relay. Settings and legacy
 pages use the host fallback frame; opening from those pages does not navigate away.
@@ -173,3 +292,9 @@ The shared conversation layer now supplies bounded thread reading/replies and
 [session-owned unread indicators](unread.md). These are separate from this styling
 pass: counts remain observed rather than exact, manual unread is local-only, and
 reading intent belongs to reusable conversation UI rather than shell navigation.
+
+Harness logs remain owned and authorized by the profile. `PanelSubview` presents
+the log as a sibling tab in the channel pane, with standalone Back navigation
+elsewhere. Closing the log or losing authorization unmounts it and stops its
+polling; switching tabs retains it and the profile state.
+Todos uses the standard 2.5rem header to align with other side panels.

@@ -7,7 +7,6 @@ import {
   type AgentControlState,
   type AgentView,
 } from "../../features/agents/control";
-import { agentSetupConfirmationAvailable } from "../../features/communities/api";
 import { LocalInventoryAction } from "./LocalInventoryAction";
 import { Button } from "../../shared/design-system/ui/Button";
 import { agentProcessLabel } from "./agent-edit";
@@ -19,6 +18,7 @@ export function ManagedAgentActions({
   imported,
   destination = "",
   owner = "",
+  showCommunity = true,
   onUseHere,
 }: {
   agent: AgentView;
@@ -27,10 +27,10 @@ export function ManagedAgentActions({
   imported: boolean;
   destination?: string;
   owner?: string;
-  onUseHere?: ((pubkey: string) => void) | undefined;
+  showCommunity?: boolean;
+  onUseHere?: ((pubkey: string, action: "use" | "clone") => void) | undefined;
 }) {
   const [settingUp, setSettingUp] = useState(false);
-  const setupAvailable = agentSetupConfirmationAvailable();
   const details = useRef<HTMLDivElement>(null);
   const [checking, setChecking] = useState(false);
   // Describes one refreshed status; any later status change supersedes it.
@@ -83,9 +83,11 @@ export function ManagedAgentActions({
   return (
     <div ref={details} tabIndex={-1} className="flex flex-col gap-2">
       <div className="flex flex-col gap-1">
-        <p className="m-0 break-all text-body-sm text-secondary">
-          {agent.relayUrl}
-        </p>
+        {showCommunity && (
+          <p className="m-0 break-all text-body-sm text-secondary">
+            {agent.relayUrl}
+          </p>
+        )}
         <p className="m-0 text-body-sm">
           {state.status === "error" && "Last known: "}
           {agentProcessLabel(agent)}
@@ -95,17 +97,15 @@ export function ManagedAgentActions({
         <p role="status" className="m-0 text-body-sm">
           Imported, not started.{" "}
           {agent.configured === false
-            ? setupAvailable
-              ? "Choose Use here to set up this identity in a community."
-              : "It is not set up in a community yet."
+            ? "Choose Use here to set up this identity in a community."
             : "Start it when you are ready."}
         </p>
       )}
       {agent.configured === false &&
-        (onUseHere && setupAvailable ? (
+        (onUseHere ? (
           <Button
             disabled={state.busy || state.status !== "ready"}
-            onClick={() => onUseHere(agent.pubkey)}
+            onClick={() => onUseHere(agent.pubkey, "use")}
           >
             Use here
           </Button>
@@ -113,11 +113,13 @@ export function ManagedAgentActions({
           <LocalInventoryAction
             control={control}
             agent={agent}
+            action="use"
             destination={destination}
             owner={owner}
             disabled={state.busy || state.status !== "ready"}
             onPending={setSettingUp}
             onUsed={() => {}}
+            onClone={() => {}}
           />
         ) : (
           <p>Update the desktop app to set up this imported identity.</p>

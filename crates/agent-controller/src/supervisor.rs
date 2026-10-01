@@ -4,11 +4,15 @@ use crate::ownership::Ownership;
 use crate::process::Process;
 use crate::Result;
 use std::io::{Read, Write};
-use std::os::fd::{FromRawFd, OwnedFd};
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
+#[cfg(windows)]
+mod pipe;
+#[cfg(windows)]
+use pipe::{channel, inherited, log_channel, peek, Channel};
+#[cfg(unix)]
+use unix::{channel, inherited, log_channel, peek, Channel};
 
 pub const MODE: &str = "--buzz-agent-session-supervisor";
 
@@ -19,7 +23,8 @@ pub fn dispatch() -> bool {
     if args.next().as_deref() != Some(std::ffi::OsStr::new(MODE)) {
         return false;
     }
-    let (Some(root), Some(id), Some(temp), Some(runtime), Some(log), None) = (
+    let (Some(root), Some(id), Some(temp), Some(control), Some(runtime), Some(log), None) = (
+        args.next(),
         args.next(),
         args.next(),
         args.next(),
@@ -29,13 +34,18 @@ pub fn dispatch() -> bool {
     ) else {
         std::process::exit(1);
     };
-    // The connected socket occupies stdin; stdout/stderr stay closed.
-    let socket = unsafe { UnixStream::from_raw_fd(0) };
+    let control = (!control.is_empty()).then(|| Path::new(&control));
+    // The connected channel occupies stdin; stdout/stderr stay closed.
+    let Ok(socket) = inherited() else {
+        let _ = remove_runtime_dirs(Path::new(&temp), control);
+        std::process::exit(1);
+    };
     let result = serve(
         socket,
         Path::new(&root),
         &id.to_string_lossy(),
         Path::new(&temp),
+        control,
         Path::new(&runtime),
         Path::new(&log),
     );
@@ -43,17 +53,18 @@ pub fn dispatch() -> bool {
 }
 
 pub(crate) fn serve(
-    mut socket: UnixStream,
+    mut socket: Channel,
     root: &Path,
     id: &str,
     temp: &Path,
+    control: Option<&Path>,
     runtime: &Path,
     log: &Path,
 ) -> Result<()> {
     let _ownership = match Ownership::acquire(root, id) {
         Ok(lock) => lock,
         Err(error) => {
-            let _ = std::fs::remove_dir_all(temp);
+            let _ = remove_runtime_dirs(temp, control);
             let _ = socket.write_all(if error.starts_with("Another buzz-app profile") {
                 b"O"
             } else {
@@ -66,30 +77,25 @@ pub(crate) fn serve(
         .set_read_timeout(Some(Duration::from_millis(100)))
         .is_err()
     {
-        let _ = std::fs::remove_dir_all(temp);
+        let _ = remove_runtime_dirs(temp, control);
         let _ = socket.write_all(b"E");
         return Err("Could not watch app lifetime".into());
     }
     let mut spawned = false;
     let result = (|| {
         let mut writer = crate::logs::Writer::new(log)?;
-        let (mut reader, output) =
-            UnixStream::pair().map_err(|_| "Could not capture harness log")?;
-        reader
-            .set_nonblocking(true)
-            .map_err(|_| "Could not capture harness log")?;
-        let stderr = output
-            .try_clone()
-            .map_err(|_| "Could not capture harness log")?;
+        let (mut reader, stdout, stderr) =
+            log_channel().map_err(|_| "Could not capture harness log")?;
         let mut command = Command::new(runtime);
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(OwnedFd::from(output)))
-            .stderr(Stdio::from(OwnedFd::from(stderr)));
+        command.stdin(Stdio::null()).stdout(stdout).stderr(stderr);
+        // Windows cannot run the sh listener fixture; its stand-in is a copy of
+        // the test binary running only runtime::tests::windows_listener.
+        #[cfg(all(test, windows))]
+        command.args(["--exact", "runtime::tests::windows_listener", "--nocapture"]);
         let mut process = match Process::spawn(&mut command) {
             Ok(process) => process,
             Err(error) => {
-                let _ = std::fs::remove_dir_all(temp);
+                let _ = remove_runtime_dirs(temp, control);
                 return Err(error);
             }
         };
@@ -144,11 +150,12 @@ pub(crate) fn serve(
         let _ = drain_log(&mut reader, &mut writer, false);
         // A confirmed failure to delete the private dir can be reported and
         // retried manually without claiming the old execution is still running.
-        std::fs::remove_dir_all(temp).map_err(|_| "Could not remove agent runtime directory")?;
+        remove_runtime_dirs(temp, control)
+            .map_err(|_| "Could not remove agent runtime directory")?;
         Ok(())
     })();
     if !spawned {
-        let _ = std::fs::remove_dir_all(temp);
+        let _ = remove_runtime_dirs(temp, control);
     }
     // Cleanup failures after confirmed exit retain the private directory but
     // allow another execution. Keep the lock through the completion handshake.
@@ -162,8 +169,16 @@ pub(crate) fn serve(
     result
 }
 
+// Both directories belong to the same session. Attempt both removals even if
+// one fails, and report failure without releasing a still-running session.
+fn remove_runtime_dirs(temp: &Path, control: Option<&Path>) -> std::io::Result<()> {
+    let scratch = std::fs::remove_dir_all(temp);
+    let snapshot = control.map(std::fs::remove_dir_all).unwrap_or(Ok(()));
+    scratch.and(snapshot)
+}
+
 // A noisy child cannot starve Stop or app-death detection.
-fn drain_log(reader: &mut UnixStream, writer: &mut crate::logs::Writer, live: bool) -> Result<()> {
+fn drain_log(reader: &mut Channel, writer: &mut crate::logs::Writer, live: bool) -> Result<()> {
     let mut bytes = [0u8; 8192];
     let mut chunks = 0;
     loop {
@@ -192,7 +207,7 @@ fn reap_failed_start(mut child: Child) {
     });
 }
 
-fn confirm_start(mut socket: UnixStream, child: Child) -> Result<(UnixStream, Child)> {
+fn confirm_start(mut socket: Channel, child: Child) -> Result<(Channel, Child)> {
     let mut state = [0u8];
     let read = socket.read_exact(&mut state);
     if read.is_err() || state != *b"R" {
@@ -217,7 +232,7 @@ fn confirm_start(mut socket: UnixStream, child: Child) -> Result<(UnixStream, Ch
 }
 
 pub(crate) struct Supervised {
-    socket: UnixStream,
+    socket: Channel,
     child: Child,
     stopped: bool,
     cleanup_failed: bool,
@@ -229,18 +244,18 @@ impl Supervised {
         root: &Path,
         id: &str,
         temp: &Path,
+        control: Option<&Path>,
         log: &Path,
     ) -> Result<Self> {
         let preflight = (|| {
-            let pair =
-                UnixStream::pair().map_err(|_| "Could not create agent supervision channel")?;
+            let pair = channel().map_err(|_| "Could not create agent supervision channel")?;
             let program =
                 std::env::current_exe().map_err(|_| "Could not locate agent supervisor")?;
             let cwd = command.get_current_dir().ok_or("Missing agent workspace")?;
             Ok::<_, &str>((pair, program, cwd))
         })();
         let ((socket, other), program, cwd) = preflight.inspect_err(|_| {
-            let _ = std::fs::remove_dir_all(temp); // no guardian was spawned
+            let _ = remove_runtime_dirs(temp, control); // no guardian was spawned
         })?;
         let mut guardian = Command::new(program);
         #[cfg(not(test))]
@@ -249,6 +264,9 @@ impl Supervised {
             root.as_os_str().to_owned(),
             id.into(),
             temp.as_os_str().to_owned(),
+            control
+                .map(|path| path.as_os_str().to_owned())
+                .unwrap_or_default(),
             command.get_program().to_owned(),
             log.as_os_str().to_owned(),
         ]);
@@ -266,23 +284,27 @@ impl Supervised {
                 root.display().to_string(),
                 id.to_owned(),
                 temp.display().to_string(),
+                control
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default(),
                 command.get_program().to_string_lossy().into_owned(),
                 log.display().to_string(),
             ])
             .map_err(|_| {
-                let _ = std::fs::remove_dir_all(temp);
+                let _ = remove_runtime_dirs(temp, control);
                 "Could not prepare test supervisor"
             })?,
         );
         guardian
             .current_dir(cwd)
-            .stdin(Stdio::from(OwnedFd::from(other)))
+            .stdin(other)
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         // A separate session keeps terminal/launcher group signals from killing
         // this lock owner, and is distinct from the listener's session.
-        use std::os::unix::process::CommandExt;
+        #[cfg(unix)]
         unsafe {
+            use std::os::unix::process::CommandExt;
             guardian.pre_exec(|| {
                 if libc::setsid() == -1 {
                     return Err(std::io::Error::last_os_error());
@@ -290,8 +312,15 @@ impl Supervised {
                 Ok(())
             });
         }
+        // Windows: its own hidden console, outside a terminal's Ctrl+C group.
+        // An enclosing kill-on-close launcher job can still end the guardian.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            guardian.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+        }
         let child = guardian.spawn().map_err(|_| {
-            let _ = std::fs::remove_dir_all(temp); // no guardian can use it
+            let _ = remove_runtime_dirs(temp, control); // no guardian can use it
             "Could not start agent supervisor"
         })?;
         // After spawn, only the guardian can decide when temp storage is safe to remove.
@@ -339,23 +368,8 @@ impl Supervised {
         Ok(true)
     }
     fn failed(&self) -> Result<bool> {
-        use std::os::fd::AsRawFd;
-        let mut byte = [0u8];
-        let n = unsafe {
-            libc::recv(
-                self.socket.as_raw_fd(),
-                byte.as_mut_ptr().cast(),
-                1,
-                libc::MSG_PEEK | libc::MSG_DONTWAIT,
-            )
-        };
-        if n < 0 {
-            if std::io::Error::last_os_error().kind() == std::io::ErrorKind::WouldBlock {
-                return Ok(false);
-            }
-            return Err("Could not inspect agent supervisor".into());
-        }
-        Ok(n == 1 && byte == *b"F")
+        let byte = peek(&self.socket).map_err(|_| "Could not inspect agent supervisor")?;
+        Ok(byte == Some(b'F'))
     }
     pub(crate) fn stop(&mut self) -> Result<()> {
         if self.stopped {
@@ -397,6 +411,55 @@ impl Drop for Supervised {
     }
 }
 
+/// Unix transport: a socketpair on the guardian's stdin.
+#[cfg(unix)]
+mod unix {
+    use std::io;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    pub(super) use std::os::unix::net::UnixStream as Channel;
+    use std::process::Stdio;
+
+    pub(super) fn channel() -> io::Result<(Channel, Stdio)> {
+        let (ours, theirs) = Channel::pair()?;
+        Ok((ours, OwnedFd::from(theirs).into()))
+    }
+
+    pub(super) fn inherited() -> io::Result<Channel> {
+        Ok(unsafe { Channel::from_raw_fd(0) })
+    }
+
+    pub(super) fn log_channel() -> io::Result<(Channel, Stdio, Stdio)> {
+        let (reader, output) = Channel::pair()?;
+        reader.set_nonblocking(true)?;
+        let stderr = output.try_clone()?;
+        Ok((
+            reader,
+            OwnedFd::from(output).into(),
+            OwnedFd::from(stderr).into(),
+        ))
+    }
+
+    pub(super) fn peek(channel: &Channel) -> io::Result<Option<u8>> {
+        let mut byte = [0u8];
+        let n = unsafe {
+            libc::recv(
+                channel.as_raw_fd(),
+                byte.as_mut_ptr().cast(),
+                1,
+                libc::MSG_PEEK | libc::MSG_DONTWAIT,
+            )
+        };
+        if n < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::WouldBlock {
+                return Ok(None);
+            }
+            return Err(error);
+        }
+        Ok((n == 1).then_some(byte[0]))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -405,24 +468,28 @@ mod tests {
             return;
         };
         let args: Vec<String> = serde_json::from_str(&args.to_string_lossy()).unwrap();
-        let socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(0) };
+        let socket = super::inherited().unwrap();
         super::serve(
             socket,
             std::path::Path::new(&args[0]),
             &args[1],
             std::path::Path::new(&args[2]),
-            std::path::Path::new(&args[3]),
+            (!args[3].is_empty()).then(|| std::path::Path::new(&args[3])),
             std::path::Path::new(&args[4]),
+            std::path::Path::new(&args[5]),
         )
         .unwrap();
     }
-    use std::os::fd::FromRawFd;
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
+mod windows_tests;
+
+#[cfg(all(test, unix))]
 mod lifecycle_tests {
     use super::*;
     use std::fs;
+    use std::os::unix::net::UnixStream;
     use std::time::Instant;
 
     const ID: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798-79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -435,11 +502,13 @@ mod lifecycle_tests {
         let dir = Path::new(&dir);
         let mut command = Command::new(dir.join("listener"));
         command.current_dir(dir);
+        fs::create_dir(dir.join("control")).unwrap();
         let run = Supervised::spawn(
             &command,
             &dir.join("locks"),
             ID,
             &dir.join("temp"),
+            Some(&dir.join("control")),
             &dir.join("harness.log"),
         )
         .unwrap();
@@ -577,11 +646,25 @@ mod lifecycle_tests {
     }
 
     #[test]
+    fn cleanup_attempts_controls_even_if_scratch_removal_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let scratch = root.path().join("scratch");
+        let control = root.path().join("control");
+        fs::write(&scratch, "not a directory").unwrap();
+        fs::create_dir(&control).unwrap();
+        assert!(remove_runtime_dirs(&scratch, Some(&control)).is_err());
+        assert!(!control.exists());
+        assert!(scratch.exists());
+    }
+
+    #[test]
     fn startup_abort_releases_ownership_and_private_directory() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let temp = root.join("temp");
         fs::create_dir(&temp).unwrap();
+        let control = root.join("control");
+        fs::create_dir(&control).unwrap();
         let mut command = Command::new(root.join("missing-listener"));
         command.current_dir(root);
         assert!(Supervised::spawn(
@@ -589,10 +672,12 @@ mod lifecycle_tests {
             &root.join("locks"),
             ID,
             &temp,
+            Some(&control),
             &root.join("harness.log")
         )
         .is_err());
         assert!(!temp.exists());
+        assert!(!control.exists());
         let _lock = Ownership::acquire(&root.join("locks"), ID).unwrap();
     }
 
@@ -602,6 +687,8 @@ mod lifecycle_tests {
         let root = dir.path();
         let temp = root.join("temp");
         fs::create_dir(&temp).unwrap();
+        let control = root.join("control");
+        fs::create_dir(&control).unwrap();
         let listener = root.join("listener");
         // Keep the listener alive until Start's handshake has completed.
         // Then explicitly permit it to exit, without sending Stop to guardian.
@@ -623,6 +710,7 @@ mod lifecycle_tests {
             &root.join("locks"),
             ID,
             &temp,
+            Some(&control),
             &root.join("harness.log"),
         )
         .unwrap();
@@ -636,6 +724,7 @@ mod lifecycle_tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(!temp.exists());
+        assert!(!control.exists());
         let _lock = Ownership::acquire(&root.join("locks"), ID).unwrap();
     }
 
@@ -787,6 +876,7 @@ while True: time.sleep(.1)
         unsafe { libc::kill(parent.id() as i32, libc::SIGKILL) };
         parent.wait().unwrap();
         assert!(Ownership::acquire(&root.join("locks"), ID).is_err());
+        assert!(root.join("temp").exists() && root.join("control").exists());
         assert_eq!(unsafe { libc::kill(guardian_pid, libc::SIGCONT) }, 0);
         let deadline = Instant::now() + Duration::from_secs(8);
         loop {
@@ -800,6 +890,7 @@ while True: time.sleep(.1)
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(!root.join("temp").exists());
+        assert!(!root.join("control").exists());
         let state = Command::new("/bin/ps")
             .args(["-p", &worker.to_string(), "-o", "stat="])
             .output()

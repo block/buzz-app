@@ -1,10 +1,12 @@
 import { PreviewCard as BasePreviewCard } from "@base-ui/react/preview-card";
 import {
+  useCallback,
   useRef,
   type ReactElement,
   type ReactNode,
   type RefObject,
 } from "react";
+import { behindActiveModal, observeModals } from "../modalLayer";
 
 export type PreviewCardProps = {
   /** The one interactive element that anchors and reveals this preview. */
@@ -48,7 +50,46 @@ export function PreviewCard({
   "aria-label": label,
 }: PreviewCardProps) {
   const triggerRef = useRef<HTMLAnchorElement>(null);
+  const actions = useRef<BasePreviewCard.Root.Actions>(null);
   const popupRef = useRef<HTMLDivElement>(null);
+  const promote = useCallback((positioner: HTMLDivElement) => {
+    // Join the top layer after the hovered row's floating actions, but not
+    // above a modal the trigger is outside. The portal is never inside one.
+    // Base UI still owns placement, timing, focus and unmounting.
+    const update = () => {
+      const trigger = triggerRef.current;
+      if (trigger && behindActiveModal(trigger)) positioner.hidePopover?.();
+      else positioner.showPopover?.();
+    };
+    update();
+    const stopObserving = observeModals(update);
+    // Hover cannot see its trigger scroll away from a still pointer: the
+    // preview would stay open, follow the trigger out of its scroller and
+    // take the wheel. Keyboard focus keeps its preview, because focusing a
+    // clipped trigger scrolls it into view.
+    const closeOnScroll = ({ target }: Event) => {
+      const trigger = triggerRef.current;
+      const popup = popupRef.current;
+      const keyboard = ":focus-visible, :has(:focus-visible)";
+      if (
+        trigger &&
+        target instanceof Node &&
+        target.contains(trigger) &&
+        popup?.hasAttribute("data-open") &&
+        !trigger.matches(keyboard) &&
+        !popup.matches(keyboard)
+      )
+        actions.current?.close();
+    };
+    document.addEventListener("scroll", closeOnScroll, {
+      capture: true,
+      passive: true,
+    });
+    return () => {
+      stopObserving();
+      document.removeEventListener("scroll", closeOnScroll, true);
+    };
+  }, []);
   const focusedTrigger = useRef<HTMLElement | null>(null);
   const closingPopup = useRef<HTMLDivElement | null>(null);
   const restoreFocus = () => {
@@ -71,6 +112,7 @@ export function PreviewCard({
   return (
     <BasePreviewCard.Root
       open={open}
+      actionsRef={actions}
       onOpenChange={(next, details) => {
         onOpenChange?.(next, details);
         if (details.isCanceled) return;
@@ -108,7 +150,8 @@ export function PreviewCard({
             (link || actionRef) &&
             event.key === "Tab" &&
             !event.shiftKey &&
-            popupRef.current?.hasAttribute("data-open")
+            popupRef.current?.hasAttribute("data-open") &&
+            !popupRef.current.closest("[data-anchor-hidden]")
           ) {
             event.preventDefault();
             (actionRef?.current ?? popupRef.current).focus();
@@ -121,6 +164,9 @@ export function PreviewCard({
           anchor={anchor}
           align="start"
           sideOffset={8}
+          positionMethod="fixed"
+          popover="manual"
+          ref={promote}
           className="buzz-preview-card-positioner"
         >
           <BasePreviewCard.Popup

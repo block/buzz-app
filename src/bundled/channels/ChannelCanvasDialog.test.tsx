@@ -7,8 +7,9 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
-import { StrictMode } from "react";
+import { StrictMode, useRef, useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { keypair, signed } from "../../features/relay/testing";
@@ -75,12 +76,48 @@ it("keeps a restored conflict draft until explicit confirmed reload", async () =
   const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
   expect(text).toHaveValue("My unsaved work");
   expect(screen.getByRole("button", { name: "Save Canvas" })).toBeDisabled();
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-  await user.click(screen.getByRole("button", { name: "Reload saved Canvas" }));
-  expect(text).toHaveValue("My unsaved work");
-  expect(canvas.read).toHaveBeenCalledTimes(1);
-  confirm.mockReturnValue(true);
-  await user.click(screen.getByRole("button", { name: "Reload saved Canvas" }));
+  const reload = screen.getByRole("button", { name: "Reload saved Canvas" });
+  for (const dismissal of ["backdrop", "escape", "close", "cancel"]) {
+    await user.click(reload);
+    const confirmation = screen.getByRole("dialog", {
+      name: "Reload saved Canvas?",
+    });
+    await waitFor(() =>
+      expect(
+        within(confirmation).getByRole("button", { name: "Cancel" }),
+      ).toHaveFocus(),
+    );
+    await user.click(
+      within(confirmation).getByText(
+        "Discard your draft and reload the saved Canvas?",
+      ),
+    );
+    expect(confirmation).toBeInTheDocument();
+    if (dismissal === "backdrop")
+      await user.click(
+        confirmation.parentElement?.querySelector(
+          ".buzz-dialog-backdrop",
+        ) as Element,
+      );
+    else if (dismissal === "escape") await user.keyboard("{Escape}");
+    else
+      await user.click(
+        within(confirmation).getByRole("button", {
+          name: dismissal === "close" ? "Close" : "Cancel",
+        }),
+      );
+    await waitFor(() => expect(confirmation).not.toBeInTheDocument());
+    expect(
+      screen.getByRole("dialog", { name: "Channel Canvas" }),
+    ).toBeInTheDocument();
+    // jsdom lacks focus({ preventScroll }) detection; browser coverage checks pointer return.
+    if (dismissal !== "backdrop")
+      await waitFor(() => expect(reload).toHaveFocus());
+    expect(text).toHaveValue("My unsaved work");
+    expect(canvas.read).toHaveBeenCalledTimes(1);
+  }
+  await user.click(reload);
+  await user.click(screen.getByRole("button", { name: "Discard and reload" }));
   await waitFor(() => expect(text).toHaveValue("Saved"));
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(
@@ -162,4 +199,58 @@ it("ignores the stale StrictMode read after the current read enables typing and 
   } finally {
     release(head);
   }
+});
+
+it("returns focus to the ingress on close and retains edits without publishing", async () => {
+  const user = userEvent.setup();
+  const canvas = {
+    available: true,
+    read: vi.fn(async () => head),
+    save: vi.fn(async () => head),
+  };
+  function Harness() {
+    const [open, setOpen] = useState(false);
+    const trigger = useRef<HTMLButtonElement>(null);
+    return (
+      <>
+        <button type="button" ref={trigger} onClick={() => setOpen(true)}>
+          Canvas
+        </button>
+        {open && (
+          <ChannelCanvasDialog
+            canvas={canvas}
+            scope={scope}
+            channelId={channelId}
+            open={open}
+            onOpenChange={setOpen}
+            finalFocus={trigger}
+          />
+        )}
+      </>
+    );
+  }
+  render(<Harness />);
+  const trigger = screen.getByRole("button", { name: "Canvas" });
+  await user.click(trigger);
+  const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
+  await waitFor(() => expect(text).toHaveValue("Saved"));
+  await user.clear(text);
+  await user.type(text, "Local draft");
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(canvas.save).not.toHaveBeenCalled();
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("textbox", { name: "Canvas Markdown" }),
+    ).toBeEnabled(),
+  );
+  expect(screen.getByRole("textbox", { name: "Canvas Markdown" })).toHaveValue(
+    "Local draft",
+  );
+  await user.click(screen.getByRole("button", { name: "Close Canvas" }));
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(canvas.save).not.toHaveBeenCalled();
 });

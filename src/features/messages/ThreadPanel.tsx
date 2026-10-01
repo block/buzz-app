@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { usePanelTabHost } from "../panels/PanelWorkspace";
 import { MessageEditScope } from "./MessageEditScope";
 import { ReplySummary } from "./ReplySummary";
 import { ReplyBranch } from "./ReplyBranch";
@@ -29,12 +30,13 @@ import { continuesMessageGroup } from "./message-grouping";
 import { MessageComposer } from "./MessageComposer";
 import styles from "./Messages.module.css";
 import { rejectUnhandledFileDrop } from "./use-file-drop";
-import { useReading } from "./use-reading";
+import { Reading, readingPositioned } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
+import { correctScrollTop } from "./scroll-correction";
 
 export type ThreadPanelProps = {
   extensions?: ConversationExtensions | undefined;
@@ -45,8 +47,10 @@ export type ThreadPanelProps = {
   sessionConversation?: boolean | undefined;
   messageId: string;
   replyRequest?: number | undefined;
+  active?: boolean | undefined;
   navigation?: PageNavigation | undefined;
-  close(): void;
+  /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
+  close?: (() => void) | undefined;
   onOpenLink(url: string): boolean;
   onOpenMediaReview?(
     messageId: string,
@@ -59,41 +63,45 @@ export type ThreadPanelProps = {
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
+  const tabbed = !!usePanelTabHost();
+  const { close } = props;
+  const viewKey = messageViewKey(
+    props.session,
+    props.scope,
+    props.channelId,
+    props.messageId,
+  );
   return (
     <aside
-      className={styles.thread}
+      className={
+        close ? styles.thread : `${styles.thread} ${styles.embeddedThread}`
+      }
       data-attachment-drop-zone=""
+      data-reading-surface=""
       onDragOver={rejectUnhandledFileDrop}
       onDrop={rejectUnhandledFileDrop}
       aria-label="Thread"
       onKeyDown={(event) => {
-        if (event.key === "Escape") {
+        if (event.key === "Escape" && !tabbed && close) {
           event.stopPropagation();
-          props.close();
+          close();
         }
       }}
     >
-      <ThreadHeader close={props.close} />
-      <OwnedThreadPanel
-        key={messageViewKey(
-          props.session,
-          props.scope,
-          props.channelId,
-          props.messageId,
-        )}
-        {...props}
-      />
+      {!tabbed && close && (
+        <ThreadHeader key={`header:${viewKey}`} close={close} />
+      )}
+      <OwnedThreadPanel key={viewKey} {...props} />
     </aside>
   );
 }
-function ThreadHeader({ close }: Pick<ThreadPanelProps, "close">) {
+function ThreadHeader({ close }: { close(): void }) {
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     closeButton.current?.focus();
   }, []);
   return (
     <PanelHeader
-      variant="compact"
       title="Thread"
       actions={
         <IconButton
@@ -120,6 +128,7 @@ function OwnedThreadPanel({
   canOpenLink,
   sessionConversation,
   replyRequest,
+  active = true,
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
@@ -171,6 +180,7 @@ function OwnedThreadPanel({
       navigation={navigation}
       messageId={messageId}
       replyRequest={replyRequest}
+      active={active}
       onOpenLink={onOpenLink}
       onOpenMediaReview={onOpenMediaReview}
       canOpenLink={canOpenLink}
@@ -195,6 +205,7 @@ function ThreadMessages({
   canOpenLink,
   sessionConversation,
   replyRequest,
+  active,
 }: {
   sessionConversation?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -205,6 +216,7 @@ function ThreadMessages({
   messageId: string;
   view: ThreadView;
   replyRequest?: number | undefined;
+  active?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   onOpenLink(url: string): boolean;
   onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"];
@@ -277,6 +289,8 @@ function ThreadMessages({
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
+  const readingSettled = useRef(false);
+  const [initialPositioned, setInitialPositioned] = useState(false);
   const follow = useRef(true);
   const jumpingToLatest = useRef(false);
   const jumpTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
@@ -355,6 +369,8 @@ function ThreadMessages({
     // Exact lookup can finish before context. Preserve this row's reading
     // position through prepended history without refocusing it after opening.
     targetAnchor.current = selectedOffset();
+    readingSettled.current = true;
+    readingPositioned(scroller.current);
     navigation?.complete({ status: "opened" });
   }, [navigation, selectedOffset]);
   const prepareTarget = useCallback(() => {
@@ -392,11 +408,17 @@ function ThreadMessages({
   const rootTarget =
     navigation?.target.kind === "conversation" &&
     navigation.target.threadRootId === messageId;
+  // Ordinary opens follow the latest reply after bounded history finishes.
+  // Keep that first positioning invisible; exact-message navigation reveals itself.
+  const positioning =
+    !initialPositioned &&
+    (!navigation || rootTarget) &&
+    snapshot.status !== "error";
   const revealed = useMessageReveal({
     scroller,
     settled: positioned,
     messageId,
-    signal: rootTarget ? undefined : navigation?.signal,
+    signal: rootTarget || !active ? undefined : navigation?.signal,
     ready:
       snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
     complete: completeTarget,
@@ -411,7 +433,6 @@ function ThreadMessages({
     else if (snapshot.targetStatus === "error")
       navigation.complete({ status: "failed", reason: "unavailable" });
   }, [navigation, rootTarget, snapshot.status, snapshot.targetStatus]);
-  useReading({ session, channelId, scroller, settled: positioned });
   const [sent, setSent] = useState<string>();
   const [replyFocus, setReplyFocus] = useState(0);
   const focusReply = useCallback(() => {
@@ -520,6 +541,17 @@ function ThreadMessages({
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element || navigation?.signal.aborted) return;
+    // Restored background tabs verify their target without competing for focus.
+    if (
+      navigation &&
+      !active &&
+      snapshot.targetStatus === "ready" &&
+      snapshot.target?.id === messageId &&
+      revealed.current !== navigation.signal
+    ) {
+      revealed.current = navigation.signal;
+      navigation.complete({ status: "opened" });
+    }
     // A mounted ordinary thread acknowledges the visit before slow history can
     // exhaust navigation's deadline. Positioning still waits for bounded loading.
     if (
@@ -534,7 +566,12 @@ function ThreadMessages({
     if (
       (navigation && !rootTarget && revealed.current !== navigation.signal) ||
       (!positioned.current &&
-        (snapshot.status !== "ready" ||
+        ((snapshot.status !== "ready" &&
+          !(
+            snapshot.status === "loading" &&
+            snapshot.readKind === "refresh" &&
+            snapshot.root
+          )) ||
           (snapshot.direction !== "older" && snapshot.canLoadMore)))
     )
       return;
@@ -548,14 +585,17 @@ function ThreadMessages({
           ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
         ].find((row) => row.dataset.messageId === anchor.id);
         if (row)
-          element.scrollTop += row.getBoundingClientRect().top - anchor.top;
+          correctScrollTop(
+            element,
+            row.getBoundingClientRect().top - anchor.top,
+          );
         if (snapshot.status !== "loading") olderAnchor.current = undefined;
       }
     }
     if (targetAnchor.current !== undefined) {
       const offset = selectedOffset();
       if (offset !== undefined) {
-        element.scrollTop += offset - targetAnchor.current;
+        correctScrollTop(element, offset - targetAnchor.current);
         targetAnchor.current = offset;
         follow.current = false;
       }
@@ -566,6 +606,8 @@ function ThreadMessages({
     // subsequent live changes follow only while the reader is at the bottom.
     if (follow.current) element.scrollTop = element.scrollHeight;
     positioned.current = true;
+    setInitialPositioned(true);
+    readingPositioned(element);
     if (jumpingToLatest.current) {
       setShowJumpToLatest(false);
     } else {
@@ -575,7 +617,10 @@ function ThreadMessages({
       if (bottom) setNewMessageCount(0);
     }
   }, [
+    active,
     snapshot.status,
+    snapshot.targetStatus,
+    snapshot.target,
     snapshot.canLoadMore,
     snapshot.direction,
     snapshot.root,
@@ -590,6 +635,25 @@ function ThreadMessages({
     tree,
     expanded,
   ]);
+  // Main's retained presentation can be usable before the initial history walk
+  // finishes. That is not yet automatic reading intent. Exact revealed targets
+  // remain individually readable; later background refreshes keep earned readiness.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active can complete an exact background visit in the preceding layout effect without changing the snapshot.
+  useLayoutEffect(() => {
+    if (
+      !positioned.current ||
+      readingSettled.current ||
+      (navigation && !rootTarget && revealed.current !== navigation.signal)
+    )
+      return;
+    if (
+      snapshot.status === "ready" &&
+      (snapshot.direction === "older" || !snapshot.canLoadMore)
+    ) {
+      readingSettled.current = true;
+      readingPositioned(scroller.current);
+    }
+  }, [active, navigation, rootTarget, revealed, snapshot]);
   // An own send can land in the middle of a branch, not at the list bottom.
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry DOM lookup after history or branch visibility changes.
   useLayoutEffect(() => {
@@ -632,6 +696,7 @@ function ThreadMessages({
     }
     olderDemand.current = true;
     targetAnchor.current = undefined;
+    setInitialPositioned(true);
     if (positioned.current) return;
     positioned.current = true;
     follow.current = false;
@@ -774,10 +839,31 @@ function ThreadMessages({
   };
   return (
     <MessageEditScope>
+      <Reading
+        session={session}
+        channelId={channelId}
+        scroller={scroller}
+        settled={readingSettled}
+        rootId={snapshot.root?.id}
+        // A visible exact reply can outlive its unavailable root. Until resolved,
+        // observe rows individually; an absent root must not mean channel catch-up.
+        latestMessageId={
+          snapshot.root
+            ? snapshot.replies.reduce<ChannelMessage | undefined>(
+                (latest, row) =>
+                  !latest || row.createdAt > latest.createdAt ? row : latest,
+                undefined,
+              )?.id
+            : undefined
+        }
+      />
       <section
         ref={scroller}
+        data-message-scroller
         className={styles.threadHistory}
         aria-label="Thread messages"
+        aria-busy={positioning}
+        data-positioning={positioning || undefined}
         onScroll={(event) => {
           if (!positioned.current) return;
           const element = event.currentTarget;
@@ -834,46 +920,50 @@ function ThreadMessages({
             onClick={jumpToLatest}
           />
         )}
-        {snapshot.root ? (
-          <MessageRow
-            extensions={extensions}
-            session={session}
-            scope={scope}
-            onReply={focusReply}
-            row={snapshot.root}
-            profile={profiles.get(snapshot.root.authorId)}
-            participantProfiles={profiles}
-            agentPubkeys={agentPubkeys}
-            media={session.media}
-            onOpenLink={onOpenLink}
-            canOpenLink={canOpenLink}
-            day={true}
-            layout="thread"
-            retry={session.messages.retry}
-            mediaMode="thread"
-            {...(mediaSeek
-              ? {
-                  mediaSeekTo: mediaSeek.seconds,
-                  mediaSeekRequest: mediaSeek.request,
-                }
-              : {})}
-            {...(onOpenMediaReview ? { onOpenMediaReview: openRootMedia } : {})}
-          />
-        ) : snapshot.status !== "loading" ? (
-          <p className={styles.empty}>Original message unavailable.</p>
-        ) : null}
-        <ol>
-          {showOlderPageStatus && snapshot.error && (
-            <li className={styles.threadHistoryPageStatus}>
-              <p role="alert">{snapshot.error}</p>
-              <Button type="button" onClick={retryThread}>
-                Retry thread
-              </Button>
-            </li>
-          )}
-          {renderReplies(undefined)}
-        </ol>
-        {snapshot.status === "loading" && !rows.length ? (
+        <div data-thread-rows="" inert={positioning}>
+          {snapshot.root ? (
+            <MessageRow
+              extensions={extensions}
+              session={session}
+              scope={scope}
+              onReply={focusReply}
+              row={snapshot.root}
+              profile={profiles.get(snapshot.root.authorId)}
+              participantProfiles={profiles}
+              agentPubkeys={agentPubkeys}
+              media={session.media}
+              onOpenLink={onOpenLink}
+              canOpenLink={canOpenLink}
+              day={true}
+              layout="thread"
+              retry={session.messages.retry}
+              mediaMode="thread"
+              {...(mediaSeek
+                ? {
+                    mediaSeekTo: mediaSeek.seconds,
+                    mediaSeekRequest: mediaSeek.request,
+                  }
+                : {})}
+              {...(onOpenMediaReview
+                ? { onOpenMediaReview: openRootMedia }
+                : {})}
+            />
+          ) : snapshot.status !== "loading" ? (
+            <p className={styles.empty}>Original message unavailable.</p>
+          ) : null}
+          <ol>
+            {showOlderPageStatus && snapshot.error && (
+              <li className={styles.threadHistoryPageStatus}>
+                <p role="alert">{snapshot.error}</p>
+                <Button type="button" onClick={retryThread}>
+                  Retry thread
+                </Button>
+              </li>
+            )}
+            {renderReplies(undefined)}
+          </ol>
+        </div>
+        {positioning || (snapshot.status === "loading" && !rows.length) ? (
           <p role="status">Loading thread…</p>
         ) : null}
         {snapshot.targetStatus === "unavailable" && (

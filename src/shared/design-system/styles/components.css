@@ -202,6 +202,7 @@
 
   /* Trailing row actions keep their size-selected width and fill the row height. */
   .buzz-button[data-icon-variant][data-icon-shape="row-end"] {
+    --interaction-hover: var(--interaction-row-hover);
     align-self: stretch;
     height: auto;
     border-radius: 0 var(--radius-row) var(--radius-row) 0;

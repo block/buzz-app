@@ -87,8 +87,9 @@ in a stretched flex slot. It keeps the size-selected width, fills the row height
 and rounds only the right corners with `radius-row`. Decorative inverse corners
 on the left extend the state fill around the preceding row's rounded edge without
 expanding the hit target. They inherit the fill, including hover/pressed/menu-open
-states, rather than painting over the adjacent surface. The ordinary shared hover,
-pressed and keyboard behavior remains unchanged.
+states, rather than painting over the adjacent surface. Hover uses the same
+contextual row highlight as NavigationItem, not the brighter floating-button
+step. Shared pressed and keyboard behavior remains unchanged.
 
 ## Public identity text
 
@@ -276,8 +277,11 @@ For finite choices, use Select: its inline layout fits compact toolbars and
 `variant="field"` fits labelled forms. The proposed `variant="compact"` fits
 trailing row choices: a small ghost trigger with a visually hidden accessible
 label, bounded single-line value, and full choice text in the popup and value hint.
-The caller owns its column width. Pass `disabled` explicitly when the choice
-is unavailable. For searchable choices, use the shared Combobox parts; keep
+Its popup has an 11.25rem minimum (bounded by the viewport) and reserves the
+selection-mark slot in every option so selecting the widest label cannot resize it.
+The caller owns its column width. `align="end"` anchors a trailing choice popup
+to the trigger’s right edge; the default remains `start`. Pass `disabled` explicitly
+when the choice is unavailable. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control
 owns the label, input and integrated browse caret; Popup and Item own the shared
 menu presentation. Use its loading state while discovering options, and keep

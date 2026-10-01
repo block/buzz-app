@@ -894,6 +894,7 @@ export function ChannelMembersDialog({
               <Select
                 variant="compact"
                 label="Filter members by role"
+                align="end"
                 value={roleFilter}
                 valueLabel={roleFilter}
                 groups={[

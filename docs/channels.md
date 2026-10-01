@@ -597,7 +597,10 @@ Role confirmations use prominent, and removal remains destructive.
 The search has a role dropdown on its right when at least two roster groups are
 present. It defaults to All and offers only populated Owners, Admins, Members and
 Agents groups, with whole-roster counts (including the All total), using the shared
-compact Select. Any search input, including whitespace, resets to All and animates
+compact Select with its popup aligned to the trigger’s right edge. The popup has
+an 11.25rem minimum and reserves checkmark space to avoid width jumps on selection.
+Counts form a partition: each identity appears once, with Owners/Admins taking precedence
+over agent identity. Any search input, including whitespace, resets to All and animates
 the picker out while the search expands. Clearing the input restores All; search
 never combines with a role filter, and ordinary invitations stay available.
 Reduced motion makes the transition immediate. Existing owner/admin
@@ -606,7 +609,9 @@ the top; a vanished group or a single-group roster returns to All. Closing and
 reopening Members resets the filter. This is display state, not role authority.
 The member action trigger retains its compact width and fills the row height, with
 right-hand corners matching the row. Inverse left corners carry its hover/pressed
-fill around the profile's rounded edge; profile and action targets remain separate.
+fill around the profile's rounded edge; its hover matches the profile row highlight
+rather than the brighter floating-button fill. Profile and action targets remain
+separate.
 The title, channel name and search stay fixed. Members uses the shared Dialog
 with `dismissOnOutsideClick` enabled. Adjacent role groups use an 8px gap in
 addition to the heading’s own top inset; invitation/recovery spacing is unchanged.

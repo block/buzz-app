@@ -1115,6 +1115,38 @@ test("member role dropdown fits beside search and preserves modal focus", async 
     const all = page.getByRole("option", { name: "All · 61" });
     const agents = page.getByRole("option", { name: "Agents · 60" });
     await expect(all).toBeVisible();
+    const popup = page.locator(".buzz-select-popup");
+    await popup.evaluate(async (element) => {
+      await Promise.all(element.getAnimations().map((a) => a.finished));
+    });
+    const popupBounds = await popup.boundingBox();
+    const minimumWidth = await page.evaluate(
+      () =>
+        11.25 *
+        Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+    );
+    expect(popupBounds.width).toBeGreaterThanOrEqual(minimumWidth);
+    expect(popupBounds.x + popupBounds.width).toBeCloseTo(
+      filterBounds.x + filterBounds.width,
+      0,
+    );
+    // Reopening after every choice must retain both width and right edge,
+    // including Members, whose label plus selection mark is the widest.
+    for (const name of ["Members · 1", "All · 61", "Agents · 60"]) {
+      await page.getByRole("option", { name, exact: true }).click();
+      await expect(popup).toBeHidden();
+      await filter.click();
+      await expect(popup).toBeVisible();
+      await popup.evaluate(async (element) => {
+        await Promise.all(element.getAnimations().map((a) => a.finished));
+      });
+      const bounds = await popup.boundingBox();
+      expect(bounds.width).toBe(popupBounds.width);
+      expect(bounds.x + bounds.width).toBeCloseTo(
+        filterBounds.x + filterBounds.width,
+        0,
+      );
+    }
     await agents.click();
     await expect(filter).toBeFocused();
     await expect(filter).toHaveText("Agents");
@@ -1166,7 +1198,27 @@ test("member role dropdown fits beside search and preserves modal focus", async 
     expect(actionBounds.width).toBe(32);
     expect(geometry.radius).toBe(geometry.rowRadius);
     expect(geometry.leftRadius).toBe("0px");
-    await action.hover();
+    // The attached action and profile are two parts of the same row, not
+    // a floating button with a brighter hover step. Check the painted states.
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((mode) => {
+        document.documentElement.className = mode;
+        document.documentElement.dataset.colorMode = mode;
+      }, mode);
+      const profile = row.getByRole("button", {
+        name: /^Open profile for Agent 12/,
+      });
+      await row.evaluate((element) =>
+        element.scrollIntoView({ block: "center" }),
+      );
+      await profile.hover({ position: { x: 20, y: 20 } });
+      const profileFill = await profile.evaluate(async (element) => {
+        await Promise.all(element.getAnimations().map((a) => a.finished));
+        return getComputedStyle(element).backgroundColor;
+      });
+      await action.hover();
+      await expect(action).toHaveCSS("background-color", profileFill);
+    }
     const corners = await action.evaluate((element) => {
       const button = getComputedStyle(element);
       return ["::before", "::after"].map((pseudo) => {

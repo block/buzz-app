@@ -672,7 +672,13 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "A labelled choice with inline, compact row and full-width form layouts.",
     behavior: "Base UI owns focus, keyboard selection, grouping, and dismissal",
-    variants: ["inline", "compact", "field", "disabled"],
+    variants: [
+      "inline",
+      "compact",
+      "field",
+      "disabled",
+      "align: start | center | end",
+    ],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Design system",

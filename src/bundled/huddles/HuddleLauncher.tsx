@@ -1,5 +1,8 @@
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ChannelLauncherProps } from "../../features/panels/service";
+import type { RelayData } from "../../features/relay/service";
+import { useRelayConnection } from "../../features/relay/react";
+import { useIncomingHuddle } from "../../features/huddle/use-incoming";
 import type { Huddles } from "../../features/huddle/service";
 import {
   HeadphonesIcon,
@@ -17,17 +20,25 @@ import {
   MenuIcon,
   MenuNote,
 } from "../../shared/design-system/ui/Menu";
+import { ChannelMembersDialog } from "../channels/ChannelMembersDialog";
 import styles from "./Huddles.module.css";
 
 type Props = Pick<
   ChannelLauncherProps,
   "context" | "available" | "openMembers"
-> & { huddles: Huddles; showWindow(): Promise<void> };
+> & { relay: RelayData; huddles: Huddles; showWindow(): Promise<void> };
 const focusPlayer = () => document.getElementById("huddle-capsule")?.focus();
 
 export function HuddleLauncher(props: Props) {
   const { context, available, huddles } = props;
   const call = useSyncExternalStore(huddles.subscribe, huddles.snapshot);
+  const connection = useRelayConnection(props.relay);
+  const incoming = useIncomingHuddle(
+    connection.scope === context.scope && connection.viewer === context.viewer
+      ? connection.session
+      : undefined,
+    context.channelId,
+  );
   const active = ["connecting", "connected", "leaving"].includes(call.phase);
   const here =
     call.phase === "connected" &&
@@ -36,31 +47,62 @@ export function HuddleLauncher(props: Props) {
     call.destination.channelId === context.channelId;
   if (here && call.id)
     return <ActiveHuddle key={call.id} {...props} callId={call.id} />;
+  const joinable =
+    !active && incoming && huddles.canJoin(context.scope, incoming.id);
+  const label = active
+    ? "Show active Huddle"
+    : joinable
+      ? `Join active huddle (${incoming.participants} ${incoming.participants === 1 ? "participant" : "participants"})`
+      : "Start or join a huddle";
   return (
-    <IconButton
-      size="toolbar"
-      variant="ghost"
-      icon={<HeadphonesIcon size={16} aria-hidden="true" />}
-      aria-label={active ? "Show active Huddle" : "Start or join a huddle"}
-      title={active ? "Show active Huddle" : "Start or join a huddle"}
-      onClick={() => {
-        if (!available()) return;
-        if (active) {
-          if (document.getElementById("huddle-capsule")) focusPlayer();
-          else void props.showWindow().catch(() => {});
-        } else void huddles.start(context);
-      }}
-    />
+    <span className={joinable ? styles.activeLauncher : undefined}>
+      <IconButton
+        size="toolbar"
+        variant="ghost"
+        icon={<HeadphonesIcon size={16} aria-hidden="true" />}
+        style={joinable ? { color: "var(--status-online)" } : undefined}
+        aria-label={label}
+        title={label}
+        onClick={() => {
+          if (!available()) return;
+          if (active) {
+            if (document.getElementById("huddle-capsule")) focusPlayer();
+            else void props.showWindow().catch(() => {});
+          } else if (joinable) void huddles.join(context, incoming.id);
+          else void huddles.start(context);
+        }}
+      />
+    </span>
   );
 }
 
 function ActiveHuddle({
   context,
   available,
-  openMembers,
+  relay,
   huddles,
   callId,
 }: Props & { callId: string }) {
+  const connection = useRelayConnection(relay);
+  const call = useSyncExternalStore(huddles.subscribe, huddles.snapshot);
+  const [membersOpen, setMembersOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const list = useSyncExternalStore(
+    connection.session.channels.subscribeList,
+    connection.session.channels.list,
+  );
+  const room =
+    list.channels.find((c) => c.id === call.room) ??
+    (call.room ? connection.session.channels.get?.(call.room) : undefined);
+  const canInvite =
+    !!room &&
+    room.huddle === true &&
+    room.parentChannelId === context.channelId &&
+    !room.archived;
+  useEffect(() => {
+    if (call.room)
+      void connection.session.channels.resolve?.([call.room]).catch(() => {});
+  }, [connection.session, call.room]);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState(false);
   const current = () =>
@@ -71,88 +113,104 @@ function ActiveHuddle({
   // explicit headphone click in the destination, never automatic mic capture.
   const link = `buzz://channel/${encodeURIComponent(context.channelId)}`;
   return (
-    <fieldset
-      className={styles.activeLauncher}
-      aria-label="Active Huddle in this chat"
-    >
-      <IconButton
-        size="toolbar"
-        variant="ghost"
-        style={{ color: "var(--status-online)" }}
-        data-huddle-leave=""
-        aria-label="Leave huddle"
-        title="Leave huddle"
-        icon={
-          <span className={styles.leaveGlyph} aria-hidden="true">
-            <HeadphonesIcon size={16} className={styles.headphonesGlyph} />
-            <PhoneDisconnectIcon size={16} className={styles.disconnectGlyph} />
-          </span>
-        }
-        onClick={() => {
-          if (current()) void huddles.leave();
-        }}
-      />
-      <span className={styles.launcherDivider} aria-hidden="true" />
-      <MenuRoot
-        onOpenChange={(open) => {
-          if (open) {
-            setCopied(false);
-            setError(false);
-          }
-        }}
+    <>
+      <fieldset
+        className={styles.activeLauncher}
+        aria-label="Active Huddle in this chat"
       >
-        <MenuTrigger
-          render={
-            <IconButton
-              size="toolbar"
-              variant="ghost"
-              style={{ color: "var(--status-online)" }}
-              aria-label="Huddle options"
-              icon={<CaretDownIcon size={16} aria-hidden="true" />}
-            />
+        <IconButton
+          size="toolbar"
+          variant="ghost"
+          style={{ color: "var(--status-online)" }}
+          data-huddle-leave=""
+          aria-label="Leave huddle"
+          title="Leave huddle"
+          icon={
+            <span className={styles.leaveGlyph} aria-hidden="true">
+              <HeadphonesIcon size={16} className={styles.headphonesGlyph} />
+              <PhoneDisconnectIcon
+                size={16}
+                className={styles.disconnectGlyph}
+              />
+            </span>
           }
+          onClick={() => {
+            if (current()) void huddles.leave();
+          }}
         />
-        <MenuPopup align="end" size="compact">
-          <MenuItem
-            disabled={!openMembers}
-            onClick={() => {
-              if (current()) openMembers?.();
-            }}
-          >
-            <MenuIcon>
-              <UsersIcon size={16} />
-            </MenuIcon>
-            Add someone
-          </MenuItem>
-          <MenuItem
-            closeOnClick={false}
-            onClick={async () => {
-              if (!current()) return;
+        <span className={styles.launcherDivider} aria-hidden="true" />
+        <MenuRoot
+          onOpenChange={(open) => {
+            if (open) {
+              setCopied(false);
               setError(false);
-              try {
-                await navigator.clipboard.writeText(link);
-                setCopied(true);
-              } catch {
-                setError(true);
-              }
-            }}
-          >
-            <MenuIcon>
-              <LinkIcon size={16} />
-            </MenuIcon>
-            {copied ? "Link copied" : "Copy link"}
-          </MenuItem>
-          <MenuNote>
-            People need to belong to this chat. The link opens it; use the
-            headphone button to join.
-          </MenuNote>
-          {error && (
-            <MenuNote role="alert">
-              Couldn’t copy. You can copy this link manually: {link}
+            }
+          }}
+        >
+          <MenuTrigger
+            render={
+              <IconButton
+                size="toolbar"
+                variant="ghost"
+                style={{ color: "var(--status-online)" }}
+                ref={trigger}
+                aria-label="Huddle options"
+                icon={<CaretDownIcon size={16} aria-hidden="true" />}
+              />
+            }
+          />
+          <MenuPopup align="end" size="compact">
+            <MenuItem
+              disabled={!canInvite}
+              onClick={() => {
+                if (current()) setMembersOpen(true);
+              }}
+            >
+              <MenuIcon>
+                <UsersIcon size={16} />
+              </MenuIcon>
+              Add someone
+            </MenuItem>
+            <MenuItem
+              closeOnClick={false}
+              onClick={async () => {
+                if (!current()) return;
+                setError(false);
+                try {
+                  await navigator.clipboard.writeText(link);
+                  setCopied(true);
+                } catch {
+                  setError(true);
+                }
+              }}
+            >
+              <MenuIcon>
+                <LinkIcon size={16} />
+              </MenuIcon>
+              {copied ? "Link copied" : "Copy link"}
+            </MenuItem>
+            <MenuNote>
+              People need to belong to this chat. The link opens it; use the
+              headphone button to join.
             </MenuNote>
-          )}
-        </MenuPopup>
-      </MenuRoot>
-    </fieldset>
+            {error && (
+              <MenuNote role="alert">
+                Couldn’t copy. You can copy this link manually: {link}
+              </MenuNote>
+            )}
+          </MenuPopup>
+        </MenuRoot>
+      </fieldset>
+      {membersOpen && current() && canInvite && call.room && (
+        <ChannelMembersDialog
+          session={connection.session}
+          channelId={call.room}
+          title="Huddle members"
+          description="People added here can join this Huddle and its thread. The original chat stays private."
+          close={() => setMembersOpen(false)}
+          trigger={trigger}
+        />
+      )}
+    </>
   );
 }

@@ -118,17 +118,42 @@ fn create(room: &str, parent: &str) -> EventTemplate {
             vec!["name".into(), "Huddle".into()],
             vec!["visibility".into(), "private".into()],
             vec!["channel_type".into(), "stream".into()],
-            vec!["ttl".into(), "3600".into()],
             vec![
                 "about".into(),
                 format!("Buzz Huddle (buzz.huddles/v1)\nparent:{parent}"),
             ],
+            vec!["ttl".into(), "3600".into()],
         ],
         String::new(),
     )
 }
-async fn publish(host: &IdentityHost, community: &str, event: EventTemplate) -> Result<()> {
+fn confirm_member(room: &str, viewer: &str) -> EventTemplate {
+    template(
+        9000,
+        vec![
+            vec!["h".into(), room.into()],
+            vec!["p".into(), viewer.into()],
+        ],
+        String::new(),
+    )
+}
+async fn publish(
+    host: &IdentityHost,
+    community: &str,
+    event: EventTemplate,
+    viewer: &str,
+) -> Result<()> {
+    let operation = match event.kind {
+        9007 => "create the Huddle room",
+        9000 => "confirm Huddle chat membership",
+        48100 => "announce the Huddle in this chat",
+        9002 => "close the temporary Huddle room",
+        _ => "update the Huddle",
+    };
     let signed = host.sign(event).await?;
+    if signed["pubkey"] != viewer {
+        return Err("Your identity changed. Reopen Huddles.".into());
+    }
     let expected = signed["id"]
         .as_str()
         .ok_or("Invalid signed Huddle event")?
@@ -142,18 +167,49 @@ async fn publish(host: &IdentityHost, community: &str, event: EventTemplate) -> 
         65536,
     )
     .await?;
-    let value: Value = serde_json::from_str(&reply.body).map_err(|_| "Invalid Huddle receipt")?;
-    if !(200..300).contains(&reply.status) {
-        return Err(format!("Huddle operation rejected (HTTP {})", reply.status));
+    publication_receipt(reply.status, &reply.body, &expected, operation)
+}
+
+fn publication_receipt(status: u16, body: &str, expected: &str, operation: &str) -> Result<()> {
+    let value = serde_json::from_str::<Value>(body).ok();
+    let reason = value
+        .as_ref()
+        .and_then(|value| {
+            value["error"]
+                .as_str()
+                .or_else(|| value["message"].as_str())
+        })
+        .map(|reason| {
+            // Relay refusal text is display-only: bounded plain text, never markup or logs.
+            reason
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(300)
+                .collect::<String>()
+        })
+        .filter(|reason| !reason.trim().is_empty());
+    if !(200..300).contains(&status) {
+        return Err(format!(
+            "Couldn’t {operation} (HTTP {status}){}",
+            reason
+                .map(|reason| format!(": {reason}"))
+                .unwrap_or_default()
+        ));
     }
+    let value = value.ok_or_else(|| format!("Invalid receipt while trying to {operation}"))?;
     // Same /events acknowledgement contract as ordinary client publications.
     if value["event_id"] != expected || value["accepted"] != true {
-        return Err("Relay did not accept the Huddle event".into());
+        return Err(format!(
+            "Relay did not accept the request to {operation}{}",
+            reason
+                .map(|reason| format!(": {reason}"))
+                .unwrap_or_default()
+        ));
     }
     Ok(())
 }
 
-async fn admit_parent(host: &IdentityHost, call: &Call) -> Result<()> {
+async fn admit_membership(host: &IdentityHost, call: &Call) -> Result<bool> {
     if host.viewer().await? != call.viewer {
         return Err("Your identity changed. Reopen Huddles.".into());
     }
@@ -164,14 +220,19 @@ async fn admit_parent(host: &IdentityHost, call: &Call) -> Result<()> {
         .or(info["pubkey"].as_str())
         .filter(|s| super::hex_key(s))
         .ok_or("Relay identity unavailable")?;
+    let mut channels = vec![call.parent.as_str()];
+    if let Some(room) = &call.room {
+        channels.push(room.as_str());
+    }
+    let filters: Vec<Value> = channels
+        .iter()
+        .map(|channel| json!({"kinds":[39002], "authors":[authority], "#d":[channel], "limit":1, "consistency":"strong"}))
+        .collect();
     let reply = send(
         host,
         request_url(&call.community, "/query", "POST")?,
         "POST",
-        Some(
-            json!([{"kinds":[39002], "authors":[authority], "#d":[call.parent], "limit":1}])
-                .to_string(),
-        ),
+        Some(serde_json::to_string(&filters).map_err(|_| "Invalid membership query")?),
         true,
         1024 * 1024,
     )
@@ -181,18 +242,38 @@ async fn admit_parent(host: &IdentityHost, call: &Call) -> Result<()> {
     }
     let events: Vec<Value> =
         serde_json::from_str(&reply.body).map_err(|_| "Invalid channel membership")?;
-    let allowed = events.iter().any(|e| {
-        verify_signature(e).is_ok()
-            && e["kind"] == 39002
-            && e["pubkey"] == authority
-            && has_tag(e, "d", &call.parent)
-            && has_tag(e, "p", &call.viewer)
-    });
+    let allowed = membership_allows(&events, authority, &call.viewer, &channels);
     if !allowed {
-        return Err("You must be a current member of this channel to join a Huddle".into());
+        return Err("You must belong to this Huddle or its original chat to join".into());
     }
-    Ok(())
+    Ok(call
+        .room
+        .as_ref()
+        .is_some_and(|room| membership_allows(&events, authority, &call.viewer, &[room.as_str()])))
 }
+// Only relay-signed current rosters count. Joining an existing room may use
+// either roster; creating a room still supplies only its parent. The audio
+// endpoint remains authoritative for creator linkage, archive state and access.
+fn membership_allows(events: &[Value], authority: &str, viewer: &str, channels: &[&str]) -> bool {
+    channels.iter().any(|channel| {
+        events
+            .iter()
+            .filter(|e| {
+                verify_signature(e).is_ok()
+                    && e["kind"] == 39002
+                    && e["pubkey"] == authority
+                    && has_tag(e, "d", channel)
+            })
+            .max_by(|a, b| {
+                a["created_at"]
+                    .as_u64()
+                    .cmp(&b["created_at"].as_u64())
+                    .then_with(|| b["id"].as_str().cmp(&a["id"].as_str()))
+            })
+            .is_some_and(|e| has_tag(e, "p", viewer))
+    })
+}
+
 fn has_tag(event: &Value, name: &str, value: &str) -> bool {
     event["tags"]
         .as_array()
@@ -249,7 +330,7 @@ async fn run(
     pcm: mpsc::Receiver<Vec<f32>>,
     touched: Arc<AtomicU64>,
 ) -> Result<()> {
-    admit_parent(host, call).await?;
+    let room_membership_confirmed = admit_membership(host, call).await?;
     check_cancelled(&stop, &touched)?;
     let room = call
         .room
@@ -262,18 +343,34 @@ async fn run(
         if creating {
             attempted_create = true;
             // Do not cancel an in-flight publication: its outcome may be uncertain.
-            publish(host, &call.community, create(&room, &call.parent)).await?;
+            publish(host, &call.community, create(&room, &call.parent), &call.viewer).await?;
             check_cancelled(&stop, &touched)?;
             // Once the advisory might be visible, another person can join. Never
             // archive that shared room on our own failed/cancelled connection.
             advertised = true;
-            publish(host, &call.community, lifecycle(48100, &call.parent, &room)).await?;
+            publish(host, &call.community, lifecycle(48100, &call.parent, &room), &call.viewer).await?;
         }
         check_cancelled(&stop, &touched)?;
         let (socket, peers) = tokio::select! {
             _ = stop.changed() => return Err("Huddle cancelled".into()),
             result = tokio::time::timeout(Duration::from_secs(15), audio::connect(host, call, &room)) => result.map_err(|_| "Huddle connection timed out")??,
         };
+        check_cancelled(&stop, &touched)?;
+        if !creating && !room_membership_confirmed {
+            // Audio can add parent-chat members directly in the database without
+            // updating NIP-29 discovery. Once audio has admitted this identity,
+            // self PUT_USER republishes the signed roster without changing roles.
+            // Never use audio participation itself as chat write authority.
+            publish(host, &call.community, confirm_member(&room, &call.viewer), &call.viewer).await?;
+            check_cancelled(&stop, &touched)?;
+            let confirmed = tokio::select! {
+                _ = stop.changed() => return Err("Huddle cancelled".into()),
+                result = admit_membership(host, call) => result?,
+            };
+            if !confirmed {
+                return Err("Huddle chat membership could not be confirmed. Try joining again.".into());
+            }
+        }
         check_cancelled(&stop, &touched)?;
         updates.send(Update::Connected { room: room.clone(), participants: peers.values().cloned().collect() }).map_err(|_| "Huddle view closed")?;
         audio::run(socket, peers, pcm, stop.clone(), updates, &touched).await
@@ -289,7 +386,7 @@ async fn run(
             ],
             String::new(),
         );
-        let cleanup = publish(host, &call.community, archive).await;
+        let cleanup = publish(host, &call.community, archive, &call.viewer).await;
         if cleanup.is_err() {
             return Err(format!(
                 "{}. The temporary Huddle could not be closed; it will expire.",
@@ -345,15 +442,95 @@ pub(crate) fn huddle_pcm(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn existing_room_membership_does_not_require_parent_access() {
+        let host = IdentityHost::fixture();
+        let authority = host.viewer().await.unwrap();
+        let viewer = "ab".repeat(32);
+        let room = host
+            .sign(EventTemplate {
+                kind: 39002,
+                created_at: 1_700_000_000,
+                tags: vec![
+                    vec!["d".into(), "room".into()],
+                    vec!["p".into(), viewer.clone()],
+                ],
+                content: String::new(),
+            })
+            .await
+            .unwrap();
+        assert!(membership_allows(
+            &[room.clone()],
+            &authority,
+            &viewer,
+            &["parent", "room"]
+        ));
+        assert!(!membership_allows(
+            &[room.clone()],
+            &authority,
+            &viewer,
+            &["parent"]
+        ));
+        assert!(!membership_allows(
+            &[room.clone()],
+            &viewer,
+            &viewer,
+            &["room"]
+        ));
+        let mut forged = room.clone();
+        forged["tags"][0][1] = json!("parent");
+        assert!(!membership_allows(
+            &[forged],
+            &authority,
+            &viewer,
+            &["parent"]
+        ));
+        let revoked = host
+            .sign(EventTemplate {
+                kind: 39002,
+                created_at: 1_700_000_000,
+                tags: vec![vec!["d".into(), "room".into()]],
+                content: String::new(),
+            })
+            .await
+            .unwrap();
+        assert!(!membership_allows(
+            &[revoked],
+            &authority,
+            &viewer,
+            &["parent", "room"]
+        ));
+    }
+    #[tokio::test]
+    async fn membership_confirmation_cannot_be_signed_by_a_replacement_identity() {
+        let host = IdentityHost::fixture();
+        let viewer = "ab".repeat(32);
+        let result = publish(
+            &host,
+            "https://relay.test",
+            confirm_member("room", &viewer),
+            &viewer,
+        )
+        .await;
+        assert_eq!(result, Err("Your identity changed. Reopen Huddles.".into()));
+    }
+    #[test]
+    fn chat_membership_confirmation_only_targets_self_and_preserves_role() {
+        let event = confirm_member("room", "viewer");
+        assert_eq!(event.kind, 9000);
+        assert_eq!(event.tags, vec![vec!["h", "room"], vec!["p", "viewer"]]);
+        assert!(event.content.is_empty());
+    }
     #[test]
     fn huddle_templates_match_existing_protocol() {
         let room = uuid::Uuid::new_v4().to_string();
         let parent = uuid::Uuid::new_v4().to_string();
         let e = create(&room, &parent);
         assert_eq!(e.kind, 9007);
-        assert_eq!(e.tags[4], ["ttl", "3600"]);
+        assert!(super::super::channel_writes::creation(&e));
+        assert_eq!(e.tags[5], ["ttl", "3600"]);
         assert_eq!(
-            e.tags[5],
+            e.tags[4],
             [
                 "about",
                 &format!("Buzz Huddle (buzz.huddles/v1)\nparent:{parent}")
@@ -366,6 +543,39 @@ mod tests {
             serde_json::from_str::<Value>(&e.content).unwrap(),
             json!({"ephemeral_channel_id":room})
         );
+    }
+    #[test]
+    fn publication_errors_identify_the_step_and_bounded_relay_reason() {
+        let operation = "announce the Huddle in this chat";
+        assert_eq!(publication_receipt(400, r#"{"error":"invalid: channel is archived"}"#, "id", operation),
+            Err("Couldn’t announce the Huddle in this chat (HTTP 400): invalid: channel is archived".into()));
+        assert_eq!(
+            publication_receipt(502, "not JSON", "id", operation),
+            Err("Couldn’t announce the Huddle in this chat (HTTP 502)".into())
+        );
+        let body = json!({"error":format!("\n{}\u{1b}", "x".repeat(500))}).to_string();
+        let error = publication_receipt(400, &body, "id", operation).unwrap_err();
+        assert!(error.ends_with(&"x".repeat(300)));
+        assert!(!error.contains('\n'));
+        assert_eq!(
+            publication_receipt(200, r#"{"event_id":"id","accepted":true}"#, "id", operation),
+            Ok(())
+        );
+        assert!(publication_receipt(
+            200,
+            r#"{"event_id":"other","accepted":true}"#,
+            "id",
+            operation
+        )
+        .is_err());
+        assert!(publication_receipt(
+            200,
+            r#"{"event_id":"id","accepted":false,"message":"duplicate"}"#,
+            "id",
+            operation
+        )
+        .unwrap_err()
+        .ends_with(": duplicate"));
     }
     #[test]
     fn destination_rejects_paths_credentials_and_noncanonical_ids() {

@@ -1,3 +1,4 @@
+import { HuddleAvatarMotion } from "./HuddleAvatarMotion";
 import { useEffect, useSyncExternalStore, type CSSProperties } from "react";
 import type { RelayData } from "../../features/relay/service";
 import { formatPublicKey } from "../../shared/identity/public-key";
@@ -7,9 +8,11 @@ import styles from "./Huddles.module.css";
 export function HuddleAvatarStack({
   participants,
   relay,
+  transition = false,
 }: {
   participants: readonly string[];
   relay: RelayData;
+  transition?: boolean;
 }) {
   const { session } = useSyncExternalStore(relay.subscribe, relay.snapshot);
   const profiles = useSyncExternalStore(
@@ -51,16 +54,18 @@ export function HuddleAvatarStack({
               } as CSSProperties
             }
           >
-            <Avatar
-              size="fill"
-              src={
-                profile?.picture
-                  ? session.media(profile.picture, "small")
-                  : undefined
-              }
-              fallback={name(key)}
-              alt=""
-            />
+            <HuddleAvatarMotion participant={key} enabled={transition}>
+              <Avatar
+                size="fill"
+                src={
+                  profile?.picture
+                    ? session.media(profile.picture, "small")
+                    : undefined
+                }
+                fallback={name(key)}
+                alt=""
+              />
+            </HuddleAvatarMotion>
           </span>
         );
       })}

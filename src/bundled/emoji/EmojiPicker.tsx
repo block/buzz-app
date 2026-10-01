@@ -18,7 +18,7 @@ import {
   PopoverTrigger,
   PopoverPopup,
 } from "../../shared/design-system/ui/Popover";
-import type { RelaySession } from "../../features/relay/session";
+import type { ComposerSession } from "../../features/messages/composer-session";
 import {
   communityFromScope,
   gifMarkdown,
@@ -43,7 +43,7 @@ export function EmojiPicker({
   reaction = false,
   externalTrigger,
 }: {
-  session: RelaySession;
+  session: ComposerSession;
   scope: string;
   disabled: boolean;
   insert(value: string): void;

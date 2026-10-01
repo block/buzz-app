@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore } from "react";
-import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import {
   UPLOAD_MAX_BYTES,
   UploadError,
@@ -23,13 +23,13 @@ type AttachmentDraft = {
   cancel(): void;
   clear(): void;
 };
-const drafts = new WeakMap<RelaySession, Map<string, AttachmentDraft>>();
+const drafts = new WeakMap<ComposerSession, Map<string, AttachmentDraft>>();
 const MAX_FILES = 10;
 const MAX_RETAINED_BYTES = 2 * UPLOAD_MAX_BYTES;
 
 /** Tab-local files survive navigation, not reload. Delivery remains outbox-owned. */
 function attachmentDraft(
-  session: RelaySession,
+  session: ComposerSession,
   key: string,
   channelId: string,
 ): AttachmentDraft {
@@ -78,7 +78,7 @@ function attachmentDraft(
       replace(item.id, { status: "preparing", error: undefined });
       void (async () => {
         try {
-          const prepared = await prepareAttachment(
+          const prepared = await (attachments.prepare ?? prepareAttachment)(
             item.file,
             controller.signal,
           );
@@ -154,6 +154,8 @@ function attachmentDraft(
       pump();
     },
     remove(id: string) {
+      const uploaded = items.find((item) => item.id === id)?.uploaded;
+      if (uploaded) session.attachments?.release?.(uploaded);
       active.get(id)?.abort();
       active.delete(id);
       items = items.filter((item) => item.id !== id);
@@ -168,6 +170,8 @@ function attachmentDraft(
     },
     cancel: cancelActive,
     clear() {
+      for (const item of items)
+        if (item.uploaded) session.attachments?.release?.(item.uploaded);
       cancelActive();
       items = [];
       emit();
@@ -177,7 +181,7 @@ function attachmentDraft(
 }
 
 export function useAttachmentDraft(
-  session: RelaySession,
+  session: ComposerSession,
   key: string,
   channelId: string,
 ) {

@@ -23,6 +23,8 @@ pub(crate) struct View {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Discussion {
+    #[serde(default)]
+    composer: Option<String>,
     version: u64,
     history_limited: bool,
     status: String,
@@ -41,7 +43,7 @@ struct DiscussionRow {
     picture: Option<String>,
     text: String,
     time: u64,
-    failed: bool,
+    delivery: String,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -56,6 +58,8 @@ struct Person {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum Action {
+    Join,
+    Decline,
     Mute,
     Leave,
     Minimize,
@@ -90,16 +94,26 @@ fn require<R: tauri::Runtime>(window: &WebviewWindow<R>, label: &str) -> Result<
 fn validate(view: &View) -> Result<()> {
     if uuid::Uuid::parse_str(&view.id).is_err()
         || view.title.len() > 4096
-        || !matches!(view.phase.as_str(), "connecting" | "connected" | "leaving")
+        || !matches!(
+            view.phase.as_str(),
+            "incoming" | "connecting" | "connected" | "leaving"
+        )
         || !view.level.is_finite()
         || !(0.0..=1.0).contains(&view.level)
         || view.participants.len() > 256
         || view.discussion.as_ref().is_some_and(|d| {
-            !matches!(d.status.as_str(), "loading" | "ready" | "error")
+            d.composer
+                .as_ref()
+                .is_some_and(|t| uuid::Uuid::parse_str(t).is_err())
+                || !matches!(d.status.as_str(), "loading" | "ready" | "error")
                 || d.error.as_ref().is_some_and(|e| e.len() > 8192)
                 || d.rows.len() > 200
                 || d.rows.iter().any(|r| {
                     r.id.len() > 128
+                        || !matches!(
+                            r.delivery.as_str(),
+                            "sending" | "accepted" | "unknown" | "failed" | "seen"
+                        )
                         || r.author.len() > 4096
                         || r.text.len() > 65536
                         || r.picture.as_ref().is_some_and(|p| p.len() > 8192)
@@ -141,6 +155,27 @@ fn closed_notice(
         });
     }
 }
+/// A reloaded renderer cannot inherit request actions, including acceptance in progress.
+#[tauri::command]
+pub(crate) fn huddle_window_reset_incoming<R: tauri::Runtime>(
+    window: WebviewWindow<R>,
+) -> Result<()> {
+    require(&window, "main")?;
+    reset_incoming(window.app_handle());
+    Ok(())
+}
+fn reset_incoming<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let host = app.state::<HuddleWindow>();
+    let pending = host.0.lock().ok().and_then(|slot| {
+        slot.as_ref()
+            .filter(|s| matches!(s.view.phase.as_str(), "incoming" | "connecting"))
+            .map(|s| s.view.id.clone())
+    });
+    if let Some(id) = pending {
+        retire(app, &id);
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn huddle_window_open<R: tauri::Runtime>(
     window: WebviewWindow<R>,
@@ -150,6 +185,7 @@ pub(crate) async fn huddle_window_open<R: tauri::Runtime>(
 ) -> Result<()> {
     require(&window, "main")?;
     validate(&view)?;
+    let incoming = view.phase == "incoming";
     let id = view.id.clone();
     let on_closed = closed_notice(actions.clone(), id.clone());
     {
@@ -183,7 +219,7 @@ pub(crate) async fn huddle_window_open<R: tauri::Runtime>(
     companion.on_window_event(on_closed);
     // Call completion may race native window creation. It retires the session;
     // this post-build check also removes a window created after that retirement.
-    if !app.state::<crate::relay::Huddles>().contains(&id) {
+    if !incoming && !app.state::<crate::relay::Huddles>().contains(&id) {
         retire(app, &id);
         return Err("This Huddle has ended".into());
     }
@@ -370,6 +406,35 @@ mod tests {
         }
     }
     #[test]
+    fn discussion_delivery_survives_the_native_dto() {
+        let mut presentation = view("00000000-0000-4000-8000-000000000001");
+        presentation.discussion = Some(Discussion {
+            composer: None,
+            version: 1,
+            history_limited: false,
+            status: "ready".into(),
+            error: None,
+            writable: true,
+            sending: false,
+            sent: 0,
+            has_more: false,
+            rows: vec![DiscussionRow {
+                id: "same-event".into(),
+                author: "Alex".into(),
+                picture: None,
+                text: "Hello".into(),
+                time: 1,
+                delivery: "unknown".into(),
+            }],
+        });
+        let serialized = serde_json::to_value(&presentation).unwrap();
+        assert_eq!(serialized["discussion"]["rows"][0]["delivery"], "unknown");
+        let restored: View = serde_json::from_value(serialized).unwrap();
+        assert!(validate(&restored).is_ok());
+        presentation.discussion.as_mut().unwrap().rows[0].delivery = "invalid".into();
+        assert!(validate(&presentation).is_err());
+    }
+    #[test]
     fn native_completion_retires_only_its_own_presentation() {
         let app = tauri::test::mock_builder()
             .manage(HuddleWindow::default())
@@ -390,6 +455,49 @@ mod tests {
         assert!(app.get_webview_window(LABEL).is_some());
         retire(app.handle(), current);
         assert!(host.0.lock().unwrap().is_none());
+    }
+    #[test]
+    fn renderer_restart_clears_requests_but_preserves_connected_calls() {
+        let app = tauri::test::mock_builder()
+            .manage(HuddleWindow::default())
+            .build(crate::app_context())
+            .unwrap();
+        let id = "00000000-0000-4000-8000-000000000001";
+        let host = app.state::<HuddleWindow>();
+        *host.0.lock().unwrap() = Some(Session {
+            view: view(id),
+            actions: Channel::new(|_| Ok(())),
+            updates: None,
+        });
+        reset_incoming(app.handle());
+        assert!(host.0.lock().unwrap().is_some());
+        for phase in ["incoming", "connecting"] {
+            let mut request = view(id);
+            request.phase = phase.into();
+            assert!(validate(&request).is_ok());
+            *host.0.lock().unwrap() = Some(Session {
+                view: request,
+                actions: Channel::new(|_| Ok(())),
+                updates: None,
+            });
+            reset_incoming(app.handle());
+            assert!(host.0.lock().unwrap().is_none());
+        }
+    }
+    #[test]
+    fn composer_capability_is_optional_and_requires_a_uuid() {
+        let id = "00000000-0000-4000-8000-000000000001";
+        let mut value = serde_json::to_value(view(id)).unwrap();
+        value["discussion"] = serde_json::json!({
+            "version": 1, "historyLimited": false, "status": "ready",
+            "error": null, "writable": true, "sending": false,
+            "sent": 0, "hasMore": false, "rows": []
+        });
+        assert!(validate(&serde_json::from_value(value.clone()).unwrap()).is_ok());
+        value["discussion"]["composer"] = serde_json::json!(id);
+        assert!(validate(&serde_json::from_value(value.clone()).unwrap()).is_ok());
+        value["discussion"]["composer"] = serde_json::json!("not-a-capability");
+        assert!(validate(&serde_json::from_value(value).unwrap()).is_err());
     }
     #[test]
     fn companion_has_no_call_or_identity_authority() {

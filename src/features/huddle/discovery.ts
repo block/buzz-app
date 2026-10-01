@@ -23,6 +23,7 @@ export function recentHuddles(
   events: readonly EventData[],
   parent: string,
   authority: string | undefined,
+  now = Date.now() / 1000,
 ): HuddleRoom[] {
   const scoped = events.filter((e) =>
     e.tags.some((t) => t[0] === "h" && t[1] === parent),
@@ -51,7 +52,9 @@ export function recentHuddles(
     )
       starts.delete(start.id);
   }
-  return [...starts.values()].sort((a, b) => b.startedAt - a.startedAt);
+  return [...starts.values()]
+    .filter((room) => room.startedAt <= now && room.startedAt + 3600 > now)
+    .sort((a, b) => b.startedAt - a.startedAt);
 }
 export async function discoverHuddles(
   session: RelaySession,

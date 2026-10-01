@@ -1,3 +1,5 @@
+import type { ConversationExtensions } from "../../features/conversation/contracts";
+import { MessageComposer } from "../../features/messages/MessageComposer";
 import { useEffect, useState } from "react";
 import type { PanelProps } from "../../features/panels/service";
 import type { RelayData } from "../../features/relay/service";
@@ -11,10 +13,13 @@ import { parseHuddleTarget } from "./HuddleCard";
 
 export function HuddlePanel({
   target,
-  close,
   channelContext,
   relay,
-}: PanelProps & { relay: RelayData }) {
+  extensions,
+}: PanelProps & {
+  relay: RelayData;
+  extensions?: ConversationExtensions | undefined;
+}) {
   const connection = useRelayConnection(relay);
   const parsed = parseHuddleTarget(target);
   const room = parsed?.room;
@@ -39,13 +44,21 @@ export function HuddlePanel({
     setDiscussion(next.snapshot());
     return () => next.dispose();
   }, [valid, room, parent, connection.session]);
-  return valid && owner && discussion ? (
+  return valid && room && owner && discussion ? (
     <HuddleDiscussionView
       discussion={discussion}
-      close={close}
-      send={(text) => {
-        void owner.send(text);
-      }}
+      composer={
+        <MessageComposer
+          session={connection.session}
+          extensions={extensions}
+          scope={connection.scope ?? ""}
+          channelId={room}
+          channelName="Huddle"
+          label="Message this Huddle"
+          placeholder="Message this Huddle"
+          disabled={!discussion.writable}
+        />
+      }
       older={owner.older}
       retry={owner.retry}
       recover={owner.recover}

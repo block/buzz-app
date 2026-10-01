@@ -12,6 +12,9 @@ import {
 import { afterEach, beforeEach, expect, it, vi, assert } from "vitest";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createRelaySession } from "../relay/session";
+import { DiscoveryState } from "../relay/discovery";
+import { keypair, metadata, roster } from "../relay/testing";
+import { huddleDescription } from "../huddle/lifecycle";
 import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
 import type { SidebarPreferences } from "../relay/sidebar-preferences";
 import type { RelayData, RelaySnapshot } from "../relay/service";
@@ -372,19 +375,19 @@ it("opens creation from a legacy subgroup + with that destination selected and r
   }
 });
 
-it("keeps marked Huddle rooms out of the sidebar while preserving ordinary private channels", async () => {
+it("keeps Huddle rooms out of the sidebar before and after metadata arrives", async () => {
   const h = fixture();
-  const list: ChannelList = {
+  const relay = keypair(),
+    viewer = keypair();
+  const room = "11111111-1111-4111-8111-111111111111";
+  const parent = "22222222-2222-4222-8222-222222222222";
+  const discovery = new DiscoveryState(viewer.pubkey, relay.pubkey);
+  discovery.accept(roster(relay, room, [viewer.pubkey]));
+  let list: ChannelList = {
     ...h.list,
     channels: [
       ...h.list.channels,
-      {
-        id: "huddle",
-        name: "Call room",
-        channelType: "stream",
-        huddle: true,
-        parentChannelId: "alpha",
-      },
+      ...discovery.channels(),
       {
         id: "private",
         name: "Private project",
@@ -394,10 +397,90 @@ it("keeps marked Huddle rooms out of the sidebar while preserving ordinary priva
     ],
   };
   h.session.channels.list = () => list;
+  const mounted = render(h.view("alpha"));
+  expect(
+    await screen.findByRole("button", { name: "Private project" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: room.slice(0, 8) })).toBeNull();
+  discovery.accept(
+    metadata(relay, room, "Call room", 30, [
+      ["private"],
+      ["about", huddleDescription(parent)],
+    ]),
+  );
+  list = {
+    ...list,
+    channels: [
+      ...list.channels.filter((c) => c.id !== room),
+      ...discovery.channels(),
+    ],
+  };
+  mounted.rerender(h.view("alpha"));
+  expect(screen.getByRole("button", { name: "alpha" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Private project" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Call room" })).toBeNull();
+});
+
+it("hides old trial rooms using signed expiry metadata while keeping ordinary private channels", async () => {
+  const h = fixture();
+  const relay = keypair(),
+    viewer = keypair();
+  const discovery = new DiscoveryState(viewer.pubkey, relay.pubkey);
+  const legacy = "33333333-3333-4333-8333-333333333333";
+  const cases = [
+    {
+      id: "trial",
+      name: "Huddle",
+      tags: [["private"], ["ttl", "3600"]],
+      hidden: true,
+    },
+    {
+      id: legacy,
+      name: `huddle-${legacy.slice(0, 8)}`,
+      tags: [["private"], ["ttl", "60"], ["archived", "true"]],
+      hidden: true,
+    },
+    { id: "ordinary", name: "Huddle", tags: [["private"]], hidden: false },
+    {
+      id: "expiring",
+      name: "Private project",
+      tags: [["private"], ["ttl", "3600"]],
+      hidden: false,
+    },
+    {
+      id: "public",
+      name: "Huddle",
+      tags: [["public"], ["ttl", "3600"]],
+      hidden: false,
+    },
+    {
+      id: "invalid",
+      name: "Huddle",
+      tags: [["private"], ["ttl", "broken"]],
+      hidden: false,
+    },
+  ];
+  for (const item of cases) {
+    discovery.accept(roster(relay, item.id, [viewer.pubkey]));
+    discovery.accept(
+      metadata(relay, item.id, item.name, 30, [["t", "stream"], ...item.tags]),
+    );
+    expect(discovery.get(item.id)?.huddle === true).toBe(item.hidden);
+    // Presentation classification neither removes membership nor invents parent access.
+    expect(discovery.authorized(item.id)).toBe(true);
+    expect(discovery.get(item.id)?.parentChannelId).toBeUndefined();
+  }
+  const list = {
+    ...h.list,
+    channels: [...h.list.channels, ...discovery.channels()],
+  };
+  h.session.channels.list = () => list;
   render(h.view("alpha"));
   expect(
     await screen.findByRole("button", { name: "Private project" }),
   ).toBeVisible();
-  expect(screen.getByRole("button", { name: "alpha" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Call room" })).toBeNull();
+  expect(screen.getAllByRole("button", { name: "Huddle" })).toHaveLength(3);
+  expect(
+    screen.queryByRole("button", { name: `huddle-${legacy.slice(0, 8)}` }),
+  ).toBeNull();
 });

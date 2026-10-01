@@ -1,4 +1,6 @@
+import { createHuddleRing, HUDDLE_RING } from "../../src/features/huddle/ring";
 // Local presentation/capture fixture. No identity, relay connection, or remote write.
+import type { UploadedAttachment } from "../../src/features/relay/attachments";
 import { createRoot } from "react-dom/client";
 import { useState, useSyncExternalStore } from "react";
 import { MessageBody } from "../../src/features/conversation/MessageBody";
@@ -7,6 +9,7 @@ import type {
   MessageRenderer,
 } from "../../src/features/conversation/contracts";
 import { HuddleCard } from "../../src/bundled/huddles/HuddleCard";
+import { huddleComposerExtensions } from "../../src/bundled/huddles/composer-extensions";
 import { HuddlePanel } from "../../src/bundled/huddles/HuddlePanel";
 import { Panel } from "../../src/shared/design-system/ui/Panel";
 import { HuddleCapsule } from "../../src/bundled/huddles/HuddleCapsule";
@@ -90,15 +93,17 @@ const roomId = "00000000-0000-4000-8000-000000000002";
 const startedAt = Math.floor(Date.now() / 1000);
 const lifecycleListeners = new Set<() => void>();
 let endedAt: number | undefined;
+let lifecycleParent = destination.channelId;
+let lifecycleCreator = viewer;
 const lifecycleEvent = (kind: number, at: number) => ({
   id: String(kind).padStart(64, "0"),
-  pubkey: viewer,
+  pubkey: kind === 48101 ? viewer : lifecycleCreator,
   kind,
   created_at: at,
   content: JSON.stringify({ ephemeral_channel_id: roomId }),
   tags: [
-    ["h", destination.channelId],
-    ["p", viewer],
+    ["h", lifecycleParent],
+    ["p", lifecycleCreator],
   ],
   sig: "",
 });
@@ -115,11 +120,16 @@ const cardMessage: ChannelMessage = {
   replyCount: 0,
   participants: [],
 };
+const legacyRoom = new URLSearchParams(location.search).has("legacyRoom");
 const room = {
   id: roomId,
   name: "Huddle",
-  huddle: true as const,
-  parentChannelId: destination.channelId,
+  huddle: legacyRoom ? undefined : (true as const),
+  visibility: "private" as const,
+  channelType: "stream" as const,
+  get parentChannelId() {
+    return legacyRoom ? undefined : lifecycleParent;
+  },
   members: [viewer, peer],
 };
 let discussionRows: ChannelMessage[] = [
@@ -193,9 +203,31 @@ const session = {
     snapshot: () => profiles,
     ensure: async () => {},
   },
+  attachments: {
+    async upload(file: File, _room: string, signal: AbortSignal) {
+      signal.throwIfAborted();
+      const text = await file.text();
+      stats.uploads.push({ name: file.name, text });
+      return {
+        name: file.name,
+        url: "https://fixture.example/attachment",
+        type: file.type,
+        size: file.size,
+        sha256: "a".repeat(64),
+      };
+    },
+  },
   messages: {
     ...store.session.messages,
-    send: (id: string, text: string) => {
+    send: (
+      id: string,
+      text: string,
+      mentions: readonly string[] = [],
+      attachments: readonly UploadedAttachment[] = [],
+    ) => {
+      if (text.includes("reject this message"))
+        throw new Error("Fixture rejected this message. Your draft is kept.");
+      stats.sent.push({ text, mentions, attachments });
       const messageId = String(discussionRows.length + 1).padStart(64, "0");
       discussionRows = [
         ...discussionRows,
@@ -216,7 +248,7 @@ const session = {
       return messageId;
     },
   },
-  read: async () => [],
+  read: async () => (legacyRoom ? [lifecycleEvent(48101, startedAt)] : []),
   media: (url: string) => url,
 };
 const snapshot = {
@@ -235,11 +267,22 @@ const relay: RelayData = {
 };
 let receive = (_: HuddleUpdate) => {};
 const stats = {
+  layoutWaiting: 0,
+  uploads: [] as { name: string; text: string }[],
+  sent: [] as {
+    text: string;
+    mentions: readonly string[];
+    attachments: readonly UploadedAttachment[];
+  }[],
   opens: 0,
   closes: 0,
   frames: 0,
   lastFrameLength: 0,
   audioClosed: 0,
+  audioOpened: 0,
+  ringPlays: 0,
+  ringEnds: 0,
+  ringPaused: 0,
 };
 let connect = () => {};
 const deferConnection = new URLSearchParams(location.search).has(
@@ -247,7 +290,9 @@ const deferConnection = new URLSearchParams(location.search).has(
 );
 const bridge: HuddleBridge = {
   available: true,
-  async open(_id, _context, _room, fn) {
+  async open(_id, context, _room, fn) {
+    lifecycleParent = context.channelId;
+    endedAt = undefined;
     stats.opens++;
     receive = fn;
     connect = () =>
@@ -271,6 +316,7 @@ const bridge: HuddleBridge = {
 };
 const realAudio = new URLSearchParams(location.search).has("audio");
 const huddles = createHuddles(relay, bridge, async (...args) => {
+  stats.audioOpened++;
   const audio = realAudio
     ? await openHuddleAudio(...args)
     : { mute() {}, play() {}, participants() {}, close() {} };
@@ -282,7 +328,24 @@ const huddles = createHuddles(relay, bridge, async (...args) => {
     },
   };
 });
+const stopRing = createHuddleRing(huddles, () => {
+  const audio = new Audio(HUDDLE_RING);
+  audio.addEventListener("playing", () => {
+    stats.ringPlays++;
+  });
+  audio.addEventListener("ended", () => {
+    stats.ringEnds++;
+  });
+  audio.addEventListener("pause", () => {
+    stats.ringPaused++;
+  });
+  return audio;
+});
 let windowView: HuddleView | null = null;
+let windowWidth = 520;
+let layoutGate: Promise<void> | undefined;
+let releaseLayout = () => {};
+let fixedWindow = false;
 const windowListeners = new Set<() => void>();
 const setWindowView = (view: HuddleView | null) => {
   windowView = view;
@@ -293,15 +356,33 @@ let windowAction = (
   _action: HuddleWindowAction,
   _text?: string,
 ) => {};
-const companion = createHuddleWindow(huddles, relay, {
-  async open(view, act) {
-    windowAction = act;
-    setWindowView(view);
-  },
-  async update(id, view) {
-    if (windowView?.id === id) setWindowView(view);
-  },
+const composerExtensions = huddleComposerExtensions({
+  tools: ["buzz.emoji/picker", "buzz.mentions/picker"],
+  completions: ["buzz.emoji/typeahead", "buzz.mentions/typeahead"],
 });
+const companion = createHuddleWindow(
+  huddles,
+  relay,
+  {
+    async open(view, act) {
+      windowAction = act;
+      setWindowView(view);
+    },
+    async update(id, view) {
+      if (windowView?.id !== id) return;
+      if (!!windowView.discussion !== !!view?.discussion) {
+        if (!fixedWindow) windowWidth = view?.discussion ? 880 : 520;
+        for (const listener of windowListeners) listener();
+        if (layoutGate) {
+          stats.layoutWaiting++;
+          await layoutGate;
+        }
+      }
+      setWindowView(view);
+    },
+  },
+  composerExtensions,
+);
 const closeWindow = () => {
   const id = windowView?.id;
   setWindowView(null);
@@ -312,6 +393,10 @@ declare global {
     huddleFixture: {
       stats: typeof stats;
       connect(): void;
+      request(): void;
+      holdLayout(): void;
+      releaseLayout(): void;
+      fixedWindow(value: boolean): void;
       participants(keys: string[]): void;
       speak(peer: string, level?: number): void;
       disconnect(error?: string): void;
@@ -322,6 +407,24 @@ declare global {
 window.huddleFixture = {
   stats,
   connect: () => connect(),
+  request: () => {
+    lifecycleParent = dmId;
+    lifecycleCreator = peer;
+    endedAt = undefined;
+    for (const fn of lifecycleListeners) fn();
+  },
+  holdLayout: () => {
+    layoutGate = new Promise((resolve) => {
+      releaseLayout = resolve;
+    });
+  },
+  releaseLayout: () => {
+    releaseLayout();
+    layoutGate = undefined;
+  },
+  fixedWindow: (value) => {
+    fixedWindow = value;
+  },
   speak: (peer, level = 0.06) =>
     receive({ type: "audio", peer, samples: Array(960).fill(level) }),
   participants: (participants) =>
@@ -329,6 +432,7 @@ window.huddleFixture = {
   disconnect: (error = "Huddle disconnected. You can join again.") =>
     receive({ type: "ended", error }),
   dispose: async () => {
+    stopRing();
     await huddles.dispose();
     await companion.dispose();
   },
@@ -363,6 +467,15 @@ const cardRegistry: ContributionReader<MessageRenderer> = {
   subscribe: () => () => {},
 };
 function Fixture() {
+  useSyncExternalStore(
+    (listener) => {
+      windowListeners.add(listener);
+      return () => {
+        windowListeners.delete(listener);
+      };
+    },
+    () => windowWidth,
+  );
   const [dm, setDm] = useState(false);
   const [chatTarget, setChatTarget] = useState<string>();
   const [membersOpen, setMembersOpen] = useState(false);
@@ -430,9 +543,11 @@ function Fixture() {
         <aside
           aria-label="Huddle window preview"
           style={{
-            maxWidth: view.discussion ? 880 : 520,
+            width: windowWidth,
+            maxWidth: "100%",
             height: 560,
-            margin: "24px auto",
+            margin: "24px 0",
+            marginLeft: "max(0px, calc((100% - 880px) / 2))",
             border: "1px solid var(--border-standard)",
             overflow: "hidden",
             position: "relative",
@@ -500,6 +615,7 @@ function Fixture() {
             onOpenChange={setMembersOpen}
           />
           <HuddleLauncher
+            relay={relay}
             context={{
               ...destination,
               channelId: dm ? dmId : destination.channelId,
@@ -519,6 +635,9 @@ function Fixture() {
         <p className="text-body text-secondary" style={{ padding: 12 }}>
           The conversation stays open while you talk.
         </p>
+        <Button variant="ghost" onClick={() => window.huddleFixture.request()}>
+          Simulate incoming DM Huddle
+        </Button>
         <Button variant="ghost" onClick={() => setDm((value) => !value)}>
           Switch conversation
         </Button>
@@ -573,6 +692,12 @@ function Fixture() {
               }
             >
               Simulate someone leaving
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => window.huddleFixture.disconnect()}
+            >
+              Simulate connection failure
             </Button>
           </>
         )}

@@ -15,7 +15,13 @@ export class MembershipChanged extends Error {
 const keyPattern = /^[0-9a-f]{64}$/;
 
 /** The relay remains authoritative; never offer role changes or DM expansion. */
-export function canAddMembers(session: RelaySession, channel?: ChannelSummary) {
+export function canAddMembers(
+  session: {
+    viewer?: string | undefined;
+    outbox?: { supports(kind: number): boolean } | undefined;
+  },
+  channel?: ChannelSummary,
+) {
   return !!(
     session.viewer &&
     session.outbox?.supports(9000) &&

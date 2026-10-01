@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import { MessageLink } from "../conversation/MessageLink";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { messageLinkParts } from "./message-link-parts";
@@ -335,7 +336,7 @@ export function MessageMarkdown({
 }: {
   row: ChannelMessage;
   directory?: typeof emptyReferenceDirectory;
-  session?: RelaySession | undefined;
+  session?: RelaySession | ComposerSession | undefined;
   scope?: string | undefined;
   extensions?: ConversationExtensions | undefined;
   media(url: string): string | undefined;

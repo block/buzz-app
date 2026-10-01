@@ -1,3 +1,4 @@
+import { createHuddleRing } from "../../features/huddle/ring";
 import type { PluginModule } from "../../plugins/api";
 import { nativeHuddles } from "../../features/huddle/bridge";
 import { openHuddleAudio } from "../../features/huddle/audio";
@@ -12,7 +13,13 @@ export const inject = ["panels", "relay", "conversation"];
 export const apply: PluginModule["apply"] = (ctx) => {
   if (!nativeHuddles.available) return;
   const huddles = createHuddles(ctx.relay, nativeHuddles, openHuddleAudio);
-  const companion = createHuddleWindow(huddles, ctx.relay);
+  const stopRing = createHuddleRing(huddles);
+  const companion = createHuddleWindow(
+    huddles,
+    ctx.relay,
+    undefined,
+    ctx.conversation,
+  );
   ctx.conversation.registerMessage({
     id: "huddle",
     title: "Huddle",
@@ -27,6 +34,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ),
   });
   ctx.effect(() => async () => {
+    stopRing();
     await Promise.all([companion.dispose(), huddles.dispose()]);
   });
   ctx.panels.register({
@@ -43,11 +51,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
     channelLauncher: (props) => (
       <HuddleLauncher
         {...props}
+        relay={ctx.relay}
         huddles={huddles}
         showWindow={companion.open}
       />
     ),
     channelPlacement: "side",
-    component: (props) => <HuddlePanel {...props} relay={ctx.relay} />,
+    component: (props) => (
+      <HuddlePanel {...props} relay={ctx.relay} extensions={ctx.conversation} />
+    ),
   });
 };

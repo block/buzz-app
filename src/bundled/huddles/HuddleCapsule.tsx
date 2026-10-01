@@ -1,3 +1,6 @@
+import { LayoutGroup } from "motion/react";
+import { useId } from "react";
+import { formatPublicKey } from "../../shared/identity/public-key";
 import { useState, useSyncExternalStore } from "react";
 import type { RelayData } from "../../features/relay/service";
 import { HuddleAvatarStack } from "./HuddleAvatarStack";
@@ -5,10 +8,10 @@ import type { HuddleWindow } from "../../features/huddle/window";
 import type { Huddles } from "../../features/huddle/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import {
   MicrophoneIcon,
   MicrophoneSlashIcon,
-  XIcon,
 } from "../../shared/design-system/icons";
 import styles from "./Huddles.module.css";
 
@@ -32,7 +35,18 @@ export function HuddleWaveform({
     </span>
   );
 }
-export function HuddleCapsule({
+export function HuddleCapsule(props: {
+  huddles: Huddles;
+  relay: RelayData;
+  companion: HuddleWindow;
+}) {
+  return (
+    <LayoutGroup id={useId()}>
+      <HuddleCapsuleContent {...props} />
+    </LayoutGroup>
+  );
+}
+function HuddleCapsuleContent({
   huddles,
   relay,
   companion,
@@ -42,6 +56,11 @@ export function HuddleCapsule({
   companion: HuddleWindow;
 }) {
   const call = useSyncExternalStore(huddles.subscribe, huddles.snapshot);
+  const { session } = useSyncExternalStore(relay.subscribe, relay.snapshot);
+  const profiles = useSyncExternalStore(
+    session.profiles.subscribe,
+    session.profiles.snapshot,
+  );
   const presentation = useSyncExternalStore(
     companion.subscribe,
     companion.snapshot,
@@ -52,33 +71,93 @@ export function HuddleCapsule({
     .includes("huddle audio unavailable in this deployment");
   if (call.phase === "error")
     return (
-      <div className={styles.capsuleWrap}>
-        <fieldset
-          className={`${styles.capsule} glass-primary`}
-          aria-label="Huddle error"
-        >
-          <span className="text-caption text-primary">
-            {audioUnavailable ? "Huddle audio unavailable" : "Couldn’t connect"}
-          </span>
-          <IconButton
-            size="toolbar"
-            variant="ghost"
-            aria-label="Dismiss Huddle error"
-            title="Dismiss"
-            icon={<XIcon size={16} />}
-            onClick={() => void huddles.leave()}
-          />
-        </fieldset>
-        <span role="alert" className={styles.capsuleError}>
-          {audioUnavailable
+      <ToastNotice
+        title={
+          audioUnavailable
+            ? "Huddle audio unavailable"
+            : "Couldn’t connect to Huddle"
+        }
+        description={
+          audioUnavailable
             ? "Huddle audio isn’t available on this server. A relay administrator needs to check its configuration."
-            : `${call.error} Try the headphone button again.`}
-        </span>
-      </div>
+            : `${call.error || "The connection failed."} Try the headphone button again.`
+        }
+        closeLabel="Dismiss Huddle error"
+        onDismiss={() => void huddles.leave()}
+      />
     );
+  if (
+    (call.phase === "incoming" ||
+      (call.phase === "connecting" && call.requester)) &&
+    call.destination &&
+    call.room
+  ) {
+    const { destination, room } = call;
+    const caller =
+      profiles.get(call.requester ?? "")?.name ||
+      formatPublicKey(call.requester ?? "") ||
+      "Someone";
+    return (
+      <fieldset
+        id="huddle-capsule"
+        tabIndex={-1}
+        className={`${styles.capsule} glass-primary`}
+        aria-label="Huddle request"
+      >
+        <Button
+          size="xs"
+          variant="ghost"
+          aria-label="Open Huddle request"
+          style={{ padding: "var(--space-1)" }}
+          onClick={() => {
+            void companion.open().catch(() => {});
+          }}
+        >
+          <span className={styles.capsuleContent}>
+            <HuddleAvatarStack
+              participants={call.participants}
+              relay={relay}
+              transition
+            />
+            {caller} calling
+          </span>
+        </Button>
+        <span className={styles.requestCompactActions}>
+          <Button
+            size="xs"
+            variant="subtle"
+            data-huddle-join=""
+            disabled={call.phase === "connecting"}
+            onClick={() => {
+              void huddles.join(destination, room);
+            }}
+          >
+            Join
+          </Button>
+          <Button
+            size="xs"
+            variant="destructive"
+            onClick={() => {
+              void huddles.leave();
+            }}
+          >
+            {call.phase === "connecting" ? "Cancel" : "Decline"}
+          </Button>
+        </span>
+      </fieldset>
+    );
+  }
   if (call.phase !== "connected") return null;
   return (
     <div className={styles.capsuleWrap}>
+      {presentation.error && (
+        <ToastNotice
+          title="Couldn’t update Huddle"
+          description={presentation.error}
+          closeLabel="Dismiss Huddle window error"
+          onDismiss={companion.dismissError}
+        />
+      )}
       <fieldset
         id="huddle-capsule"
         tabIndex={-1}
@@ -98,7 +177,11 @@ export function HuddleCapsule({
         >
           <span className={styles.capsuleContent}>
             <HuddleWaveform level={call.level ?? 0} muted={call.muted} />
-            <HuddleAvatarStack participants={call.participants} relay={relay} />
+            <HuddleAvatarStack
+              participants={call.participants}
+              relay={relay}
+              transition
+            />
           </span>
         </Button>
         <IconButton

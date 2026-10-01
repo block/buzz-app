@@ -206,9 +206,21 @@ export class DiscoveryState {
     const parentId = event && sessionMetadata(tag(event, "about"))?.parentId;
     const huddle =
       event && this.isPrivate(id) && huddleParent(tag(event, "about"));
+    // Early desktop trials and legacy clients omitted the parent marker. Match
+    // their generated name plus signed ephemeral metadata, never a name alone.
+    const ttl = event && Number(tag(event, "ttl"));
+    const legacyHuddle =
+      event &&
+      this.isPrivate(id) &&
+      channelType === "stream" &&
+      Number.isSafeInteger(ttl) &&
+      Number(ttl) > 0 &&
+      (this.name(id) === "Huddle" ||
+        this.name(id) === `huddle-${id.slice(0, 8)}`);
     return {
       id,
-      ...(huddle ? { huddle: true as const, parentChannelId: huddle } : {}),
+      ...(huddle || legacyHuddle ? { huddle: true as const } : {}),
+      ...(huddle ? { parentChannelId: huddle } : {}),
       ...(!this.authorized(id) || this.cached.has(id)
         ? { readOnly: true as const }
         : {}),

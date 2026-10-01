@@ -1,62 +1,41 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { HuddleDiscussion } from "../../features/huddle/discussion";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
-import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Field } from "../../shared/design-system/ui/Field";
-import { Textarea } from "../../shared/design-system/ui/Textarea";
-import { ChatCircleIcon, XIcon } from "../../shared/design-system/icons";
+
 import styles from "./HuddleDiscussion.module.css";
 
 export function HuddleDiscussionView({
   discussion,
-  send,
-  close,
+  composer,
   older,
   retry,
   recover,
 }: {
   discussion: HuddleDiscussion;
-  send(text: string): void;
-  close(): void;
+  composer: ReactNode;
   older(): void;
   retry(): void;
   recover(id: string, dismiss?: boolean): void;
 }) {
   const [tab, setTab] = useState<"thread" | "transcript">("thread");
-  const [draft, setDraft] = useState("");
-  const sent = useRef(discussion.sent);
   const tail = useRef<HTMLDivElement>(null);
+  const log = useRef<HTMLDivElement>(null);
+  const composerHost = useRef<HTMLDivElement>(null);
+  const focusConversation = () => {
+    const editor = composerHost.current?.querySelector<HTMLElement>(
+      '[role="textbox"]:not([aria-disabled="true"]), textarea:not(:disabled)',
+    );
+    (editor ?? log.current)?.focus({ preventScroll: true });
+  };
   const following = useRef(true);
-  useEffect(() => {
-    if (sent.current !== discussion.sent) {
-      setDraft("");
-      sent.current = discussion.sent;
-    }
-  }, [discussion.sent]);
   const newest = discussion.rows.at(-1)?.id;
   useEffect(() => {
     if (newest && tab === "thread" && following.current)
       tail.current?.scrollIntoView({ block: "end" });
   }, [newest, tab]);
-  const submit = () => {
-    if (draft.trim() && !discussion.sending && discussion.writable) send(draft);
-  };
   return (
     <div className={styles.discussion}>
-      <PanelHeader
-        title="Huddle"
-        icon={<ChatCircleIcon size={16} />}
-        variant="compact"
-        actions={
-          <IconButton
-            aria-label="Close Huddle chat"
-            icon={<XIcon size={16} />}
-            onClick={close}
-          />
-        }
-      />
       <Tabs
         label="Huddle conversation"
         variant="panel"
@@ -77,6 +56,8 @@ export function HuddleDiscussionView({
           ) : (
             <div className={styles.thread}>
               <div
+                ref={log}
+                tabIndex={-1}
                 className={styles.messages}
                 role="log"
                 aria-label="Huddle messages"
@@ -125,19 +106,27 @@ export function HuddleDiscussionView({
                         </time>
                       </header>
                       <p>{row.text}</p>
-                      {row.failed && (
+                      {["failed", "unknown"].includes(row.delivery) && (
                         <p role="status" className="text-secondary">
-                          Message wasn’t delivered.{" "}
+                          {row.delivery === "unknown"
+                            ? "Delivery hasn’t been confirmed. Retry sends the same message."
+                            : "Message wasn’t delivered."}{" "}
                           <Button
                             size="sm"
                             disabled={!discussion.writable}
-                            onClick={() => recover(row.id)}
+                            onClick={() => {
+                              focusConversation();
+                              recover(row.id);
+                            }}
                           >
                             Retry
                           </Button>{" "}
                           <Button
                             size="sm"
-                            onClick={() => recover(row.id, true)}
+                            onClick={() => {
+                              focusConversation();
+                              recover(row.id, true);
+                            }}
                           >
                             Discard
                           </Button>
@@ -151,47 +140,21 @@ export function HuddleDiscussionView({
               {discussion.error && (
                 <div role="alert" className={styles.notice}>
                   {discussion.error}{" "}
-                  <Button size="sm" onClick={retry}>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      log.current?.focus({ preventScroll: true });
+                      retry();
+                    }}
+                  >
                     Retry
                   </Button>
                 </div>
               )}
               {discussion.writable ? (
-                <form
-                  className={styles.composer}
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    submit();
-                  }}
-                >
-                  <Field label="Message this Huddle" labelVisibility="hidden">
-                    <Textarea
-                      value={draft}
-                      maxLength={16000}
-                      disabled={discussion.sending}
-                      placeholder="Message this Huddle"
-                      rows={2}
-                      onChange={(e) => setDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (
-                          e.key === "Enter" &&
-                          !e.shiftKey &&
-                          !e.nativeEvent.isComposing
-                        ) {
-                          e.preventDefault();
-                          submit();
-                        }
-                      }}
-                    />
-                  </Field>
-                  <Button
-                    type="submit"
-                    size="sm"
-                    disabled={!draft.trim() || discussion.sending}
-                  >
-                    {discussion.sending ? "Sending…" : "Send"}
-                  </Button>
-                </form>
+                <div ref={composerHost} className={styles.composer}>
+                  {composer}
+                </div>
               ) : (
                 discussion.status === "ready" && (
                   <p className={styles.notice}>

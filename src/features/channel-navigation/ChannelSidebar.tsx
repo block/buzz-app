@@ -275,7 +275,12 @@ function ReadySidebar({
     target.route?.params === "new-message";
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
   const sidebarChannels = channels
-    .filter((channel) => !channel.huddle)
+    .filter(
+      (channel) =>
+        // Wait for metadata so temporary rooms never flash as unnamed channels.
+        !channel.huddle &&
+        (channel.visibility !== undefined || channel.channelType !== undefined),
+    )
     .filter(
       (channel) =>
         !preparingDm ||

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { ChannelSummary } from "../relay/contracts";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import { keypair, signed } from "../relay/testing";
 import { createRelaySession } from "../relay/session";
@@ -20,7 +21,14 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-function harness() {
+function harness(
+  initialChannels: ChannelSummary[] = [
+    { id: destination.channelId, name: "Design" },
+  ],
+) {
+  let channels = initialChannels;
+  let partial = false;
+  const accessListeners = new Set<() => void>();
   const store = createRelaySession(null);
   const read = vi.fn<typeof store.session.read>(async () => []);
   let connection: RelaySnapshot = {
@@ -33,20 +41,27 @@ function harness() {
       read,
       channels: {
         ...store.session.channels,
+        subscribeList(fn: () => void) {
+          accessListeners.add(fn);
+          return () => {
+            accessListeners.delete(fn);
+          };
+        },
         list: () => ({
           status: "ready",
-          channels: [{ id: destination.channelId, name: "Design" }],
+          channels,
+          ...(partial ? { coverage: "partial" as const } : {}),
         }),
       },
     },
   };
-  let changed = () => {};
+  const changes = new Set<() => void>();
   const relay: RelayData = {
     snapshot: () => connection,
     subscribe(fn) {
-      changed = fn;
+      changes.add(fn);
       return () => {
-        changed = () => {};
+        changes.delete(fn);
       };
     },
     retry() {},
@@ -83,9 +98,14 @@ function harness() {
     openAudio,
     receive: (e: HuddleUpdate) => receive(e),
     send: (pcm: number[]) => send(pcm),
+    access(next: ChannelSummary[], incomplete = false) {
+      channels = next;
+      partial = incomplete;
+      for (const fn of accessListeners) fn();
+    },
     replace() {
       connection = { ...connection, generation: 2, status: "disconnected" };
-      changed();
+      for (const fn of changes) fn();
     },
     async dispose() {
       await service.dispose();
@@ -226,7 +246,7 @@ it("direct start joins the newest discovered room, or creates one if none exists
     signed(creator, {
       kind: 48100,
       tags: [["h", destination.channelId]],
-      created_at: 10,
+      created_at: Math.floor(Date.now() / 1000),
       content: JSON.stringify({ ephemeral_channel_id: room }),
     }),
   ]);
@@ -309,4 +329,63 @@ it("tracks simultaneous speakers independently and clears mute, departure, silen
     await h.dispose();
     vi.useRealTimers();
   }
+});
+
+it("joins an explicitly invited room without parent access, then leaves on revoked room membership", async () => {
+  const room = "00000000-0000-4000-8000-000000000002";
+  const memberRoom: ChannelSummary = {
+    id: room,
+    name: "Huddle",
+    huddle: true,
+    parentChannelId: destination.channelId,
+    members: [destination.viewer],
+  };
+  const h = harness([memberRoom]);
+  await h.service.join(destination, room);
+  expect(h.bridge.open).toHaveBeenCalledWith(
+    expect.any(String),
+    destination,
+    room,
+    expect.any(Function),
+  );
+  h.receive({ type: "connected", room, participants: [] });
+  h.access([{ ...memberRoom, members: [] }], true);
+  await vi.waitFor(() => expect(h.audio.close).toHaveBeenCalled());
+  await h.dispose();
+});
+it.each(["wrong-parent", "archived", "cached", "not-member", "new-call"])(
+  "rejects %s room admission before microphone capture",
+  async (failure) => {
+    const room = "00000000-0000-4000-8000-000000000002";
+    const h = harness([
+      {
+        id: room,
+        name: "Huddle",
+        huddle: true,
+        parentChannelId:
+          failure === "wrong-parent" ? "other" : destination.channelId,
+        ...(failure === "archived" ? { archived: true as const } : {}),
+        ...(failure === "cached" ? { cached: true as const } : {}),
+        members: failure === "not-member" ? [] : [destination.viewer],
+      },
+    ]);
+    await h.service.join(
+      destination,
+      failure === "new-call" ? undefined : room,
+    );
+    expect(h.openAudio).not.toHaveBeenCalled();
+    expect(h.bridge.open).not.toHaveBeenCalled();
+    await h.dispose();
+  },
+);
+
+it("leaves immediately for an archived parent even while discovery is partial", async () => {
+  const h = harness();
+  await h.service.join(destination);
+  h.access(
+    [{ id: destination.channelId, name: "Design", archived: true }],
+    true,
+  );
+  await vi.waitFor(() => expect(h.audio.close).toHaveBeenCalled());
+  await h.dispose();
 });

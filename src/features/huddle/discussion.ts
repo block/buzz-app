@@ -1,7 +1,10 @@
+import { huddleRoom } from "./lifecycle";
 import type { RelaySession } from "../relay/session";
+import type { Delivery } from "../relay/outbox";
 import { formatPublicKey } from "../../shared/identity/public-key";
 
 export type HuddleDiscussion = {
+  composer?: string | undefined;
   version: number;
   historyLimited: boolean;
   status: "loading" | "ready" | "error";
@@ -16,7 +19,7 @@ export type HuddleDiscussion = {
     picture: string | null;
     text: string;
     time: number;
-    failed: boolean;
+    delivery: Delivery;
   }[];
 };
 
@@ -30,6 +33,8 @@ export function createHuddleDiscussion(
   let disposed = false;
   let version = 0;
   let resolved = false;
+  let legacyVerified = false;
+  let loading = 0;
   let sending = false;
   let sent = 0;
   let error: string | undefined;
@@ -44,40 +49,73 @@ export function createHuddleDiscussion(
   const stopList = session.channels.subscribeList(notify);
   const stopProfiles = session.profiles.subscribe(notify);
   async function load() {
+    const attempt = ++loading;
     error = undefined;
+    resolved = false;
     try {
       await session.channels.resolve?.([room], { signal: controller.signal });
-      if (disposed) return;
-      const metadata =
-        session.channels.get?.(room) ??
-        session.channels.list().channels.find((c) => c.id === room);
-      if (!metadata?.huddle || metadata.parentChannelId !== parent)
-        throw new Error("Huddle identity unavailable");
+      if (disposed || attempt !== loading) return;
+      const metadata = channel();
+      if (metadata?.parentChannelId === undefined && session.relayAuthor) {
+        // Legacy rooms have no parent marker. Only the relay's signed audio
+        // lifecycle can establish this link; a user-authored card is not proof.
+        const events = await session.read(
+          [
+            {
+              kinds: [48101, 48102, 48103],
+              authors: [session.relayAuthor],
+              "#h": [parent],
+              limit: 500,
+            },
+          ],
+          { signal: controller.signal },
+        );
+        if (disposed || attempt !== loading) return;
+        legacyVerified = events.some(
+          (event) =>
+            event.pubkey === session.relayAuthor &&
+            [48101, 48102, 48103].includes(event.kind) &&
+            event.tags.some(
+              ([key, value]) => key === "h" && value === parent,
+            ) &&
+            huddleRoom(event) === room,
+        );
+      }
       resolved = true;
+      if (!available()) {
+        resolved = false;
+        throw new Error("Huddle identity unavailable");
+      }
       session.channels.ensure(room);
     } catch {
-      if (!disposed)
+      if (!disposed && attempt === loading)
         error =
-          "Couldn’t verify this Huddle conversation. Older Huddles may not support this view.";
+          "Couldn’t load this Huddle conversation. Retry to check its connection and access.";
     }
     notify();
   }
   const channel = () =>
     session.channels.get?.(room) ??
     session.channels.list().channels.find((c) => c.id === room);
-  const writable = () => {
+  const available = () => {
     const c = channel();
     return (
       resolved &&
-      !!c?.huddle &&
-      c.parentChannelId === parent &&
-      !c.archived &&
-      !c.readOnly &&
-      !c.cached
+      !!c &&
+      ((c.huddle === true && c.parentChannelId === parent) ||
+        (legacyVerified &&
+          c.parentChannelId === undefined &&
+          c.visibility === "private" &&
+          c.channelType === "stream"))
     );
+  };
+  const writable = () => {
+    const c = channel();
+    return available() && !!c && !c.archived && !c.readOnly && !c.cached;
   };
   void load();
   return {
+    available,
     snapshot(): HuddleDiscussion {
       const window = session.channels.window(room);
       const profiles = session.profiles.snapshot();
@@ -97,7 +135,7 @@ export function createHuddleDiscussion(
         sending,
         sent,
         hasMore: resolved && window.hasMore && window.rows.length < 200,
-        rows: (resolved ? window.rows : [])
+        rows: (available() ? window.rows : [])
           .slice(-200)
           .filter((r) => !r.membership && !r.huddle)
           .map((r) => {
@@ -114,7 +152,8 @@ export function createHuddleDiscussion(
                 : null,
               text: r.content.slice(0, 16000),
               time: r.createdAt,
-              failed: r.delivery === "failed" && r.authorId === session.viewer,
+              delivery:
+                r.authorId === session.viewer ? (r.delivery ?? "seen") : "seen",
             };
           }),
       };
@@ -150,10 +189,10 @@ export function createHuddleDiscussion(
           (item) =>
             item.event.id === id &&
             item.event.pubkey === session.viewer &&
-            item.delivery === "failed" &&
+            ["failed", "unknown"].includes(item.delivery) &&
             item.event.tags.some((t) => t[0] === "h" && t[1] === room),
         );
-      if (disposed || !resolved || !item) return;
+      if (disposed || !available() || !item) return;
       if (dismiss)
         void session.outbox?.dismiss(id).catch(() => {
           error = "Couldn’t discard this message.";
@@ -165,7 +204,7 @@ export function createHuddleDiscussion(
       void load();
     },
     older: () => {
-      if (resolved && session.channels.window(room).rows.length < 200)
+      if (available() && session.channels.window(room).rows.length < 200)
         session.channels.loadOlder(room);
     },
     dispose() {

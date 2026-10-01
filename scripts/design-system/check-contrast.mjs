@@ -40,12 +40,24 @@ const TARGET_META = 45;
  * surface that role reaches, which is the failure mode this list must not have.
  */
 const EXCEPTIONS = new Map([
+  // Product-directed 2026-10-01: Green 10 / Red 10 incoming-call fills.
+  ...[
+    "affordance-call-join",
+    "affordance-call-join-hover",
+    "affordance-call-decline",
+    "affordance-call-decline-hover",
+  ].map((surface) => [
+    `--text-inverse on --${surface}`,
+    "Product-directed bright incoming-call fills with inverse labels; below normal text targets, limited to Join and Decline.",
+  ]),
   // Kenneth requested Red 10 for Huddle Leave during the 2026-10-01 tryout.
   // Limit this deliberate text-contrast tradeoff to the actual control fills.
   ...[
     "surface-panel",
     "affordance-subtle-hover",
     "affordance-subtle-pressed",
+    "affordance-danger",
+    "affordance-danger-hover",
     "affordance-danger-pressed",
   ].map((surface) => [
     `--text-call-leave on --${surface}`,
@@ -139,9 +151,17 @@ const TEXT_ROLES = [
  */
 const PAIRS = [
   ...[
+    "affordance-call-join",
+    "affordance-call-join-hover",
+    "affordance-call-decline",
+    "affordance-call-decline-hover",
+  ].map((surface) => ["--text-inverse", `--${surface}`]),
+  ...[
     "surface-panel",
     "affordance-subtle-hover",
     "affordance-subtle-pressed",
+    "affordance-danger",
+    "affordance-danger-hover",
     "affordance-danger-pressed",
   ].map((surface) => ["--text-call-leave", `--${surface}`]),
   ["--text-standard", "--affordance-popover-selected"],

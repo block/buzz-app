@@ -9,19 +9,38 @@ its minimize control keeps audio connected; the mini player can reopen and focus
 and the header shows a green headphone/divider/chevron capsule only in the chat
 where your call is connected. Its headphone changes to a leave icon on hover or
 keyboard focus, and clicking leaves the call. Elsewhere the neutral headphone
-focuses the existing player. Its menu opens the existing channel
-member picker through a guarded host callback, or copies a Buzz channel link.
-The link opens the chat in the recipient’s selected community; members click the
-headphone to join. It does not auto-join audio or grant access. Adding someone
-uses the existing channel membership flow; DM membership cannot be expanded here. Microphone access follows the explicit click.
+focuses the existing player. Its Add someone menu opens the existing member
+picker for the Huddle's private room. Adding someone grants access to the room's
+audio and thread, including when the Huddle started in a DM; the original chat's
+membership and messages remain private. The copied Buzz channel link still opens
+the original chat and is only useful to its existing members. Microphone access
+follows the explicit Join click.
+
+Room invitations require the parent marker written by this app; Add someone is
+unavailable on older unmarked rooms. The recipient uses the relay's signed global
+44100 membership notice, checks its target, inviter, current room membership and
+parent metadata, then presents the existing incoming request in both views. The
+notice may arrive before discovery grants local room access, so the finite recovery
+reads by relay author and recipient, without a channel filter. Requests from before
+this activation, self-adds, archived rooms and ordinary channels do not ring.
+Joining an existing room can use its signed roster or the original chat's roster;
+creating a new Huddle still requires membership in the original chat. When audio
+auto-admission adds a parent-chat member without publishing discovery, the client
+confirms its own room membership with a role-preserving 9000 after the audio
+handshake, then re-reads the signed roster. This happens only when that room's
+initial signed roster did not include the viewer; it also emits the relay's normal
+member-joined notice. A failed confirmation reports an incomplete join instead of
+granting local chat write access from audio participation alone. The audio
+relay remains authoritative for creator linkage and current admission. Explicit
+access revocation ends the call even during an incomplete roster refresh.
 
 The mini player matches the neighboring 28px shell controls, with matching internal
 buttons, 16px regular-weight icons and 20px avatars. Its end buttons sit flush
-against the outer edges, with 4px between controls. Waveform and avatar content has
+against the outer edges, with 4px before the microphone and no gap on either side of the microphone/Leave divider. Waveform and avatar content has
 4px padding, with an extra 4px on the waveform’s left side. It uses the shared
 primary glass material from the shell controls and offers audio activity, an
 avatar stack of actual participants, mute, and a text-only Leave button. Leave keeps its Red 10 label with a muted red
-fill on hover and is separated from mute by a subtle divider with spacing on both sides.
+fill on hover and is separated from mute by a subtle divider flush against both button containers.
 The neutral glass controls use the white chrome hover in light mode and its dark-mode counterpart.
 The proposed `text-call-leave` role preserves the requested Red 10 in both themes.
 It is a documented contrast exception for these controls: the light-mode Leave
@@ -46,8 +65,10 @@ waveform; the compact player keeps its waveform. Muting clears only your halo.
 Arrivals fade and scale in; reduced motion removes those transitions. Closing that window or navigating to another conversation
 keeps audio connected. Leave releases the microphone and closes the companion.
 Native call completion also retires it after a renderer reload/crash. The companion
-has no identity, signing or microphone permissions. Connection failures appear
-beside the player; the headphone button can retry them.
+has no identity, signing or microphone permissions. Failed companion updates also report their error in the main app toast stack,
+instead of silently ignoring the chat button. Connection failures appear
+in the shared app toast stack without showing the compact player; the headphone
+button can retry them, and dismissing the notice clears the failed call.
 
 Disabling the plugin, losing channel access, replacing the relay session, or
 switching community ends the local call. If the UI disappears, the native call
@@ -56,29 +77,80 @@ manual join retry. Recent-room discovery is advisory: it uses signed lifecycle
 events, and the audio relay checks current membership, creator linkage and archive
 state before admission. A rejected recent candidate is removed for this plugin
 activation when the relay says it is inaccessible or ended; the generic admission
-response does not reveal whether it was archived. No microphone or discovery work
-runs on startup.
+response does not reveal whether it was archived. Incoming lifecycle discovery runs while a conversation header is visible. A green
+headphone offers Join for a recent remote Huddle, and clears on end, expiry, or
+conversation/community changes. Microphone capture still requires an explicit click.
+
+## Incoming DM requests
+
+A new Huddle started by another member of a DM appears in both the glass capsule
+and the focused Huddle window, even while viewing another conversation. Both show
+the caller's avatar and equal-width Join/Decline controls. These use opaque Green 10
+and Red 10 fills with inverse labels in both themes; hover uses step 9. They remain
+opaque over glass without changing the active-call Leave treatment. The requested
+bright-fill/inverse-label pairing has a scoped contrast exception for these incoming
+controls; it does not meet every normal text contrast target. The compact label is
+“[Name] calling”, with equal padding above, below, and before the avatar. The window's single title
+puts “[Name]” on its own line above “is calling”; long names wrap within the window. Channel Huddles keep their existing header and
+card join controls without opening an incoming request.
+
+Accepting keeps the caller visible in both surfaces while the connection is prepared,
+with Cancel available. Once connected, Motion moves and scales that same avatar
+into its final stack/cloud position over 280ms. Each surface has its own layout
+group; reduced motion skips the shared movement. Minimizing while accepting keeps
+the window minimized after connection, and a renderer reload clears pending requests.
+
+Incoming DM requests ring with `public/sounds/huddle-ping.m4a`, copied from the
+user-provided `Pow Sounds/ping.m4a`. One main-window player finishes the clip,
+waits one second, then repeats. Both surfaces share it; closing/minimizing the
+window leaves the ring active. Joining, declining, request retirement, or disabling
+the plugin stops and releases it. If browser autoplay requires interaction, it
+waits for that interaction instead of repeatedly retrying playback.
+
+Incoming requests do not capture audio. Join uses the normal audio admission path;
+Decline dismisses that room for the current plugin/session lifetime without sending
+a relay event or ending the caller's Huddle. Closing/minimizing the request window
+leaves its compact prompt available. Requests do not interrupt an active local call.
+Ended, expired, inaccessible, self-authored, and pre-activation starts are excluded.
+The main renderer clears stale request windows on reload without retiring connected
+calls. Request discovery continues from verified live events if its finite read fails.
 
 ## Conversation panels and cards
 
 The chat button between microphone and Leave opens a panel beside the avatar
-cloud. The shared tabs separate **Thread** from **Live transcript**. Thread uses
+cloud as a flush region with a subtle divider, without separate rounded corners,
+shadow or a close button. The same chat button closes it. The shared tabs separate **Thread** from **Live transcript**. Thread uses
+the full regular rich-text composer, attachments, emoji, and mentions, with Enter
+to send and Shift+Enter for a new line. The detached window sends typed requests
+through a per-room capability to the main app, which retains upload preparation,
+membership checks, signing, and outbox admission. The tabs stay above the scrolling content. Thread uses
 the existing relay session for message history, sending, and failed-message
 Retry/Discard. Closing this panel or minimizing the window does not end audio or
-cancel an accepted message delivery. Drafts survive tab changes; closing the panel
-discards its unsent draft. The transcript tab is a placeholder: local speech
+cancel an accepted message delivery. Text drafts survive tab changes and reopening. Attachment drafts survive tab changes,
+but closing the panel releases its local files. An admitted message clears its persisted
+draft in the main app even if the companion closes before acknowledgment. The transcript tab is a placeholder: local speech
 generation is deferred and no transcription is recorded by this version.
 
 Start/end events appear as cards in the parent conversation. Active cards show
-elapsed time, known participants and Join (or Open for your current call). View
+elapsed time beside the same avatar stack as the compact player, and one action:
+Join (or Open for your current call) while active, then View after ending. View
 opens the saved Huddle conversation in a side panel. Archived rooms remain
 read-only. The display is bounded to the latest 200 messages and says when history
 is limited; it does not delete earlier messages.
 
 New rooms carry a parent marker in their relay-owned metadata. Marked rooms stay
-out of ordinary sidebar destinations, and the discussion reader verifies that
-marker before reading or sending. Older clients' unmarked rooms remain unchanged
-and currently show an unavailable message in this panel. The marker and lifecycle
+out of ordinary sidebar destinations; destinations without metadata are withheld
+until they can be classified, preventing temporary unnamed room rows. The discussion reader verifies that
+marker before reading or sending. Older trial rooms named `Huddle` or
+`huddle-<first eight room-ID characters>` are also hidden when relay-signed metadata
+identifies them as private, expiring streams. Names alone never hide a channel.
+This only changes presentation: membership and messages remain intact. Unmarked
+rooms can open when one of the latest 500 relay-signed join/leave/end events in
+the parent identifies that exact room. User-authored cards and room names do not
+prove the relationship. This fallback is shared with the detached composer;
+current room access and archive state still control reading and writing.
+Rooms without that evidence remain unavailable, including sufficiently old calls
+outside the bounded lifecycle lookup. The marker and lifecycle
 cards use the existing relay protocol; no server changes are part of this slice.
 
 ## Ownership and compatibility
@@ -123,3 +195,23 @@ community switching. Production audio remains unverified until that live tryout 
 that audio is unavailable is an operator deployment issue, not microphone permission
 failure. Every endpoint that can receive `/huddle/{room}/audio` must support the
 relay’s Huddle routing; mixed server pools can make admission intermittent.
+
+
+### Review follow-up validation
+
+The release signer receives the microphone entitlement explicitly and the returned
+signed app is checked for it and its microphone usage description. Linux candidate
+build dependencies include system Opus. Actual packaged permission behavior and
+Linux candidate runtime loading remain release-environment checks.
+
+Discussion rows retain uncertain delivery separately from rejection. Retry keeps the
+original outbox event ID; Discard only removes that local pending record. Recovery
+hands keyboard focus to the surviving composer or message log. The detached window
+uses the same regular composer and retains focus after Enter-send.
+
+Discovery excludes expired or future starts. Ordinary search, completion, profile,
+and exact channel navigation exclude Huddle rooms. Invited requests retire on a
+matching relay end. Room invitations expire after 60 seconds. Invited outsiders
+cannot receive the private parent's end event, so their prompt may remain until
+that deadline; stored metadata does not reflect every automatic archive. Joining
+still rechecks current room access on the relay.

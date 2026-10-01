@@ -1,12 +1,15 @@
 import { expect, it, vi, assert } from "vitest";
 import { createRelaySession } from "../relay/session";
 import { createHuddleDiscussion } from "./discussion";
+import type { ReadOptions } from "../relay/reader";
+import type { ReadFilter, RelayEvent } from "../relay/events";
+import { createRelayReader } from "../relay/reader";
+import { keypair, signed, scriptedTransport } from "../relay/testing";
 import type { ChannelMessage, ChannelSummary } from "../relay/contracts";
 
-function harness() {
+function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
   const owner = createRelaySession(null),
     viewer = "ab".repeat(32),
-    room = "room",
     parent = "parent";
   let metadata: ChannelSummary = {
     id: room,
@@ -28,11 +31,21 @@ function harness() {
       tags: [["h", room]],
       content: "Hello",
     },
-    delivery: "failed" as const,
+    delivery,
   };
+  const authority = keypair();
+  const read = vi.fn(
+    async (
+      _filters: readonly ReadFilter[],
+      _options?: ReadOptions,
+    ): Promise<readonly RelayEvent[]> => [],
+  );
+  const ensure = vi.fn();
   const session = {
     ...owner.session,
     viewer,
+    relayAuthor: authority.pubkey,
+    read,
     messages: { ...owner.session.messages, send },
     outbox: {
       subscribe: () => () => {},
@@ -50,7 +63,7 @@ function harness() {
       ...owner.session.channels,
       get: () => metadata,
       resolve: async () => {},
-      ensure: () => {},
+      ensure,
       subscribeWindow: (_id: string, fn: () => void) => {
         listeners.add(fn);
         return () => {
@@ -70,6 +83,9 @@ function harness() {
   const discussion = createHuddleDiscussion(session, room, parent, vi.fn());
   return {
     owner,
+    authority,
+    read,
+    ensure,
     discussion,
     send,
     retry,
@@ -150,3 +166,168 @@ it("bounds native presentation and offers room-bound failure recovery", async ()
     h.dispose();
   }
 });
+
+const legacyRoom = "33333333-3333-4333-8333-333333333333";
+const legacyMetadata: ChannelSummary = {
+  id: legacyRoom,
+  name: "General huddle",
+  visibility: "private",
+  channelType: "stream",
+};
+function evidence(
+  h: ReturnType<typeof harness>,
+  overrides: {
+    author?: ReturnType<typeof keypair>;
+    parent?: string;
+    room?: string;
+    kind?: number;
+  } = {},
+) {
+  return signed(overrides.author ?? h.authority, {
+    kind: overrides.kind ?? 48101,
+    content: JSON.stringify({
+      ephemeral_channel_id: overrides.room ?? legacyRoom,
+    }),
+    tags: [["h", overrides.parent ?? "parent"]],
+  });
+}
+it("opens an unmarked legacy room using signed relay activity and keeps archive/access restrictions", async () => {
+  const h = harness(legacyRoom);
+  h.metadata(legacyMetadata);
+  h.read.mockResolvedValue([evidence(h)]);
+  try {
+    await vi.waitFor(() => expect(h.discussion.snapshot().writable).toBe(true));
+    expect(h.ensure).toHaveBeenCalledWith(legacyRoom);
+    await h.discussion.send("Legacy reply");
+    expect(h.send).toHaveBeenCalledWith(legacyRoom, "Legacy reply");
+    h.metadata({ ...legacyMetadata, archived: true });
+    expect(h.discussion.available()).toBe(true);
+    expect(h.discussion.snapshot().writable).toBe(false);
+    h.metadata({ ...legacyMetadata, readOnly: true });
+    expect(h.discussion.snapshot().writable).toBe(false);
+    h.metadata({ ...legacyMetadata, cached: true });
+    expect(h.discussion.snapshot().writable).toBe(false);
+    h.metadata({ ...legacyMetadata, huddle: true, parentChannelId: "other" });
+    expect(h.discussion.available()).toBe(false);
+    expect(h.discussion.snapshot().rows).toEqual([]);
+  } finally {
+    h.dispose();
+  }
+});
+it.each(["author", "parent", "room", "kind", "missing"])(
+  "rejects legacy evidence with wrong %s",
+  async (invalid) => {
+    const h = harness(legacyRoom);
+    h.metadata(legacyMetadata);
+    h.read.mockResolvedValue(
+      invalid === "missing"
+        ? []
+        : [
+            evidence(h, {
+              ...(invalid === "author" ? { author: keypair() } : {}),
+              ...(invalid === "parent" ? { parent: "other" } : {}),
+              ...(invalid === "room"
+                ? { room: "44444444-4444-4444-8444-444444444444" }
+                : {}),
+              ...(invalid === "kind" ? { kind: 48100 } : {}),
+            }),
+          ],
+    );
+    try {
+      await vi.waitFor(() =>
+        expect(h.discussion.snapshot().status).toBe("error"),
+      );
+      expect(h.ensure).not.toHaveBeenCalled();
+      await h.discussion.send("Wrong room");
+      expect(h.send).not.toHaveBeenCalled();
+    } finally {
+      h.dispose();
+    }
+  },
+);
+it("retries a failed legacy read and ignores its completion after disposal", async () => {
+  const h = harness(legacyRoom);
+  h.metadata(legacyMetadata);
+  h.read.mockRejectedValueOnce(new Error("offline"));
+  try {
+    await vi.waitFor(() =>
+      expect(h.discussion.snapshot().status).toBe("error"),
+    );
+    let finish!: (events: readonly RelayEvent[]) => void;
+    h.read.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    h.discussion.retry();
+    await vi.waitFor(() => expect(h.read).toHaveBeenCalledTimes(2));
+    h.discussion.dispose();
+    finish([evidence(h)]);
+    await Promise.resolve();
+    expect(h.ensure).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
+
+it("verifies legacy evidence through the real relay reader admission boundary", async () => {
+  const h = harness(legacyRoom);
+  h.metadata(legacyMetadata);
+  const transport = scriptedTransport("ab".repeat(32), h.authority.pubkey);
+  const reader = createRelayReader(transport.transport);
+  h.read.mockImplementation(reader.reader.read);
+  try {
+    await vi.waitFor(() => expect(transport.pending).toHaveLength(1));
+    transport.next().respond([evidence(h)]);
+    await vi.waitFor(() => expect(h.discussion.snapshot().writable).toBe(true));
+    expect(h.ensure).toHaveBeenCalledWith(legacyRoom);
+  } finally {
+    h.dispose();
+    reader.dispose();
+  }
+});
+
+it.each(["failed", "unknown"] as const)(
+  "preserves %s delivery and recovers the same room-bound event",
+  async (delivery) => {
+    const h = harness("room", delivery);
+    try {
+      await vi.waitFor(() =>
+        expect(h.discussion.snapshot().writable).toBe(true),
+      );
+      h.rows([
+        {
+          id: "failed",
+          channelId: "room",
+          authorId: "ab".repeat(32),
+          createdAt: 1,
+          content: "Hello",
+          delivery,
+          mentions: [],
+          attachments: [],
+          reactions: [],
+          participants: [],
+          replyCount: 0,
+        },
+      ]);
+      expect(h.discussion.snapshot().rows[0]?.delivery).toBe(delivery);
+      h.discussion.recover("failed");
+      expect(h.retry).toHaveBeenCalledWith("failed", expect.any(Function));
+      expect(h.send).not.toHaveBeenCalled();
+      h.discussion.recover("failed", true);
+      expect(h.dismiss).toHaveBeenCalledWith("failed");
+      h.metadata({
+        id: "room",
+        name: "Huddle",
+        huddle: true,
+        parentChannelId: "parent",
+        readOnly: true,
+      });
+      h.discussion.recover("failed");
+      expect(h.retry).toHaveBeenCalledTimes(1);
+    } finally {
+      h.dispose();
+    }
+  },
+);

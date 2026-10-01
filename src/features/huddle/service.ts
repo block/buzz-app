@@ -1,3 +1,4 @@
+import { createHuddleRequests } from "./requests";
 import { discoverHuddles } from "./discovery";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { HuddleBridge, HuddleDestination, HuddleUpdate } from "./bridge";
@@ -7,7 +8,8 @@ export type HuddleSnapshot = Readonly<{
   id?: string;
   level?: number;
   speakers?: Readonly<Record<string, number>>;
-  phase: "idle" | "connecting" | "connected" | "leaving" | "error";
+  requester?: string;
+  phase: "idle" | "incoming" | "connecting" | "connected" | "leaving" | "error";
   destination?: HuddleDestination;
   room?: string;
   muted: boolean;
@@ -35,6 +37,7 @@ export function createHuddles(
   openAudio: OpenHuddleAudio,
 ) {
   let snapshot = idle;
+  let requests: ReturnType<typeof createHuddleRequests> | undefined;
   let current: Attempt | undefined;
   let disposed = false;
   const speakers = new Map<
@@ -48,6 +51,7 @@ export function createHuddles(
   const update = (next: HuddleSnapshot) => {
     snapshot = next;
     for (const listener of listeners) listener();
+    requests?.refresh();
   };
   const activitySnapshot = () => {
     const levels = Object.fromEntries(
@@ -109,6 +113,10 @@ export function createHuddles(
     !disposed && current === attempt && !attempt.abort.signal.aborted;
   async function leave(error?: string) {
     if (closing) return closing;
+    if (snapshot.phase === "incoming" && snapshot.room) {
+      requests?.dismiss(snapshot.room);
+      return;
+    }
     const previous = current;
     current = undefined;
     resetActivity();
@@ -138,6 +146,7 @@ export function createHuddles(
         update({ ...idle, phase: "error", error: message(failure) });
       } finally {
         closing = undefined;
+        requests?.refresh();
       }
     });
     return closing;
@@ -162,14 +171,32 @@ export function createHuddles(
   ) {
     if (disposed || current || closing) return;
     const connection = relay.snapshot();
+    // The originating DM stays private. Explicit room members can join using
+    // its verified parent marker without access to the original conversation.
+    const accessible = () => {
+      const channels = connection.session.channels.list().channels;
+      const parent = channels.find((c) => c.id === destination.channelId);
+      const invited = room ? channels.find((c) => c.id === room) : undefined;
+      if (parent?.archived || invited?.archived) return "denied";
+      if (
+        parent ||
+        (invited &&
+          !invited.archived &&
+          !invited.readOnly &&
+          !invited.cached &&
+          invited.huddle &&
+          invited.parentChannelId === destination.channelId &&
+          invited.members?.includes(destination.viewer))
+      )
+        return "allowed";
+      return invited ? "denied" : "unknown";
+    };
     if (
       !bridge.available ||
       connection.status !== "ready" ||
       connection.scope !== destination.scope ||
       connection.viewer !== destination.viewer ||
-      !connection.session.channels
-        .list()
-        .channels.some((c) => c.id === destination.channelId && !c.archived)
+      accessible() !== "allowed"
     ) {
       update({
         ...idle,
@@ -178,6 +205,13 @@ export function createHuddles(
       });
       return;
     }
+    const incoming =
+      snapshot.phase === "incoming" &&
+      snapshot.room === room &&
+      snapshot.destination?.scope === destination.scope &&
+      snapshot.destination.channelId === destination.channelId
+        ? snapshot
+        : undefined;
     const attempt: Attempt = {
       id: crypto.randomUUID(),
       connection,
@@ -187,11 +221,12 @@ export function createHuddles(
     current = attempt;
     attempt.stopAccess = connection.session.channels.subscribeList(() => {
       const list = connection.session.channels.list();
-      const channel = list.channels.find((c) => c.id === destination.channelId);
       if (
         valid(attempt) &&
-        (channel?.archived ||
-          (!channel && list.status === "ready" && list.coverage !== "partial"))
+        (accessible() === "denied" ||
+          (accessible() === "unknown" &&
+            list.status === "ready" &&
+            list.coverage !== "partial"))
       )
         void leave("You no longer have access to this channel.");
     });
@@ -201,7 +236,11 @@ export function createHuddles(
       id: attempt.id,
       destination,
       ...(room ? { room } : {}),
+      ...(incoming
+        ? { requester: incoming.requester, participants: incoming.participants }
+        : {}),
     });
+    if (room) requests?.dismiss(room);
     const receive = (event: HuddleUpdate) => {
       if (!valid(attempt)) return;
       if (event.type === "ended") {
@@ -301,6 +340,28 @@ export function createHuddles(
       if (valid(attempt)) await leave(message(error));
     }
   }
+  if (bridge.available)
+    requests = createHuddleRequests(
+      relay,
+      () =>
+        !disposed &&
+        !current &&
+        !closing &&
+        ["idle", "error", "incoming"].includes(snapshot.phase),
+      (request) => {
+        if (request)
+          update({
+            ...idle,
+            phase: "incoming",
+            id: request.room,
+            room: request.room,
+            requester: request.creator,
+            destination: request.destination,
+            participants: [request.creator],
+          });
+        else if (snapshot.phase === "incoming") update(idle);
+      },
+    );
   return {
     snapshot: () => snapshot,
     canJoin(scope: string, room: string) {
@@ -326,6 +387,7 @@ export function createHuddles(
     leave,
     async dispose() {
       disposed = true;
+      requests?.dispose();
       unsubscribe();
       await leave();
       listeners.clear();

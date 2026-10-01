@@ -282,3 +282,126 @@ it("sends speaking levels with the matching participant", async () => {
     await h.dispose();
   }
 });
+
+it("keeps the request window through acceptance and reuses it for the connected call", async () => {
+  const h = harness();
+  h.release();
+  const initial = h.call.snapshot();
+  const room = initial.id ?? "";
+  try {
+    h.set({
+      ...initial,
+      phase: "incoming",
+      room,
+      requester: "alex",
+      participants: ["alex"],
+    });
+    await h.companion.open();
+    h.set({
+      ...initial,
+      id: "00000000-0000-4000-8000-000000000002",
+      phase: "connecting",
+      room,
+      requester: "alex",
+      participants: ["alex"],
+    });
+    await vi.waitFor(() =>
+      expect(h.bridge.update).toHaveBeenCalledWith(
+        room,
+        expect.objectContaining({ id: room, phase: "connecting" }),
+      ),
+    );
+    expect(
+      vi.mocked(h.bridge.update).mock.calls.some(([, value]) => value === null),
+    ).toBe(false);
+    h.set({
+      ...h.call.snapshot(),
+      phase: "connected",
+      participants: ["alex", "viewer"],
+    });
+    await vi.waitFor(() => expect(h.bridge.open).toHaveBeenCalledTimes(2));
+    expect(h.companion.snapshot().visible).toBe(true);
+    expect(
+      vi.mocked(h.bridge.update).mock.calls.some(([, value]) => value === null),
+    ).toBe(false);
+  } finally {
+    await h.dispose();
+  }
+});
+it("can minimize the old request presentation while its accepted call connects", async () => {
+  const h = harness();
+  h.release();
+  const initial = h.call.snapshot();
+  const room = initial.id ?? "";
+  try {
+    h.set({ ...initial, phase: "incoming", room, requester: "alex" });
+    await h.companion.open();
+    h.set({
+      ...initial,
+      id: "00000000-0000-4000-8000-000000000002",
+      phase: "connecting",
+      room,
+      requester: "alex",
+    });
+    h.action(room, "minimize");
+    expect(h.companion.snapshot().visible).toBe(false);
+    h.set({ ...h.call.snapshot(), phase: "connected" });
+    await Promise.resolve();
+    expect(h.bridge.open).toHaveBeenCalledOnce();
+    expect(h.companion.snapshot().visible).toBe(false);
+    await h.companion.open();
+    expect(h.companion.snapshot().visible).toBe(true);
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("cancels only the matching accepted request while connection is pending", async () => {
+  const h = harness();
+  h.release();
+  const initial = h.call.snapshot();
+  const room = initial.id ?? "";
+  try {
+    h.set({ ...initial, phase: "incoming", room, requester: "alex" });
+    await h.companion.open();
+    h.set({
+      ...initial,
+      id: "00000000-0000-4000-8000-000000000002",
+      phase: "connecting",
+      room,
+      requester: "alex",
+    });
+    h.action("stale", "decline");
+    expect(h.call.leave).not.toHaveBeenCalled();
+    h.action(room, "decline");
+    expect(h.call.leave).toHaveBeenCalledOnce();
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("surfaces a failed native chat update and lets the next chat action retry", async () => {
+  const h = harness();
+  try {
+    h.release();
+    await h.companion.open();
+    await vi.waitFor(() => expect(h.bridge.update).toHaveBeenCalled());
+    vi.mocked(h.bridge.update).mockRejectedValueOnce(
+      new Error("Window resize unavailable"),
+    );
+    h.action(h.call.snapshot().id ?? "", "thread");
+    await vi.waitFor(() =>
+      expect(h.companion.snapshot().error).toContain(
+        "Window resize unavailable",
+      ),
+    );
+    expect(h.companion.snapshot().visible).toBe(true);
+    h.action(h.call.snapshot().id ?? "", "thread");
+    await vi.waitFor(() =>
+      expect(h.companion.snapshot().error).toBeUndefined(),
+    );
+    expect(h.call.leave).not.toHaveBeenCalled();
+  } finally {
+    await h.dispose();
+  }
+});

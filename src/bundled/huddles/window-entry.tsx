@@ -1,5 +1,6 @@
 import "../../shared/styles/globals.css";
 import "@fontsource-variable/inter/wght.css";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createRoot } from "react-dom/client";
 import { useEffect, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
@@ -41,7 +42,9 @@ function Companion() {
     );
   };
   return view ? (
-    <HuddleWindowView view={view} act={act} error={error} />
+    <ToastProvider>
+      <HuddleWindowView view={view} act={act} error={error} />
+    </ToastProvider>
   ) : error ? (
     <p role="alert" className="p-6 text-body text-secondary">
       {error}

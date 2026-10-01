@@ -57,6 +57,7 @@ export function SearchResults({
     () =>
       list.channels.filter(
         (channel) =>
+          !channel.huddle &&
           !channel.archived &&
           (!channel.hidden || channel.channelType === "dm") &&
           (!scopedChannelId || channel.id === scopedChannelId),

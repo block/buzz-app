@@ -553,6 +553,11 @@
   --affordance-success: var(--green-3);
   --affordance-success-hover: var(--green-4);
   --affordance-success-pressed: var(--green-5);
+  /* Incoming call decisions remain opaque over glass, paired with text-inverse. */
+  --affordance-call-join: var(--green-10);
+  --affordance-call-join-hover: var(--green-9);
+  --affordance-call-decline: var(--red-10);
+  --affordance-call-decline-hover: var(--red-9);
   --border-success-subtle: var(--green-6);
   --affordance-accent: var(--purple-3);
   --affordance-accent-hover: var(--purple-4);
@@ -617,6 +622,11 @@
   --affordance-success: var(--green-3);
   --affordance-success-hover: var(--green-4);
   --affordance-success-pressed: var(--green-5);
+  /* Incoming call decisions remain opaque over glass, paired with text-inverse. */
+  --affordance-call-join: var(--green-10);
+  --affordance-call-join-hover: var(--green-9);
+  --affordance-call-decline: var(--red-10);
+  --affordance-call-decline-hover: var(--red-9);
   --border-success-subtle: var(--green-6);
   --affordance-accent: var(--purple-3);
   --affordance-accent-hover: var(--purple-4);

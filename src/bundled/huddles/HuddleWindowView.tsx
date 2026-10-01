@@ -1,47 +1,87 @@
+import { LayoutGroup } from "motion/react";
+import { useId } from "react";
+import { HuddleRequestView } from "./HuddleRequestView";
 import type { HuddleAction, HuddleView } from "../../features/huddle/window";
+import { useLayoutEffect, useRef, useState } from "react";
+import { useHuddleComposer } from "./HuddleComposer";
 import { HuddleAvatarCloud } from "./HuddleAvatarCloud";
 import { HuddleDiscussionView } from "./HuddleDiscussionView";
-import { Panel } from "../../shared/design-system/ui/Panel";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
-  HeadphonesIcon,
   ChatCircleIcon,
-  ArrowsInIcon,
+  ArrowsInSimpleIcon,
   MicrophoneIcon,
   MicrophoneSlashIcon,
   PhoneDisconnectIcon,
 } from "../../shared/design-system/icons";
 import styles from "./Huddles.module.css";
 
-export function HuddleWindowView({
-  view,
-  act,
-  error,
-}: {
+type WindowProps = {
   view: HuddleView;
   act(action: HuddleAction, text?: string): void;
   error?: string | undefined;
-}) {
+};
+export function HuddleWindowView(props: WindowProps) {
+  return (
+    <LayoutGroup id={useId()}>
+      <HuddleWindowContent {...props} />
+    </LayoutGroup>
+  );
+}
+function HuddleWindowContent({ view, act, error }: WindowProps) {
+  const incoming = useRef(false);
+  if (view.phase === "incoming") incoming.current = true;
+  else if (view.phase !== "connecting") incoming.current = false;
+  const composer = useHuddleComposer(view.discussion?.composer);
+  const layout = useRef<HTMLDivElement>(null);
+  const call = useRef<HTMLElement>(null);
+  const open = !!view.discussion;
+  const [hold, setHold] = useState<{
+    width: number;
+    open: boolean;
+  }>();
+  useLayoutEffect(() => {
+    if (hold && open === hold.open) setHold(undefined);
+  }, [open, hold]);
+  useLayoutEffect(() => {
+    if (error) setHold(undefined);
+  }, [error]);
+  if (
+    view.phase === "incoming" ||
+    (view.phase === "connecting" && incoming.current)
+  )
+    return <HuddleRequestView view={view} act={act} error={error} />;
+  const toggleChat = () => {
+    if (call.current && layout.current)
+      setHold({
+        width: call.current.getBoundingClientRect().width,
+        open: !open,
+      });
+    act("thread");
+  };
   return (
     <div
+      ref={layout}
       className={styles.windowLayout}
       data-chat={!!view.discussion || undefined}
     >
-      <main data-buzz-ui="" className={styles.window}>
+      <main
+        ref={call}
+        data-buzz-ui=""
+        className={styles.window}
+        style={hold ? { flex: "0 0 auto", width: hold.width } : undefined}
+      >
         <header className={styles.windowHeader}>
           <div className={styles.windowMinimize}>
             <IconButton
-              size="toolbar"
-              variant="ghost"
+              size="large"
+              variant="subtle"
               aria-label="Minimize Huddle to compact controls"
               title="Minimize Huddle"
               onClick={() => act("minimize")}
-              icon={<ArrowsInIcon size={16} />}
+              icon={<ArrowsInSimpleIcon size={22} />}
             />
           </div>
-          <span className="text-caption text-secondary">
-            <HeadphonesIcon size={16} /> Huddle
-          </span>
           {view.phase !== "connected" && (
             <p className="text-body text-secondary">
               {view.phase === "connecting"
@@ -83,7 +123,7 @@ export function HuddleWindowView({
               aria-label="Huddle chat"
               title="Huddle chat"
               aria-expanded={!!view.discussion}
-              onClick={() => act("thread")}
+              onClick={toggleChat}
               icon={<ChatCircleIcon size={22} />}
             />
             <IconButton
@@ -104,18 +144,15 @@ export function HuddleWindowView({
           className={styles.windowDiscussion}
           aria-label="Huddle chat panel"
         >
-          <Panel>
-            <HuddleDiscussionView
-              discussion={view.discussion}
-              close={() => act("thread")}
-              send={(text) => act("send", text)}
-              older={() => act("older")}
-              retry={() => act("retry")}
-              recover={(id, dismiss) =>
-                act(dismiss ? "discardMessage" : "retryMessage", id)
-              }
-            />
-          </Panel>
+          <HuddleDiscussionView
+            discussion={view.discussion}
+            composer={composer}
+            older={() => act("older")}
+            retry={() => act("retry")}
+            recover={(id, dismiss) =>
+              act(dismiss ? "discardMessage" : "retryMessage", id)
+            }
+          />
         </aside>
       )}
     </div>

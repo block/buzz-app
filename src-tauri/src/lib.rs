@@ -11,8 +11,8 @@ mod deep_links;
 mod dock;
 mod huddle_window;
 use huddle_window::{
-    huddle_window_action, huddle_window_open, huddle_window_update, huddle_window_watch,
-    HuddleWindow,
+    huddle_window_action, huddle_window_open, huddle_window_reset_incoming, huddle_window_update,
+    huddle_window_watch, HuddleWindow,
 };
 mod host_command;
 mod host_request;
@@ -381,6 +381,7 @@ async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
 }
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
+        huddle_window_reset_incoming,
         huddle_window_open,
         huddle_window_update,
         huddle_window_watch,

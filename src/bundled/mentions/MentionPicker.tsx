@@ -11,7 +11,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AtIcon } from "../../shared/design-system/icons/index";
 import { useEffect, useId, useRef, useState } from "react";
 import { useMentionChoices } from "./use-mention-choices";
-import type { RelaySession } from "../../features/relay/session";
+import type { ComposerSession } from "../../features/messages/composer-session";
 import "../../shared/design-system/styles/scrollbars.css";
 import styles from "./Mentions.module.css";
 
@@ -25,7 +25,7 @@ export function MentionPicker({
   inviteAgents,
   select,
 }: {
-  session: RelaySession;
+  session: ComposerSession;
   scope: string;
   channelId: string;
   disabled: boolean;

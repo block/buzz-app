@@ -1,3 +1,4 @@
+import { HuddleAvatarMotion } from "./HuddleAvatarMotion";
 import {
   Fragment,
   useLayoutEffect,
@@ -34,6 +35,7 @@ function arrange(
   rem: number,
   labelHeight: number,
   activeIndex: number,
+  hasSelf: boolean,
   anchor?: ActiveName,
 ) {
   const scale = Math.min(width / 360, height / 340);
@@ -48,6 +50,26 @@ function arrange(
     y: (y + size / 2 - meanY) * scale,
     r: (size * scale) / 2,
   }));
+  // Center the resting bounds of the whole group, including your portrait.
+  // Keep this offset independent of hover and speech so those never move the group.
+  const stageWidth = width / 0.64;
+  const peerCenter = stageWidth * (hasSelf ? 0.68 : 0.5);
+  const portraits = points.map((point) => ({
+    ...point,
+    x: point.x + peerCenter,
+  }));
+  if (hasSelf)
+    portraits.push({
+      x: stageWidth * 0.17,
+      y: 0,
+      r: Math.max(48, Math.min(stageWidth * 0.2, height * 0.55, 100)) / 2,
+    });
+  const offset = portraits.length
+    ? ({
+        "--cloud-shift-x": `${stageWidth / 2 - (Math.min(...portraits.map((p) => p.x - p.r)) + Math.max(...portraits.map((p) => p.x + p.r))) / 2}px`,
+        "--cloud-shift-y": `${-(Math.min(...portraits.map((p) => p.y - p.r)) + Math.max(...portraits.map((p) => p.y + p.r))) / 2}px`,
+      } as CSSProperties)
+    : {};
   const active = points[activeIndex];
   if (active && anchor) {
     // Keep the hovered portrait under the pointer, including during a transition.
@@ -115,14 +137,17 @@ function arrange(
       if (!moved) break;
     }
   }
-  return points.map(
-    (point) =>
-      ({
-        "--bubble-x": `${point.x}px`,
-        "--bubble-y": `${point.y}px`,
-        width: `${point.r * 2}px`,
-      }) as CSSProperties,
-  );
+  return {
+    offset,
+    positions: points.map(
+      (point) =>
+        ({
+          "--bubble-x": `${point.x}px`,
+          "--bubble-y": `${point.y}px`,
+          width: `${point.r * 2}px`,
+        }) as CSSProperties,
+    ),
+  };
 }
 type Person = HuddleView["participants"][number];
 
@@ -179,13 +204,14 @@ export function HuddleAvatarCloud({
     if (name) observer.observe(name);
     return () => observer.disconnect();
   }, [hasPeers]);
-  const positions = arrange(
+  const { positions, offset } = arrange(
     occupied,
     bounds.width,
     bounds.height,
     bounds.rem,
     bounds.labelHeight,
     visible.findIndex((person) => person.key === activeKey),
+    !!self,
     active,
   );
   const revealName = (key: string, element: HTMLDivElement) => {
@@ -225,6 +251,7 @@ export function HuddleAvatarCloud({
       className={styles.avatarStage}
       aria-label="Huddle participants"
       data-has-peers={hasPeers}
+      style={hasPeers ? offset : undefined}
     >
       {self && (
         <div className={styles.selfBubble} aria-hidden="true">
@@ -295,12 +322,14 @@ function Bubble({ person, muted }: { person: Person; muted: boolean }) {
   const label = `${person.name}${person.own ? (muted ? " (you, muted)" : " (you)") : ""}${level > 0 ? ", speaking" : ""}`;
   return (
     <span className={styles.bubbleArtwork}>
-      <Avatar
-        size="fill"
-        src={person.picture}
-        fallback={person.name}
-        alt={label}
-      />
+      <HuddleAvatarMotion participant={person.key}>
+        <Avatar
+          size="fill"
+          src={person.picture}
+          fallback={person.name}
+          alt={label}
+        />
+      </HuddleAvatarMotion>
       <NameBadge name={person.name} />
     </span>
   );

@@ -9,12 +9,15 @@
   min-inline-size: 0;
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: 0;
   /* Match the shell header’s 1.75rem navigation/search/profile controls. */
   height: 1.75rem;
   padding: 0;
   border: 0;
   border-radius: var(--radius-pill);
+}
+.capsule > :first-child {
+  margin-inline-end: var(--space-1);
 }
 .capsuleContent {
   display: inline-flex;
@@ -71,23 +74,16 @@
   gap: var(--space-5);
 }
 .windowHeader {
-  position: relative;
   min-height: 1.75rem;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: var(--space-2);
   text-align: center;
 }
 .windowMinimize {
-  position: absolute;
-  right: 0;
-  top: 0;
-}
-.windowHeader > span {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  grid-area: 1 / 1;
+  justify-self: end;
 }
 .windowFooter {
   display: flex;
@@ -111,12 +107,11 @@
 }
 .windowDiscussion {
   width: 360px;
-  max-width: 55%;
   flex-shrink: 0;
-  padding: var(--space-2) var(--space-2) var(--space-2) 0;
-}
-.windowDiscussion > section {
-  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border-inline-start: 1px solid var(--border-standard);
+  background: var(--surface-panel);
 }
 @media (prefers-reduced-motion: reduce) {
   .waveform > span {
@@ -236,7 +231,10 @@
   transition: transform var(--duration-settle) var(--easing-enter);
 }
 .avatarStage[data-has-peers="true"] .selfBubble {
-  transform: translate(calc(17cqw - 50%), -50%);
+  transform: translate(
+    calc(17cqw - 50% + var(--cloud-shift-x, 0px)),
+    calc(-50% + var(--cloud-shift-y, 0px))
+  );
 }
 .remoteCloud {
   position: absolute;
@@ -244,12 +242,18 @@
   top: 50%;
   width: 64cqw;
   height: 100%;
-  transform: translateY(-50%);
+  transform: translate(
+    var(--cloud-shift-x, 0px),
+    calc(-50% + var(--cloud-shift-y, 0px))
+  );
   container-type: inline-size;
 }
 .remoteCloud[data-has-self="false"] {
   right: 50%;
-  transform: translate(50%, -50%);
+  transform: translate(
+    calc(50% + var(--cloud-shift-x, 0px)),
+    calc(-50% + var(--cloud-shift-y, 0px))
+  );
 }
 .cloudBubble {
   position: absolute;
@@ -369,4 +373,54 @@
 }
 .capsule [data-huddle-leave]:active {
   background: var(--affordance-danger-pressed);
+}
+
+.requestBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  text-align: center;
+}
+.requestAvatar {
+  width: 8rem;
+  height: 8rem;
+}
+.requestBody p {
+  margin: 0;
+}
+.requestTitle {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.requestName {
+  display: block;
+}
+
+.requestActions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+}
+.requestCompactActions {
+  display: inline-grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-1);
+  align-items: center;
+}
+
+:is(.requestActions, .requestCompactActions) [data-huddle-join] {
+  --interaction-fill: var(--affordance-call-join);
+  --interaction-hover: var(--affordance-call-join-hover);
+  --interaction-pressed: var(--affordance-call-join);
+  color: var(--text-inverse);
+}
+
+:is(.requestActions, .requestCompactActions) [data-variant="destructive"] {
+  --affordance-danger: var(--affordance-call-decline);
+  --affordance-danger-hover: var(--affordance-call-decline-hover);
+  --affordance-danger-pressed: var(--affordance-call-decline);
+  color: var(--text-inverse);
 }

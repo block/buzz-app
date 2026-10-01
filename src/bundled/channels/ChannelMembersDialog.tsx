@@ -74,12 +74,16 @@ export function ChannelMembersDialog({
   control,
   close,
   trigger,
+  title = "Channel members",
+  description,
 }: {
   session: RelaySession;
   channelId: string;
   control?: AgentControl | undefined;
   close(): void;
   trigger: React.RefObject<HTMLButtonElement | null>;
+  title?: string;
+  description?: string;
 }) {
   const input = useRef<HTMLElement>(null);
   const focusedAdd = useRef<{ key: string; button: HTMLButtonElement } | null>(
@@ -312,9 +316,9 @@ export function ChannelMembersDialog({
       onOpenChange={(open) => {
         if (!open) close();
       }}
-      title="Channel members"
+      title={title}
       height="stable"
-      description={channel?.name}
+      description={description ?? channel?.name}
       closeLabel="Close channel members"
       initialFocus={input}
       finalFocus={trigger}

@@ -6,6 +6,7 @@ import { huddleLifecycle } from "../../features/huddle/lifecycle";
 import { HeadphonesIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { useRelayConnection } from "../../features/relay/react";
+import { HuddleAvatarStack } from "./HuddleAvatarStack";
 import styles from "./HuddleCard.module.css";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -90,7 +91,8 @@ export function HuddleCard({
   const ended =
     message.huddle?.state === "ended" || history.endedAt !== undefined;
   const start = history.startedAt ?? message.createdAt;
-  const active = current || (loaded && !ended && now - start < 3600);
+  const active = !ended && (current || (loaded && now - start < 3600));
+  const finished = ended || (loaded && !active);
   useEffect(() => {
     if (!active) return;
     const timer = setInterval(
@@ -100,16 +102,6 @@ export function HuddleCard({
     return () => clearInterval(timer);
   }, [active]);
   const people = current ? call.participants : history.participants;
-  const peopleKey = people.join(":");
-  useEffect(() => {
-    void connection.session.profiles
-      .ensure(peopleKey ? peopleKey.split(":") : [], "background")
-      .catch(() => {});
-  }, [connection.session, peopleKey]);
-  const profiles = useSyncExternalStore(
-    connection.session.profiles.subscribe,
-    connection.session.profiles.snapshot,
-  );
   const parent = connection.session.channels
     .list()
     .channels.find((c) => c.id === message.channelId);
@@ -117,7 +109,7 @@ export function HuddleCard({
   return (
     <section
       className={styles.card}
-      aria-label={ended ? "Huddle ended" : "Huddle"}
+      aria-label={finished ? "Huddle ended" : "Huddle"}
     >
       <div className={styles.status} aria-hidden="true">
         {active ? (
@@ -134,37 +126,17 @@ export function HuddleCard({
       </div>
       <div className={styles.details}>
         <strong>
-          {ended ? "Huddle ended" : active ? "Huddle in progress" : "Huddle"}
+          {finished ? "Huddle ended" : active ? "Huddle in progress" : "Huddle"}
         </strong>
-        <span className="text-secondary">
+        <div className={`${styles.summary} text-secondary`}>
           {(active || history.endedAt) && (
             <time>
               {duration(Math.max(0, (history.endedAt ?? now) - start))}
             </time>
           )}
           {people.length > 0 && (
-            <>
-              {" "}
-              · {people.length}{" "}
-              {people.length === 1 ? "participant" : "participants"}
-            </>
+            <HuddleAvatarStack participants={people} relay={relay} />
           )}
-        </span>
-        <div className={styles.people}>
-          {people.slice(0, 4).map((key) => {
-            const p = profiles.get(key);
-            const picture = p?.picture && connection.session.media(p.picture);
-            return (
-              <span key={key} title={p?.name ?? "Participant"}>
-                {picture ? (
-                  <img src={picture} alt={p?.name ?? "Participant"} />
-                ) : (
-                  (p?.name?.slice(0, 1) ?? "?")
-                )}
-              </span>
-            );
-          })}
-          {people.length > 4 && <span>+{people.length - 4}</span>}
         </div>
       </div>
       <div className={styles.actions}>
@@ -202,10 +174,10 @@ export function HuddleCard({
             {current ? "Open" : "Join"}
           </Button>
         )}
-        {open && (
+        {finished && open && (
           <Button
             size="sm"
-            variant="ghost"
+            variant="subtle"
             onClick={() => open(huddleTarget(message.channelId, room))}
           >
             View

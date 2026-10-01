@@ -39,6 +39,21 @@ it("opens with a conversation action and recent channels in activity order", asy
     roster(relay, "older", [viewer.pubkey]),
     metadata(relay, "latest", "latest", 1700000100),
     roster(relay, "latest", [viewer.pubkey]),
+    signed(relay, {
+      kind: 39000,
+      content: "",
+      created_at: 1700000200,
+      tags: [
+        ["d", "hidden-huddle"],
+        ["name", "Hidden Huddle"],
+        ["private"],
+        [
+          "about",
+          "Buzz Huddle (buzz.huddles/v1)\nparent:00000000-0000-4000-8000-000000000001",
+        ],
+      ],
+    }),
+    roster(relay, "hidden-huddle", [viewer.pubkey]),
   ];
   const owner = createRelaySession({
     ...wire.transport,
@@ -70,6 +85,7 @@ it("opens with a conversation action and recent channels in activity order", asy
     const recent = within(
       screen.getByRole("group", { name: "Recent activity" }),
     );
+    expect(screen.queryByRole("option", { name: /Hidden Huddle/ })).toBeNull();
     const [first, second] = recent.getAllByRole("option");
     expect(first).toHaveTextContent("latest");
     expect(second).toHaveTextContent("older");

@@ -1166,6 +1166,31 @@ test("member role dropdown fits beside search and preserves modal focus", async 
     expect(actionBounds.width).toBe(32);
     expect(geometry.radius).toBe(geometry.rowRadius);
     expect(geometry.leftRadius).toBe("0px");
+    await action.hover();
+    const corners = await action.evaluate((element) => {
+      const button = getComputedStyle(element);
+      return ["::before", "::after"].map((pseudo) => {
+        const style = getComputedStyle(element, pseudo);
+        return {
+          width: style.width,
+          height: style.height,
+          right: style.right,
+          mask: style.maskImage,
+          radius: button.borderTopRightRadius,
+          buttonWidth: button.width,
+          sameFill: style.backgroundColor === button.backgroundColor,
+          pointerEvents: style.pointerEvents,
+        };
+      });
+    });
+    for (const corner of corners) {
+      expect(corner.width).toBe(corner.radius);
+      expect(corner.height).toBe(corner.radius);
+      expect(corner.right).toBe(corner.buttonWidth);
+      expect(corner.mask).toContain("radial-gradient");
+      expect(corner.sameFill).toBe(true);
+      expect(corner.pointerEvents).toBe("none");
+    }
     await action.click({ position: { x: actionBounds.width / 2, y: 2 } });
     await expect(
       page.getByRole("menu", { name: "Actions for Agent 12" }),

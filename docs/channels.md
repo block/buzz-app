@@ -589,7 +589,8 @@ precedence over agent identity is unchanged. Selecting a role returns the list t
 the top; a vanished group or a single-group roster returns to All. Closing and
 reopening Members resets the filter. This is display state, not role authority.
 The member action trigger retains its compact width and fills the row height, with
-right-hand corners matching the row; profile and action targets remain separate.
+right-hand corners matching the row. Inverse left corners carry its hover/pressed
+fill around the profile's rounded edge; profile and action targets remain separate.
 The title, channel name and search stay fixed. Members uses the shared Dialog
 with `dismissOnOutsideClick` enabled. Adjacent role groups use an 8px gap in
 addition to the heading’s own top inset; invitation/recovery spacing is unchanged.

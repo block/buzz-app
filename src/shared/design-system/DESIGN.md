@@ -84,7 +84,10 @@ Bézier artwork cutouts, presence behavior and accessible names are unchanged.
 
 For a separate trailing action attached to a row, use `IconButton shape="row-end"`
 in a stretched flex slot. It keeps the size-selected width, fills the row height,
-and rounds only the right corners with `radius-row`. The ordinary shared hover,
+and rounds only the right corners with `radius-row`. Decorative inverse corners
+on the left extend the state fill around the preceding row's rounded edge without
+expanding the hit target. They inherit the fill, including hover/pressed/menu-open
+states, rather than painting over the adjacent surface. The ordinary shared hover,
 pressed and keyboard behavior remains unchanged.
 
 ## Public identity text

@@ -830,6 +830,11 @@ it("navigation holds sidebar requests until this document is shown again", async
   for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0));
   // WebKit refuses (and reports) fetches started while its loader stops.
   expect(h.api.sidebar).not.toHaveBeenCalled();
+  // Resumption and the next departure can share a task.
+  page.dispatchEvent(new Event("pageshow"));
+  page.dispatchEvent(new Event("beforeunload"));
+  for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0));
+  expect(h.api.sidebar).not.toHaveBeenCalled();
   page.dispatchEvent(new Event("pageshow"));
   await loading;
   expect(h.api.sidebar).toHaveBeenCalledTimes(1);

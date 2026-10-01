@@ -164,7 +164,8 @@ export function createSidebarState({
       owner = active;
     const result = (lane === "write" ? writes : serial).then(async () => {
       // Navigation pauses both lanes; their caller-owned work stays queued.
-      if (navigation.paused()) await navigation.resumed();
+      // A resumed page can leave again before this continuation runs.
+      while (navigation.paused() && !closed) await navigation.resumed();
       if (closed || generation !== epoch)
         throw new DOMException("Sidebar cancelled", "AbortError");
       const refused = retry[lane];

@@ -159,7 +159,9 @@ it.each(["cli-needed", "adapter-needed", "ready"] as const)(
     } else {
       expect(copyPi).toBeVisible();
       expect(
-        screen.getByText("npm install -g @earendil-works/pi-coding-agent"),
+        screen.getByText(
+          "npm install -g '@earendil-works/pi-coding-agent@>=0.99.0'",
+        ),
       ).toBeVisible();
       expect(
         screen.getByText(
@@ -169,6 +171,10 @@ it.each(["cli-needed", "adapter-needed", "ready"] as const)(
       const write = vi
         .spyOn(navigator.clipboard, "writeText")
         .mockResolvedValue();
+      await user.click(screen.getByRole("button", { name: "Copy Pi command" }));
+      expect(write).toHaveBeenCalledWith(
+        "npm install -g '@earendil-works/pi-coding-agent@>=0.99.0'",
+      );
       await user.click(
         screen.getByRole("button", { name: "Copy Adapter command" }),
       );
@@ -200,7 +206,9 @@ it("offers manual copying when clipboard access fails", async () => {
     "Select it to copy manually.",
   );
   expect(
-    screen.getByText("npm install -g @earendil-works/pi-coding-agent"),
+    screen.getByText(
+      "npm install -g '@earendil-works/pi-coding-agent@>=0.99.0'",
+    ),
   ).toBeVisible();
 });
 

@@ -1041,22 +1041,46 @@ async fn start_guarded(
                 replay_floor,
             },
         );
-        Ok((request, ticket, host.credentials.clone()))
+        let pi = host.controller.pi_launch_context(&id, request.2);
+        Ok((request, ticket, host.credentials.clone(), pi))
     })
     .await?;
-    let ((credential, pubkey, revision, _workspace), ticket, credentials) = prepared;
+    let ((credential, pubkey, revision, _workspace), ticket, credentials, pi) = prepared;
+    let probed_pi = matches!(&pi, Ok(Some(_)));
+    let preflight = match pi {
+        Ok(Some(pi)) => crate::pi_models::verify(pi)
+            .await
+            .map(|pi| buzz_agent_controller::pi::LaunchPreflight::new(Some(pi))),
+        Ok(None) => Ok(buzz_agent_controller::pi::LaunchPreflight::new(None)),
+        Err(error) => Err(error),
+    };
+    if probed_pi && preflight.is_ok() {
+        let target = id.clone();
+        run(owner.clone(), move |host| {
+            host.starts
+                .get(&target)
+                .filter(|pending| pending.ticket == ticket)
+                .ok_or(START_CANCELLED)?;
+            Ok(())
+        })
+        .await?;
+    }
     // OS permission prompts never hold the controller. Stop/quit invalidate the
     // ticket while the OS owns its dialog; a late key cannot start a listener.
-    let acquired = tauri::async_runtime::spawn_blocking(move || {
-        if !restore && replay_floor.is_none() && guard.is_none() {
-            credentials.retry();
-        }
-        credentials.read(&credential, &pubkey)
-    })
-    .await
-    .map_err(|_| "Native credential operation failed".to_owned())
-    .and_then(|v| v)
-    .and_then(|v| v.ok_or("Saved agent key is unavailable; nothing was started".into()));
+    let acquired = if preflight.is_ok() {
+        tauri::async_runtime::spawn_blocking(move || {
+            if !restore && replay_floor.is_none() && guard.is_none() {
+                credentials.retry();
+            }
+            credentials.read(&credential, &pubkey)
+        })
+        .await
+        .map_err(|_| "Native credential operation failed".to_owned())
+        .and_then(|v| v)
+        .and_then(|v| v.ok_or("Saved agent key is unavailable; nothing was started".into()))
+    } else {
+        Err(preflight.as_ref().err().unwrap().clone())
+    };
     let target = id.clone();
     if acquired.is_ok() {
         run(owner.clone(), move |host| {
@@ -1086,10 +1110,14 @@ async fn start_guarded(
         // The OS credential prompt can outlast the agent (e.g. its listener
         // exited); eligibility must still hold right before Restart enables it.
         check_guard(host, &id, guard)?;
-        if let Err(error) =
-            host.controller
-                .action_with_key(&id, action, revision, &key, replay_floor)
-        {
+        if let Err(error) = host.controller.action_with_preflight(
+            &id,
+            action,
+            revision,
+            &key,
+            replay_floor,
+            &preflight?,
+        ) {
             host.controller.record_error(&id, error);
         }
         host.snapshot()

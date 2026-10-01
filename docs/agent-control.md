@@ -208,7 +208,11 @@ is executable detection, not a guarantee of sign-in, ACP readiness or inference.
 The reviewed Pi adapter revision supports native steering, which needs Pi 0.99.0
 or later. Buzz checks the selected Pi CLI's version before agent startup or
 model browsing. An older or unreadable version fails with an error naming the
-selected CLI path and the required update.
+selected CLI path and the required update. Verification has a five-second limit
+and receives only basic system environment values, never inherited Buzz or
+provider credentials. Model Cancel retires the probe and its helpers; probing
+runs outside the agent controller lock so Stop and status remain available.
+Start rechecks its ticket and effective Pi settings after verification.
 
 Each app-owned install goes into a new release under
 `node-tools/releases/<adapter revision>.<time>`. Buzz then renames the `pi` and

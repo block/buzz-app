@@ -1539,6 +1539,23 @@ fn discovery_accepts_only_v2_from_saved_environment_or_build_provider() {
 #[cfg(unix)]
 fn pi_launch_rejects_old_user_global_cli() {
     use std::os::unix::fs::PermissionsExt;
+    // Keep the parent-credential fixture out of the parallel test process.
+    if std::env::var("BUZZ_PRIVATE_KEY").as_deref() != Ok("synthetic-version-probe-test") {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "runtime::tests::pi_launch_rejects_old_user_global_cli",
+            ])
+            .env("BUZZ_PRIVATE_KEY", "synthetic-version-probe-test")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let adapter = dir.path().join("buzz-pi-acp");
     let pi = dir.path().join("pi");
@@ -1556,7 +1573,11 @@ fn pi_launch_rejects_old_user_global_cli() {
         ("0.99.1", true),
         ("0.99.0-beta.1", false),
     ] {
-        fs::write(&pi, format!("#!/bin/sh\nprintf '{version}\\n'\n")).unwrap();
+        fs::write(
+            &pi,
+            format!("#!/bin/sh\n[ -z \"$BUZZ_PRIVATE_KEY\" ] || exit 1\nprintf '{version}\\n'\n"),
+        )
+        .unwrap();
         let launch = runtime.command(&selected, &key);
         if accepted {
             let launch = launch.unwrap();
@@ -1575,6 +1596,69 @@ fn pi_launch_rejects_old_user_global_cli() {
     fs::write(&pi, "#!/bin/sh\nexit 1\n").unwrap();
     let error = runtime.command(&selected, &key).err().unwrap();
     assert!(error.contains("0.99.0"), "{error}");
+    let context = crate::pi::PiContext::new(
+        &selected.harness,
+        &selected.workspace,
+        &selected.environment,
+    )
+    .unwrap();
+    let preflight =
+        crate::pi::LaunchPreflight::new(Some(context.accept_version("0.99.1").unwrap()));
+    selected
+        .environment
+        .insert("PI_CODING_AGENT_DIR".into(), "/changed/pi-profile".into());
+    let error = runtime
+        .command_checked(&selected, &key, &crate::build_defaults(), Some(&preflight))
+        .err()
+        .unwrap();
+    assert!(error.contains("settings changed"), "{error}");
+}
+
+#[test]
+#[cfg(unix)]
+fn pi_version_probe_times_out_and_retires_helpers() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["buzz-pi-acp", "node"] {
+        let file = dir.path().join(name);
+        fs::write(&file, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(file, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let pi = dir.path().join("pi");
+    let pid_file = dir.path().join("helper.pid");
+    fs::write(
+        &pi,
+        format!(
+            "#!/bin/sh\nprintf '0.99.1\\n'\n/bin/sleep 30 &\nprintf '%s' $! > '{}'\nwait\n",
+            pid_file.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&pi, fs::Permissions::from_mode(0o700)).unwrap();
+    let runtime = bundle(dir.path());
+    let mut selected = agent(dir.path());
+    selected.harness.command = dir.path().join("buzz-pi-acp").display().to_string();
+    let key = Secret::parse(KEY, PUB).unwrap();
+    let error = runtime
+        .command(&selected, &key)
+        .expect_err("Stalled Pi was accepted");
+    assert!(error.contains("timed out"), "{error}");
+    let pid: i32 = fs::read_to_string(pid_file).unwrap().parse().unwrap();
+    // SIGKILL can briefly leave a zombie owned by init. Wait on process state,
+    // not an arbitrary delay after signalling.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let output = Command::new("/bin/ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        let state = String::from_utf8(output.stdout).unwrap();
+        if state.trim().is_empty() || state.trim().starts_with('Z') {
+            break;
+        }
+        assert!(Instant::now() < deadline, "Helper still running: {state}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[test]

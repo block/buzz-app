@@ -364,7 +364,7 @@ pub(crate) fn huddle_window_action<R: tauri::Runtime>(
             return Err("Invalid Huddle message".into());
         }
     } else if matches!(action, Action::InputDevice | Action::OutputDevice) {
-        if text.as_ref().is_none_or(|id| id.len() > 4096) {
+        if text.as_ref().map_or(true, |id| id.len() > 4096) {
             return Err("Invalid audio device".into());
         }
     } else if text.is_some() {

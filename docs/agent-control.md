@@ -36,12 +36,19 @@ reporting that its process could not run. During Create, Start, or profile setup
 **Close** leaves the operation running and exposes the existing cards' recovery
 Stop. Late completion never closes a subsequently opened dialog. If an operation
 cannot be confirmed, refresh status before repeating it.
+
 Create is blocked with an explanation if this app’s runtime is unavailable;
 existing agents and profile retry remain intact.
 Without the dev broker, the native identity signs the owner authorization only
 for the key this host prepared for the pending Create. Native owner-scoped
 community resolution is also available; other broker-only helpers remain
 unavailable. Packaged support still requires attended native acceptance.
+
+New agents, including clones and duplicates, start with `BUZZ_ACP_AGENTS=10` in
+the existing **Environment** overrides. Replace or remove it there to choose the
+worker count. With **Each thread** conversation context, separate threads can
+use different workers while retaining separate histories. Existing saved agents
+keep their settings; add the variable and restart them to enable more workers.
 
 **Not imported from old Buzz** is a separate collapsible section. Expanding it
 loads installed identities for the connected community; already-managed exact

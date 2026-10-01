@@ -437,7 +437,7 @@ it("duplicates editable settings into a new identity without copying write-only 
     name: "Fixture agent copy",
     systemPrompt: "Be concise",
     harness: { provider: "openai", model: "example-model" },
-    environment: {},
+    environment: { BUZZ_ACP_AGENTS: "10" },
   });
 });
 
@@ -852,6 +852,9 @@ it("creates and starts a bundled Goose agent with the selected provider", async 
     args: [],
     provider: "openrouter",
     model: "anthropic/claude-sonnet-4",
+  });
+  expect(commit.mock.calls[0]?.[1].environment).toEqual({
+    BUZZ_ACP_AGENTS: "10",
   });
   expect(start).toHaveBeenCalledExactlyOnceWith("created-goose", "start");
   expect(
@@ -1770,13 +1773,13 @@ for (const mode of ["edit", "create"] as const) {
           )?.edit;
     expect(edit).toMatchObject({
       name: "Name-only change",
-      environment: {},
+      environment: mode === "create" ? { BUZZ_ACP_AGENTS: "10" } : {},
       harness: { command: "buzz-agent", provider: "", model: "" },
     });
     expect(edit.harness.databricks).toBeUndefined();
   });
 }
-it("create copies only the default harness and shows inherited defaults", async () => {
+it("create seeds editable workers while inheriting model and context defaults", async () => {
   const user = userEvent.setup();
   const create = vi.fn();
   vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
@@ -1831,10 +1834,15 @@ it("create copies only the default harness and shows inherited defaults", async 
   await user.click(
     await screen.findByRole("option", { name: "Entire channel" }),
   );
+  await user.click(within(dialog).getByRole("button", { name: "Environment" }));
+  const workers = within(dialog).getByLabelText(
+    "Replacement for BUZZ_ACP_AGENTS",
+  );
+  expect(workers).toHaveValue("10");
+  fireEvent.change(workers, { target: { value: "3" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Create agent" }));
   await waitFor(() => expect(create).toHaveBeenCalled());
-  // Only the harness is copied; provider, model, effort and env stay blank
-  // so they are looked up at each start.
+  // Harness and worker count are explicit; other defaults stay inherited.
   expect(create.mock.calls[0]?.[1]).toMatchObject({
     harness: {
       command: "/opt/tools/goose",
@@ -1842,7 +1850,7 @@ it("create copies only the default harness and shows inherited defaults", async 
       provider: "",
       model: "",
     },
-    environment: {},
+    environment: { BUZZ_ACP_AGENTS: "3" },
     sessionPolicy: "channel",
   });
 });

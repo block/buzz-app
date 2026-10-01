@@ -126,8 +126,15 @@ export async function threadSample(
   corrupt = false,
 ) {
   const requests: Request[] = [];
+  // Unread conversation lookups: parents by ID (unscoped), or the viewer's
+  // replies to them in one channel.
   const lookup = (filters: readonly ReadFilter[]) =>
-    filters.every((filter) => !filter["#h"] && (filter.ids || filter["#e"]));
+    filters.every(
+      (filter) =>
+        filter.include_aux &&
+        !filter.depth_limit &&
+        (filter.authors || (filter.ids && !filter["#h"])),
+    );
   let fixtureError: unknown;
   const server = createServer(async (request, response) => {
     try {

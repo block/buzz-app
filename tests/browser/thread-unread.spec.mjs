@@ -115,10 +115,19 @@ test("thread buttons show observed unread independently, clear only after readin
   await popover.screenshot({
     path: testInfo.outputPath("activity-popover.png"),
   });
-  // The viewer's own thread and the peer thread the viewer joined.
+  // The viewer's own thread and the peer thread the viewer joined. Channel
+  // evidence never returns the viewer's displaced reply, so only the
+  // conversation lookup can make the second thread count.
   await expect(
     popover.getByRole("button", { name: /Open unread thread from/ }),
   ).toHaveCount(2);
+  expect(
+    app.report.queries.some(
+      ({ filter }) =>
+        filter.authors?.[0] === app.viewer &&
+        filter["#e"]?.includes(roots[1].id),
+    ),
+  ).toBe(true);
   const queries = () =>
     app.report.queries.filter(({ filter }) => filter.depth_limit);
   expect(queries()).toHaveLength(0); // Merely displaying buttons never fetches threads.

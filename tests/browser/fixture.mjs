@@ -484,6 +484,9 @@ export const test = base.extend({
         searchTarget,
       ]);
     const threadSummaries = [];
+    // Viewer replies older than the unread sample: the thread view and the
+    // conversation lookup return them, but channel unread evidence never does.
+    const displacedReplies = new Map();
     if (threadUnread) {
       const history = histories.get("primary/alpha");
       for (const [index, event] of history.slice(-2).entries()) {
@@ -511,21 +514,20 @@ export const test = base.extend({
             peerKey,
             root.created_at + 10,
           ),
-          ...(threadUnreadJoined && index === 1
-            ? [
-                sign(
-                  9,
-                  [
-                    ["h", "alpha"],
-                    ["e", root.id.toUpperCase(), "", "reply"],
-                  ],
-                  "Viewer reply",
-                  userKey,
-                  root.created_at + 5,
-                ),
-              ]
-            : []),
         ];
+        if (threadUnreadJoined && index === 1)
+          displacedReplies.set(root.id, [
+            sign(
+              9,
+              [
+                ["h", "alpha"],
+                ["e", root.id.toUpperCase(), "", "reply"],
+              ],
+              "Viewer reply",
+              userKey,
+              root.created_at + 5,
+            ),
+          ]);
         threadReplies.set(root.id, replies);
         threadSummaries.push(
           sign(
@@ -1055,7 +1057,12 @@ export const test = base.extend({
       if (filter.depth_limit) {
         const rootId = filter["#e"]?.[0];
         const candidates = [
-          ...(community === "primary" ? (threadReplies.get(rootId) ?? []) : []),
+          ...(community === "primary"
+            ? [
+                ...(threadReplies.get(rootId) ?? []),
+                ...(displacedReplies.get(rootId) ?? []),
+              ]
+            : []),
           ...(histories.get(`${community}/${filter["#h"]?.[0]}`) ?? []),
         ].filter((event) => {
           const refs = event.tags.filter(([key]) => key === "e");
@@ -1100,23 +1107,27 @@ export const test = base.extend({
       // Unread conversation lookup: the viewer's replies to undecided parents.
       if (
         filter.kinds?.includes(9) &&
-        !filter["#h"] &&
         filter["#e"] &&
         filter.authors?.length === 1 &&
         filter.authors[0] === viewer
       )
-        return [...histories.entries()]
-          .filter(([key]) => key.startsWith(`${community}/`))
-          .flatMap(([, events]) => events)
+        return (filter["#h"] ?? [])
+          .flatMap((channel) => histories.get(`${community}/${channel}`) ?? [])
           .concat(
             threadUnread && community === "primary"
-              ? [...threadReplies.values()].flat()
+              ? [
+                  ...[...threadReplies.values()].flat(),
+                  ...[...displacedReplies.values()].flat(),
+                ]
               : [],
           )
           .filter(
             (event) =>
               filter.kinds.includes(event.kind) &&
               event.pubkey === viewer &&
+              event.tags.some(
+                ([key, value]) => key === "h" && filter["#h"]?.includes(value),
+              ) &&
               event.tags.some(
                 ([key, value]) =>
                   key === "e" && filter["#e"].includes(value?.toLowerCase()),

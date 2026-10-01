@@ -34,6 +34,9 @@ export type MessageAttention = Readonly<{
   /** The event explicitly p-tags the viewer, even inside DM channels. */
   mentioned?: boolean;
   rootId?: string;
+  /** The reply's conversation is still being looked up; it may become thread
+   * attention when the lookup finishes. */
+  pending?: boolean;
   unread: boolean;
   /** This row is explicitly forced unread during the current channel visit. */
   forced: boolean;
@@ -229,6 +232,8 @@ export function createUnread({
       );
   const keyFor = (target: ReadTarget) =>
     `${target.channelId}:${targetKey(target)}`;
+  /** Counted evidence, or a fetched parent/root kept only for structure. */
+  const structural = (id: string) => events.get(id) ?? lookupEvents.get(id);
   function root(event: RelayEvent): string | undefined {
     const channel = channelOf(event);
     let current = event;
@@ -238,7 +243,7 @@ export function createUnread({
       seen.add(current.id);
       const reference = threadReference(current);
       if (!reference) return current.id;
-      const next = events.get(reference.rootId);
+      const next = structural(reference.rootId);
       if (!next || !contentKind(next) || channelOf(next) !== channel) return;
       current = next;
     }
@@ -256,15 +261,22 @@ export function createUnread({
   const byChannel = new Map<string, Evidence[]>();
   const tombstones = new Set<string>();
   // Conversation membership: the viewer's own messages, and the parents the
-  // viewer has replied to. A conversation is the set of replies to one parent.
-  const own = new Set<string>();
+  // viewer has replied to, each keyed by channel. A conversation is the set of
+  // replies to one parent.
+  const own = new Map<string, string>();
   const joined = new Set<string>();
-  // Parents already looked up, parents still to look up, and fetched parents
-  // kept only as context.
-  const asked = new Set<string>();
-  const wanted = new Set<string>();
+  // Relay lookups for parents the sampled window cannot decide. They are kept
+  // apart from counted evidence: fetched events never count, never fill the
+  // window and survive its overflow reset, because whether the viewer wrote or
+  // answered a message does not change with the sample. Bounded, oldest first.
+  type Lookup = { channelId: string; done: boolean; member: boolean };
+  const lookups = new Map<string, Lookup>();
+  const lookupEvents = new Map<string, RelayEvent>();
+  const queued = new Map<string, { channelId: string; ids: Set<string> }>();
   let scheduled = false;
-  const context = new Set<string>();
+  let failures = 0;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  const membershipListeners = new Set<() => void>();
   function indexEvidence() {
     if (indexed) return;
     indexed = true;
@@ -285,8 +297,14 @@ export function createUnread({
       const rootId = root(event);
       const parentId = threadReference(event)?.parentId;
       if (event.pubkey === viewer) {
-        own.add(event.id);
-        if (parentId) joined.add(parentId);
+        own.set(event.id, channel);
+        if (parentId) {
+          joined.add(`${channel}:${parentId}`);
+          // A later reply of the viewer outlives the window that showed it.
+          const lookup = lookups.get(parentId);
+          if (lookup?.done && lookup.channelId === channel)
+            lookup.member = true;
+        }
       }
       const rows = byChannel.get(channel) ?? [];
       rows.push({
@@ -320,10 +338,18 @@ export function createUnread({
   const isDm = (channelId: string) =>
     channels.list().channels.find((channel) => channel.id === channelId)
       ?.channelType === "dm";
-  /** The reply is in a conversation the viewer is part of: it answers the
-   * viewer's message, or the viewer also replied to the same parent. */
-  const conversation = ({ parentId }: Evidence) =>
-    !!parentId && (own.has(parentId) || joined.has(parentId));
+  /** The reply is in a conversation the viewer is part of in its own channel:
+   * it answers the viewer's message, or the viewer also replied to the same
+   * parent. Undecided parents are not members until their lookup finishes. */
+  const conversation = ({ parentId, channelId }: Evidence) => {
+    if (!parentId) return false;
+    const lookup = lookups.get(parentId);
+    return (
+      own.get(parentId) === channelId ||
+      joined.has(`${channelId}:${parentId}`) ||
+      (!!lookup?.member && lookup.channelId === channelId)
+    );
+  };
   /** Top-level posts always count. A reply counts only in the viewer's own
    * conversations, or when it is a DM, mentions the viewer, or is broadcast. */
   const relevant = (entry: Evidence, dm: boolean) =>
@@ -332,6 +358,11 @@ export function createUnread({
     entry.mentioned ||
     entry.broadcast ||
     conversation(entry);
+  /** Retained evidence cannot decide this reply's conversation yet. */
+  const undecided = (entry: Evidence, dm: boolean) =>
+    !!entry.parentId &&
+    !relevant(entry, dm) &&
+    !lookups.get(entry.parentId)?.done;
   function isUnread(entry: Evidence, state: ReadState, dm: boolean) {
     const { event, channelId } = entry;
     if (event.pubkey === viewer) return false;
@@ -342,28 +373,7 @@ export function createUnread({
       reads.localUnread(`msg:${event.id}`)
     )
       return true;
-    if (relevant(entry, dm)) return afterFrontier(entry, state, dm);
-    // An otherwise-unread reply whose conversation is undecided asks the relay
-    // once; it stays quiet until membership evidence arrives.
-    const { parentId } = entry;
-    if (
-      parentId &&
-      !dm &&
-      !asked.has(parentId) &&
-      !context.has(event.id) &&
-      !deleted(event) &&
-      afterFrontier(entry, state, dm)
-    ) {
-      wanted.add(parentId);
-      if (!scheduled) {
-        scheduled = true;
-        queueMicrotask(() => {
-          scheduled = false;
-          resolveConversations();
-        });
-      }
-    }
-    return false;
+    return relevant(entry, dm) && afterFrontier(entry, state, dm);
   }
   /** The read-state half of unread, before conversation relevance. */
   function afterFrontier(entry: Evidence, state: ReadState, dm: boolean) {
@@ -402,14 +412,14 @@ export function createUnread({
     entry: Evidence,
     dm: boolean,
   ): MessageAttention["category"] {
-    const { rootId, mentioned } = entry;
     // DM events p-tag the recipient, so a mention check would classify every
-    // direct message as a mention. Direct wins inside DM channels.
+    // direct message as a mention. Direct wins inside DM channels. Thread
+    // attention follows the direct parent, even when the root is unknown.
     return dm
       ? "direct"
-      : mentioned
+      : entry.mentioned
         ? "mention"
-        : rootId && conversation(entry)
+        : conversation(entry)
           ? "thread"
           : undefined;
   }
@@ -440,16 +450,20 @@ export function createUnread({
       });
     const dm = isDm(channelId);
     const kind = category(entry, dm);
+    // A pending lookup may still make this reply thread attention.
+    const pending = undecided(entry, dm);
+    if (pending) want(entry, dm);
     const viewing = [...views.values()].some(
       (view) => view.ids.has(messageId) && view.visible(),
     );
     return Object.freeze({
       status: kind
         ? "eligible"
-        : threadReference(event) && !entry.rootId
+        : pending || (threadReference(event) && !entry.rootId)
           ? "unknown"
           : "ineligible",
       ...(kind ? { category: kind } : {}),
+      ...(pending ? { pending: true } : {}),
       ...(entry.mentioned ? { mentioned: true } : {}),
       ...(entry.rootId ? { rootId: entry.rootId } : {}),
       unread: isUnread(entry, reads.state(), dm),
@@ -463,9 +477,10 @@ export function createUnread({
       allowed(target.channelId) &&
       (target.kind === "channel" ||
         (() => {
-          const event = events.get(
-            target.kind === "thread" ? target.rootId : target.messageId,
-          );
+          const event =
+            target.kind === "thread"
+              ? structural(target.rootId)
+              : events.get(target.messageId);
           return (
             !!event &&
             channelOf(event) === target.channelId &&
@@ -497,7 +512,9 @@ export function createUnread({
           (event.created_at === latest.created_at && event.id < latest.id))
       )
         latest = event;
-      if (!inTarget(entry, target) || !isUnread(entry, state, dm)) continue;
+      if (!inTarget(entry, target)) continue;
+      want(entry, dm);
+      if (!isUnread(entry, state, dm)) continue;
       count++;
       if (priority(entry, dm)) attention++;
     }
@@ -552,6 +569,7 @@ export function createUnread({
     let presented: Map<string, string> | undefined;
     for (const evidence of byChannel.get(channelId) ?? []) {
       const { event, rootId, mentioned, broadcast } = evidence;
+      want(evidence, dm);
       if (
         !rootId ||
         (!mentioned && !broadcast && !conversation(evidence)) ||
@@ -711,9 +729,12 @@ export function createUnread({
     epoch++;
     for (const channelId of channelReadGenerations.keys())
       if (!allowed(channelId)) channelReadGenerations.delete(channelId);
-    asked.clear();
-    context.clear();
-    wanted.clear();
+    for (const [id, lookup] of lookups)
+      if (!allowed(lookup.channelId)) lookups.delete(id);
+    for (const [id, event] of lookupEvents)
+      if (!allowed(channelOf(event) ?? "")) lookupEvents.delete(id);
+    for (const [id, { channelId }] of queued)
+      if (!allowed(channelId)) queued.delete(id);
     const denied = new Set(
       [...known, ...forcedMessages.keys()].filter(
         (channel) => !allowed(channel),
@@ -790,71 +811,199 @@ export function createUnread({
   // Conversation membership for unread replies whose parent conversation is
   // not decided by retained evidence: the parent may be the viewer's own older
   // message, or the viewer may have replied to it outside the sampled window.
-  // Ask the relay once per parent, and only for replies that are otherwise
-  // unread. Fetched parents are context: they never start another lookup.
-  let resolving: Promise<void> | undefined;
-  let resolveAgain = false;
-  function resolveConversations() {
-    if (closed || !wanted.size) return;
-    if (resolving) {
-      resolveAgain = true;
+  // A selector that evaluates an otherwise-unread reply asks the relay once per
+  // parent. Selectors only queue the parent; the fetch starts in a microtask,
+  // so channels nobody observes cost nothing. Fetched events are structure
+  // only: they never count and never start another lookup, so a lookup cannot
+  // walk up an old thread.
+  function want(entry: Evidence, dm: boolean) {
+    const { event, channelId, parentId } = entry;
+    if (
+      !parentId ||
+      event.pubkey === viewer ||
+      lookups.has(parentId) ||
+      !undecided(entry, dm) ||
+      !afterFrontier(entry, reads.state(), dm)
+    )
       return;
+    lookups.set(parentId, { channelId, done: false, member: false });
+    const ids = new Set([parentId]);
+    // Also fetch the root so a reply to a fetched parent still groups and opens.
+    const rootId = threadReference(event)?.rootId;
+    if (rootId && !structural(rootId)) ids.add(rootId);
+    queued.set(parentId, { channelId, ids });
+    if (scheduled || retry) return;
+    scheduled = true;
+    queueMicrotask(() => {
+      scheduled = false;
+      void resolveConversations();
+    });
+  }
+  function resetLookups() {
+    lookups.clear();
+    lookupEvents.clear();
+    queued.clear();
+    failures = 0;
+    if (retry) clearTimeout(retry);
+    retry = undefined;
+  }
+  function remember(id: string, lookup: Lookup) {
+    lookups.delete(id);
+    lookups.set(id, lookup);
+    for (const [oldest] of lookups) {
+      if (lookups.size <= 4096) break;
+      lookups.delete(oldest);
     }
-    resolveAgain = false;
-    const generation = epoch;
-    resolving = (async () => {
-      const parents = [...wanted];
-      wanted.clear();
-      for (let offset = 0; offset < parents.length; offset += 50) {
-        const chunk = parents.slice(offset, offset + 50);
-        for (const id of chunk) asked.add(id);
-        const missing = chunk.filter((id) => !events.has(id));
+  }
+  function keep(event: RelayEvent) {
+    lookupEvents.set(event.id, event);
+    for (const [oldest] of lookupEvents) {
+      if (lookupEvents.size <= 1024) break;
+      lookupEvents.delete(oldest);
+    }
+  }
+  const contentKinds = [9, 40002, 40008];
+  /** The viewer's replies under these parents, with their deletions. `#e`
+   * also matches root tags, so a busy thread can fill one page: split a full
+   * page, and page one parent back in time until its direct reply appears. */
+  async function viewerReplies(
+    channelId: string,
+    parents: readonly string[],
+    signal: AbortSignal,
+    until?: number,
+    pages = 0,
+  ): Promise<RelayEvent[]> {
+    const rows = await reader.read(
+      [
+        {
+          kinds: contentKinds,
+          authors: [viewer],
+          "#h": [channelId],
+          "#e": [...parents],
+          include_aux: true,
+          limit: 500,
+          ...(until === undefined ? {} : { until }),
+        },
+      ],
+      { signal, priority: "background" },
+    );
+    const content = rows.filter((event) => contentKinds.includes(event.kind));
+    if (content.length < 500) return [...rows];
+    if (parents.length > 1) {
+      const half = Math.ceil(parents.length / 2);
+      return [
+        ...(await viewerReplies(channelId, parents.slice(0, half), signal)),
+        ...(await viewerReplies(channelId, parents.slice(half), signal)),
+      ];
+    }
+    // `until` is inclusive: stop when a page makes no progress, and after ten
+    // pages (5,000 replies under one root) as a cost bound.
+    const oldest = Math.min(...content.map((event) => event.created_at));
+    if (
+      content.some(
+        (event) => threadReference(event)?.parentId === parents[0],
+      ) ||
+      oldest === until ||
+      pages >= 9
+    )
+      return [...rows];
+    return [
+      ...rows,
+      ...(await viewerReplies(channelId, parents, signal, oldest, pages + 1)),
+    ];
+  }
+  let resolving = false;
+  async function resolveConversations() {
+    if (closed || resolving || !queued.size) return;
+    resolving = true;
+    try {
+      while (!closed && queued.size) {
+        const channelId = queued.values().next().value?.channelId;
+        if (!channelId) return;
+        const chunk = [...queued]
+          .filter(([, item]) => item.channelId === channelId)
+          .slice(0, 50);
+        for (const [id] of chunk) queued.delete(id);
+        const parents = chunk.map(([id]) => id);
+        const ids = [
+          ...new Set(chunk.flatMap(([, item]) => [...item.ids])),
+        ].filter((id) => !structural(id));
+        const signal = AbortSignal.any([
+          lifetime.signal,
+          AbortSignal.timeout(10000),
+        ]);
+        let fetched: readonly RelayEvent[];
+        let replies: readonly RelayEvent[];
         try {
-          const result = await reader.read(
-            [
-              ...(missing.length
-                ? [
+          [fetched, replies] = await Promise.all([
+            ids.length
+              ? reader.read(
+                  [
                     {
-                      kinds: [9, 40002, 40008],
-                      ids: missing,
-                      limit: missing.length,
+                      kinds: contentKinds,
+                      ids,
+                      include_aux: true,
+                      limit: ids.length,
                     },
-                  ]
-                : []),
-              {
-                kinds: [9, 40002, 40008],
-                authors: [viewer],
-                "#e": chunk,
-                limit: 500,
-              },
-            ],
-            {
-              signal: AbortSignal.any([
-                lifetime.signal,
-                AbortSignal.timeout(10000),
-              ]),
-              priority: "background",
-            },
-          );
-          if (closed || generation !== epoch) {
-            for (const id of chunk) asked.delete(id);
-            return;
-          }
-          for (const event of result)
-            if (event.pubkey !== viewer && !events.has(event.id))
-              context.add(event.id);
-          if (!accept(result)) return;
+                  ],
+                  { signal, priority: "background" },
+                )
+              : Promise.resolve([]),
+            viewerReplies(channelId, parents, signal),
+          ]);
         } catch {
-          // Undecided replies stay quiet until the next accepted evidence or
-          // completed repair retries them.
-          for (const id of chunk) asked.delete(id);
+          if (closed) return;
+          // Keep the parents pending, so they are not asked twice, and retry
+          // the batch with backoff while the relay is unavailable.
+          for (const [id, item] of chunk) queued.set(id, item);
+          const delay = Math.min(60000, 1000 * 2 ** failures++);
+          retry = setTimeout(() => {
+            retry = undefined;
+            void resolveConversations();
+          }, delay);
           return;
         }
+        failures = 0;
+        if (closed) return;
+        if (!allowed(channelId)) continue;
+        const removed = new Set<string>();
+        for (const event of [...fetched, ...replies])
+          if (event.kind === 5 || event.kind === 9005)
+            for (const [name, id] of event.tags)
+              if (name === "e" && id) removed.add(`${event.pubkey}:${id}`);
+        const live = (event: RelayEvent) =>
+          contentKind(event) &&
+          channelOf(event) === channelId &&
+          !removed.has(`${event.pubkey}:${event.id}`);
+        for (const event of fetched) if (live(event)) keep(event);
+        const answered = new Set(
+          replies.flatMap((event) => {
+            const parentId = threadReference(event)?.parentId;
+            return event.pubkey === viewer && live(event) && parentId
+              ? [parentId]
+              : [];
+          }),
+        );
+        for (const id of parents) {
+          const parent = structural(id);
+          remember(id, {
+            channelId,
+            done: true,
+            member:
+              answered.has(id) ||
+              (parent?.pubkey === viewer &&
+                channelOf(parent) === channelId &&
+                !removed.has(`${viewer}:${id}`)),
+          });
+        }
+        indexed = false;
+        publish(new Set([channelId]));
+        // Live notifications wait on pending replies; let them re-check.
+        for (const listener of [...membershipListeners]) listener();
       }
-    })().finally(() => {
-      resolving = undefined;
-      if (!closed && resolveAgain) resolveConversations();
-    });
+    } finally {
+      resolving = false;
+    }
   }
   async function repair(priority: Priority = "foreground") {
     requested = true;
@@ -1069,7 +1218,14 @@ export function createUnread({
     activity,
     subscribeActivity: addActivityListener,
     sync: reads.snapshot,
-    subscribeSync: reads.subscribe,
+    subscribeSync(listener) {
+      const stop = reads.subscribe(listener);
+      membershipListeners.add(listener);
+      return () => {
+        stop();
+        membershipListeners.delete(listener);
+      };
+    },
     ensure: () => refresh ?? (requested ? Promise.resolve() : repair()),
     refresh: async () => {
       await reads.refresh("foreground");
@@ -1416,9 +1572,7 @@ export function createUnread({
     clear() {
       epoch++;
       channelReadGenerations.clear();
-      asked.clear();
-      context.clear();
-      wanted.clear();
+      resetLookups();
       repairAgain = false;
       indexed = false;
       events.clear();
@@ -1435,6 +1589,8 @@ export function createUnread({
       epoch++;
       channelReadGenerations.clear();
       lifetime.abort();
+      resetLookups();
+      membershipListeners.clear();
       for (const stop of [...handles]) stop();
       stopRead();
       stopChannels();

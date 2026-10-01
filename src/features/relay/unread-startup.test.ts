@@ -3,7 +3,7 @@ import type { ReadFilter, RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
 import { createRelaySession } from "./session";
 import { readJournal, type ReadJournal } from "./read-state-storage";
-import { keypair, message, metadata, roster } from "./testing";
+import { keypair, message, metadata, roster, signed } from "./testing";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
@@ -268,7 +268,7 @@ function conversationRelay(h: ReturnType<typeof setup>) {
     );
   h.query.mockImplementation(async (filters) => {
     if (!filters[0]?.kinds?.includes(9)) return [];
-    if (!filters[0]["#h"]) {
+    if (filters[0].ids || filters[0].authors) {
       lookups.push([...filters]);
       if (fail) throw new Error("lookup failed");
     }
@@ -283,15 +283,24 @@ function conversationRelay(h: ReturnType<typeof setup>) {
               )) &&
             (!filter.ids || filter.ids.includes(event.id)) &&
             (!filter.authors || filter.authors.includes(event.pubkey)) &&
+            (filter.until === undefined || event.created_at <= filter.until) &&
             (!filter["#e"] || tagged(event, filter["#e"])),
         )
         .sort((a, b) => b.created_at - a.created_at)
         .slice(0, filter.limit),
     );
   });
+  const asked = () =>
+    lookups.flatMap((filters) =>
+      filters.flatMap((filter) => (filter.authors ? (filter["#e"] ?? []) : [])),
+    );
+  const fetched = () =>
+    lookups.flatMap((filters) => filters.flatMap((filter) => filter.ids ?? []));
   return {
     store,
     lookups,
+    asked,
+    fetched,
     fail(value: boolean) {
       fail = value;
     },
@@ -303,11 +312,16 @@ const reply = (
   time: number,
   root: RelayEvent,
   parent: RelayEvent,
+  channel = "other",
 ) =>
-  message(author, "other", content, time, [
+  message(author, channel, content, time, [
     ...(root === parent ? [] : [["e", root.id, "", "root"]]),
     ["e", parent.id, "", "reply"],
   ]);
+const busy = (h: ReturnType<typeof setup>, count: number) =>
+  Array.from({ length: count }, (_, i) =>
+    message(h.peer, "other", `busy ${i}`, 100 + i),
+  );
 
 it("looks up conversation membership that falls outside the sampled window", async () => {
   const h = setup();
@@ -318,10 +332,14 @@ it("looks up conversation membership that falls outside the sampled window", asy
   const answer = reply(h.peer, "answer to me", 700, mine, mine);
   const sibling = reply(h.peer, "same level as me", 701, agentRoot, agentRoot);
   const nested = reply(h.peer, "nested, not mine", 702, agentRoot, sibling);
-  // 500 newer rows fill the channel sample and push out every older message.
-  const busy = Array.from({ length: 497 }, (_, i) =>
-    message(h.peer, "other", `busy ${i}`, 100 + i),
+  const underAnswer = reply(
+    h.peer,
+    "nested under the answer",
+    703,
+    mine,
+    answer,
   );
+  // 500 newer rows fill the channel sample and push out every older message.
   relay.store.push(
     mine,
     agentRoot,
@@ -329,15 +347,23 @@ it("looks up conversation membership that falls outside the sampled window", asy
     answer,
     sibling,
     nested,
-    ...busy,
+    underAnswer,
+    ...busy(h, 496),
   );
   await h.session.unread.ensure();
   const attention = (id: string) => h.session.unread.attention("other", id);
-  // Before membership arrives, undecided replies stay quiet.
-  expect(attention(answer.id).unread).toBe(false);
+  // Before membership arrives, undecided replies stay quiet and pending.
+  expect(attention(answer.id)).toMatchObject({
+    status: "unknown",
+    pending: true,
+    unread: false,
+  });
+  expect(h.snapshot().observedCount).toBe(496);
   await vi.waitFor(() =>
     expect(attention(answer.id)).toMatchObject({
+      status: "eligible",
       category: "thread",
+      rootId: mine.id,
       unread: true,
     }),
   );
@@ -347,63 +373,266 @@ it("looks up conversation membership that falls outside the sampled window", asy
       unread: true,
     }),
   );
-  // Each undecided parent is asked once: by ID when missing, and for the
-  // viewer's replies to it. Present parents are not fetched again.
-  const asked = () =>
-    relay.lookups.flatMap((filters) =>
-      filters.flatMap((filter) => filter["#e"] ?? []),
-    );
-  // The channel badge projects every retained reply, so it asks for all.
-  h.snapshot();
-  await vi.waitFor(() => expect(asked()).toHaveLength(3));
-  const fetched = relay.lookups.flatMap((filters) =>
-    filters.flatMap((filter) => filter.ids ?? []),
+  expect(attention(nested.id)).toMatchObject({ unread: false });
+  expect(attention(underAnswer.id)).toMatchObject({ unread: false });
+  expect(attention(nested.id).pending).toBeUndefined();
+  // Fetched parents are structure only: the badge gains the two replies in the
+  // viewer's conversations, not the fetched old posts.
+  expect(h.snapshot()).toMatchObject({ observedCount: 498, attentionCount: 2 });
+  // Each undecided parent is asked once, scoped to its channel: by ID when
+  // missing, and for the viewer's replies to it.
+  expect(relay.asked().sort()).toEqual(
+    [mine.id, agentRoot.id, sibling.id, answer.id].sort(),
   );
-  expect(asked().sort()).toEqual([mine.id, agentRoot.id, sibling.id].sort());
-  expect(fetched.sort()).toEqual([mine.id, agentRoot.id].sort());
+  expect(relay.fetched().sort()).toEqual([mine.id, agentRoot.id].sort());
   for (const filters of relay.lookups)
     for (const filter of filters)
       expect(filter).toMatchObject(
         filter.ids
-          ? { kinds: [40002, 40008, 9], limit: filter.ids.length }
+          ? { include_aux: true, limit: filter.ids.length }
           : {
-              kinds: [40002, 40008, 9],
               authors: [h.viewer.pubkey],
+              "#h": ["other"],
+              include_aux: true,
               limit: 500,
             },
       );
-  await Promise.resolve();
-  expect(attention(nested.id)).toMatchObject({ unread: false });
   const count = relay.lookups.length;
-  // Asked parents are not asked again; fetched parents start no lookup.
+  // Decided parents are not asked again; fetched parents start no lookup.
   h.session.unread.snapshot({ kind: "channel", channelId: "other" });
+  h.session.unread.activity("other");
   await Promise.resolve();
   expect(relay.lookups).toHaveLength(count);
 });
 
-it("a failed membership lookup stays quiet and retries on the next evidence", async () => {
+it("a reply whose parent and root are both outside the window still groups as the viewer's thread", async () => {
+  const h = setup();
+  const relay = conversationRelay(h);
+  const root = message(h.peer, "other", "old root", 10);
+  const mine = reply(h.viewer, "my old nested reply", 11, root, root);
+  const answer = reply(h.peer, "agent answers me", 700, root, mine);
+  relay.store.push(root, mine, answer, ...busy(h, 499));
+  await h.session.unread.ensure();
+  h.snapshot();
+  const attention = () => h.session.unread.attention("other", answer.id);
+  await vi.waitFor(() =>
+    expect(attention()).toMatchObject({
+      status: "eligible",
+      category: "thread",
+      rootId: root.id,
+      unread: true,
+    }),
+  );
+  // The parent and the root are fetched together; neither recurses.
+  expect(relay.fetched().sort()).toEqual([mine.id, root.id].sort());
+  expect(h.snapshot()).toMatchObject({ observedCount: 500, attentionCount: 1 });
+  expect(
+    h.session.unread.snapshot({
+      kind: "thread",
+      channelId: "other",
+      rootId: root.id,
+    }).observedCount,
+  ).toBe(1);
+  expect(h.session.unread.activity("other").items).toMatchObject([
+    { rootId: root.id, latestMessageId: answer.id },
+  ]);
+});
+
+it("a full page of replies under one parent cannot hide the viewer's reply to another", async () => {
+  const h = setup();
+  const relay = conversationRelay(h);
+  const busyRoot = message(h.peer, "other", "busy root", 10);
+  const quietRoot = message(h.peer, "other", "quiet root", 11);
+  const mineQuiet = reply(h.viewer, "my one reply", 12, quietRoot, quietRoot);
+  const busyParent = reply(h.peer, "busy parent", 13, busyRoot, busyRoot);
+  // 500 newer replies of the viewer deep under busyRoot match `#e` by root tag.
+  const deep = Array.from({ length: 500 }, (_, i) =>
+    reply(h.viewer, `deep ${i}`, 20 + i, busyRoot, busyParent),
+  );
+  const answer = reply(h.peer, "same level as me", 700, quietRoot, quietRoot);
+  const peerUnderBusy = reply(
+    h.peer,
+    "under busy root",
+    701,
+    busyRoot,
+    busyRoot,
+  );
+  relay.store.push(busyRoot, quietRoot, mineQuiet, busyParent, ...deep);
+  relay.store.push(answer, peerUnderBusy, ...busy(h, 498));
+  await h.session.unread.ensure();
+  h.snapshot();
+  await vi.waitFor(() =>
+    expect(h.session.unread.attention("other", answer.id)).toMatchObject({
+      category: "thread",
+      unread: true,
+    }),
+  );
+  // Neither the deep replies nor their root tags make busyRoot a joined parent.
+  expect(h.session.unread.attention("other", peerUnderBusy.id)).toMatchObject({
+    unread: false,
+  });
+  expect(h.session.unread.attention("other", peerUnderBusy.id).pending).toBe(
+    undefined,
+  );
+});
+
+it("pages one busy parent back until the viewer's direct reply appears", async () => {
+  const h = setup();
+  const relay = conversationRelay(h);
+  const root = message(h.peer, "other", "busy root", 10);
+  const mine = reply(h.viewer, "my direct reply", 12, root, root);
+  const nestedParent = reply(h.peer, "nested parent", 13, root, root);
+  // 500 newer replies of the viewer, nested deeper, match `#e` by root tag.
+  const deep = Array.from({ length: 500 }, (_, i) =>
+    reply(h.viewer, `deep ${i}`, 20 + i, root, nestedParent),
+  );
+  const answer = reply(h.peer, "same level as me", 2000, root, root);
+  relay.store.push(root, mine, nestedParent, ...deep, answer);
+  relay.store.push(
+    ...Array.from({ length: 499 }, (_, i) =>
+      message(h.peer, "other", `busy ${i}`, 1000 + i),
+    ),
+  );
+  await h.session.unread.ensure();
+  h.snapshot();
+  await vi.waitFor(() =>
+    expect(h.session.unread.attention("other", answer.id)).toMatchObject({
+      category: "thread",
+      unread: true,
+    }),
+  );
+  const pages = relay.lookups
+    .flat()
+    .filter((filter) => filter.authors && filter["#e"]?.includes(root.id));
+  expect(pages.map((filter) => filter.until)).toEqual([undefined, 20]);
+});
+
+it("a later reply of the viewer outlives a negative lookup and a window reset", async () => {
+  const h = setup();
+  const relay = conversationRelay(h);
+  const root = message(h.peer, "other", "peer post", 10);
+  const answer = reply(h.peer, "a peer reply", 700, root, root);
+  relay.store.push(root, answer, ...busy(h, 499));
+  await h.session.unread.ensure();
+  h.snapshot();
+  const attention = () => h.session.unread.attention("other", answer.id);
+  await vi.waitFor(() => expect(attention().pending).toBeUndefined());
+  expect(attention().unread).toBe(false);
+  // The viewer joins the conversation live, after the lookup said no.
+  h.receive([reply(h.viewer, "now I reply", 800, root, root)]);
+  expect(attention()).toMatchObject({ category: "thread", unread: true });
+  const count = relay.lookups.length;
+  // The overflow reset drops the live reply; the refreshed sample lacks it.
+  h.receive(
+    Array.from({ length: 4096 }, (_, i) =>
+      message(h.peer, "other", `flood ${i}`, 900 + i),
+    ),
+  );
+  await h.session.unread.refresh();
+  expect(attention()).toMatchObject({ category: "thread", unread: true });
+  expect(relay.lookups).toHaveLength(count);
+}, 30000);
+
+it("lookup results survive a full-window reset and refresh without asking again", async () => {
   const h = setup();
   const relay = conversationRelay(h);
   const mine = message(h.viewer, "other", "my old post", 10);
   const answer = reply(h.peer, "answer to me", 700, mine, mine);
-  const busy = Array.from({ length: 499 }, (_, i) =>
-    message(h.peer, "other", `busy ${i}`, 100 + i),
+  relay.store.push(mine, answer, ...busy(h, 499));
+  await h.session.unread.ensure();
+  h.snapshot();
+  const attention = () => h.session.unread.attention("other", answer.id);
+  await vi.waitFor(() => expect(attention().unread).toBe(true));
+  const count = relay.lookups.length;
+  // Overflow the 4,096-event window: every channel's evidence is dropped.
+  h.receive(
+    Array.from({ length: 4096 }, (_, i) =>
+      message(h.peer, "other", `flood ${i}`, 800 + i),
+    ),
   );
-  relay.store.push(mine, answer, ...busy);
+  expect(h.snapshot().freshness).toBe("stale");
+  expect(attention().status).toBe("unknown");
+  await h.session.unread.refresh();
+  expect(attention()).toMatchObject({ category: "thread", unread: true });
+  expect(relay.lookups).toHaveLength(count);
+}, 30000);
+
+it("a reply to the viewer's message in another channel is not the viewer's conversation", async () => {
+  const h = setup(2);
+  const relay = conversationRelay(h);
+  const mine = message(h.viewer, "room-1", "my post elsewhere", 10);
+  const forged = reply(h.peer, "claims my parent", 700, mine, mine);
+  relay.store.push(mine, forged, ...busy(h, 499));
+  await h.session.unread.ensure();
+  h.snapshot();
+  await vi.waitFor(() =>
+    expect(
+      h.session.unread.attention("other", forged.id).pending,
+    ).toBeUndefined(),
+  );
+  const forgedAttention = h.session.unread.attention("other", forged.id);
+  expect(forgedAttention).toMatchObject({ unread: false });
+  expect(forgedAttention.category).toBeUndefined();
+});
+
+it("a deleted reply of the viewer does not join its parent", async () => {
+  const h = setup();
+  const relay = conversationRelay(h);
+  const agentRoot = message(h.peer, "other", "agent post", 10);
+  const mine = reply(h.viewer, "my old reply", 11, agentRoot, agentRoot);
+  const removal = signed(h.viewer, {
+    kind: 5,
+    content: "",
+    created_at: 12,
+    tags: [
+      ["e", mine.id],
+      ["h", "other"],
+    ],
+  });
+  const sibling = reply(h.peer, "same level", 700, agentRoot, agentRoot);
+  relay.store.push(agentRoot, mine, removal, sibling, ...busy(h, 499));
+  // The fixture relay returns the deletion with include_aux lookups.
+  const base = h.query.getMockImplementation();
+  h.query.mockImplementation(async (filters, signal) => {
+    const rows = (await base?.(filters, signal)) ?? [];
+    return filters[0]?.authors && filters[0].include_aux
+      ? [...rows, removal]
+      : rows;
+  });
+  await h.session.unread.ensure();
+  h.snapshot();
+  await vi.waitFor(() =>
+    expect(
+      h.session.unread.attention("other", sibling.id).pending,
+    ).toBeUndefined(),
+  );
+  expect(h.session.unread.attention("other", sibling.id).unread).toBe(false);
+});
+
+it("a failed membership lookup stays pending and retries with backoff", async () => {
+  const h = setup();
+  const relay = conversationRelay(h);
+  const mine = message(h.viewer, "other", "my old post", 10);
+  const answer = reply(h.peer, "answer to me", 700, mine, mine);
+  relay.store.push(mine, answer, ...busy(h, 499));
   relay.fail(true);
   await h.session.unread.ensure();
   const attention = () => h.session.unread.attention("other", answer.id);
-  expect(attention().unread).toBe(false);
-  await vi.waitFor(() => expect(relay.lookups).toHaveLength(1));
-  await Promise.resolve();
-  expect(attention().unread).toBe(false);
+  h.snapshot();
+  await vi.waitFor(() => expect(relay.lookups.length).toBeGreaterThan(0));
+  const failed = relay.lookups.length;
+  expect(attention()).toMatchObject({ pending: true, unread: false });
   relay.fail(false);
+  // New evidence does not retry at once: the parent stays pending in backoff.
   h.receive([message(h.peer, "other", "new top-level", 800)]);
   h.snapshot();
-  await vi.waitFor(() =>
-    expect(attention()).toMatchObject({ category: "thread", unread: true }),
+  await Promise.resolve();
+  expect(relay.lookups).toHaveLength(failed);
+  await vi.waitFor(
+    () =>
+      expect(attention()).toMatchObject({ category: "thread", unread: true }),
+    { timeout: 3000 },
   );
-  expect(relay.lookups).toHaveLength(2);
 });
 
 it.each(["clear", "dispose", "revoke", "join"])(

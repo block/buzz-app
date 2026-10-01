@@ -177,16 +177,38 @@ viewer posts in it or is mentioned there. Explicit per-message unread intent sti
 applies to any reply. The same rule feeds channel and thread counts, thread
 activity, per-message attention and the `thread` notification category.
 
-Membership starts from retained evidence. When a reply is otherwise unread but
-its conversation is undecided (the parent is not loaded, or the viewer's own
-reply to it is not), the projection asks the relay once per parent, in batches
-of 50: the missing parents by ID, and the viewer's replies that tag those
-parents (`#e`, limit 500). The lookup is lazy and background priority; it runs
-only for replies that some badge, row or activity projection evaluated. Until it
-answers, or if it fails, the reply stays quiet; a failed batch retries on the
-next projection. Fetched parents are context only: they never start another
-lookup, so a lookup cannot climb an old thread. The age of the viewer's message
-does not matter. Replies still require retained evidence of their own.
+Membership is checked in the reply's own channel. It starts from retained
+evidence. When a reply is otherwise unread but its conversation is undecided
+(the parent is not loaded, or the viewer's own reply to it is not), a projection
+that evaluates the reply queues one relay lookup for that parent. The fetch runs
+in a microtask, at background priority, in batches of up to 50 parents from one
+channel:
+
+- the missing parents, and the replies' roots, by ID;
+- the viewer's replies in that channel that tag those parents (`#e`, `#h`,
+  `include_aux`, limit 500). `#e` also matches root tags, so a full page is
+  split and asked again; a full page for one parent pages back in time until
+  the viewer's direct reply appears (at most ten pages). Only replies whose
+  reply tag names the parent count, and deleted ones do not.
+
+While a lookup is pending, the reply is quiet and its attention is `unknown`
+with `pending: true`; a live notification for it waits instead of being
+dropped. A failed batch keeps its parents pending and retries with backoff
+(1 s doubling to 60 s), so the same parent is never asked twice at once.
+
+Lookup results are kept apart from counted evidence, in a store bounded to
+4,096 decided parents and 1,024 fetched events. Fetched parents and roots are
+structure only: they give a reply its root for grouping and navigation, but
+they never count, never start another lookup (so a lookup cannot climb an old
+thread) and never fill the 4,096-event window. Whether the viewer wrote or
+answered a message does not change with the sample, so results survive the
+window's overflow reset and roster changes for still-accessible channels. A
+session reset clears them. Thread attention follows the direct parent, so a
+reply whose root could not be fetched still counts as the viewer's thread; it
+just cannot be grouped. A later reply of the viewer turns a negative result
+into membership, so it still counts after the window drops that reply. One
+residual: a direct reply older than 5,000 of the viewer's root-tag matches is
+not seen. Replies still require retained evidence of their own.
 
 ## Explicit clearing matrix
 

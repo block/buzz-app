@@ -4,6 +4,7 @@ import { keypair, message, metadata, roster, signed } from "./testing";
 import type { RelayEvent, ReadFilter } from "./events";
 import type { LiveCallbacks } from "./live";
 import { byteSize } from "./budget";
+import { createInboxFeed } from "./inbox-feed";
 
 // General #e reads return an empty terminal page. The ordinary #p response is
 // still explicitly gated by each test; no incidental timer orders admission.
@@ -1200,31 +1201,80 @@ it("a fully visibility-filtered auxiliary page is incomplete, not a false termin
   }
 });
 
-it.each(["bounded", "events", "bytes"] as const)(
+it("a signed short-page walk settles edits and checks their deletion dependencies", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const target = addressed(h, "original", 20);
+  const edits = Array.from({ length: 3 }, (_, i) =>
+    signed(h.alice, {
+      kind: 40003,
+      created_at: 33 - i,
+      content: `revision ${i}`,
+      tags: [
+        ["h", "room"],
+        ["e", target.id],
+      ],
+    }),
+  );
+  const pages: ReadFilter[] = [];
+  h.query.mockImplementation(async ([filter]) => {
+    if (filter?.["#p"]) return [target];
+    if (filter?.["#e"]?.includes(target.id)) {
+      pages.push(filter);
+      return edits
+        .filter(
+          (edit) =>
+            filter.until === undefined || edit.created_at < filter.until,
+        )
+        .slice(0, 1);
+    }
+    return [];
+  });
+  await h.session.inboxFeed.ensure();
+  expect(pages.map((filter) => filter.until)).toEqual([undefined, 33, 32, 31]);
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "ready",
+    incomplete: [],
+  });
+  expect(rows(h)[0]?.preview).toBe("revision 0");
+  expect(
+    h.query.mock.calls.some(
+      ([filters]) =>
+        filters[0]?.kinds?.join(",") === "5,9005" &&
+        filters[0]?.["#e"]?.length === 3,
+    ),
+  ).toBe(true);
+});
+
+// Retention budgets belong to the feed, not signing/session folding. Synthetic
+// DTOs model the already-verified reader boundary here; signed admission, edits,
+// and short-page closure remain covered through the real session above.
+it.each(["events", "bytes"] as const)(
   "walks advancing auxiliary pages with a discriminating %s budget outcome",
   async (budget) => {
     const h = setup();
     h.admit([h.viewer.pubkey, h.alice.pubkey]);
     const target = addressed(h, "original", 20);
-    const count = budget === "events" ? 2001 : budget === "bytes" ? 9 : 3;
-    const edits = Array.from({ length: count }, (_, i) =>
-      signed(h.alice, {
-        kind: 40003,
-        created_at: 30 + count - i,
-        content: budget === "bytes" ? "x".repeat(512 * 1024) : `revision ${i}`,
-        tags: [
-          ["h", "room"],
-          ["e", target.id],
-        ],
-      }),
-    );
+    const count = budget === "events" ? 2001 : 9;
+    const edits: RelayEvent[] = Array.from({ length: count }, (_, i) => ({
+      ...target,
+      id: (i + 1).toString(16).padStart(64, "0"),
+      kind: 40003,
+      created_at: 30 + count - i,
+      content: budget === "bytes" ? "x".repeat(512 * 1024) : `revision ${i}`,
+      tags: [
+        ["h", "room"],
+        ["e", target.id],
+      ],
+    }));
     expect(edits.length > 2000).toBe(budget === "events");
     expect(byteSize(edits) > 4 * 1024 * 1024).toBe(budget === "bytes");
-    const pageSize = budget === "events" ? 500 : budget === "bytes" ? 3 : 1;
+    const pageSize = budget === "events" ? 500 : 3;
     const pages: ReadFilter[] = [];
-    h.query.mockImplementation(async ([filter]) => {
-      if (filter?.["#p"]) return [target];
-      if (filter?.["#e"]?.includes(target.id)) {
+    const reader = {
+      read: vi.fn(async (filters: readonly ReadFilter[]) => {
+        const filter = filters[0];
+        if (!filter?.["#e"]?.includes(target.id)) return [];
         pages.push(filter);
         return edits
           .filter(
@@ -1232,34 +1282,42 @@ it.each(["bounded", "events", "bytes"] as const)(
               filter.until === undefined || edit.created_at < filter.until,
           )
           .slice(0, pageSize);
-      }
-      return [];
+      }),
+    };
+    const feed = createInboxFeed({
+      viewer: h.viewer.pubkey,
+      channels: h.session.channels,
+      reader,
+      async addressedRead(_filter, _signal, prepare) {
+        prepare([target]);
+        return [target];
+      },
+      retainedEvent: (id) => (id === target.id ? target : undefined),
+      retainedEditIds: () => [],
     });
-    await h.session.inboxFeed.ensure();
-    expect(pages.length).toBe(
-      budget === "events" ? 5 : budget === "bytes" ? 3 : 4,
-    );
-    expect(h.session.inboxFeed.snapshot()).toMatchObject(
-      budget === "bounded"
-        ? {
-            status: "ready",
-            incomplete: [],
-          }
-        : {
-            status: "error",
-            incomplete: [target.id],
-            error: "Inbox message updates exceed the read budget. Retry inbox.",
-          },
-    );
-    expect(rows(h)[0]?.preview).toBe(edits[0]?.content);
-    if (budget === "bounded")
-      expect(
-        h.query.mock.calls.some(
-          ([filters]) =>
-            filters[0]?.kinds?.join(",") === "5,9005" &&
-            filters[0]?.["#e"]?.length === 3,
-        ),
-      ).toBe(true);
+    try {
+      await feed.ensure();
+      expect(pages.length).toBe(budget === "events" ? 5 : 3);
+      expect(feed.snapshot()).toMatchObject({
+        status: "error",
+        incomplete: [target.id],
+        error: "Inbox message updates exceed the read budget. Retry inbox.",
+      });
+      // Failure must be retryable; no blanket pagination rejection may pass.
+      pages.length = 0;
+      const first = edits[0];
+      if (!first) throw Error("Missing budget fixture edit");
+      edits.splice(0, edits.length, { ...first, content: "bounded retry" });
+      await feed.refresh();
+      expect(pages).toHaveLength(2);
+      expect(feed.snapshot()).toMatchObject({
+        status: "ready",
+        incomplete: [],
+      });
+      expect(reader.read.mock.calls.at(-1)?.[0][0]?.["#e"]).toEqual([first.id]);
+    } finally {
+      feed.dispose();
+    }
   },
 );
 

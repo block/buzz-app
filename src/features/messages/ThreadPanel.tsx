@@ -1014,6 +1014,9 @@ function ThreadMessages({
             ].find((row) => row.dataset.messageId === anchor.id);
             if (row) anchor.top = row.getBoundingClientRect().top;
           }
+          // A scroll outside positioning is the reader's; hold the target there.
+          if (targetAnchor.current !== undefined && !pinned.current)
+            targetAnchor.current = selectedOffset() ?? targetAnchor.current;
           const bottom =
             (pinned.current && follow.current) ||
             element.scrollHeight - element.clientHeight - element.scrollTop <

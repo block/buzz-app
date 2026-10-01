@@ -352,6 +352,25 @@ test("newest window positions immediately; scrollback preserves the visible repl
     await expect(
       history.getByText("Reply with image", { exact: true }),
     ).toBeInViewport();
+    // Walk the virtualized range: every loaded reply mounts, none twice.
+    const seen = new Set();
+    await expect
+      .poll(
+        async () => {
+          const ids = await history.evaluate((el) => {
+            const ids = [...el.querySelectorAll("ol [data-message-id]")].map(
+              (row) => row.dataset.messageId,
+            );
+            el.scrollTop += el.clientHeight / 2;
+            return ids;
+          });
+          expect(new Set(ids).size).toBe(ids.length);
+          for (const id of ids) seen.add(id);
+          return seen.size;
+        },
+        { intervals: [50] },
+      )
+      .toBe(305);
     expect(
       (await page.evaluate(() => window.messagesFixture.report.filters)).every(
         (f) => f.thread_window && f.thread_cursor === undefined,

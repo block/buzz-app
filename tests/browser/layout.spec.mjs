@@ -1289,6 +1289,32 @@ readingTest(
     } else {
       await settle(page);
       expect(await history.evaluate((el) => el.scrollTop)).toBe(before);
+      // No outer scrollend will retire this key. A later real layout contraction
+      // must retain bottom follow, including the next incoming message.
+      const height = await history.evaluate((el) => el.scrollHeight);
+      await inner.evaluate((el) => {
+        el.style.maxHeight = "80px";
+      });
+      await expect
+        .poll(() => history.evaluate((el) => el.scrollHeight))
+        .toBeLessThan(height);
+      await settle(page);
+      const arrival = app.append(
+        "primary",
+        "alpha",
+        "Still following after an unconsumed Page Up",
+      );
+      await expect(
+        page.locator(`[data-message-id="${arrival.id}"]`),
+      ).toBeInViewport();
+      await settle(page);
+      await expect
+        .poll(() =>
+          history.evaluate(
+            (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+          ),
+        )
+        .toBeLessThan(2);
     }
   },
 );

@@ -212,6 +212,7 @@ function Timeline({
   }>({ ids: new Set() });
   const intent = useRef(0);
   const upwardGesture = useRef(false);
+  const gestureFrame = useRef<number | undefined>(undefined);
   const touchY = useRef<number | undefined>(undefined);
   const measuredPosition = useRef<{
     offset: number;
@@ -386,6 +387,10 @@ function Timeline({
     observer.observe(element);
     if (edge.current) observer.observe(edge.current);
     return () => {
+      if (gestureFrame.current !== undefined)
+        cancelAnimationFrame(gestureFrame.current);
+      gestureFrame.current = undefined;
+      upwardGesture.current = false;
       olderDemand.current = false;
       settled.current = false;
       writeView(scope, `scroll:${channelId}`, savedPosition.current);
@@ -620,6 +625,20 @@ function Timeline({
     userScrolled.current = true;
     if (scroller.current) recordPosition(scroller.current);
     upwardGesture.current = upward;
+    if (gestureFrame.current !== undefined)
+      cancelAnimationFrame(gestureFrame.current);
+    gestureFrame.current = undefined;
+    if (upward)
+      gestureFrame.current = requestAnimationFrame(() => {
+        gestureFrame.current = undefined;
+        // Input is only a candidate: an inner scrollport can consume it without
+        // moving history or emitting scrollend. Sample native movement before
+        // retiring the candidate so input+shrink still wins in this observation,
+        // even when the browser has not delivered its scroll event yet.
+        if (upwardGesture.current && scroller.current)
+          recordPosition(scroller.current);
+        upwardGesture.current = false;
+      });
     // At a restored top edge, input cannot move the DOM and emits no scroll.
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);

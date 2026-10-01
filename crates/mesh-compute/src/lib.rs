@@ -51,3 +51,5 @@ pub mod model_context;
 
 #[cfg(feature = "mesh")]
 pub mod consumers;
+
+pub mod roster;

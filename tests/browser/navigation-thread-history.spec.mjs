@@ -119,8 +119,9 @@ for (const mode of ["bottom", "reading", "jump"]) {
       release = resolve;
     });
     let requested = false;
+    let heldContinuation;
     const routePattern = "**/api/relay/**/query";
-    await page.route(routePattern, async (route) => {
+    const holdHistory = async (route) => {
       if (
         !requested &&
         route
@@ -134,10 +135,13 @@ for (const mode of ["bottom", "reading", "jump"]) {
           )
       ) {
         requested = true;
-        await held;
+        heldContinuation = held.then(() => route.continue());
+        await heldContinuation;
+        return;
       }
       await route.continue();
-    });
+    };
+    await page.route(routePattern, holdHistory);
     try {
       const trigger = page
         .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
@@ -225,9 +229,9 @@ for (const mode of ["bottom", "reading", "jump"]) {
       }
       if (mode === "jump") {
         // Hold history across the keyboard jump, before its completion fallback.
-        const clockStart = new Date();
-        await page.clock.install({ time: clockStart });
-        await page.clock.pauseAt(new Date(clockStart.getTime() + 1));
+        // pauseAt installs the clock itself; a separate install followed by
+        // pauseAt(start + 1) races real elapsed time between the two calls.
+        await page.clock.pauseAt(new Date());
         const jumpToLatest = region.locator("button[data-jump-to-latest]");
         await expect(jumpToLatest).toHaveAccessibleName("Jump to latest");
         await jumpToLatest.focus();
@@ -349,7 +353,12 @@ for (const mode of ["bottom", "reading", "jump"]) {
       );
     } finally {
       release();
-      await page.unroute(routePattern);
+      try {
+        // Let the held handler finish before unroute changes interception.
+        await heldContinuation;
+      } finally {
+        await page.unroute(routePattern, holdHistory);
+      }
     }
   });
 }

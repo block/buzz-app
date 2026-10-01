@@ -189,7 +189,7 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
       if (timing.warmVisibleMs >= targetMs)
         test.info().annotations.push({
           type: "performance",
-          description: `${name} warm switch: ${timing.warmVisibleMs.toFixed(1)}ms (target <${targetMs}ms; ceiling <${ceilingMs}ms)`,
+          description: `${name} warm switch: ${timing.warmVisibleMs.toFixed(1)}ms (target <${targetMs}ms; median ceiling <${ceilingMs}ms)`,
         });
     }
     expect(submittedHeads).toHaveLength(before);
@@ -217,10 +217,18 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
     expect(app.report.profileHolds.some((held) => held.aborted)).toBe(false);
     // A provisional margin for shared-runner scheduling, not a device SLA.
     // Enforce only after the complete functional journey and all four samples.
-    for (const { name, warmVisibleMs } of warmTimings)
-      expect
-        .soft(warmVisibleMs, `${name} warm-switch regression ceiling`)
-        .toBeLessThan(ceilingMs);
+    // Hosted runner speed alone moves every sample together (about 2x between
+    // runs of the same code), so one slow sample is not a regression signal. A
+    // render-path regression moves the whole run, which the median detects.
+    const sorted = warmTimings
+      .map((timing) => timing.warmVisibleMs)
+      .sort((a, b) => a - b);
+    const medianMs = (sorted[1] + sorted[2]) / 2;
+    app.report.measurements.push({ name: "warm-switch median", medianMs });
+    expect(
+      medianMs,
+      `warm-switch median regression ceiling (samples ${sorted.map((ms) => ms.toFixed(1)).join(", ")} ms)`,
+    ).toBeLessThan(ceilingMs);
   } finally {
     preferences.resolve();
     app.relay.releaseEose("alpha");

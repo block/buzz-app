@@ -228,9 +228,10 @@ new head request and visible correct-channel rows with the matching composer
 across a paint opportunity. The existing **1s completion watchdog** still fails
 an unfinished switch.
 
-Warm timing keeps a **<100ms target** and a provisional **<200ms per-switch hard
-ceiling**. All four browser-clock samples and the functional checks complete
-before the ceiling is enforced; there are no retries or discarded outliers.
+Warm timing keeps a **<100ms per-switch target** and a provisional **<200ms
+ceiling on the median of the four switches**. All four browser-clock samples and
+the functional checks complete before the ceiling is enforced; there are no
+retries, and every sample stays in the evidence and target annotations.
 Target misses add `performance` annotations to the downloadable Playwright JSON
 report (`ci-report.json` in CI), not the GitHub job-summary table. Raw timings,
 first-visible times and frame diagnostics remain in `evidence.json`, including on
@@ -248,6 +249,14 @@ well as application work: those samples do not establish runner contention as th
 cause, and severe stalls can still fail. Regressions between 100ms and 200ms now
 require performance review rather than automatically failing CI. This is not a
 universal device/relay SLA or hardware input measurement.
+
+The ceiling applies to the median, not to each sample, because hosted runner
+speed moves a whole run. On 21 main runs from 2026-09-30 to 2026-10-01 with no
+change to the switching path, per-run medians ranged 90–176ms and cold opening
+256–517ms; the slowest run failed only on one 206ms sample. A render-path
+regression slows every switch and moves the median. A single stall does not.
+Runner variance remains about 2x, so the ceiling only catches large regressions;
+target misses are the signal for smaller ones.
 
 Run this focused journey when changing startup/sidebar scheduling:
 

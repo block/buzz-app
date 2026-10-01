@@ -195,12 +195,7 @@ export function VideoControls({
         data-review-chrome={inline ? undefined : ""}
       >
         {!inline && playButton}
-        <PopoverRoot
-          onOpenChange={(open, details) => {
-            // Clicking the speaker still toggles mute while its slider is open.
-            if (!open && details.reason === "trigger-press") details.cancel();
-          }}
-        >
+        <PopoverRoot>
           <PopoverTrigger
             openOnHover
             delay={100}
@@ -208,16 +203,7 @@ export function VideoControls({
             render={
               <IconButton
                 size="sm"
-                aria-label={
-                  muted || volume === 0 ? "Unmute video" : "Mute video"
-                }
-                onClick={(event) => {
-                  const video = videoRef.current;
-                  if (!video) return;
-                  setVolumeMotion(event.detail > 0);
-                  video.muted = !(muted || volume === 0);
-                  if (!video.muted && video.volume === 0) video.volume = 1;
-                }}
+                aria-label="Video volume"
                 icon={
                   muted || volume === 0 ? (
                     <SpeakerSlashIcon />
@@ -274,6 +260,24 @@ export function VideoControls({
                 }}
               />
             </div>
+            <IconButton
+              size="sm"
+              aria-label={muted || volume === 0 ? "Unmute video" : "Mute video"}
+              onClick={(event) => {
+                const video = videoRef.current;
+                if (!video) return;
+                setVolumeMotion(event.detail > 0);
+                video.muted = !(muted || volume === 0);
+                if (!video.muted && video.volume === 0) video.volume = 1;
+              }}
+              icon={
+                muted || volume === 0 ? (
+                  <SpeakerSlashIcon />
+                ) : (
+                  <SpeakerHighIcon />
+                )
+              }
+            />
           </PopoverPopup>
         </PopoverRoot>
         <span className={styles.time}>{videoTime(time)}</span>

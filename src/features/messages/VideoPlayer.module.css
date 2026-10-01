@@ -176,7 +176,12 @@
   width: var(--size-control-sm);
   height: min(
     calc(var(--space-8) * 3),
-    calc(var(--available-height) - var(--space-4) - 2px)
+    calc(
+      var(--available-height) -
+      var(--size-control-sm) -
+      var(--space-4) -
+      2px
+    )
   );
   margin: var(--space-1) 0;
 }

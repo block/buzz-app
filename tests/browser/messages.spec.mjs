@@ -200,7 +200,7 @@ test("inline video controls follow playback, hover and keyboard focus", async ({
     await play.focus();
     await page.keyboard.press("Tab");
     await expect(
-      preview.getByRole("button", { name: "Mute video", exact: true }),
+      preview.getByRole("button", { name: "Video volume", exact: true }),
     ).toBeFocused();
     await expect(expand).toHaveCSS("opacity", "1");
     await page
@@ -226,7 +226,7 @@ test("inline video controls follow playback, hover and keyboard focus", async ({
     await preview.getByRole("button", { name: "Pause video" }).focus();
     await page.keyboard.press("Tab");
     await expect(
-      preview.getByRole("button", { name: "Mute video", exact: true }),
+      preview.getByRole("button", { name: "Video volume", exact: true }),
     ).toBeFocused();
     for (const control of controls())
       await expect(control).toHaveCSS("opacity", "1");

@@ -132,7 +132,7 @@ test("narrow video thumbnails keep play clear of the progress controls", async (
   await play.focus();
   await page.keyboard.press("Tab");
   await expect(
-    preview.getByRole("button", { name: "Mute video", exact: true }),
+    preview.getByRole("button", { name: "Video volume", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Tab");
   const controls = preview
@@ -172,7 +172,13 @@ test("mute glides the volume knob and keyboard changes stay immediate", async ({
     name: "Video review",
     exact: true,
   });
-  await dialog.getByRole("button", { name: "Mute video", exact: true }).hover();
+  await dialog
+    .getByRole("button", { name: "Video volume", exact: true })
+    .hover();
+  const popup = page.getByRole("dialog", {
+    name: "Video volume controls",
+    exact: true,
+  });
   const volume = page.getByRole("slider", { name: "Video volume" });
   await expect(volume).toBeVisible();
   const knob = volume
@@ -194,7 +200,7 @@ test("mute glides the volume knob and keyboard changes stay immediate", async ({
     );
   });
   try {
-    await dialog
+    await popup
       .getByRole("button", { name: "Mute video", exact: true })
       .click();
     await expect(volume).toHaveValue("0");
@@ -215,20 +221,20 @@ test("mute glides the volume knob and keyboard changes stay immediate", async ({
       }),
     );
   }
-  await dialog
+  await popup
     .getByRole("button", { name: "Unmute video", exact: true })
     .click();
   await expect(volume).toHaveValue("1");
   await volume.press("ArrowDown");
   await expect(volume).toHaveValue("0.95");
   await expect(knob).toHaveCSS("transition-duration", "0s");
-  await dialog
+  await popup
     .getByRole("button", { name: "Mute video", exact: true })
     .press("Enter");
   await expect(volume).toHaveValue("0");
   await expect(knob).toHaveCSS("transition-duration", "0s");
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await dialog
+  await popup
     .getByRole("button", { name: "Unmute video", exact: true })
     .click();
   await expect(volume).toHaveValue("0.95");
@@ -258,7 +264,10 @@ test("media popovers support hover and keyboard without stealing playback focus"
     name: "Video review",
     exact: true,
   });
-  const mute = review.getByRole("button", { name: "Mute video", exact: true });
+  const trigger = review.getByRole("button", {
+    name: "Video volume",
+    exact: true,
+  });
   await expect(
     review.getByRole("slider", { name: "Video timeline" }),
   ).toBeEnabled();
@@ -266,8 +275,8 @@ test("media popovers support hover and keyboard without stealing playback focus"
   await review
     .locator("[data-review-stage]")
     .hover({ position: { x: 8, y: 8 } });
-  await expect(mute.locator("..")).toHaveCSS("opacity", "1");
-  await mute.hover();
+  await expect(trigger.locator("..")).toHaveCSS("opacity", "1");
+  await trigger.hover();
   const volumePopup = page.getByRole("dialog", {
     name: "Video volume controls",
     exact: true,
@@ -297,10 +306,41 @@ test("media popovers support hover and keyboard without stealing playback focus"
   await volume.press("Escape");
   await expect(volumePopup).toBeHidden();
   await expect(review).toBeVisible();
+  await expect(trigger).toBeFocused();
+  await trigger.press("Enter");
+  await expect(volume).toBeFocused();
+  await expect(volume).toHaveValue("0.75");
+  await expect(review.locator("video")).toHaveJSProperty("muted", false);
+  await volume.press("Escape");
+  await expect(volumePopup).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await expect(review.locator("video")).toHaveJSProperty("muted", false);
+  await expect(review.locator("video")).toHaveJSProperty("volume", 0.75);
+  await trigger.press("Space");
+  await expect(volume).toBeFocused();
+  await expect(volume).toHaveValue("0.75");
+  await volume.press("ArrowDown");
+  await expect(volume).toHaveValue("0.7");
+  await expect
+    .poll(() => review.locator("video").evaluate((video) => video.volume))
+    .toBeCloseTo(0.7, 6);
+  await volume.press("Tab");
+  const mute = volumePopup.getByRole("button", {
+    name: "Mute video",
+    exact: true,
+  });
   await expect(mute).toBeFocused();
   await mute.press("Enter");
-  await expect(volume).toBeFocused();
-  await volume.press("Tab");
+  await expect(volume).toHaveValue("0");
+  await expect(review.locator("video")).toHaveJSProperty("muted", true);
+  const unmute = volumePopup.getByRole("button", {
+    name: "Unmute video",
+    exact: true,
+  });
+  await unmute.press("Space");
+  await expect(volume).toHaveValue("0.7");
+  await expect(review.locator("video")).toHaveJSProperty("muted", false);
+  await mute.press("Tab");
   await expect(
     review.getByRole("slider", { name: "Video timeline" }),
   ).toBeFocused();
@@ -350,4 +390,79 @@ test("timeline hover marks the click position without seeking until clicked", as
     .toBeCloseTo((await video.evaluate((el) => el.duration)) * 0.4, 1);
   await page.mouse.move(0, 0);
   await expect(preview).toBeHidden();
+});
+
+// Native touch activation must disclose the controls without mutating media.
+test.describe("touch volume controls", () => {
+  test.use({ hasTouch: true });
+
+  test("opening and dismissing volume preserves sound until an explicit mute", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 320, height: 320 });
+    await page.goto("/tests/fixtures/media-review.html?review");
+    const review = page.getByRole("dialog", {
+      name: "Video review",
+      exact: true,
+    });
+    const video = review.locator("video");
+    await expect(
+      review.getByRole("slider", { name: "Video timeline" }),
+    ).toBeEnabled();
+    await video.evaluate((element) => {
+      element.volume = 0.75;
+    });
+    const trigger = review.getByRole("button", {
+      name: "Video volume",
+      exact: true,
+    });
+    await trigger.tap();
+    const popup = page.getByRole("dialog", {
+      name: "Video volume controls",
+      exact: true,
+    });
+    await expect(
+      popup.getByRole("slider", { name: "Video volume" }),
+    ).toHaveValue("0.75");
+    await expect(video).toHaveJSProperty("muted", false);
+    await expect(video).toHaveJSProperty("volume", 0.75);
+    await expect
+      .poll(() =>
+        popup.evaluate((element) => {
+          const bounds = element.getBoundingClientRect();
+          return [...element.querySelectorAll("input, button")].every(
+            (control) => {
+              const rect = control.getBoundingClientRect();
+              return (
+                rect.width >= 24 &&
+                rect.height >= 24 &&
+                rect.top >= bounds.top &&
+                rect.bottom <= bounds.bottom &&
+                rect.left >= bounds.left &&
+                rect.right <= bounds.right
+              );
+            },
+          );
+        }),
+      )
+      .toBe(true);
+    await trigger.tap();
+    await expect(popup).toBeHidden();
+    await expect(video).toHaveJSProperty("muted", false);
+    await expect(video).toHaveJSProperty("volume", 0.75);
+    await trigger.tap();
+    await popup.getByRole("button", { name: "Mute video", exact: true }).tap();
+    await expect(video).toHaveJSProperty("muted", true);
+    await expect(
+      popup.getByRole("slider", { name: "Video volume" }),
+    ).toHaveValue("0");
+    await popup
+      .getByRole("button", { name: "Unmute video", exact: true })
+      .tap();
+    await expect(video).toHaveJSProperty("muted", false);
+    await expect(
+      popup.getByRole("slider", { name: "Video volume" }),
+    ).toHaveValue("0.75");
+    await expect(video).toHaveJSProperty("volume", 0.75);
+  });
 });

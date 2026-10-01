@@ -2447,3 +2447,72 @@ it("a reply surviving root deletion can be marked unread and then cleared", asyn
     unreadCount: 0,
   });
 });
+
+it("a prepared channel read retries its captured cut, not later arrivals or the retry clock", async () => {
+  const h = setup();
+  h.grant("room");
+  const before = message(h.alice, "room", "before click", 11);
+  h.emit([before]);
+  const unread = h.session.unread;
+  await unread.markUnreadLocal(h.target);
+  clock(20);
+  const retry = unread.prepareChannelRead("room");
+  h.failSave();
+  await expect(retry()).rejects.toThrow("disk full");
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 1,
+    manual: "local-only",
+  });
+  const later = message(h.alice, "room", "after click", 25);
+  h.emit([later]);
+  clock(30);
+  await retry();
+  expect(h.journal()?.state.frontiers.room).toBe(20);
+  expect(unread.attention("room", before.id).unread).toBe(false);
+  expect(unread.attention("room", later.id).unread).toBe(true);
+  expect(h.snapshot()).toMatchObject({ observedCount: 1, manual: "none" });
+  await unread.markChannelRead("room");
+  expect(h.journal()?.state.frontiers.room).toBe(30);
+  expect(h.snapshot().observedCount).toBe(0);
+});
+
+it("prepared channel reads serialize each invocation with existing channel mutations", async () => {
+  const h = setup();
+  h.grant("room");
+  h.emit([message(h.alice, "room", "before click", 11)]);
+  const unread = h.session.unread;
+  await unread.ensure();
+  clock(20);
+  const retry = unread.prepareChannelRead("room");
+  const held = h.holdSaveStarted();
+  const first = retry();
+  try {
+    await held.started;
+    const mark = unread.markUnreadLocal(h.target);
+    const last = retry();
+    held.release();
+    await Promise.all([first, mark, last]);
+    expect(h.journal()?.state.frontiers.room).toBe(20);
+    expect(h.snapshot()).toMatchObject({ observedCount: 0, manual: "none" });
+  } finally {
+    held.release();
+  }
+});
+
+it.each(["clearCache", "dispose", "revoke-regrant"] as const)(
+  "a prepared channel read cannot retry past %s",
+  async (change) => {
+    const h = setup();
+    h.grant("room");
+    h.emit([message(h.alice, "room", "before click", 11)]);
+    await h.session.unread.markUnreadLocal(h.target);
+    const before = h.journal();
+    const retry = h.session.unread.prepareChannelRead("room");
+    if (change === "revoke-regrant") {
+      h.emit([roster(h.relay, "room", [], 20)]);
+      h.grant("room", 21);
+    } else await h[change]();
+    await expect(retry()).rejects.toThrow();
+    expect(h.journal()).toEqual(before);
+  },
+);

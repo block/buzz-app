@@ -389,7 +389,7 @@ export function createRelaySession(
       for (const purge of views.values()) purge();
       commit();
       unread.purge();
-      inboxFeed.clear();
+      inboxFeed.purge();
     } finally {
       if (--revoking === 0) {
         const pending = [...notifications];
@@ -402,7 +402,10 @@ export function createRelaySession(
     filters: readonly ReadFilter[],
     settings?: ReadOptions,
     channelTraffic = true,
-    beforeInbox?: (events: readonly RelayEvent[]) => void,
+    beforeInbox?: (
+      events: readonly RelayEvent[],
+      raw: readonly RelayEvent[],
+    ) => void,
   ) {
     if (
       options.cachedOnly ||
@@ -495,7 +498,10 @@ export function createRelaySession(
   function accept(
     events: readonly RelayEvent[],
     channelTraffic = true,
-    beforeInbox?: (events: readonly RelayEvent[]) => void,
+    beforeInbox?: (
+      events: readonly RelayEvent[],
+      raw: readonly RelayEvent[],
+    ) => void,
     signal?: AbortSignal,
   ): readonly RelayEvent[] {
     if (closed) return [];
@@ -517,7 +523,7 @@ export function createRelaySession(
       )
       .filter(visibility(events, true));
     const epoch = accessEpoch;
-    beforeInbox?.(visible);
+    beforeInbox?.(visible, events);
     if (
       beforeInbox &&
       (closed || epoch !== accessEpoch || signal?.aborted || cacheClearing)
@@ -533,7 +539,6 @@ export function createRelaySession(
           recent.set(event.id, { event, revision: ++revision });
         reads.accept(visible);
         unread.accept(visible);
-        inboxFeed.receive(visible);
         writes?.observe(visible);
         if (epoch !== accessEpoch) return;
         profiles.accept(visible);
@@ -806,7 +811,26 @@ export function createRelaySession(
     notify,
   });
   const inboxFeed = createInboxFeed({
-    reader: verified,
+    // A withheld auxiliary event is not proof of an exhausted history page.
+    // Fail closed at raw/admitted admission; do not relax reference visibility.
+    reader: {
+      read: (filters, settings) =>
+        readVerified(filters, settings, true, (visible, raw) => {
+          const admitted = new Set(visible.map((event) => event.id));
+          if (
+            raw.some(
+              (event) =>
+                [40003, 5, 9005].includes(event.kind) &&
+                !admitted.has(event.id),
+            )
+          )
+            throw new Error(
+              "Inbox message updates could not be verified for current access. Retry inbox.",
+            );
+        }),
+    },
+    retainedEvent: unread.event,
+    retainedEditIds: unread.retainedEditIds,
     addressedRead: (filter, signal, prepare) =>
       readVerified([filter], { signal }, true, prepare),
     channels: channels.queries,

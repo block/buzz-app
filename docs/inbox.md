@@ -16,13 +16,14 @@ outbox retain their existing ownership. No projects, approvals or reminders.
 
 `session.unread.inbox()` / `subscribeInbox()` own retained verified unread
 evidence and read actions. `session.inboxFeed` owns finite, verified addressed
-history and live reconciliation. Its admitted channel events contribute to the
-shared unread fold, never a second raw row projection that could resurrect
-own/deleted messages or invent unresolved conversation roots. Inbox renders these
-shared conversation rows directly; there is no second project/approval row merge.
-The feed retains a bounded chat snapshot and membership reprojection, but it
-is not a separate row or read-state owner. Arrivals and admitted deletions
-reconcile within the attempt's bound and generation. PR4 will own only
+history demand and exact incomplete-target metadata, not a row cache. Finite
+results and live arrivals, edits and deletions use the existing session admission
+and shared unread fold, so own/deleted messages stay absent and unresolved roots
+never become duplicate conversations. Current membership gates the feed's
+completeness targets and unread's rows; joining alone does not materialize
+pre-membership history without fresh shared admission. Inbox renders those shared
+conversation rows directly; there is no second project/approval row merge or
+feed-owned reconciliation buffer and deletion-count abort. PR4 owns only
 presentation, filtering and selection. No parallel signing or persistence is
 added. Optional profile enrichment belongs to PR4; access, cache clear and
 session retirement fence these projections. Opening Inbox does not mark rows
@@ -50,7 +51,14 @@ that metadata and offer retry. This is a completeness signal, not atomic content
 admission or a second message fold. A target outside the latest 50 addressed
 rows is not discovered; if a failed target falls outside a later page its
 bounded auxiliary check still runs before its incomplete flag is cleared.
-Auxiliary reads cap retained results at 2,000 events / 4 MiB; the shared reader
+Incomplete obligations survive disconnect and unrelated access revocation while
+the corresponding readable unread evidence survives; full cache/session retirement
+clears both. Tombstone checks include retained author edits even if a later relay
+query omits their soft-deleted rows. If reference visibility withholds an auxiliary
+event, the finite attempt stays failed/incomplete rather than treating the filtered
+page as exhausted history. Explicit Retry can settle it once existing shared
+readers have admitted the missing reference; Inbox adds no reference-resolution loop.
+Auxiliary reads cap retained results at 2,000 events / 4 MiB per stage; the shared reader
 keeps its existing per-request deadline and cancellation. Missing roots,
 participation or older activity can omit rows; an empty Inbox does not prove
 complete history. No polling, independent row source or channel window is
@@ -76,3 +84,19 @@ messages. `unread.test.ts` retains the current main read/catch-up behavior and
 adds Inbox projection/read-state cases. Neither file establishes browser paint,
 real relay persistence or packaged/native acceptance. PR4 must cover the
 per-row pending/failed presentation contract and exact inline previews.
+
+
+### Review repairs
+
+Incomplete obligations now survive lifecycle changes that retain readable evidence.
+Closure includes retained author edits omitted by later relay queries and fails
+visibly on withheld auxiliary evidence. Shared unread remains the sole row owner;
+the unused feed row copy and its 70-deletion abort were removed with explicit
+approval. A prepared channel-read intent lets the dependent UI retry the original
+cutoff and manual-clear keys. Tests retain all prior scenarios, distinguish both
+finite retention guards, and prove 71 admitted author deletions do not resurrect
+rows or require a second reconciliation buffer.
+
+Prior local tests and review cover the repairs on the combined tree; this PR's
+updated head requires its own checks. No human/live/native acceptance or shipping
+readiness is claimed.

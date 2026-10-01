@@ -11,42 +11,30 @@ const cursorOf = (event: RelayEvent) => ({
 const older = (event: RelayEvent, cursor: ReturnType<typeof cursorOf>) =>
   event.created_at < cursor.until ||
   (event.created_at === cursor.until && event.id > cursor.before_id);
-const union = (
-  old: readonly RelayEvent[],
-  next: readonly RelayEvent[],
-  cap: number,
-) =>
-  [...new Map([...old, ...next].map((event) => [event.id, event])).values()]
-    .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
-    .slice(0, cap);
-const deletedBy = (event: RelayEvent, deletions: readonly RelayEvent[]) =>
-  deletions.some(
-    (deletion) =>
-      deletion.pubkey === event.pubkey &&
-      deletion.tags.some(([name, id]) => name === "e" && id === event.id),
-  );
 export type InboxFeedSnapshot = Readonly<{
   status: "idle" | "loading" | "ready" | "error";
-  mentions: readonly RelayEvent[];
   error?: string | undefined;
-  /** Finite reads are bounded, not a claim of complete historical coverage. */
-  limited: boolean;
   /** Exact addressed targets whose stored edits/deletions are not settled. */
   incomplete: readonly string[];
 }>;
 
 /** The session owns finite, verified, viewer-addressed history. No new live route,
- * polling, or parallel channel store. Current membership is checked at projection. */
+ * polling, or parallel channel store. Current membership gates completeness targets. */
 export function createInboxFeed({
   viewer,
   channels,
   reader,
   addressedRead,
+  retainedEvent,
+  retainedEditIds,
   notify = (listener) => listener(),
 }: {
   viewer: string;
   channels: ChannelQueries;
   reader: RelayReader;
+  /** Private lookups in the existing bounded unread evidence owner. */
+  retainedEvent: (id: string) => RelayEvent | undefined;
+  retainedEditIds: (ids: readonly string[]) => readonly string[];
   /** Verified session admission calls prepare before publishing unread evidence. */
   addressedRead: (
     filter: ReadFilter,
@@ -60,24 +48,11 @@ export function createInboxFeed({
   let work: Promise<void> | undefined;
   let controller: AbortController | undefined;
   let requested = false;
-  // Only arrivals during this finite attempt; never a persistent second cache.
-  let arrivals:
-    | {
-        mentions: readonly RelayEvent[];
-        deletions: readonly RelayEvent[];
-      }
-    | undefined;
-  let rawMentions: readonly RelayEvent[] = [];
   let snapshot: InboxFeedSnapshot = Object.freeze({
     status: "idle",
-    mentions: [],
-    limited: false,
     incomplete: [],
   });
   const listeners = new Set<() => void>();
-  const stopChannels = channels.subscribeList(() => {
-    if (rawMentions.length) publish({});
-  });
   const admitted = (event: RelayEvent) => {
     if (!event.tags.some(([name, value]) => name === "p" && value === viewer))
       return false;
@@ -107,7 +82,6 @@ export function createInboxFeed({
     snapshot = Object.freeze({
       ...snapshot,
       ...patch,
-      mentions: project(rawMentions),
     });
     for (const listener of listeners) notify(listener);
   }
@@ -154,11 +128,6 @@ export function createInboxFeed({
     const generation = epoch;
     const owned = new AbortController();
     controller = owned;
-    const delta = {
-      mentions: [] as readonly RelayEvent[],
-      deletions: [] as readonly RelayEvent[],
-    };
-    arrivals = delta;
     // Do not clear incomplete targets on retry: the new first read can re-admit
     // the old body before its stored overlays are checked again.
     work = (async () => {
@@ -195,17 +164,18 @@ export function createInboxFeed({
         const updates = await overlays(targets, [40003, 5, 9005], owned.signal);
         const edits = updates.filter((event) => event.kind === 40003);
         await overlays(
-          edits.map((event) => event.id),
+          [
+            ...new Set([
+              ...retainedEditIds(targets),
+              ...edits.map((event) => event.id),
+            ]),
+          ],
           [5, 9005],
           owned.signal,
         );
         if (closed || generation !== epoch) return;
-        rawMentions = union(mentions, delta.mentions, 50).filter(
-          (event) => !deletedBy(event, delta.deletions),
-        );
         publish({
           status: "ready",
-          limited: mentions.length >= 50,
           incomplete: [],
           error: undefined,
         });
@@ -222,7 +192,6 @@ export function createInboxFeed({
     })().finally(() => {
       if (controller === owned) {
         controller = undefined;
-        arrivals = undefined;
         work = undefined;
       }
     });
@@ -230,6 +199,16 @@ export function createInboxFeed({
       publish({ status: "loading", error: undefined });
     return work;
   }
+  function clear(incomplete: readonly string[] = []) {
+    epoch++;
+    controller?.abort();
+    controller = undefined;
+    work = undefined;
+    // Previously demanded data recovers explicitly or through reconnect.
+    publish({ status: "idle", incomplete, error: undefined });
+  }
+  const retainedIncomplete = () =>
+    Object.freeze(snapshot.incomplete.filter((id) => retainedEvent(id)));
   return Object.freeze({
     snapshot: () => snapshot,
     subscribe(listener: () => void) {
@@ -246,76 +225,28 @@ export function createInboxFeed({
       controller?.abort();
       controller = undefined;
       work = undefined;
-      arrivals = undefined;
-      publish({ status: "idle", incomplete: [], error: undefined });
+      publish({
+        status: "idle",
+        incomplete: retainedIncomplete(),
+        error: undefined,
+      });
     },
     reconnect() {
       if (requested) void refresh();
     },
-    receive(events: readonly RelayEvent[]) {
-      if (closed || snapshot.status === "idle") return;
-      const mentions = project(events);
-      const deletions = events.filter(
-        (event) => event.kind === 5 || event.kind === 9005,
-      );
-      if (!mentions.length && !deletions.length) return;
-      if (arrivals) {
-        arrivals.mentions = union(arrivals.mentions, mentions, 50);
-        const merged = union(arrivals.deletions, deletions, 71);
-        if (merged.length > 70) {
-          // Cannot safely reconcile a bounded attempt after excessive deletion traffic.
-          epoch++;
-          controller?.abort();
-          controller = undefined;
-          work = undefined;
-          arrivals = undefined;
-          rawMentions = [];
-          publish({
-            status: "error",
-            error: "Inbox changed during refresh. Try again.",
-          });
-          return;
-        }
-        arrivals.deletions = merged;
-      }
-      const removed = arrivals?.deletions ?? deletions;
-      rawMentions = union(rawMentions, mentions, 50).filter(
-        (event) => !deletedBy(event, removed),
-      );
-      publish({});
-    },
-    clear() {
-      epoch++;
-      controller?.abort();
-      controller = undefined;
-      work = undefined;
-      arrivals = undefined;
-      rawMentions = [];
-      // Preserve never-requested demand. Previously loaded data recovers explicitly
-      // through Refresh (or the existing reconnect callback), not a new retry loop.
-      publish({
-        status: "idle",
-        limited: false,
-        incomplete: [],
-        error: undefined,
-      });
-    },
+    clear: () => clear(),
+    purge: () => clear(retainedIncomplete()),
     dispose() {
       closed = true;
       epoch++;
       controller?.abort();
       controller = undefined;
       work = undefined;
-      arrivals = undefined;
-      rawMentions = [];
       // Retained capabilities expose no retired content; do not notify dead consumers.
       snapshot = Object.freeze({
         status: "idle",
-        mentions: [],
-        limited: false,
         incomplete: [],
       });
-      stopChannels();
       listeners.clear();
     },
   });

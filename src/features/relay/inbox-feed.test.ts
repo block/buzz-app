@@ -3,6 +3,7 @@ import { createRelaySession } from "./session";
 import { keypair, message, metadata, roster, signed } from "./testing";
 import type { RelayEvent, ReadFilter } from "./events";
 import type { LiveCallbacks } from "./live";
+import { byteSize } from "./budget";
 
 // General #e reads return an empty terminal page. The ordinary #p response is
 // still explicitly gated by each test; no incidental timer orders admission.
@@ -80,8 +81,7 @@ it("reads addressed history independently of the retained unread window, never a
   await work;
   expect(h.session.inboxFeed.snapshot()).toMatchObject({
     status: "ready",
-    mentions: [addressed],
-    limited: false,
+    incomplete: [],
   });
   // The session reconciles authorized history into shared unread evidence, not a shadow store.
   expect(h.session.unread.inbox().items.map((item) => item.messageId)).toEqual([
@@ -105,36 +105,44 @@ it("reconciles live addressed updates and drops membership-revoked history befor
   h.admit([h.viewer.pubkey, h.alice.pubkey]);
   const work = h.session.inboxFeed.ensure();
   const mentions = await take(h, 9);
-  mentions.resolve([
-    message(h.alice, "room", "first", 20, [["p", h.viewer.pubkey]]),
-  ]);
+  const first = addressed(h, "first", 20);
+  mentions.resolve([first]);
   await work;
-  const updates: number[] = [];
-  h.session.inboxFeed.subscribe(() =>
-    updates.push(h.session.inboxFeed.snapshot().mentions.length),
+  expect(rows(h).map((row) => row.messageId)).toEqual([first.id]);
+  const updates: string[][] = [];
+  h.session.unread.subscribeInbox(() =>
+    updates.push(rows(h).map((row) => row.messageId)),
   );
-  h.live.receive([
-    message(h.alice, "room", "later", 22, [["p", h.viewer.pubkey]]),
-  ]);
-  expect(h.session.inboxFeed.snapshot().mentions).toHaveLength(2);
+  const later = addressed(h, "later", 22);
+  h.live.receive([later]);
+  expect(rows(h).map((row) => row.messageId)).toEqual([later.id, first.id]);
+  expect(updates).toEqual([[later.id, first.id]]);
   h.admit([h.alice.pubkey], 30);
-  expect(h.session.inboxFeed.snapshot().mentions).toEqual([]);
-  expect(updates.at(-1)).toBe(0);
+  expect(rows(h)).toEqual([]);
+  // The revocation notification itself must already expose empty rows.
+  expect(updates).toEqual([[later.id, first.id], []]);
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "idle",
+    incomplete: [],
+  });
 });
 it("cache clear fences late completions; fresh demand recovers", async () => {
   const h = setup();
   h.admit([h.viewer.pubkey]);
+  const old = addressed(h, "old", 20);
+  h.live.receive([old]);
+  expect(rows(h).map((row) => row.messageId)).toEqual([old.id]);
   const work = h.session.inboxFeed.ensure();
   const mentions = await take(h, 9);
   await h.clearCache();
-  mentions.resolve([
-    message(h.alice, "room", "old", 20, [["p", h.viewer.pubkey]]),
-  ]);
+  expect(rows(h)).toEqual([]);
+  mentions.resolve([old]);
   await work;
   expect(h.session.inboxFeed.snapshot()).toMatchObject({
     status: "idle",
-    mentions: [],
+    incomplete: [],
   });
+  expect(rows(h)).toEqual([]);
   expect(h.query).toHaveBeenCalledTimes(1);
   const again = h.session.inboxFeed.ensure();
   (await take(h, 9)).resolve([]);
@@ -194,7 +202,7 @@ it("complete initial roster remains lazy; first demand, invalidation and fresh d
   const count = addressedReads();
   expect(count).toBe(1);
   h.admit([h.alice.pubkey], 30);
-  expect(h.session.inboxFeed.snapshot().mentions).toEqual([]);
+  expect(rows(h)).toEqual([]);
   // Admission/listeners run synchronously; drain microtasks and the existing
   // zero-delay scheduling boundary before granting any fresh Inbox demand.
   await vi.advanceTimersByTimeAsync(0);
@@ -206,6 +214,7 @@ it("complete initial roster remains lazy; first demand, invalidation and fresh d
   fresh.resolve([issue]);
   await next;
   expect(h.session.inboxFeed.snapshot().status).toBe("ready");
+  expect(rows(h)).toEqual([]);
 });
 it("reconnect recovers demanded feed but never starts an unopened feed", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -275,6 +284,59 @@ it("finite completion merges concurrent live chat arrivals and author deletions"
   await again;
   expect(rows(h)).toEqual([]);
 });
+it("71 admitted author deletions keep shared rows deleted without aborting a held finite attempt", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const chats = Array.from({ length: 71 }, (_, i) =>
+    addressed(h, `delete ${i}`, 20 + i),
+  );
+  // Establish every target's actual row and shared reference admission first.
+  h.live.receive(chats);
+  expect(
+    rows(h)
+      .map((row) => row.messageId)
+      .sort(),
+  ).toEqual(chats.map((chat) => chat.id).sort());
+  const feed = h.session.inboxFeed;
+  const work = feed.ensure();
+  const held = await take(h, 9);
+  const deletions = chats.map((chat, i) =>
+    signed(h.alice, {
+      kind: i % 2 ? 9005 : 5,
+      tags: [["e", chat.id]],
+      content: "",
+      created_at: 100 + i,
+    }),
+  );
+  expect(new Set(deletions.map((event) => event.id)).size).toBe(71);
+  try {
+    h.live.receive(deletions);
+    expect(rows(h)).toEqual([]);
+    // The retired guard failed here on deletion 71 despite remaining well
+    // inside shared unread and finite auxiliary budgets.
+    expect(feed.snapshot().status).toBe("loading");
+  } finally {
+    held.resolve(chats.slice(0, 50));
+    await work;
+  }
+  expect(feed.snapshot()).toMatchObject({
+    status: "ready",
+    incomplete: [],
+    error: undefined,
+  });
+  expect(rows(h)).toEqual([]); // Late addressed history cannot resurrect them.
+  expect(h.query).toHaveBeenCalledTimes(2);
+  expect(h.query.mock.calls[1]?.[0]).toEqual([
+    {
+      kinds: [40003, 5, 9005],
+      "#e": chats
+        .slice(0, 50)
+        .map((chat) => chat.id)
+        .sort(),
+      limit: 500,
+    },
+  ]);
+});
 it("channel feed history uses the shared fold: own/deleted rows stay absent and unresolved roots never duplicate", async () => {
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);
@@ -333,44 +395,53 @@ it("a live deletion arriving before a held finite result suppresses its late row
 });
 
 it.each([false, true])(
-  "disposal erases populated feed content and rejects late completion (pending=%s)",
+  "disposal erases populated unread rows and feed metadata and rejects late completion (pending=%s)",
   async (pending) => {
     const h = setup();
     h.admit([h.viewer.pubkey, h.alice.pubkey]);
     const feed = h.session.inboxFeed;
+    const unread = h.session.unread;
     const mention = addressed(h, "retired mention", 20);
     const initial = feed.ensure();
     (await take(h, 9)).resolve([mention]);
     await initial;
     expect(feed.snapshot()).toMatchObject({
       status: "ready",
-      mentions: [mention],
+      incomplete: [],
     });
+    expect(unread.inbox().items.map((row) => row.messageId)).toEqual([
+      mention.id,
+    ]);
     const work = pending ? feed.refresh() : undefined;
     const held = pending ? await take(h, 9) : undefined;
     const notify = vi.fn();
+    const notifyRows = vi.fn();
     feed.subscribe(notify);
+    unread.subscribeInbox(notifyRows);
     try {
       h.dispose();
       expect(feed.snapshot()).toMatchObject({
         status: "idle",
-        mentions: [],
-        limited: false,
+        incomplete: [],
       });
+      expect(unread.inbox().items).toEqual([]);
       expect(notify).not.toHaveBeenCalled();
+      expect(notifyRows).not.toHaveBeenCalled();
     } finally {
       held?.resolve([mention]);
       await work;
     }
     expect(feed.snapshot()).toMatchObject({
       status: "idle",
-      mentions: [],
+      incomplete: [],
     });
+    expect(unread.inbox().items).toEqual([]);
     expect(notify).not.toHaveBeenCalled();
+    expect(notifyRows).not.toHaveBeenCalled();
   },
 );
 
-it("reprojects retained chat candidates after joining from an empty admitted snapshot without another feed read", async () => {
+it("joining after public pre-membership history needs fresh shared admission, not another feed read", async () => {
   const h = setup();
   h.live.receive([
     roster(h.relay, "room", [h.alice.pubkey], 10),
@@ -382,24 +453,28 @@ it("reprojects retained chat candidates after joining from an empty admitted sna
   await work;
   expect(h.session.inboxFeed.snapshot()).toMatchObject({
     status: "ready",
-    mentions: [],
+    incomplete: [],
   });
   expect(rows(h)).toEqual([]);
   const reads = h.query.mock.calls.length;
+  expect(reads).toBe(1);
+  expect(h.query.mock.calls.some(([filters]) => filters[0]?.["#e"])).toBe(
+    false,
+  );
   h.admit([h.viewer.pubkey, h.alice.pubkey], 30);
   expect(h.session.inboxFeed.snapshot()).toMatchObject({
     status: "ready",
-    mentions: [chat],
+    incomplete: [],
   });
-  // Unread never admitted the pre-membership chat. Its existing admission owner
-  // needs fresh evidence; the feed snapshot must not create an alternate row.
+  // Unread never admitted the pre-membership chat. Joining alone cannot create
+  // a row or completeness obligation from that unretained evidence.
   expect(rows(h)).toEqual([]);
   await h.session.inboxFeed.ensure();
   expect(h.query).toHaveBeenCalledTimes(reads);
   h.live.receive([chat]);
   expect(rows(h).map((row) => row.messageId)).toEqual([chat.id]);
 });
-it("excludes nonchat and approval events from finite/live feed rows and coalesces one bounded chat request", async () => {
+it("excludes nonchat and approvals from unread rows and completeness targets and coalesces one bounded chat request", async () => {
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);
   const chat = addressed(h, "Chat mention", 20);
@@ -423,12 +498,22 @@ it("excludes nonchat and approval events from finite/live feed rows and coalesce
   (await take(h, 9)).resolve([chat, ...nonchat]);
   await Promise.all([first, second]);
   expect(h.query).toHaveBeenCalledTimes(2); // one coalesced #p, one #e closure
-  expect(h.session.inboxFeed.snapshot().mentions).toEqual([chat]);
+  expect(h.query.mock.calls[1]?.[0]).toEqual([
+    { kinds: [40003, 5, 9005], "#e": [chat.id], limit: 500 },
+  ]);
+  expect(rows(h).map((row) => row.messageId)).toEqual([chat.id]);
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "ready",
+    incomplete: [],
+  });
   const before = h.session.unread.inbox();
   h.live.receive(nonchat);
   expect(h.session.unread.inbox()).toBe(before);
   expect(rows(h).map((row) => row.messageId)).toEqual([chat.id]);
-  expect(h.session.inboxFeed.snapshot().mentions).toEqual([chat]);
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "ready",
+    incomplete: [],
+  });
 });
 
 it("first verified admission marks exact target incomplete before unread subscribers see original", async () => {
@@ -558,6 +643,14 @@ it("keeps exact incomplete evidence across held edit and deletion reads, failed 
   let editReads = 0;
   const tombstone = deferred<RelayEvent[]>();
   const retry = deferred<RelayEvent[]>();
+  const retryTombstone = deferred<RelayEvent[]>();
+  const deletion = signed(h.alice, {
+    kind: 5,
+    created_at: 22,
+    content: "",
+    tags: [["e", edit.id]],
+  });
+  let tombstoneReads = 0;
   h.query.mockImplementation(async ([filter]) => {
     if (filter?.["#p"]) return [old];
     if (filter?.["#e"]?.includes(old.id)) {
@@ -565,7 +658,11 @@ it("keeps exact incomplete evidence across held edit and deletion reads, failed 
       editReads++;
       return editReads === 1 ? hold.promise : retry.promise;
     }
-    if (filter?.["#e"]?.includes(edit.id)) return tombstone.promise;
+    if (filter?.["#e"]?.includes(edit.id)) {
+      if (filter.until !== undefined) return [];
+      tombstoneReads++;
+      return tombstoneReads === 1 ? tombstone.promise : retryTombstone.promise;
+    }
     return [];
   });
   const feed = h.session.inboxFeed;
@@ -596,14 +693,22 @@ it("keeps exact incomplete evidence across held edit and deletion reads, failed 
       status: "loading",
       incomplete: [old.id],
     });
-    retry.resolve([]); // existing admitted edit remains usable
-    await next;
+    retry.resolve([]); // Soft-deleted edits are absent from ordinary relay queries.
+    await vi.waitFor(() => expect(tombstoneReads).toBe(2));
+    expect(feed.snapshot()).toMatchObject({
+      status: "loading",
+      incomplete: [old.id],
+    });
     expect(rows(h)[0]?.preview).toBe("CURRENT BODY");
+    retryTombstone.resolve([deletion]);
+    await next;
+    expect(rows(h)[0]?.preview).toBe("OLD BODY");
     expect(feed.snapshot()).toMatchObject({ status: "ready", incomplete: [] });
   } finally {
     hold.resolve([]);
     retry.resolve([]);
     tombstone.resolve([]);
+    retryTombstone.resolve([]);
   }
 });
 
@@ -701,6 +806,7 @@ it("a cache reset fences an old pending edit read and its late result", async ()
       expect(h.session.inboxFeed.snapshot().incomplete).toEqual([target.id]),
     );
     expect(h.session.inboxFeed.snapshot().status).toBe("loading");
+    expect(rows(h)[0]?.preview).toBe("old");
     await h.clearCache();
     release([
       signed(h.alice, {
@@ -717,7 +823,6 @@ it("a cache reset fences an old pending edit read and its late result", async ()
     expect(h.session.inboxFeed.snapshot()).toMatchObject({
       status: "idle",
       incomplete: [],
-      mentions: [],
     });
     expect(rows(h)).toEqual([]);
   } finally {
@@ -825,11 +930,11 @@ it("retry verifies an old incomplete target even if a new addressed page exclude
   expect(exactReads[1]).toHaveLength(51);
 });
 
-it("an excessive edit page remains retryable instead of clearing incomplete evidence", async () => {
+it("a non-advancing edit page remains retryable instead of clearing incomplete evidence", async () => {
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);
   const target = addressed(h, "original", 20);
-  const edits = Array.from({ length: 500 }, (_, i) =>
+  const edits = Array.from({ length: 2 }, (_, i) =>
     signed(h.alice, {
       kind: 40003,
       created_at: 30 + i,
@@ -850,8 +955,8 @@ it("an excessive edit page remains retryable instead of clearing incomplete evid
     status: "error",
     incomplete: [target.id],
   });
-  expect(h.session.inboxFeed.snapshot().error).toMatch(
-    /did not advance|read budget/,
+  expect(h.session.inboxFeed.snapshot().error).toBe(
+    "Inbox message updates did not advance. Retry inbox.",
   );
   expect(h.session.inboxFeed.snapshot().status).not.toBe("ready");
 });
@@ -886,4 +991,432 @@ it("a reentrant feed clear during exact pre-admission never publishes the old bo
     stop();
     stopUnread();
   }
+});
+
+it.each(["disconnect", "unrelated revocation"] as const)(
+  "%s preserves unresolved retained targets and retries them outside the next addressed page",
+  async (change) => {
+    const h = setup();
+    h.admit([h.viewer.pubkey, h.alice.pubkey]);
+    h.live.receive([
+      roster(h.relay, "other", [h.viewer.pubkey], 10),
+      metadata(h.relay, "other", "Other", 10),
+    ]);
+    h.live.state({ status: "connected", routes: [] });
+    const old = addressed(h, "unsettled", 20);
+    const newer = Array.from({ length: 50 }, (_, i) =>
+      addressed(h, `new ${i}`, 100 + i),
+    );
+    const initial = deferred<RelayEvent[]>();
+    const retry = deferred<RelayEvent[]>();
+    const exactReads: readonly string[][] = [];
+    let attempt = 0;
+    h.query.mockImplementation(async ([filter]) => {
+      if (filter?.["#p"]) return ++attempt === 1 ? [old] : newer;
+      if (filter?.["#e"]) {
+        (exactReads as string[][]).push([...filter["#e"]]);
+        return attempt === 1 ? initial.promise : retry.promise;
+      }
+      return [];
+    });
+    const feed = h.session.inboxFeed;
+    const snapshots: { retained: boolean; incomplete: readonly string[] }[] =
+      [];
+    const observe = () =>
+      snapshots.push({
+        retained: rows(h).some((row) => row.messageIds.includes(old.id)),
+        incomplete: feed.snapshot().incomplete,
+      });
+    const stopUnread = h.session.unread.subscribeInbox(observe);
+    const stopFeed = feed.subscribe(observe);
+    const first = feed.ensure();
+    try {
+      await vi.waitFor(() => expect(exactReads).toHaveLength(1));
+      expect(rows(h).map((row) => row.preview)).toContain("unsettled");
+      if (change === "disconnect")
+        h.live.state({ status: "retrying", routes: [] });
+      else h.live.receive([roster(h.relay, "other", [], 30)]);
+      initial.resolve([]);
+      await first;
+      expect(feed.snapshot()).toMatchObject({
+        status: "idle",
+        incomplete: [old.id],
+      });
+      expect(rows(h).map((row) => row.preview)).toContain("unsettled");
+      expect(
+        snapshots.filter(({ retained }) => retained).length,
+      ).toBeGreaterThan(0);
+      expect(
+        snapshots.filter(
+          ({ retained, incomplete }) =>
+            retained && !incomplete.includes(old.id),
+        ),
+      ).toEqual([]);
+      if (change === "disconnect")
+        h.live.state({ status: "connected", routes: [] });
+      const next = feed.refresh();
+      await vi.waitFor(() => expect(exactReads).toHaveLength(2));
+      expect(exactReads[1]).toContain(old.id);
+      expect(exactReads[1]).toHaveLength(51);
+      expect(feed.snapshot().incomplete).toContain(old.id);
+      retry.resolve([]);
+      await next;
+      expect(feed.snapshot()).toMatchObject({
+        status: "ready",
+        incomplete: [],
+      });
+    } finally {
+      stopUnread();
+      stopFeed();
+      initial.resolve([]);
+      retry.resolve([]);
+    }
+  },
+);
+
+it("refresh checks a previously settled retained edit omitted after disconnect", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  h.live.state({ status: "connected", routes: [] });
+  const target = addressed(h, "original", 20);
+  const edit = signed(h.alice, {
+    kind: 40003,
+    created_at: 21,
+    content: "deleted edit",
+    tags: [
+      ["h", "room"],
+      ["e", target.id],
+    ],
+  });
+  const deletion = signed(h.alice, {
+    kind: 9005,
+    created_at: 22,
+    content: "",
+    tags: [["e", edit.id]],
+  });
+  const held = deferred<RelayEvent[]>();
+  let attempt = 0;
+  let tombstoneReads = 0;
+  h.query.mockImplementation(async ([filter]) => {
+    if (filter?.["#p"]) {
+      attempt++;
+      return [target];
+    }
+    if (filter?.until !== undefined) return [];
+    if (filter?.["#e"]?.includes(target.id)) return attempt === 1 ? [edit] : [];
+    if (filter?.["#e"]?.includes(edit.id)) {
+      tombstoneReads++;
+      return attempt === 1 ? [] : held.promise;
+    }
+    return [];
+  });
+  const feed = h.session.inboxFeed;
+  await feed.ensure();
+  expect(feed.snapshot()).toMatchObject({ status: "ready", incomplete: [] });
+  expect(rows(h)[0]?.preview).toBe("deleted edit");
+  h.live.state({ status: "retrying", routes: [] });
+  h.live.state({ status: "connected", routes: [] });
+  const next = feed.refresh();
+  try {
+    await vi.waitFor(() => expect(tombstoneReads).toBe(2));
+    expect(feed.snapshot()).toMatchObject({
+      status: "loading",
+      incomplete: [target.id],
+    });
+    held.resolve([deletion]);
+    await next;
+    expect(rows(h)[0]?.preview).toBe("original");
+    expect(feed.snapshot()).toMatchObject({ status: "ready", incomplete: [] });
+  } finally {
+    held.resolve([]);
+  }
+});
+
+it("a fully visibility-filtered auxiliary page is incomplete, not a false terminal page", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const target = addressed(h, "original", 20);
+  const unretained = message(h.alice, "room", "another removal target", 21);
+  const deletion = signed(h.alice, {
+    kind: 5,
+    created_at: 30,
+    content: "",
+    tags: [
+      ["h", "room"],
+      ["e", target.id],
+      ["e", unretained.id],
+    ],
+  });
+  const olderEdit = signed(h.alice, {
+    kind: 40003,
+    created_at: 25,
+    content: "older applicable update",
+    tags: [
+      ["h", "room"],
+      ["e", target.id],
+    ],
+  });
+  const mentions = deferred<RelayEvent[]>();
+  const auxiliary: ReadFilter[] = [];
+  h.query.mockImplementation(async ([filter]) => {
+    if (filter?.["#p"]) return mentions.promise;
+    if (filter?.["#e"]?.includes(target.id)) {
+      auxiliary.push(filter);
+      if (filter.until === undefined) return [deletion];
+      return filter.until === 30 ? [olderEdit] : [];
+    }
+    return [];
+  });
+  const feed = h.session.inboxFeed;
+  const work = feed.ensure();
+  try {
+    await vi.waitFor(() => expect(h.query).toHaveBeenCalledTimes(1));
+    expect(rows(h)).toEqual([]);
+    mentions.resolve([target]);
+    await work;
+    // Fail closed rather than claiming the unadmitted page proved exhaustion.
+    expect(feed.snapshot()).toMatchObject({
+      status: "error",
+      incomplete: [target.id],
+      error:
+        "Inbox message updates could not be verified for current access. Retry inbox.",
+    });
+    expect(rows(h)[0]?.preview).toBe("original");
+    expect(auxiliary).toHaveLength(1);
+    // Existing shared admission can later supply the missing reference. Retry
+    // must then traverse the older applicable update and a real empty terminal.
+    h.live.receive([unretained]);
+    await feed.refresh();
+    expect(auxiliary.map((filter) => filter.until)).toEqual([
+      undefined,
+      undefined,
+      30,
+      25,
+    ]);
+    expect(feed.snapshot()).toMatchObject({ status: "ready", incomplete: [] });
+    expect(rows(h)).toEqual([]); // Author's bulk deletion is now fully admitted.
+  } finally {
+    mentions.resolve([]);
+  }
+});
+
+it.each(["bounded", "events", "bytes"] as const)(
+  "walks advancing auxiliary pages with a discriminating %s budget outcome",
+  async (budget) => {
+    const h = setup();
+    h.admit([h.viewer.pubkey, h.alice.pubkey]);
+    const target = addressed(h, "original", 20);
+    const count = budget === "events" ? 2001 : budget === "bytes" ? 9 : 3;
+    const edits = Array.from({ length: count }, (_, i) =>
+      signed(h.alice, {
+        kind: 40003,
+        created_at: 30 + count - i,
+        content: budget === "bytes" ? "x".repeat(512 * 1024) : `revision ${i}`,
+        tags: [
+          ["h", "room"],
+          ["e", target.id],
+        ],
+      }),
+    );
+    expect(edits.length > 2000).toBe(budget === "events");
+    expect(byteSize(edits) > 4 * 1024 * 1024).toBe(budget === "bytes");
+    const pageSize = budget === "events" ? 500 : budget === "bytes" ? 3 : 1;
+    const pages: ReadFilter[] = [];
+    h.query.mockImplementation(async ([filter]) => {
+      if (filter?.["#p"]) return [target];
+      if (filter?.["#e"]?.includes(target.id)) {
+        pages.push(filter);
+        return edits
+          .filter(
+            (edit) =>
+              filter.until === undefined || edit.created_at < filter.until,
+          )
+          .slice(0, pageSize);
+      }
+      return [];
+    });
+    await h.session.inboxFeed.ensure();
+    expect(pages.length).toBe(
+      budget === "events" ? 5 : budget === "bytes" ? 3 : 4,
+    );
+    expect(h.session.inboxFeed.snapshot()).toMatchObject(
+      budget === "bounded"
+        ? {
+            status: "ready",
+            incomplete: [],
+          }
+        : {
+            status: "error",
+            incomplete: [target.id],
+            error: "Inbox message updates exceed the read budget. Retry inbox.",
+          },
+    );
+    expect(rows(h)[0]?.preview).toBe(edits[0]?.content);
+    if (budget === "bounded")
+      expect(
+        h.query.mock.calls.some(
+          ([filters]) =>
+            filters[0]?.kinds?.join(",") === "5,9005" &&
+            filters[0]?.["#e"]?.length === 3,
+        ),
+      ).toBe(true);
+  },
+);
+
+it("access purge drops denied obligations but retains the still-readable target", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  h.live.receive([
+    roster(h.relay, "other", [h.viewer.pubkey], 10),
+    metadata(h.relay, "other", "Other", 10),
+  ]);
+  const kept = addressed(h, "kept", 20);
+  const denied = message(h.alice, "other", "denied", 21, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const held = deferred<RelayEvent[]>();
+  let reads = 0;
+  h.query.mockImplementation(async ([filter]) => {
+    if (filter?.["#p"]) return [kept, denied];
+    if (filter?.["#e"]) {
+      reads++;
+      return held.promise;
+    }
+    return [];
+  });
+  const feed = h.session.inboxFeed;
+  const work = feed.ensure();
+  try {
+    await vi.waitFor(() => expect(reads).toBe(1));
+    expect(feed.snapshot().incomplete).toEqual(
+      expect.arrayContaining([kept.id, denied.id]),
+    );
+    expect(rows(h)).toHaveLength(2);
+    h.live.receive([roster(h.relay, "other", [], 30)]);
+    held.resolve([]);
+    await work;
+    expect(rows(h).map((row) => row.messageId)).toEqual([kept.id]);
+    expect(feed.snapshot()).toMatchObject({
+      status: "idle",
+      incomplete: [kept.id],
+    });
+    await h.clearCache();
+    expect(rows(h)).toEqual([]);
+    expect(feed.snapshot().incomplete).toEqual([]);
+  } finally {
+    held.resolve([]);
+  }
+});
+
+it.each(["revoke-regrant", "dispose"] as const)(
+  "an auxiliary response cannot re-admit evidence after %s",
+  async (change) => {
+    const h = setup();
+    h.admit([h.viewer.pubkey, h.alice.pubkey]);
+    const target = addressed(h, "original", 20);
+    const edit = signed(h.alice, {
+      kind: 40003,
+      created_at: 21,
+      content: "stale update",
+      tags: [
+        ["h", "room"],
+        ["e", target.id],
+      ],
+    });
+    const held = deferred<RelayEvent[]>();
+    let reads = 0;
+    h.query.mockImplementation(async ([filter]) => {
+      if (filter?.["#p"]) return [target];
+      if (filter?.["#e"]) {
+        reads++;
+        return held.promise;
+      }
+      return [];
+    });
+    const feed = h.session.inboxFeed;
+    const work = feed.ensure();
+    try {
+      await vi.waitFor(() => expect(reads).toBe(1));
+      expect(rows(h)[0]?.preview).toBe("original");
+      if (change === "revoke-regrant") {
+        h.admit([h.alice.pubkey], 30);
+        h.admit([h.viewer.pubkey, h.alice.pubkey], 31);
+      } else await h[change]();
+      held.resolve([edit]);
+      await work;
+      expect(rows(h)).toEqual([]);
+      expect(feed.snapshot()).toMatchObject({
+        status: "idle",
+        incomplete: [],
+      });
+      expect(reads).toBe(1);
+    } finally {
+      held.resolve([]);
+    }
+  },
+);
+
+it("retained dependency closure checks only live author edits of the exact addressed target", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const target = addressed(h, "original", 20);
+  const unrelated = message(h.alice, "room", "not addressed", 21);
+  const edit = (
+    author: typeof h.alice,
+    id: string,
+    content: string,
+    at: number,
+  ) =>
+    signed(author, {
+      kind: 40003,
+      created_at: at,
+      content,
+      tags: [
+        ["h", "room"],
+        ["e", id],
+      ],
+    });
+  const originalEdit = edit(h.alice, target.id, "surviving older edit", 22);
+  const newestEdit = edit(h.alice, target.id, "newest edit", 23);
+  const removedEdit = edit(h.alice, target.id, "already deleted", 24);
+  const wrongAuthor = edit(h.viewer, target.id, "not an author edit", 25);
+  const unrelatedEdit = edit(h.alice, unrelated.id, "another target", 26);
+  const deletion = signed(h.alice, {
+    kind: 5,
+    created_at: 27,
+    content: "",
+    tags: [["e", removedEdit.id]],
+  });
+  // All are already retained; the relay omits them from this finite query.
+  h.live.receive([
+    target,
+    unrelated,
+    originalEdit,
+    newestEdit,
+    removedEdit,
+    wrongAuthor,
+    unrelatedEdit,
+    deletion,
+  ]);
+  expect(rows(h)[0]?.preview).toBe("newest edit");
+  const filters: ReadFilter[] = [];
+  h.query.mockImplementation(async ([filter]) => {
+    if (!filter) return [];
+    filters.push(filter);
+    return filter["#p"] ? [target] : [];
+  });
+  await h.session.inboxFeed.ensure();
+  expect(filters.filter((filter) => filter["#e"])).toEqual([
+    { kinds: [40003, 5, 9005], "#e": [target.id], limit: 500 },
+    {
+      kinds: [5, 9005],
+      "#e": [originalEdit.id, newestEdit.id].sort(),
+      limit: 500,
+    },
+  ]);
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "ready",
+    incomplete: [],
+  });
+  expect(rows(h)[0]?.preview).toBe("newest edit");
 });

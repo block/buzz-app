@@ -105,6 +105,8 @@ export interface UnreadCapability {
   enterChannel(channelId: string): Promise<void>;
   /** Explicit channel prefix through retained verified evidence, including replies. */
   markChannelRead(channelId: string): Promise<ReadMutationResult>;
+  /** Capture one prefix/time cut; each invocation queues that same intent for retry. */
+  prepareChannelRead(channelId: string): () => Promise<ReadMutationResult>;
   /** `markChannelRead` serialised over every accessible listed channel that still
    * shows unread evidence or a local mark. Channels with nothing to clear are
    * skipped, so an already-read community costs no writes. One failing channel
@@ -1366,8 +1368,11 @@ export function createUnread({
       });
     },
     async markChannelRead(channelId) {
+      return capability.prepareChannelRead(channelId)();
+    },
+    prepareChannelRead(channelId) {
       const read = channelReadIntent(channelId, Math.floor(Date.now() / 1000));
-      return serialize(channelId, read);
+      return () => serialize(channelId, read);
     },
     async markAllChannelsRead() {
       if (closed) throw new Error("Read target unavailable");
@@ -1472,6 +1477,30 @@ export function createUnread({
         event,
       );
       return owners && [...owners].every(allowed) ? event : undefined;
+    },
+    // Edits omitted by later relay queries can still affect the shared fold.
+    // Read their deletion evidence too; no second edit cache or projection.
+    retainedEditIds(ids: readonly string[]) {
+      if (closed) return [];
+      const targets = new Set(ids);
+      const owners = channelOwnership((id) => events.get(id));
+      return [...events.values()].flatMap((event) => {
+        if (event.kind !== 40003 || deleted(event)) return [];
+        const channels = owners(event);
+        if (!channels || ![...channels].every(allowed)) return [];
+        return event.tags.some(([name, id]) => {
+          const target = id && targets.has(id) ? events.get(id) : undefined;
+          return (
+            name === "e" &&
+            target &&
+            contentKind(target) &&
+            target.pubkey === event.pubkey &&
+            !deleted(target)
+          );
+        })
+          ? [event.id]
+          : [];
+      });
     },
     accept,
     purge,

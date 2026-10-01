@@ -209,11 +209,14 @@ seconds × 1,000 with the zero device ID. Edits exceed every observed register
 version and use a random in-memory device ID. Sections sort by canonical `(order,id)`
 and project dense display orders; new sections append after the canonical live
 maximum. Orphan assignments are omitted from the legacy projection, not deleted
-from metadata. Unsupported/malformed metadata fails closed rather than salvaging
-individual leaves. Live projection caps remain 100 sections, 1,000 assignments and
-104 sort overrides; retained tombstones are bounded by the existing 128 KiB
-plaintext budget, not live counts. Native signing/admission additionally requires
-legacy fields to equal the validated register projection.
+from metadata. Read projection accepts Desktop string values on retained section
+name/icon registers; only projected live text receives UI length limits. Writes
+still reject those out-of-policy retained values rather than dropping or truncating
+them. Unsupported/malformed metadata fails closed, including unknown fields;
+this is not general forward-schema salvage. Live projection caps remain 100
+sections, 1,000 assignments and 104 sort overrides; retained tombstones are bounded
+by the existing 128 KiB plaintext budget, not live counts. Native signing/admission
+additionally requires legacy fields to equal the validated register projection.
 
 Saving preserves unrelated top-level fields and known register choices present in
 the strong head read before publication. This is wire-format compatibility, not

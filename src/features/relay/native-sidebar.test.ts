@@ -357,3 +357,111 @@ it("native writers update authoritative registers and preserve unrelated tombsto
     },
   });
 });
+
+it("reads all coordinates with oversized deleted-section text but refuses to rewrite it", async () => {
+  const reg = (value: unknown) => [100, "1111111111111111", value];
+  const sections = {
+    version: 1,
+    sections: [{ id: "stale", name: "Stale", order: 0 }],
+    assignments: { c2: "stale" },
+    meta: {
+      v: 1,
+      s: {
+        work: { name: reg("Work"), order: reg(0), live: reg(true) },
+        dead: {
+          name: reg("x".repeat(257)),
+          icon: reg("i".repeat(129)),
+          live: reg(false),
+        },
+      },
+      a: { c1: reg("work"), c2: reg("dead") },
+    },
+  };
+  for (const [coordinate, value] of Object.entries({
+    "channel-sections": sections,
+    "channel-stars": {
+      version: 1,
+      channels: { c1: { starred: true, updatedAt: 1 } },
+    },
+    "channel-mutes": {
+      version: 1,
+      channels: { c2: { muted: true, updatedAt: 1 } },
+    },
+    "channel-sort": { version: 1, groups: { channels: "recent" } },
+  }))
+    records.set(coordinate, signedRecord(coordinate, value));
+  const before = [...records.values()];
+  const transport = await connectNativeTransport(community);
+  expect(await transport.decodeSidebarPreferences?.(before, signal)).toEqual({
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: { c1: "work" },
+    starred: ["c1"],
+    muted: ["c2"],
+    sort: { channels: "recent" },
+  });
+  await expect(
+    transport.writeSidebarAssignment?.(
+      { channelId: "c3", sectionId: "work" },
+      signal,
+    ),
+  ).rejects.toThrow("Invalid sidebar register");
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.some(([command]) => command === "relay_sign_sidebar"),
+  ).toBe(false);
+  expect([...records.values()]).toEqual(before);
+});
+
+it.each([false, true])(
+  "appends a native section after canonical imported orders (metadata=%s)",
+  async (metadata) => {
+    const reg = (value: unknown) => [100, "1111111111111111", value];
+    records.set(
+      "channel-sections",
+      signedRecord("channel-sections", {
+        version: 1,
+        sections: [{ id: "work", name: "Work", order: 0.5 }],
+        assignments: {},
+        ...(metadata
+          ? {
+              meta: {
+                v: 1,
+                s: {
+                  work: { name: reg("Work"), order: reg(40), live: reg(true) },
+                },
+                a: {},
+              },
+            }
+          : {}),
+      }),
+    );
+    const transport = await connectNativeTransport(community);
+    const id = "12345678-1234-1234-1234-123456789abc";
+    expect(
+      await transport.writeSidebarAssignment?.(
+        { channelId: "c1", createSection: { id, name: "New" } },
+        signal,
+      ),
+    ).toEqual({
+      sections: [
+        { id: "work", name: "Work", order: 0 },
+        { id, name: "New", order: 1 },
+      ],
+      assignments: { c1: id },
+    });
+    const saved = decode([...records.values()])["channel-sections"];
+    expect(saved).toMatchObject({
+      meta: {
+        s: {
+          work: {
+            order: [expect.any(Number), expect.any(String), metadata ? 40 : 1],
+          },
+          [id]: {
+            order: [expect.any(Number), expect.any(String), metadata ? 41 : 2],
+          },
+        },
+      },
+    });
+  },
+);

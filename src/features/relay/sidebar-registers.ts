@@ -49,8 +49,22 @@ function map(
     }),
   );
 }
-function metadata(coordinate: Coordinate, value: unknown): Tree {
+function metadata(
+  coordinate: Coordinate,
+  value: unknown,
+  reading = false,
+): Tree {
   const data = object(value);
+  // Desktop retains unrestricted text on deleted sections. Read its wire shape;
+  // UI text limits apply to the live projection, not nonprojecting tombstones.
+  // Writers keep strict admission and never rewrite a partially understood tree.
+  const fieldsFor = reading
+    ? {
+        ...sectionFields,
+        name: (v: unknown) => typeof v === "string",
+        icon: (v: unknown) => v === null || typeof v === "string",
+      }
+    : sectionFields;
   // Tombstones outlive live projection caps. Bound all retained nodes by bytes,
   // not the number of currently visible sections/sort overrides.
   if (new TextEncoder().encode(JSON.stringify(data)).length > 128 * 1024)
@@ -74,7 +88,7 @@ function metadata(coordinate: Coordinate, value: unknown): Tree {
             throw new Error("Invalid sidebar section register");
           return [
             key,
-            register(value, sectionFields[key as keyof typeof sectionFields]),
+            register(value, fieldsFor[key as keyof typeof fieldsFor]),
           ];
         }),
       );
@@ -137,7 +151,7 @@ export function projectSidebarRecord(
   if (value.meta === undefined) return value;
   return {
     ...value,
-    ...projection(coordinate, metadata(coordinate, value.meta)),
+    ...projection(coordinate, metadata(coordinate, value.meta, true)),
   };
 }
 function importLegacy(
@@ -253,7 +267,9 @@ export function nextSidebarSectionOrder(
     return (
       Math.max(
         -1,
-        ...(current.sections as { order: number }[]).map(({ order }) => order),
+        ...(current.sections as { order: number }[]).map(({ order }) =>
+          Math.round(order),
+        ),
       ) + 1
     );
   const tree = metadata("channel-sections", current.meta);

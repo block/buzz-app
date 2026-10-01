@@ -148,3 +148,52 @@ it("refuses an exhausted register clock instead of emitting unsafe integers", ()
     ),
   ).toThrow("clock exhausted");
 });
+
+it.each(["name", "icon"])(
+  "read tolerance does not admit oversized live %s or rewrite retained text",
+  (field) => {
+    const current = sections();
+    const meta = {
+      ...current.meta,
+      s: {
+        ...current.meta.s,
+        live: { ...current.meta.s.live, [field]: reg("x".repeat(257)) },
+      },
+    };
+    expect(() =>
+      projectSidebarPreferences({ ...current, meta }, undefined),
+    ).toThrow("Invalid sidebar preference text");
+    const dead = {
+      ...current,
+      meta: {
+        ...meta,
+        s: { ...meta.s, live: { ...meta.s.live, live: reg(false) } },
+      },
+    };
+    const before = structuredClone(dead);
+    expect(projectSidebarPreferences(dead, undefined).sections).toEqual([]);
+    expect(() =>
+      editSidebarRecord("channel-sections", dead, 1, [[["a", "a"], null]]),
+    ).toThrow("Invalid sidebar register");
+    expect(dead).toEqual(before);
+  },
+);
+
+it("does not salvage malformed register envelopes or unknown retained fields on reads or writes", () => {
+  for (const dead of [
+    { name: [1, "bad-device", "x".repeat(257)], live: reg(false) },
+    { name: reg("Deleted"), live: reg(false), future: reg("keep") },
+  ]) {
+    const current = sections();
+    const value = {
+      ...current,
+      meta: { ...current.meta, s: { ...current.meta.s, dead } },
+    };
+    const before = structuredClone(value);
+    expect(() => projectSidebarPreferences(value, undefined)).toThrow();
+    expect(() =>
+      editSidebarRecord("channel-sections", value, 1, [[["a", "a"], null]]),
+    ).toThrow();
+    expect(value).toEqual(before);
+  }
+});

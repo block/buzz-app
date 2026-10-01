@@ -6,6 +6,7 @@ import {
   nip44,
 } from "nostr-tools";
 import {
+  decodeSidebarPreferences,
   assertSidebarAssignmentIntent,
   prepareSidebarAssignment,
   mutateSidebarAssignment,
@@ -14,14 +15,14 @@ import {
 const secret = generateSecretKey();
 const id = "12345678-1234-1234-1234-123456789abc";
 const intent = { channelId: "alpha", createSection: { id, name: " Launch " } };
-function event(blob) {
+function event(blob, coordinate = "channel-sections") {
   const key = nip44.v2.utils.getConversationKey(secret, getPublicKey(secret));
   try {
     return finalizeEvent(
       {
         kind: 30078,
         created_at: 5,
-        tags: [["d", "channel-sections"]],
+        tags: [["d", coordinate]],
         content: nip44.v2.encrypt(JSON.stringify(blob), key),
       },
       secret,
@@ -140,4 +141,74 @@ it("a failed initial read never seeds or publishes", async () => {
     ),
   ).rejects.toThrow("offline");
   expect(publications).toBe(0);
+});
+
+it("decodes all encrypted preferences despite oversized deleted text without rewriting it", () => {
+  const reg = (value) => [100, "1111111111111111", value];
+  const blob = {
+    version: 1,
+    sections: [{ id: "stale", name: "Stale", order: 0 }],
+    assignments: {},
+    meta: {
+      v: 1,
+      s: {
+        work: { name: reg("Work"), order: reg(0), live: reg(true) },
+        dead: {
+          name: reg("x".repeat(257)),
+          icon: reg("i".repeat(129)),
+          live: reg(false),
+        },
+      },
+      a: { alpha: reg("work"), beta: reg("dead") },
+    },
+  };
+  const head = event(blob);
+  expect(
+    decodeSidebarPreferences(
+      [
+        head,
+        event(
+          { version: 1, channels: { alpha: { starred: true, updatedAt: 1 } } },
+          "channel-stars",
+        ),
+        event(
+          { version: 1, channels: { beta: { muted: true, updatedAt: 1 } } },
+          "channel-mutes",
+        ),
+        event({ version: 1, groups: { channels: "recent" } }, "channel-sort"),
+      ],
+      secret,
+    ),
+  ).toEqual({
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: { alpha: "work" },
+    starred: ["alpha"],
+    muted: ["beta"],
+    sort: { channels: "recent" },
+  });
+  expect(() => prepareSidebarAssignment([head], intent, secret)).toThrow(
+    "Invalid sidebar register",
+  );
+  expect(decode(head)).toEqual(blob);
+});
+
+it("appends after the rounded order imported from a fractional legacy head", () => {
+  const created = prepareSidebarAssignment(
+    [
+      event({
+        version: 1,
+        sections: [{ id: "work", name: "Work", order: 0.5 }],
+        assignments: {},
+      }),
+    ],
+    intent,
+    secret,
+  );
+  const saved = decode(created.event);
+  expect(saved.sections).toEqual([
+    { id: "work", name: "Work", order: 0 },
+    { id, name: "Launch", order: 1 },
+  ]);
+  expect(saved.meta.s.work.order[2]).toBe(1);
+  expect(saved.meta.s[id].order[2]).toBe(2);
 });

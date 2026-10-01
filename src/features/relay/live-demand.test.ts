@@ -680,6 +680,200 @@ it("an exact membership confirmation cannot overwrite a concurrent roster error"
   }
 });
 
+it("a concurrent roster failure without a cooldown retires the exact confirmation and keeps the error for Retry", async () => {
+  const h = setup();
+  try {
+    await readyRoster(h);
+    h.owner.session.channels.refreshList?.();
+    const full = h.wire.next();
+    h.live.receive([membershipHint(h, "a")]);
+    await flush();
+    const exact = h.wire.next();
+    expect(exact.filters).toEqual(exactFilters(h, ["a"]));
+    full.fail(new ReadError("unavailable", "Roster failed", 503));
+    await flush();
+    await flush();
+    expect(exact.signal?.aborted).toBe(true);
+    exact.respond([
+      metadata(h.relay, "a", "Alpha"),
+      roster(h.relay, "a", [h.viewer.pubkey]),
+    ]);
+    await flush();
+    await flush();
+    // The intentional abort is not a failed lookup: no fallback full pass
+    // replaces the error, which stays visible and retryable.
+    expect(h.owner.session.channels.list()).toMatchObject({
+      status: "error",
+      error: "Roster failed",
+      channels: [],
+    });
+    expect(h.owner.session.live.snapshot().roster).toEqual({
+      state: "error",
+      error: "Roster failed",
+    });
+    expect(h.wire.pending).toHaveLength(0);
+    h.owner.session.live.retry();
+    await flush();
+    expect(h.wire.pending).toHaveLength(1);
+    const recovery = h.wire.next();
+    expect(recovery.filters[0]?.kinds).toEqual([39002]);
+    expect(recovery.filters[0]?.["#d"]).toBeUndefined();
+    recovery.respond([
+      metadata(h.relay, "a", "Alpha"),
+      roster(h.relay, "a", [h.viewer.pubkey]),
+    ]);
+    await flush();
+    expect(h.owner.session.channels.list()).toMatchObject({
+      status: "ready",
+      channels: [{ id: "a", name: "Alpha" }],
+    });
+    expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+    expect(h.wire.pending).toHaveLength(0);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("singleton member-added deliveries coalesce into one exact read and never duplicate an in-flight confirmation", async () => {
+  const h = setup();
+  try {
+    await readyRoster(h);
+    h.live.receive([
+      metadata(h.relay, "x", "Xray"),
+      roster(h.relay, "x", [h.viewer.pubkey]),
+    ]);
+    await flush();
+    expect(h.wire.pending).toHaveLength(0);
+    // Shipped transports deliver one event per receive() call.
+    for (const id of ["a", "b", "a"]) h.live.receive([membershipHint(h, id)]);
+    h.owner.session.channels.ensure("x");
+    await flush();
+    // One exact read for both channels leaves the reader's foreground slots to
+    // the conversation read instead of queueing it behind three hint reads.
+    const requests = h.wire.pending.splice(0);
+    expect(requests).toHaveLength(2);
+    const exact = requests.find((r) => r.filters[0]?.kinds?.[0] === 39000);
+    const head = requests.find((r) => r.filters[0]?.["#h"]?.includes("x"));
+    expect(exact?.filters).toEqual(exactFilters(h, ["a", "b"]));
+    expect(head).toBeDefined();
+    // A repeated hint while its confirmation is in flight reads nothing more.
+    h.live.receive([membershipHint(h, "a")]);
+    await flush();
+    await flush();
+    expect(h.wire.pending).toHaveLength(0);
+    head?.respond([
+      bounds(h.relay, "x", "head", { has_more: false, next_cursor: null }),
+    ]);
+    exact?.respond([
+      metadata(h.relay, "a", "Alpha"),
+      roster(h.relay, "a", [h.viewer.pubkey]),
+      metadata(h.relay, "b", "Beta"),
+      roster(h.relay, "b", [h.viewer.pubkey]),
+    ]);
+    await flush();
+    await flush();
+    expect(
+      h.owner.session.channels
+        .list()
+        .channels.map((c) => c.name)
+        .sort(),
+    ).toEqual(["Alpha", "Beta", "Xray"]);
+    expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+    expect(h.wire.pending).toHaveLength(0);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it.each([
+  "the full refresh completes first",
+  "the delayed grant is released first",
+])(
+  "a later removal hint supersedes a pending grant confirmation when %s",
+  async (order) => {
+    const h = setup();
+    try {
+      await readyRoster(h);
+      h.live.receive([membershipHint(h, "a")]);
+      await flush();
+      const exact = h.wire.next();
+      expect(exact.filters).toEqual(exactFilters(h, ["a"]));
+      h.live.receive([membershipHint(h, "b", 44101)]);
+      await flush();
+      const full = h.wire.next();
+      expect(full.filters[0]?.kinds).toEqual([39002]);
+      expect(full.filters[0]?.["#d"]).toBeUndefined();
+      // The full pass started after the exact read, so its complete roster is
+      // the newer authority; the older confirmation is retired before it lands.
+      expect(exact.signal?.aborted).toBe(true);
+      const grant = [
+        metadata(h.relay, "a", "Alpha"),
+        roster(h.relay, "a", [h.viewer.pubkey]),
+      ];
+      if (order === "the full refresh completes first") {
+        full.respond([]);
+        await flush();
+        exact.respond(grant);
+      } else {
+        exact.respond(grant);
+        await flush();
+        expect(h.owner.session.channels.get?.("a")).toBeUndefined();
+        full.respond([]);
+      }
+      await flush();
+      await flush();
+      expect(h.owner.session.channels.list()).toMatchObject({
+        status: "ready",
+        channels: [],
+      });
+      expect(h.owner.session.channels.get?.("a")).toBeUndefined();
+      expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+      expect(h.wire.pending).toHaveLength(0);
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
+
+it("a removal hint after a completed grant confirmation still revokes the channel", async () => {
+  const h = setup();
+  try {
+    await readyRoster(h);
+    h.live.receive([membershipHint(h, "a")]);
+    await flush();
+    h.wire
+      .next()
+      .respond([
+        metadata(h.relay, "a", "Alpha"),
+        roster(h.relay, "a", [h.viewer.pubkey]),
+      ]);
+    await flush();
+    await flush();
+    expect(h.owner.session.channels.list()).toMatchObject({
+      status: "ready",
+      channels: [{ id: "a", name: "Alpha" }],
+    });
+    expect(h.wire.pending).toHaveLength(0);
+    h.live.receive([membershipHint(h, "a", 44101)]);
+    await flush();
+    const full = h.wire.next();
+    expect(full.filters[0]?.kinds).toEqual([39002]);
+    expect(full.filters[0]?.["#d"]).toBeUndefined();
+    full.respond([]);
+    await flush();
+    await flush();
+    expect(h.owner.session.channels.list()).toMatchObject({
+      status: "ready",
+      channels: [],
+    });
+    expect(h.owner.session.channels.get?.("a")).toBeUndefined();
+    expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+    expect(h.wire.pending).toHaveLength(0);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
 it("disposing an exact membership confirmation aborts the read and prevents its fallback", async () => {
   const h = setup();
   try {

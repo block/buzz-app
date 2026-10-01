@@ -683,7 +683,11 @@ Refresh channels share the same cooldown. Metadata failure never revokes success
 membership authority. Hints during an active read coalesce into one follow-up;
 a member-added hint naming a channel the viewer does not yet hold confirms only
 that channel when the list is already ready, while removals, unnamed hints, held
-channels and CLOSED still schedule the full refresh.
+channels and CLOSED still schedule the full refresh. Named hints arriving
+together share one exact read, a channel already being confirmed is not read
+again, and a full refresh that starts afterwards retires pending confirmations
+in favour of its own result. A full refresh that fails while a confirmation is
+pending keeps its error for Retry rather than triggering another refresh.
 A refused read retains the obligation without draining queued work. Live Retry
 retries failed/deferred work, not every successful refresh or healthy subscription.
 A new channel-route failure with Buzz's `restricted: channel access revoked`

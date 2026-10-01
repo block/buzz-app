@@ -1242,7 +1242,11 @@ export function createChannelStore(
    *   these channels and hide a failed initial discovery. See "creates a channel
    *   during initial discovery without committing a list of only that channel";
    *   its check that every ready snapshot carries the first page's channel is
-   *   the canonical regression test. */
+   *   the canonical regression test.
+   * - Every call is a fresh read that the reader never merges with an identical
+   *   read in flight. The session coalesces hints across deliveries and skips
+   *   ids it is already confirming; a full pass that starts later retires
+   *   those confirmations, so a delayed grant cannot outlive the complete roster. */
   async function resolve(
     channelIds: readonly string[],
     settings?: ReadOptions,

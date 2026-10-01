@@ -255,7 +255,7 @@ it("rejects altered signer payloads", async () => {
   expect(h.publish).not.toHaveBeenCalled();
 });
 it.each(["ack", "lost", "read"])(
-  "retains confirmed roles and recovers %s uncertainty with readback only",
+  "retains roles on %s uncertainty and preserves readback-only recovery through clear",
   async (failure) => {
     const h = harness();
     await h.owner.capability.refresh(id);
@@ -268,6 +268,11 @@ it.each(["ack", "lost", "read"])(
     expect(h.owner.capability.snapshot(id)).toMatchObject({
       authority: { roles: { [target]: "member" } },
       operation: { status: "uncertain" },
+    });
+    h.owner.clear();
+    expect(h.owner.capability.snapshot(id)).toMatchObject({
+      authority: { roles: {}, canManage: false },
+      operation: { change, status: "uncertain" },
     });
     await expect(h.owner.capability.run(id, change)).rejects.toThrow(
       /not be sent again/,
@@ -451,6 +456,109 @@ it("clears roles when the production session observes viewer access loss", async
     owner.session.memberAdministration.run(id, change),
   ).rejects.toThrow(/access unavailable/);
   expect(h.sign).not.toHaveBeenCalled();
+});
+it.each(["cache", "access"] as const)(
+  "%s clearing preserves sent intent during publication and after uncertainty",
+  async (end) => {
+    const h = harness();
+    const owner = createRelaySession({
+      viewer,
+      relayAuthor: author,
+      media: () => undefined,
+      query: async (filters) =>
+        h
+          .events()
+          .filter((event) =>
+            filters.some((filter) => matchesEvent(event, filter)),
+          ),
+      memberAdministration: { sign: h.sign, publish: h.publish },
+    });
+    stops.push(owner.dispose);
+    const session = owner.session;
+    const admin = session.memberAdministration;
+    const readRoster = () =>
+      session.read([{ kinds: [39002], "#d": [id], limit: 1 }], { fresh: true });
+    const clear = async () => {
+      if (end === "cache") await owner.clearCache();
+      else {
+        h.setEvents([
+          required(h.events()[0]),
+          h.record(39001, [["d", id]]),
+          h.record(39002, [
+            ["d", id],
+            ["p", target, "", "member"],
+          ]),
+        ]);
+        await readRoster();
+      }
+    };
+    const recoverAccess = async () => {
+      h.setRoles("owner", "member");
+      await readRoster();
+    };
+    session.channels.ensureList();
+    await vi.waitFor(() =>
+      expect(session.channels.list().status).toBe("ready"),
+    );
+    await admin.refresh(id);
+    const gate = deferred();
+    h.publish.mockImplementationOnce(() => gate.promise);
+    const pending = admin.run(id, change);
+    try {
+      await vi.waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+      await clear();
+      expect(admin.snapshot(id)).toMatchObject({
+        status: "idle",
+        authority: { roles: {}, canManage: false },
+        operation: { change, status: "uncertain" },
+      });
+      await recoverAccess();
+      await expect(admin.run(id, change)).rejects.toThrow(/not be sent again/);
+      await admin.refresh(id);
+      expect(admin.snapshot(id).operation?.status).toBe("uncertain");
+      // Clearing the settled uncertain snapshot must retain the same fence too.
+      await clear();
+      expect(admin.snapshot(id).authority).toEqual({
+        roles: {},
+        canManage: false,
+      });
+      await recoverAccess();
+      await expect(admin.run(id, change)).rejects.toThrow(/not be sent again/);
+      // Fresh readback, not a response from the old publication, resolves it.
+      h.setRoles("owner", "admin");
+      await admin.refresh(id);
+      expect(admin.snapshot(id).operation?.status).toBe("confirmed");
+      const confirmed = admin.snapshot(id);
+      gate.resolve();
+      await pending;
+      expect(admin.snapshot(id)).toBe(confirmed);
+      expect(h.publish).toHaveBeenCalledOnce();
+      expect(h.sign).toHaveBeenCalledOnce();
+    } finally {
+      gate.resolve();
+      await pending;
+    }
+  },
+);
+it("clearing during signing cancels without retaining an unsent operation", async () => {
+  const h = harness();
+  const gate = deferred();
+  h.sign.mockImplementationOnce(async (template) => {
+    await gate.promise;
+    return finalizeEvent(template, key);
+  });
+  const pending = h.owner.capability.run(id, change);
+  try {
+    await vi.waitFor(() => expect(h.sign).toHaveBeenCalledOnce());
+    h.owner.clear();
+  } finally {
+    gate.resolve();
+    await pending;
+  }
+  expect(h.owner.capability.snapshot(id).operation).toBeUndefined();
+  expect(h.publish).not.toHaveBeenCalled();
+  await h.owner.capability.run(id, change);
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
 });
 it("narrow validator rejects self-removal and arbitrary role/metadata payloads", () => {
   const base = {

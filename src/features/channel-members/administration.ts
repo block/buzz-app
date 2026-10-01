@@ -50,6 +50,7 @@ export function createMemberAdministration({
   let epoch = 0;
   const states = new Map<string, MemberAdministrationState>();
   const active = new Map<string, AbortController>();
+  const publishing = new Set<string>();
   const listeners = new Set<() => void>();
   const snapshot = (id: string) => states.get(id) ?? empty;
   const emit = (id: string, state: MemberAdministrationState) => {
@@ -196,6 +197,7 @@ export function createMemberAdministration({
           await authorize();
           signal.throwIfAborted();
           publicationStarted = true;
+          publishing.add(id);
           await writer.publish(signed, signal);
           // Acceptance is not proof; delayed side effects use explicit readback,
           // not a privileged outbox or an automatic retry loop.
@@ -229,6 +231,8 @@ export function createMemberAdministration({
                     ? error.message
                     : String(error),
             });
+        } finally {
+          if (current()) publishing.delete(id);
         }
       });
     },
@@ -237,7 +241,27 @@ export function createMemberAdministration({
     epoch++;
     for (const controller of active.values()) controller.abort();
     active.clear();
-    states.clear();
+    for (const [id, state] of states) {
+      const operation = state.operation;
+      // Aborting cannot retract a publication. Drop role authority, not the
+      // readback-only fence, and never let an old completion settle a new epoch.
+      if (
+        !closed &&
+        operation &&
+        (operation.status === "uncertain" ||
+          (operation.status === "pending" && publishing.has(id)))
+      ) {
+        states.set(
+          id,
+          Object.freeze<MemberAdministrationState>({
+            ...empty,
+            operation: { ...operation, status: "uncertain" },
+            error: uncertain,
+          }),
+        );
+      } else states.delete(id);
+    }
+    publishing.clear();
     for (const listener of listeners) listener();
   }
   return {

@@ -657,8 +657,10 @@ Pending intent survives dialog close/reopen and suppresses duplicate actions.
 Definitive failure preserves the last confirmed roles and offers explicit refresh;
 an uncertain outcome offers readback only, never automatic resubmission. If the
 requested result still cannot be observed, administration remains blocked in that
-session. Cache clear, access loss and disposal fence late completions, but cannot
-retract a request already sent. Recovery is in-memory, not durable across restart.
+session. Cache clear and access loss discard role authority but retain sent,
+unconfirmed intent for fresh readback only. They fence late completions, as does
+disposal, but cannot retract a request already sent. Unsent work is canceled;
+recovery is in-memory, not durable across session disposal or restart.
 
 The development broker advertises a separate `memberAdministration` capability
 and admits only exact `9000` Admin/Member/Guest changes or `9001` other-member

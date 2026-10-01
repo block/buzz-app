@@ -282,8 +282,24 @@ export function createUnread({
   // The viewer's own deleted messages, so neither a stored lookup result nor
   // one still in flight can outlive them.
   const retracted = new Set<string>();
+  // The viewer's messages behind positive lookups, kept so a deletion from
+  // another client can be verified (see `event`) after the window drops them.
+  // They are not counted evidence. Evicting one forgets the lookups it backs,
+  // so a membership never outlives the means to observe its deletion.
+  const witnesses = new Map<string, RelayEvent>();
   const conversationKey = (channelId: string, parentId: string) =>
     `${channelId}:${parentId}`;
+  function witness(lookup: Lookup, event: RelayEvent) {
+    lookup.evidence.add(event.id);
+    witnesses.delete(event.id);
+    witnesses.set(event.id, event);
+    for (const [oldest] of witnesses) {
+      if (witnesses.size <= 4096) break;
+      witnesses.delete(oldest);
+      for (const [key, other] of lookups)
+        if (other.evidence.has(oldest)) lookups.delete(key);
+    }
+  }
   let scheduled = false;
   let failures = 0;
   let retry: ReturnType<typeof setTimeout> | undefined;
@@ -313,7 +329,7 @@ export function createUnread({
           joined.add(`${channel}:${parentId}`);
           // A later reply of the viewer outlives the window that showed it.
           const lookup = lookups.get(conversationKey(channel, parentId));
-          if (lookup?.done) lookup.evidence.add(event.id);
+          if (lookup?.done) witness(lookup, event);
         }
       }
       const rows = byChannel.get(channel) ?? [];
@@ -748,6 +764,8 @@ export function createUnread({
       if (!allowed(lookup.channelId)) lookups.delete(key);
     for (const [id, event] of lookupEvents)
       if (!allowed(channelOf(event) ?? "")) lookupEvents.delete(id);
+    for (const [id, event] of witnesses)
+      if (!allowed(channelOf(event) ?? "")) witnesses.delete(id);
     for (const [key, { channelId }] of queued)
       if (!allowed(channelId)) queued.delete(key);
     const denied = new Set(
@@ -859,6 +877,7 @@ export function createUnread({
     lookupEvents.clear();
     queued.clear();
     retracted.clear();
+    witnesses.clear();
     failures = 0;
     if (retry) clearTimeout(retry);
     retry = undefined;
@@ -1007,20 +1026,23 @@ export function createUnread({
           !removed.has(`${event.pubkey}:${event.id}`) &&
           !(event.pubkey === viewer && retracted.has(event.id));
         for (const event of fetched) if (live(event)) keep(event);
-        const evidence = new Map(parents.map((id) => [id, new Set<string>()]));
+        const decided = new Map(
+          parents.map((id): [string, Lookup] => [
+            id,
+            { channelId, done: true, evidence: new Set() },
+          ]),
+        );
         for (const event of replies) {
           const parentId = threadReference(event)?.parentId;
-          if (event.pubkey === viewer && live(event) && parentId)
-            evidence.get(parentId)?.add(event.id);
+          const lookup = parentId ? decided.get(parentId) : undefined;
+          if (lookup && event.pubkey === viewer && live(event))
+            witness(lookup, event);
         }
-        for (const [id, set] of evidence) {
+        for (const [id, lookup] of decided) {
           const parent = structural(id);
-          if (parent?.pubkey === viewer && live(parent)) set.add(id);
-          remember(conversationKey(channelId, id), {
-            channelId,
-            done: true,
-            evidence: set,
-          });
+          if (parent?.pubkey === viewer && live(parent))
+            witness(lookup, parent);
+          remember(conversationKey(channelId, id), lookup);
         }
         indexed = false;
         publish(new Set([channelId]));
@@ -1101,6 +1123,7 @@ export function createUnread({
     for (const id of ids) {
       retracted.delete(id);
       retracted.add(id);
+      witnesses.delete(id);
       for (const lookup of lookups.values())
         if (lookup.evidence.delete(id) && !lookup.evidence.size)
           changed.add(lookup.channelId);
@@ -1601,6 +1624,9 @@ export function createUnread({
     // bounded, fail-closed ancestry used for retention.
     event(id: string) {
       if (closed) return;
+      const witnessed = witnesses.get(id);
+      if (witnessed)
+        return allowed(channelOf(witnessed) ?? "") ? witnessed : undefined;
       const event = events.get(id);
       if (!event) return;
       const owners = channelOwnership((targetId) => events.get(targetId))(

@@ -623,9 +623,9 @@ it("deleting the viewer's reply after a completed lookup ends the membership", a
     expect(attention()).toMatchObject({ category: "thread", unread: true }),
   );
   const count = relay.lookups.length;
-  // The viewer opens the old thread, which loads the reply, then deletes it.
-  // The lookup result, not only the window, must forget it.
-  h.receive([mine]);
+  // Another client deletes the old reply. This client never loaded it, so
+  // the deletion must still pass the session's target-visibility check.
+  expect(h.session.channels.window("other").rows).toEqual([]);
   h.receive([
     signed(h.viewer, {
       kind: 5,

@@ -213,7 +213,10 @@ reply whose root could not be fetched still counts as the viewer's thread; it
 just cannot be grouped. A later reply of the viewer turns a negative result
 into membership, so it still counts after the window drops that reply. A
 positive result records which of the viewer's messages made it; when the viewer
-deletes all of them, even after the lookup, the membership ends. One
+deletes all of them, even after the lookup, the membership ends. Those messages
+are kept (up to 4,096, not counted) so a deletion from another client still
+passes the target-visibility check after the window drops them; evicting one
+forgets the lookups it backs, which are asked again. One
 residual: a direct reply older than 5,000 of the viewer's root-tag matches is
 not seen. Replies still require retained evidence of their own.
 

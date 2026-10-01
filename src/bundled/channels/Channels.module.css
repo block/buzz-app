@@ -579,6 +579,46 @@
   text-align: center;
   overflow-wrap: anywhere;
 }
+.settingsTitle {
+  max-width: 100%;
+}
+.settingsTitleAction {
+  display: inline-block;
+  max-width: 100%;
+  /* Reserve both sides equally; only the trailing space contains artwork. */
+  padding: 0 calc(var(--space-4) + var(--space-2));
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+/* A zero-width inline anchor follows the final text line, not the block edge. */
+.settingsTitlePencil {
+  display: inline-block;
+  position: relative;
+  width: 0;
+  height: 1em;
+  vertical-align: middle;
+  opacity: 0;
+}
+.settingsTitlePencil > svg {
+  position: absolute;
+  inset-inline-start: var(--space-2);
+  top: 50%;
+  transform: translateY(-50%);
+}
+.settingsTitleAction:hover .settingsTitlePencil,
+.settingsTitleAction:focus-visible .settingsTitlePencil {
+  opacity: 1;
+}
+@media (hover: none) {
+  .settingsTitlePencil {
+    opacity: 1;
+  }
+}
 .settingsIcon {
   display: grid;
   place-items: center;
@@ -612,7 +652,7 @@
 }
 .settingsDetailAction {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
   width: 100%;

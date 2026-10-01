@@ -27,7 +27,6 @@ import {
   MenuNote,
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
-import { ChannelDetailsEditor } from "./ChannelDetailsEditor";
 import { ChannelLifecycleMenu } from "./ChannelLifecycleMenu";
 
 /** Entry points only: editors and the sidebar retain dialog and mutation ownership. */
@@ -73,11 +72,7 @@ export function ChannelHeaderMenu({
           }),
       })
     : undefined;
-  const popup = (
-    lifecycle: ReactNode,
-    edit?: ReactNode,
-    saveAs?: ReactNode,
-  ) => (
+  const popup = (lifecycle: ReactNode, saveAs?: ReactNode) => (
     <MenuPopup
       size="default"
       align="end"
@@ -103,7 +98,6 @@ export function ChannelHeaderMenu({
           View canvas
         </MenuItem>
       )}
-      {edit}
       {saveAs}
       {!!actions?.length && <MenuSeparator />}
       {actions}
@@ -114,16 +108,15 @@ export function ChannelHeaderMenu({
       {lifecycle}
     </MenuPopup>
   );
-  // Keep dialog owners outside the menu portal: closing it must not unmount a
-  // draft, an in-flight template read, or an uncertain details-save recovery.
-  const withTemplate = (lifecycle: ReactNode, edit?: ReactNode) =>
+  // Keep the template owner outside the menu portal so dismissal cannot unmount
+  // its draft or an in-flight template read.
+  const withTemplate = (lifecycle: ReactNode) =>
     prepared && channel && templateProvider ? (
       <OwnedContribution
         entry={templateProvider}
         registry={providers}
         fallback={popup(
           lifecycle,
-          edit,
           <MenuNote role="alert">Templates unavailable</MenuNote>,
         )}
       >
@@ -137,34 +130,14 @@ export function ChannelHeaderMenu({
               menu={{
                 close: () => setOpen(false),
                 finalFocus: trigger,
-                render: (items) => popup(lifecycle, edit, items),
+                render: (items) => popup(lifecycle, items),
               }}
             />
           );
         }}
       </OwnedContribution>
     ) : (
-      popup(lifecycle, edit)
-    );
-  const editable =
-    channel &&
-    !channel.readOnly &&
-    !channel.cached &&
-    !channel.archived &&
-    (channel.channelType === "stream" || channel.channelType === "forum");
-  const withDetails = (lifecycle: ReactNode) =>
-    prepared && editable && session.channelDetails.available ? (
-      <ChannelDetailsEditor
-        channel={channel}
-        capability={session.channelDetails}
-        menu={{
-          open,
-          finalFocus: trigger,
-          render: (items) => withTemplate(lifecycle, items),
-        }}
-      />
-    ) : (
-      withTemplate(lifecycle)
+      popup(lifecycle)
     );
   return (
     <MenuRoot
@@ -206,10 +179,10 @@ export function ChannelHeaderMenu({
           choose={(action) =>
             handoff.openLifecycle(channel, action, trigger.current ?? undefined)
           }
-          render={withDetails}
+          render={withTemplate}
         />
       ) : (
-        withDetails(null)
+        withTemplate(null)
       )}
     </MenuRoot>
   );

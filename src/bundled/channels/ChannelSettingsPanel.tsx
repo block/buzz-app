@@ -1,5 +1,13 @@
 import { usePanelTabHost } from "../../features/panels/PanelWorkspace";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactElement,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { channelIcon } from "../../features/channels/channel-icon";
 import type { ChannelCanvas } from "../../features/channel-templates/capability";
@@ -9,8 +17,10 @@ import {
   GearIcon,
   CaretRightIcon,
   FileTextIcon,
+  PencilSimpleIcon,
 } from "../../shared/design-system/icons/index";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
+import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import styles from "./Channels.module.css";
@@ -138,7 +148,34 @@ export function ChannelSettingsPanel({
                 <span className={styles.settingsIcon}>
                   <ChannelIcon size={32} aria-hidden="true" />
                 </span>
-                <h3 className="text-heading text-primary">{channel.name}</h3>
+                <h3
+                  className={`text-heading text-primary ${styles.settingsTitle}`}
+                  aria-label={channel.name}
+                >
+                  {edit ? (
+                    <button
+                      type="button"
+                      className={styles.settingsTitleAction}
+                      aria-label={`${edit.label} channel name`}
+                      aria-description={channel.name}
+                      aria-haspopup="dialog"
+                      onClick={(event) => edit.open(event.currentTarget)}
+                    >
+                      <span>
+                        {channel.name}
+                        {"\u2060"}
+                        <span
+                          className={styles.settingsTitlePencil}
+                          aria-hidden="true"
+                        >
+                          <PencilSimpleIcon size={16} />
+                        </span>
+                      </span>
+                    </button>
+                  ) : (
+                    channel.name
+                  )}
+                </h3>
               </div>
               <dl className={styles.settingsDetails}>
                 {channel.channelType !== "session" &&
@@ -173,13 +210,11 @@ export function ChannelSettingsPanel({
                   <SettingsDetail
                     label="Members"
                     value={String(channel.members.length)}
+                    icon={<CaretRightIcon size={16} aria-hidden="true" />}
                     onOpen={openMembers}
                   />
                 )}
-                <div>
-                  <dt>Channel ID</dt>
-                  <dd className={styles.settingsId}>{channel.id}</dd>
-                </div>
+                <ChannelIdDetail key={channel.id} id={channel.id} />
               </dl>
             </>
           )}
@@ -245,38 +280,96 @@ function SettingsDetail({
   value,
   valueClassName,
   actionLabel,
+  icon,
   onOpen,
+  hasPopup = "dialog",
+  disabled = false,
+  renderAction = (action) => action,
 }: {
   label: string;
   value: string;
   valueClassName?: string | undefined;
   actionLabel?: string | undefined;
+  icon?: ReactNode;
+  hasPopup?: "dialog" | false;
+  disabled?: boolean;
+  renderAction?(action: ReactElement<ComponentProps<"button">>): ReactNode;
   onOpen?: ((trigger: HTMLButtonElement) => void) | undefined;
 }) {
   return (
     <div>
       <dt>
-        {onOpen ? (
-          <button
-            type="button"
-            className={styles.settingsDetailAction}
-            aria-label={
-              actionLabel
-                ? `${actionLabel} ${label.toLowerCase()}`
-                : `View ${label.toLowerCase()}`
-            }
-            aria-description={value}
-            aria-haspopup="dialog"
-            onClick={(event) => onOpen(event.currentTarget)}
-          >
-            <span>{label}</span>
-            {actionLabel && <span className="text-link">{actionLabel}</span>}
-          </button>
-        ) : (
-          label
-        )}
+        {onOpen
+          ? renderAction(
+              <button
+                type="button"
+                className={styles.settingsDetailAction}
+                aria-label={
+                  actionLabel
+                    ? `${actionLabel} ${label.toLowerCase()}`
+                    : `View ${label.toLowerCase()}`
+                }
+                aria-description={value}
+                aria-haspopup={hasPopup}
+                aria-disabled={disabled || undefined}
+                onClick={(event) => {
+                  if (!disabled) onOpen(event.currentTarget);
+                }}
+              >
+                <span>{label}</span>
+                {icon ?? <span className="text-link">{actionLabel}</span>}
+              </button>,
+            )
+          : label}
       </dt>
       <dd className={valueClassName}>{value}</dd>
     </div>
+  );
+}
+
+function ChannelIdDetail({ id }: { id: string }) {
+  const [state, setState] = useState<"idle" | "copying" | "copied" | "failed">(
+    "idle",
+  );
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  async function copy() {
+    setState("copying");
+    try {
+      await navigator.clipboard.writeText(id);
+      setState("copied");
+    } catch {
+      setState("failed");
+    }
+    setFeedbackOpen(true);
+  }
+  return (
+    <SettingsDetail
+      label="Channel ID"
+      value={id}
+      valueClassName={styles.settingsId}
+      actionLabel="Copy"
+      hasPopup={false}
+      disabled={state === "copying"}
+      onOpen={() => void copy()}
+      renderAction={(action) => (
+        <Tooltip
+          open={feedbackOpen}
+          closeOnClick={false}
+          onOpenChange={setFeedbackOpen}
+          disableHoverablePopup
+          content={
+            <span role="status">
+              {state === "copied"
+                ? "Channel ID copied"
+                : state === "failed"
+                  ? "Couldn’t copy channel ID. Try again."
+                  : "Copy channel ID"}
+            </span>
+          }
+        >
+          {action}
+        </Tooltip>
+      )}
+    />
   );
 }

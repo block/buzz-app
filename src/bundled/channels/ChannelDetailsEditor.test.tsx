@@ -422,9 +422,15 @@ it("orders metadata, Canvas, and actions and dismisses each edit layer with Esca
     screen.getByRole("button", { name: "Close Channel settings tab" }),
   ).toHaveFocus();
   await user.tab();
+  expect(
+    screen.getByRole("button", { name: "Edit channel name" }),
+  ).toHaveFocus();
+  await user.tab();
   expect(edit).toHaveFocus();
   await user.tab();
   expect(screen.getByRole("button", { name: "Edit visibility" })).toHaveFocus();
+  await user.tab();
+  expect(screen.getByRole("button", { name: "Copy channel id" })).toHaveFocus();
   await user.tab();
   expect(canvas).toHaveFocus();
   await user.tab();
@@ -577,7 +583,7 @@ it.each(["save", "check"] as const)(
     if (operation === "check") expect(h.save).not.toHaveBeenCalled();
   },
 );
-it("a save that becomes uncertain reopens in check-only recovery", async () => {
+it("a save that becomes uncertain reopens through a settings row in check-only recovery", async () => {
   const h = harness();
   const user = userEvent.setup();
   const draft = { ...base, name: "Pending name" };
@@ -586,13 +592,17 @@ it("a save that becomes uncertain reopens in check-only recovery", async () => {
     throw new Error("The change may have been saved.");
   });
   render(
-    <ChannelDetailsEditor
-      scope="community:viewer"
-      capability={h.capability}
+    <ChannelSettingsPanel scope="community:viewer"
       channel={channel}
-    />,
+      details={h.capability}
+      close={() => {}}
+    >
+      Diagnostics
+    </ChannelSettingsPanel>,
   );
-  await user.click(await screen.findByRole("button", { name: "Edit details" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Edit description" }),
+  );
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
     target: { value: draft.name },
   });
@@ -603,7 +613,9 @@ it("a save that becomes uncertain reopens in check-only recovery", async () => {
   await user.click(
     screen.getByRole("button", { name: "Close edit channel details" }),
   );
-  await user.click(screen.getByRole("button", { name: "Edit details" }));
+  await user.click(
+    screen.getByRole("button", { name: "Review pending changes visibility" }),
+  );
   expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(draft.name);
   expect(
     screen.queryByRole("button", { name: "Save changes" }),
@@ -1552,8 +1564,8 @@ it("protects retained text after a failed authority reload", async () => {
   );
 });
 
-it.each(["description", "visibility"])(
-  "opens the full editor from the %s row and returns focus without saving",
+it.each(["description", "visibility", "channel name"])(
+  "opens the full editor from the %s action and returns focus without saving",
   async (field) => {
     const h = harness();
     const user = userEvent.setup();
@@ -1568,7 +1580,15 @@ it.each(["description", "visibility"])(
     );
     const row = await screen.findByRole("button", { name: `Edit ${field}` });
     expect(row).toHaveAttribute("aria-haspopup", "dialog");
-    expect(row).toHaveTextContent("Edit");
+    if (field === "channel name") {
+      expect(row).not.toHaveTextContent("Edit");
+      expect(row.querySelector("svg")?.parentElement).toHaveAttribute(
+        "aria-hidden",
+        "true",
+      );
+    } else {
+      expect(row).toHaveTextContent("Edit");
+    }
     expect(
       screen.queryByRole("button", { name: "Edit details" }),
     ).not.toBeInTheDocument();

@@ -98,15 +98,10 @@ it("loads only on demand, uses the non-compact shared menu, and opens details wi
   ).toEqual([
     "View channel details",
     "View canvas",
-    "Edit details",
     "Archive channel",
     "Delete channel",
   ]);
-  expect(
-    screen
-      .getByRole("menuitem", { name: "Edit details" })
-      .querySelector(".buzz-menu-icon svg"),
-  ).toHaveAttribute("aria-hidden", "true");
+  expect(h.load).not.toHaveBeenCalled();
   expect(h.run).not.toHaveBeenCalled();
   expect(h.save).not.toHaveBeenCalled();
   await user.click(
@@ -149,56 +144,29 @@ it("supports keyboard dismissal, outside clicks, and Canvas with the stable head
   );
   expect(h.props.openCanvas).toHaveBeenCalledWith(trigger);
 });
-it("keeps the real details dialog alive after menu dismissal and returns focus on Cancel", async () => {
+it("does not expose details editing or recovery from the header", async () => {
   const h = harness();
+  h.props.session.channelDetails.snapshot = () => ({
+    draft: { name: "Pending", description: "", visibility: "public" },
+    status: "unconfirmed",
+  });
   h.mount();
   const user = userEvent.setup();
   const trigger = screen.getByRole("button", { name: "Channel actions" });
-  await user.click(trigger);
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Edit details" }),
-  );
-  await screen.findByRole("dialog", { name: "Edit channel details" });
-  await waitFor(() =>
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
-  );
-  await user.type(screen.getByRole("textbox", { name: "Name" }), " draft");
-  await user.click(screen.getByRole("button", { name: "Cancel" }));
-  await waitFor(() => expect(trigger).toHaveFocus());
-  expect(h.save).not.toHaveBeenCalled();
-  await user.click(trigger);
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Edit details" }),
-  );
-  expect(await screen.findByRole("textbox", { name: "Name" })).toHaveValue(
-    "Alpha",
-  );
-});
-it("rechecks permission on reopening and retries a failed details read", async () => {
-  const h = harness();
-  h.mount();
-  const user = userEvent.setup();
-  const trigger = screen.getByRole("button", { name: "Channel actions" });
-  await user.click(trigger);
-  await screen.findByRole("menuitem", { name: "Edit details" });
-  await user.keyboard("{Escape}");
-  h.load.mockRejectedValueOnce(new Error("Unavailable"));
-  await user.click(trigger);
-  await screen.findByText("Channel details unavailable");
-  expect(
-    screen.queryByRole("menuitem", { name: "Edit details" }),
-  ).not.toBeInTheDocument();
-  h.load.mockResolvedValue({ ...h.details, canEdit: false });
-  await user.click(screen.getByRole("menuitem", { name: "Reload details" }));
-  await waitFor(() =>
+  for (let opening = 0; opening < 2; opening++) {
+    await user.click(trigger);
+    await screen.findByRole("menuitem", { name: "Delete channel" });
     expect(
-      screen.queryByText("Channel details unavailable"),
-    ).not.toBeInTheDocument(),
-  );
-  expect(h.load).toHaveBeenCalledTimes(3);
-  expect(
-    screen.queryByRole("menuitem", { name: "Edit details" }),
-  ).not.toBeInTheDocument();
+      screen.queryByRole("menuitem", {
+        name: /Edit details|Review pending changes|Reload details/,
+      }),
+    ).not.toBeInTheDocument();
+    expect(h.load).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
+  }
 });
 it.each([
   { readOnly: true as const },
@@ -216,7 +184,7 @@ it.each([
     screen.queryByRole("menuitem", { name: "Edit details" }),
   ).not.toBeInTheDocument();
 });
-it("does not offer editing for archived channels", async () => {
+it("does not offer lifecycle actions for archived channels", async () => {
   const h = harness({ ...channel, archived: true });
   h.lifecycleLoad.mockResolvedValue({
     channelId: "alpha",

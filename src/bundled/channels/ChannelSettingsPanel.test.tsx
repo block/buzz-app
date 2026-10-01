@@ -7,7 +7,10 @@ import { keypair, signed } from "../../features/relay/testing";
 import type { ChannelCanvas } from "../../features/channel-templates/capability";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 it("shows known channel details with diagnostics collapsed until requested", async () => {
   const user = userEvent.setup();
@@ -114,6 +117,8 @@ it("opens Canvas from its own keyboard-accessible row before setup actions", asy
   expect(
     screen.getByRole("button", { name: "Close Channel settings tab" }),
   ).toHaveFocus();
+  await user.tab();
+  expect(screen.getByRole("button", { name: "Copy channel id" })).toHaveFocus();
   await user.tab();
   expect(canvas).toHaveFocus();
   await user.keyboard("{Enter}");
@@ -325,7 +330,114 @@ it("opens even an empty members list without an Edit ingress", async () => {
   const members = screen.getByRole("button", { name: "View members" });
   expect(members).toHaveAccessibleDescription("0");
   expect(members).not.toHaveTextContent("Edit");
+  expect(members.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
   members.focus();
   await user.keyboard("{Enter}");
   expect(openMembers).toHaveBeenCalledWith(members);
 });
+
+function idPanel(id = "11111111-1111-4111-8111-111111111111") {
+  return (
+    <ChannelSettingsPanel channel={{ id, name: "Alpha" }} close={() => {}}>
+      Diagnostics
+    </ChannelSettingsPanel>
+  );
+}
+
+it("copies the exact channel ID with keyboard access and reports success", async () => {
+  const user = userEvent.setup();
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  render(idPanel());
+  const copy = screen.getByRole("button", { name: "Copy channel id" });
+  expect(copy).toHaveAttribute("aria-haspopup", "false");
+  expect(copy).toHaveTextContent("Copy");
+  copy.focus();
+  await user.keyboard("{Enter}");
+  expect(write).toHaveBeenCalledExactlyOnceWith(
+    "11111111-1111-4111-8111-111111111111",
+  );
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Channel ID copied",
+  );
+  expect(copy).toHaveFocus();
+});
+
+it("keeps the ID visible after clipboard denial and supports retry", async () => {
+  const user = userEvent.setup();
+  const write = vi
+    .spyOn(navigator.clipboard, "writeText")
+    .mockRejectedValueOnce(new Error("denied"))
+    .mockResolvedValue();
+  render(idPanel("alpha"));
+  const copy = screen.getByRole("button", { name: "Copy channel id" });
+  await user.click(copy);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Couldn’t copy channel ID. Try again.",
+  );
+  expect(screen.getByText("alpha")).toBeVisible();
+  expect(copy).toBeEnabled();
+  await user.click(copy);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Channel ID copied",
+  );
+  expect(screen.getByRole("tooltip")).not.toHaveTextContent("Couldn’t");
+  expect(write).toHaveBeenCalledTimes(2);
+});
+
+it("reports an unavailable clipboard without throwing", async () => {
+  const user = userEvent.setup();
+  const descriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  if (!descriptor) throw new Error("Missing clipboard test stub");
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: undefined,
+  });
+  try {
+    render(idPanel());
+    await user.click(screen.getByRole("button", { name: "Copy channel id" }));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Couldn’t copy channel ID.",
+    );
+  } finally {
+    Object.defineProperty(navigator, "clipboard", descriptor);
+  }
+});
+
+it.each(["resolve", "reject"])(
+  "does not show stale copy feedback after changing channels (%s)",
+  async (outcome) => {
+    const user = userEvent.setup();
+    let resolve!: () => void;
+    let reject!: (reason: Error) => void;
+    const pending = new Promise<void>((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    const write = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockReturnValueOnce(pending)
+      .mockResolvedValue();
+    const { rerender } = render(idPanel("alpha"));
+    await user.click(screen.getByRole("button", { name: "Copy channel id" }));
+    try {
+      expect(
+        screen.getByRole("button", { name: "Copy channel id" }),
+      ).toHaveAttribute("aria-disabled", "true");
+      rerender(idPanel("beta"));
+      expect(
+        screen.getByRole("button", { name: "Copy channel id" }),
+      ).toBeEnabled();
+    } finally {
+      await act(async () =>
+        outcome === "resolve" ? resolve() : reject(new Error("denied")),
+      );
+    }
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Copy channel id" }));
+    expect(write).toHaveBeenLastCalledWith("beta");
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Channel ID copied",
+    );
+  },
+);

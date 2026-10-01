@@ -298,8 +298,8 @@ and modeled upstream I/O; it does not send messages to a live community.
 
 The conversation header’s **Channel actions** ellipsis opens the shared, default-size
 (non-compact) menu. **View channel details** is first and opens or focuses the existing
-Channel Settings tab; selecting it again never closes the pane. **View canvas**, eligible
-**Edit details** / **Review pending changes**, optional **Save as template…** and
+Channel Settings tab; selecting it again never closes the pane. Editing is available
+from that pane, not directly from the menu. **View canvas**, optional **Save as template…** and
 **New session**, **Move channel**, **Mute/Unmute**, and **Mark as Read/Unread**
 reuse the sidebar’s action composition and persistent mutation/recovery owners.
 Move replaces the redundant Personal group shortcut. Permission-gated lifecycle
@@ -309,8 +309,8 @@ action; their permissions are not inferred from stream channels. Members retains
 Session headings are unchanged. Header moves and dialog cancellation return focus
 to the ellipsis, while session creation hands focus to its composer. Read-only, cached, archived and DM eligibility stays
 with the existing capabilities. Opening the menu reads permissions, never publishes
-a lifecycle command. Menu Escape/outside dismissal returns to the header; editor and
-confirmation cancellation also return there. Dialog owners outlive menu dismissal,
+a lifecycle command. Menu Escape/outside dismissal returns to the header; Canvas, template
+and lifecycle confirmation cancellation also return there. Dialog owners outlive menu dismissal,
 while channel/session navigation retires them.
 
 ## Channel lifecycle
@@ -470,11 +470,17 @@ No dismissal saves, retries, replaces setup or confirms a destructive action.
 
 Channel Settings shows the signed name, description and explicit visibility for
 ordinary channels; missing visibility stays **Not available**, not implicitly
-Public. Description and Visibility open the shared Dialog with one
-Name/Description/Duration/Private draft. Only authorized editors get interactive
-rows; other viewers retain plain metadata. Members opens the existing member list
-through its conversation navigation owner. The standalone Edit details button and
-Channel type row are omitted.
+Public. The centered title opens the same editor, revealing a pencil on hover or
+keyboard focus (always visible on touch). The pencil follows the final text line;
+balanced side padding keeps the text centered and lets long titles wrap without clipping it. Description and Visibility
+have a trailing link-colored **Edit** action;
+each whole row opens the shared Dialog with one Name/Description/Duration/Private draft.
+Only authorized editors get the interactive rows; other viewers retain plain metadata.
+Members has a right chevron and opens the existing member list. Channel ID has a
+**Copy** action; selecting its row copies the exact ID and shows success or retryable
+failure feedback in a tooltip without growing the row. The redundant standalone
+Edit details button, header-menu Edit details entry and informational Channel type
+row are omitted.
 Duration uses Create's Ongoing/Temporary cards, and Private uses the same
 switch in the action row. These controls stage changes; neither publishes immediately.
 **Save changes** submits the draft together and is enabled only for valid, changed values.
@@ -489,7 +495,7 @@ loading spinner on the disabled edit control without changing its label.
 Saving and permission loading do not add text status rows or reserve empty space;
 viewers without editing authority see neither edit controls nor an explanatory hint.
 Actionable errors and uncertain-save warnings remain visible.
-After an uncertain outcome, The edit controls re-enable so the save may be closed
+After an uncertain outcome, the edit controls re-enable so the save may be closed
 and reopened for check-only recovery, never a blind resend. The panel retains its
 own Close/Escape focus return, conversation and collapsed Diagnostics.
 Names accept 1–120 code points and descriptions up to 1,000. Typing and paste

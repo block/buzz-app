@@ -227,12 +227,6 @@ it("keeps the unavailable section separated without loading permissions", async 
   expect(lifecycle.load).not.toHaveBeenCalled();
 });
 it("confirmation, pending lockout and failed-write recovery stay in the actual dialog", async () => {
-  // jsdom does not implement top-layer focus; that contract is covered in browsers.
-  HTMLDialogElement.prototype.showModal = vi.fn(function (
-    this: HTMLDialogElement,
-  ) {
-    this.setAttribute("open", "");
-  });
   const user = userEvent.setup();
   const lifecycle = capability();
   const completed = vi.fn();
@@ -280,7 +274,15 @@ it("confirmation, pending lockout and failed-write recovery stay in the actual d
     (screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement)
       .disabled,
   ).toBe(true);
-  gate.resolve();
+  try {
+    await user.click(
+      document.querySelector(".buzz-dialog-backdrop") as Element,
+    );
+    await user.keyboard("{Escape}");
+    expect(close).not.toHaveBeenCalled();
+  } finally {
+    gate.resolve();
+  }
   expect((await screen.findByRole("alert")).textContent).toBe("relay rejected");
   expect(completed).not.toHaveBeenCalled();
   expect(confirm.disabled).toBe(false);
@@ -293,15 +295,11 @@ it("confirmation, pending lockout and failed-write recovery stay in the actual d
 it.each(["leave", "hide", "archive", "unarchive"] as const)(
   "%s requires confirmation and ignores completion after unmount",
   async (action) => {
-    HTMLDialogElement.prototype.showModal = vi.fn(function (
-      this: HTMLDialogElement,
-    ) {
-      this.setAttribute("open", "");
-    });
     const lifecycle = capability();
     const gate = deferred<void>();
     lifecycle.run.mockImplementationOnce(() => gate.promise);
     const completed = vi.fn();
+    const close = vi.fn();
     const user = userEvent.setup();
     const view = render(
       <ChannelLifecycleDialog
@@ -309,7 +307,7 @@ it.each(["leave", "hide", "archive", "unarchive"] as const)(
         channelName="Fixture"
         action={action}
         lifecycle={lifecycle}
-        close={() => {}}
+        close={close}
         completed={completed}
       />,
     );
@@ -341,20 +339,29 @@ it.each(["leave", "hide", "archive", "unarchive"] as const)(
     expect(screen.getByRole("status")).toHaveClass("sr-only");
     await user.click(confirm);
     expect(lifecycle.run).toHaveBeenCalledOnce();
-    const signal = vi.mocked(lifecycle.run).mock.calls[0]?.[2];
-    view.unmount();
-    expect(signal?.aborted).toBe(true);
-    gate.resolve();
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    const closeButton = screen.getByRole("button", { name: "Close" });
+    expect(cancel).toBeDisabled();
+    expect(closeButton).toBeDisabled();
+    try {
+      await user.click(cancel);
+      await user.click(closeButton);
+      await user.click(
+        document.querySelector(".buzz-dialog-backdrop") as Element,
+      );
+      await user.keyboard("{Escape}");
+      expect(close).not.toHaveBeenCalled();
+      const signal = vi.mocked(lifecycle.run).mock.calls[0]?.[2];
+      view.unmount();
+      expect(signal?.aborted).toBe(true);
+    } finally {
+      gate.resolve();
+    }
     await gate.promise;
     expect(completed).not.toHaveBeenCalled();
   },
 );
 it("uncertain delivery keeps the dialog recoverable without offering blind resubmission", async () => {
-  HTMLDialogElement.prototype.showModal = vi.fn(function (
-    this: HTMLDialogElement,
-  ) {
-    this.setAttribute("open", "");
-  });
   const lifecycle = capability();
   lifecycle.run.mockRejectedValueOnce(
     new ChannelLifecycleUnconfirmed("connection lost"),
@@ -436,5 +443,58 @@ it.each([true, false])(
     ).not.toHaveAttribute("aria-disabled", "true");
     expect(screen.queryByText("Delete check unavailable")).toBeNull();
     expect(choose).not.toHaveBeenCalled();
+  },
+);
+
+it.each(
+  (
+    [
+      { action: "delete", label: "Delete channel" },
+      { action: "unarchive", label: "Unarchive channel" },
+    ] as const
+  ).flatMap(({ action, label }) =>
+    ["backdrop", "escape", "close", "cancel"].map((dismissal) => ({
+      action,
+      label,
+      dismissal,
+    })),
+  ),
+)(
+  "$action $dismissal dismissal cancels without executing and starts on Cancel",
+  async ({ action, label, dismissal }) => {
+    const user = userEvent.setup();
+    const lifecycle = capability();
+    const close = vi.fn();
+    const completed = vi.fn();
+    render(
+      <ChannelLifecycleDialog
+        channelId="id"
+        channelName="Fixture"
+        action={action}
+        lifecycle={lifecycle}
+        close={close}
+        completed={completed}
+      />,
+    );
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    await waitFor(() => expect(document.activeElement).toBe(cancel));
+    await user.click(
+      screen.getByRole("heading", { name: `${label}: Fixture` }),
+    );
+    expect(close).not.toHaveBeenCalled();
+    if (dismissal === "backdrop")
+      await user.click(
+        document.querySelector(".buzz-dialog-backdrop") as Element,
+      );
+    else if (dismissal === "escape") await user.keyboard("{Escape}");
+    else
+      await user.click(
+        screen.getByRole("button", {
+          name: dismissal === "close" ? "Close" : "Cancel",
+        }),
+      );
+    expect(close).toHaveBeenCalledOnce();
+    expect(lifecycle.run).not.toHaveBeenCalled();
+    expect(completed).not.toHaveBeenCalled();
   },
 );

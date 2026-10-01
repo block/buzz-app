@@ -201,12 +201,32 @@ The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
   fallback (Node.js required):
 
   ```sh
-  npm install -g @earendil-works/pi-coding-agent
-  npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#86b201e'
+  npm install -g '@earendil-works/pi-coding-agent@>=0.99.0'
+  npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#72015de'
   ```
 
 **Check again** re-detects installed Harnesses without reopening Buzz. Status
 is executable detection, not a guarantee of sign-in, ACP readiness or inference.
+The reviewed Pi adapter revision supports native steering, which needs Pi 0.99.0
+or later. Buzz checks the selected Pi CLI's version before agent startup or
+model browsing. An older or unreadable version fails with an error naming the
+selected CLI path and the required update. Verification has a five-second limit
+and receives only basic system environment values, never inherited Buzz or
+provider credentials. Model Cancel retires the probe and its helpers; probing
+runs outside the agent controller lock so Stop and status remain available.
+Start rechecks its ticket and effective Pi settings after verification.
+
+Each app-owned install goes into a new release under
+`node-tools/releases/<adapter revision>.<time>`. Buzz then renames the `pi` and
+`buzz-pi-acp` shims in `node-tools/bin` to point at it, so an agent that starts
+during an update never sees a partial install. Buzz keeps the previous release
+for agents still running from it. When the shims point at a release of an older
+adapter revision, a Ready app-owned Pi offers **Update Pi**, which installs Pi
+and the pinned adapter together. Settings shows no update guidance for a ready
+user-global installation. To update one at `<prefix>/bin/buzz-pi-acp`, rerun both
+commands above with `--prefix <prefix>` so npm updates that copy even when the
+active npm uses another global prefix. Restart running Pi agents after either
+update so new sessions load it.
 Add/Edit links to Settings → Agents for setup instead of telling people to reopen
 the app. The ACP tooltip says:
 
@@ -230,6 +250,15 @@ provider, model, effort and environment variables.
   own workspace/filter inherit the global pair.
 - Changing the default harness in the card clears the default model and effort;
   values entered for the new harness before Save are kept.
+- The effort picker offers common values for the selected harness and keeps
+  custom values editable; support still depends on the selected model. Known Pi
+  and Goose providers show the same masked API key field as agent Create/Edit.
+  A key entered there is a write-only
+  global environment override, used by model lookup and inherited by agents
+  without their own key. Switching provider or harness drops an unsaved key.
+- Model choices include exact IDs. Catalogs over ten models have a local search
+  by name or ID; filtering does not change the selection. Environment removals
+  must be saved before browsing because lookup still inherits saved values.
 
 The store is `defaults.json` under app-data `agent-controller/`, not
 localStorage, written atomically with owner-only permissions (0600).

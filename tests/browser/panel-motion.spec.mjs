@@ -1,6 +1,9 @@
 import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
 
+// Exercise generic panel motion independently of the hidden Bestie launcher.
+test.use({ companionFixture: true });
+
 // Capture real CSS transitions at the DOM-change boundary, before rendering can
 // finish them. transitionrun is queued: a busy renderer can deliver it after the
 // animation has gone, so that event alone is not evidence of a successful hold.
@@ -55,10 +58,10 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
   const launch = page
-    .getByRole("button", { name: "Bestie", exact: true })
+    .getByRole("button", { name: "Companion fixture", exact: true })
     .and(page.locator("button[aria-expanded]"));
   const close = page.getByRole("button", {
-    name: "Close Bestie panel",
+    name: "Close Companion fixture panel",
     exact: true,
   });
   const dock = page.locator("[data-panel-dock]");
@@ -207,10 +210,10 @@ for (const destination of ["Messages", "Projects"]) {
     await page.goto(app.origin);
     await openPage(page, destination);
     const launch = page
-      .getByRole("button", { name: "Bestie", exact: true })
+      .getByRole("button", { name: "Companion fixture", exact: true })
       .and(page.locator("button[aria-expanded]"));
     const close = page.getByRole("button", {
-      name: "Close Bestie panel",
+      name: "Close Companion fixture panel",
       exact: true,
     });
     await launch.click();
@@ -310,10 +313,10 @@ for (const destination of ["Messages", "Projects"]) {
     await page.goto(app.origin);
     await openPage(page, destination);
     const launch = page
-      .getByRole("button", { name: "Bestie", exact: true })
+      .getByRole("button", { name: "Companion fixture", exact: true })
       .and(page.locator("button[aria-expanded]"));
     const close = page.getByRole("button", {
-      name: "Close Bestie panel",
+      name: "Close Companion fixture panel",
       exact: true,
     });
     const dock = page.locator("[data-panel-dock]");

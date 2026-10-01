@@ -697,6 +697,22 @@ export function policyRelay({
             filters.flatMap((filter) => answer(community, filter)),
           );
         }
+        if (filters.length === 2 && filters[1].kinds?.includes(40003)) {
+          // An Activity preview read: the listed newest replies and their edits.
+          const ids = filters[0].ids;
+          expect(ids?.length).toBeGreaterThan(0);
+          expect(ids.length).toBeLessThanOrEqual(5);
+          expect(filters).toEqual([
+            { ids, limit: 5 },
+            { kinds: [40003], "#e": ids, limit: 500 },
+          ]);
+          const community = communityOf(url);
+          for (const filter of filters)
+            report.queries.push({ community, filter, at: performance.now() });
+          return Response.json(
+            filters.flatMap((filter) => answer(community, filter)),
+          );
+        }
         if (filters.length !== 1) {
           // Sidebar preferences read only these four exact own-author coordinates.
           expect(filters).toHaveLength(4);

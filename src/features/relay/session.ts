@@ -1190,16 +1190,17 @@ export function createRelaySession(
             await workSessions.delivered(id, undefined, false, false);
             if (
               !(
-                await verified.read([{ ids: [id], limit: 1 }], {
-                  signal: lifetime.signal,
-                  fresh: true,
-                })
+                await verified.read(
+                  [{ ids: [id], limit: 1, consistency: "strong" }],
+                  { signal: lifetime.signal, fresh: true },
+                )
               ).some((event) => event.id === id)
             )
               throw new Error("Setup is awaiting exact relay confirmation");
           },
           refresh: (id, member) => workSessions.refresh(id, { member }, false),
-          canvasHead: async (id) => (await channelKit.canvas.read(id))?.id,
+          canvasHead: async (id) =>
+            (await channelKit.canvas.read(id, { consistency: "strong" }))?.id,
           async preflight(input) {
             if (
               !input.name.trim() ||

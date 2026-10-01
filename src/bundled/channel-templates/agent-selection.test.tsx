@@ -26,7 +26,7 @@ import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 import { keypair, signed, roster } from "../../features/relay/testing";
 import { matchesEvent } from "../../features/relay/projection";
-import type { RelayEvent } from "../../features/relay/events";
+import type { ReadFilter, RelayEvent } from "../../features/relay/events";
 import { createOutbox, type OutgoingEvent } from "../../features/relay/outbox";
 import type { EventTemplate } from "nostr-tools";
 import type { KitRecord } from "../../features/channel-templates/model";
@@ -105,6 +105,8 @@ function harness(
   });
   const stored = new Map<string, KitRecord>();
   const published: RelayEvent[] = [];
+  const replica = { lag: false };
+  const reads: ReadFilter[] = [];
   const sign = vi.fn(async (value: EventTemplate) => signed(viewer, value));
   let journal: readonly OutgoingEvent[] = [];
   const channels = new Map<string, string[]>([
@@ -177,6 +179,7 @@ function harness(
         },
       },
       query: async (filters) => {
+        reads.push(...filters);
         if (
           filters.some((filter) =>
             filter.kinds?.some((kind) => [39000, 39002].includes(kind)),
@@ -211,7 +214,13 @@ function harness(
           ),
         ];
         return events.filter((event) =>
-          filters.some((filter) => matchesEvent(event, filter)),
+          filters.some(
+            (filter) =>
+              matchesEvent(event, filter) &&
+              (!replica.lag ||
+                filter.consistency === "strong" ||
+                ![9007, 9000, 40100, 39000, 39002].includes(event.kind)),
+          ),
         );
       },
     },
@@ -231,6 +240,8 @@ function harness(
     native,
     fixture,
     published,
+    replica,
+    reads,
     sign,
     viewer,
     journal: () => journal,
@@ -1251,6 +1262,60 @@ it.each([
       ).toHaveLength(1);
     } finally {
       cleanup();
+      test.dispose();
+    }
+  },
+);
+
+it.each(["", "# Seed plan"])(
+  "finishes template setup against the writer with stale replicas and no live echoes (Canvas: %s)",
+  async (canvas) => {
+    const test = harness();
+    test.replica.lag = true;
+    try {
+      const id = await test.owner.session.channelCreation.create({
+        name: "Writer-confirmed setup",
+        visibility: "private",
+        setup: {
+          agents: [test.fixture.agent.pubkey],
+          canvas,
+          groupId: "",
+          templateId: "saved",
+        },
+      });
+      const receipt = `buzz-channel-setup.v2:https://relay.example.test:${test.viewer.pubkey}:${id}`;
+      // Receipt retirement is the completion barrier, not admission or publish ACK.
+      await waitFor(() => expect(localStorage.getItem(receipt)).toBeNull());
+      expect(test.owner.session.channelCreation.notices()).toEqual([]);
+      expect(test.published.map((event) => event.kind)).toEqual(
+        canvas ? [9007, 40100, 9000] : [9007, 9000],
+      );
+      expect(test.sign).toHaveBeenCalledTimes(test.published.length);
+      expect(test.journal()).toEqual([]);
+      expect(test.owner.session.channels.get?.(id)?.members).toContain(
+        test.fixture.agent.pubkey,
+      );
+      for (const event of test.published.filter((event) => event.kind !== 9007))
+        expect(test.reads).toContainEqual({
+          ids: [event.id],
+          limit: 1,
+          consistency: "strong",
+        });
+      if (canvas) {
+        const heads = test.reads.filter((filter) =>
+          filter.kinds?.includes(40100),
+        );
+        expect(heads).toHaveLength(3); // Before seeding, after save, before members.
+        expect(heads.every((filter) => filter.consistency === "strong")).toBe(
+          true,
+        );
+        // Ordinary browsing still uses the lagging replica, not the writer.
+        await expect(
+          test.owner.session.canvas.read(id),
+        ).resolves.toBeUndefined();
+        expect(test.reads.at(-1)?.consistency).toBeUndefined();
+      }
+    } finally {
       test.dispose();
     }
   },

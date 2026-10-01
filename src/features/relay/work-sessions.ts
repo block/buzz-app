@@ -316,7 +316,15 @@ export function createWorkSessions(
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
     const limit = 500;
     const events = await discovery.read(
-      [{ kinds: [39002], authors: [relayAuthor], "#p": [pubkey], limit }],
+      [
+        {
+          kinds: [39002],
+          authors: [relayAuthor],
+          "#p": [pubkey],
+          limit,
+          consistency: "strong",
+        },
+      ],
       {
         signal: AbortSignal.any([signal, caller]),
         fresh: true,
@@ -343,7 +351,15 @@ export function createWorkSessions(
   async function listsMember(id: string, pubkey: string, caller: AbortSignal) {
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
     const events = await discovery.read(
-      [{ kinds: [39002], authors: [relayAuthor], "#d": [id], limit: 1 }],
+      [
+        {
+          kinds: [39002],
+          authors: [relayAuthor],
+          "#d": [id],
+          limit: 1,
+          consistency: "strong",
+        },
+      ],
       {
         signal: AbortSignal.any([signal, caller]),
         fresh: true,

@@ -460,19 +460,19 @@ mod tests {
             .await
             .unwrap();
         assert!(membership_allows(
-            &[room.clone()],
+            std::slice::from_ref(&room),
             &authority,
             &viewer,
             &["parent", "room"]
         ));
         assert!(!membership_allows(
-            &[room.clone()],
+            std::slice::from_ref(&room),
             &authority,
             &viewer,
             &["parent"]
         ));
         assert!(!membership_allows(
-            &[room.clone()],
+            std::slice::from_ref(&room),
             &viewer,
             &viewer,
             &["room"]

@@ -33,8 +33,13 @@ behavior.
 DM read clears the channel through its newest retained evidence. Thread read
 advances the thread prefix, including earlier unshown replies, plus individually
 represented top-level mentions and local message marks, but not unrelated
-messages. Multiple steps are not atomic: failures leave remaining evidence
-retryable. Manual unread is local to this device. Hosts without frontier-sync
+messages. Participation follows the shared unread owner's direct-parent policy,
+including its existing bounded lookups for replies whose membership is undecided.
+Fetched roots and participation witnesses remain structural, never extra Inbox rows.
+A lookup-only root uses the existing exact-message manual-unread target until counted
+root evidence arrives; its known root still supplies grouping and read-through.
+Relevant replies remain thread activity even when the root cannot be fetched.
+Multiple steps are not atomic: failures leave remaining evidence retryable. Manual unread is local to this device. Hosts without frontier-sync
 disable read mutations. Saved frontiers are not proof of remote reconciliation.
 
 This is **bounded recent evidence**, not a complete historical inbox. Unread

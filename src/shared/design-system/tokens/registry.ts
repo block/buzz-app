@@ -430,6 +430,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         use: "Gray native scrollbar thumb on a transparent track, including vendor shadow roots.",
         status: "core",
       },
+      {
+        token: "scrollbar-thumb-quiet",
+        variable: "--scrollbar-thumb-quiet",
+        pointsAt: "border-standard at 90% opacity",
+        use: "Quiet sidebar and navigation-tab scrollbar thumb, revealed on interaction.",
+        status: "core",
+      },
     ],
   },
   {
@@ -693,6 +700,29 @@ export const ROLE_GROUPS: RoleGroup[] = [
     ],
   },
 
+  {
+    id: "terminal-art",
+    name: "Terminal artwork",
+    description: "Warm palette endpoints for the decorative terminal welcome.",
+    roles: [
+      {
+        token: "art-terminal-start",
+        variable: "--art-terminal-start",
+        pointsAt: "orange 9",
+        use: "The orange endpoint of terminal welcome lettering.",
+        status: "proposed",
+        owner: "Terminal",
+      },
+      {
+        token: "art-terminal-end",
+        variable: "--art-terminal-end",
+        pointsAt: "amber 9",
+        use: "The amber endpoint of terminal welcome lettering.",
+        status: "proposed",
+        owner: "Terminal",
+      },
+    ],
+  },
   {
     id: "surfaces",
     name: "Structural surfaces",

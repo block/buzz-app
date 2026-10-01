@@ -482,6 +482,8 @@
    ============================================================ */
 
 :root {
+  --art-terminal-start: var(--orange-9);
+  --art-terminal-end: var(--amber-9);
   --gradient-1: var(--gradient-sky-field);
   --gradient-2: var(--gradient-peach-field);
   --gradient-3: var(--gradient-blue-hour);
@@ -525,6 +527,11 @@
   --affordance-link-hover: var(--blue-3);
   --border-standard: var(--neutral-3);
   --scrollbar-thumb: var(--neutral-8);
+  --scrollbar-thumb-quiet: color-mix(
+    in srgb,
+    var(--border-standard) 90%,
+    transparent
+  );
   --border-prominent: var(--neutral-8);
   --border-focus: var(--neutral-12);
   --border-danger: var(--red-9);
@@ -586,6 +593,11 @@
   --affordance-link-hover: var(--blue-3);
   --border-standard: var(--neutral-4);
   --scrollbar-thumb: var(--neutral-9);
+  --scrollbar-thumb-quiet: color-mix(
+    in srgb,
+    var(--border-standard) 90%,
+    transparent
+  );
   --border-prominent: var(--neutral-8);
   --border-focus: var(--neutral-12);
   --border-danger: var(--red-9);

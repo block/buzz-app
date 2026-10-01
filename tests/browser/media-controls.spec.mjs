@@ -37,6 +37,12 @@ for (const kind of ["image", "video"]) {
       await expect(
         dialog.getByRole("button", { name: "Play video", exact: true }),
       ).toBeVisible();
+      // Portrait artwork must fill its avatar, independently of the video's fit.
+      const portrait = dialog
+        .getByRole("button", { name: "Seek to 00:00.5, Alex", exact: true })
+        .locator("img");
+      await expect(portrait).toHaveAttribute("data-loaded", "true");
+      await expect(portrait).toHaveCSS("object-fit", "cover");
     }
     for (const width of [320, 800, 1280]) {
       await page.setViewportSize({ width, height: 720 });

@@ -1078,7 +1078,9 @@ function ReadySidebar({
                     }
                   >
                     {section.rows.map((channel) => {
-                      const sessions = childrenByParent.get(channel.id);
+                      const sessions = sessionsEnabled
+                        ? childrenByParent.get(channel.id)
+                        : undefined;
                       const selected =
                         current?.id === channel.id ||
                         sessions?.some((child) => child.id === current?.id)
@@ -1107,7 +1109,9 @@ function ReadySidebar({
                             `session-children:${channel.id}`,
                           )}
                           onToggle={sidebar.toggle}
-                          draft={draftParents.includes(channel.id)}
+                          draft={
+                            sessionsEnabled && draftParents.includes(channel.id)
+                          }
                           draftSelected={draftParent === channel.id}
                           sessions={sessions}
                           onSelect={select}

@@ -154,6 +154,55 @@ function fixture(
   return { view, navigator, snapshot, list, session };
 }
 
+it("hides session disclosure and children while the Sessions plugin is disabled", async () => {
+  const h = fixture();
+  const channels: ChannelList["channels"] = [
+    ...h.list.channels,
+    {
+      id: "child",
+      name: "Plan",
+      channelType: "session",
+      parentChannelId: "alpha",
+    },
+  ];
+  vi.spyOn(h.session.channels, "list").mockReturnValue({ ...h.list, channels });
+  const mounted = render(h.view("alpha", false));
+  await screen.findByRole("button", { name: "alpha" });
+  expect(
+    screen.queryByRole("button", { name: /sessions in alpha/ }),
+  ).toBeNull();
+  expect(
+    screen.queryByRole("button", {
+      name: "Plan, session in alpha",
+      hidden: true,
+    }),
+  ).toBeNull();
+
+  mounted.rerender(h.view("alpha", true));
+  expect(
+    screen.getByRole("button", { name: /sessions in alpha/ }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", {
+      name: "Plan, session in alpha",
+      hidden: true,
+    }),
+  ).toBeInTheDocument();
+
+  mounted.rerender(h.view("alpha", false));
+  expect(
+    screen.queryByRole("button", { name: /sessions in alpha/ }),
+  ).toBeNull();
+  expect(
+    screen.queryByRole("button", {
+      name: "Plan, session in alpha",
+      hidden: true,
+    }),
+  ).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "alpha" }));
+  expect(h.navigator.open).toHaveBeenCalled();
+});
+
 it("does not rebuild unchanged rows on channel switches and refreshes session action eligibility", async () => {
   const h = fixture();
   const mounted = render(h.view("alpha"));

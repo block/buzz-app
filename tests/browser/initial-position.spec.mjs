@@ -112,20 +112,30 @@ readingTest(
   },
 );
 
-for (const count of [1, 3, 5, 7, 9]) {
-  const nearFitTest = test.extend({
-    historyCounts: { alpha: 1, beta: count },
-  });
-  nearFitTest(
-    `near-fit channel with ${count} mixed-height rows starts at bottom`,
-    async ({ page, app }) => {
-      await open(page, app);
-      expect(app.histories.get("primary/beta")).toHaveLength(count);
-      await select(page, "Beta");
-      await bottom(page, app, `cold ${count}-row Beta`);
+// One launch opens every near-fit length: each channel is still entered cold,
+// then warm, and the row counts do not interact.
+const nearFitCounts = [1, 3, 5, 7, 9];
+const nearFitTest = test.extend({
+  channelIds: ["alpha", ...nearFitCounts.map((count) => `rows-${count}`)],
+  historyCounts: {
+    alpha: 1,
+    ...Object.fromEntries(
+      nearFitCounts.map((count) => [`rows-${count}`, count]),
+    ),
+  },
+});
+nearFitTest(
+  "near-fit channels with 1 to 9 mixed-height rows start at bottom",
+  async ({ page, app }) => {
+    await open(page, app);
+    for (const count of nearFitCounts) {
+      const name = `rows-${count}`;
+      expect(app.histories.get(`primary/${name}`)).toHaveLength(count);
+      await select(page, name);
+      await bottom(page, app, `cold ${count}-row channel`);
       await select(page, "Alpha");
-      await select(page, "Beta");
-      await bottom(page, app, `warm ${count}-row Beta`);
-    },
-  );
-}
+      await select(page, name);
+      await bottom(page, app, `warm ${count}-row channel`);
+    }
+  },
+);

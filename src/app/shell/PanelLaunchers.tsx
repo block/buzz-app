@@ -13,7 +13,10 @@ export function PanelLaunchers({
   launch(panel: RegisteredPanel, trigger: HTMLButtonElement): void;
 }) {
   return panels
-    .filter((panel) => panel.launcher || panel.toolbar)
+    .filter(
+      (panel) =>
+        (panel.launcher || panel.toolbar) && panel.pluginId !== "buzz.bestie",
+    )
     .map((panel) =>
       panel.toolbar ? (
         <ToolbarBoundary
@@ -26,7 +29,7 @@ export function PanelLaunchers({
         <IconButton
           type="button"
           key={`${panel.key}:${panel.revision}`}
-          variant="chrome"
+          variant="ghost"
           shape="round"
           aria-label={panel.title}
           title={panel.title}

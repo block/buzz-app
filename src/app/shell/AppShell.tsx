@@ -12,6 +12,7 @@ import { CommunityRail } from "../../features/communities/CommunityRail";
 import { ProfileButton } from "./ProfileButton";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import { orderPages, pagePresentation } from "./presentation";
+import { PageIcon } from "./PageIcon";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 import { macTitleBarDragHandlers } from "./title-bar";
 
@@ -99,7 +100,7 @@ export function AppShell({
     const pageNavigation = primaryPages.length ? (
       <nav aria-label="Pages" className="shell-pages">
         {primaryPages.map((page) => {
-          const { label, icon: Icon } = pagePresentation(page);
+          const { label, icon, image } = pagePresentation(page);
           return (
             <NavigationItem
               type="button"
@@ -114,7 +115,12 @@ export function AppShell({
               label={label}
               icon={
                 <span className="shell-page-icon">
-                  <Icon aria-hidden="true" strokeWidth={2.5} size={15} />
+                  <PageIcon
+                    icon={icon}
+                    image={image}
+                    size={15}
+                    strokeWidth={2.5}
+                  />
                 </span>
               }
             />

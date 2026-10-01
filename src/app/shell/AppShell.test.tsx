@@ -104,3 +104,42 @@ it("hides and shows the channel sidebar without re-rendering its content", async
   expect(renders.mock.calls.length).toBeGreaterThan(rendered);
   expect(row()).not.toHaveAttribute("aria-current");
 });
+
+it("shows a primary plugin page's declared icon beside its nav label", () => {
+  const current = createServices();
+  services = current;
+  const icon = "data:image/png;base64,iVBORbeacon";
+  const pages: RegisteredPage[] = [
+    {
+      id: "main",
+      key: "example.plugin/main",
+      pluginId: "example.plugin",
+      revision: "1",
+      title: "Beacon",
+      component: () => null,
+      primary: true,
+      icon,
+    },
+  ];
+  render(
+    <ToastProvider>
+      <AppShell
+        pages={pages}
+        selected="example.plugin/main"
+        navigationAttempt=""
+        onSelect={() => {}}
+        tone="default"
+        communities={current.communities}
+        accountActions={current.accountActions}
+      >
+        content
+      </AppShell>
+    </ToastProvider>,
+  );
+  const row = within(
+    screen.getByRole("navigation", { name: "Pages" }),
+  ).getByRole("button", { name: "Beacon" });
+  const image = row.querySelector("img");
+  expect(image).toBeInstanceOf(HTMLImageElement);
+  expect(image).toHaveAttribute("src", icon);
+});

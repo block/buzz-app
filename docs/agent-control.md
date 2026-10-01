@@ -50,6 +50,16 @@ worker count. With **Each thread** conversation context, separate threads can
 use different workers while retaining separate histories. Existing saved agents
 keep their settings; add the variable and restart them to enable more workers.
 
+Pi and Goose apply permitted Environment overrides after saved fields and
+imported settings. For example, `BUZZ_ACP_MODEL`, `BUZZ_ACP_SYSTEM_PROMPT`, and
+`BUZZ_ACP_AGENTS` take precedence at launch; worker counts must be from 1 to 32.
+Removing an override restores the saved/default setting. Identity, relay routing,
+executable commands, response policy, team instructions, and host lifecycle,
+readiness, and replay controls remain protected. Device-wide Pi/Goose behavior
+overrides are inherited only by harnesses that permit them. Buzz Agent retains
+its existing environment policy. Pi model browsing and connection tests use the
+Provider/Model fields; ACP overrides apply to the listener's sessions at launch.
+
 **Not imported from old Buzz** is a separate collapsible section. Expanding it
 loads installed identities for the connected community; already-managed exact
 identities are excluded. Each remaining row says **Not imported** and has its own

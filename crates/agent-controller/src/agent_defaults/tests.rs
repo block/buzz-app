@@ -253,6 +253,43 @@ fn environment_patch_is_write_only_and_validated() {
     let mut reserved = edit("buzz-agent", "", "");
     reserved.environment = BTreeMap::from([("BUZZ_PRIVATE_KEY".into(), Some("x".into()))]);
     assert!(saved.apply(reserved).is_err());
+
+    for harness in ["pi", "goose"] {
+        let mut patch = edit(harness, "model", "");
+        patch.environment = BTreeMap::from([
+            ("BUZZ_ACP_MODEL".into(), Some("private-model".into())),
+            (
+                "BUZZ_ACP_SYSTEM_PROMPT".into(),
+                Some("private-prompt".into()),
+            ),
+            ("BUZZ_ACP_AGENTS".into(), Some("10".into())),
+        ]);
+        saved.apply(patch).unwrap();
+        let wire = serde_json::to_string(&saved.view()).unwrap();
+        assert!(!wire.contains("private-model") && !wire.contains("private-prompt"));
+        let mut agent = fixture();
+        agent.harness.command = "buzz-agent".into();
+        let out = effective(&agent, &saved);
+        out.validate().unwrap();
+        assert!(!out.environment.contains_key("BUZZ_ACP_MODEL"));
+        assert!(!out.environment.contains_key("BUZZ_ACP_SYSTEM_PROMPT"));
+        assert_eq!(out.environment["BUZZ_ACP_AGENTS"], "10");
+        agent.harness.command = if harness == "pi" {
+            "/opt/tools/buzz-pi-acp"
+        } else {
+            "goose-acp"
+        }
+        .into();
+        let inherited = effective(&agent, &saved);
+        assert_eq!(inherited.environment["BUZZ_ACP_MODEL"], "private-model");
+        agent
+            .environment
+            .insert("BUZZ_ACP_MODEL".into(), "agent-model".into());
+        assert_eq!(
+            effective(&agent, &saved).environment["BUZZ_ACP_MODEL"],
+            "agent-model"
+        );
+    }
 }
 
 #[test]

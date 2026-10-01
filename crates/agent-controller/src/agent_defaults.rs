@@ -120,7 +120,12 @@ impl AgentDefaults {
                 return Err(format!("{label} is too long or invalid"));
             }
         }
-        crate::config::validate_environment(&self.environment)
+        let command = if self.harness == "pi" {
+            "buzz-pi-acp"
+        } else {
+            &self.harness
+        };
+        crate::config::validate_environment(&self.environment, command)
     }
 }
 
@@ -156,6 +161,11 @@ pub(crate) fn effective_settings(
     let own_databricks =
         harness_kind(&harness.command) == Some("buzz-agent") && harness.databricks.is_some();
     for (key, value) in &defaults.environment {
+        // A Pi/Goose behavior override must not expand another harness's
+        // accepted configuration when device-wide defaults are inherited.
+        if crate::config::validate_env_key(key, &harness.command).is_err() {
+            continue;
+        }
         if own_databricks && matches!(key.as_str(), "DATABRICKS_HOST" | "DATABRICKS_MODEL_FILTER") {
             continue;
         }

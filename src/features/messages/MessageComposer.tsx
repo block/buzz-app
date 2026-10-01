@@ -1,3 +1,4 @@
+import { TypingPresentation } from "../conversation/typing-presentation";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { useMessageDeletion } from "./MessageManagement";
@@ -128,15 +129,17 @@ export type MessageComposerProps = {
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function MessageComposer(props: MessageComposerProps) {
   return (
-    <Composer
-      key={`${props.submission?.draftKey ?? ""}:${messageViewKey(
-        props.session,
-        props.scope,
-        props.channelId,
-        props.threadRootId,
-      )}`}
-      {...props}
-    />
+    <TypingPresentation active>
+      <Composer
+        key={`${props.submission?.draftKey ?? ""}:${messageViewKey(
+          props.session,
+          props.scope,
+          props.channelId,
+          props.threadRootId,
+        )}`}
+        {...props}
+      />
+    </TypingPresentation>
   );
 }
 function Composer({

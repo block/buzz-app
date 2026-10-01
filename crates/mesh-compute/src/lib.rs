@@ -35,3 +35,8 @@ mod tests {
         assert!(!super::status().available);
     }
 }
+
+#[cfg(feature = "mesh")]
+pub mod discovery;
+#[cfg(feature = "mesh")]
+pub mod discovery_types;

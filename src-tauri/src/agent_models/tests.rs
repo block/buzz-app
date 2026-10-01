@@ -700,6 +700,7 @@ fn pi_catalog_uses_native_ticket_and_draft_configuration_without_saving() {
     for tool in ["pi", "node", "buzz-pi-acp"] {
         let file = tools.join(tool);
         std::fs::write(&file, r#"#!/bin/sh
+if [ "$1" = --version ]; then printf '0.99.1\n'; exit 0; fi
 read request
 [ "$PI_CODING_AGENT_DIR" -ef "./local-config" ] || exit 1
 [ "$BUZZ_PRIVATE_KEY" = "" ] || exit 1

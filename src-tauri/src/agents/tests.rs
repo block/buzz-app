@@ -2015,7 +2015,7 @@ fn pi_model_lookup_waits_out_brief_host_contention() {
     std::fs::create_dir(&tools).unwrap();
     for tool in ["pi", "node", "buzz-pi-acp"] {
         let file = tools.join(tool);
-        std::fs::write(&file, "#!/bin/sh\nread request\nprintf '%s\\n' '{\"id\":\"catalog\",\"type\":\"response\",\"command\":\"get_available_models\",\"success\":true,\"data\":{\"models\":[{\"provider\":\"databricks\",\"id\":\"model-a\"}]}}'\n").unwrap();
+        std::fs::write(&file, "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.99.1\\n'; exit 0; fi\nread request\nprintf '%s\\n' '{\"id\":\"catalog\",\"type\":\"response\",\"command\":\"get_available_models\",\"success\":true,\"data\":{\"models\":[{\"provider\":\"databricks\",\"id\":\"model-a\"}]}}'\n").unwrap();
         std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
     // Another native operation (for example a snapshot refresh) briefly holds
@@ -2059,7 +2059,7 @@ fn pi_connection_test_prompts_the_draft_selection() {
     std::fs::create_dir(&tools).unwrap();
     for tool in ["pi", "node", "buzz-pi-acp"] {
         let file = tools.join(tool);
-        std::fs::write(&file, "#!/bin/sh\nread request\ncase \"$*\" in *'--model model-a'*) stop=stop;; *) stop=error;; esac\nprintf '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"stopReason\":\"%s\",\"errorMessage\":\"401\"}}\\n' \"$stop\"\n").unwrap();
+        std::fs::write(&file, "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.99.1\\n'; exit 0; fi\nread request\ncase \"$*\" in *'--model model-a'*) stop=stop;; *) stop=error;; esac\nprintf '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"stopReason\":\"%s\",\"errorMessage\":\"401\"}}\\n' \"$stop\"\n").unwrap();
         std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
     let test = |model: &str| {

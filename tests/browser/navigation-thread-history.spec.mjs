@@ -1,5 +1,5 @@
 import { test, expect, ids } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, virtuaIdle, wheel } from "./timeline.mjs";
 
 test.use({
   productionBroker: true,
@@ -148,7 +148,7 @@ for (const mode of ["bottom", "reading", "jump"]) {
         .getByRole("button", { name: /^View thread:/ });
       // Virtua can retain its pointer lock after geometry stops moving. Wait
       // for input readiness before Playwright tries alternate scroll alignments.
-      await expect(trigger).toHaveCSS("pointer-events", "auto");
+      await virtuaIdle(page);
       await trigger.click();
       await expect(
         region.getByText("New peer reply", { exact: true }),
@@ -311,7 +311,7 @@ for (const mode of ["bottom", "reading", "jump"]) {
         ).toBeInViewport();
         await expect(jumpToLatest).toHaveCount(0);
         await region.hover();
-        await page.mouse.wheel(0, -500);
+        await wheel(page, -500, region);
         await expect
           .poll(() =>
             region.evaluate(

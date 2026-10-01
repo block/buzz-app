@@ -108,7 +108,6 @@ test("built sidebar → visible dwell → durable journal → relay write; reloa
   page,
   app,
 }) => {
-  await page.clock.install();
   await open(page, app);
   const all = app.histories.get(`primary/${ids.alpha}`);
   // The relay counts the whole channel; there is no client-side repair bound.
@@ -117,7 +116,11 @@ test("built sidebar → visible dwell → durable journal → relay write; reloa
     new RegExp(`^${all.length} unread messages`),
   );
   await park(page);
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  // Install after startup and focus cancellation have settled on the real
+  // clock; pause at a fixed instant rather than the page's ticking clock.
+  const base = Date.now();
+  await page.clock.install({ time: base });
+  await page.clock.pauseAt(base + 20_000);
   await page.clock.runFor(900); // Sidebar focus is not reading, even past dwell.
   expect(await journal(page)).toEqual({ pending: [], manual: [] });
   expect(app.report.readWrites).toEqual([]);
@@ -170,7 +173,6 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
   page,
   app,
 }) => {
-  await page.clock.install();
   app.relay.sidebarApi.hold();
   try {
     await open(page, app);
@@ -193,7 +195,11 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
     )
     .toEqual({ status: "reconciled", completeness: "snapshot" });
   await park(page);
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  // As above: install after startup and focus cancellation, then pause at
+  // fixed instants from one base.
+  const base = Date.now();
+  await page.clock.install({ time: base });
+  await page.clock.pauseAt(base + 20_000);
   await history(page).focus();
   const visibleIds = await visible(page);
   expect(visibleIds.length).toBeGreaterThan(0);
@@ -242,6 +248,7 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
     }),
   ).toBeVisible();
   await park(page);
+  // Native append/layout ran with the clock resumed; pause on its advanced clock.
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await history(page).focus();
   await page.clock.runFor(1000);
@@ -276,7 +283,6 @@ test("a surviving window delivers a closed window's saved read intent", async ({
   context,
   app,
 }) => {
-  await page.clock.install();
   await holdReadingFocus(page);
   await open(page, app);
   await park(page);
@@ -307,7 +313,11 @@ test("a surviving window delivers a closed window's saved read intent", async ({
       await window.evaluate(() =>
         window.fixtureRelay.snapshot().session.unread.ensure(),
       );
-    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+    // Both windows are parked and their durable owners are ready before the
+    // context-wide clock is installed. No ticking startup interval to overtake.
+    const base = Date.now();
+    await page.clock.install({ time: base });
+    await page.clock.pauseAt(base + 20_000);
     expect(await journal(page)).toEqual({ pending: [], manual: [] });
     await page.bringToFront();
     const visibleIds = await visible(page);

@@ -1,5 +1,5 @@
 import { test, expect, ids } from "./fixture.mjs";
-import { open, end } from "./timeline.mjs";
+import { open, end, edge } from "./timeline.mjs";
 
 test.use({
   productionBroker: true,
@@ -128,10 +128,12 @@ for (const scope of ["channel", "thread"]) {
       // Scrollback deliberately moved away from the tail.
       // Establish the bottom-reading precondition with real browser input before
       // capturing geometry; the assertions below verify typing keeps it there.
+      // ThreadPanel re-pins only on a snapshot change, so a wheel that stopped
+      // short would have no other way down: edge() waits for the gesture's
+      // scrollend and asserts the bottom before the exact poll below.
       // Point at message text: the hovered row's floating toolbar can cover
       // the centre, and a wheel over it does not scroll the thread.
-      await history.hover({ position: { x: 100, y: 100 } });
-      await page.mouse.wheel(0, Math.max(1, await gap()));
+      await edge(page, 1, history, { x: 100, y: 100 });
     }
     await expect.poll(gap).toBeLessThan(2);
     expect(

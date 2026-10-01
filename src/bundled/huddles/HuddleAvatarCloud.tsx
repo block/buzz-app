@@ -328,7 +328,7 @@ function SpeakingHalo({ level, peer }: { level: number; peer: string }) {
       aria-hidden="true"
       style={
         {
-          "--speaker-scale": 1.08 + (0.08 + level * 0.92) * 1.55,
+          "--speaker-scale": 1.12 + Math.max(0, Math.min(1, level)) * 0.9,
         } as CSSProperties
       }
     />

@@ -1,0 +1,70 @@
+.card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  max-width: 440px;
+  background: var(--surface-panel);
+}
+.details {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.details time {
+  font-variant-numeric: tabular-nums;
+}
+.status {
+  color: var(--status-online);
+  width: var(--space-8);
+  display: grid;
+  place-items: center;
+}
+.actions {
+  display: flex;
+  gap: var(--space-1);
+}
+.people {
+  display: flex;
+  padding-left: var(--space-1);
+}
+.people > span {
+  margin-left: calc(-1 * var(--space-1));
+  width: var(--space-6);
+  height: var(--space-6);
+  border-radius: var(--radius-pill);
+  background: var(--surface-inset);
+  border: 2px solid var(--surface-panel);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  font-size: var(--text-caption);
+}
+.people img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.wave {
+  display: flex;
+  gap: var(--space-half);
+  align-items: center;
+  height: 24px;
+}
+.wave i {
+  width: 3px;
+  height: 8px;
+  background: currentColor;
+  border-radius: var(--radius-pill);
+}
+.wave i:nth-child(2),
+.wave i:nth-child(4) {
+  height: 16px;
+}
+.wave i:nth-child(3) {
+  height: 24px;
+}

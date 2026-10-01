@@ -1,5 +1,5 @@
 import { test, expect, chromium } from "@playwright/test";
-import { createServer } from "vite";
+import { createServer } from "./vite-server.mjs";
 import { fileURLToPath } from "node:url";
 
 let server, origin;
@@ -15,7 +15,7 @@ test.afterAll(async () => {
   await server?.close();
 });
 
-test("closing the default Huddle window reveals compact controls without a panel", async ({
+test("connected Huddles keep compact controls beside the default window", async ({
   page,
 }) => {
   await page.goto(`${origin}/tests/fixtures/huddles.html?deferConnection`);
@@ -43,7 +43,7 @@ test("closing the default Huddle window reveals compact controls without a panel
   ).toBeVisible();
   await expect(
     page.getByRole("group", { name: "Active Huddle", exact: true }),
-  ).toHaveCount(0);
+  ).toBeVisible();
   await page.getByRole("button", { name: "Close Huddle window" }).click();
   const capsule = page.getByRole("group", {
     name: "Active Huddle",
@@ -134,7 +134,7 @@ test("closing the default Huddle window reveals compact controls without a panel
     exact: true,
   });
   await expect(leaveButton.locator("svg")).toHaveCount(0);
-  await expect(leaveButton).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(leaveButton).toHaveAttribute("data-variant", "destructive");
   await capsule.getByRole("button", { name: "Mute", exact: true }).click();
   await expect(
     capsule.getByRole("button", { name: "Unmute", exact: true }),
@@ -220,7 +220,11 @@ test("real capture emits 20ms frames and stops on mute and plugin disposal", asy
     expect(
       await page.evaluate(() => window.huddleFixture.stats.lastFrameLength),
     ).toBe(960);
-    await page.getByRole("button", { name: "Mute", exact: true }).click();
+    const controls = page.getByRole("group", {
+      name: "Active Huddle",
+      exact: true,
+    });
+    await controls.getByRole("button", { name: "Mute", exact: true }).click();
     const before = await page.evaluate(() => window.huddleFixture.stats.frames);
     expect(
       await page.evaluate(() =>
@@ -230,7 +234,7 @@ test("real capture emits 20ms frames and stops on mute and plugin disposal", asy
     expect(await page.evaluate(() => window.huddleFixture.stats.frames)).toBe(
       before,
     );
-    await page.getByRole("button", { name: "Unmute", exact: true }).click();
+    await controls.getByRole("button", { name: "Unmute", exact: true }).click();
     await expect
       .poll(() => page.evaluate(() => window.huddleFixture.stats.frames))
       .toBeGreaterThan(before);
@@ -267,7 +271,7 @@ test("capsule and companion presentation share mute and leave", async ({
     name: "Active Huddle",
     exact: true,
   });
-  await expect(capsule).toHaveCount(0);
+  await expect(capsule).toBeVisible();
   const companion = page.getByRole("complementary", {
     name: "Huddle window preview",
   });
@@ -346,6 +350,14 @@ test("capsule and companion presentation share mute and leave", async ({
         width: area.width,
         height: area.height,
         self: bounds(el.querySelector("[data-self]")),
+        portraitGaps: [
+          ...el.querySelectorAll("[data-self], [data-participant]"),
+        ].map((person) =>
+          Math.abs(
+            person.getBoundingClientRect().height -
+              person.querySelector("[role=img]").getBoundingClientRect().height,
+          ),
+        ),
         peers: [...el.querySelectorAll("[data-participant]")].map(bounds),
       };
     });
@@ -353,6 +365,7 @@ test("capsule and companion presentation share mute and leave", async ({
       geometry.width * (count === 1 ? 0.5 : 0.17),
       0,
     );
+    expect(geometry.portraitGaps.every((gap) => gap < 0.1)).toBe(true);
     await expectNamesClear();
     for (const bubble of [geometry.self, ...geometry.peers]) {
       expect(bubble.left).toBeGreaterThanOrEqual(0);
@@ -443,7 +456,12 @@ test("capsule and companion presentation share mute and leave", async ({
     await roster.evaluate((el) => el.getAnimations({ subtree: true }).length),
   ).toBe(0);
   await companion.getByRole("button", { name: "Mute", exact: true }).click();
-  await page.getByRole("button", { name: "Close Huddle window" }).click();
+  await expect(
+    capsule.getByRole("button", { name: "Unmute", exact: true }),
+  ).toBeVisible();
+  await companion
+    .getByRole("button", { name: "Minimize Huddle to compact controls" })
+    .click();
   await expect(companion).toHaveCount(0);
   expect(
     await page.evaluate(() => window.huddleFixture.stats.audioClosed),
@@ -451,7 +469,7 @@ test("capsule and companion presentation share mute and leave", async ({
   await capsule
     .getByRole("button", { name: "Open Huddle window for Design" })
     .click();
-  await expect(capsule).toHaveCount(0);
+  await expect(capsule).toBeVisible();
   await expect(
     companion.getByRole("button", { name: "Unmute", exact: true }),
   ).toBeVisible();
@@ -674,5 +692,75 @@ test("active chat has a split Huddle menu for members and a join-path link", asy
   await page.getByRole("menuitem", { name: "Add someone" }).click();
   await expect(
     page.getByText("DM membership cannot be changed here."),
+  ).toBeVisible();
+});
+
+// Browser boundary: the separate presentation expands without crowding the call,
+// retains its draft across tab switching, and shares the room with the saved panel.
+test("Huddle chat expands beside the call and stays separate from Live transcript", async ({
+  page,
+}) => {
+  await page.goto(`${origin}/tests/fixtures/huddles.html?chrome`);
+  await page.getByRole("button", { name: "Join", exact: true }).click();
+  const companion = page.getByRole("complementary", {
+    name: "Huddle window preview",
+    exact: true,
+  });
+  await companion
+    .getByRole("button", { name: "Huddle chat", exact: true })
+    .click();
+  const panel = companion.getByRole("complementary", {
+    name: "Huddle chat panel",
+    exact: true,
+  });
+  await expect(
+    panel.getByText("Let’s keep our notes here while we talk."),
+  ).toBeVisible();
+  const portrait = await panel.locator("img").boundingBox();
+  expect(portrait.width).toBeLessThanOrEqual(32);
+  const composer = panel.getByRole("textbox", { name: "Message this Huddle" });
+  await composer.fill("Follow up after this call");
+  await panel
+    .getByRole("tab", { name: "Live transcript", exact: true })
+    .click();
+  await expect(
+    panel.getByText(
+      "Speech transcription isn’t connected in this version yet.",
+    ),
+  ).toBeVisible();
+  await expect(composer).toHaveCount(0);
+  await panel.getByRole("tab", { name: "Thread", exact: true }).click();
+  await expect(composer).toHaveValue("Follow up after this call");
+  await composer.press("Enter");
+  await expect(
+    panel.getByText("Follow up after this call", { exact: true }),
+  ).toBeVisible();
+  await expect(composer).toHaveValue("");
+  const callBounds = await companion.getByRole("main").boundingBox();
+  const panelBounds = await panel.boundingBox();
+  expect(panelBounds.x).toBeGreaterThanOrEqual(
+    callBounds.x + callBounds.width - 1,
+  );
+  const inputBounds = await composer.boundingBox();
+  expect(inputBounds.y + inputBounds.height).toBeLessThanOrEqual(
+    panelBounds.y + panelBounds.height,
+  );
+  await panel.getByRole("button", { name: "Close Huddle chat" }).click();
+  await expect(panel).toHaveCount(0);
+  await expect(companion).toBeVisible();
+  await companion
+    .getByRole("button", { name: "Leave huddle", exact: true })
+    .click();
+  await expect(companion).toHaveCount(0);
+  await expect(page.getByText("Huddle ended", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "View", exact: true }).click();
+  const saved = page.getByRole("complementary", {
+    name: "Saved Huddle conversation",
+  });
+  await expect(
+    saved.getByText("Follow up after this call", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    saved.getByText("This Huddle conversation is read-only."),
   ).toBeVisible();
 });

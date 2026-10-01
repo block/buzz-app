@@ -511,6 +511,7 @@
   --text-inverse: var(--neutral-1);
   --text-unavailable: var(--neutral-7);
   --text-danger: var(--red-12);
+  --text-call-leave: var(--red-10);
   --text-warning: var(--amber-12);
   --text-success: var(--green-12);
   --status-online: var(--green-11);
@@ -575,6 +576,7 @@
   --text-inverse: var(--neutral-1);
   --text-unavailable: var(--neutral-7);
   --text-danger: var(--red-12);
+  --text-call-leave: var(--red-10);
   --text-warning: var(--amber-12);
   --text-success: var(--green-12);
   --status-online: var(--green-11);
@@ -813,6 +815,7 @@
   --text-color-inverse: var(--text-inverse);
   --text-color-unavailable: var(--text-unavailable);
   --text-color-danger: var(--text-danger);
+  --text-color-call-leave: var(--text-call-leave);
   --text-color-warning: var(--text-warning);
   --text-color-success: var(--text-success);
   --text-color-accent: var(--text-accent);

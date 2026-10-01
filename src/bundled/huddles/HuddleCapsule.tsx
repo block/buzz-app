@@ -76,7 +76,7 @@ export function HuddleCapsule({
         </span>
       </div>
     );
-  if (presentation.visible || call.phase !== "connected") return null;
+  if (call.phase !== "connected") return null;
   return (
     <div className={styles.capsuleWrap}>
       <fieldset
@@ -119,7 +119,8 @@ export function HuddleCapsule({
         <span className={styles.capsuleDivider} aria-hidden="true" />
         <Button
           size="xs"
-          variant="ghost"
+          variant="destructive"
+          data-huddle-leave=""
           style={{ alignSelf: "stretch" }}
           aria-label="Leave huddle"
           title="Leave huddle"

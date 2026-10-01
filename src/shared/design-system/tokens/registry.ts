@@ -365,6 +365,14 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "text-call-leave",
+        variable: "--text-call-leave",
+        pointsAt: "red-10 light / red-10 dark",
+        use: "Huddle Leave label and icon on glass or neutral controls. Product-directed lighter red; contrast exception, not general error text.",
+        status: "proposed",
+        owner: "Huddles",
+      },
+      {
         token: "text-warning",
         variable: "--text-warning",
         pointsAt: "amber-12 light / amber-12 dark",

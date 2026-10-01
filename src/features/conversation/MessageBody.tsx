@@ -8,10 +8,12 @@ export function MessageBody({
   registry,
   message,
   children,
+  open,
 }: {
   registry: ContributionReader<MessageRenderer>;
   message: ChannelMessage;
   children: ReactNode;
+  open?: ((target: string) => boolean) | undefined;
 }) {
   const renderers = useSyncExternalStore(
     registry.subscribe,
@@ -32,7 +34,7 @@ export function MessageBody({
       key={`${contributionKey(renderer)}:${message.channelId}:${message.id}`}
       fallback={children}
     >
-      <Render message={message} />
+      <Render message={message} open={open} />
     </ContributionBoundary>
   );
 }

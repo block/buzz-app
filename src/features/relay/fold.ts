@@ -3,6 +3,7 @@ import { validatedBlurhash } from "./blurhash";
 import { threadReference } from "./thread-reference";
 import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
+import { huddleRoom } from "../huddle/lifecycle";
 import { newer } from "./events";
 import type { EventData } from "./events";
 import {
@@ -228,6 +229,32 @@ export function foldMessages(
       continue;
     const aux = overlays.get(event.id) ?? [];
     if (deleted(event)) continue;
+    if (event.kind === 48100 || event.kind === 48103) {
+      const room = huddleRoom(event);
+      if (!room || room === channelId) continue;
+      // End cards are authoritative; creator-authored ends still update the start card.
+      if (event.kind === 48103 && event.pubkey !== relayAuthor) continue;
+      rows.push(
+        Object.freeze({
+          id: event.id,
+          channelId,
+          authorId: event.pubkey,
+          createdAt: event.created_at,
+          content: event.kind === 48100 ? "Huddle started" : "Huddle ended",
+          huddle: {
+            room,
+            state:
+              event.kind === 48100 ? ("started" as const) : ("ended" as const),
+          },
+          mentions: [],
+          attachments: [],
+          reactions: [],
+          replyCount: 0,
+          participants: [],
+        }),
+      );
+      continue;
+    }
     if (event.kind === 40099) {
       const membership = membershipChange(event, relayAuthor);
       if (membership)

@@ -371,3 +371,33 @@ it("opens creation from a legacy subgroup + with that destination selected and r
     preferences.dispose();
   }
 });
+
+it("keeps marked Huddle rooms out of the sidebar while preserving ordinary private channels", async () => {
+  const h = fixture();
+  const list: ChannelList = {
+    ...h.list,
+    channels: [
+      ...h.list.channels,
+      {
+        id: "huddle",
+        name: "Call room",
+        channelType: "stream",
+        huddle: true,
+        parentChannelId: "alpha",
+      },
+      {
+        id: "private",
+        name: "Private project",
+        channelType: "stream",
+        visibility: "private",
+      },
+    ],
+  };
+  h.session.channels.list = () => list;
+  render(h.view("alpha"));
+  expect(
+    await screen.findByRole("button", { name: "Private project" }),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "alpha" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Call room" })).toBeNull();
+});

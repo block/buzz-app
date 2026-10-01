@@ -40,6 +40,17 @@ const TARGET_META = 45;
  * surface that role reaches, which is the failure mode this list must not have.
  */
 const EXCEPTIONS = new Map([
+  // Kenneth requested Red 10 for Huddle Leave during the 2026-10-01 tryout.
+  // Limit this deliberate text-contrast tradeoff to the actual control fills.
+  ...[
+    "surface-panel",
+    "affordance-subtle-hover",
+    "affordance-subtle-pressed",
+    "affordance-danger-pressed",
+  ].map((surface) => [
+    `--text-call-leave on --${surface}`,
+    "Product-directed Red 10 for the Huddle Leave label/icon; below normal text targets, not approved for general error text.",
+  ]),
   [
     "--text-disabled",
     "Low contrast is the signal that a control is unavailable; WCAG exempts inactive controls. Never carries information a person needs.",
@@ -127,6 +138,12 @@ const TEXT_ROLES = [
  * every fill it can actually sit on, and hover is one of them.
  */
 const PAIRS = [
+  ...[
+    "surface-panel",
+    "affordance-subtle-hover",
+    "affordance-subtle-pressed",
+    "affordance-danger-pressed",
+  ].map((surface) => ["--text-call-leave", `--${surface}`]),
   ["--text-standard", "--affordance-popover-selected"],
   ["--text-subtle", "--affordance-popover-selected"],
   ...["control", "control-hover", "control-pressed", "selected"].map(

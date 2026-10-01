@@ -2,6 +2,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type { RelayData } from "../relay/service";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import type { Huddles } from "./service";
+import { createHuddleDiscussion, type HuddleDiscussion } from "./discussion";
 
 export type HuddleView = {
   id: string;
@@ -10,6 +11,7 @@ export type HuddleView = {
   muted: boolean;
   level: number;
   dark: boolean;
+  discussion?: HuddleDiscussion | undefined;
   participants: {
     key: string;
     name: string;
@@ -18,22 +20,55 @@ export type HuddleView = {
     level: number;
   }[];
 };
-export type HuddleAction = "mute" | "leave";
+export type HuddleAction =
+  | "mute"
+  | "leave"
+  | "minimize"
+  | "thread"
+  | "send"
+  | "older"
+  | "retry"
+  | "retryMessage"
+  | "discardMessage";
 export type HuddleWindowAction = HuddleAction | "closed";
 export type WindowBridge = {
   open(
     view: HuddleView,
-    act: (id: string, action: HuddleWindowAction) => void,
+    act: (id: string, action: HuddleWindowAction, text?: string) => void,
   ): Promise<void>;
   update(id: string, view: HuddleView | null): Promise<void>;
 };
+let sentDiscussion: { id: string; version: number | undefined } | undefined;
 export const nativeHuddleWindow: WindowBridge = {
-  open(view, act) {
-    const actions = new Channel<{ id: string; action: HuddleWindowAction }>();
-    actions.onmessage = ({ id, action }) => act(id, action);
-    return invoke("huddle_window_open", { view, actions });
+  async open(view, act) {
+    const actions = new Channel<{
+      id: string;
+      action: HuddleWindowAction;
+      text?: string;
+    }>();
+    actions.onmessage = ({ id, action, text }) => act(id, action, text);
+    await invoke("huddle_window_open", {
+      view: { ...view, discussionOpen: !!view.discussion },
+      actions,
+    });
+    sentDiscussion = { id: view.id, version: view.discussion?.version };
   },
-  update: (id, view) => invoke("huddle_window_update", { id, view }),
+  async update(id, view) {
+    const unchanged =
+      sentDiscussion?.id === id &&
+      sentDiscussion.version === view?.discussion?.version;
+    await invoke("huddle_window_update", {
+      id,
+      view: view && {
+        ...view,
+        discussionOpen: !!view.discussion,
+        discussion: unchanged ? undefined : view.discussion,
+      },
+    });
+    sentDiscussion = view
+      ? { id, version: view.discussion?.version }
+      : undefined;
+  },
 };
 
 /** Companion is a remote view; only this main-window owner can operate the call. */
@@ -57,6 +92,11 @@ export function createHuddleWindow(
   let opening: Promise<void> | undefined;
   let stopProfiles: (() => void) | undefined;
   let ensured = "";
+  let discussion: ReturnType<typeof createHuddleDiscussion> | undefined;
+  const closeDiscussion = () => {
+    discussion?.dispose();
+    discussion = undefined;
+  };
   // Serialize updates with window creation so Leave during Open cannot orphan a view.
   let updates = Promise.resolve();
   function view(): HuddleView | null {
@@ -76,6 +116,7 @@ export function createHuddleWindow(
       muted: call.muted,
       level: call.level ?? 0,
       dark: document.documentElement.classList.contains("dark"),
+      discussion: discussion?.snapshot(),
       participants: call.participants.map((key) => {
         const profile = profiles.get(key);
         return {
@@ -107,6 +148,7 @@ export function createHuddleWindow(
     // Observe errors, allowing the next update or explicit Open to recover.
     void updates.catch(() => {});
     if (!live) {
+      closeDiscussion();
       publish(false);
       opened = undefined;
       stopProfiles?.();
@@ -145,12 +187,13 @@ export function createHuddleWindow(
     opening = (async () => {
       await updates.catch(() => {});
       try {
-        await bridge.open(next, (id, action) => {
+        await bridge.open(next, (id, action, text) => {
           if (disposed || revision !== version || huddles.snapshot().id !== id)
             return;
-          if (action === "closed") {
+          if (action === "closed" || action === "minimize") {
             if (opened !== id) return;
             opened = undefined;
+            closeDiscussion();
             stopProfiles?.();
             stopProfiles = undefined;
             updates = updates
@@ -160,6 +203,30 @@ export function createHuddleWindow(
             publish(false);
           } else if (action === "mute") huddles.mute();
           else if (action === "leave") void huddles.leave();
+          else if (action === "thread") {
+            const call = huddles.snapshot();
+            if (discussion) closeDiscussion();
+            else if (
+              call.room &&
+              call.destination &&
+              call.phase === "connected"
+            )
+              discussion = createHuddleDiscussion(
+                relay.snapshot().session,
+                call.room,
+                call.destination.channelId,
+                sync,
+              );
+            sync();
+          } else if (action === "send" && typeof text === "string")
+            void discussion?.send(text);
+          else if (action === "older") discussion?.older();
+          else if (action === "retry") discussion?.retry();
+          else if (
+            (action === "retryMessage" || action === "discardMessage") &&
+            text
+          )
+            discussion?.recover(text, action === "discardMessage");
         });
       } catch (error) {
         // Include partial-creation cleanup in the promise disposal waits for.
@@ -190,6 +257,7 @@ export function createHuddleWindow(
     },
     async dispose() {
       disposed = true;
+      closeDiscussion();
       stop();
       theme.disconnect();
       await opening?.catch(() => {});

@@ -15,6 +15,33 @@ pub(crate) struct View {
     level: f32,
     dark: bool,
     participants: Vec<Person>,
+    #[serde(default)]
+    discussion: Option<Discussion>,
+    #[serde(default)]
+    discussion_open: bool,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Discussion {
+    version: u64,
+    history_limited: bool,
+    status: String,
+    error: Option<String>,
+    writable: bool,
+    sending: bool,
+    sent: u64,
+    has_more: bool,
+    rows: Vec<DiscussionRow>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct DiscussionRow {
+    id: String,
+    author: String,
+    picture: Option<String>,
+    text: String,
+    time: u64,
+    failed: bool,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -31,12 +58,20 @@ struct Person {
 pub(crate) enum Action {
     Mute,
     Leave,
+    Minimize,
+    Thread,
+    Send,
+    Older,
+    Retry,
+    RetryMessage,
+    DiscardMessage,
     Closed,
 }
 #[derive(Clone, Serialize)]
 pub(crate) struct Control {
     id: String,
     action: Action,
+    text: Option<String>,
 }
 struct Session {
     view: View,
@@ -59,6 +94,17 @@ fn validate(view: &View) -> Result<()> {
         || !view.level.is_finite()
         || !(0.0..=1.0).contains(&view.level)
         || view.participants.len() > 256
+        || view.discussion.as_ref().is_some_and(|d| {
+            !matches!(d.status.as_str(), "loading" | "ready" | "error")
+                || d.error.as_ref().is_some_and(|e| e.len() > 8192)
+                || d.rows.len() > 200
+                || d.rows.iter().any(|r| {
+                    r.id.len() > 128
+                        || r.author.len() > 4096
+                        || r.text.len() > 65536
+                        || r.picture.as_ref().is_some_and(|p| p.len() > 8192)
+                })
+        })
         || view.participants.iter().any(|p| {
             !p.level.is_finite()
                 || !(0.0..=1.0).contains(&p.level)
@@ -90,6 +136,7 @@ fn closed_notice(
             let _ = actions.send(Control {
                 id,
                 action: Action::Closed,
+                text: None,
             });
         });
     }
@@ -161,9 +208,43 @@ pub(crate) fn huddle_window_update<R: tauri::Runtime>(
     let Some(session) = slot.as_mut().filter(|s| s.view.id == id) else {
         return Ok(());
     };
-    if let Some(view) = view {
+    if let Some(mut view) = view {
+        // Activity-only patches omit the unchanged message list. Watch still
+        // receives the complete cached presentation after a renderer reload.
+        let patch = view.clone();
+        if view.discussion_open && view.discussion.is_none() {
+            view.discussion = session.view.discussion.clone();
+        } else if !view.discussion_open {
+            view.discussion = None;
+        }
+        if session.view.discussion.is_some() != view.discussion.is_some() {
+            if let Some(companion) = window.app_handle().get_webview_window(LABEL) {
+                let scale = companion.scale_factor().map_err(|e| e.to_string())?;
+                let size = companion
+                    .inner_size()
+                    .map_err(|e| e.to_string())?
+                    .to_logical::<f64>(scale);
+                let opening = view.discussion.is_some();
+                companion
+                    .set_min_size(Some(tauri::LogicalSize::new(
+                        if opening { 720.0 } else { 360.0 },
+                        400.0,
+                    )))
+                    .map_err(|e| e.to_string())?;
+                companion
+                    .set_size(tauri::LogicalSize::new(
+                        (size.width + if opening { 360.0 } else { -360.0 }).max(if opening {
+                            720.0
+                        } else {
+                            360.0
+                        }),
+                        size.height,
+                    ))
+                    .map_err(|e| e.to_string())?;
+            }
+        }
         if let Some(updates) = &session.updates {
-            let _ = updates.send(view.clone());
+            let _ = updates.send(patch);
         }
         session.view = view;
     } else {
@@ -196,10 +277,24 @@ pub(crate) fn huddle_window_action<R: tauri::Runtime>(
     host: tauri::State<'_, HuddleWindow>,
     id: String,
     action: Action,
+    text: Option<String>,
 ) -> Result<()> {
     require(&window, LABEL)?;
     if matches!(action, Action::Closed) {
         return Err("Window closure is native-owned".into());
+    }
+    if matches!(
+        action,
+        Action::Send | Action::RetryMessage | Action::DiscardMessage
+    ) {
+        if text
+            .as_ref()
+            .map_or(true, |t| t.trim().is_empty() || t.len() > 65536)
+        {
+            return Err("Invalid Huddle message".into());
+        }
+    } else if text.is_some() {
+        return Err("Unexpected Huddle message".into());
     }
     let slot = host.0.lock().map_err(|_| "Huddle window unavailable")?;
     let session = slot
@@ -208,7 +303,7 @@ pub(crate) fn huddle_window_action<R: tauri::Runtime>(
         .ok_or("This Huddle has ended")?;
     session
         .actions
-        .send(Control { id, action })
+        .send(Control { id, action, text })
         .map_err(|e| e.to_string())
 }
 
@@ -270,6 +365,8 @@ mod tests {
             level: 0.0,
             dark: false,
             participants: vec![],
+            discussion: None,
+            discussion_open: false,
         }
     }
     #[test]

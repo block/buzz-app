@@ -279,7 +279,7 @@ function ChannelWorkspace({
   const panelTrigger = useRef<HTMLElement | null>(null);
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
   const { channels, profiles } = useChannelLabels(
-    list.channels,
+    list.channels.filter((channel) => !channel.huddle),
     queries.profiles,
     queries.names,
   );

@@ -92,7 +92,11 @@ export type MessageRenderer = Readonly<{
   id: string;
   title: string;
   matches(message: ChannelMessage): boolean;
-  component: ComponentType<{ message: ChannelMessage }>;
+  component: ComponentType<{
+    message: ChannelMessage;
+    /** Host-owned panel/link activation; unavailable outside a conversation host. */
+    open?: ((target: string) => boolean) | undefined;
+  }>;
 }>;
 export type ConversationExtensions = Readonly<{
   messages?: ContributionReader<MessageRenderer>;

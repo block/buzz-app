@@ -1,6 +1,14 @@
 // Local presentation/capture fixture. No identity, relay connection, or remote write.
 import { createRoot } from "react-dom/client";
 import { useState, useSyncExternalStore } from "react";
+import { MessageBody } from "../../src/features/conversation/MessageBody";
+import type {
+  ContributionReader,
+  MessageRenderer,
+} from "../../src/features/conversation/contracts";
+import { HuddleCard } from "../../src/bundled/huddles/HuddleCard";
+import { HuddlePanel } from "../../src/bundled/huddles/HuddlePanel";
+import { Panel } from "../../src/shared/design-system/ui/Panel";
 import { HuddleCapsule } from "../../src/bundled/huddles/HuddleCapsule";
 import { HuddleWindowView } from "../../src/bundled/huddles/HuddleWindowView";
 import { ChannelMembersButton } from "../../src/bundled/channels/ChannelMembersDialog";
@@ -26,7 +34,10 @@ import type {
   HuddleUpdate,
 } from "../../src/features/huddle/bridge";
 import { createRelaySession } from "../../src/features/relay/session";
-import type { Profile } from "../../src/features/relay/contracts";
+import type {
+  ChannelMessage,
+  Profile,
+} from "../../src/features/relay/contracts";
 import type { RelayData } from "../../src/features/relay/service";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import { Button } from "../../src/shared/design-system/ui/Button";
@@ -75,16 +86,135 @@ const channelList = {
     },
   ],
 };
+const roomId = "00000000-0000-4000-8000-000000000002";
+const startedAt = Math.floor(Date.now() / 1000);
+const lifecycleListeners = new Set<() => void>();
+let endedAt: number | undefined;
+const lifecycleEvent = (kind: number, at: number) => ({
+  id: String(kind).padStart(64, "0"),
+  pubkey: viewer,
+  kind,
+  created_at: at,
+  content: JSON.stringify({ ephemeral_channel_id: roomId }),
+  tags: [
+    ["h", destination.channelId],
+    ["p", viewer],
+  ],
+  sig: "",
+});
+const cardMessage: ChannelMessage = {
+  id: "ab".repeat(32),
+  channelId: destination.channelId,
+  authorId: viewer,
+  createdAt: startedAt,
+  content: "Huddle started",
+  huddle: { room: roomId, state: "started" },
+  mentions: [],
+  attachments: [],
+  reactions: [],
+  replyCount: 0,
+  participants: [],
+};
+const room = {
+  id: roomId,
+  name: "Huddle",
+  huddle: true as const,
+  parentChannelId: destination.channelId,
+  members: [viewer, peer],
+};
+let discussionRows: ChannelMessage[] = [
+  {
+    id: "01".repeat(32),
+    channelId: roomId,
+    authorId: peer,
+    createdAt: Math.floor(Date.now() / 1000),
+    content: "Let’s keep our notes here while we talk.",
+    mentions: [],
+    attachments: [],
+    reactions: [],
+    replyCount: 0,
+    participants: [],
+  },
+];
+const discussionListeners = new Set<() => void>();
 const session = {
   ...store.session,
+  viewer,
+  relayAuthor: viewer,
+  observe: () => ({
+    snapshot: () => ({
+      status: "ready" as const,
+      events: [
+        lifecycleEvent(48100, startedAt),
+        lifecycleEvent(48101, startedAt),
+        ...(endedAt ? [lifecycleEvent(48103, endedAt)] : []),
+      ],
+    }),
+    subscribe: (fn: () => void) => {
+      lifecycleListeners.add(fn);
+      return () => {
+        lifecycleListeners.delete(fn);
+      };
+    },
+    refresh: async () => {},
+    dispose: () => {},
+  }),
   channels: {
     ...store.session.channels,
     list: () => channelList,
+    get: (id: string) =>
+      id === roomId
+        ? { ...room, ...(endedAt ? { archived: true as const } : {}) }
+        : channelList.channels.find((c) => c.id === id),
+    resolve: async () => {},
+    ensure: () => {},
+    window: (id: string) =>
+      id === roomId
+        ? {
+            channelId: id,
+            status: "ready" as const,
+            rows: discussionRows,
+            hasMore: false,
+            loadingOlder: false,
+            error: undefined,
+          }
+        : store.session.channels.window(id),
+    subscribeWindow: (id: string, listener: () => void) => {
+      if (id !== roomId)
+        return store.session.channels.subscribeWindow(id, listener);
+      discussionListeners.add(listener);
+      return () => {
+        discussionListeners.delete(listener);
+      };
+    },
   },
   profiles: {
     ...store.session.profiles,
     snapshot: () => profiles,
     ensure: async () => {},
+  },
+  messages: {
+    ...store.session.messages,
+    send: (id: string, text: string) => {
+      const messageId = String(discussionRows.length + 1).padStart(64, "0");
+      discussionRows = [
+        ...discussionRows,
+        {
+          id: messageId,
+          channelId: id,
+          authorId: viewer,
+          createdAt: Math.floor(Date.now() / 1000),
+          content: text,
+          mentions: [],
+          attachments: [],
+          reactions: [],
+          replyCount: 0,
+          participants: [],
+        },
+      ];
+      for (const listener of discussionListeners) listener();
+      return messageId;
+    },
   },
   read: async () => [],
   media: (url: string) => url,
@@ -130,6 +260,8 @@ const bridge: HuddleBridge = {
   },
   async close() {
     stats.closes++;
+    endedAt = Math.floor(Date.now() / 1000);
+    for (const listener of lifecycleListeners) listener();
   },
   async touch() {},
   async send(_id, samples) {
@@ -156,7 +288,11 @@ const setWindowView = (view: HuddleView | null) => {
   windowView = view;
   for (const listener of windowListeners) listener();
 };
-let windowAction = (_id: string, _action: HuddleWindowAction) => {};
+let windowAction = (
+  _id: string,
+  _action: HuddleWindowAction,
+  _text?: string,
+) => {};
 const companion = createHuddleWindow(huddles, relay, {
   async open(view, act) {
     windowAction = act;
@@ -197,8 +333,38 @@ window.huddleFixture = {
     await companion.dispose();
   },
 };
+const cardRenderers = [
+  {
+    id: "huddle",
+    title: "Huddle",
+    key: "buzz.huddles/huddle",
+    pluginId: "buzz.huddles",
+    revision: "fixture",
+    matches: (message: ChannelMessage) => !!message.huddle,
+    component: ({
+      message,
+      open,
+    }: {
+      message: ChannelMessage;
+      open?: ((target: string) => boolean) | undefined;
+    }) => (
+      <HuddleCard
+        message={message}
+        open={open}
+        relay={relay}
+        huddles={huddles}
+        showWindow={companion.open}
+      />
+    ),
+  },
+];
+const cardRegistry: ContributionReader<MessageRenderer> = {
+  snapshot: () => cardRenderers,
+  subscribe: () => () => {},
+};
 function Fixture() {
   const [dm, setDm] = useState(false);
+  const [chatTarget, setChatTarget] = useState<string>();
   const [membersOpen, setMembersOpen] = useState(false);
   const view = useSyncExternalStore(
     (listener) => {
@@ -264,7 +430,7 @@ function Fixture() {
         <aside
           aria-label="Huddle window preview"
           style={{
-            maxWidth: 520,
+            maxWidth: view.discussion ? 880 : 520,
             height: 560,
             margin: "24px auto",
             border: "1px solid var(--border-standard)",
@@ -272,7 +438,7 @@ function Fixture() {
             position: "relative",
           }}
         >
-          <div style={{ position: "absolute", right: 8, top: 8, zIndex: 2 }}>
+          <div style={{ position: "absolute", left: 8, top: 8, zIndex: 2 }}>
             <IconButton
               size="toolbar"
               variant="ghost"
@@ -283,9 +449,7 @@ function Fixture() {
           </div>
           <HuddleWindowView
             view={view}
-            act={(action) =>
-              action === "mute" ? huddles.mute() : void huddles.leave()
-            }
+            act={(action, text) => windowAction(view.id, action, text)}
           />
         </aside>
       )}
@@ -298,6 +462,31 @@ function Fixture() {
           color: "var(--text-standard)",
         }}
       >
+        <MessageBody
+          registry={cardRegistry}
+          message={cardMessage}
+          open={(target) => {
+            setChatTarget(target);
+            return true;
+          }}
+        >
+          Huddle started
+        </MessageBody>
+        {chatTarget && (
+          <aside
+            aria-label="Saved Huddle conversation"
+            style={{ height: 440, maxWidth: 420 }}
+          >
+            <Panel style={{ height: "100%" }}>
+              <HuddlePanel
+                target={chatTarget}
+                close={() => setChatTarget(undefined)}
+                relay={relay}
+                channelContext={destination}
+              />
+            </Panel>
+          </aside>
+        )}
         <header
           style={{ display: "flex", alignItems: "center", gap: 4, padding: 12 }}
         >

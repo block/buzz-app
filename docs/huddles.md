@@ -3,9 +3,9 @@
 **Huddles** is enabled by default on macOS desktop and can be turned off in
 Settings → Plugins. Click the headphone button immediately after members in a
 channel or DM header to join the latest available Huddle or start one when none
-is found. The Huddle window opens by default once connected. Closing it reveals the mini
-player beside search while audio stays connected; reopening it hides the mini
-player again. If opening fails, the mini player stays available to retry. No side panel opens
+is found. The Huddle window opens and receives focus by default once connected. The mini
+player stays visible beside search at the same time. Closing the window or using
+its minimize control keeps audio connected; the mini player can reopen and focus it. If opening fails, the mini player stays available to retry. No side panel opens
 and the header shows a green headphone/divider/chevron capsule only in the chat
 where your call is connected. Its headphone changes to a leave icon on hover or
 keyboard focus, and clicking leaves the call. Elsewhere the neutral headphone
@@ -20,8 +20,15 @@ buttons, 16px regular-weight icons and 20px avatars. Its end buttons sit flush
 against the outer edges, with 4px between controls. Waveform and avatar content has
 4px padding, with an extra 4px on the waveform’s left side. It uses the shared
 primary glass material from the shell controls and offers audio activity, an
-avatar stack of actual participants, mute, and a text-only Leave button. Leave has no
-default fill and is separated from mute by a subtle divider with spacing on both sides.
+avatar stack of actual participants, mute, and a text-only Leave button. Leave keeps its Red 10 label with a muted red
+fill on hover and is separated from mute by a subtle divider with spacing on both sides.
+The neutral glass controls use the white chrome hover in light mode and its dark-mode counterpart.
+The proposed `text-call-leave` role preserves the requested Red 10 in both themes.
+It is a documented contrast exception for these controls: the light-mode Leave
+label measures 3.09–4.37:1 across its opaque fills; dark-mode APCA is Lc 35.2–40.4.
+Glass depends on its backdrop and is not certified by those opaque measurements.
+The separate window uses matching neutral gray controls for microphone and Leave,
+with a Red 10 Leave icon.
 New arrivals slide
 and scale into the front of the stack; reduced motion removes that movement. The
 latest four avatars remain visible, with a matching avatar showing the count for other participants. Click the
@@ -32,7 +39,8 @@ mobile-inspired cluster’s varied avatar sizes, with an overflow count for larg
 Names appear on hover or keyboard focus. Nearby portraits shift aside for the
 active name capsule, then settle back when it closes. Only one name is shown
 at a time; reduced motion makes the layout change immediate.
-A soft halo around each speaker responds to their own microphone or received audio,
+A soft halo around each speaker eases between audio levels with a restrained expansion,
+responding to their own microphone or received audio,
 then fades after speech stops. The window uses these halos instead of a footer
 waveform; the compact player keeps its waveform. Muting clears only your halo.
 Arrivals fade and scale in; reduced motion removes those transitions. Closing that window or navigating to another conversation
@@ -50,6 +58,28 @@ state before admission. A rejected recent candidate is removed for this plugin
 activation when the relay says it is inaccessible or ended; the generic admission
 response does not reveal whether it was archived. No microphone or discovery work
 runs on startup.
+
+## Conversation panels and cards
+
+The chat button between microphone and Leave opens a panel beside the avatar
+cloud. The shared tabs separate **Thread** from **Live transcript**. Thread uses
+the existing relay session for message history, sending, and failed-message
+Retry/Discard. Closing this panel or minimizing the window does not end audio or
+cancel an accepted message delivery. Drafts survive tab changes; closing the panel
+discards its unsent draft. The transcript tab is a placeholder: local speech
+generation is deferred and no transcription is recorded by this version.
+
+Start/end events appear as cards in the parent conversation. Active cards show
+elapsed time, known participants and Join (or Open for your current call). View
+opens the saved Huddle conversation in a side panel. Archived rooms remain
+read-only. The display is bounded to the latest 200 messages and says when history
+is limited; it does not delete earlier messages.
+
+New rooms carry a parent marker in their relay-owned metadata. Marked rooms stay
+out of ordinary sidebar destinations, and the discussion reader verifies that
+marker before reading or sending. Older clients' unmarked rooms remain unchanged
+and currently show an unavailable message in this panel. The marker and lifecycle
+cards use the existing relay protocol; no server changes are part of this slice.
 
 ## Ownership and compatibility
 
@@ -73,7 +103,7 @@ may already have joined, so existing relay socket/TTL cleanup owns it.
 
 The macOS bundle includes the microphone purpose string and audio-input entitlement.
 Browser-only, Linux and Windows hosts do not expose the launcher in this slice.
-Agent voices, transcription, screen sharing, device selection and automatic reconnect
+Agent voices, transcription generation, screen sharing, device selection and automatic reconnect
 are outside this first version.
 
 ## Checks and tryout

@@ -177,30 +177,36 @@ it("disposal awaits cleanup when a pending native open rejects", async () => {
   await h.dispose();
 });
 
-it("opens once per call, falls back on close, and reopens only explicitly", async () => {
-  const h = harness();
-  try {
-    h.release();
-    h.set({ ...h.call.snapshot() });
-    await vi.waitFor(() => expect(h.bridge.open).toHaveBeenCalledOnce());
-    expect(h.companion.snapshot()).toEqual({ visible: true, failed: false });
-    const id = h.call.snapshot().id ?? "";
-    h.action(id, "closed");
-    expect(h.companion.snapshot().visible).toBe(false);
-    expect(h.call.leave).not.toHaveBeenCalled();
-    h.set({ ...h.call.snapshot(), muted: true });
-    await Promise.resolve();
-    expect(h.bridge.open).toHaveBeenCalledOnce();
-    await h.companion.open();
-    expect(h.companion.snapshot().visible).toBe(true);
-    h.set({ ...h.call.snapshot(), id: "00000000-0000-4000-8000-000000000002" });
-    await vi.waitFor(() => expect(h.bridge.open).toHaveBeenCalledTimes(3));
-    h.action(id, "closed");
-    expect(h.companion.snapshot().visible).toBe(true);
-  } finally {
-    await h.dispose();
-  }
-});
+it.each(["closed", "minimize"] as const)(
+  "opens once per call, keeps audio after %s, and reopens explicitly",
+  async (action) => {
+    const h = harness();
+    try {
+      h.release();
+      h.set({ ...h.call.snapshot() });
+      await vi.waitFor(() => expect(h.bridge.open).toHaveBeenCalledOnce());
+      expect(h.companion.snapshot()).toEqual({ visible: true, failed: false });
+      const id = h.call.snapshot().id ?? "";
+      h.action(id, action);
+      expect(h.companion.snapshot().visible).toBe(false);
+      expect(h.call.leave).not.toHaveBeenCalled();
+      h.set({ ...h.call.snapshot(), muted: true });
+      await Promise.resolve();
+      expect(h.bridge.open).toHaveBeenCalledOnce();
+      await h.companion.open();
+      expect(h.companion.snapshot().visible).toBe(true);
+      h.set({
+        ...h.call.snapshot(),
+        id: "00000000-0000-4000-8000-000000000002",
+      });
+      await vi.waitFor(() => expect(h.bridge.open).toHaveBeenCalledTimes(3));
+      h.action(id, "closed");
+      expect(h.companion.snapshot().visible).toBe(true);
+    } finally {
+      await h.dispose();
+    }
+  },
+);
 it("keeps compact controls available after an automatic open failure", async () => {
   const h = harness();
   vi.mocked(h.bridge.open).mockRejectedValueOnce(new Error("Focus failed"));

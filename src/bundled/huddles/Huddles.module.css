@@ -3,6 +3,7 @@
   flex-shrink: 0;
 }
 .capsule {
+  --interaction-hover: var(--bg-chrome-selected);
   color: var(--text-standard);
   margin: 0;
   min-inline-size: 0;
@@ -55,7 +56,7 @@
   width: 3px;
   border-radius: var(--radius-pill);
   background: currentColor;
-  transition: height 100ms ease-out;
+  transition: height var(--duration-settle) var(--easing-settle);
 }
 .waveform[data-muted="true"] {
   color: var(--text-secondary);
@@ -70,11 +71,18 @@
   gap: var(--space-5);
 }
 .windowHeader {
+  position: relative;
+  min-height: 1.75rem;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-2);
   text-align: center;
+}
+.windowMinimize {
+  position: absolute;
+  right: 0;
+  top: 0;
 }
 .windowHeader > span {
   display: flex;
@@ -91,6 +99,24 @@
 .windowControls {
   display: flex;
   gap: var(--space-3);
+}
+.windowLayout {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+.windowLayout > main {
+  flex: 1;
+  min-width: 0;
+}
+.windowDiscussion {
+  width: 360px;
+  max-width: 55%;
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-2) var(--space-2) 0;
+}
+.windowDiscussion > section {
+  height: 100%;
 }
 @media (prefers-reduced-motion: reduce) {
   .waveform > span {
@@ -238,7 +264,8 @@
 }
 .bubbleArtwork {
   position: relative;
-  display: block;
+  /* Grid removes the inline avatar’s baseline gap beneath photo artwork. */
+  display: grid;
   width: 100%;
   aspect-ratio: 1;
   opacity: 1;
@@ -264,8 +291,8 @@
   opacity: 0;
   transform: scale(1);
   transition:
-    opacity var(--duration-settle) var(--easing-enter),
-    transform var(--duration-settle) var(--easing-enter);
+    opacity 280ms var(--easing-settle),
+    transform 280ms var(--easing-settle);
 }
 .speakingHalo[data-speaking="true"] {
   opacity: 1;
@@ -321,4 +348,25 @@
   .speakingHalo[data-speaking="true"] {
     transform: scale(1.15);
   }
+}
+
+/* Compact Leave keeps its red hover; window controls share the mobile gray fill. */
+.capsule [data-huddle-leave],
+.windowControls [data-huddle-leave] {
+  color: var(--text-call-leave);
+}
+.capsule [data-huddle-leave] {
+  background: transparent;
+}
+.windowControls {
+  --interaction-fill: var(--affordance-subtle-hover);
+  --interaction-hover: var(--affordance-subtle-pressed);
+}
+@media (hover: hover) and (pointer: fine) {
+  .capsule [data-huddle-leave]:hover {
+    background: var(--affordance-danger-pressed);
+  }
+}
+.capsule [data-huddle-leave]:active {
+  background: var(--affordance-danger-pressed);
 }

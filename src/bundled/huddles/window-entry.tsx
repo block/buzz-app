@@ -13,11 +13,17 @@ function Companion() {
   const [error, setError] = useState<string>();
   useEffect(() => {
     let mounted = true;
-    const updates = new Channel<HuddleView>();
+    const updates = new Channel<HuddleView & { discussionOpen: boolean }>();
     updates.onmessage = (next) => {
       if (!mounted) return;
       document.documentElement.classList.toggle("dark", next.dark);
-      setView(next);
+      setView((previous) => ({
+        ...next,
+        discussion: next.discussionOpen
+          ? (next.discussion ??
+            (previous?.id === next.id ? previous.discussion : undefined))
+          : undefined,
+      }));
     };
     void invoke("huddle_window_watch", { updates }).catch(() => {
       if (mounted)
@@ -27,11 +33,11 @@ function Companion() {
       mounted = false;
     };
   }, []);
-  const act = (action: HuddleAction) => {
+  const act = (action: HuddleAction, text?: string) => {
     if (!view) return;
     setError(undefined);
-    void invoke("huddle_window_action", { id: view.id, action }).catch(() =>
-      setError("Couldn’t update the call. Try again from Buzz."),
+    void invoke("huddle_window_action", { id: view.id, action, text }).catch(
+      () => setError("Couldn’t update the call. Try again from Buzz."),
     );
   };
   return view ? (

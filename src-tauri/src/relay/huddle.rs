@@ -110,7 +110,7 @@ fn lifecycle(kind: u16, parent: &str, room: &str) -> EventTemplate {
         json!({"ephemeral_channel_id": room}).to_string(),
     )
 }
-fn create(room: &str) -> EventTemplate {
+fn create(room: &str, parent: &str) -> EventTemplate {
     template(
         9007,
         vec![
@@ -119,6 +119,10 @@ fn create(room: &str) -> EventTemplate {
             vec!["visibility".into(), "private".into()],
             vec!["channel_type".into(), "stream".into()],
             vec!["ttl".into(), "3600".into()],
+            vec![
+                "about".into(),
+                format!("Buzz Huddle (buzz.huddles/v1)\nparent:{parent}"),
+            ],
         ],
         String::new(),
     )
@@ -258,7 +262,7 @@ async fn run(
         if creating {
             attempted_create = true;
             // Do not cancel an in-flight publication: its outcome may be uncertain.
-            publish(host, &call.community, create(&room)).await?;
+            publish(host, &call.community, create(&room, &call.parent)).await?;
             check_cancelled(&stop, &touched)?;
             // Once the advisory might be visible, another person can join. Never
             // archive that shared room on our own failed/cancelled connection.
@@ -345,9 +349,16 @@ mod tests {
     fn huddle_templates_match_existing_protocol() {
         let room = uuid::Uuid::new_v4().to_string();
         let parent = uuid::Uuid::new_v4().to_string();
-        let e = create(&room);
+        let e = create(&room, &parent);
         assert_eq!(e.kind, 9007);
-        assert_eq!(e.tags.last().unwrap(), &["ttl", "3600"]);
+        assert_eq!(e.tags[4], ["ttl", "3600"]);
+        assert_eq!(
+            e.tags[5],
+            [
+                "about",
+                &format!("Buzz Huddle (buzz.huddles/v1)\nparent:{parent}")
+            ]
+        );
         assert_eq!(e.tags[2], ["visibility", "private"]);
         let e = lifecycle(48100, &parent, &room);
         assert_eq!(e.tags, vec![vec!["h", &parent]]);

@@ -274,14 +274,16 @@ function ReadySidebar({
     target.pluginId === "buzz.channels" &&
     target.route?.params === "new-message";
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
-  const sidebarChannels = channels.filter(
-    (channel) =>
-      !preparingDm ||
-      preparingDm.existing.has(channel.id) ||
-      channel.channelType !== "dm" ||
-      channel.members?.length !== preparingDm.members.size ||
-      !channel.members.every((member) => preparingDm.members.has(member)),
-  );
+  const sidebarChannels = channels
+    .filter((channel) => !channel.huddle)
+    .filter(
+      (channel) =>
+        !preparingDm ||
+        preparingDm.existing.has(channel.id) ||
+        channel.channelType !== "dm" ||
+        channel.members?.length !== preparingDm.members.size ||
+        !channel.members.every((member) => preparingDm.members.has(member)),
+    );
   const current = channels.find(
     (channel) =>
       channel.id ===

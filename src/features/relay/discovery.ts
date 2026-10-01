@@ -1,5 +1,6 @@
 import { channelVisibility } from "./channel-details-protocol";
 import { sessionMetadata } from "../sessions/metadata";
+import { huddleParent } from "../huddle/lifecycle";
 import { objectBody } from "./body";
 import { newer, hasTag, tag, type RelayEvent } from "./events";
 import type { ChannelSummary } from "./contracts";
@@ -203,8 +204,11 @@ export class DiscoveryState {
         : undefined;
     const roster = this.rosters.get(id);
     const parentId = event && sessionMetadata(tag(event, "about"))?.parentId;
+    const huddle =
+      event && this.isPrivate(id) && huddleParent(tag(event, "about"));
     return {
       id,
+      ...(huddle ? { huddle: true as const, parentChannelId: huddle } : {}),
       ...(!this.authorized(id) || this.cached.has(id)
         ? { readOnly: true as const }
         : {}),

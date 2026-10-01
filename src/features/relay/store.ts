@@ -210,6 +210,7 @@ export function createChannelStore(
         old.private === channel.private &&
         old.channelType === channel.channelType &&
         old.parentChannelId === channel.parentChannelId &&
+        old.huddle === channel.huddle &&
         old.updatedAt === channel.updatedAt &&
         old.archived === channel.archived &&
         old.readOnly === channel.readOnly &&

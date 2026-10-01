@@ -224,7 +224,10 @@ function ChannelWorkspace({
     groupEntry?.record.value.type === "groups"
       ? groupEntry.record.value
       : undefined;
-  const [canvasOpen, setCanvasOpen] = useState(false);
+  const [canvasOrigin, setCanvasOrigin] = useState<{
+    channelId: string;
+    navigation: PageNavigation | undefined;
+  }>();
   const canvasTrigger = useRef<HTMLButtonElement>(null);
   const [membersChannel, setMembersChannel] = useState<string>();
   const membersTrigger = useRef<HTMLButtonElement>(null);
@@ -436,6 +439,14 @@ function ChannelWorkspace({
     }
   }, [cached, current, navigation]);
   const currentId = current?.id;
+  const canvasOpen =
+    !!canvasOrigin &&
+    canvasOrigin.channelId === currentId &&
+    canvasOrigin.navigation === navigation &&
+    !navigation?.signal.aborted;
+  useEffect(() => {
+    if (!canvasOpen) setCanvasOrigin(undefined);
+  }, [canvasOpen]);
   useEffect(() => {
     setMembersChannel((id) => (id === currentId ? id : undefined));
   }, [currentId]);
@@ -1265,7 +1276,8 @@ function ChannelWorkspace({
   }, [settingsFocus, split.ref]);
   const openCanvas = (trigger: HTMLButtonElement) => {
     canvasTrigger.current = trigger;
-    setCanvasOpen(true);
+    if (currentId && !navigation?.signal.aborted)
+      setCanvasOrigin({ channelId: currentId, navigation });
   };
   const settingsContent = (
     <ChannelSettingsPanel
@@ -1411,7 +1423,9 @@ function ChannelWorkspace({
           scope={scope}
           channelId={current.id}
           open={canvasOpen}
-          onOpenChange={setCanvasOpen}
+          onOpenChange={(open) => {
+            if (!open) setCanvasOrigin(undefined);
+          }}
           finalFocus={canvasTrigger}
         />
       )}

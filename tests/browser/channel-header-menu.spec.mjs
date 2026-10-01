@@ -487,3 +487,74 @@ test.describe("sidebar actions in the header", () => {
     expect(app.report.unexpected).toEqual([]);
   });
 });
+
+// Browser history changes the page while native/portaled dialogs make the
+// background inert. DOM-only navigation cannot prove this app ownership seam.
+test.describe("dialog origin retirement", () => {
+  test.use({ savedSidebar: true });
+  async function start(page, app) {
+    await page.goto(app.origin);
+    await openPage(page, "Messages");
+    await page.locator('button[data-channel-id="beta"]').click();
+    await expect(
+      page.getByRole("tab", { name: "Beta", exact: true }),
+    ).toBeVisible();
+    await page.locator(`button[data-channel-id="${channelId}"]`).click();
+    await expect(
+      page.getByRole("tab", { name: channelName, exact: true }),
+    ).toBeVisible();
+  }
+  async function back(page) {
+    await page.goBack();
+    await expect(
+      page.locator(
+        '[aria-label="Conversation"] [role="tab"][aria-selected="true"]',
+      ),
+    ).toHaveText("Beta");
+  }
+  test("Canvas retires without reading the next channel or losing its original draft", async ({
+    page,
+    app,
+  }) => {
+    await start(page, app);
+    await page
+      .getByRole("button", { name: "Channel actions", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "View canvas", exact: true })
+      .click();
+    const canvas = page.getByRole("dialog", {
+      name: "Channel Canvas",
+      exact: true,
+    });
+    const editor = canvas.getByRole("textbox", {
+      name: "Canvas Markdown",
+      exact: true,
+    });
+    await expect(editor).toBeEnabled();
+    await editor.fill("Draft belongs to the original channel");
+    const canvasReads = () =>
+      app.report.queries.filter(({ filter }) => filter.kinds?.includes(40100));
+    const before = canvasReads();
+    expect(before.length).toBeGreaterThan(0);
+    await back(page);
+    await expect(canvas).toHaveCount(0);
+    expect(canvasReads()).toEqual(before);
+    await page.goForward();
+    await expect(
+      page.getByRole("tab", { name: channelName, exact: true }),
+    ).toBeVisible();
+    await expect(canvas).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "Channel actions", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "View canvas", exact: true })
+      .click();
+    await expect(editor).toHaveValue("Draft belongs to the original channel");
+    await canvas
+      .getByRole("button", { name: "Close Canvas", exact: true })
+      .click();
+    expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
+  });
+});

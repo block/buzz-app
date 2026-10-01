@@ -1327,3 +1327,75 @@ it.each(
     expect(preview()).toBe(unloaded);
   },
 );
+
+function cachedRoster(viewer: string, cached: boolean, ids = [channel]) {
+  const listeners = new Set<() => void>();
+  let list = { status: "ready", channels: [] as unknown[] };
+  const set = (next: boolean, next_ids = ids) => {
+    list = {
+      status: "ready",
+      channels: next_ids.map((id) => ({ id, cached: next, members: [viewer] })),
+    };
+    for (const listener of listeners) listener();
+  };
+  set(cached);
+  const channels = {
+    list: () => list,
+    subscribeList(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as Parameters<typeof createUnread>[0]["channels"];
+  return { channels, set };
+}
+
+it.each([
+  ["confirmation", true],
+  ["fresh empty roster", false],
+] as const)(
+  "a cached restore starts no walk; a %s starts exactly one",
+  async (_label, restored) => {
+    vi.useFakeTimers();
+    const bff = sidebarFixture(),
+      viewer = keypair();
+    bff.rows.set(
+      channel,
+      sidebarRow(channel, { unread: { status: "exact", value: 3 } }),
+    );
+    const roster = cachedRoster(viewer.pubkey, true);
+    const owner = createUnread({
+      api: bff.api,
+      storage: bff.storage,
+      scope: "cached-restore",
+      channels: roster.channels,
+      viewer: viewer.pubkey,
+      reader: { read: async () => [] },
+      find: () => undefined,
+    });
+    cleanups.push(owner.dispose);
+    const walks = () =>
+      bff.api.sidebar.mock.calls.filter(([q]) => !("channel_ids" in q)).length;
+    await owner.capability.ensure();
+    // A restore that changes while still unconfirmed is no reason to walk.
+    roster.set(true, [channel, other]);
+    // Completion barrier: run the timers that change left pending, with their
+    // microtasks.
+    await vi.runOnlyPendingTimersAsync();
+    // Offline after a restore: no walk, and nothing claims to be observed.
+    expect(walks()).toBe(0);
+    expect(owner.capability.sync().status).toBe("loading");
+    expect(owner.capability.snapshot(target)).toMatchObject({
+      unread: { status: "unknown" },
+      freshness: "unknown",
+    });
+    if (restored) roster.set(false);
+    else roster.set(false, []);
+    await vi.waitFor(() =>
+      expect(owner.capability.sync().status).toBe("reconciled"),
+    );
+    expect(walks()).toBe(1);
+    expect(owner.capability.snapshot(target).unread).toEqual(
+      restored ? { status: "exact", value: 3 } : { status: "unknown" },
+    );
+  },
+);

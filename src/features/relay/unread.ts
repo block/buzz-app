@@ -1,4 +1,4 @@
-import type { ChannelQueries } from "./contracts";
+import type { ChannelQueries, ChannelSummary } from "./contracts";
 import type { RelayEvent } from "./events";
 import type { RelayReader } from "./reader";
 import { foldMessages } from "./fold";
@@ -133,13 +133,20 @@ export function createUnread({
 }) {
   let closed = false,
     epoch = 0;
+  const admitted = (c: ChannelSummary) =>
+    !c.cached && !!c.members?.includes(viewer);
   const allowed = (id: string) =>
-    !closed &&
-    channels
-      .list()
-      .channels.some(
-        (c) => c.id === id && !c.cached && c.members?.includes(viewer),
-      );
+    !closed && channels.list().channels.some((c) => c.id === id && admitted(c));
+  // A traversal keeps only admitted rows. A cached restore admits none, so
+  // walking it would fetch every page only to discard it; its confirmation
+  // changes the roster key below and starts the one useful walk.
+  const traversable = () => {
+    const list = channels.list();
+    return (
+      list.status === "ready" &&
+      (list.channels.some(admitted) || !list.channels.some((c) => c.cached))
+    );
+  };
   const state = createSidebarState({
     api,
     storage: storage ?? browserSidebarStorage(scope),
@@ -258,8 +265,7 @@ export function createUnread({
     if (key === previousRosterKey) return;
     previousRosterKey = key;
     publish();
-    if (ensureRequested && channels.list().status === "ready")
-      void state.ensure(true);
+    if (ensureRequested && traversable()) void state.ensure(true);
   });
   function subscribe(listener: () => void) {
     listeners.add(listener);
@@ -538,9 +544,7 @@ export function createUnread({
     subscribeSync: subscribe,
     ensure: () => {
       ensureRequested = true;
-      return channels.list().status === "ready"
-        ? state.ensure()
-        : Promise.resolve();
+      return traversable() ? state.ensure() : Promise.resolve();
     },
     refresh: state.refresh,
     retrySync: state.retry,

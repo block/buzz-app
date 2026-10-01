@@ -49,7 +49,7 @@ it.each([
         close={() => {}}
       />,
     );
-    await screen.findByRole("heading", { name: "A small improvement" });
+    await screen.findByRole("heading", { name: "A small improvement #1" });
     expect(screen.getByText(label).hasAttribute("data-open")).toBe(open);
     const changes = screen.getByText("Changes").parentElement;
     if (!changes) throw new Error("Missing Changes row");
@@ -147,7 +147,7 @@ it("links branch labels to their own repositories and preserves unavailable bran
       close={() => {}}
     />,
   );
-  await screen.findByRole("heading", { name: "An unavailable branch" });
+  await screen.findByRole("heading", { name: "An unavailable branch #2" });
   const deleted = screen.getByText("contributor:deleted");
   expect(deleted).toBeVisible();
   expect(deleted).toHaveClass(branchLabelClass);
@@ -212,5 +212,65 @@ it.each([
     );
     await screen.findByText(`by ${name}`);
     expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
+  },
+);
+
+it("links the PR owner and repository and moves its number to the title", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ title: "A small improvement" })),
+      ),
+  );
+  render(
+    <GitHubPanel
+      target="https://github.com/block/buzz-app/pull/629"
+      close={() => {}}
+    />,
+  );
+  const owner = screen.getByRole("link", { name: "block" });
+  const repository = screen.getByRole("link", { name: "buzz-app" });
+  expect(owner).toHaveAttribute("href", "https://github.com/block");
+  expect(repository).toHaveAttribute(
+    "href",
+    "https://github.com/block/buzz-app",
+  );
+  for (const link of [owner, repository]) {
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noreferrer");
+  }
+  const identity = screen.getByText("Pull request").parentElement;
+  expect(identity).toHaveTextContent("block / buzz-appPull request");
+  expect(identity).not.toHaveTextContent("#629");
+  const title = await screen.findByRole("heading", {
+    name: "A small improvement #629",
+  });
+  expect(within(title).getByText("#629")).toBeVisible();
+});
+
+it.each([
+  ["https://github.com/example/project", "Repository project"],
+  ["https://github.com/example/project/issues/2", "Issue #2"],
+  ["https://github.com/example/project/commit/abcdef1", "Commit abcdef1"],
+])(
+  "preserves the non-PR identity and title for %s",
+  async (target, identity) => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ title: "GitHub object" })),
+        ),
+    );
+    render(<GitHubPanel target={target} close={() => {}} />);
+    expect(screen.getByText(identity)).toBeVisible();
+    expect(screen.getByText("example/project")).toBeVisible();
+    expect(
+      screen.queryByRole("link", { name: "example" }),
+    ).not.toBeInTheDocument();
+    await screen.findByRole("heading", { name: "GitHub object" });
   },
 );

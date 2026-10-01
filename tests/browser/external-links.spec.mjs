@@ -57,7 +57,7 @@ test("unhandled links open externally and disabling GitHub restores the fallback
     exact: true,
   });
   await expect(
-    panel.getByRole("heading", { name: "A useful change" }),
+    panel.getByRole("heading", { name: "A useful change #1" }),
   ).toBeVisible();
   expect(context.pages()).toHaveLength(1);
   expect(
@@ -86,7 +86,7 @@ test("unhandled links open externally and disabling GitHub restores the fallback
   await link(page, github).focus();
   await page.keyboard.press("Enter");
   await expect(
-    panel.getByRole("heading", { name: "A useful change" }),
+    panel.getByRole("heading", { name: "A useful change #1" }),
   ).toBeVisible();
   expect(context.pages()).toHaveLength(1);
 });
@@ -115,7 +115,7 @@ test("GitHub object identities have comparable visible artwork at one size", asy
     await link(page, target).click();
     const identity = page
       .getByRole("complementary", { name: "GitHub", exact: true })
-      .getByText(new RegExp(`^${kind} `))
+      .getByText(new RegExp(`^${kind}(?: |$)`))
       .locator("xpath=../..");
     const svg = identity.locator("svg");
     await expect(svg).toHaveCSS("width", "22px");
@@ -152,6 +152,8 @@ test("PR state, changes and branch links use shared roles in both themes", async
   app,
 }, testInfo) => {
   for (const url of [
+    "https://github.com/block",
+    "https://github.com/block/buzz",
     "https://github.com/sample-author",
     "https://github.com/block/buzz/tree/main",
     "https://github.com/block/buzz/tree/small-improvement",
@@ -196,7 +198,7 @@ test("PR state, changes and branch links use shared roles in both themes", async
     exact: true,
   });
   await expect(
-    panel.getByRole("heading", { name: "A small improvement" }),
+    panel.getByRole("heading", { name: "A small improvement #1" }),
   ).toBeVisible();
   expect(
     await popup(
@@ -204,6 +206,18 @@ test("PR state, changes and branch links use shared roles in both themes", async
       panel.getByRole("link", { name: "sample-author", exact: true }),
     ),
   ).toBe("https://github.com/sample-author");
+  for (const [name, url] of [
+    ["block", "https://github.com/block"],
+    ["buzz", "https://github.com/block/buzz"],
+  ]) {
+    const repositoryLink = panel.getByRole("link", { name, exact: true });
+    await expect(repositoryLink).toHaveCSS("font-size", "24px");
+    expect(await popup(page, repositoryLink)).toBe(url);
+  }
+  await expect(panel.getByText("Pull request", { exact: true })).toBeVisible();
+  await expect(panel.getByText("Pull request #1", { exact: true })).toHaveCount(
+    0,
+  );
   const changes = panel.getByText("Changes", { exact: true }).locator("..");
   expect(
     await popup(page, panel.getByRole("link", { name: "main", exact: true })),
@@ -218,7 +232,7 @@ test("PR state, changes and branch links use shared roles in both themes", async
     ),
   ).toBe("https://github.com/block/buzz/tree/small-improvement");
   // Popup clicks leave the pointer on the branch. Assert rest paint off-target.
-  await panel.getByRole("heading", { name: "A small improvement" }).hover();
+  await panel.getByRole("heading", { name: "A small improvement #1" }).hover();
   for (const mode of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: mode });
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
@@ -230,6 +244,7 @@ test("PR state, changes and branch links use shared roles in both themes", async
         success: "--text-success",
         danger: "--text-danger",
         standard: "--text-standard",
+        subtle: "--text-subtle",
         fill: "--affordance-success",
         link: "--text-link",
         linkFill: "--affordance-link-hover",
@@ -243,6 +258,10 @@ test("PR state, changes and branch links use shared roles in both themes", async
     await expect(
       panel.getByRole("link", { name: "sample-author", exact: true }),
     ).toHaveCSS("color", colors.link);
+    await expect(panel.getByText("#1", { exact: true })).toHaveCSS(
+      "color",
+      colors.subtle,
+    );
     expect(colors.success).not.toBe(colors.standard);
     expect(colors.danger).not.toBe(colors.standard);
     await expect(panel.getByText("open", { exact: true })).toHaveCSS(

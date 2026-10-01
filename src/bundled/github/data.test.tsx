@@ -27,7 +27,7 @@ it("opens a target without a channel, even when no message window contains it", 
   const html = renderToStaticMarkup(
     <GitHubPanel target={reference.url} close={() => {}} />,
   );
-  expect(html).toContain("#23");
+  expect(html).toContain("Pull request");
   expect(html).toContain(
     'href="https://github.com/block/buzz/pull/23#discussion_r1"',
   );

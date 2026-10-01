@@ -76,6 +76,7 @@ function ObjectPanel({
     return () => controller.abort();
   }, [reference]);
   const Icon = icons[reference.kind];
+  const [owner, repositoryName] = reference.repository.split("/");
   return (
     <div className={styles.root}>
       <div className={styles.identity}>
@@ -83,10 +84,37 @@ function ObjectPanel({
           <Icon size={22} aria-hidden="true" />
         </span>
         <div>
-          <small>{reference.repository}</small>
-          <strong>
-            {labels[reference.kind]} {reference.label}
-          </strong>
+          {reference.kind === "pull" ? (
+            <>
+              <div className={styles.repository}>
+                <a
+                  className={inlineStyles.link}
+                  href={`https://github.com/${owner}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {owner}
+                </a>
+                <span className={styles.repositorySeparator}> / </span>
+                <a
+                  className={inlineStyles.link}
+                  href={`https://github.com/${reference.repository}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {repositoryName}
+                </a>
+              </div>
+              <small>{labels[reference.kind]}</small>
+            </>
+          ) : (
+            <>
+              <small>{reference.repository}</small>
+              <strong>
+                {labels[reference.kind]} {reference.label}
+              </strong>
+            </>
+          )}
         </div>
       </div>
       <a
@@ -139,7 +167,15 @@ function ObjectPanel({
               </span>
             )}
           </div>
-          <h2>{result.title}</h2>
+          <h2>
+            {result.title}
+            {reference.kind === "pull" && (
+              <>
+                {" "}
+                <span className={styles.titleNumber}>{reference.label}</span>
+              </>
+            )}
+          </h2>
           {!!result.facts.length && (
             <dl className={styles.facts}>
               {result.facts.map(([label, value]) => (

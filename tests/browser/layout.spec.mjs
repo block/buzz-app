@@ -90,7 +90,9 @@ async function link(page, app, target) {
   ).toHaveCSS("pointer-events", "auto");
   await trigger.click();
   await expect(
-    panel(page).getByRole("heading", { name: "A useful change" }),
+    panel(page).getByRole("heading", {
+      name: `A useful change #${new URL(target).pathname.split("/").at(-1)}`,
+    }),
   ).toBeVisible();
   // Geometry assertions observe the settled overlay, not an entrance frame.
   await panel(page).evaluate(async (element) => {
@@ -280,7 +282,9 @@ test("joined surface, sidebar pages, real link panel and compact community navig
     name: "Channel message history",
   });
   const offset = await timeline.evaluate((el) => el.scrollTop);
-  await panel(page).getByRole("heading", { name: "A useful change" }).hover();
+  await panel(page)
+    .getByRole("heading", { name: "A useful change #1" })
+    .hover();
   await page.mouse.wheel(0, 1000);
   await expect
     .poll(() =>

@@ -1,8 +1,8 @@
-import { openPage, selectSettingsSection } from "./navigation.mjs";
+import { selectSettingsSection } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
-// Browser boundary: enabling the opt-in Mesh plugin must make its Compute page open.
-test("enabling Mesh compute opens its Compute page", async ({ page, app }) => {
+// Browser boundary: enabling the opt-in Mesh plugin must expose its consumer view in Settings → Compute.
+test("enabling Mesh compute opens Settings Compute", async ({ page, app }) => {
   await page.goto(app.origin);
   const button = (name) => page.getByRole("button", { name, exact: true });
   await button("Your profile").click();
@@ -14,7 +14,11 @@ test("enabling Mesh compute opens its Compute page", async ({ page, app }) => {
   });
   await enabled.click();
   await expect(enabled).toBeChecked();
-  await openPage(page, "Compute");
+  // Contributed cards own their region label rather than the built-in section wrapper.
+  await page
+    .getByRole("complementary", { name: "Settings sidebar", exact: true })
+    .getByRole("button", { name: "Compute", exact: true })
+    .click();
   await expect(
     page.getByRole("heading", { name: "Compute — Consumer", exact: true }),
   ).toBeVisible();

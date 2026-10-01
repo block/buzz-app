@@ -39,7 +39,7 @@ it("revokes a pending selection on disposal and never starts it", async () => {
     effect: (setup: () => () => void) => {
       dispose = setup();
     },
-    pages: {
+    settingsCards: {
       register: (card: { component: React.ComponentType }) => {
         Component = card.component;
       },
@@ -107,7 +107,7 @@ it("preserves the running lease through reconnect and revokes on identity change
     effect: (setup: () => () => void) => {
       dispose = setup();
     },
-    pages: {
+    settingsCards: {
       register: (card: { component: React.ComponentType }) => {
         Component = card.component;
       },
@@ -203,7 +203,7 @@ it("renders Running without claiming connectivity, stops by lease, and separates
     effect: (setup: () => () => void) => {
       dispose = setup();
     },
-    pages: {
+    settingsCards: {
       register: (card: { component: React.ComponentType }) => {
         Component = card.component;
       },
@@ -249,7 +249,7 @@ it("polls transient states serially, stops at Running, and cancels on unmount", 
     effect: (setup: () => () => void) => {
       dispose = setup();
     },
-    pages: {
+    settingsCards: {
       register: (page: { component: React.ComponentType }) => {
         Component = page.component;
       },

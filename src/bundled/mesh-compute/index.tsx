@@ -20,7 +20,7 @@ const phaseLabels = {
   failed: "Needs attention",
 };
 
-export const inject = ["relay", "pages"];
+export const inject = ["relay", "settingsCards"];
 export const apply: PluginModule["apply"] = (ctx) => {
   let lease: Promise<string> | undefined;
   let scope: string | undefined;
@@ -187,11 +187,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       />
     );
   }
-  ctx.pages.register({
+  ctx.settingsCards.register({
     id: "mesh",
     title: "Compute",
-    layout: "workspace",
-    primary: true,
+    group: "Compute",
     component: CommunityComputePage,
   });
 };

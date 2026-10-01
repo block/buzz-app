@@ -32,6 +32,7 @@ export function AgentEditor({
   state,
   avatar,
   onClose,
+  onSaved,
   onOpenHarnesses,
   initialDraft,
   notice: initialNotice,
@@ -43,6 +44,7 @@ export function AgentEditor({
   state: AgentControlState;
   avatar?: string | undefined;
   onClose(): void;
+  onSaved?: () => void;
   initialDraft?: AgentDraft;
   notice?: string;
 }) {
@@ -150,10 +152,11 @@ export function AgentEditor({
                       return;
                     }
                   }
-                  if (mounted.current)
-                    setNotice(
-                      savedMessage(saved.restarted, saved.restartFailures),
-                    );
+                  if (!mounted.current) return;
+                  setNotice(
+                    savedMessage(saved.restarted, saved.restartFailures),
+                  );
+                  onSaved?.();
                 })
                 .catch((problem: Error) => setError(problem.message));
             }}

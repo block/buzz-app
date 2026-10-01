@@ -176,6 +176,7 @@ export function AgentUpdateReview({
       initialDraft={initial}
       notice="Requested by an agent. Review every field before saving."
       onClose={dismiss}
+      onSaved={dismiss}
     />
   );
 }

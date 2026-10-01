@@ -136,7 +136,7 @@ it("preserves the running lease through reconnect and revokes on identity change
   expect(
     native.invoke.mock.calls.filter(
       ([command]) => command === "mesh_compute_start",
-    )[1][1],
+    )[1]?.[1],
   ).toEqual({ lease: "stable-lease" });
   await act(async () => {
     snapshot = { status: "disconnected", viewer: "", scope: "" };

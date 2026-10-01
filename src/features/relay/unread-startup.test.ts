@@ -507,56 +507,6 @@ it("pages one busy parent back until the viewer's direct reply appears", async (
   expect(pages.map((filter) => filter.until)).toEqual([undefined, 20]);
 });
 
-it("a later reply of the viewer outlives a negative lookup and a window reset", async () => {
-  const h = setup();
-  const relay = conversationRelay(h);
-  const root = message(h.peer, "other", "peer post", 10);
-  const answer = reply(h.peer, "a peer reply", 700, root, root);
-  relay.store.push(root, answer, ...busy(h, 499));
-  await h.session.unread.ensure();
-  h.snapshot();
-  const attention = () => h.session.unread.attention("other", answer.id);
-  await vi.waitFor(() => expect(attention().pending).toBeUndefined());
-  expect(attention().unread).toBe(false);
-  // The viewer joins the conversation live, after the lookup said no.
-  h.receive([reply(h.viewer, "now I reply", 800, root, root)]);
-  expect(attention()).toMatchObject({ category: "thread", unread: true });
-  const count = relay.lookups.length;
-  // The overflow reset drops the live reply; the refreshed sample lacks it.
-  h.receive(
-    Array.from({ length: 4096 }, (_, i) =>
-      message(h.peer, "other", `flood ${i}`, 900 + i),
-    ),
-  );
-  await h.session.unread.refresh();
-  expect(attention()).toMatchObject({ category: "thread", unread: true });
-  expect(relay.lookups).toHaveLength(count);
-}, 30000);
-
-it("lookup results survive a full-window reset and refresh without asking again", async () => {
-  const h = setup();
-  const relay = conversationRelay(h);
-  const mine = message(h.viewer, "other", "my old post", 10);
-  const answer = reply(h.peer, "answer to me", 700, mine, mine);
-  relay.store.push(mine, answer, ...busy(h, 499));
-  await h.session.unread.ensure();
-  h.snapshot();
-  const attention = () => h.session.unread.attention("other", answer.id);
-  await vi.waitFor(() => expect(attention().unread).toBe(true));
-  const count = relay.lookups.length;
-  // Overflow the 4,096-event window: every channel's evidence is dropped.
-  h.receive(
-    Array.from({ length: 4096 }, (_, i) =>
-      message(h.peer, "other", `flood ${i}`, 800 + i),
-    ),
-  );
-  expect(h.snapshot().freshness).toBe("stale");
-  expect(attention().status).toBe("unknown");
-  await h.session.unread.refresh();
-  expect(attention()).toMatchObject({ category: "thread", unread: true });
-  expect(relay.lookups).toHaveLength(count);
-}, 30000);
-
 it("a reply to the viewer's message in another channel is not the viewer's conversation", async () => {
   const h = setup(2);
   const relay = conversationRelay(h);

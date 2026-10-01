@@ -7,9 +7,10 @@ import { createReadState } from "./read-state";
 import { readJournal, type ReadJournal } from "./read-state-storage";
 import { createUnread } from "./unread";
 
-// Unread receives events the transport already verified, so this fixture
-// marks thousands of events verified instead of signing them; signing them
-// takes seconds. Session-level tests keep real signatures.
+// Conversation lookups with thousands of events. Unread receives events the
+// transport already verified, so this fixture marks them verified instead of
+// signing them; signing takes seconds. Session-level tests in
+// unread-startup.test.ts keep real signatures.
 let next = 0;
 function event(
   pubkey: string,
@@ -30,37 +31,33 @@ function event(
 }
 const reply = (pubkey: string, time: number, parent: RelayEvent) =>
   event(pubkey, 9, time, [["e", parent.id, "", "reply"]]);
+const viewer = "a".repeat(64),
+  peer = "b".repeat(64);
+const flood = (count: number, from: number) =>
+  Array.from({ length: count }, (_, i) => event(peer, 9, from + i, []));
 
 const owners: ReturnType<typeof createUnread>[] = [];
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
 });
 
-it("a lookup batch larger than the witness bound keeps every membership deletable", async () => {
-  const viewer = "a".repeat(64),
-    peer = "b".repeat(64);
-  // Ten parents, each with 500 old replies of the viewer: one batch returns
-  // 5,000 of the viewer's replies, more than the 4,096 witnesses unread keeps.
-  const parents = Array.from({ length: 10 }, (_, i) =>
-    event(peer, 9, 10 + i, []),
-  );
-  const mine = parents.map((parent) =>
-    Array.from({ length: 500 }, (_, j) => reply(viewer, 20 + j, parent)),
-  );
-  const siblings = parents.map((parent, i) => reply(peer, 700 + i, parent));
-  const store = [...parents, ...mine.flat()];
+async function setup() {
+  // A relay whose channel sample holds only the 500 newest rows, so older
+  // conversation membership is reachable only by parent lookup.
+  const store: RelayEvent[] = [];
   const asked: string[] = [];
   const reader = {
     read: vi.fn(async (filters: readonly ReadFilter[]) =>
       filters.flatMap((filter) => {
         if (filter.authors && filter["#e"]?.length === 1)
           asked.push(filter["#e"][0] ?? "");
-        if (!filter.ids && !filter.authors) return [];
         return store
           .filter(
             (item) =>
+              (!filter.kinds || filter.kinds.includes(item.kind)) &&
               (!filter.ids || filter.ids.includes(item.id)) &&
               (!filter.authors || filter.authors.includes(item.pubkey)) &&
+              (filter.until === undefined || item.created_at <= filter.until) &&
               (!filter["#e"] ||
                 item.tags.some(
                   ([name, value]) =>
@@ -104,6 +101,25 @@ it("a lookup batch larger than the witness bound keeps every membership deletabl
   };
   const owner = createUnread({ reads, channels, reader, viewer });
   owners.push(owner);
+  const lookups = () =>
+    reader.read.mock.calls.filter(
+      ([[filter]]) => filter?.ids || filter?.authors,
+    ).length;
+  return { owner, store, asked, reader, lookups };
+}
+
+it("a lookup batch larger than the witness bound keeps every membership deletable", async () => {
+  const { owner, store, asked, reader } = await setup();
+  // Ten parents, each with 500 old replies of the viewer: one batch returns
+  // 5,000 of the viewer's replies, more than the 4,096 witnesses unread keeps.
+  const parents = Array.from({ length: 10 }, (_, i) =>
+    event(peer, 9, 10 + i, []),
+  );
+  const mine = parents.map((parent) =>
+    Array.from({ length: 500 }, (_, j) => reply(viewer, 20 + j, parent)),
+  );
+  const siblings = parents.map((parent, i) => reply(peer, 700 + i, parent));
+  store.push(...parents, ...mine.flat());
   owner.accept(siblings);
   const attention = (i: number) => {
     const sibling = siblings[i];
@@ -143,4 +159,48 @@ it("a lookup batch larger than the witness bound keeps every membership deletabl
   for (const i of parents.keys())
     if (i !== first)
       expect(attention(i)).toMatchObject({ category: "thread", unread: true });
+});
+
+it("a later reply of the viewer outlives a negative lookup and a window reset", async () => {
+  const { owner, store, lookups } = await setup();
+  const root = event(peer, 9, 10, []);
+  const answer = reply(peer, 700, root);
+  store.push(root, answer, ...flood(499, 100));
+  await owner.capability.ensure();
+  const attention = () => owner.capability.attention("c0", answer.id);
+  await vi.waitFor(() => {
+    expect(attention().pending).toBeUndefined();
+    expect(lookups()).toBeGreaterThan(0);
+  });
+  expect(attention().unread).toBe(false);
+  // The viewer joins the conversation live, after the lookup said no.
+  owner.accept([reply(viewer, 800, root)]);
+  expect(attention()).toMatchObject({ category: "thread", unread: true });
+  const count = lookups();
+  // The overflow reset drops the live reply; the refreshed sample lacks it.
+  owner.accept(flood(4096, 900));
+  await owner.capability.refresh();
+  expect(attention()).toMatchObject({ category: "thread", unread: true });
+  expect(lookups()).toBe(count);
+});
+
+it("lookup results survive a full-window reset and refresh without asking again", async () => {
+  const { owner, store, lookups } = await setup();
+  const mine = event(viewer, 9, 10, []);
+  const answer = reply(peer, 700, mine);
+  store.push(mine, answer, ...flood(499, 100));
+  await owner.capability.ensure();
+  const attention = () => owner.capability.attention("c0", answer.id);
+  await vi.waitFor(() => expect(attention().unread).toBe(true));
+  expect(lookups()).toBeGreaterThan(0);
+  const count = lookups();
+  // Overflow the 4,096-event window: every channel's evidence is dropped.
+  owner.accept(flood(4096, 800));
+  expect(
+    owner.capability.snapshot({ kind: "channel", channelId: "c0" }).freshness,
+  ).toBe("stale");
+  expect(attention().status).toBe("unknown");
+  await owner.capability.refresh();
+  expect(attention()).toMatchObject({ category: "thread", unread: true });
+  expect(lookups()).toBe(count);
 });

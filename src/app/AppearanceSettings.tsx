@@ -1,3 +1,8 @@
+import {
+  BUBBLE_COLORS,
+  messageButtonStyle,
+} from "../shared/theme/bubble-color";
+import { IconButton } from "../shared/design-system/ui/IconButton";
 import { Header } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Field } from "../shared/design-system/ui/Field";
@@ -39,10 +44,8 @@ export function AppearanceSettings({
     pendingFocus.current = null;
     if (target?.isConnected) target.focus();
   });
-  const { preference, error, fontScale, fontError } = useSyncExternalStore(
-    appearance.subscribe,
-    appearance.snapshot,
-  );
+  const { preference, error, fontScale, fontError, bubbleColor, bubbleError } =
+    useSyncExternalStore(appearance.subscribe, appearance.snapshot);
   return (
     <section aria-labelledby="appearance-settings-title">
       <Header id="appearance-settings-title" title="Appearance" />
@@ -74,6 +77,51 @@ export function AppearanceSettings({
             ))}
           </RadioGroup>
         </Field>
+        <fieldset className="m-0 mt-6 min-w-0 border-0 p-0">
+          <legend className="mb-2 p-0 text-label-sm">Your message color</legend>
+          <p className="mb-3 text-body-sm text-subtle">
+            Used for your message bubbles and the send button on this device.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {BUBBLE_COLORS.map((color) => (
+              <IconButton
+                key={color}
+                data-bubble-color={color}
+                style={messageButtonStyle}
+                variant="primary"
+                size="large"
+                shape="round"
+                aria-label={`${color.charAt(0).toUpperCase()}${color.slice(1)} message color`}
+                title={`${color.charAt(0).toUpperCase()}${color.slice(1)}`}
+                aria-pressed={bubbleColor === color}
+                onClick={() => appearance.setBubbleColor(color)}
+                icon={
+                  <span
+                    className={
+                      bubbleColor === color
+                        ? "size-6 rounded-full border-2 border-current"
+                        : "size-6"
+                    }
+                    aria-hidden="true"
+                  />
+                }
+              />
+            ))}
+          </div>
+        </fieldset>
+        {active && bubbleError && (
+          <ToastNotice
+            title="Message color wasn’t saved"
+            description={bubbleError}
+          >
+            <Button
+              size="sm"
+              onClick={() => appearance.setBubbleColor(bubbleColor)}
+            >
+              Retry saving message color
+            </Button>
+          </ToastNotice>
+        )}
         <fieldset className="m-0 mt-6 min-w-0 border-0 p-0">
           <legend className="mb-2 p-0 text-label-sm">Interface size</legend>
           <div className="flex flex-wrap items-center gap-3">

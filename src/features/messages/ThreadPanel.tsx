@@ -704,7 +704,9 @@ function ThreadMessages({
   let previousReply: ChannelMessage | undefined = snapshot.root;
   let previousParent: string | undefined;
   function renderReplies(parent: string | undefined, depth = 0): ReactNode {
-    return (tree.children.get(parent) ?? []).map((row) => {
+    const siblings = tree.children.get(parent) ?? [];
+    return siblings.map((row, index) => {
+      const nextRow = siblings[index + 1];
       const children = tree.children.get(row.id);
       const continuation =
         previousParent === parent && continuesMessageGroup(previousReply, row);
@@ -729,6 +731,15 @@ function ThreadMessages({
           scope={scope}
           onReply={snapshot.root ? targetReply : undefined}
           row={row}
+          stackPrevious={
+            continuesMessageGroup(siblings[index - 1], row) &&
+            !tree.children.get(siblings[index - 1]?.id ?? "")?.length
+          }
+          stackNext={
+            !!nextRow &&
+            continuesMessageGroup(row, nextRow) &&
+            !children?.length
+          }
           profile={profiles.get(row.authorId)}
           participantProfiles={profiles}
           agentPubkeys={agentPubkeys}

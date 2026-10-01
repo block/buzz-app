@@ -1,3 +1,4 @@
+import { BUBBLE_COLORS, type BubbleColor } from "./bubble-color";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
@@ -13,7 +14,10 @@ const blocks = [...css.matchAll(/:root[^{}]*\{([^}]+)\}/g)].map((match) =>
 
 // Resolve the real shared palette and host aliases in cascade order. The host
 // no longer owns literal colors; a missing or cyclic alias must fail the test.
-function resolvedPalette(mode: "light" | "dark") {
+function resolvedPalette(
+  mode: "light" | "dark",
+  bubbleColor: BubbleColor = "neutral",
+) {
   const source = (
     readFileSync("src/shared/design-system/styles/tokens.css", "utf8") +
     "\n" +
@@ -24,6 +28,11 @@ function resolvedPalette(mode: "light" | "dark") {
     /([^{}]+)\{([^{}]*)\}/g,
   )) {
     if (!selector.includes(":root") && !selector.includes(".dark")) continue;
+    if (
+      selector.includes("data-bubble-color") &&
+      !selector.includes(`data-bubble-color="${bubbleColor}"`)
+    )
+      continue;
     const dark =
       selector.includes('data-color-mode="dark"') || selector.includes(".dark");
     if (dark && mode !== "dark") continue;
@@ -154,3 +163,42 @@ it("a scoped dark surface rebinds glass roles inherited from a light app", () =>
     expect(scoped[role], role).not.toBe(light[role]);
   }
 });
+
+it.each(["light", "dark"] as const)(
+  "message text and links contrast with both bubble fills in %s",
+  (mode) => {
+    const palette = resolvedPalette(mode);
+    // Bubble links use the same foreground as their message, with an underline.
+    for (const surface of ["--surface-message", "--surface-message-own"]) {
+      for (const text of surface === "--surface-message-own"
+        ? ["--text-message-own"]
+        : ["--text-standard", "--text-subtle"]) {
+        expect(
+          contrast(palette[text], palette[surface]),
+          `${text} on ${surface}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+    const own = luminance(palette["--surface-message-own"]);
+    const received = luminance(palette["--surface-message"]);
+    if (mode === "light") expect(own).toBeLessThan(received);
+    else expect(own).toBeGreaterThan(received);
+  },
+);
+
+it.each(BUBBLE_COLORS)(
+  "%s message fill keeps text and send icons readable in both modes",
+  (color) => {
+    for (const mode of ["light", "dark"] as const) {
+      const palette = resolvedPalette(mode, color);
+      expect(palette["--text-message-own"]).toBe("#ffffff");
+      expect(
+        contrast(
+          palette["--text-message-own"],
+          palette["--surface-message-own"],
+        ),
+        `${color} in ${mode}`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  },
+);

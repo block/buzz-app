@@ -744,6 +744,7 @@ function Timeline({
           {...(initialCache.current ? { cache: initialCache.current } : {})}
         >
           {rows.map((row, index) => {
+            const nextRow = rows[index + 1];
             const day =
               index === 0
                 ? true
@@ -765,11 +766,8 @@ function Timeline({
               />
             ) : (
               <MessageRow
-                layout={
-                  continuesMessageGroup(rows[index - 1], row)
-                    ? "continuation"
-                    : "timeline"
-                }
+                stackPrevious={continuesMessageGroup(rows[index - 1], row)}
+                stackNext={!!nextRow && continuesMessageGroup(row, nextRow)}
                 session={queries}
                 scope={scope}
                 key={row.id}

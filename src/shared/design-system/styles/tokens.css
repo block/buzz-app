@@ -285,6 +285,20 @@
      Keep these current. A step whose comment disagrees with its
      use is worse than no comment, because it reads as a decision
      someone made. `pnpm census` lists the real readers. */
+  /* Transparent neutral rims preserve image colors underneath. */
+  --image-edge-light: oklch(0 0 0 / 0.1);
+  --image-edge-dark: oklch(1 0 0 / 0.1);
+  --bubble-ink: #ffffff;
+  --bubble-neutral: #404040;
+  --bubble-blue: #2563eb;
+  --bubble-cyan: #0e7490;
+  --bubble-green: #15803d;
+  --bubble-orange: #c2410c;
+  --bubble-red: #dc2626;
+  --bubble-pink: #be185d;
+  --bubble-lilac: #8662b3;
+  --bubble-purple: #9333ea;
+  --bubble-indigo: #4f46e5;
   --neutral-navigation-text: #404040; /* Tailwind neutral-700. */
   --neutral-navigation-unread: #262626; /* Tailwind neutral-800. */
   --neutral-navigation-quiet: #f7f7f7; /* Designer-requested gentle sidenav states. */
@@ -504,6 +518,10 @@
   --surface-popover: var(--neutral-1);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
+  --border-image: var(--image-edge-light);
+  --surface-message: var(--neutral-navigation-quiet);
+  --text-message-own: var(--bubble-ink);
+  --surface-message-own: var(--bubble-neutral);
   --text-navigation: var(--neutral-navigation-text);
   --text-navigation-unread: var(--neutral-navigation-unread);
   --text-standard: var(--neutral-12);
@@ -560,6 +578,10 @@
 
 :root[data-color-mode="dark"],
 .dark {
+  --border-image: var(--image-edge-dark);
+  --surface-message: var(--neutral-4);
+  --text-message-own: var(--bubble-ink);
+  --surface-message-own: var(--bubble-neutral);
   --surface-base: var(--neutral-1);
   --surface-panel: var(--neutral-3);
   --surface-popover: var(--neutral-raised);
@@ -1020,4 +1042,56 @@
   --spacing-section-gap: var(--space-section-gap);
   --spacing-chip-inset: var(--space-chip-inset);
   --spacing-chip-gap: var(--space-chip-gap);
+}
+
+/* Device-local message colors; scopes also paint the settings swatches. */
+:root[data-bubble-color="neutral"],
+[data-bubble-color="neutral"] {
+  --surface-message-own: var(--bubble-neutral);
+  --text-message-own: var(--bubble-ink);
+}
+:root[data-bubble-color="blue"],
+[data-bubble-color="blue"] {
+  --surface-message-own: var(--bubble-blue);
+  --text-message-own: var(--bubble-ink);
+}
+:root[data-bubble-color="cyan"],
+[data-bubble-color="cyan"] {
+  --surface-message-own: var(--bubble-cyan);
+  --text-message-own: var(--bubble-ink);
+}
+:root[data-bubble-color="green"],
+[data-bubble-color="green"] {
+  --surface-message-own: var(--bubble-green);
+  --text-message-own: var(--bubble-ink);
+}
+:root[data-bubble-color="orange"],
+[data-bubble-color="orange"] {
+  --surface-message-own: var(--bubble-orange);
+  --text-message-own: var(--bubble-ink);
+}
+:root[data-bubble-color="red"],
+[data-bubble-color="red"] {
+  --surface-message-own: var(--bubble-red);
+  --text-message-own: var(--bubble-ink);
+}
+:root[data-bubble-color="pink"],
+[data-bubble-color="pink"] {
+  --surface-message-own: var(--bubble-pink);
+  --text-message-own: var(--bubble-ink);
+}
+:root[data-bubble-color="lilac"],
+[data-bubble-color="lilac"] {
+  --surface-message-own: var(--bubble-lilac);
+  --text-message-own: var(--bubble-ink);
+}
+:root[data-bubble-color="purple"],
+[data-bubble-color="purple"] {
+  --surface-message-own: var(--bubble-purple);
+  --text-message-own: var(--bubble-ink);
+}
+:root[data-bubble-color="indigo"],
+[data-bubble-color="indigo"] {
+  --surface-message-own: var(--bubble-indigo);
+  --text-message-own: var(--bubble-ink);
 }

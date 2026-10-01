@@ -368,3 +368,6 @@ export const ThumbsUpIcon = defineIcon("phosphor", PhosphorThumbsUpIcon);
 
 import { ColumnsIcon as PhosphorColumnsIcon } from "@phosphor-icons/react/dist/csr/Columns";
 export const ColumnsIcon = defineIcon("phosphor", PhosphorColumnsIcon);
+
+import { ImageIcon as PhosphorImageIcon } from "@phosphor-icons/react/dist/csr/Image";
+export const ImageIcon = defineIcon("phosphor", PhosphorImageIcon);

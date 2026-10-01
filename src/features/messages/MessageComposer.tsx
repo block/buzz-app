@@ -1,3 +1,4 @@
+import { messageButtonStyle } from "../../shared/theme/bubble-color";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { useMessageDeletion } from "./MessageManagement";
@@ -1042,6 +1043,7 @@ function Composer({
             size="toolbar"
             shape="round"
             type="submit"
+            style={messageButtonStyle}
             aria-label={editing.target ? "Save changes" : "Send message"}
             title={editing.target ? "Save changes" : "Send message"}
             disabled={

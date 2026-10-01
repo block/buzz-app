@@ -4,6 +4,7 @@ import "@fontsource-variable/inter/wght.css";
 import "@fontsource/jetbrains-mono/400.css";
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { continuesMessageGroup } from "../../../src/features/messages/message-grouping";
 import { MessageRow } from "../../../src/features/messages/MessageRow";
 import { MembershipRow } from "../../../src/features/messages/MembershipRow";
 import { Button } from "../../../src/shared/design-system/ui/Button";
@@ -93,6 +94,13 @@ function Specimen({ example }: { example: Example }) {
             <MessageRow
               key={row.id}
               row={row}
+              viewer={reader}
+              stackPrevious={continuesMessageGroup(rows[index - 1], row)}
+              stackNext={
+                rows[index + 1]
+                  ? continuesMessageGroup(row, rows[index + 1])
+                  : false
+              }
               profile={profiles.get(row.authorId)}
               participantProfiles={profiles}
               agentPubkeys={agentPubkeys}

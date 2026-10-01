@@ -232,6 +232,21 @@ export const groups: Group[] = [
         },
       ),
       single(
+        "image-long-caption",
+        "Image with a long message",
+        "The background hugs the capped text, with the attached image directly below.",
+        "I’m sharing a longer update alongside this image so we can check how the message reads in a wide conversation. The text should wrap at a comfortable measure, and the bubble should stop just beyond that text instead of stretching across the entire window. A small attachment underneath should not change the width of the background.\n\nDoes this direction work for the next review?",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/landscape",
+              kind: "image",
+              dimensions: { width: 640, height: 360 },
+            },
+          ],
+        },
+      ),
+      single(
         "images",
         "Multiple images",
         "Each image follows the current stacked attachment layout.",

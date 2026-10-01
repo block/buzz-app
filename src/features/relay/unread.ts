@@ -269,10 +269,21 @@ export function createUnread({
   // apart from counted evidence: fetched events never count, never fill the
   // window and survive its overflow reset, because whether the viewer wrote or
   // answered a message does not change with the sample. Bounded, oldest first.
-  type Lookup = { channelId: string; done: boolean; member: boolean };
+  // Keyed by channel and parent, like `joined`. `evidence` holds the viewer's
+  // messages that make the viewer a member: the parent itself, or replies to
+  // it. A later deletion of all of them ends the membership.
+  type Lookup = { channelId: string; done: boolean; evidence: Set<string> };
   const lookups = new Map<string, Lookup>();
   const lookupEvents = new Map<string, RelayEvent>();
-  const queued = new Map<string, { channelId: string; ids: Set<string> }>();
+  const queued = new Map<
+    string,
+    { channelId: string; parentId: string; ids: Set<string> }
+  >();
+  // The viewer's own deleted messages, so neither a stored lookup result nor
+  // one still in flight can outlive them.
+  const retracted = new Set<string>();
+  const conversationKey = (channelId: string, parentId: string) =>
+    `${channelId}:${parentId}`;
   let scheduled = false;
   let failures = 0;
   let retry: ReturnType<typeof setTimeout> | undefined;
@@ -301,9 +312,8 @@ export function createUnread({
         if (parentId) {
           joined.add(`${channel}:${parentId}`);
           // A later reply of the viewer outlives the window that showed it.
-          const lookup = lookups.get(parentId);
-          if (lookup?.done && lookup.channelId === channel)
-            lookup.member = true;
+          const lookup = lookups.get(conversationKey(channel, parentId));
+          if (lookup?.done) lookup.evidence.add(event.id);
         }
       }
       const rows = byChannel.get(channel) ?? [];
@@ -343,11 +353,11 @@ export function createUnread({
    * parent. Undecided parents are not members until their lookup finishes. */
   const conversation = ({ parentId, channelId }: Evidence) => {
     if (!parentId) return false;
-    const lookup = lookups.get(parentId);
+    const key = conversationKey(channelId, parentId);
     return (
       own.get(parentId) === channelId ||
-      joined.has(`${channelId}:${parentId}`) ||
-      (!!lookup?.member && lookup.channelId === channelId)
+      joined.has(key) ||
+      !!lookups.get(key)?.evidence.size
     );
   };
   /** Top-level posts always count. A reply counts only in the viewer's own
@@ -362,7 +372,7 @@ export function createUnread({
   const undecided = (entry: Evidence, dm: boolean) =>
     !!entry.parentId &&
     !relevant(entry, dm) &&
-    !lookups.get(entry.parentId)?.done;
+    !lookups.get(conversationKey(entry.channelId, entry.parentId))?.done;
   function isUnread(entry: Evidence, state: ReadState, dm: boolean) {
     const { event, channelId } = entry;
     if (event.pubkey === viewer) return false;
@@ -450,16 +460,21 @@ export function createUnread({
       });
     const dm = isDm(channelId);
     const kind = category(entry, dm);
-    // A pending lookup may still make this reply thread attention.
-    const pending = undecided(entry, dm);
-    if (pending) want(entry, dm);
+    // A queued or running lookup may still make this reply thread attention.
+    // A read reply is never looked up, so it is undecided but not pending.
+    const open = undecided(entry, dm);
+    if (open) want(entry, dm);
+    const pending =
+      open &&
+      lookups.get(conversationKey(channelId, entry.parentId ?? ""))?.done ===
+        false;
     const viewing = [...views.values()].some(
       (view) => view.ids.has(messageId) && view.visible(),
     );
     return Object.freeze({
       status: kind
         ? "eligible"
-        : pending || (threadReference(event) && !entry.rootId)
+        : open || (threadReference(event) && !entry.rootId)
           ? "unknown"
           : "ineligible",
       ...(kind ? { category: kind } : {}),
@@ -729,12 +744,12 @@ export function createUnread({
     epoch++;
     for (const channelId of channelReadGenerations.keys())
       if (!allowed(channelId)) channelReadGenerations.delete(channelId);
-    for (const [id, lookup] of lookups)
-      if (!allowed(lookup.channelId)) lookups.delete(id);
+    for (const [key, lookup] of lookups)
+      if (!allowed(lookup.channelId)) lookups.delete(key);
     for (const [id, event] of lookupEvents)
       if (!allowed(channelOf(event) ?? "")) lookupEvents.delete(id);
-    for (const [id, { channelId }] of queued)
-      if (!allowed(channelId)) queued.delete(id);
+    for (const [key, { channelId }] of queued)
+      if (!allowed(channelId)) queued.delete(key);
     const denied = new Set(
       [...known, ...forcedMessages.keys()].filter(
         (channel) => !allowed(channel),
@@ -818,20 +833,20 @@ export function createUnread({
   // walk up an old thread.
   function want(entry: Evidence, dm: boolean) {
     const { event, channelId, parentId } = entry;
+    if (!parentId || event.pubkey === viewer) return;
+    const key = conversationKey(channelId, parentId);
     if (
-      !parentId ||
-      event.pubkey === viewer ||
-      lookups.has(parentId) ||
+      lookups.has(key) ||
       !undecided(entry, dm) ||
       !afterFrontier(entry, reads.state(), dm)
     )
       return;
-    lookups.set(parentId, { channelId, done: false, member: false });
+    lookups.set(key, { channelId, done: false, evidence: new Set() });
     const ids = new Set([parentId]);
     // Also fetch the root so a reply to a fetched parent still groups and opens.
     const rootId = threadReference(event)?.rootId;
     if (rootId && !structural(rootId)) ids.add(rootId);
-    queued.set(parentId, { channelId, ids });
+    queued.set(key, { channelId, parentId, ids });
     if (scheduled || retry) return;
     scheduled = true;
     queueMicrotask(() => {
@@ -843,13 +858,14 @@ export function createUnread({
     lookups.clear();
     lookupEvents.clear();
     queued.clear();
+    retracted.clear();
     failures = 0;
     if (retry) clearTimeout(retry);
     retry = undefined;
   }
-  function remember(id: string, lookup: Lookup) {
-    lookups.delete(id);
-    lookups.set(id, lookup);
+  function remember(key: string, lookup: Lookup) {
+    lookups.delete(key);
+    lookups.set(key, lookup);
     for (const [oldest] of lookups) {
       if (lookups.size <= 4096) break;
       lookups.delete(oldest);
@@ -923,8 +939,16 @@ export function createUnread({
         const chunk = [...queued]
           .filter(([, item]) => item.channelId === channelId)
           .slice(0, 50);
-        for (const [id] of chunk) queued.delete(id);
-        const parents = chunk.map(([id]) => id);
+        for (const [key] of chunk) queued.delete(key);
+        const parents = chunk.map(([, item]) => item.parentId);
+        // A reset or access change during the read makes its answer stale.
+        // Re-queue only lookups the reset kept; cleared ones are asked again
+        // by the next selector that needs them.
+        const generation = epoch;
+        const requeue = () => {
+          for (const [key, item] of chunk)
+            if (lookups.get(key)?.done === false) queued.set(key, item);
+        };
         const ids = [
           ...new Set(chunk.flatMap(([, item]) => [...item.ids])),
         ].filter((id) => !structural(id));
@@ -953,9 +977,11 @@ export function createUnread({
           ]);
         } catch {
           if (closed) return;
+          requeue();
+          // A reset retires its requests; that is not a relay failure.
+          if (generation !== epoch) continue;
           // Keep the parents pending, so they are not asked twice, and retry
           // the batch with backoff while the relay is unavailable.
-          for (const [id, item] of chunk) queued.set(id, item);
           const delay = Math.min(60000, 1000 * 2 ** failures++);
           retry = setTimeout(() => {
             retry = undefined;
@@ -965,6 +991,10 @@ export function createUnread({
         }
         failures = 0;
         if (closed) return;
+        if (generation !== epoch) {
+          requeue();
+          continue;
+        }
         if (!allowed(channelId)) continue;
         const removed = new Set<string>();
         for (const event of [...fetched, ...replies])
@@ -974,26 +1004,22 @@ export function createUnread({
         const live = (event: RelayEvent) =>
           contentKind(event) &&
           channelOf(event) === channelId &&
-          !removed.has(`${event.pubkey}:${event.id}`);
+          !removed.has(`${event.pubkey}:${event.id}`) &&
+          !(event.pubkey === viewer && retracted.has(event.id));
         for (const event of fetched) if (live(event)) keep(event);
-        const answered = new Set(
-          replies.flatMap((event) => {
-            const parentId = threadReference(event)?.parentId;
-            return event.pubkey === viewer && live(event) && parentId
-              ? [parentId]
-              : [];
-          }),
-        );
-        for (const id of parents) {
+        const evidence = new Map(parents.map((id) => [id, new Set<string>()]));
+        for (const event of replies) {
+          const parentId = threadReference(event)?.parentId;
+          if (event.pubkey === viewer && live(event) && parentId)
+            evidence.get(parentId)?.add(event.id);
+        }
+        for (const [id, set] of evidence) {
           const parent = structural(id);
-          remember(id, {
+          if (parent?.pubkey === viewer && live(parent)) set.add(id);
+          remember(conversationKey(channelId, id), {
             channelId,
             done: true,
-            member:
-              answered.has(id) ||
-              (parent?.pubkey === viewer &&
-                channelOf(parent) === channelId &&
-                !removed.has(`${viewer}:${id}`)),
+            evidence: set,
           });
         }
         indexed = false;
@@ -1061,8 +1087,33 @@ export function createUnread({
     });
     return refresh;
   }
+  /** The viewer's deletions end lookup memberships they were evidence for,
+   * including ones decided before the deletion, and even when the deletion
+   * itself is not retained as counted evidence. */
+  function retract(batch: readonly RelayEvent[]) {
+    const ids = batch.flatMap((event) =>
+      (event.kind === 5 || event.kind === 9005) && event.pubkey === viewer
+        ? event.tags.flatMap(([name, id]) => (name === "e" && id ? [id] : []))
+        : [],
+    );
+    if (!ids.length) return;
+    const changed = new Set<string>();
+    for (const id of ids) {
+      retracted.delete(id);
+      retracted.add(id);
+      for (const lookup of lookups.values())
+        if (lookup.evidence.delete(id) && !lookup.evidence.size)
+          changed.add(lookup.channelId);
+    }
+    for (const id of retracted) {
+      if (retracted.size <= 1024) break;
+      retracted.delete(id);
+    }
+    if (changed.size) publish(changed);
+  }
   function accept(batch: readonly RelayEvent[]) {
     if (closed) return false;
+    retract(batch);
     const changed = new Set<string>();
     indexed = false;
     const incoming = new Map(batch.map((event) => [event.id, event]));

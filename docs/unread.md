@@ -177,7 +177,9 @@ viewer posts in it or is mentioned there. Explicit per-message unread intent sti
 applies to any reply. The same rule feeds channel and thread counts, thread
 activity, per-message attention and the `thread` notification category.
 
-Membership is checked in the reply's own channel. It starts from retained
+Membership is checked in the reply's own channel, and lookups are keyed by
+channel and parent, so a reply in another channel that tags the same parent
+gets its own answer. It starts from retained
 evidence. When a reply is otherwise unread but its conversation is undecided
 (the parent is not loaded, or the viewer's own reply to it is not), a projection
 that evaluates the reply queues one relay lookup for that parent. The fetch runs
@@ -191,10 +193,13 @@ channel:
   the viewer's direct reply appears (at most ten pages). Only replies whose
   reply tag names the parent count, and deleted ones do not.
 
-While a lookup is pending, the reply is quiet and its attention is `unknown`
-with `pending: true`; a live notification for it waits instead of being
-dropped. A failed batch keeps its parents pending and retries with backoff
-(1 s doubling to 60 s), so the same parent is never asked twice at once.
+While a lookup is queued or running, the reply is quiet and its attention is
+`unknown` with `pending: true`; a live notification for it waits instead of
+being dropped. A read reply is never looked up: it stays `unknown` but is not
+`pending`, because nothing would settle it. A failed batch keeps its parents
+pending and retries with backoff (1 s doubling to 60 s), so the same parent is
+never asked twice at once. A session reset or access change during a lookup
+discards its answer; parents the reset kept are asked again.
 
 Lookup results are kept apart from counted evidence, in a store bounded to
 4,096 decided parents and 1,024 fetched events. Fetched parents and roots are
@@ -206,7 +211,9 @@ window's overflow reset and roster changes for still-accessible channels. A
 session reset clears them. Thread attention follows the direct parent, so a
 reply whose root could not be fetched still counts as the viewer's thread; it
 just cannot be grouped. A later reply of the viewer turns a negative result
-into membership, so it still counts after the window drops that reply. One
+into membership, so it still counts after the window drops that reply. A
+positive result records which of the viewer's messages made it; when the viewer
+deletes all of them, even after the lookup, the membership ends. One
 residual: a direct reply older than 5,000 of the viewer's root-tag matches is
 not seen. Replies still require retained evidence of their own.
 

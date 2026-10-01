@@ -171,6 +171,26 @@ function setup(
   };
 }
 
+it("a read reply that needs no conversation lookup is not reported pending", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "root", 11);
+  const reply = message(h.alice, "room", "reply", 12, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.emit([root, reply]);
+  await h.session.unread.markMessageRead("room", reply.id);
+  // Undecided, but read: no lookup is queued, so nothing would settle a
+  // pending notification.
+  const attention = h.session.unread.attention("room", reply.id);
+  expect(attention).toMatchObject({ status: "unknown", unread: false });
+  expect(attention.pending).toBeUndefined();
+  await flush();
+  expect(
+    h.query.mock.calls.some(([filters]) => filters.some((f) => f.authors)),
+  ).toBe(false);
+});
+
 it("production live evidence feeds stable snapshots; selection/prefetch do not read", async () => {
   const h = setup();
   h.grant("room");

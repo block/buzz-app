@@ -609,6 +609,107 @@ it("a deleted reply of the viewer does not join its parent", async () => {
   expect(h.session.unread.attention("other", sibling.id).unread).toBe(false);
 });
 
+it("deleting the viewer's reply after a completed lookup ends the membership", async () => {
+  const h = setup();
+  const relay = conversationRelay(h);
+  const agentRoot = message(h.peer, "other", "agent post", 10);
+  const mine = reply(h.viewer, "my old reply", 11, agentRoot, agentRoot);
+  const sibling = reply(h.peer, "same level", 700, agentRoot, agentRoot);
+  relay.store.push(agentRoot, mine, sibling, ...busy(h, 499));
+  await h.session.unread.ensure();
+  h.snapshot();
+  const attention = () => h.session.unread.attention("other", sibling.id);
+  await vi.waitFor(() =>
+    expect(attention()).toMatchObject({ category: "thread", unread: true }),
+  );
+  const count = relay.lookups.length;
+  // The viewer opens the old thread, which loads the reply, then deletes it.
+  // The lookup result, not only the window, must forget it.
+  h.receive([mine]);
+  h.receive([
+    signed(h.viewer, {
+      kind: 5,
+      content: "",
+      created_at: 800,
+      tags: [
+        ["h", "other"],
+        ["e", mine.id],
+      ],
+    }),
+  ]);
+  expect(attention()).toMatchObject({ status: "ineligible", unread: false });
+  expect(attention().category).toBeUndefined();
+  const later = reply(h.peer, "another sibling", 801, agentRoot, agentRoot);
+  h.receive([later]);
+  expect(h.session.unread.attention("other", later.id).unread).toBe(false);
+  expect(relay.lookups).toHaveLength(count);
+});
+
+it("lookups for the same parent ID in two channels do not share a result", async () => {
+  const h = setup(2);
+  const relay = conversationRelay(h);
+  const root = message(h.peer, "other", "peer post", 10);
+  const mine = reply(h.viewer, "my old reply", 11, root, root);
+  // A reply in another channel that deliberately tags the same parent.
+  const elsewhere = reply(h.peer, "cross-channel", 700, root, root, "room-1");
+  const sibling = reply(h.peer, "same level as me", 701, root, root);
+  relay.store.push(root, mine, elsewhere, sibling, ...busy(h, 498));
+  await h.session.unread.ensure();
+  // The other channel asks first, in the same turn.
+  h.session.unread.attention("room-1", elsewhere.id);
+  h.session.unread.attention("other", sibling.id);
+  await vi.waitFor(() =>
+    expect(h.session.unread.attention("other", sibling.id)).toMatchObject({
+      category: "thread",
+      unread: true,
+    }),
+  );
+  const elsewhereAttention = h.session.unread.attention("room-1", elsewhere.id);
+  expect(elsewhereAttention).toMatchObject({ unread: false });
+  expect(elsewhereAttention.pending).toBeUndefined();
+});
+
+it("a lookup in flight during a cache clear cannot restore its result", async () => {
+  const h = setup();
+  const relay = conversationRelay(h);
+  const mine = message(h.viewer, "other", "my old post", 10);
+  const answer = reply(h.peer, "answer to me", 700, mine, mine);
+  relay.store.push(mine, answer, ...busy(h, 499));
+  const base = h.query.getMockImplementation();
+  const held = deferred();
+  let hold = true;
+  h.query.mockImplementation(async (filters, signal) => {
+    // Evaluate against the relay now; answer after the clear.
+    const rows = (await base?.(filters, signal)) ?? [];
+    const lookup =
+      filters[0]?.kinds?.includes(9) && (filters[0].ids || filters[0].authors);
+    if (hold && lookup) await held.promise;
+    return rows;
+  });
+  await h.session.unread.ensure();
+  h.snapshot();
+  await vi.waitFor(() => expect(relay.lookups.length).toBeGreaterThan(0));
+  await h.clearCache();
+  // After the clear, the viewer's post is gone from the relay.
+  relay.store.splice(relay.store.indexOf(mine), 1);
+  hold = false;
+  held.release();
+  const asked = relay.lookups.length;
+  h.receive([
+    roster(h.relay, "other", [h.viewer.pubkey], 11),
+    metadata(h.relay, "other", "other", 11),
+  ]);
+  await h.session.unread.refresh();
+  h.snapshot();
+  await vi.waitFor(() => expect(relay.lookups.length).toBeGreaterThan(asked));
+  await vi.waitFor(() =>
+    expect(
+      h.session.unread.attention("other", answer.id).pending,
+    ).toBeUndefined(),
+  );
+  expect(h.session.unread.attention("other", answer.id).unread).toBe(false);
+});
+
 it("a failed membership lookup stays pending and retries with backoff", async () => {
   const h = setup();
   const relay = conversationRelay(h);

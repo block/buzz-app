@@ -1,5 +1,10 @@
 import { test, expect, ids } from "./fixture.mjs";
-import { open, end, settle } from "./timeline.mjs";
+import { open, end, settle, wheel } from "./timeline.mjs";
+import {
+  holdReadingFocus,
+  releaseReadingFocus,
+  readJournal,
+} from "./reading.mjs";
 
 test.use({
   pluginFixtures: true,
@@ -113,7 +118,7 @@ test("old root and reply open exactly in a bounded newest window; reclick and Ba
     .locator('[aria-label="Thread messages"]')
     .evaluate((element) => element.focus());
   await expect(
-    page.getByRole("button", { name: "Close channel settings" }),
+    page.getByRole("tab", { name: "Channel settings", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Tab");
   expect(
@@ -121,7 +126,9 @@ test("old root and reply open exactly in a bounded newest window; reclick and Ba
       element.contains(document.activeElement),
     ),
   ).toBe(false);
-  await page.getByRole("button", { name: "Close channel settings" }).click();
+  await page
+    .getByRole("button", { name: "Close Channel settings tab" })
+    .click();
   await expect(threadElement).toBeVisible();
   expect(
     await threadElement.evaluate(
@@ -153,7 +160,13 @@ test("old root and reply open exactly in a bounded newest window; reclick and Ba
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();
   await expect(profile).toBeHidden();
-  await page.getByRole("button", { name: "Close channel settings" }).click();
+  await page
+    .getByRole("button", { name: "Close Channel settings tab" })
+    .click();
+  await expect(
+    page.getByRole("tab", { name: "Thread", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: "Alice Fixture", exact: true }).click();
   await expect(profile).toBeVisible();
   expect(
     await profile.evaluate(
@@ -161,13 +174,14 @@ test("old root and reply open exactly in a bounded newest window; reclick and Ba
     ),
   ).toBe(true);
   await page
-    .getByRole("button", { name: "Close channel panel", exact: true })
+    .getByRole("button", { name: /^Close (?!Thread).* tab$/, exact: true })
     .click();
-  // Opening a panel retires the navigation-owned thread so the rail continues
-  // to hold one surface. A fresh navigation can open another exact target.
-  await expect(thread(page)).toHaveCount(0);
+  // Closing the profile returns to its retained thread tab.
+  await expect(thread(page)).toBeVisible();
   expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
-  await page.getByRole("button", { name: "Close thread", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Close Thread tab", exact: true })
+    .click();
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
@@ -217,7 +231,7 @@ test("loaded virtual rows reveal per attempt without thread reads or live-update
   // Successful exact navigation retains its target ID. Detach after reveal;
   // live arrivals must count without treating that retained ID as pending.
   await history.hover();
-  await page.mouse.wheel(0, -500);
+  await wheel(page, -500, history);
   await expect
     .poll(() =>
       history.evaluate(
@@ -234,8 +248,16 @@ test("loaded virtual rows reveal per attempt without thread reads or live-update
   await expect(
     history.locator(`[data-message-id="${first.id}"]`),
   ).toBeInViewport();
+  await settle(page, history);
+  await expect
+    .poll(() =>
+      history.evaluate(
+        (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+      ),
+    )
+    .toBeLessThan(4);
   await history.hover();
-  await page.mouse.wheel(0, -500);
+  await wheel(page, -500, history);
   await expect
     .poll(() =>
       history.evaluate(
@@ -243,7 +265,23 @@ test("loaded virtual rows reveal per attempt without thread reads or live-update
       ),
     )
     .toBeGreaterThan(80);
+  const detachedTop = await history.evaluate((element) => element.scrollTop);
   app.append("primary", ids.alpha, "Second detached arrival");
+  // A row can remeasure after newer reader input (for example, media loading).
+  // Preserve the detached position through that measurement, not just the count
+  // before Virtua has delivered it. Finish native wheel movement before taking
+  // the exact baseline; the driver regression, not this settled browser check,
+  // controls cancellation inside the retained command's 150ms lifetime.
+  await history
+    .locator("[data-message-id]")
+    .last()
+    .evaluate((row) => {
+      row.style.paddingBottom = "24px";
+    });
+  await settle(page, history);
+  expect(await history.evaluate((element) => element.scrollTop)).toBe(
+    detachedTop,
+  );
   await expect(jump).toHaveAccessibleName("1 new message");
   await jump.focus();
   await page.keyboard.press("Enter");
@@ -318,7 +356,7 @@ for (const nested of [false, true])
             `[data-message-id="${app.exact.target.id}"]`,
           );
           const close = page.getByRole("button", {
-            name: "Close thread",
+            name: "Close Thread tab",
             exact: true,
           });
           let originalRow;
@@ -553,7 +591,7 @@ test("post-success membership loss removes the thread and live updates do not sn
   expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
   const region = thread(page);
   const channelButton = page.getByRole("button", {
-    name: "Close thread",
+    name: "Close Thread tab",
     exact: true,
   });
   await channelButton.focus();
@@ -660,7 +698,10 @@ readingTest(
       const reading = await anchor(page);
       expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
       await page
-        .getByRole("button", { name: "Close thread", exact: true })
+        .getByRole("button", {
+          name: "Close Thread tab",
+          exact: true,
+        })
         .click();
       await expect(history).toBeVisible();
       await settle(page);
@@ -773,15 +814,26 @@ readTest(
   "settings blocks reading and focus in a retained thread",
   async ({ page, app }) => {
     await page.clock.install();
+    await holdReadingFocus(page);
     await open(page, app);
     await page.evaluate(() =>
       window.fixtureRelay.snapshot().session.unread.ensure(),
     );
-    expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
-    await page
-      .getByRole("button", { name: "Close thread", exact: true })
-      .focus();
+
     await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+    await releaseReadingFocus(page);
+    const opening = openTarget(page, target(app));
+    // Exact reveal requires real focus for two animation frames. Advance one
+    // frame at a time until its owner completes, without earning reading dwell.
+    await expect
+      .poll(async () => {
+        await page.clock.runFor(16);
+        return status(page);
+      })
+      .toBe("opened");
+    expect(await opening).toEqual({ status: "opened" });
+    expect((await readJournal(page)).pending).toEqual([]);
+    expect(app.report.readWrites).toEqual([]);
     const before = app.report.readWrites.length;
     const row = page.locator(
       `[aria-label="Thread messages"] [data-message-id="${app.exact.target.id}"]`,
@@ -807,9 +859,10 @@ readTest(
         .evaluate((element) => element.contains(document.activeElement)),
     ).toBe(false);
     await page.clock.runFor(10000);
+    expect((await readJournal(page)).pending).toEqual([]);
     expect(app.report.readWrites.length).toBe(before);
     await page
-      .getByRole("button", { name: "Close channel settings", exact: true })
+      .getByRole("button", { name: "Close Channel settings tab", exact: true })
       .click();
     await row.focus();
     await expect(row).toBeFocused();
@@ -863,7 +916,7 @@ traversalTest(
       "retained thread must not paint over settings",
     ).toBe(true);
     await page
-      .getByRole("button", { name: "Close channel settings", exact: true })
+      .getByRole("button", { name: "Close Channel settings tab", exact: true })
       .click();
     await expect(
       row.getByText("REVEALED SPOILER TEXT", { exact: true }),
@@ -896,7 +949,7 @@ for (const movedFocus of [false, true])
       await row.getByRole("button", { name: "Reveal spoiler" }).click();
       const original = await row.elementHandle();
       const close = page.getByRole("button", {
-        name: "Close thread",
+        name: "Close Thread tab",
         exact: true,
       });
       const focusTarget = movedFocus ? close : row;
@@ -1061,9 +1114,7 @@ liveTest(
       region.getByText("Reply after selected deletion", { exact: true }),
     ).toBeVisible();
     await expect(region).toHaveAttribute("tabindex", "0");
-    await page
-      .getByRole("button", { name: "Close thread", exact: true })
-      .focus();
+    await page.getByRole("button", { name: "Add tab", exact: true }).focus();
     await page.keyboard.press("Tab");
     await expect(region).toBeFocused();
     await expect(

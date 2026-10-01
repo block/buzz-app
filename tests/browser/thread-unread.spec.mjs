@@ -1,5 +1,6 @@
 import { test, expect, ids, sidebarJournals } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { holdReadingFocus, releaseReadingFocus } from "./reading.mjs";
 
 test.use({
   productionBroker: true,
@@ -16,6 +17,7 @@ test.describe("mentioned reply priority", () => {
     page,
     app,
   }) => {
+    await holdReadingFocus(page);
     await open(page, app);
     const alpha = page.locator(`button[data-channel-id="${ids.alpha}"]`);
     await expect(
@@ -46,13 +48,14 @@ test("thread buttons show observed unread independently, clear only after readin
   page,
   app,
 }, testInfo) => {
-  // Reading needs a 750ms dwell (use-reading.ts). The clock runs that deadline
+  // Reading needs a 300ms dwell (use-reading.ts). The clock runs that deadline
   // exactly where the test proves that something is not reading.
   await page.clock.install();
   const fullHistory = app.histories.get(`primary/${ids.alpha}`);
   const fullReplies = new Map(app.threadReplies);
   app.histories.set(`primary/${ids.alpha}`, fullHistory.slice(0, 1));
   app.threadReplies.clear();
+  await holdReadingFocus(page);
   await open(page, app);
   const alpha = page.locator(`button[data-channel-id="${ids.alpha}"]`);
   const actions = page.getByRole("menu", { name: "Actions for Alpha" });
@@ -166,11 +169,14 @@ test("thread buttons show observed unread independently, clear only after readin
     .first();
   await item.focus();
   await expect(item).toBeFocused();
+  await releaseReadingFocus(page);
   await item.press("Enter");
   await expect(
     page.getByRole("complementary", { name: "Thread", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Close thread", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Close Thread tab", exact: true })
+    .click();
   await expect(alpha).toBeFocused();
   const beforeRect = await first.boundingBox();
   await first.hover();
@@ -233,17 +239,15 @@ test("thread buttons show observed unread independently, clear only after readin
     name: "Reply to thread",
     exact: true,
   });
-  await replyComposer.focus();
-  await page.clock.runFor(750);
-  await expect(replyComposer).toBeFocused();
-  await expect(first).toHaveAccessibleName(/\d+ unread replies/); // Click/composer focus is not reading.
-  await history.focus();
-  // Finish a real read of a visible sibling before checking the hidden child.
-  // Loaded history is not read evidence: collapsed descendants stay unread.
+  // Own-composer dwell acknowledges the visible reply without list focus;
+  // the collapsed descendant and sibling thread remain independent.
   const directId = await panel
     .locator("[data-message-id]")
     .filter({ hasText: "Unread reply 0" })
     .getAttribute("data-message-id");
+  await replyComposer.focus();
+  await page.clock.runFor(300);
+  await expect(replyComposer).toBeFocused();
   await expect
     .poll(
       () =>
@@ -257,6 +261,8 @@ test("thread buttons show observed unread independently, clear only after readin
       { timeout: 12000 },
     )
     .toBe(true);
+  await expect(replyComposer).toBeFocused();
+  await expect(other).toHaveAccessibleName(/\d+ unread replies/);
   await expect(
     panel.getByText("Broadcast descendant", { exact: true }),
   ).toHaveCount(0);
@@ -271,8 +277,8 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(dot(first)).toHaveCount(0);
   await expect(dot(other)).toBeVisible();
   await expect(other).toHaveAccessibleName(/\d+ unread replies/); // No channel-wide shortcut.
-  await panel
-    .getByRole("button", { name: "Close thread", exact: true })
+  await page
+    .getByRole("button", { name: "Close Thread tab", exact: true })
     .click();
   const own = app.reply(roots[0].id, true);
   // Barrier: the session indexed this reply under the exact root. A live own
@@ -337,6 +343,7 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
   page,
   app,
 }) => {
+  await holdReadingFocus(page);
   await open(page, app);
   const root = app.histories
     .get(`primary/${ids.alpha}`)
@@ -367,6 +374,7 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
       .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
       .getByRole("button", { name: /^View thread:/ });
     await expect(trigger).toHaveCSS("pointer-events", "auto");
+    await releaseReadingFocus(page);
     await trigger.click();
     await expect.poll(() => requested).toBe(true);
     const before = await page.evaluate(() => {
@@ -398,10 +406,102 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
       )
       .toBe("opened");
     await page
-      .getByRole("button", { name: "Close thread", exact: true })
+      .getByRole("button", {
+        name: "Close Thread tab",
+        exact: true,
+      })
       .click();
     await expect(alpha).toBeFocused();
   } finally {
     release();
   }
+});
+
+// Browser-only contract: fitting rows generate no scroll/resize when an empty
+// legacy continuation finishes. Opening alone must still earn reading dwell.
+test("opening a fitting thread reads after unchanged-row continuation without another gesture", async ({
+  page,
+  app,
+}) => {
+  await page.clock.install();
+  await open(page, app);
+  const root = app.histories
+    .get(`primary/${ids.alpha}`)
+    .find((row) => row.content === "Thread root 1");
+  const button = page
+    .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ });
+  await expect(button).toHaveAccessibleName(/\d+ unread replies/);
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let continuation = false;
+  await page.route("**/query", async (route) => {
+    const filters = route.request().postDataJSON();
+    if (
+      filters.some(
+        (filter) =>
+          filter.depth_limit &&
+          filter["#e"]?.[0] === root.id &&
+          filter.thread_cursor !== undefined,
+      )
+    ) {
+      continuation = true;
+      await gate;
+    }
+    await route.continue();
+  });
+  const panel = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const history = panel.getByRole("region", { name: "Thread messages" });
+  try {
+    await button.click();
+    await expect.poll(() => continuation).toBe(true);
+    await expect(
+      panel.getByText("Unread reply 1", { exact: true }),
+    ).toBeInViewport();
+    await expect(
+      page.getByRole("tab", { name: "Thread", exact: true }),
+    ).toBeFocused();
+    expect(
+      await history.evaluate(
+        (element) => element.scrollHeight <= element.clientHeight,
+      ),
+    ).toBe(true);
+    await page.clock.runFor(300);
+    await expect(button).toHaveAccessibleName(/\d+ unread replies/);
+  } finally {
+    release();
+  }
+  await expect(button).not.toHaveAccessibleName(/\d+ unread replies/);
+  // An explicit retarget of the still-open panel also transfers reading focus.
+  const otherRoot = app.histories
+    .get(`primary/${ids.alpha}`)
+    .find((row) => row.content === "Thread root 0");
+  const other = page
+    .locator(`[data-channel-timeline] [data-message-id="${otherRoot.id}"]`)
+    .getByRole("button", { name: /^View thread:/ });
+  await other.click();
+  await expect(panel).toHaveCount(1);
+  await expect(
+    page.getByRole("tab", { name: "Thread", exact: true }),
+  ).toBeFocused();
+  const reply = panel
+    .locator("[data-message-id]")
+    .filter({ hasText: "Unread reply 0" });
+  await expect(reply).toBeInViewport();
+  const id = await reply.getAttribute("data-message-id");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        ({ id, channelId }) =>
+          window.fixtureRelay.snapshot().session.unread.attention(channelId, id)
+            .unread,
+        { id, channelId: ids.alpha },
+      ),
+    )
+    .toBe(false);
 });

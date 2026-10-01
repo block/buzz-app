@@ -131,6 +131,41 @@ it("does not defer while scrolling or interrupt without a correction", () => {
   expect(c.store.L()[0]).toBe(0);
 });
 
+it("buffers both sides while a shift freezes the scroll direction", () => {
+  const c = setup({ offset: 500 }); // native downward scrolling
+  c.prepend();
+  c.store.W(1, 2500); // compensated offset
+  c.store.W(1, 2400); // upward movement cannot update the frozen direction
+  expect(c.store.i(200)).toEqual([22, 31]);
+  c.store.W(2); // inferred idle restores native direction tracking
+  c.store.W(1, 2300);
+  expect(c.store.i(200)).toEqual([21, 28]);
+});
+
+it("buffers below a shift frozen upward without letting those rows move the reading position", () => {
+  for (const [row, size, top] of [
+    [32, 150, null], // wholly below the 2500–3000 viewport
+    [32, 60, null],
+    [23, 150, 50], // above it, as prepended rows are
+    [29, 150, 50], // visible rows are still corrected
+    [30, 150, null], // starts exactly at the viewport end
+  ]) {
+    const c = setup({ offset: 500 });
+    c.store.W(1, 400); // native upward scrolling
+    c.prepend();
+    c.store.W(1, 2400); // compensated offset
+    c.store.W(1, 2500); // downward movement cannot update the frozen direction
+    expect(c.store.i(200)).toEqual([23, 32]);
+    c.calls.length = 0;
+    c.store.W(3, [[row, size]]);
+    c.driver.J();
+    expect(c.calls.map((call) => call.options.top ?? null)).toEqual(
+      top === null ? [] : [top],
+    );
+    c.driver._();
+  }
+});
+
 it("preserves absolute edge correction and RTL axis normalization", () => {
   for (const config of [
     { offset: 1500 },
@@ -376,4 +411,65 @@ it("drops retired targets, cancels pending delivery on disposal, and can remount
   h.notify([remounted]);
   h.flush();
   expect(h.received).toEqual([[retained], [remounted]]);
+});
+
+// The timer stays at zero: measurement delivery is explicitly inside the
+// retained command's 150ms lifetime, not after an input-settle helper expires it.
+it.each(["wheel", "touchmove", "keydown", "pointerdown"])(
+  "%s retires a pending imperative target before late measurement",
+  async (type) => {
+    const c = setup({ platform: "Linux x86_64", offset: 0 });
+    c.store.W(
+      3,
+      Array.from({ length: 20 }, (_, index) => [index, 100]),
+    );
+    await c.driver.V(() => c.store.u(19) + c.store.h(19) - c.store.o(), false);
+    expect(c.viewport.scrollTop).toBe(1500);
+    c.viewport.dispatchEvent(Object.assign(new Event(type), { deltaY: -500 }));
+    c.viewport.scrollTop = 1000;
+    c.viewport.dispatchEvent(new Event("scroll"));
+    c.calls.length = 0;
+    c.store.W(5, [21, false]);
+    c.store.W(3, [[20, 120]]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(c.viewport.scrollTop).toBe(1000);
+    expect(c.calls).toEqual([]);
+    // A fresh navigation still owns its target and corrects later measurements.
+    await c.driver.V(() => c.store.t() - c.store.o(), false);
+    c.store.W(3, [[20, 140]]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(c.viewport.scrollTop).toBe(1640);
+    c.driver._();
+  },
+);
+
+it.each(["input", "dispose"])(
+  "%s invalidates an already queued imperative measurement replay",
+  async (cancel) => {
+    const c = setup({ platform: "Linux x86_64", offset: 0 });
+    await c.driver.V(() => 1500, false);
+    c.calls.length = 0;
+    c.store.W(3, [[19, 120]]); // queue the replay, but do not run it yet
+    if (cancel === "input") c.viewport.dispatchEvent(new Event("wheel"));
+    else c.driver._();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(c.calls).toEqual([]);
+    if (cancel === "input") c.driver._();
+  },
+);
+
+it("removes cancellation listeners on disposal and reattaches on remount", async () => {
+  const c = setup({ platform: "Linux x86_64", offset: 0 });
+  const remove = vi.spyOn(c.viewport, "removeEventListener");
+  c.driver._();
+  for (const type of ["wheel", "touchmove", "keydown", "pointerdown"])
+    expect(remove).toHaveBeenCalledWith(type, expect.any(Function), true);
+  c.driver.D({}, c.viewport);
+  await c.driver.V(() => 1500, false);
+  c.viewport.dispatchEvent(new Event("wheel"));
+  c.calls.length = 0;
+  c.store.W(3, [[19, 120]]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(c.calls).toEqual([]);
+  c.driver._();
 });

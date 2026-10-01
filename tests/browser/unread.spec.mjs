@@ -1,6 +1,11 @@
 import { openPage } from "./navigation.mjs";
-import { test, expect, ids, sidebarJournals } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
+import {
+  readJournal as journal,
+  holdReadingFocus,
+  releaseReadingFocus,
+} from "./reading.mjs";
 
 test.use({
   productionBroker: true,
@@ -13,14 +18,8 @@ const history = (page) =>
 const alpha = (page) => page.getByRole("button", { name: /^Alpha/ });
 const composer = (page) =>
   page.getByRole("textbox", { name: "Message #Alpha", exact: true });
-// Observe the real durable result, never seed state or call an engine test hook.
-async function journal(page) {
-  const all = await sidebarJournals(page);
-  return {
-    pending: all.flatMap((journal) => journal.pending),
-    manual: all.flatMap((journal) => journal.manual),
-  };
-}
+// The list and its own composer read; the sidebar only selects.
+const park = (page) => alpha(page).focus();
 const alphaManual = (j) =>
   j.manual.some(
     (target) => target.kind === "channel" && target.channelId === ids.alpha,
@@ -117,17 +116,19 @@ test("built sidebar → visible dwell → durable journal → relay write; reloa
     "aria-label",
     new RegExp(`^${all.length} unread messages`),
   );
-  await composer(page).focus();
+  await park(page);
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
-  await page.clock.runFor(900); // Composer focus is not reading, even past dwell.
+  await page.clock.runFor(900); // Sidebar focus is not reading, even past dwell.
   expect(await journal(page)).toEqual({ pending: [], manual: [] });
   expect(app.report.readWrites).toEqual([]);
   const visibleIds = await visible(page);
   expect(visibleIds.length).toBeGreaterThan(0);
-  await history(page).focus();
-  await page.clock.runFor(300);
+  // Own-composer focus earns the same dwell as the list.
+  await composer(page).focus();
+  await page.clock.runFor(299);
   expect(app.report.readWrites).toEqual([]);
-  await page.clock.runFor(750);
+  expect(await journal(page)).toEqual({ pending: [], manual: [] });
+  await page.clock.runFor(1);
   // One mark_through per context, anchored on the newest dwelled message.
   const newest = all
     .filter((event) => visibleIds.includes(event.id))
@@ -191,7 +192,7 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
       }),
     )
     .toEqual({ status: "reconciled", completeness: "snapshot" });
-  await composer(page).focus();
+  await park(page);
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await history(page).focus();
   const visibleIds = await visible(page);
@@ -210,8 +211,8 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
       ),
     )
     .toBe(true);
-  await page.clock.runFor(300);
-  await composer(page).focus();
+  await page.clock.runFor(299);
+  await park(page);
   await page.clock.runFor(900);
   await page.clock.resume();
   expect(app.report.readWrites).toEqual([]); // Focus left before dwell.
@@ -240,7 +241,7 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
       exact: true,
     }),
   ).toBeVisible();
-  await composer(page).focus();
+  await park(page);
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await history(page).focus();
   await page.clock.runFor(1000);
@@ -275,8 +276,10 @@ test("a surviving window delivers a closed window's saved read intent", async ({
   context,
   app,
 }) => {
+  await page.clock.install();
+  await holdReadingFocus(page);
   await open(page, app);
-  await composer(page).focus();
+  await park(page);
   const survivor = await context.newPage();
   app.watchPageErrors(survivor);
   survivor.on("console", (message) => {
@@ -290,8 +293,9 @@ test("a surviving window delivers a closed window's saved read intent", async ({
       : route.continue(),
   );
   try {
+    await holdReadingFocus(survivor);
     await open(survivor, app);
-    await composer(survivor).focus();
+    await park(survivor);
     await expect
       .poll(() =>
         survivor.evaluate(
@@ -299,14 +303,26 @@ test("a surviving window delivers a closed window's saved read intent", async ({
         ),
       )
       .toBe("reconciled");
+    for (const window of [page, survivor])
+      await window.evaluate(() =>
+        window.fixtureRelay.snapshot().session.unread.ensure(),
+      );
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+    expect(await journal(page)).toEqual({ pending: [], manual: [] });
     await page.bringToFront();
+    const visibleIds = await visible(page);
+    expect(visibleIds.length).toBeGreaterThan(0);
+    await releaseReadingFocus(page);
     await history(page).focus();
+    await page.clock.runFor(300);
     await expect
       .poll(async () => (await journal(page)).pending.length)
       .toBeGreaterThan(0);
+    await park(page);
     const [saved] = (await journal(page)).pending;
     expect(app.report.readWrites).toEqual([]);
     await page.close();
+    await survivor.clock.resume(); // The controlled clock is shared by this context.
     await survivor.bringToFront();
     // Headless bringToFront does not deliver window focus; activation is what
     // flushes the shared journal, so dispatch the event the OS would.
@@ -344,7 +360,7 @@ test.describe("explicit channel read with membership activity", () => {
         // Start read, so the user can reach Mark as Unread in the real menu.
         app.histories.set(`primary/${ids.alpha}`, activity);
         await open(page, app);
-        await composer(page).focus();
+        await park(page);
         await expect(
           history(page).locator("[data-membership-row]"),
         ).toHaveCount(1);

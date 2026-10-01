@@ -38,6 +38,9 @@ const labels = [
     "dm-group",
   ],
   ...Array.from({ length: 128 }, (_, i) => `dm-${String(i).padStart(3, "0")}`),
+  // Appended so earlier labels keep their UUIDs.
+  ...["dm-a", "dm-b", "dm-c", "dm-d", "dm-self"],
+  ...Array.from({ length: 12 }, (_, i) => `padding-${i}`),
 ];
 export const ids = Object.freeze(
   Object.fromEntries(labels.map((label, i) => [label, uuid(i + 1)])),
@@ -100,6 +103,7 @@ export const test = base.extend({
   largeSidebar: [false, { option: true }],
   iconCongestion: [false, { option: true }],
   dmLabels: [false, { option: true }],
+  dmMembers: [{}, { option: true }],
   agentPeers: [false, { option: true }],
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
@@ -141,6 +145,7 @@ export const test = base.extend({
       largeSidebar,
       iconCongestion,
       dmLabels,
+      dmMembers,
       agentPeers,
       tallMessages,
       membershipActivity,
@@ -241,14 +246,16 @@ export const test = base.extend({
           (i + 1).toString(16).padStart(64, "0"),
         )
       : peerKeys.map(getPublicKey);
-    const dmIds = largeSidebar
-      ? Array.from(
-          { length: 128 },
-          (_, i) => ids[`dm-${i.toString().padStart(3, "0")}`],
-        )
-      : dmLabels
-        ? [ids["dm-peer"], ids["dm-group"]]
-        : [];
+    const dmIds = Object.keys(dmMembers).length
+      ? Object.keys(dmMembers)
+      : largeSidebar
+        ? Array.from(
+            { length: 128 },
+            (_, i) => ids[`dm-${i.toString().padStart(3, "0")}`],
+          )
+        : dmLabels
+          ? [ids["dm-peer"], ids["dm-group"]]
+          : [];
     const personalChannel = "11111111-1111-4111-8111-111111111111";
     const sortingIds = sortingSidebar ? [ids.cedar, ids.maple, ids.willow] : [];
     const renamedChannels = new Map();
@@ -503,7 +510,9 @@ export const test = base.extend({
       );
     }
     if (sidebarUnread) {
-      for (const id of [ids["dm-030"], ids["dm-090"]])
+      for (const id of Object.keys(dmMembers).length
+        ? Object.keys(dmMembers)
+        : [ids["dm-030"], ids["dm-090"]])
         histories.set(`primary/${id}`, [
           sign(9, [["h", id]], `Unread in ${labelOf(id)}`, peerKey, 1700000900),
         ]);
@@ -816,18 +825,30 @@ export const test = base.extend({
               ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
                 ? [["p", ownerAgent, "", "owner"]]
                 : []),
-              ...(agentPeers && channels.includes(id)
-                ? participants.map((pubkey) => ["p", pubkey, "", "member"])
-                : dmLabels && id === ids["dm-peer"]
-                  ? [["p", participants[0], "", "member"]]
-                  : dmLabels && id === ids["dm-group"]
-                    ? participants.map((pubkey) => ["p", pubkey, "", "member"])
-                    : participants
-                        .slice(
-                          dmIds.indexOf(id) * 8,
-                          (dmIds.indexOf(id) + 1) * 8,
-                        )
-                        .map((pubkey) => ["p", pubkey, "", "member"])),
+              ...(dmMembers[id]
+                ? dmMembers[id].map((index) => [
+                    "p",
+                    participants[index],
+                    "",
+                    "member",
+                  ])
+                : agentPeers && channels.includes(id)
+                  ? participants.map((pubkey) => ["p", pubkey, "", "member"])
+                  : dmLabels && id === ids["dm-peer"]
+                    ? [["p", participants[0], "", "member"]]
+                    : dmLabels && id === ids["dm-group"]
+                      ? participants.map((pubkey) => [
+                          "p",
+                          pubkey,
+                          "",
+                          "member",
+                        ])
+                      : participants
+                          .slice(
+                            dmIds.indexOf(id) * 8,
+                            (dmIds.indexOf(id) + 1) * 8,
+                          )
+                          .map((pubkey) => ["p", pubkey, "", "member"])),
             ]),
           );
       if (filter.kinds?.includes(39000))
@@ -1451,6 +1472,14 @@ export const test = base.extend({
           )
         ) {
           const owner = streamOwners.get(body.streamId);
+          // Reload may retire the SSE owner after a control was dispatched.
+          // Match the broker for that exact known stream; unknown IDs still fail.
+          if (!owner && retiredStreams.has(body.streamId))
+            return send(
+              response,
+              { error: "Live stream no longer available" },
+              404,
+            );
           expect(owner?.community).toBe(community);
           if (route === "stream-interests") {
             expect(body.interestRevision).toBeGreaterThan(
@@ -1502,6 +1531,7 @@ export const test = base.extend({
             clearInterval(heartbeat);
             clients.delete(owner);
             streamOwners.delete(streamId);
+            retiredStreams.add(streamId);
           });
           return;
         }

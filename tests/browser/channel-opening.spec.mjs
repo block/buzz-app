@@ -352,7 +352,10 @@ test.describe("large thread opening", () => {
         });
       }
       await page
-        .getByRole("button", { name: "Close thread", exact: true })
+        .getByRole("button", {
+          name: "Close Thread tab",
+          exact: true,
+        })
         .click();
       await expect(history).toHaveCount(0);
     }

@@ -26,6 +26,11 @@ Panel navigation uses `affordance-panel-hover` for its quiet hover and the share
 `affordance-selected` for persistent selection. In dark mode, the unfilled panel
 row needs a quieter hover than a filled subtle control; these are distinct roles.
 
+Anchored popup selection uses `affordance-popover-selected` (neutral 2 light /
+neutral 6 dark). It stays visible on `surface-popover` independently of the quiet
+neutral button and tab hover fill; mention and emoji suggestions use this
+role for their active completion highlight.
+
 ## Foundations
 
 The interface uses shared color, type, spacing and shape roles. Primary actions
@@ -120,13 +125,13 @@ Buzz is a place where people build together and bring their agents into the room
 
 ## Surface and depth
 
-- **Panels sit on the backdrop; the backdrop is a gradient.** Everything else is a panel in a different place. The navigation column is not a special kind of surface.
+- **Panels sit on the backdrop; the backdrop is a gradient.** The app shell uses one `Panel joined` around navigation and content. Nested Panels keep their opaque fill and clipping but lose independent borders, rounding, and shadows; layout owners separate adjacent regions with `border-standard` hairlines. Standalone Panels retain their own outer surface.
 - **A region is separated by a soft fill, not by an outline.** Reach for `bg-inset` before reaching for a border. A bordered box announces its own edges; a filled one lets the content sit in a place. Grouping is the common case, so the quiet treatment is the default one.
 - **Use border-standard for quiet separators, border-prominent for controls and border-focus for keyboard focus.** Error and warning boundaries have their own roles. Measure real surfaces in both themes.
 - **No page-wide gradient behind documentation or dense reading.** The gradient is the product's backdrop for chrome and panels. Behind a column of prose it fights the text and makes contrast position-dependent — such surfaces sit on `bg-panel`.
 - **Shadows stay at the threshold of perception.** If a shadow is obvious, it is too strong. The two elevation values are the whole vocabulary.
 - **Floating controls share one outer material.** Menus, selects, popovers, and preview cards use the opaque `floating-surface`: floating fill, primary boundary, panel radius, and graduated lift. Each component still owns its content padding and interaction behavior; sharing the container does not imply that a preview behaves like a menu.
-- **Floating rows need their own hover contrast.** Menu, select, and popover activity rows use `affordance-floating-hover` (neutral 3 in light mode, neutral 7 in dark). Supporting text becomes standard text on highlight so it stays readable. Selection marks remain independent of hover. Small action menus and compact account popovers use 10px `radius-row` outer corners with a 4px list inset and 8px inner rows (80% of the outer radius). Their hover uses `affordance-subtle-hover` with immediate feedback. Default/wide menus, content popovers, pickers, dialogs, and alert dialogs retain 24px `radius-panel` outer corners. Choose compact explicitly for short action lists, never automatically from viewport width.
+- **Floating rows need their own hover contrast.** Menu, select, and popover activity rows use `affordance-floating-hover` (neutral 2 in light mode, neutral 5 in dark). Supporting text becomes standard text on highlight so it stays readable. Selection marks remain independent of hover. Small action menus and compact account popovers use 10px `radius-row` outer corners with a 4px list inset and 8px inner rows (80% of the outer radius). Their hover uses `affordance-subtle-hover` with immediate feedback. Default/wide menus, content popovers, pickers, dialogs, and alert dialogs retain 24px `radius-panel` outer corners. Choose compact explicitly for short action lists, never automatically from viewport width.
 - **Elevation is carried by shadow in light mode and by lightness in dark mode.** On a near-black background there is nothing darker for a shadow to cast, so a floating surface becomes a step lighter instead. Never reach for a stronger shadow to make something float in dark mode.
 - **On a translucent surface, elevation reads as less translucency, not as a lighter colour.** A glass container with a fully opaque child looks layered; the same container with a merely brighter child looks unchanged.
 - **Light comes from one direction, and every glass surface agrees on it.** A glass rim is bright along the lit edge and dimmer on the opposite one; that is what makes it read as a material rather than an outline. Two surfaces lit from different directions in the same view look like a mistake.
@@ -198,8 +203,8 @@ boundary too. Prominent/destructive actions and switch geometry/state colors
 are unchanged. No extra hover affordance is added to static content.
 
 The floating control mappings are proposed, not an accessibility certification.
-Dark subtle action fills are neutral-6/7/8 at rest/hover/press, on the unchanged
-neutral-5 floating surface; those fill edges are below 3:1. The contextual control
+Dark floating action fills are neutral-6/7/8 at rest/hover/press, on the
+neutral-raised (#282828) floating surface; those fill edges are below 3:1. The contextual control
 stroke uses neutral-9 and clears 3:1 against that outer surface. This proof does
 not change focus appearance: the viewer's temporary outline suppression remains,
 while the host's separate stylesheet still renders keyboard rings. That existing
@@ -353,6 +358,17 @@ show these contracts and their compositions.
 
 ## Compositions
 
+PanelHeader owns one consistent header frame: leading `navigation`, title/icon,
+and trailing `actions`. Use a toolbar IconButton with ArrowLeft for a local back
+action and X for closing the panel. The default 2.5rem (40px at the default root size) minimum height aligns conversation,
+thread, profile, tabbed workspace, and Todos headers. The compact variant shares
+this height. Headers use 0.25rem inline padding (matching the centered 2rem controls’ block inset), 1rem identity icons, and
+0.25rem gaps between action buttons without reducing their hit areas. Navigation
+tabs use 1rem icons or fill avatars and 0.5rem leading padding.
+Header spacing, icons, and controls scale with rem; separators remain
+1px hairlines. Titles and actions may wrap when their content needs more room.
+Navigation state, focus restoration, and content transitions belong to the host.
+
 Composer pickers reuse PopoverPopup and anchor above the whole composer with a
 4px gap, preserving the shared popup behavior and material.
 
@@ -421,7 +437,16 @@ shell header or composer. F6 enters notifications, Tab reaches actions. Modals
 remain above the stack. Content updates do not restart expiry; timeout changes do.
 
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
-Route navigation uses NavigationItem with aria-current instead. NavigationItem
+Route navigation uses NavigationItem with aria-current instead. Tabs can also
+compose NavigationItem through the `navigation` variant: these retain tab
+semantics, use 12rem widths with ellipsis and a subtle selected fill, accept avatars/icons, and place a sibling close
+button over reserved trailing space. Navigation tab strips scroll horizontally with a thin native scrollbar. The main
+channel header uses the same control with a single non-closable tab with `showSelection={false}` (no selection or hover fill); channel
+actions remain in the header action slot. The settings launcher uses
+`data-highlight-expanded="false"` to preserve disclosure semantics without a
+sticky pressed treatment; the selected tab owns the open-state indicator.
+
+NavigationItem
 offers an `option` variant for picker rows with even 8px padding and immediate
 hover feedback. It forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
@@ -432,7 +457,11 @@ navigation reaches the action. They remain non-modal and never take focus on hov
 from the trigger reaches the action; Shift+Tab returns to the trigger; forward Tab
 continues after the trigger. Escape dismisses the preview before restoring focus,
 but never pulls focus back if the user moved it during exit. Closing previews
-are no longer Tab destinations.
+are no longer Tab destinations or pointer targets.
+Scrolling anything that contains the trigger dismisses a hover-opened preview: a
+still pointer cannot report that its trigger moved away. A keyboard-focused
+trigger keeps its preview, hidden while the trigger is scrolled out of view
+unless focus is inside it.
 The positioned portal owns its layer above dialogs. An optional content anchor
 keeps previews near compact identity content inside wider actionable rows. Identity
 previews prefer above that content (with Base UI collision handling), leaving
@@ -501,13 +530,13 @@ namespaces: colour registers as `--color-*` and is named for emphasis
 name ever means both.
 
 The active sizes are 12, 14, 16, 18, 20, 24, 28, 32, 36, 44, 56, 72 and 96px
-at 100% text size. Sans roles use Inter and mono roles use JetBrains Mono.
-Values scale with the host text-size preference.
+at 100% interface size. Sans roles use Inter and mono roles use JetBrains Mono.
+Values scale with the host interface-size preference.
 
 - Components use named roles, never private primitive sizes. The viewer shows
   each utility’s semantic role and complete setting alongside the size ladder.
-- A role carries size, leading, tracking and weight together. Display roles have
-  solid leading; the 24px section title uses 24/24, not the primitive's 24/32.
+- A role carries size, leading, tracking and weight together. Display, title,
+  and heading roles use unitless 1.1 leading so wrapped headings have breathing room.
 - Regular (400) is for reading; Medium (500) is for labels and structure.
   Existing `font-semibold` consumers resolve to Medium.
 - Mono uses `detail/body-xsmall` at 12/16 with 0.03em tracking.
@@ -595,25 +624,14 @@ Tailwind namespaces so a border cannot accidentally inherit a text color.
 
 ## Contrast
 
-Buzz judges text contrast with **APCA** (the perceptual algorithm in the WCAG 3
-draft). Control and state boundaries use the separate WCAG 2 non-text ratio. Target **Lc 60** for body text, Lc 45 for large
-or non-essential text. This is a deliberate position, taken with evidence, and
-it is the rule a generated theme is measured against.
+Buzz checks opaque text pairs against both **WCAG AA (4.5:1)** and its existing
+**APCA** targets: Lc 60 for body/UI text and Lc 45 for metadata. Small metadata
+still needs the normal-text WCAG ratio. Control and state boundaries use the
+separate WCAG 3:1 non-text ratio; decorative separators and hover fills do not.
 
-- **Why.** The WCAG 2 ratio underweights blue and ignores polarity, so it
-  systematically recommends dark text on saturated mid-tone fills where light
-  text is plainly more readable. Measured: white on `#3b82f6` scores WCAG 3.68
-  (fail) but APCA Lc 69 (pass); black on the same fill scores WCAG 5.71 (pass)
-  but Lc 40 — badly unreadable. Apple ships white on `#0088ff`–`#3daefc` in
-  Messages at WCAG 2.4–3.5, and Tailwind, Bootstrap, and Radix all ship white
-  on their primary blue below or near the WCAG threshold. Three independent
-  signals agree with the eye; one number disagrees with all of them.
-- **APCA is not the looser choice.** It is stricter wherever WCAG 2 is
-  permissive: red on black (WCAG 5.25 pass, Lc 38 fail) and every dark-mode
-  mid-grey. Adopting it tightens more pairings than it relaxes.
-- **Report both.** WCAG 2 is what an audit measures and what regulators
-  recognise today. Design to APCA, and know the WCAG number before shipping a
-  surface that will be scanned. Where they disagree, say so in the change.
+- **Use both measurements.** The ratio establishes the AA floor; APCA adds a
+  polarity-aware readability check. A perceptual pass alone does not establish
+  WCAG conformance, and a numeric pass does not replace rendered inspection.
 - **Constrain the fill, never degrade the text.** If neither black nor white
   carries a fill legibly, the fill is wrong — it is not a valid solid. Move the
   fill's lightness and keep the hue; do not settle for the less-bad text.
@@ -622,10 +640,9 @@ it is the rule a generated theme is measured against.
   pairing in this system has been wrong at least once.
 - **One implementation of the rule.** Desktop, mobile, and web must not each
   compute their own pairing; they diverge and the same defect ships three times.
-- **Size a text step against the worst surface it can land on**, not the most
-  common one. `bg-float` is the lightest dark surface, so it is the binding case
-  in dark mode; a step that only clears the target on `bg-inset` fails wherever
-  a popover opens.
+- **Size a text step against the worst surface it can land on**, including
+  hover, pressed and selected fills. A step that only clears a panel at rest
+  can fail when a menu row highlights.
 - **Dark mode is not light mode inverted.** APCA is polarity-asymmetric:
   light-on-dark needs more separation than the same WCAG ratio suggests. The
   dark ramp's text steps are therefore lighter than a mirrored ramp would put
@@ -650,33 +667,34 @@ it is the rule a generated theme is measured against.
 
 ### Link contrast
 
-Inline links and mentions use Blue 11 text with Blue 3 hover in both modes.
-This is an explicitly approved visual tradeoff: the brighter link color is
-preferred to Blue 12, and Blue 3 makes the hover fill more visible than Blue 2,
-even where these choices fall below the ordinary contrast target.
-It is not a claim of WCAG AA conformance on every supported surface.
+Inline links and mentions use Blue 11 with Blue 3 hover in both modes.
+Blue 11 is tuned for the supported surface stack: #0b5fa8 in light mode and
+#83c4ff in dark. The former pair-specific link exemptions have been removed.
+The contrast guard checks APCA and WCAG AA (4.5:1) on opaque text pairs, including
+hover and pressed fills. Metadata uses neutral 9 (#5f5f5f) in light mode so small
+labels remain readable even on the pressed neutral 4 surface.
 
-The contrast guard accepts only these eight exact mode/role/color pairings:
+### Quiet surface stack
 
-| Mode | Surface role | Text / surface | APCA Lc | WCAG ratio |
-| --- | --- | --- | ---: | ---: |
-| Light | affordance-selected | #0d74ce / #e8e8e8 | 58.831 | 3.889 |
-| Light | neutral-4 | #0d74ce / #dadada | 50.774 | 3.409 |
-| Dark | surface-panel | #70b8ff / #1a1a1a | 59.953 | 8.279 |
-| Dark | surface-popover | #70b8ff / #333333 | 55.433 | 6.010 |
-| Dark | affordance-subtle | #70b8ff / #333333 | 55.433 | 6.010 |
-| Dark | affordance-selected | #70b8ff / #333333 | 55.433 | 6.010 |
-| Dark | neutral-4 | #70b8ff / #232323 | 58.707 | 7.476 |
-| Dark | affordance-link-hover | #70b8ff / #0d2847 | 57.791 | 7.076 |
+In dark mode the panel is #1a1a1a, inset #101010, subtle control #232323,
+popover #282828, ordinary control hover #2e2e2e, and floating row hover/ordinary
+selection #333333. Floating controls and selection use #404040, with control
+hover #595959 and press #737373. The popup separates from the panel without
+consuming the ordinary control hover range.
+In light mode panels and popovers remain white, inset/control fills #f5f5f6,
+control hover #f1f1f2, floating row hover #f5f5f6, ordinary selection #e8e8e8,
+and floating selection #dadada.
+Borders stay decorative unless needed to identify a control or state.
 
-Each accepted shortfall is printed with its measurements. Changed colors and
-other roles/surfaces remain subject to the normal APCA target; unused exceptions
-are reported for removal. The target stays Lc 60. Blue 3 hover in light mode
-(#0d74ce on #e6f4fe) clears APCA at Lc 64.614 but falls below WCAG 4.5:1
-at 4.252:1; this is also an accepted visual tradeoff.
-Light base/inset/subtle surfaces clear APCA but remain below WCAG
-4.5:1 at 4.374:1. Focus appearance and link-identification cues are separate
-contracts; this color choice does not change them.
+### Relative sizing
+
+Use rem for authored UI dimensions and spacing, semantic roles for text, and
+unitless line-height. At the default 16px root the migration retains geometry.
+The host interface-size preference scales the root, so text, numeric icons and
+rem layout spacing grow together. Keep physical hairlines, optical offsets, and runtime
+geometry returned by the browser or media APIs in pixels. Sidebar resize limits
+and its 650px navigation breakpoint remain paired with their JavaScript owner;
+the timeline measures its rem-sized leading region for Virtua's pixel start margin.
 
 ## Writing
 

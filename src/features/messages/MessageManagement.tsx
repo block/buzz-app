@@ -15,6 +15,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { MenuItem, MenuIcon } from "../../shared/design-system/ui/Menu";
 import type { ChannelMessage } from "../relay/contracts";
+import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
 import type { OutgoingEvent } from "../relay/outbox";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
@@ -57,10 +58,12 @@ export function useMessageDeletion() {
 export function MessageManagement({
   session,
   channelId,
+  active = true,
   children,
 }: {
   session: RelaySession;
   channelId?: string | undefined;
+  active?: boolean | undefined;
   children: ReactNode;
 }) {
   const [selection, setSelection] = useState<Deletion>();
@@ -84,6 +87,7 @@ export function MessageManagement({
   }, [available]);
   const visitChannelId = channels.channels.find(
     (channel) =>
+      active &&
       channel.id === channelId &&
       !channel.cached &&
       !!session.viewer &&
@@ -150,9 +154,15 @@ export function MessageManagementItems({
   const management = useContext(Management);
   const editor = useMessageEditScope();
   const afterClose = useAfterMessageMenuClose();
-  const channels = useSyncExternalStore(
-    session.channels.subscribeList,
-    session.channels.list,
+  const writable = useListedChannel(
+    session.channels,
+    row.channelId,
+    (channel) => !!channel && !channel.readOnly,
+  );
+  const archived = useListedChannel(
+    session.channels,
+    row.channelId,
+    (channel) => !!channel?.archived,
   );
   const target = {
     kind: "message" as const,
@@ -177,17 +187,14 @@ export function MessageManagementItems({
     (row.delivery && !["accepted", "seen"].includes(row.delivery))
   )
     return null;
-  const member = channels.channels.find(
-    (channel) => channel.id === row.channelId,
-  );
-  if (!member || member.readOnly) return null;
+  if (!writable) return null;
   const busy = management.operations.some(
     (item) =>
       ["sending", "accepted"].includes(item.delivery) &&
       [5, 40003].includes(item.event.kind) &&
       item.event.tags.some(([name, id]) => name === "e" && id === row.id),
   );
-  const own = row.authorId === session.viewer && !member.archived;
+  const own = row.authorId === session.viewer && !archived;
   const canEdit = own && editor && lastEditableMessage(session, [row]);
   const canDelete = own && session.outbox?.supports(5);
   const attention = session.unread.attention(row.channelId, row.id);

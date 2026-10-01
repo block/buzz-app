@@ -19,9 +19,10 @@ test("channel sidebar resizes from the full gutter and persists", async ({
   app,
 }) => {
   await open(page, app);
-  const sidebar = page.getByRole("complementary", {
+  const sidebarPanel = page.getByRole("complementary", {
     name: "Channel sidebar",
   });
+  const sidebar = page.locator(".shell-sidebar").filter({ has: sidebarPanel });
   const handle = page.getByRole("separator", {
     name: "Resize channel sidebar",
   });
@@ -34,7 +35,7 @@ test("channel sidebar resizes from the full gutter and persists", async ({
   expect(before).not.toBeNull();
   expect(grip).not.toBeNull();
   expect(listBox).not.toBeNull();
-  const geometry = await sidebar.evaluate((panel) => {
+  const geometry = await sidebarPanel.evaluate((panel) => {
     const content = panel.firstElementChild;
     const row = panel.querySelector(`[data-channel-id="${ids.alpha}"]`);
     if (!(content instanceof HTMLElement) || !(row instanceof HTMLElement))
@@ -46,6 +47,9 @@ test("channel sidebar resizes from the full gutter and persists", async ({
       throw new Error("Missing sidebar gutter");
     const contentStyle = getComputedStyle(content);
     const rowStyle = getComputedStyle(row);
+    const rootSize = Number.parseFloat(
+      getComputedStyle(document.documentElement).fontSize,
+    );
     return {
       panelGap:
         Number.parseFloat(getComputedStyle(handle).width) +
@@ -57,9 +61,10 @@ test("channel sidebar resizes from the full gutter and persists", async ({
         Number.parseFloat,
       ),
       rowRadius: Number.parseFloat(rowStyle.borderTopLeftRadius),
-      rowRadiusToken: Number.parseFloat(
-        contentStyle.getPropertyValue("--radius-row"),
-      ),
+      // Custom properties retain rem units; computed corner values are pixels.
+      rowRadiusToken:
+        Number.parseFloat(contentStyle.getPropertyValue("--radius-row")) *
+        rootSize,
     };
   });
   expect(new Set(geometry.padding).size).toBe(1);
@@ -75,7 +80,7 @@ test("channel sidebar resizes from the full gutter and persists", async ({
   );
   expect(grip.width).toBeGreaterThanOrEqual(16);
   expect(grip.height).toBeGreaterThan(500);
-  // The list extends 6px into the 8px inline inset, plus the panel's 1px border.
+  // Leave 2px between the scrollbar track and the 1px divider.
   expect(before.x + before.width - (listBox.x + listBox.width)).toBeCloseTo(
     3,
     0,

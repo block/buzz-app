@@ -1,6 +1,7 @@
 import { openPage } from "./navigation.mjs";
 import { test, expect, ids, sidebarJournals } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { holdReadingFocus } from "./reading.mjs";
 
 // Browser-only boundary: real shared-menu focus/dismissal, production broker,
 // IndexedDB reload and app-global preference startup. Policy matrices live in Vitest.
@@ -18,6 +19,8 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await page.addInitScript(() => {
     localStorage.setItem("buzz-appearance.v1", "dark");
   });
+  // Sidebar actions and reload must not read the selected conversation.
+  await holdReadingFocus(page);
   await open(page, app);
   // Context menus make the rest of the page aria-hidden while open.
   const sidebar = page.getByRole("navigation", {
@@ -148,6 +151,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await expect(
     menu.getByRole("menuitem", { name: "Unmute", exact: true }),
   ).toBeVisible();
+  // The explicit whole-channel cut uses the relay's latest message anchor.
   await menu.getByRole("menuitem", { name: "Mark as Read" }).click();
   await expect(menu).toHaveCount(0);
   await expect(beta).toBeFocused();

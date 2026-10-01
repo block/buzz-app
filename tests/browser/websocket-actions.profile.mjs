@@ -222,7 +222,10 @@ test("profiles primary actions through production broker and built app", async (
       ),
     });
     await page
-      .getByRole("button", { name: "Close thread", exact: true })
+      .getByRole("button", {
+        name: "Close Thread tab",
+        exact: true,
+      })
       .click();
   }
   await settle(page, app);
@@ -312,7 +315,9 @@ test("profiles primary actions through production broker and built app", async (
       ),
     )
     .toBe(true);
-  await page.getByRole("button", { name: "Close thread", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Close Thread tab", exact: true })
+    .click();
   const reconnectAt = performance.now();
   app.relay.disconnect("primary");
   await expect.poll(() => app.relay.hasRoute("primary", ids.alpha)).toBe(true);

@@ -149,6 +149,16 @@ for (const mode of ["bottom", "reading", "jump"]) {
       await expect(
         region.getByText("New peer reply", { exact: true }),
       ).toHaveCount(10);
+      // Main's opening-completion barrier belongs before user-demand pagination,
+      // not inside the deliberately held final page.
+      await expect(region).toHaveAttribute("aria-busy", "false");
+      await expect
+        .poll(() =>
+          region.evaluate(
+            (node) => node.scrollHeight - node.clientHeight - node.scrollTop,
+          ),
+        )
+        .toBeLessThan(4);
       const demandOlder = async () => {
         await region.evaluate((element) => {
           element.scrollTop = 0;
@@ -278,7 +288,7 @@ for (const mode of ["bottom", "reading", "jump"]) {
         ).toBeInViewport();
         if (mode === "bottom")
           await expect(
-            page.getByRole("button", { name: "Close thread", exact: true }),
+            page.getByRole("tab", { name: "Thread", exact: true }),
           ).toBeFocused();
       }
       const live = app.reply(root.id);

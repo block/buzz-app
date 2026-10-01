@@ -50,9 +50,13 @@ const bundledIcons = new Map<string, typeof BrowserIcon>([
 ]);
 export function pagePresentation(page: RegisteredPage) {
   if (page.id === "channels") return shellPresentation.channels;
+  const tone = page.layout === "workspace" ? "lime" : "sky";
+  const bundledIcon = bundledIcons.get(page.key);
+  if (bundledIcon) return { label: page.title, icon: bundledIcon, tone };
   return {
     label: page.title,
-    icon: bundledIcons.get(page.key) ?? BrowserIcon,
-    tone: page.layout === "workspace" ? "lime" : "sky",
+    icon: BrowserIcon,
+    tone,
+    ...(page.icon === undefined ? {} : { image: page.icon }),
   };
 }

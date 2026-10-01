@@ -408,3 +408,44 @@ it.each(["pointer", "keyboard"])(
     await vi.waitFor(() => expect(trigger).toHaveFocus());
   },
 );
+
+it("shows a plugin page's declared icon on its search row", async () => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  const user = userEvent.setup();
+  const icon = "data:image/png;base64,iVBORbeacon";
+  render(
+    <PageSearch
+      pages={[
+        {
+          key: "example.plugin/main",
+          pluginId: "example.plugin",
+          id: "main",
+          title: "Beacon",
+          revision: "one",
+          component: () => null,
+          icon,
+        },
+        {
+          key: "example.other/main",
+          pluginId: "example.other",
+          id: "main",
+          title: "Plain",
+          revision: "one",
+          component: () => null,
+        },
+      ]}
+      onSelect={vi.fn()}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Search Buzz" }));
+  const dialog = await screen.findByRole("dialog", { name: "Search Buzz" });
+  const beacon = within(dialog).getByRole("option", { name: "Beacon" });
+  const plain = within(dialog).getByRole("option", { name: "Plain" });
+  const image = beacon.querySelector("img");
+  expect(image).toBeInstanceOf(HTMLImageElement);
+  expect(image).toHaveAttribute("src", icon);
+  expect(plain.querySelector("img")).toBeNull();
+});

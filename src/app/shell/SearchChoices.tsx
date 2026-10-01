@@ -10,6 +10,7 @@ import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { NavigationSection } from "../../shared/design-system/ui/NavigationSection";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { isApplePlatform } from "../../features/shortcuts/format";
+import { PageIcon } from "./PageIcon";
 import "./SearchChoices.css";
 
 export type SearchDestination = {
@@ -17,6 +18,7 @@ export type SearchDestination = {
   label: string;
   detail?: string;
   icon: typeof ChatCircleIcon;
+  image?: string | undefined;
   run: () => void;
 };
 
@@ -172,7 +174,7 @@ export function SearchChoices({
               >
                 <NavigationSection label={label}>
                   {destinations.map(
-                    ({ key, label, detail, icon: Icon, run }) => (
+                    ({ key, label, detail, icon, image, run }) => (
                       <NavigationItem
                         key={key}
                         id={optionId(key)}
@@ -189,7 +191,7 @@ export function SearchChoices({
                         }
                         icon={
                           <span className="grid size-6 shrink-0 place-items-center">
-                            <Icon size={17} aria-hidden="true" />
+                            <PageIcon icon={icon} image={image} size={17} />
                           </span>
                         }
                         label={

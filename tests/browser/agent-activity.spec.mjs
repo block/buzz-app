@@ -447,15 +447,13 @@ for (const mode of ["light", "dark"]) {
       // Escape starts Base UI's asynchronous unmount. The closing portal still
       // has its wide-screen position and can overflow the next narrow viewport.
       await expect(
-        page
-          .getByRole("dialog", { includeHidden: true })
-          .filter({
-            has: page.getByRole("button", {
-              name: "View activity",
-              exact: true,
-              includeHidden: true,
-            }),
+        page.getByRole("dialog", { includeHidden: true }).filter({
+          has: page.getByRole("button", {
+            name: "View activity",
+            exact: true,
+            includeHidden: true,
           }),
+        }),
       ).toHaveCount(0);
     }
 
@@ -895,15 +893,13 @@ test.describe("thread activity", () => {
     await page.mouse.move(0, 0);
     // A closing popup retains its desktop position until its exit completes.
     await expect(
-      page
-        .getByRole("dialog", { includeHidden: true })
-        .filter({
-          has: page.getByRole("button", {
-            name: "View activity",
-            exact: true,
-            includeHidden: true,
-          }),
+      page.getByRole("dialog", { includeHidden: true }).filter({
+        has: page.getByRole("button", {
+          name: "View activity",
+          exact: true,
+          includeHidden: true,
         }),
+      }),
     ).toHaveCount(0);
     await page.setViewportSize({ width: 390, height: 844 });
     sendTyping(root.id);

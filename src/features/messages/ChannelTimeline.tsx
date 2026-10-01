@@ -224,15 +224,17 @@ function Timeline({
       )
         return;
       const previous = measuredPosition.current;
-      // List shrinkage can clamp scrollTop upward without reader movement. An
-      // upward offset beyond that clamp is input, including later events from
-      // one smooth keyboard scroll / scrollbar drag. Layout growth alone is not.
+      // Reflow can move the offset twice: the browser clamps a shrinking list,
+      // then Virtua corrects its measured rows. That combined movement can exceed
+      // the height delta, so a contracting list is not evidence of reader input.
+      // Later scrolls at stable/growing height still detect upward movement,
+      // including subsequent events from one keyboard scroll or scrollbar drag.
       const movedUp =
         previous &&
         element.clientWidth === previous.width &&
         element.clientHeight === previous.viewport &&
-        element.scrollTop <
-          previous.offset + Math.min(0, element.scrollHeight - previous.height);
+        element.scrollHeight >= previous.height &&
+        element.scrollTop < previous.offset;
       if (follow.current && !movedUp && (previous || !userScrolled.current))
         position.bottom = true;
       // Restoration can scroll before Virtua measures rows beneath the anchor,

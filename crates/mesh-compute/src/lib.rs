@@ -39,4 +39,6 @@ mod tests {
 #[cfg(feature = "mesh")]
 pub mod discovery;
 #[cfg(feature = "mesh")]
+pub mod discovery_query;
+#[cfg(feature = "mesh")]
 pub mod discovery_types;

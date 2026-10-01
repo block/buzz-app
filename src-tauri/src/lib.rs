@@ -540,8 +540,14 @@ pub fn run() {
                 browser_action,
                 browser_status
             ];
+            #[cfg(feature = "mesh")]
+            let mesh_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![mesh_compute::mesh_compute_start, mesh_compute::mesh_compute_select, mesh_compute::mesh_compute_release];
             // Browser embeds a real native view; existing commands also support MockRuntime.
             move |request: tauri::ipc::Invoke<tauri::Wry>| {
+                #[cfg(feature = "mesh")]
+                if matches!(request.message.command(), "mesh_compute_start" | "mesh_compute_select" | "mesh_compute_release") {
+                    return mesh_commands(request);
+                }
                 if request.message.command().starts_with("browser_") {
                     browser_commands(request)
                 } else {

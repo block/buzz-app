@@ -168,3 +168,28 @@ mod tests {
         assert!(request.build().is_err());
     }
 }
+
+/// Legacy community name derivation: hash the relay URL origin, preserving its scheme.
+pub fn mesh_name_for_relay(relay_url: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let normalized = url::Url::parse(relay_url.trim())
+        .map(|url| url.origin().ascii_serialization())
+        .unwrap_or_else(|_| relay_url.trim().trim_end_matches('/').to_ascii_lowercase());
+    let digest = hex::encode(Sha256::digest(normalized.as_bytes()));
+    format!("buzz-community-{}", &digest[..32])
+}
+
+#[cfg(test)]
+mod mesh_name_tests {
+    #[test]
+    fn matches_legacy_fixture_origin_hash() {
+        assert_eq!(
+            super::mesh_name_for_relay("wss://meshllm.communities.buzz.xyz/"),
+            "buzz-community-d91dbf16b4343b6383e4ff067f7d9ecc"
+        );
+        assert_eq!(
+            super::mesh_name_for_relay("wss://meshllm.communities.buzz.xyz/path"),
+            super::mesh_name_for_relay("wss://meshllm.communities.buzz.xyz")
+        );
+    }
+}

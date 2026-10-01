@@ -176,12 +176,12 @@ async function recordManifest(directory, target, profileArgs, extra = {}) {
   );
 }
 
-// The relay the dev server will use: Vite's development environment (.env
+// The relay the dev server will use: Vite's environment for its mode (.env
 // files, with the process environment winning) reduced to the validated public
 // origin. A rejected value may carry a credential, so it is never recorded.
-export async function configuredRelay(directory = root) {
+export async function configuredRelay(mode, directory = root) {
   const { loadEnv } = await import("vite");
-  const value = loadEnv("development", directory, "BUZZ_").BUZZ_RELAY_URL;
+  const value = loadEnv(mode, directory, "BUZZ_").BUZZ_RELAY_URL;
   if (!value?.trim()) return null;
   try {
     return relayOrigin(value);
@@ -245,10 +245,23 @@ export function normalizeWebViteArgs(values) {
   let port = 1430;
   let sawPort = false;
   let sawHost = false;
+  let mode;
   for (let index = 0; index < values.length; index++) {
     const value = values[index];
     if (value === "--")
       throw new Error("Web profiling does not accept Vite arguments after --.");
+    if (/^(?:--mode|-m)(?:=|$)/.test(value)) {
+      if (mode !== undefined)
+        throw new Error("Web profiling accepts only one --mode option.");
+      const equals = value.indexOf("=");
+      mode = equals < 0 ? values[++index] : value.slice(equals + 1);
+      if (!mode) throw new Error("--mode requires a mode name.");
+      continue;
+    }
+    // Vite also takes a mode from a short-flag group or --m. The manifest's
+    // relay follows the mode, so a mode Vite alone sees would misattribute it.
+    if (/^-[^-=]*m|^--m(?:=|$)/.test(value))
+      throw new Error("Web profiling requires the mode as --mode <mode>.");
     if (value === "--port") {
       if (sawPort)
         throw new Error("Web profiling accepts only one --port option.");
@@ -287,6 +300,7 @@ export function normalizeWebViteArgs(values) {
     throw new Error("--port must be an integer between 1 and 65535.");
   return {
     port,
+    mode: mode ?? "development",
     args: [
       ...normalized,
       "--host",
@@ -294,6 +308,7 @@ export function normalizeWebViteArgs(values) {
       "--port",
       String(port),
       "--strictPort",
+      ...(mode === undefined ? [] : ["--mode", mode]),
     ],
   };
 }
@@ -607,7 +622,7 @@ export async function profileWeb({
     ],
     network,
     scenario: scenario?.file ?? null,
-    relay: await configuredRelay(),
+    relay: await configuredRelay(vite.mode),
   });
 
   const control = stopController();

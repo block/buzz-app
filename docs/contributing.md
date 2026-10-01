@@ -77,8 +77,9 @@ need their own validation.
   keep it read-only. Every capture starts from a fresh browser profile with no
   community selected unless `BUZZ_DEV_OPEN_RELAY=1` is set. `manifest.json`
   records the scenario file and `relay`, the `https://` origin of the
-  `BUZZ_RELAY_URL` that development mode resolves from the environment or
-  `.env.local`; a value the dev server would reject is recorded as `null`.
+  `BUZZ_RELAY_URL` that Vite resolves from the environment or its `.env` files;
+  a value the dev server would reject is recorded as `null`. To profile in
+  another Vite mode, pass it as `--mode <mode>` so the manifest follows it.
 - `just desktop [args...]`: install locked dependencies and forward arguments to
   Tauri, e.g. `just desktop --port 1431 --no-watch`. Before launching, the adapter
   builds the pinned agent runtime when missing/outdated, or verifies and reuses it.

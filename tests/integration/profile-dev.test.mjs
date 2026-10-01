@@ -34,6 +34,7 @@ test("web profiling canonicalizes its Vite port and strict-port contract", () =>
     normalizeWebViteArgs(["--host", "127.0.0.1", "--port=1431"]),
     {
       port: 1431,
+      mode: "development",
       args: ["--host", "127.0.0.1", "--port", "1431", "--strictPort"],
     },
   );
@@ -57,6 +58,37 @@ test("web profiling canonicalizes its Vite port and strict-port contract", () =>
     () => normalizeWebViteArgs(["--no-strictPort"]),
     /requires --strictPort/,
   );
+});
+
+test("web profiling owns the Vite mode that selects its recorded relay", () => {
+  for (const values of [
+    ["--mode", "staging"],
+    ["--mode=staging"],
+    ["-m", "staging"],
+    ["-m=staging"],
+  ]) {
+    const { mode, args } = normalizeWebViteArgs(values);
+    assert.equal(mode, "staging");
+    assert.deepEqual(args.slice(-2), ["--mode", "staging"]);
+    assert.equal(args.filter((value) => /^-m|^--m/.test(value)).length, 1);
+  }
+  for (const values of [["--mode"], ["--mode="], ["-m"]])
+    assert.throws(() => normalizeWebViteArgs(values), /requires a mode name/);
+  assert.throws(
+    () => normalizeWebViteArgs(["-m", "a", "--mode", "b"]),
+    /only one --mode/,
+  );
+  // Spellings Vite would accept as a mode without the profiler seeing one.
+  for (const values of [
+    ["-dm", "staging"],
+    ["--m", "staging"],
+    ["--m=staging"],
+  ])
+    assert.throws(
+      () => normalizeWebViteArgs(values),
+      /requires the mode as --mode/,
+    );
+  assert.equal(normalizeWebViteArgs(["--force", "-d"]).mode, "development");
 });
 
 test("profiling takes one scenario file and leaves the other arguments", () => {
@@ -113,7 +145,7 @@ test("a scenario that never finishes is aborted and fails at the timeout", {
   await assert.rejects(waiting, { name: "AbortError" });
 });
 
-test("the recorded relay is the validated origin of Vite's development environment", async (t) => {
+test("the recorded relay is the validated origin of Vite's environment for its mode", async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), "buzz-profile-env-"));
   const original = process.env.BUZZ_RELAY_URL;
   const setProcess = (value) => {
@@ -124,19 +156,36 @@ test("the recorded relay is the validated origin of Vite's development environme
     setProcess(original);
     await rm(directory, { recursive: true, force: true });
   });
-  const relay = async (file, environment) => {
+  await writeFile(
+    path.join(directory, ".env.staging"),
+    "BUZZ_RELAY_URL=wss://staging.example\n",
+  );
+  const relay = async (file, environment, mode = "development") => {
     await writeFile(
       path.join(directory, ".env.local"),
       file === undefined ? "" : `BUZZ_RELAY_URL='${file}'\n`,
     );
     setProcess(environment);
-    return await configuredRelay(directory);
+    return await configuredRelay(mode, directory);
   };
   assert.equal(await relay(), null);
   assert.equal(await relay("wss://file.example/"), "https://file.example");
   assert.equal(
     await relay("wss://file.example", "wss://process.example"),
     "https://process.example",
+  );
+  // A mode's own file outranks .env.local; the process environment still wins.
+  assert.equal(
+    await relay("wss://file.example", undefined, "staging"),
+    "https://staging.example",
+  );
+  assert.equal(
+    await relay("wss://file.example", "wss://process.example", "staging"),
+    "https://process.example",
+  );
+  assert.equal(
+    await relay("wss://file.example", "wss://relay.example/secret", "staging"),
+    null,
   );
   // A rejected value may carry a credential; neither source may record it.
   for (const rejected of [
@@ -295,6 +344,10 @@ async function webFixture(t, scenario) {
   await writeFile(
     path.join(directory, ".env.local"),
     "BUZZ_RELAY_URL=wss://relay.example\n",
+  );
+  await writeFile(
+    path.join(directory, ".env.staging"),
+    "BUZZ_RELAY_URL=wss://staging.example\n",
   );
   const child = fork(path.join(directory, "driver.mjs"), [], {
     cwd: directory,
@@ -608,4 +661,22 @@ test("a scenario is aborted when Vite exits during the capture", {
   await fixture.wait("browserClosed");
   fixture.child.send("finish");
   assert.deepEqual(await fixture.exited, [1, null], fixture.log());
+});
+
+test("a forwarded Vite mode selects the relay the manifest records", async (t) => {
+  const fixture = await webFixture(t, {
+    scenario: "scenario.mjs",
+    args: ["-m", "staging"],
+  });
+  assert.equal((await fixture.wait("settled")).error, undefined);
+  fixture.child.send("finish");
+  assert.deepEqual(await fixture.exited, [0, null], fixture.log());
+  const read = async (name) =>
+    JSON.parse(await readFile(path.join(fixture.directory, name), "utf8"));
+  assert.equal(
+    (await read("profiles/manifest.json")).relay,
+    "https://staging.example",
+  );
+  // Vite is launched in the same mode the manifest was resolved for.
+  assert.deepEqual((await read("vite.args")).slice(-2), ["--mode", "staging"]);
 });

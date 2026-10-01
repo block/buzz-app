@@ -15,7 +15,7 @@ try {
   await profileWeb({
     directory: `${process.cwd()}/profiles`,
     profileArgs: [],
-    args: [],
+    args: fixture.args ?? [],
     network: true,
     trace: fixture.trace === true,
     scenario: fixture.scenario && (await loadScenario(fixture.scenario)),

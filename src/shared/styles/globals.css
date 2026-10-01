@@ -23,8 +23,7 @@
    system's text-primary and border-primary meanings. */
 @theme inline {
   --spacing: var(--space-1);
-  /* Scale type, not Tailwind spacing (which is also rem-based). Plugins can
-     consume these utilities or multiply custom font sizes by --buzz-text-scale. */
+  /* Type and spacing share the host-scaled root rem. */
   --text-xs: var(--text-caption);
   --text-xs--line-height: var(--text-caption--line-height);
   --text-sm: var(--text-body-sm);
@@ -186,19 +185,20 @@
 
   .shell-header {
     @apply flex shrink-0 items-center justify-between;
-    height: 48px;
+    min-height: 3rem;
+    flex-wrap: wrap;
     padding-left: var(--space-4);
     padding-right: var(--space-2);
     gap: var(--space-2);
     background: color-mix(in srgb, var(--bg-app) 72%, var(--surface-panel));
   }
-  @media (min-width: 640px) {
+  @media (min-width: 40rem) {
     .shell-header {
       padding-right: var(--space-4);
     }
   }
   .shell-communities {
-    @apply flex min-w-0 items-center justify-start;
+    @apply flex min-w-0 shrink-0 items-center justify-start;
     gap: var(--space-1);
     padding-left: var(--space-4);
   }
@@ -209,68 +209,85 @@
     padding-left: calc(var(--space-16) + var(--space-4));
   }
   .shell-pages {
-    @apply flex min-h-0 min-w-0 flex-col gap-1 overflow-y-auto;
-    max-height: 40dvh;
+    @apply flex min-w-0 flex-col gap-1;
   }
-  .shell-page-navigation-slot {
-    @apply flex min-h-0 shrink-0 flex-col mb-4;
-    max-height: 40%;
+  /* Matches the channel sidebar's icon box so page rows align with sections. */
+  .shell-page-icon {
+    display: inline-grid;
+    width: 1.125rem;
+    height: 1.125rem;
+    flex: 0 0 1.125rem;
+    place-items: center;
   }
-  .shell-navigation {
+  .shell-navigation,
+  .shell-navigation-content {
     display: contents;
   }
+  /* A single fr track animates from the sidebar's real extent (not a larger
+     ceiling) to zero, so movement starts on the first frame. */
   .shell-navigation[data-sidebar-collapsible] {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr);
     min-width: 0;
     flex: none;
     width: max-content;
-    max-width: max(calc(220px + var(--space-panel-gap)), calc(100% - 336px));
     overflow: visible;
     clip-path: none;
     /* Release resize help only after expansion; contain content while moving. */
     transition:
-      max-width var(--duration-settle) ease-in-out,
+      grid-template-columns var(--duration-settle) ease-in-out,
       clip-path var(--duration-settle) step-end allow-discrete;
   }
   .shell-navigation[data-sidebar-collapsible][aria-hidden="true"] {
-    max-width: 0;
+    grid-template-columns: 0fr;
     clip-path: inset(0);
     transition-timing-function: ease-in-out, step-start;
+  }
+  .shell-navigation[data-sidebar-collapsible] > .shell-navigation-content {
+    display: flex;
+    min-width: 0;
+  }
+  .shell-body {
+    @apply relative flex min-h-0 min-w-0 flex-1 pl-0 pr-2 pb-2 sm:pl-0 sm:pr-4 sm:pb-4;
+  }
+  .shell-content {
+    @apply relative flex h-full min-h-0 min-w-0;
+    container-type: inline-size;
+  }
+  .shell-sidebar,
+  .shell-sidebar-default {
+    @apply flex min-h-0 shrink-0;
+    /* Coupled to the sidebar's persisted pixel width and resize limits. */
+    border-inline-end: 1px solid var(--border-standard);
+    width: 260px;
+    min-width: 220px;
+    max-width: max(220px, calc(100% - 336px));
+  }
+  .shell-sidebar > *,
+  .shell-sidebar-default > * {
+    @apply min-w-0 flex-1;
+  }
+  .shell-navigation[data-sidebar-collapsible]
+    > .shell-navigation-content
+    > :is(.shell-sidebar, .shell-sidebar-default) {
+    flex: none;
+    /* Clamp against the stable shell, not the animated navigation track. */
+    max-width: max(220px, calc(100cqi - 336px));
   }
   @media (prefers-reduced-motion: reduce) {
     .shell-navigation[data-sidebar-collapsible] {
       transition: none;
     }
   }
-  .shell-body {
-    @apply relative flex min-h-0 min-w-0 flex-1 pl-0 pr-2 pb-2 sm:pl-0 sm:pr-4 sm:pb-4;
-  }
-  .shell-sidebar,
-  .shell-sidebar-default {
-    @apply flex min-h-0 shrink-0;
-    width: 260px;
-    min-width: 220px;
-    max-width: max(220px, calc(100% - 336px));
-  }
-  .shell-sidebar-default {
-    margin-right: var(--space-panel-gap);
-  }
-  .shell-sidebar > *,
-  .shell-sidebar-default > * {
-    @apply min-w-0 flex-1;
-  }
-  .shell-navigation[data-sidebar-collapsible] > .shell-sidebar,
-  .shell-navigation[data-sidebar-collapsible] > .shell-sidebar-default {
-    flex: none;
-    max-width: calc(100% - var(--space-panel-gap));
-  }
   .shell-actions {
     @apply flex items-center justify-end;
+    margin-left: auto;
     gap: var(--space-2);
   }
   .shell-header .buzz-button[data-icon-variant] {
-    width: 28px;
-    height: 28px;
+    width: 1.75rem;
+    height: 1.75rem;
   }
   .shell-header .buzz-button[data-shell-sidebar-toggle] {
     background: var(--surface-panel);
@@ -278,20 +295,20 @@
   }
   .shell-header .buzz-button[data-icon-variant] svg,
   .shell-header .buzz-button[data-icon-variant="chrome"] img {
-    width: 16px;
-    height: 16px;
+    width: 1rem;
+    height: 1rem;
   }
   .shell-header
     .buzz-button[data-icon-variant="chrome"]
     img[src="/bestie.png"] {
-    width: 18px;
-    height: 18px;
+    width: 1.125rem;
+    height: 1.125rem;
   }
   .shell-header
     .buzz-button[data-shell-sidebar-toggle]:hover:not([data-disabled]) {
     background: var(--affordance-subtle-hover);
   }
-  @media (max-width: 700px) {
+  @media (max-width: 43.75rem) {
     .shell-header {
       padding-left: var(--space-2);
       gap: var(--space-2);
@@ -300,32 +317,32 @@
       padding-left: var(--space-4);
     }
   }
+  /* Keep this in sync with AppShell's matchMedia navigation owner. */
   @media (max-width: 650px) {
     .shell-sidebar,
     .shell-sidebar-default {
       width: 220px;
       max-width: 220px;
     }
-    .shell-sidebar-default {
-      margin-right: var(--space-1);
-    }
     .shell-navigation {
       display: none;
     }
     .shell-navigation[data-expanded="true"] {
-      @apply absolute inset-y-0 left-2 z-20 flex pb-2;
-      max-width: calc(100% - 16px);
+      @apply absolute inset-y-0 left-0 z-20 flex;
+      background: var(--surface-panel);
+      box-shadow: var(--elevation-dock);
+      max-width: calc(100% - 1rem);
     }
     .shell-navigation .shell-sidebar,
     .shell-navigation .shell-sidebar-default {
       max-width: 220px;
       margin-right: 0;
     }
-    .shell-navigation > hr {
+    .shell-navigation-content > hr {
       display: none;
     }
   }
-  @media (max-width: 400px) {
+  @media (max-width: 25rem) {
     .shell-header,
     .shell-actions,
     .shell-communities > nav {
@@ -353,10 +370,10 @@
   }
 }
 
-/* Host text preference feeds the system ramp exactly once; rem geometry is unchanged.
-   Compatibility names forward to shared values; the host owns appearance. */
+/* Apply the saved scale once at the root so type, icons and spacing grow together.
+   Keep the existing preference token for persisted settings and fixed-pixel plugins. */
 :root {
-  --type-scale: var(--buzz-text-scale, 1);
+  font-size: calc(100% * var(--buzz-text-scale, 1));
   --buzz-mono-family: var(--font-system-mono);
   --default-mono-font-family: var(--buzz-mono-family);
 }

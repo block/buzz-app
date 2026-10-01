@@ -292,6 +292,40 @@ it("preserves confirmed roles on rejection and requires fresh explicit intent", 
     authority: { roles: { [target]: "member" } },
   });
 });
+it.each(["access", "invalid ID"])(
+  "settles a %s preflight failure instead of leaving role consumers idle",
+  async (failure) => {
+    const h = harness();
+    if (failure === "access") h.deny();
+    const channelId = failure === "invalid ID" ? "one" : id;
+    await h.owner.capability.refresh(channelId);
+    expect(h.owner.capability.snapshot(channelId)).toMatchObject({
+      status: "error",
+      authority: { roles: {}, canManage: false },
+      error:
+        failure === "access"
+          ? "Channel access unavailable; refresh membership."
+          : "Invalid channel ID",
+    });
+    expect(h.read).not.toHaveBeenCalled();
+    expect(h.sign).not.toHaveBeenCalled();
+    expect(h.publish).not.toHaveBeenCalled();
+  },
+);
+it.each(["clear", "dispose"] as const)(
+  "does not resurrect preflight errors after %s",
+  async (end) => {
+    const h = harness();
+    h.deny();
+    const pending = h.owner.capability.refresh(id);
+    h.owner[end]();
+    await pending;
+    expect(h.owner.capability.snapshot(id)).toMatchObject({
+      status: "idle",
+      authority: { roles: {}, canManage: false },
+    });
+  },
+);
 it("retains confirmed roles on refresh failure", async () => {
   const h = harness();
   await h.owner.capability.refresh(id);

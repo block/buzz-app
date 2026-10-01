@@ -113,6 +113,7 @@ export function createMemberAdministration({
     },
     async refresh(id: string) {
       if (active.has(id)) return;
+      const started = epoch;
       await perform(id, async (signal, current) => {
         const previous = snapshot(id);
         emit(id, { ...previous, status: "loading" });
@@ -146,6 +147,15 @@ export function createMemberAdministration({
               error: error instanceof Error ? error.message : String(error),
             });
         }
+      }).catch((error: unknown) => {
+        // Preflight can fail before work starts. Settle the read without
+        // reviving a cleared/closed session or leaving consumers waiting on idle.
+        if (!closed && started === epoch)
+          emit(id, {
+            ...snapshot(id),
+            status: "error",
+            error: error instanceof Error ? error.message : String(error),
+          });
       });
     },
     async run(id: string, intent: MemberChange) {

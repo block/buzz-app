@@ -3,7 +3,7 @@ import { open } from "./timeline.mjs";
 
 test.use({ savedSidebar: true });
 
-test("sidebar scrollbar starts below the top inset without changing content geometry", async ({
+test("sidebar scrollbar stays close to the divider without clipping its native thumb", async ({
   page,
   app,
 }) => {
@@ -21,28 +21,19 @@ test("sidebar scrollbar starts below the top inset without changing content geom
     const frame = viewport.parentElement;
     if (!(frame instanceof HTMLElement))
       throw new Error("Missing sidebar frame");
-    const mask = getComputedStyle(frame, "::after");
-    const panel = viewport.closest("[data-buzz-surface]");
-    if (!(panel instanceof HTMLElement))
-      throw new Error("Missing sidebar panel");
+    const panel = viewport.closest('[aria-label="Channel sidebar"]');
+    const bounds = viewport.getBoundingClientRect();
+    const panelBounds = panel.getBoundingClientRect();
     return {
-      maskTop: Number.parseFloat(mask.top),
-      maskHeight: Number.parseFloat(mask.height),
-      maskRight: Number.parseFloat(mask.right),
-      maskWidth: Number.parseFloat(mask.width),
-      maskColor: mask.backgroundColor,
-      panelColor: getComputedStyle(panel).backgroundColor,
+      rightInset: panelBounds.right - bounds.right,
+      clipped: bounds.right > frame.getBoundingClientRect().right,
       paddingTop: Number.parseFloat(getComputedStyle(viewport).paddingTop),
       scrollTop: viewport.scrollTop,
     };
   });
   expect(geometry).toEqual({
-    maskTop: 0,
-    maskHeight: 24,
-    maskRight: 0,
-    maskWidth: 5,
-    maskColor: geometry.panelColor,
-    panelColor: geometry.panelColor,
+    rightInset: 2,
+    clipped: false,
     paddingTop: 8,
     scrollTop: 0,
   });
@@ -61,9 +52,14 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
     name: "Channel sidebar",
     exact: true,
   });
-  const destinations = ["Inbox", "Bestie", "Agents"].map((name) =>
-    panel.getByRole("button", { name, exact: true }),
-  );
+  const pages = panel.getByRole("navigation", { name: "Pages" });
+  const destinations = [
+    "Inbox",
+    "Bestie",
+    "Projects",
+    "Agents",
+    "Workflows",
+  ].map((name) => pages.getByRole("button", { name, exact: true }));
   const assertDestinationFillParity = async () => {
     const geometry = await Promise.all(
       destinations.map((destination) =>
@@ -87,7 +83,7 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
       ),
     );
     for (const row of geometry) {
-      expect(row.left).toBe(13);
+      expect(row.left).toBe(12);
       expect(row.right).toBe(row.left + row.gutter);
     }
   };
@@ -211,24 +207,9 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
   await page
     .getByRole("button", { name: "Personal space", exact: true })
     .click();
-  for (const name of ["Inbox", "Bestie"]) {
-    const button = page
-      .getByRole("complementary", { name: "Channel sidebar", exact: true })
-      .getByRole("button", { name, exact: true });
-    await expect(button).toBeDisabled();
-    await button.hover();
-    await expect(button).toHaveCSS("cursor", "default");
-    await expect(button).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-    const unavailable = await button.evaluate((element) => {
-      const probe = document.createElement("span");
-      probe.style.color = "var(--text-unavailable)";
-      element.append(probe);
-      const color = getComputedStyle(probe).color;
-      probe.remove();
-      return color;
-    });
-    await expect(button).toHaveCSS("color", unavailable);
-  }
+  // Plugin pages do not need a community, so personal space keeps them enabled.
+  for (const destination of destinations)
+    await expect(destination).toBeEnabled();
 });
 
 // Browser layout and native disclosure behavior are not represented in jsdom.
@@ -394,7 +375,129 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
     expect(help.overflow).toBe("visible");
   }
   const sidebarNode = await sidebar.elementHandle();
-  const expandedWidth = (await sidebar.boundingBox()).width;
+  let expandedWidth;
+  for (const viewportWidth of [1440, 800]) {
+    if (viewportWidth === 800) await handle.press("End");
+    await page.setViewportSize({ width: viewportWidth, height: 950 });
+    expandedWidth = await sidebar.evaluate(
+      (node) => node.closest(".shell-sidebar").getBoundingClientRect().width,
+    );
+    const gutterWidth = await handle.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return (
+        element.getBoundingClientRect().width +
+        Number.parseFloat(style.marginLeft) +
+        Number.parseFloat(style.marginRight)
+      );
+    });
+    const track = await shellNavigation.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return {
+        width: node.getBoundingClientRect().width,
+        property: style.transitionProperty,
+        duration: style.transitionDuration,
+      };
+    });
+    expect(track.width).toBe(expandedWidth + gutterWidth);
+    expect(track.property).toContain("grid-template-columns");
+    expect(parseFloat(track.duration)).toBeGreaterThan(0);
+    const openGap = await page.evaluate(() => {
+      const sidebar = document.querySelector(".shell-sidebar");
+      const main = document.querySelector("#main-content");
+      if (!(sidebar instanceof HTMLElement) || !(main instanceof HTMLElement))
+        throw new Error("Missing shell panels");
+      return (
+        main.getBoundingClientRect().left -
+        sidebar.getBoundingClientRect().right
+      );
+    });
+    expect(openGap).toBe(gutterWidth);
+    // Seek paused real transitions so runner speed cannot hide an immediate jump.
+    // Pause them when the toggle commits, before any frame: transitionrun arrives
+    // in a later frame, and a stalled WebKit frame can finish the 220ms transition
+    // first. Only the track and the sidebar it holds are seeked; the resize help's
+    // own descendant transitions are unrelated.
+    for (const label of ["Hide Channel sidebar", "Show Channel sidebar"]) {
+      const samples = await page.evaluate(async (label) => {
+        const nav = document.querySelector("#shell-navigation");
+        const sidebar = nav.querySelector(".shell-sidebar");
+        const button = document.querySelector(`button[aria-label="${label}"]`);
+        const committed = new Promise((resolve) => {
+          const observer = new MutationObserver(() => {
+            observer.disconnect();
+            // getAnimations() flushes style, so the toggle's transitions exist.
+            const transitions = [
+              ...nav.getAnimations(),
+              ...sidebar.getAnimations(),
+            ];
+            for (const transition of transitions) transition.pause();
+            resolve(transitions);
+          });
+          observer.observe(nav, {
+            attributes: true,
+            attributeFilter: ["aria-hidden"],
+          });
+        });
+        button.click();
+        const transitions = await committed;
+        try {
+          const properties = transitions.map(
+            (transition) => transition.transitionProperty,
+          );
+          for (const property of ["grid-template-columns", "clip-path"])
+            if (!properties.includes(property))
+              throw new Error(`Missing ${property} transition`);
+          return [0, 0.1, 0.25, 0.5, 0.75, 1].map((progress) => {
+            for (const transition of transitions)
+              transition.currentTime =
+                transition.effect.getTiming().duration * progress;
+            return {
+              width: nav.getBoundingClientRect().width,
+              sidebar: sidebar.getBoundingClientRect().width,
+              clip: getComputedStyle(nav).clipPath,
+            };
+          });
+        } finally {
+          for (const transition of transitions) transition.finish();
+          await Promise.all(
+            transitions.map((transition) => transition.finished),
+          );
+        }
+      }, label);
+      const width = expandedWidth + gutterWidth;
+      const hiding = label.startsWith("Hide");
+      // The track leaves its real extent on the first sampled step and crosses
+      // the midpoint halfway through, instead of stalling behind a larger
+      // ceiling; the sidebar itself keeps its width and is only clipped.
+      expect(samples[0].width).toBe(hiding ? width : 0);
+      expect(samples[1].width).toBeGreaterThan(0);
+      expect(samples[1].width).toBeLessThan(width);
+      expect(Math.abs(samples[3].width - width / 2)).toBeLessThan(1);
+      for (let index = 1; index < samples.length; index++) {
+        const step = samples[index].width - samples[index - 1].width;
+        expect(hiding ? -step : step).toBeGreaterThan(0);
+      }
+      expect(samples.at(-1).width).toBe(hiding ? 0 : width);
+      for (const sample of samples) expect(sample.sidebar).toBe(expandedWidth);
+      for (const sample of samples.slice(1, -1))
+        expect(sample.clip).toBe("inset(0px)");
+      expect(samples.at(-1).clip).toBe(hiding ? "inset(0px)" : "none");
+    }
+
+    if (viewportWidth === 800) {
+      expect(expandedWidth).toBeGreaterThan(220);
+      expect(expandedWidth).toBeLessThan(520);
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await expect
+    .poll(() =>
+      sidebar.evaluate(
+        (node) => node.closest(".shell-sidebar").getBoundingClientRect().width,
+      ),
+    )
+    .toBe(520);
+  expandedWidth = 520;
   const gutterWidth = await handle.evaluate((element) => {
     const style = getComputedStyle(element);
     return (
@@ -403,79 +506,6 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
       Number.parseFloat(style.marginRight)
     );
   });
-  const track = await shellNavigation.evaluate((node) => {
-    const style = getComputedStyle(node);
-    return {
-      width: node.getBoundingClientRect().width,
-      property: style.transitionProperty,
-      duration: style.transitionDuration,
-    };
-  });
-  expect(track.width).toBe(expandedWidth + gutterWidth);
-  expect(track.property).toContain("width");
-  expect(parseFloat(track.duration)).toBeGreaterThan(0);
-  const openGap = await page.evaluate(() => {
-    const sidebar = document.querySelector(".shell-sidebar");
-    const main = document.querySelector("#main-content");
-    if (!(sidebar instanceof HTMLElement) || !(main instanceof HTMLElement))
-      throw new Error("Missing shell panels");
-    return (
-      main.getBoundingClientRect().left - sidebar.getBoundingClientRect().right
-    );
-  });
-  expect(openGap).toBe(gutterWidth);
-  // Seek a paused real transition so runner speed cannot hide an immediate jump.
-  for (const label of ["Hide Channel sidebar", "Show Channel sidebar"]) {
-    const samples = await page.evaluate(async (label) => {
-      const nav = document.querySelector("#shell-navigation");
-      const button = document.querySelector(`button[aria-label="${label}"]`);
-      const started = new Promise((resolve) => {
-        nav.addEventListener("transitionrun", resolve, { once: true });
-      });
-      button.click();
-      await started;
-      const animation = nav
-        .getAnimations()
-        .find((animation) => animation.transitionProperty === "max-width");
-      if (!animation) throw new Error("Missing sidebar transition");
-      animation.pause();
-      try {
-        const duration = animation.effect.getTiming().duration;
-        const clipping = nav
-          .getAnimations()
-          .find((animation) => animation.transitionProperty === "clip-path");
-        if (!clipping) throw new Error("Missing containment transition");
-        clipping.pause();
-        try {
-          return [0, 0.25, 0.5, 0.75, 1].map((progress) => {
-            animation.currentTime = duration * progress;
-            clipping.currentTime = duration * progress;
-            return {
-              width: nav.getBoundingClientRect().width,
-              clip: getComputedStyle(nav).clipPath,
-            };
-          });
-        } finally {
-          clipping.finish();
-          await clipping.finished;
-        }
-      } finally {
-        animation.finish();
-        await animation.finished;
-      }
-    }, label);
-    const width = expandedWidth + gutterWidth;
-    expect(
-      samples.some((sample) => sample.width > 0 && sample.width < width),
-    ).toBe(true);
-    expect(samples[0].width).toBe(label.startsWith("Hide") ? width : 0);
-    expect(samples.at(-1).width).toBe(label.startsWith("Hide") ? 0 : width);
-    for (const sample of samples.slice(1, -1))
-      expect(sample.clip).toBe("inset(0px)");
-    expect(samples.at(-1).clip).toBe(
-      label.startsWith("Hide") ? "inset(0px)" : "none",
-    );
-  }
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect
@@ -524,7 +554,10 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
   );
   await expect
     .poll(() =>
-      sidebar.evaluate((element) => element.getBoundingClientRect().width),
+      sidebar.evaluate(
+        (element) =>
+          element.closest(".shell-sidebar").getBoundingClientRect().width,
+      ),
     )
     .toBe(expandedWidth);
 
@@ -546,7 +579,10 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
   );
   await expect
     .poll(() =>
-      sidebar.evaluate((element) => element.getBoundingClientRect().width),
+      sidebar.evaluate(
+        (element) =>
+          element.closest(".shell-sidebar").getBoundingClientRect().width,
+      ),
     )
     .toBe(expandedWidth);
   await expect(
@@ -555,39 +591,39 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
 });
 
 // A real grid/overlay measurement is needed: DOM presence misses implicit columns.
-test("placeholder destinations retain companion layout across navigation and resize", async ({
+// Inbox and Bestie leave companion placement to the shell frame, unlike Messages.
+test("Inbox and Bestie pages retain companion layout across navigation and resize", async ({
   page,
   app,
 }) => {
   await open(page, app);
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
+  const pages = page
+    .getByRole("complementary", { name: "Channel sidebar", exact: true })
+    .getByRole("navigation", { name: "Pages" });
   const launcher = page.locator('.shell-header button[aria-label="Bestie"]');
   const companion = page.getByRole("complementary", {
     name: "Bestie",
     exact: true,
   });
-  const conversation = page.getByRole("article", {
-    name: "Conversation",
-    exact: true,
-  });
-  const checkGeometry = async (overlay) => {
+  const checkGeometry = async (body, overlay) => {
     await expect(companion).toBeVisible();
     await expect
       .poll(async () => {
         const card = await companion.boundingBox();
-        const body = await conversation.boundingBox();
-        if (!card || !body) return false;
+        const bounds = await body.boundingBox();
+        if (!card || !bounds) return false;
         return overlay
-          ? Math.abs(card.x + card.width - body.x - body.width) < 2 &&
-              card.x < body.x + body.width
-          : card.x >= body.x + body.width;
+          ? Math.abs(card.x + card.width - bounds.x - bounds.width) < 2 &&
+              card.x < bounds.x + bounds.width
+          : card.x >= bounds.x + bounds.width;
       })
       .toBe(true);
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
       .toBe(page.viewportSize().width);
   };
-  const selectChannel = async (name) => {
+  const showNavigation = async () => {
     if (page.viewportSize().width <= 650)
       await expect(
         page.locator("[data-shell-sidebar-toggle]"),
@@ -597,24 +633,33 @@ test("placeholder destinations retain companion layout across navigation and res
       exact: true,
     });
     if (await show.isVisible()) await show.click();
+  };
+  const selectChannel = async (name) => {
+    await showNavigation();
     await sidebar.getByRole("button", { name, exact: true }).click();
+  };
+  const openPage = async (name) => {
+    await showNavigation();
+    await pages.getByRole("button", { name, exact: true }).click();
+    const body = page.getByRole("region", { name, exact: true });
+    await expect(
+      body.getByRole("heading", { name, exact: true }),
+    ).toBeVisible();
+    return body;
   };
   for (const width of [1440, 900, 600]) {
     await page.setViewportSize({ width, height: 950 });
-    await selectChannel("Inbox");
+    let body = await openPage("Inbox");
     await launcher.click();
-    await checkGeometry(width <= 1000);
-    await selectChannel("Bestie");
-    await expect(
-      conversation.getByRole("heading", { name: "Bestie", exact: true }),
-    ).toBeVisible();
-    await checkGeometry(width <= 1000);
+    await checkGeometry(body, width <= 1000);
+    body = await openPage("Bestie");
+    await checkGeometry(body, width <= 1000);
     await launcher.click();
     await expect(companion).not.toBeVisible();
     await selectChannel("Alpha");
     await launcher.click();
-    await selectChannel("Inbox");
-    await checkGeometry(width <= 1000);
+    body = await openPage("Inbox");
+    await checkGeometry(body, width <= 1000);
     await launcher.click();
   }
 });
@@ -688,7 +733,10 @@ fillSidebar(
     });
     const list = page.getByRole("navigation", { name: "Subscribed channels" });
     const rows = {
-      destination: sidebar.getByRole("button", { name: "Inbox", exact: true }),
+      destination: sidebar.getByRole("button", {
+        name: "Projects",
+        exact: true,
+      }),
       channel: sidebar.getByRole("button", { name: "Beta", exact: true }),
       dm: sidebar.getByRole("button", { name: "Alice Fixture", exact: true }),
       session: sidebar.getByRole("button", { name: /Alpha, session in/ }),
@@ -762,3 +810,124 @@ fillSidebar(
     expect(await fillBounds(profile)).toEqual(await fillBounds(back));
   },
 );
+
+// Wheel scrolling and clipping in a short viewport require a real layout engine.
+test("non-ready sidebar keeps page rows and Retry reachable by pointer scrolling", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 220 });
+  await page.route("**/session", (route) => route.fulfill({ json: {} }));
+  await page.goto(app.origin);
+  const sidebar = page.getByRole("complementary", {
+    name: "Channel sidebar",
+    exact: true,
+  });
+  const retry = sidebar.getByRole("button", {
+    name: "Retry channels",
+    exact: true,
+  });
+  await expect(retry).toBeAttached();
+  const scrollToBottom = async (target) => {
+    await sidebar.hover();
+    await page.mouse.wheel(0, 800);
+    await expect
+      .poll(async () => {
+        const bounds = await sidebar.boundingBox();
+        const row = await target.boundingBox();
+        // A visible row is not the end of WebKit's asynchronous wheel gesture.
+        // Focusing early can stop it before the bottom padding clears the ring.
+        const atEnd = await target.evaluate((element) => {
+          let scroll = element.parentElement;
+          while (scroll && getComputedStyle(scroll).overflowY !== "auto")
+            scroll = scroll.parentElement;
+          return (
+            !!scroll &&
+            Math.abs(
+              scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop,
+            ) <= 1
+          );
+        });
+        return (
+          atEnd &&
+          !!bounds &&
+          !!row &&
+          row.y >= bounds.y &&
+          row.y + row.height <= bounds.y + bounds.height
+        );
+      })
+      .toBe(true);
+  };
+  const expectUnclippedFocus = async (button) => {
+    await page.keyboard.press("Tab");
+    await button.focus();
+    await expect(button).toBeFocused();
+    await expect
+      .poll(() =>
+        button.evaluate((element) => {
+          const style = getComputedStyle(element);
+          const extent =
+            parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset);
+          let scroll = element.parentElement;
+          while (scroll && getComputedStyle(scroll).overflowY !== "auto")
+            scroll = scroll.parentElement;
+          if (!scroll || style.outlineStyle === "none" || extent <= 0)
+            return false;
+          const row = element.getBoundingClientRect();
+          const clip = scroll.getBoundingClientRect();
+          return (
+            row.left - extent >= clip.left &&
+            row.right + extent <= clip.left + scroll.clientWidth
+          );
+        }),
+      )
+      .toBe(true);
+  };
+  const expectRingAboveScrollEnd = () =>
+    expect
+      .poll(() =>
+        retry.evaluate((element) => {
+          const style = getComputedStyle(element);
+          const extent =
+            parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset);
+          return (
+            element.getBoundingClientRect().bottom + extent <=
+            element.parentElement.getBoundingClientRect().bottom
+          );
+        }),
+      )
+      .toBe(true);
+  await scrollToBottom(retry);
+  await expectUnclippedFocus(retry);
+  await expectRingAboveScrollEnd();
+  // Content height can be fractional while scroll offsets snap to whole
+  // pixels; hosted WebKit clipped the ring that way.
+  for (const fraction of [0.3, 0.7]) {
+    const layout = await page.addStyleTag({
+      content: `[aria-label="Channel sidebar"] p { padding-block-end: ${fraction}px; }`,
+    });
+    await scrollToBottom(retry);
+    await expectRingAboveScrollEnd();
+    await layout.evaluate((element) => element.remove());
+  }
+  await page.unroute("**/session");
+  await retry.click();
+  await expect(
+    page.getByRole("navigation", { name: "Subscribed channels" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Personal space", exact: true })
+    .click();
+  const status = sidebar.getByText("Choose a community to see channels.", {
+    exact: true,
+  });
+  await expect(status).toBeAttached();
+  await scrollToBottom(status);
+  await expectUnclippedFocus(
+    sidebar.getByRole("button", { name: "Workflows", exact: true }),
+  );
+  await sidebar.getByRole("button", { name: "Workflows", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Workflows", exact: true }),
+  ).toBeVisible();
+});

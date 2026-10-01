@@ -183,7 +183,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       await row.hover();
       await expect(row).toHaveCSS(
         "background-color",
-        mode === "light" ? "rgb(232, 232, 232)" : "rgb(89, 89, 89)",
+        mode === "light" ? "rgb(245, 245, 246)" : "rgb(51, 51, 51)",
       );
       await mention.getByRole("searchbox").fill("");
       const empty = await searchAppearance(mention.locator(".search-field"));
@@ -641,15 +641,34 @@ test("namesake recipient qualifiers remain visible on touch after live name chan
     const labels = keys.map((key) => `@Honey · ${npubEncode(key).slice(-4)}`);
     await expect(chips).toHaveText(["@Honey", "@Other Honey"]);
     await page.emulateMedia({ reducedMotion: "no-preference" });
+    // Hold each reveal when its qualifier renders, before any frame. WebKit can
+    // dispatch animationstart after the 220ms reveal has already finished.
     await page.evaluate(() => {
       window.qualifierReveals = [];
-      document.addEventListener("animationstart", (event) => {
-        if (event.animationName !== "inline-chip-qualifier-reveal") return;
-        window.qualifierReveals.push(event.target);
-        for (const animation of event.target.getAnimations()) {
-          animation.pause();
-          animation.currentTime = 0;
+      new MutationObserver(() => {
+        for (const element of document.querySelectorAll(
+          ".inline-chip-qualifier[data-reveal]",
+        )) {
+          if (window.qualifierReveals.includes(element)) continue;
+          // getAnimations() flushes style, so the reveal animation exists.
+          const reveals = element
+            .getAnimations()
+            .filter(
+              (animation) =>
+                animation.animationName === "inline-chip-qualifier-reveal",
+            );
+          if (!reveals.length) continue;
+          window.qualifierReveals.push(element);
+          for (const animation of reveals) {
+            animation.pause();
+            animation.currentTime = 0;
+          }
         }
+      }).observe(document.body, {
+        attributes: true,
+        attributeFilter: ["data-reveal"],
+        childList: true,
+        subtree: true,
       });
     });
     await page.evaluate(() => window.mentionFixture.collide(true));

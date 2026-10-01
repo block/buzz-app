@@ -22,6 +22,11 @@ fn routes_cannot_retarget_credentials_or_expand_http_access() {
     ] {
         assert!(request_url("https://relay.test", path, "POST").is_err());
     }
+    for path in ["/api/invites", "/gifs/search"] {
+        assert!(request_url("https://relay.test", path, "POST").is_ok());
+        assert!(request_url("https://relay.test", path, "GET").is_err());
+    }
+    assert!(request_url("https://relay.test", "/gifs/other", "POST").is_err());
     assert!(request_url("https://relay.test", "/events", "GET").is_err());
     assert_eq!(
         request_url("https://relay.test", "/query", "POST")
@@ -50,6 +55,41 @@ fn websocket_auth_is_bound_to_the_captured_community() {
     assert!(validate_event("https://relay.test", &event).is_err());
     event.kind = 27235;
     assert!(validate_event("https://relay.test", &event).is_err());
+}
+
+#[test]
+fn leave_requests_sign_only_the_protected_empty_shape() {
+    let leave = |content: &str, tags: Vec<Vec<String>>| EventTemplate {
+        kind: 28936,
+        created_at: 1,
+        content: content.into(),
+        tags,
+    };
+    let protected = || vec![vec!["-".to_string()]];
+    assert!(validate_event("https://relay.test", &leave("", protected())).is_ok());
+    for rejected in [
+        leave("bye", protected()),
+        leave("", vec![]),
+        leave("", vec![vec!["-".into(), "x".into()]]),
+        leave(
+            "",
+            vec![vec!["-".into()], vec!["h".into(), "channel".into()]],
+        ),
+        leave("", vec![vec!["p".into(), "a".repeat(64)]]),
+    ] {
+        assert!(validate_event("https://relay.test", &rejected).is_err());
+    }
+    // Member commands stay owner/admin-only on the broker; native signs none.
+    assert!(validate_event(
+        "https://relay.test",
+        &EventTemplate {
+            kind: 9031,
+            created_at: 1,
+            content: "".into(),
+            tags: vec![vec!["p".into(), "a".repeat(64)]],
+        }
+    )
+    .is_err());
 }
 
 fn fixture_server(response: String) -> (Url, std::thread::JoinHandle<(String, String)>) {
@@ -218,6 +258,7 @@ fn isolated_agent_ipc_probe() {
     use tauri::Manager;
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(Uploads::default())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -239,6 +280,38 @@ fn isolated_agent_ipc_probe() {
         )
         .map(|body| body.deserialize::<serde_json::Value>().unwrap())
     };
+    // Empty uploads must fail before copying or networking, preserving the
+    // prepared response shape and releasing upload admission for the same ID.
+    for prepared in [false, true] {
+        let mut headers = tauri::http::HeaderMap::new();
+        headers.insert("x-buzz-community", "https://relay.test".parse().unwrap());
+        headers.insert("x-buzz-upload-id", "empty".parse().unwrap());
+        if prepared {
+            headers.insert("x-buzz-preparation", "video:mov".parse().unwrap());
+        }
+        let result = get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: "relay_upload".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body: tauri::ipc::InvokeBody::Raw(Vec::new()),
+                headers,
+                invoke_key: INVOKE_KEY.into(),
+            },
+        );
+        if prepared {
+            let response = result.unwrap().deserialize::<serde_json::Value>().unwrap();
+            assert_eq!(response["status"], 413);
+            assert_eq!(response["body"], r#"{"code":"size"}"#);
+        } else {
+            assert_eq!(
+                result.unwrap_err(),
+                serde_json::json!("File exceeds the supported upload limit")
+            );
+        }
+    }
     let public = invoke("identity_restore", serde_json::json!({})).unwrap();
     let event = invoke(
         "relay_sign",
@@ -778,6 +851,83 @@ async fn sidebar_ipc_only_decodes_verified_self_coordinates_and_signs_valid_payl
         host.decode_sidebar(vec![other]).await.unwrap()["channel-sort"]["version"],
         1
     );
+}
+
+#[tokio::test]
+async fn event_writer_admits_sidebar_records_and_recipes_by_their_own_coordinate() {
+    let host = IdentityHost::fixture();
+    let community = "https://relay.test";
+    for (coordinate, payload) in [
+        (
+            "channel-sections",
+            serde_json::json!({"version":1,"sections":[{"id":"group","name":"Group","order":0}],"assignments":{"channel":"group"}}),
+        ),
+        (
+            "channel-stars",
+            serde_json::json!({"version":1,"channels":{"channel":{"starred":true,"updatedAt":1}}}),
+        ),
+        (
+            "channel-mutes",
+            serde_json::json!({"version":1,"channels":{"channel":{"muted":true,"updatedAt":1}}}),
+        ),
+        (
+            "channel-sort",
+            serde_json::json!({"version":1,"groups":{"channels":"recent"}}),
+        ),
+    ] {
+        let event = host
+            .sign_sidebar(coordinate.into(), payload, 1)
+            .await
+            .unwrap();
+        admit_app_data(&host, &event, community).await.unwrap();
+    }
+    let sidebar = host
+        .sign_sidebar(
+            "channel-sort".into(),
+            serde_json::json!({"version":1,"groups":{}}),
+            1,
+        )
+        .await
+        .unwrap();
+    let mut tampered = sidebar.clone();
+    tampered["content"] = serde_json::json!("changed");
+    assert!(admit_app_data(&host, &tampered, community).await.is_err());
+    let mut foreign = sidebar.clone();
+    foreign["pubkey"] = serde_json::json!("02".repeat(32));
+    assert!(admit_app_data(&host, &foreign, community).await.is_err());
+
+    // Anything outside the four sidebar coordinates is still held to the recipe contract.
+    let sign = |tags: Vec<Vec<String>>, content: String| {
+        host.sign(crate::identity::EventTemplate {
+            kind: 30078,
+            created_at: 1,
+            content,
+            tags,
+        })
+    };
+    let recipe = serde_json::json!({"version":1,"community":community,"deleted":false,
+        "value":{"type":"team","id":"team-one","name":"Team","agents":[]}});
+    let ciphertext = host.kit_cipher(recipe.to_string(), true).await.unwrap();
+    let coordinate = "buzz-channel-kit-v1:https%3A%2F%2Frelay.test:team:team-one";
+    let kit_tags = |d: &str| {
+        vec![
+            vec!["d".to_owned(), d.to_owned()],
+            vec!["t".to_owned(), "buzz-channel-kit-v1".to_owned()],
+        ]
+    };
+    let valid = sign(kit_tags(coordinate), ciphertext.clone())
+        .await
+        .unwrap();
+    admit_app_data(&host, &valid, community).await.unwrap();
+    // A recipe cannot borrow a sidebar coordinate, and a sidebar record cannot borrow another.
+    for d in ["channel-sections", "read-state:other", "unknown"] {
+        let event = sign(kit_tags(d), ciphertext.clone()).await.unwrap();
+        assert!(admit_app_data(&host, &event, community).await.is_err());
+    }
+    let mut duplicate = kit_tags(coordinate);
+    duplicate.push(vec!["d".to_owned(), "channel-stars".to_owned()]);
+    let event = sign(duplicate, ciphertext).await.unwrap();
+    assert!(admit_app_data(&host, &event, community).await.is_err());
 }
 
 #[tokio::test]
@@ -1502,4 +1652,98 @@ fn general_signing_never_accepts_read_state_kind() {
         content: String::new(),
     };
     assert!(validate_event("https://relay.test", &event).is_err());
+}
+
+#[tokio::test]
+#[ignore = "local performance measurement; run with --ignored --nocapture"]
+async fn measure_preference_batch_decode() {
+    let host = IdentityHost::fixture();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let blob = serde_json::json!({"v":1,"client_id":"fixture","contexts":{"channel":now}});
+    let event = host
+        .sign_read_state("a".repeat(32), now, blob)
+        .await
+        .unwrap();
+    let events = vec![event; 16];
+    host.decode_read_state(events.clone()).await.unwrap();
+    let started = Instant::now();
+    for _ in 0..100 {
+        std::hint::black_box(host.decode_read_state(events.clone()).await.unwrap());
+    }
+    eprintln!(
+        "read-state batch: 16 slots, 100 iterations: {:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn upload_hash_moves_the_buffer_and_keeps_exact_bytes() {
+    let bytes = vec![0xa5; 1024 * 1024];
+    let pointer = bytes.as_ptr() as usize;
+    let expected = format!("{:x}", Sha256::digest(&bytes));
+    let (body, hash) = hash_upload(bytes).await.unwrap();
+    assert_eq!(body.as_ptr() as usize, pointer);
+    assert_eq!(hash, expected);
+    assert!(body.iter().all(|byte| *byte == 0xa5));
+    assert!(hash_upload(Vec::new()).await.is_err());
+    assert!(validate_upload_size(0).is_err());
+    assert!(validate_upload_size(MAX_UPLOAD + 1).is_err());
+    assert!(validate_upload_size(MAX_UPLOAD).is_ok());
+}
+
+#[tokio::test]
+async fn preference_batches_reject_invalid_ciphertext_after_signature_verification() {
+    let host = IdentityHost::fixture();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let sidebar = host
+        .sign_sidebar(
+            "channel-stars".into(),
+            serde_json::json!({"version":1,"channels":{}}),
+            now,
+        )
+        .await
+        .unwrap();
+    let read = host
+        .sign_read_state(
+            "a".repeat(32),
+            now,
+            serde_json::json!({"v":1,"client_id":"fixture","contexts":{"channel":now}}),
+        )
+        .await
+        .unwrap();
+    for (event, sidebar_record) in [(sidebar, true), (read, false)] {
+        let payload = STANDARD.decode(event["content"].as_str().unwrap()).unwrap();
+        let mut version = payload.clone();
+        version[0] = 3;
+        let mut mac = payload;
+        *mac.last_mut().unwrap() ^= 1;
+        for content in [
+            STANDARD.encode(version),
+            STANDARD.encode(mac),
+            "invalid base64".into(),
+        ] {
+            let invalid = host
+                .sign(EventTemplate {
+                    created_at: now,
+                    kind: 30078,
+                    tags: serde_json::from_value(event["tags"].clone()).unwrap(),
+                    content,
+                })
+                .await
+                .unwrap();
+            verify(&invalid);
+            let result = if sidebar_record {
+                host.decode_sidebar(vec![invalid]).await
+            } else {
+                host.decode_read_state(vec![invalid]).await
+            };
+            assert!(result.is_err());
+        }
+    }
 }

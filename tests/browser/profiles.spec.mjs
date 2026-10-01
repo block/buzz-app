@@ -27,6 +27,15 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await avatar.focus();
   await avatar.press("Enter");
   await expect(key).toHaveText(npubs.viewer);
+  const viewerTab = page
+    .getByRole("tablist", { name: "Panel tabs" })
+    .getByRole("tab", { name: "Viewer", exact: true });
+  await expect(viewerTab.locator("[data-avatar-shape]")).toHaveAttribute(
+    "data-avatar-shape",
+    "circle",
+  );
+  await expect(viewerTab.locator("img")).toHaveCount(1);
+
   await expect(panel.getByRole("tab", { name: "Memories" })).toHaveCount(0);
   const portrait = panel.getByRole("img", { name: "Viewer avatar" });
   await expect(portrait).toBeVisible();
@@ -90,7 +99,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     "data-avatar-shape",
     "circle",
   );
-  await panel.getByRole("button", { name: "Close channel panel" }).click();
+  await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
   await expect(mention).toBeFocused();
   await mention.press("Space");
   await expect(key).toHaveText(npubs.mic);
@@ -199,10 +208,13 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await expect(memories).toHaveCount(0);
 
   await expect(panel.getByRole("region", { name: "Instances" })).toHaveCount(0);
-  await panel.getByRole("button", { name: "Close channel panel" }).click();
+  await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
   await expect(
-    page.getByRole("button", { name: "View thread: 1 reply", exact: true }),
+    page.getByRole("tab", { name: "Thread", exact: true }),
   ).toBeFocused();
+  await page
+    .getByRole("button", { name: "Close Thread tab", exact: true })
+    .click();
   const missingKey = await page.evaluate(
     () => window.profilesFixture.keys.missing,
   );
@@ -308,7 +320,7 @@ test("contextual panel callbacks retire with opening, channel, contribution and 
   expect(await invoke()).toBe(true);
   // A second synchronous use of the old opening must not replace its successor.
   expect(await invoke()).toBe(false);
-  await panel.getByRole("button", { name: "Close channel panel" }).click();
+  await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
   await capture();
   await page.locator('[data-channel-id="two"]').click();
   await expect(panel).toHaveCount(0);
@@ -433,7 +445,7 @@ test("local agent command survives Info tab unmount without stealing tab focus",
 // Real renderer and profile plugin wiring; the fixture substitutes native custody
 // and broker signing. Security of those boundaries is covered by IPC/HTTP tests.
 // Real browser focus removal and PanelCard Escape bubbling are not modeled by jsdom.
-test("keyboard harness log entry focuses Back and restores focus on Back or Escape", async ({
+test("keyboard harness log tabs retain profile state and restore focus on close", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/profiles.html?harness-log");
@@ -441,7 +453,6 @@ test("keyboard harness log entry focuses Back and restores focus on Back or Esca
     name: "View Mic profile",
     exact: true,
   });
-  await opener.focus();
   await opener.press("Enter");
   const profile = page.getByRole("complementary", {
     name: "Profile",
@@ -449,23 +460,32 @@ test("keyboard harness log entry focuses Back and restores focus on Back or Esca
   });
   await profile.getByRole("tab", { name: "Runtime" }).click();
   const entry = profile.getByRole("button", { name: "Harness log" });
-  await entry.focus();
   await entry.press("Enter");
-  const log = profile.getByRole("region", { name: "Harness log" });
-  const back = log.getByRole("button", { name: "Back" });
-  await expect(back).toBeFocused();
+  const tablist = page.getByRole("tablist", { name: "Panel tabs" });
+  const logTab = tablist.getByRole("tab", { name: "Harness log", exact: true });
+  const profileTab = tablist.getByRole("tab", { name: "Mic", exact: true });
+  const log = page.getByRole("region", { name: "Harness log", exact: true });
+  await expect(logTab).toBeFocused();
   await expect(log.getByTestId("managed-agent-log-content")).toHaveText(
     "fixture harness output",
   );
-  await back.press("Enter");
+  const output = await log
+    .getByTestId("managed-agent-log-content")
+    .elementHandle();
+  await profileTab.click();
   await expect(profile.getByRole("tab", { name: "Runtime" })).toBeVisible();
-  await expect(
-    profile.getByRole("region", { name: "Profile details" }),
-  ).toBeFocused();
-  await entry.focus();
   await entry.press("Enter");
-  await expect(back).toBeFocused();
-  await back.press("Escape");
+  await expect(logTab).toBeFocused();
+  expect(await output.evaluate((el) => el.isConnected)).toBe(true);
+  await logTab.press("Escape");
+  await expect(log).toHaveCount(0);
+  await expect(profileTab).toBeFocused();
+  await entry.press("Enter");
+  await expect(logTab).toBeFocused();
+  await page
+    .getByRole("button", { name: "Close Mic tab", exact: true })
+    .click();
+  await expect(log).toHaveCount(0);
   await expect(profile).toHaveCount(0);
   await expect(opener).toBeFocused();
 });
@@ -483,12 +503,14 @@ test("focused harness log renders exact local output and exits on disconnect", a
   });
   await profile.getByRole("tab", { name: "Runtime" }).click();
   await profile.getByRole("button", { name: "Harness log" }).click();
-  const log = profile.getByRole("region", { name: "Harness log" });
+  const log = page.getByRole("region", { name: "Harness log", exact: true });
   await expect(profile.getByRole("tab", { name: "Runtime" })).toHaveCount(0);
   await expect(log.getByTestId("managed-agent-log-content")).toHaveText(
     "fixture harness output",
   );
-  await log.getByRole("button", { name: "Back" }).click();
+  await page
+    .getByRole("button", { name: "Close Harness log tab", exact: true })
+    .click();
   await expect(profile.getByRole("tab", { name: "Runtime" })).toBeVisible();
   await expect(
     profile.getByRole("button", { name: "Harness log" }),
@@ -529,7 +551,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
       await expect(dialog).toBeInViewport({ ratio: 1 });
       await expect(dialog).toHaveCSS(
         "background-color",
-        mode === "light" ? "rgb(255, 255, 255)" : "rgb(51, 51, 51)",
+        mode === "light" ? "rgb(255, 255, 255)" : "rgb(40, 40, 40)",
       );
       await expect(body).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       await expect(body).toHaveCSS("border-top-width", "0px");
@@ -680,24 +702,24 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
     name: "Profile",
     exact: true,
   });
-  const details = panel.getByRole("region", {
-    name: "Profile details",
-    exact: true,
-  });
+  // Mainline panel navigation focuses the selected tab, not the details body.
+  const profileTab = page
+    .getByRole("tablist", { name: "Panel tabs" })
+    .getByRole("tab", { name: "Viewer", exact: true });
   await expect(dialog).toHaveCount(0);
-  await expect(details).toBeFocused();
+  await expect(profileTab).toBeFocused();
   await expect(
     panel.getByRole("heading", { name: "Viewer", exact: true }),
   ).toBeVisible();
-  await details.press("Escape");
+  await profileTab.press("Escape");
   await expect(panel).toHaveCount(0);
   await expect(members).toBeFocused();
   await members.press("Enter");
   await row.focus();
   await expect(npub).toBeVisible();
   await row.press("Enter");
-  await expect(details).toBeFocused();
-  await details.press("Escape");
+  await expect(profileTab).toBeFocused();
+  await profileTab.press("Escape");
   await expect(members).toBeFocused();
   // Every row, including the viewer and protected identities, has one action
   // slot. Hover/focus only changes visibility, never row or profile geometry.
@@ -716,10 +738,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   expect(await row.boundingBox()).toEqual(restingBounds);
   await actions.click();
   const menu = page.getByRole("menu", { name: "Actions for Viewer" });
-  await expect(menu.getByRole("menuitem")).toHaveText([
-    "View profile",
-    "Copy npub",
-  ]);
+  await expect(menu.getByRole("menuitem")).toHaveText(["View profile"]);
   await expect(menu).toBeFocused();
   await page.mouse.move(0, 0);
   await expect(actionSlot).toHaveCSS("opacity", "1");
@@ -732,7 +751,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   await page.keyboard.press("Tab");
   await expect(actions).toBeFocused();
   await actions.press("Enter");
-  await menu.getByRole("menuitem", { name: "Copy npub" }).click();
+  await page.keyboard.press("Escape");
   await expect(actions).toBeFocused();
   await expect(dialog).toBeVisible();
 
@@ -742,10 +761,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
     if (entry === "ellipsis") await actions.press("Enter");
     else if (entry === "right-click") await row.click({ button: "right" });
     else await row.press(entry);
-    await expect(menu.getByRole("menuitem")).toHaveText([
-      "View profile",
-      "Copy npub",
-    ]);
+    await expect(menu.getByRole("menuitem")).toHaveText(["View profile"]);
     if (entry === "right-click") {
       await expect(menu).toBeFocused();
       await page.keyboard.press("Escape");
@@ -755,8 +771,8 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
     }
     await menu.getByRole("menuitem", { name: "View profile" }).click();
     await expect(dialog).toHaveCount(0);
-    await expect(details).toBeFocused();
-    await details.press("Escape");
+    await expect(profileTab).toBeFocused();
+    await profileTab.press("Escape");
     await expect(members).toBeFocused();
     await members.press("Enter");
   }
@@ -804,12 +820,11 @@ test.describe("touch member actions", () => {
     await actions.tap();
     await page.getByRole("menuitem", { name: "View profile" }).tap();
     await expect(dialog).toHaveCount(0);
-    const details = page.getByRole("region", {
-      name: "Profile details",
-      exact: true,
-    });
-    await expect(details).toBeFocused();
-    await details.press("Escape");
+    const profileTab = page
+      .getByRole("tablist", { name: "Panel tabs" })
+      .getByRole("tab", { name: "Viewer", exact: true });
+    await expect(profileTab).toBeFocused();
+    await profileTab.press("Escape");
     await expect(members).toBeFocused();
   });
 });
@@ -838,7 +853,6 @@ test("member Send message navigates a human DM without sending or returning focu
   await expect(menu.getByRole("menuitem")).toHaveText([
     "View profile",
     "Send message",
-    "Copy npub",
   ]);
   await menu
     .getByRole("menuitem", { name: "Send message", exact: true })
@@ -848,7 +862,7 @@ test("member Send message navigates a human DM without sending or returning focu
     .poll(() => page.evaluate(() => window.profilesFixture.dmOpens))
     .toEqual([[await page.evaluate(() => window.profilesFixture.keys.mic)]]);
   await expect(
-    page.getByRole("heading", { name: "Mic", exact: true }),
+    page.getByRole("tab", { name: "Mic", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("textbox", { name: "Message #Mic", exact: true }),

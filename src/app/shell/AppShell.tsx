@@ -1,5 +1,5 @@
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { SidebarIcon } from "../../shared/design-system/icons";
 import { Panel } from "../../shared/design-system/ui/Panel";
@@ -7,6 +7,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { AccountActionsService } from "../../features/account-actions/service";
 import type { Communities } from "../../features/communities/service";
+import type { OpenTarget } from "../../features/navigation/targets";
 import { CommunityRail } from "../../features/communities/CommunityRail";
 import { ProfileButton } from "./ProfileButton";
 import { PageSearch, type SearchServices } from "./PageSearch";
@@ -31,6 +32,7 @@ export function AppShell({
   searchServices,
   navigationControls,
   onCommunitySelect,
+  onOpenTarget,
   launchers,
   companion,
   children,
@@ -48,6 +50,8 @@ export function AppShell({
   searchServices?: SearchServices;
   navigationControls?: ReactNode;
   onCommunitySelect?: (id: string | null) => void;
+  /** Community menu destinations, opened through the host's navigation. */
+  onOpenTarget?: (target: OpenTarget) => void;
   launchers?: ReactNode;
   companion?: ReactNode;
   children: ReactNode;
@@ -84,28 +88,50 @@ export function AppShell({
     }
     setNavigationOpen(false);
   }, [navigationAttempt]);
-  const pageNavigation = (
-    <nav aria-label="Pages" className="shell-pages">
-      {orderPages(pages).map((page) => {
-        const { label, icon: Icon } = pagePresentation(page);
-        return (
-          <NavigationItem
-            type="button"
-            key={page.key}
-            onClick={() => {
-              onSelect(page.key);
-              document
-                .getElementById("main-content")
-                ?.focus({ preventScroll: true });
-            }}
-            selected={selected === page.key}
-            label={label}
-            icon={<Icon aria-hidden="true" size={20} />}
-          />
-        );
-      })}
-    </nav>
-  );
+  // Toggling the sidebar changes only this shell's own state. Keep the
+  // navigation element stable across those renders so React skips the whole
+  // sidebar subtree instead of re-rendering every row on each click.
+  const navigation = useMemo(() => {
+    // Only primary pages get a row; search below still lists every active page.
+    // Every primary page comes from an optional plugin, so an empty list is
+    // reachable; skip the landmark rather than announce an empty region.
+    const primaryPages = orderPages(pages.filter((page) => page.primary));
+    const pageNavigation = primaryPages.length ? (
+      <nav aria-label="Pages" className="shell-pages">
+        {primaryPages.map((page) => {
+          const { label, icon: Icon } = pagePresentation(page);
+          return (
+            <NavigationItem
+              type="button"
+              key={page.key}
+              onClick={() => {
+                onSelect(page.key);
+                document
+                  .getElementById("main-content")
+                  ?.focus({ preventScroll: true });
+              }}
+              selected={selected === page.key}
+              label={label}
+              icon={
+                <span className="shell-page-icon">
+                  <Icon aria-hidden="true" weight="bold" size={15} />
+                </span>
+              }
+            />
+          );
+        })}
+      </nav>
+    ) : null;
+    return sidebar ? (
+      sidebar(pageNavigation)
+    ) : (
+      <div className="shell-sidebar-default">
+        <Panel as="aside" aria-label="Page sidebar">
+          <div className="p-2">{pageNavigation}</div>
+        </Panel>
+      </div>
+    );
+  }, [pages, selected, onSelect, sidebar]);
   return (
     <div
       data-shell-tone={tone}
@@ -175,66 +201,66 @@ export function AppShell({
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <CommunityRail communities={communities} onSelect={onCommunitySelect} />
+        <CommunityRail
+          communities={communities}
+          onSelect={onCommunitySelect}
+          onOpenTarget={onOpenTarget}
+        />
         <div
           className={`shell-body ${selected === "settings" ? "shell-body-settings" : ""}`}
         >
-          <div
-            id="shell-navigation"
-            className="shell-navigation"
-            data-sidebar-collapsible={
-              (collapsibleSidebar && !narrow) || undefined
-            }
-            data-sidebar-open={visibleSidebar || undefined}
-            aria-hidden={(collapsibleSidebar || narrow) && !visibleSidebar}
-            inert={(collapsibleSidebar || narrow) && !visibleSidebar}
-            data-expanded={navigationOpen}
-            onKeyDown={(event) => {
-              if (
-                event.key === "Escape" &&
-                navigationOpen &&
-                !event.defaultPrevented
-              ) {
-                setNavigationOpen(false);
-                navigationToggle.current?.focus();
-              }
-            }}
-          >
-            {sidebar ? (
-              sidebar(pageNavigation)
-            ) : (
-              <div className="shell-sidebar-default">
-                <Panel as="aside" aria-label="Page sidebar">
-                  <div className="p-2">{pageNavigation}</div>
-                </Panel>
-              </div>
-            )}
-          </div>
-          <main
-            id="main-content"
-            tabIndex={-1}
-            className="min-h-0 min-w-0 flex-1 overflow-hidden"
-          >
-            <PanelFrame companion={companion}>
+          <Panel as="div" joined>
+            <div className="shell-content">
               <div
-                className={
-                  fillsWorkspace
-                    ? "h-full min-h-0"
-                    : "h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
+                id="shell-navigation"
+                className="shell-navigation"
+                data-sidebar-collapsible={
+                  (collapsibleSidebar && !narrow) || undefined
                 }
-              >
-                <div
-                  className={
-                    fillsWorkspace
-                      ? "h-full min-h-0"
-                      : "mx-auto w-full max-w-4xl"
+                data-sidebar-open={visibleSidebar || undefined}
+                aria-hidden={(collapsibleSidebar || narrow) && !visibleSidebar}
+                inert={(collapsibleSidebar || narrow) && !visibleSidebar}
+                data-expanded={navigationOpen}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Escape" &&
+                    navigationOpen &&
+                    !event.defaultPrevented
+                  ) {
+                    setNavigationOpen(false);
+                    navigationToggle.current?.focus();
                   }
-                >
-                  {children}
-                </div>
+                }}
+              >
+                <div className="shell-navigation-content">{navigation}</div>
               </div>
-            </PanelFrame>
-          </main>
+              <main
+                id="main-content"
+                tabIndex={-1}
+                className="min-h-0 min-w-0 flex-1 overflow-hidden"
+              >
+                <PanelFrame companion={companion}>
+                  <div
+                    className={
+                      fillsWorkspace
+                        ? "h-full min-h-0"
+                        : "h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
+                    }
+                  >
+                    <div
+                      className={
+                        fillsWorkspace
+                          ? "h-full min-h-0"
+                          : "mx-auto w-full max-w-4xl"
+                      }
+                    >
+                      {children}
+                    </div>
+                  </div>
+                </PanelFrame>
+              </main>
+            </div>
+          </Panel>
         </div>
       </div>
     </div>

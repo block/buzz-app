@@ -38,6 +38,13 @@ const namesReady = new Promise<void>((resolve) => {
   releaseNames = resolve;
 });
 let namesRequested = false;
+// A team long enough to scroll inside its dialog.
+const team = new URLSearchParams(location.search).has("team")
+  ? Array.from({ length: 12 }, (_, index) => ({
+      pubkey: keypair().pubkey,
+      name: `Agent ${index + 1}`,
+    }))
+  : [{ pubkey: person.pubkey, name: "Morgan" }];
 const additions: string[] = [];
 const channelId = "11111111-1111-4111-8111-111111111111";
 // Only the scroll-dismissal journey needs an overflowing roster.
@@ -215,7 +222,7 @@ function Fixture() {
           session={session}
           selected={selected}
           onChange={setSelected}
-          agents={[{ pubkey: person.pubkey, name: "Morgan" }]}
+          agents={team}
         />
       </Dialog>
     </ToastProvider>

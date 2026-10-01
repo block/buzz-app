@@ -6,6 +6,7 @@
     background: var(--bg-scrim);
   }
   .buzz-dialog {
+    @apply interaction-floating;
     --dialog-padding: var(--space-6);
     position: fixed;
     top: 50%;
@@ -242,10 +243,12 @@
     background: var(--surface-panel);
     color: var(--text-standard);
   }
-  .navigation-item:active {
-    background: var(--affordance-subtle-pressed);
+  .navigation-item:active:not([data-selected], [data-disabled], :disabled) {
+    --text-subtle: var(--interaction-selected-text);
+    --text-metadata: var(--interaction-selected-metadata);
+    background: var(--interaction-pressed);
   }
-  @media (max-width: 480px) {
+  @media (max-width: 30rem) {
     .buzz-dialog {
       --dialog-padding: var(--space-4);
     }
@@ -258,7 +261,8 @@
 /* Shared paint for anchored popups. Features retain layout and interaction. */
 @utility popover-surface {
   /* Selection must remain visible on the raised dark surface. */
-  --affordance-selected: var(--affordance-subtle-hover);
+  --affordance-selected: var(--affordance-popover-selected);
+  @apply interaction-floating;
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-control);
   background: var(--surface-popover);
@@ -293,7 +297,7 @@
     /* Only toast cards intercept clicks, not the empty viewport or its gaps. */
     pointer-events: none;
   }
-  @media (max-width: 700px) {
+  @media (max-width: 43.75rem) {
     .buzz-toast-viewport {
       --toast-top: 12rem;
     }

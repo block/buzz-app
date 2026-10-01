@@ -306,7 +306,7 @@ export function ChannelMembersButton({
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen(true)}
-        icon={<UsersIcon size={19} aria-hidden="true" />}
+        icon={<UsersIcon size="1rem" aria-hidden="true" />}
       />
       {open && (
         <ChannelMembersDialog

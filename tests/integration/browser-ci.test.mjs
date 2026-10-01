@@ -5,14 +5,16 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join, posix } from "node:path";
 import test from "node:test";
 import { parse } from "yaml";
+import ciConfig from "../browser/playwright.ci.config.mjs";
 import config from "../browser/playwright.config.mjs";
 import { run } from "../browser/run-command.mjs";
 
@@ -37,31 +39,46 @@ const matrixValues = (key) => {
   return values.split(",").map((value) => value.trim());
 };
 
-test("twelve independent browser jobs retain isolated measurements and native setup", () => {
+test("twelve browser jobs retain isolated measurements and a required native fixture", () => {
   assert.deepEqual(matrixValues("engine"), ["chromium", "webkit"]);
   assert.deepEqual(matrixValues("shard"), ["1", "2", "3", "4", "5", "6"]);
-  assert.doesNotMatch(browser, /^ {4}(needs|continue-on-error):/m);
+  assert.match(browser, /^ {4}needs: \[browser_fixture\]$/m);
+  assert.doesNotMatch(browser, /^ {4}continue-on-error:/m);
   assert.doesNotMatch(browser, /^ {8}(include|exclude):/m);
   assert.match(browser, /^ {6}fail-fast: false$/m);
   assert.match(
     browser,
     /name: browser-journeys-\$\{\{ matrix\.engine \}\}-\$\{\{ matrix\.shard \}\}/,
   );
-  const preparation = browser.indexOf(
-    "run: cargo build --locked -p buzzodz-plugins --example fixture-bridge",
-  );
-  const journey = browser.indexOf("-- pnpm test:browser:ci");
+  const fixture = parse(workflow).jobs.browser_fixture;
   assert.ok(
-    preparation >= 0 && journey > preparation,
-    "native fixture must build before the browser journeys",
+    fixture.steps.some(
+      (step) =>
+        step.run ===
+        "cargo build --locked -p buzzodz-plugins --example fixture-bridge",
+    ),
   );
   // Setup must run on misses too, not merely when a cache is present.
-  const step = browser.slice(
-    browser.lastIndexOf("- name:", preparation),
-    preparation,
+  const build = fixture.steps.find(
+    (step) =>
+      step.run ===
+      "cargo build --locked -p buzzodz-plugins --example fixture-bridge",
   );
-  assert.doesNotMatch(step, /\bif:/);
-  assert.doesNotMatch(step, /continue-on-error/);
+  assert.equal(build.if, undefined);
+  assert.equal(build["continue-on-error"], undefined);
+  const upload = fixture.steps.find(
+    (step) => step.with?.name === "native-browser-fixture",
+  );
+  assert.equal(upload.with["if-no-files-found"], "error");
+  const download = parse(workflow).jobs.browser.steps.find(
+    (step) => step.with?.name === "native-browser-fixture",
+  );
+  assert.equal(download.with.path, ".browser-fixture");
+  assert.match(browser, /run: chmod \+x \.browser-fixture\/fixture-bridge/);
+  assert.equal(
+    parse(workflow).jobs.browser.env.BUZZ_BROWSER_FIXTURE,
+    `\${{ github.workspace }}/.browser-fixture/fixture-bridge`,
+  );
   const functional = browser
     .split("      - name: Functional journeys\n")[1]
     ?.split("      - name:")[0];
@@ -89,7 +106,7 @@ test("twelve independent browser jobs retain isolated measurements and native se
 });
 
 test("browser Rust setup uses the repository pin before Hermit and fails closed", (t) => {
-  const { steps } = parse(workflow).jobs.browser;
+  const { steps } = parse(workflow).jobs.browser_fixture;
   const install = steps.find(
     (step) => step.name === "Install minimal pinned Rust for browser fixtures",
   );
@@ -98,14 +115,18 @@ test("browser Rust setup uses the repository pin before Hermit and fails closed"
   assert.equal(install["continue-on-error"], undefined);
   assert.ok(
     steps.indexOf(install) <
-      steps.findIndex((step) => step.uses === "./.github/actions/setup"),
+      steps.findIndex(
+        (step) =>
+          step.run ===
+          "cargo build --locked -p buzzodz-plugins --example fixture-bridge",
+      ),
   );
   const pins = readdirSync(new URL("../../bin", import.meta.url)).filter(
     (name) => /^\.rust-.*\.pkg$/.test(name),
   );
   assert.equal(pins.length, 1);
   const version = pins[0].slice(6, -4);
-  const cwd = mkdtempSync(join(tmpdir(), "buzz-browser-rust-"));
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "buzz-browser-rust-")));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
   mkdirSync(join(cwd, "bin"));
   mkdirSync(join(cwd, "toolchain"));
@@ -217,9 +238,112 @@ test("workflow shards discover every functional test/project exactly once", (t) 
   );
 });
 
+test("classic-scrollbar cases run exactly once, after the measurements, without clearing their evidence", () => {
+  const { steps } = parse(workflow).jobs.measurements;
+  const serial = steps.findIndex(
+    (step) => step.name === "Serial Chromium and WebKit measurements",
+  );
+  const classic = steps.find(
+    (step) => step.name === "Chromium classic-scrollbar layout",
+  );
+  assert.ok(serial >= 0 && classic, "both Playwright steps must exist");
+  assert.ok(steps.indexOf(classic) > serial, "classic cases run afterwards");
+  assert.equal(classic.if, undefined);
+  assert.equal(classic["continue-on-error"], undefined);
+  const command = classic.run.match(
+    /^node scripts\/ci-test-report\.mjs kind=playwright report=(\S+) evidence=(\S+) title="[^"]+" -- (pnpm test:browser:ci --project chromium-classic-scrollbars --no-deps --reporter=list,json)$/,
+  );
+  assert.ok(command, "classic step must report through ci-test-report");
+  const [, report, evidence, invocation] = command;
+  assert.equal(classic.env.PLAYWRIGHT_JSON_OUTPUT_FILE, report);
+  // A Playwright run clears the outputDir of every project it selects. The
+  // second run must therefore own a directory the measurement report and the
+  // per-test evidence never live in, and the artifact must upload both. The
+  // step runs the CI config, so resolve the project there and require the
+  // local config to agree: a CI-only override of the launch arguments or the
+  // output directory would otherwise pass this gate unnoticed.
+  const classicProject = (candidate) =>
+    candidate.name === "chromium-classic-scrollbars";
+  const project = ciConfig.projects.find(classicProject);
+  assert.ok(project, "chromium-classic-scrollbars project must exist in CI");
+  assert.deepEqual(
+    project,
+    config.projects.find(classicProject),
+    "CI must run the classic project exactly as the local gate defines it",
+  );
+  assert.equal(ciConfig.outputDir, config.outputDir);
+  assert.equal(project.use.browserName, "chromium");
+  assert.deepEqual(project.use.launchOptions.ignoreDefaultArgs, [
+    "--hide-scrollbars",
+  ]);
+  const outputDir = (dir) => posix.normalize(posix.join("tests/browser", dir));
+  const measurementDir = outputDir(ciConfig.outputDir);
+  const classicDir = outputDir(project.outputDir);
+  assert.notEqual(classicDir, measurementDir);
+  assert.ok(!classicDir.startsWith(`${measurementDir}/`));
+  assert.ok(!measurementDir.startsWith(`${classicDir}/`));
+  assert.ok(
+    steps[serial].env.PLAYWRIGHT_JSON_OUTPUT_FILE.startsWith(
+      `${measurementDir}/`,
+    ),
+  );
+  for (const path of [report, evidence])
+    assert.ok(
+      path.startsWith(`${classicDir}/`),
+      `${path} stays in its own dir`,
+    );
+  const upload = steps.find((step) => step.name === "Measurement evidence");
+  assert.deepEqual(
+    upload.with.path
+      .trim()
+      .split("\n")
+      .map((line) => line.trim())
+      .sort(),
+    [measurementDir, classicDir].sort(),
+  );
+  // The tagged cases belong to this project alone: the engine shards above
+  // exclude the tag, and this project selects nothing else.
+  const list = (args) => {
+    const listed = JSON.parse(
+      run("pnpm", ["--silent", ...args, "--list", "--reporter=json"]),
+    );
+    assert.deepEqual(listed.errors, []);
+    const collect = (suites) =>
+      suites.flatMap((suite) => [
+        ...(suite.specs ?? []),
+        ...collect(suite.suites ?? []),
+      ]);
+    return collect(listed.suites);
+  };
+  const selected = list(invocation.split(/\s+/).slice(1));
+  assert.ok(selected.length > 0, "the classic project must select tests");
+  for (const spec of selected) {
+    assert.ok(spec.tags.includes("classic-scrollbars"), spec.title);
+    for (const entry of spec.tests)
+      assert.equal(entry.projectName, "chromium-classic-scrollbars");
+  }
+  const functional = list([
+    "test:browser:ci",
+    "--project",
+    "chromium",
+    "--project",
+    "webkit",
+    "--no-deps",
+  ]);
+  assert.ok(functional.length > 0);
+  for (const spec of functional)
+    assert.ok(!spec.tags.includes("classic-scrollbars"), spec.title);
+});
+
 test("automatic CI stays on Linux and manual dispatch runs only Windows", () => {
   const { jobs } = parse(workflow);
-  for (const lane of ["javascript", "native", "measurements", "browser"]) {
+  for (const lane of [
+    "javascript",
+    "native",
+    "measurements",
+    "browser_fixture",
+    "browser",
+  ]) {
     assert.equal(jobs[lane].if, "github.event_name != 'workflow_dispatch'");
     assert.equal(jobs[lane]["runs-on"], "ubuntu-24.04");
   }
@@ -292,60 +416,44 @@ test("Hermit cache keys distinguish jobs that provision different tools", () => 
   assert.match(setup, /key: hermit-.*\$\{\{ github\.job \}\}/);
 });
 
-test("browser cache follows the installed Playwright version, not unrelated dependency edits", (t) => {
-  const { steps } = parse(read(".github/actions/setup/action.yml")).runs;
-  const version = steps.find((step) => step.id === "playwright");
-  const cache = steps.find((step) => step.name === "Cache Playwright engines");
-  const install = steps.find(
-    (step) => step.name === "Install pinned browser engines and libraries",
-  );
-  assert.ok(version, "resolve the installed version after the frozen install");
-  assert.ok(
-    steps.findIndex((step) => step.run === "pnpm install --frozen-lockfile") <
-      steps.indexOf(version),
-  );
-  assert.ok(steps.indexOf(version) < steps.indexOf(cache));
-  assert.ok(steps.indexOf(cache) < steps.indexOf(install));
-  for (const step of [version, cache, install])
-    assert.equal(step.if, "inputs.browsers == 'true'");
-  assert.equal(
-    install.run,
-    "pnpm exec playwright install --with-deps chromium webkit",
-  );
-  assert.equal(
-    cache.with.key,
-    `playwright-\${{ runner.os }}-\${{ runner.arch }}-\${{ steps.playwright.outputs.version }}-chromium-webkit`,
-  );
-  assert.equal(cache.with["restore-keys"], undefined);
+test("browser jobs use the version-matched pinned Playwright image without apt provisioning", () => {
+  const { jobs } = parse(workflow);
+  const version = JSON.parse(read("package.json")).devDependencies[
+    "@playwright/test"
+  ];
+  for (const lane of ["measurements", "browser"]) {
+    assert.match(
+      jobs[lane].container.image,
+      new RegExp(
+        `^mcr\\.microsoft\\.com/playwright:v${version.replaceAll(".", "\\.")}-noble@sha256:[a-f0-9]{64}$`,
+      ),
+    );
+    assert.equal(jobs[lane].container.options, "--init --ipc=host");
+    assert.equal(jobs[lane].defaults.run.shell, "bash");
+    const steps = jobs[lane].steps;
+    const trust = steps.find(
+      (step) => step.name === "Trust checked-out workspace",
+    );
+    assert.ok(trust);
+    assert.equal(
+      trust.run,
+      'git config --global --add safe.directory "$GITHUB_WORKSPACE"',
+    );
+    assert.equal(trust.if, undefined);
+    assert.equal(trust["continue-on-error"], undefined);
+    assert.ok(
+      steps.indexOf(trust) >
+        steps.findIndex((step) => step.uses === "./.github/actions/setup"),
+    );
+    assert.ok(
+      steps.indexOf(trust) <
+        steps.findIndex((step) =>
+          step.run?.includes("-- pnpm test:browser:ci"),
+        ),
+    );
 
-  const cwd = mkdtempSync(join(tmpdir(), "buzz-playwright-version-"));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
-  const manifest = join(cwd, "node_modules/@playwright/test/package.json");
-  const output = join(cwd, "output");
-  mkdirSync(dirname(manifest), { recursive: true });
-  const resolve = () => {
-    writeFileSync(output, "");
-    return spawnSync("bash", ["-e", "-c", version.run], {
-      cwd,
-      env: { ...process.env, GITHUB_OUTPUT: output },
-      encoding: "utf8",
-      timeout: 5000,
-    });
-  };
-  for (const installed of ["1.60.0", "1.61.0"]) {
-    writeFileSync(manifest, JSON.stringify({ version: installed }));
-    for (const unrelated of ["before", "after"]) {
-      writeFileSync(join(cwd, "pnpm-lock.yaml"), unrelated);
-      const result = resolve();
-      assert.equal(result.status, 0, result.stderr);
-      assert.equal(readFileSync(output, "utf8"), `version=${installed}\n`);
-    }
+    assert.doesNotMatch(job(lane), /apt-get|playwright install|run: cargo/);
   }
-  rmSync(manifest);
-  assert.notEqual(
-    resolve().status,
-    0,
-    "missing installation must fail, not cache an empty version",
-  );
-  assert.equal(readFileSync(output, "utf8"), "");
+  const setup = read(".github/actions/setup/action.yml");
+  assert.doesNotMatch(setup, /playwright install|Cache Playwright engines/);
 });

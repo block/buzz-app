@@ -70,13 +70,13 @@
     color: var(--text-inverse);
   }
   .buzz-button[data-variant="subtle"] {
-    background: var(--affordance-subtle);
+    background: var(--interaction-fill);
   }
   .buzz-button[data-variant="inverted"] {
     background: var(--surface-panel);
   }
   .buzz-button[data-variant="outline"] {
-    box-shadow: inset 0 0 0 1px var(--border-prominent);
+    box-shadow: inset 0 0 0 1px var(--interaction-border);
   }
   .buzz-button[data-variant="destructive"] {
     background: var(--affordance-danger);
@@ -103,7 +103,7 @@
         [data-icon-variant="avatar"],
         [data-icon-variant="media"]
       ) {
-      background: var(--affordance-subtle-hover);
+      background: var(--interaction-hover);
     }
     .buzz-button[data-variant="destructive"]:hover:not([data-disabled]) {
       background: var(--affordance-danger-hover);
@@ -123,12 +123,15 @@
     [data-variant="outline"],
     [data-variant="ghost"],
     [data-variant="inverted"]
-  ):is(:active, [aria-expanded="true"]):not(
+  ):is(
+    :active,
+    [aria-expanded="true"]:not([data-highlight-expanded="false"])
+  ):not(
     [data-disabled],
     [data-icon-variant="avatar"],
     [data-icon-variant="media"]
   ) {
-    background: var(--affordance-subtle-pressed);
+    background: var(--interaction-pressed);
   }
   .buzz-button[data-variant="destructive"]:is(
     :active,
@@ -201,7 +204,7 @@
   .buzz-button[data-icon-variant="ghost"][data-selected]:hover:not(
     [data-disabled]
   ) {
-    background: var(--affordance-selected);
+    background: var(--interaction-selected);
   }
 
   /* Buzz's existing composer and workspace treatments remain explicit. */
@@ -289,6 +292,18 @@
   .buzz-preview-card[data-ending-style] {
     opacity: 0;
     transform: scale(0.98);
+  }
+
+  /* A closing preview still follows its trigger; it must not take the pointer
+     from what it passes over. A keyboard-focused trigger keeps its preview
+     through scrolling, hidden while the trigger is scrolled out of view unless
+     that would hide the focused action. */
+  .buzz-preview-card[data-ending-style] {
+    pointer-events: none;
+  }
+
+  .buzz-preview-card-positioner[data-anchor-hidden]:not(:focus-within) {
+    visibility: hidden;
   }
 
   .buzz-preview-card-name {
@@ -416,6 +431,7 @@
      variant can still override it without an escalation. */
   .panel,
   :where(.bento-workspace .dv-groupview) {
+    @apply interaction-panel;
     width: 100%;
     height: 100%;
     min-width: 0;
@@ -425,6 +441,14 @@
     border-radius: var(--radius-panel);
     background: var(--surface-panel);
     box-shadow: var(--shadow-xs);
+  }
+
+  /* A joined surface keeps one outer edge; nested panels retain opaque
+     fills for responsive overlays while their layout owns the separators. */
+  .panel[data-joined] .panel {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
   }
 
   /* ============================================================
@@ -448,6 +472,15 @@
 
   /* --- Shared ------------------------------------------------ */
 
+  .buzz-tabs-item {
+    display: contents;
+  }
+  .buzz-tabs-item[data-closable] {
+    display: inline-flex;
+    gap: var(--space-1);
+    align-items: center;
+    flex-shrink: 0;
+  }
   .buzz-tabs-list {
     position: relative;
     display: inline-flex;
@@ -611,6 +644,15 @@
     background: var(--text-standard);
   }
 
+  .buzz-tabs-item[data-closable] .buzz-tabs-tab {
+    max-width: 12rem;
+  }
+  .buzz-tabs-item[data-closable] .buzz-tabs-tab > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .panel-header {
     position: relative;
     display: flex;
@@ -618,26 +660,29 @@
     width: 100%;
     flex: 0 0 auto;
     flex-wrap: wrap;
-    padding-block: var(--space-2);
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-4);
-    padding: 0 var(--space-panel-inset);
+    gap: var(--space-2);
+    padding-block: 0;
+    padding-inline: var(--space-1);
   }
 
   .panel-header::after {
     position: absolute;
-    right: var(--space-panel-inset);
-    bottom: 0;
-    left: var(--space-panel-inset);
+    inset-block-end: 0;
+    inset-inline: var(--space-1);
     height: 1px;
     background: var(--border-standard);
     content: "";
     pointer-events: none;
   }
 
+  .panel[data-joined] .panel-header::after {
+    inset-inline: 0;
+  }
+
   .panel-header[data-variant="compact"] {
-    min-height: 3rem;
+    min-height: var(--size-panel-header);
   }
 
   .panel-header-title,
@@ -654,6 +699,7 @@
   }
 
   .panel-header-actions {
+    gap: var(--space-1);
     flex: 0 1 auto;
     flex-wrap: wrap;
     margin-inline-start: auto;
@@ -774,13 +820,19 @@
   /* Hover is the lightest acknowledgement; selection is a persistent, one-step
      stronger statement. Keeping them separate prevents a selected destination
      from becoming indistinguishable the moment a pointer passes over it. */
-  .navigation-item:hover:not([data-selected]) {
-    background: var(--affordance-subtle);
-    color: var(--text-standard);
+  @media (hover: hover) and (pointer: fine) {
+    .navigation-item:hover:not([data-selected], [data-disabled], :disabled) {
+      --text-subtle: var(--interaction-row-text);
+      --text-metadata: var(--interaction-row-metadata);
+      background: var(--interaction-row-hover);
+      color: var(--text-standard);
+    }
   }
 
   .navigation-item[data-selected] {
-    background: var(--affordance-selected);
+    --text-subtle: var(--interaction-selected-text);
+    --text-metadata: var(--interaction-selected-metadata);
+    background: var(--interaction-selected);
     color: var(--text-standard);
   }
 
@@ -810,6 +862,62 @@
   .navigation-item-trailing {
     flex: 0 0 auto;
     color: var(--text-metadata);
+  }
+
+  /* Compose the sidebar's NavigationItem as a tab; the sibling close action
+     overlays its reserved trailing space, so buttons are never nested. */
+  .buzz-tabs[data-variant="navigation"] {
+    display: flex;
+    min-width: 0;
+    width: 100%;
+    @apply text-body-sm;
+  }
+  .buzz-tabs[data-variant="navigation"] .buzz-tabs-list {
+    min-width: 0;
+    overflow-x: auto;
+    gap: var(--space-1);
+    padding-block: 0;
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+  .buzz-tabs[data-variant="navigation"] .buzz-tabs-item {
+    display: flex;
+    position: relative;
+    flex: 0 0 12rem;
+    width: 12rem;
+    max-width: 100%;
+  }
+  .buzz-tabs[data-variant="navigation"] .navigation-item {
+    padding-inline-start: var(--space-2);
+    padding-inline-end: var(--space-2);
+  }
+  .buzz-tabs[data-variant="navigation"] .navigation-item[data-selected] {
+    background: var(--affordance-subtle);
+  }
+  .buzz-tabs[data-variant="navigation"][data-selection-hidden]
+    .navigation-item {
+    background: transparent;
+    cursor: default;
+  }
+  .buzz-tabs[data-variant="navigation"]
+    .buzz-tabs-item[data-closable]
+    .navigation-item {
+    padding-inline-end: var(--space-8);
+  }
+  .buzz-tabs[data-variant="navigation"] .buzz-tabs-item > .buzz-button {
+    position: absolute;
+    inset-inline-end: var(--space-1);
+    top: 50%;
+    translate: 0 -50%;
+  }
+  .buzz-tabs-icon {
+    display: inline-flex;
+    flex: 0 0 1rem;
+    width: 1rem;
+    height: 1rem;
+    @apply text-caption;
+    align-items: center;
+    justify-content: center;
   }
 
   html[data-keyboard-navigation] .buzz-button:focus-visible,
@@ -868,11 +976,10 @@
      Supporting copy follows the brighter fill so it remains readable. */
   .buzz-menu-item[data-highlighted],
   .buzz-menu-item[data-popup-open],
-  .buzz-select-option[data-highlighted],
-  .buzz-popover-popup .navigation-item:hover:not([data-selected]) {
+  .buzz-select-option[data-highlighted] {
     --text-subtle: var(--text-standard);
     --text-metadata: var(--text-standard);
-    background: var(--affordance-floating-hover);
+    background: var(--interaction-row-hover);
   }
   .buzz-menu-item[data-tone="danger"] {
     color: var(--text-danger);
@@ -922,8 +1029,6 @@
     overflow-wrap: anywhere;
   }
   .buzz-popover-popup {
-    /* Persistent navigation selection must remain visible on the raised fill. */
-    --affordance-selected: var(--affordance-subtle-hover);
     @apply floating-surface;
     width: 20rem;
     max-width: min(var(--available-width), calc(100vw - var(--space-4)));
@@ -939,7 +1044,8 @@
      Content surfaces keep the panel recipe, regardless of viewport width. */
   .buzz-menu-popup[data-size="compact"],
   .buzz-popover-popup[data-size="compact"] {
-    --affordance-floating-hover: var(--affordance-subtle-hover);
+    --interaction-row-hover: var(--affordance-subtle-hover);
+    --interaction-selected: var(--affordance-subtle-pressed);
     border-radius: var(--radius-row);
   }
   .buzz-menu-popup[data-size="compact"] .buzz-menu-item,
@@ -948,7 +1054,7 @@
     transition: none;
   }
   .buzz-popover-popup[data-size="compact"] .navigation-item:focus-visible {
-    background: var(--affordance-floating-hover);
+    background: var(--interaction-row-hover);
     outline-offset: -2px;
   }
   .buzz-popover-popup[data-size="wide"] {
@@ -1053,6 +1159,29 @@
       transition: none;
       transform: none;
       filter: none;
+    }
+  }
+  .buzz-popover-popup[data-channel-activity] {
+    filter: none;
+    transition:
+      opacity var(--duration-state) ease-out,
+      transform var(--duration-state) cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  .buzz-popover-popup[data-channel-activity]:where(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    filter: none;
+  }
+  .buzz-popover-popup[data-channel-activity][data-ending-style] {
+    transition-duration: calc(var(--duration-fast) / 2);
+  }
+  html[data-keyboard-navigation] .buzz-popover-popup[data-channel-activity] {
+    transition: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-popover-popup[data-channel-activity] {
+      transition: none;
     }
   }
 }

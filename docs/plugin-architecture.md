@@ -52,7 +52,8 @@ features/projects/     entity route/data contracts and bounded Git read bridge
 bundled/agents/         local control UI and read-only current-Buzz library page
 features/agents/        app-owned control capability; separate session-owned library
 bundled/github/         builtin GitHub panel plugin
-bundled/bestie/         builtin companion panel and its snake launcher
+bundled/bestie/         builtin Bestie page, companion panel and its snake launcher
+bundled/inbox/          builtin Inbox page, a placeholder until inbox content exists
 ```
 
 The host composes one channel sidebar beside independently mounted pages. It reuses
@@ -76,10 +77,12 @@ source imports are not a versioned external SDK. See
 ## Starting contracts
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
-`ctx.pages.register({ id, title, layout?, companion?, component })`. Panels register with
+`ctx.pages.register({ id, title, layout?, companion?, primary?, component })`. Panels register with
 `ctx.panels.register({ id, title, matches, launcher?, component })`. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
-contribution when its Cordis scope ends.
+contribution when its Cordis scope ends. `primary: true` gives a page a row in the
+shell's page navigation. Pages without it are still listed in search and reachable
+by deep link or from another page; Channels and Sessions are bundled examples.
 
 A page calls `panels.resolve(target)` and renders `PanelView` with the resulting
 contribution, the target string, and a close callback. The first active matcher
@@ -100,7 +103,7 @@ render failures and remounts on target or revision changes. Unloading a plugin
 removes its contributions and closes its panel. Other pages can use these same
 contracts with their own layout and local navigation.
 
-The initial distribution contains Channels, Projects, Agents, GitHub, Bestie, Emoji, Mentions, Profiles, Terminal and Links. Projects
+The initial distribution contains Channels, Inbox, Projects, Agents, GitHub, Bestie, Emoji, Mentions, Profiles, Terminal and Links. Projects
 is enabled by default and owns versioned, validated entity page routes. It resolves
 signed metadata through the session reader and reports navigation completion only
 after destination content is presented. Git browsing uses a narrow host-owned,
@@ -486,22 +489,21 @@ into versioned route parameters. These are host-matched preview types through
 `@buzz/author`, not a cross-version runtime compatibility promise.
 
 Browser `#buzz=` addresses and session history support reload and Back/Forward.
-`targetLink`/`parseTargetLink` define a `buzz://open` locator codec that omits the
-sender's viewer; `bindSharedTarget` pins it for an admitted recipient. Messages also
-recognize the Buzz link forms `buzz://channel/<id>`, `buzz://channel/<id>/<event>` and
-`buzz://message?channel=<id>&id=<event>&thread=<optional-root>`. Buzz links use the
-receiving conversation's community and viewer; `buzz://open` locators retain their
-community and use the recipient's viewer. Both pass through existing navigation
-admission and session ownership checks. Message targets open their
+Messages recognize the Buzz link forms `buzz://channel/<id>`,
+`buzz://channel/<id>/<event>` and
+`buzz://message?channel=<id>&id=<event>&thread=<optional-root>`. Buzz links carry
+no community: they bind to the receiving conversation's community and viewer and
+pass through existing navigation admission and session ownership checks. The app
+has no link form of its own; any other `buzz://` host is rejected everywhere,
+staying plain text in messages. Message targets open their
 verified thread, reveal the exact message after bounded history loading, and only
 then acknowledge navigation. Supplied root hints do not override verified events.
 Missing or unavailable messages report failure. Ingress adapters must reuse this
 validated target/completion lifecycle; notification clicks
 ([notifications](notifications.md)) and OS-delivered deep links on desktop
 ([OS deep links](deep-links.md)) do. The OS ingress accepts only the Buzz link
-forms and binds them to the selected community; any other OS link, `buzz://open`
-included, fails `invalid-target` through the same failure notice rather than being
-dropped.
+forms and binds them to the selected community; any other OS link fails
+`invalid-target` through the same failure notice rather than being dropped.
 
 Drafts, reading geometry and sidebar view intent remain domain-owned, outside
 visit history. Saved sidebar preferences live in the relay session, not in the
@@ -566,12 +568,26 @@ unambiguous signed person/agent mentions share the inline hover styling. Names i
 ordinary prose never create notification intent or establish an identity.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
-methods and stable `conversation.ui.Composer` / `.Message` components. Generated
+methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` components. Generated
 type-only `@buzz/author` declarations are exercised by a source-only external consumer
 fixture in `tests/fixtures/conversation-consumer`; it is built and installed only in
 the browser test's temporary profile.
 This remains a host-matched preview, not a stable cross-version SDK. Shared session
 ownership and trusted-plugin authority do not change.
+
+`conversation.ui.Thread({ session, scope, channelId, channelName, messageId })`
+renders the existing `ThreadPanel` without its side-panel header, close control
+or Escape dismissal; the page owns the surrounding header and placement. The
+host supplies the rest of the Channels thread behavior: contribution renderers,
+message management (edit, delete, mark read/unread, and a notice above the
+thread to retry or discard a failed edit or deletion), session-channel
+recipients, Buzz link navigation, and one modal at a time for a registered panel
+or media review. The page passes its current ready session and stable
+community/viewer scope; retargeting disposes the old thread and its modal. As in
+Channels, showing a thread is one visit to its channel for unread state, and
+that visit lasts across threads of the same channel. The page holds no second
+message reader, cache or outbox.
+Exact message links still navigate to Channels rather than the page's route.
 
 ### Composer ownership and mention tools
 
@@ -703,7 +719,7 @@ Plugins can render the host-provided [`browser.View` component](browser.md) insi
 
 The host composes one `ShortcutsService` in `app/services.ts`. Plugins declare
 `inject = ["shortcuts"]` and call `ctx.shortcuts.register(shortcut)`; their bindings
-use the same matching/dispatch rules as host-owned Settings and text sizing.
+use the same matching/dispatch rules as host-owned Settings and interface sizing.
 There is no OS-wide hotkey registration, native accelerator API, or command bus.
 
 ```ts
@@ -752,7 +768,7 @@ assigns deliberate values to its actions (for example, a primary action starts
 at `10`), leaving gaps for related actions to be added later. Equal orders use
 the stable namespaced contribution key (`pluginId/shortcutId`), then title, as
 presentation tie-breakers. The core Buzz host category uses the same metadata
-and a host-owned functional sequence: navigation, text sizing, search/settings,
+and a host-owned functional sequence: navigation, interface sizing, search/settings,
 then development-only actions. Host rows use their bare IDs for tie-breaking.
 Presentation order does not affect dispatch precedence, and
 shortcuts with duplicate titles remain separate rows because registry keys—not

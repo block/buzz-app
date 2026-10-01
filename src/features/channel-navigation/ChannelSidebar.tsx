@@ -20,7 +20,6 @@ import { useChannelList, useRelayConnection } from "../relay/react";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
 import { Panel } from "../../shared/design-system/ui/Panel";
-import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   MenuGroup,
@@ -41,14 +40,21 @@ import { clientMetrics } from "../developer/client-metrics";
 import {
   BellIcon,
   BellSlashIcon,
-  RobotIcon,
   FolderSimpleIcon,
 } from "../../shared/design-system/icons";
 import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
 import { useOptimisticMute } from "../../bundled/channels/useOptimisticMute";
 import { ChannelSidebarItem } from "../../bundled/channels/ChannelSidebarItem";
-import { SidebarUnread } from "../../bundled/channels/SidebarUnread";
-import { SidebarSection } from "../../bundled/channels/SidebarSection";
+import {
+  SidebarUnread,
+  type UnreadDmPreview,
+} from "../../bundled/channels/SidebarUnread";
+import {
+  ChannelSidebarDnd,
+  DraggableChannel,
+  DroppableSidebarSection,
+} from "./ChannelSidebarDnd";
+import { channelIcon } from "../channels/channel-icon";
 import { SidebarGroupIcon } from "../../bundled/channels/SidebarGroupIcon";
 import { CreateSidebarSection } from "../../bundled/channels/CreateSidebarSection";
 import { useSidebarStartup } from "../../bundled/channels/useSidebarStartup";
@@ -67,7 +73,7 @@ import {
 } from "../../bundled/channels/CreateChannelDialog";
 import { writeView } from "../../shared/view-state";
 import { useChannelNavigation } from "./ChannelNavigationState";
-import { channelPlaceholder, newSessionParent } from "./routes";
+import { newSessionParent } from "./routes";
 import { ChannelSidebarResizeHandle } from "./ChannelSidebarResizeHandle";
 import styles from "../../bundled/channels/Channels.module.css";
 
@@ -77,19 +83,11 @@ type Props = {
   providers: TemplateProviders;
   target: OpenTarget;
   sessionsEnabled: boolean;
-  agentsEnabled: boolean;
+  children: ReactNode;
 };
 export function ChannelSidebar(props: Props) {
   const connection = useRelayConnection(props.relay);
-  const navigation = (
-    <SidebarNavigation
-      agentsEnabled={props.agentsEnabled}
-      navigator={props.navigator}
-      scope={connection.scope ?? "disconnected"}
-      target={props.target}
-      viewer={connection.viewer}
-    />
-  );
+  const navigation = <SidebarNavigation>{props.children}</SidebarNavigation>;
   return (
     <SidebarBoundary
       key={`${connection.scope}:${connection.generation}`}
@@ -109,15 +107,18 @@ export function ChannelSidebar(props: Props) {
         <div className="shell-sidebar-default">
           <Panel as="aside" aria-label="Channel sidebar">
             <div className={styles.sidebar}>
-              {navigation}
-              <p className={styles.empty}>
-                {connection.status === "connecting"
-                  ? "Connecting to your relay…"
-                  : (connection.error ?? "Choose a community to see channels.")}
-              </p>
-              {connection.status === "error" && (
-                <Button onClick={props.relay.retry}>Retry channels</Button>
-              )}
+              <div className={styles.sidebarScroll}>
+                {navigation}
+                <p className={styles.empty}>
+                  {connection.status === "connecting"
+                    ? "Connecting to your relay…"
+                    : (connection.error ??
+                      "Choose a community to see channels.")}
+                </p>
+                {connection.status === "error" && (
+                  <Button onClick={props.relay.retry}>Retry channels</Button>
+                )}
+              </div>
             </div>
           </Panel>
         </div>
@@ -126,77 +127,7 @@ export function ChannelSidebar(props: Props) {
   );
 }
 
-type SidebarNavigationProps = Pick<
-  Props,
-  "agentsEnabled" | "navigator" | "target"
-> & {
-  scope: string;
-  viewer?: string | undefined;
-};
-
-function SidebarNavigation({
-  agentsEnabled,
-  navigator,
-  scope,
-  target,
-  viewer,
-}: SidebarNavigationProps) {
-  const placeholder =
-    target.kind === "page" && target.pluginId === "buzz.channels"
-      ? channelPlaceholder(target.route?.params)
-      : undefined;
-  const communityOrigin = viewer
-    ? scope.slice(0, -(viewer.length + 1))
-    : undefined;
-  const openChannelDestination = (destination: "Inbox" | "Bestie") => {
-    if (!viewer || communityOrigin === undefined) return;
-    void navigator.open({
-      version: 1,
-      kind: "page",
-      pluginId: "buzz.channels",
-      pageId: "channels",
-      scope: { viewer, communityOrigin },
-      route: { version: 1, params: destination },
-    });
-  };
-  const destinations = [
-    {
-      title: "Inbox",
-      icon: <BellIcon weight="bold" size={15} />,
-      selected: placeholder === "Inbox",
-      disabled: !viewer || communityOrigin === undefined,
-      open: () => openChannelDestination("Inbox"),
-    },
-    {
-      title: "Bestie",
-      icon: <img src="/bestie.png" alt="" width={17} height={17} />,
-      selected: placeholder === "Bestie",
-      disabled: !viewer || communityOrigin === undefined,
-      open: () => openChannelDestination("Bestie"),
-    },
-    ...(agentsEnabled
-      ? [
-          {
-            title: "Agents",
-            disabled: false,
-            icon: <RobotIcon weight="bold" size={15} />,
-            selected:
-              target.kind === "page" && target.pluginId === "buzz.agents",
-            open: () =>
-              void navigator.open({
-                version: 1,
-                kind: "page",
-                pluginId: "buzz.agents",
-                pageId: "agents",
-                scope:
-                  viewer && communityOrigin !== undefined
-                    ? { viewer, communityOrigin }
-                    : null,
-              }),
-          },
-        ]
-      : []),
-  ];
+function SidebarNavigation({ children }: { children: ReactNode }) {
   return (
     <>
       <div className={styles.sidebarBrand}>
@@ -206,18 +137,10 @@ function SidebarNavigation({
           aria-label="Buzz"
         />
       </div>
-      <div className={styles.destinations}>
-        {destinations.map(({ title, icon, selected, disabled, open }) => (
-          <NavigationItem
-            key={title}
-            label={title}
-            disabled={disabled}
-            selected={selected}
-            icon={<span className={styles.sidebarIcon}>{icon}</span>}
-            onClick={open}
-          />
-        ))}
-      </div>
+      {/* The shell passes null when no primary page is active; the wrapper's margin must not remain around nothing. */}
+      {children != null && children !== false && (
+        <div className={styles.destinations}>{children}</div>
+      )}
     </>
   );
 }
@@ -234,11 +157,13 @@ class SidebarBoundary extends Component<
       <div className="shell-sidebar-default">
         <Panel as="aside" aria-label="Channel sidebar">
           <div className={styles.sidebar}>
-            {this.props.fallback}
-            <p role="alert">Channels couldn’t open.</p>
-            <Button onClick={() => this.setState({ failed: false })}>
-              Retry channels
-            </Button>
+            <div className={styles.sidebarScroll}>
+              {this.props.fallback}
+              <p role="alert">Channels couldn’t open.</p>
+              <Button onClick={() => this.setState({ failed: false })}>
+                Retry channels
+              </Button>
+            </div>
           </div>
         </Panel>
       </div>
@@ -253,7 +178,7 @@ function ReadySidebar({
   providers,
   target,
   sessionsEnabled,
-  agentsEnabled,
+  children,
   queries,
   cached,
   connectionError,
@@ -310,6 +235,22 @@ function ReadySidebar({
     queries.profiles,
     queries.names,
   );
+  const unreadDmPreviews = useMemo(() => {
+    const previews = new Map<string, UnreadDmPreview>();
+    for (const channel of channels) {
+      if (channel.channelType !== "dm" || channel.participants?.length !== 1)
+        continue;
+      const profile = dmProfiles.get(channel.participants[0] ?? "");
+      previews.set(channel.id, {
+        name: channel.name,
+        src: profile?.picture
+          ? queries.media(profile.picture, "small")
+          : undefined,
+        isAgent: profile?.isAgent,
+      });
+    }
+    return previews;
+  }, [channels, dmProfiles, queries]);
   const workingIds = useSyncExternalStore(
     queries.agentActivity.subscribeWorking,
     queries.agentActivity.workingSnapshot,
@@ -498,29 +439,100 @@ function ReadySidebar({
       scope,
     ],
   );
-  const openActivityThread = useCallback(
-    (channelId: string, rootId: string) => {
+  const openActivityMessage = useCallback(
+    (
+      channelId: string,
+      messageId: string | undefined,
+      threadRootId?: string,
+    ) => {
       if (!viewer || relay.snapshot().session !== queries) return;
-      if (handoff)
-        handoff.activityThread.current = {
-          channelId,
-          rootId,
-          trigger:
-            sidebar.list.current?.querySelector<HTMLElement>(
-              `[data-channel-id="${CSS.escape(channelId)}"]`,
-            ) ?? null,
-        };
-      void navigator.open({
+      const trigger =
+        sidebar.list.current?.querySelector<HTMLElement>(
+          `[data-channel-id="${CSS.escape(channelId)}"]`,
+        ) ?? null;
+      const result = navigator.open({
         version: 1,
         kind: "conversation",
         channelId,
-        messageId: rootId,
-        threadRootId: rootId,
+        ...(messageId ? { messageId } : {}),
+        ...(threadRootId ? { threadRootId } : {}),
         scope: {
           viewer,
           communityOrigin: scope.slice(0, -(viewer.length + 1)),
         },
       });
+      const { attempt } = navigator.snapshot();
+      const target = attempt.entry.target;
+      if (
+        handoff &&
+        messageId &&
+        target.kind === "conversation" &&
+        target.channelId === channelId &&
+        target.messageId === messageId
+      ) {
+        const intent = {
+          channelId,
+          messageId,
+          trigger,
+          entryId: attempt.entry.id,
+          signal: attempt.signal,
+        };
+        handoff.activityThread.current = intent;
+        void result.then(() => {
+          if (handoff.activityThread.current === intent)
+            handoff.activityThread.current = undefined;
+        });
+      }
+    },
+    [viewer, relay, queries, handoff, sidebar.list, navigator, scope],
+  );
+  const openActivityThread = useCallback(
+    (channelId: string, rootId: string) =>
+      openActivityMessage(channelId, rootId, rootId),
+    [openActivityMessage],
+  );
+  const openWorkingAgent = useCallback(
+    (channelId: string, _agent: string, messageId: string | undefined) => {
+      const root =
+        messageId &&
+        channels.find((channel) => channel.id === channelId)?.channelType !==
+          "session" &&
+        queries.channels
+          .window(channelId)
+          .rows.some((row) => row.id === messageId && !row.threadRootId);
+      openActivityMessage(channelId, messageId, root ? messageId : undefined);
+    },
+    [queries, channels, openActivityMessage],
+  );
+  const openAgentActivity = useCallback(
+    (channelId: string, agent: string) => {
+      if (!viewer || relay.snapshot().session !== queries) return;
+      const intent = {
+        channelId,
+        agent,
+        trigger:
+          sidebar.list.current?.querySelector<HTMLElement>(
+            `[data-channel-id="${CSS.escape(channelId)}"]`,
+          ) ?? null,
+      };
+      if (handoff) handoff.activityAgent.current = intent;
+      void navigator
+        .open({
+          version: 1,
+          kind: "conversation",
+          channelId,
+          scope: {
+            viewer,
+            communityOrigin: scope.slice(0, -(viewer.length + 1)),
+          },
+        })
+        .then((result) => {
+          if (
+            result.status !== "opened" &&
+            handoff?.activityAgent.current === intent
+          )
+            handoff.activityAgent.current = undefined;
+        });
     },
     [viewer, relay, queries, handoff, sidebar.list, navigator, scope],
   );
@@ -584,6 +596,8 @@ function ReadySidebar({
     moveChannel(channelId, () => preferences.assign(channelId, sectionId));
   const setChannelStar = (channelId: string, starred: boolean) =>
     moveChannel(channelId, () => preferences.setStar(channelId, starred));
+  const placementWritable =
+    preferences.writable && preferences.starWritable && !!preferences.data;
   const setSectionSort = (key: string, mode: "alpha" | "recent") => {
     void preferences
       .setSort(
@@ -616,9 +630,7 @@ function ReadySidebar({
       );
     }
     if (
-      preferences.writable &&
-      preferences.starWritable &&
-      preferences.data &&
+      placementWritable &&
       channel.channelType !== "dm" &&
       channel.channelType !== "forum"
     ) {
@@ -976,136 +988,165 @@ function ReadySidebar({
                 </Button>
               </div>
             )}
-            <SidebarUnread listRef={sidebar.list}>
-              <SidebarNavigation
-                agentsEnabled={agentsEnabled}
-                navigator={navigator}
-                scope={scope}
-                target={target}
-                viewer={viewer}
-              />
-              {sections.map((section) => (
-                <SidebarSection
-                  key={section.key}
-                  sectionKey={section.key}
-                  title={section.title}
-                  icon={section.icon}
-                  session={queries}
-                  open={!sidebar.collapsed.includes(section.key)}
-                  onToggle={(open) => sidebar.toggle(section.key, open)}
-                  createChannel={
-                    isChannelSectionKey(section.key)
-                      ? {
-                          available: queries.channelCreation.available,
-                          open: (trigger) => {
-                            createChannelTrigger.current = trigger;
-                            setInitialGroup(
-                              section.key.startsWith("group:")
-                                ? section.key.slice(6)
-                                : "",
-                            );
-                            setCreateChannelOpen(true);
-                          },
-                        }
-                      : undefined
-                  }
-                  newMessage={
-                    section.key === "dms"
-                      ? () => {
-                          if (viewer && relay.snapshot().session === queries)
-                            void navigator.open({
-                              version: 1,
-                              kind: "page",
-                              pluginId: "buzz.channels",
-                              pageId: "channels",
-                              scope: {
-                                viewer,
-                                communityOrigin: scope.slice(
-                                  0,
-                                  -(viewer.length + 1),
-                                ),
-                              },
-                              route: { version: 1, params: "new-message" },
-                            });
-                        }
-                      : undefined
-                  }
-                  sort={
-                    preferences.sortWritable
-                      ? {
-                          value:
-                            preferences.data?.sort?.[
-                              section.key.startsWith("group:")
-                                ? `section:${section.key.slice(6)}`
-                                : section.key
-                            ] ?? "alpha",
-                          change: (mode) => setSectionSort(section.key, mode),
-                        }
-                      : undefined
-                  }
-                >
-                  {section.rows.map((channel) => {
-                    const sessions = childrenByParent.get(channel.id);
-                    const selected =
-                      current?.id === channel.id ||
-                      sessions?.some((child) => child.id === current?.id)
-                        ? current?.id
-                        : undefined;
-                    const actions = rowActions(channel, section.key);
-                    const menuEnabled = actions.length > 0;
-                    const menuOpen =
-                      menuEnabled &&
-                      rowMenu?.channelId === channel.id &&
-                      rowMenu.sectionKey === section.key;
-                    return (
-                      <ChannelSidebarItem
-                        profile={
-                          channel.channelType === "dm" &&
-                          channel.participants?.length === 1
-                            ? dmProfiles.get(channel.participants[0] ?? "")
-                            : undefined
-                        }
-                        key={channel.id}
-                        channel={channel}
-                        session={queries}
-                        working={workingChannels.has(channel.id)}
-                        selected={composingMessage ? undefined : selected}
-                        collapsed={sidebar.collapsed.includes(
-                          `session-children:${channel.id}`,
-                        )}
-                        onToggle={sidebar.toggle}
-                        draft={draftParents.includes(channel.id)}
-                        draftSelected={draftParent === channel.id}
-                        sessions={sessions}
-                        onSelect={select}
-                        onNewSession={startSession}
-                        onOpenThread={openActivityThread}
-                        menuEnabled={menuEnabled}
-                        sectionKey={section.key}
-                        onOpenMenu={openRowMenu}
-                        menuOpen={menuOpen}
-                        menuAnchor={menuOpen ? rowMenu.anchor : undefined}
-                        menuContent={
-                          menuOpen ? (
-                            <>
-                              {actions}
-                              {readWrite?.pending && (
-                                <p role="status">Saving…</p>
-                              )}
-                              {readWrite?.error && (
-                                <p role="alert">{readWrite.error}</p>
-                              )}
-                            </>
-                          ) : undefined
-                        }
-                        onCloseMenu={closeRowMenu}
-                        onMenuClosed={rowMenuClosed}
-                        menuFinalFocus={rowMenuFinalFocus}
-                      />
-                    );
-                  })}
-                </SidebarSection>
-              ))}
+            <SidebarUnread listRef={sidebar.list} dmPreviews={unreadDmPreviews}>
+              <SidebarNavigation>{children}</SidebarNavigation>
+              <ChannelSidebarDnd
+                writable={placementWritable}
+                onMove={(channelId, sectionKey) =>
+                  assignGroup(
+                    channelId,
+                    sectionKey.startsWith("group:")
+                      ? sectionKey.slice("group:".length)
+                      : undefined,
+                  )
+                }
+                overlay={(channelId) => {
+                  const channel = sidebarChannels.find(
+                    ({ id }) => id === channelId,
+                  );
+                  if (!channel) return null;
+                  const Icon = channelIcon(channel);
+                  return (
+                    <div className={styles.channelDragOverlay}>
+                      <Icon size={16} />
+                      <span>{channel.name}</span>
+                    </div>
+                  );
+                }}
+              >
+                {sections.map((section) => (
+                  <DroppableSidebarSection
+                    key={section.key}
+                    disabled={
+                      !placementWritable || !isChannelSectionKey(section.key)
+                    }
+                    sectionKey={section.key}
+                    title={section.title}
+                    icon={section.icon}
+                    session={queries}
+                    open={!sidebar.collapsed.includes(section.key)}
+                    onToggle={(open) => sidebar.toggle(section.key, open)}
+                    createChannel={
+                      isChannelSectionKey(section.key)
+                        ? {
+                            available: queries.channelCreation.available,
+                            open: (trigger) => {
+                              createChannelTrigger.current = trigger;
+                              setInitialGroup(
+                                section.key.startsWith("group:")
+                                  ? section.key.slice(6)
+                                  : "",
+                              );
+                              setCreateChannelOpen(true);
+                            },
+                          }
+                        : undefined
+                    }
+                    newMessage={
+                      section.key === "dms"
+                        ? () => {
+                            if (viewer && relay.snapshot().session === queries)
+                              void navigator.open({
+                                version: 1,
+                                kind: "page",
+                                pluginId: "buzz.channels",
+                                pageId: "channels",
+                                scope: {
+                                  viewer,
+                                  communityOrigin: scope.slice(
+                                    0,
+                                    -(viewer.length + 1),
+                                  ),
+                                },
+                                route: { version: 1, params: "new-message" },
+                              });
+                          }
+                        : undefined
+                    }
+                    sort={
+                      preferences.sortWritable
+                        ? {
+                            value:
+                              preferences.data?.sort?.[
+                                section.key.startsWith("group:")
+                                  ? `section:${section.key.slice(6)}`
+                                  : section.key
+                              ] ?? "alpha",
+                            change: (mode) => setSectionSort(section.key, mode),
+                          }
+                        : undefined
+                    }
+                  >
+                    {section.rows.map((channel) => {
+                      const sessions = childrenByParent.get(channel.id);
+                      const selected =
+                        current?.id === channel.id ||
+                        sessions?.some((child) => child.id === current?.id)
+                          ? current?.id
+                          : undefined;
+                      const actions = rowActions(channel, section.key);
+                      const menuEnabled = actions.length > 0;
+                      const menuOpen =
+                        menuEnabled &&
+                        rowMenu?.channelId === channel.id &&
+                        rowMenu.sectionKey === section.key;
+                      return (
+                        <ChannelSidebarItem
+                          profile={
+                            channel.channelType === "dm" &&
+                            channel.participants?.length === 1
+                              ? dmProfiles.get(channel.participants[0] ?? "")
+                              : undefined
+                          }
+                          key={channel.id}
+                          channel={channel}
+                          session={queries}
+                          working={workingChannels.has(channel.id)}
+                          selected={composingMessage ? undefined : selected}
+                          collapsed={sidebar.collapsed.includes(
+                            `session-children:${channel.id}`,
+                          )}
+                          onToggle={sidebar.toggle}
+                          draft={draftParents.includes(channel.id)}
+                          draftSelected={draftParent === channel.id}
+                          sessions={sessions}
+                          onSelect={select}
+                          onNewSession={startSession}
+                          onOpenThread={openActivityThread}
+                          onOpenWorkingAgent={openWorkingAgent}
+                          onOpenAgentActivity={openAgentActivity}
+                          menuEnabled={menuEnabled}
+                          sectionKey={section.key}
+                          selectFrame={
+                            isChannelSectionKey(section.key)
+                              ? DraggableChannel
+                              : undefined
+                          }
+                          onOpenMenu={openRowMenu}
+                          menuOpen={menuOpen}
+                          menuAnchor={menuOpen ? rowMenu.anchor : undefined}
+                          menuContent={
+                            menuOpen ? (
+                              <>
+                                {actions}
+                                {readWrite?.pending && (
+                                  <p role="status">Saving…</p>
+                                )}
+                                {readWrite?.error && (
+                                  <p role="alert">{readWrite.error}</p>
+                                )}
+                              </>
+                            ) : undefined
+                          }
+                          onCloseMenu={closeRowMenu}
+                          onMenuClosed={rowMenuClosed}
+                          menuFinalFocus={rowMenuFinalFocus}
+                        />
+                      );
+                    })}
+                  </DroppableSidebarSection>
+                ))}
+              </ChannelSidebarDnd>
               {!startup.ready && (
                 <p className={styles.empty} role="status">
                   Loading your sidebar…

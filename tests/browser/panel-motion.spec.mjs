@@ -6,16 +6,30 @@ import { openPage } from "./navigation.mjs";
 // animation has gone, so that event alone is not evidence of a successful hold.
 async function holdPanelMotion(page) {
   await page.evaluate(() => {
-    new MutationObserver(() => {
-      for (const dock of document.querySelectorAll("[data-panel-dock]")) {
+    new MutationObserver((records) => {
+      const docks = new Set();
+      for (const record of records) {
+        if (
+          record.target instanceof HTMLElement &&
+          record.target.matches("[data-panel-dock]")
+        )
+          docks.add(record.target);
+        for (const node of record.addedNodes)
+          if (node instanceof HTMLElement) {
+            if (node.matches("[data-panel-dock]")) docks.add(node);
+            for (const dock of node.querySelectorAll("[data-panel-dock]"))
+              docks.add(dock);
+          }
+      }
+      for (const dock of docks) {
         const animations = dock.getAnimations();
-        if (!animations.length) continue;
         for (const animation of animations) animation.pause();
-        dock.dataset.motionHeld = "true";
+        if (animations.some((animation) => animation.playState === "paused"))
+          dock.dataset.motionHeld = "true";
       }
     }).observe(document.body, {
-      subtree: true,
       childList: true,
+      subtree: true,
       attributes: true,
       attributeFilter: ["data-closing", "hidden", "style"],
     });

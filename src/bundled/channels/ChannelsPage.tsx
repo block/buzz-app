@@ -582,6 +582,13 @@ function ChannelWorkspace({
     showingThread?.navigation,
     setThread,
   ]);
+  // Retargeting the retained thread is a new opening, not a passive rerender.
+  const threadChannelId = showingThread?.channelId;
+  const threadMessageId = showingThread?.messageId;
+  const threadInstance = useMemo(
+    () => ({ queries, scope, threadChannelId, threadMessageId }),
+    [queries, scope, threadChannelId, threadMessageId],
+  );
   type Opening = PanelOpening;
   const opened = entries.find(
     (entry) => panelTabId(entry) === tabState.selected,
@@ -1346,7 +1353,7 @@ function ChannelWorkspace({
       <Panel as="article" aria-label="Conversation">
         {/* biome-ignore lint/a11y/noStaticElementInteractions: file-drop fallback; the composer also provides a keyboard-accessible picker. */}
         <div
-          className={styles.conversation}
+          className={`${styles.conversation}${flatSession ? ` ${styles.sessionConversation}` : ""}`}
           data-attachment-drop-zone=""
           onDragOver={rejectUnhandledFileDrop}
           onDrop={rejectUnhandledFileDrop}
@@ -1644,6 +1651,7 @@ function ChannelWorkspace({
                         ? [
                             {
                               id: "thread",
+                              instance: threadInstance,
                               label: "Thread",
                               icon: (
                                 <ChatCircleIcon

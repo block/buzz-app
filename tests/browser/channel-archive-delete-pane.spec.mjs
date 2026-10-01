@@ -86,6 +86,8 @@ for (const action of ["archive", "delete"]) {
           const editor = panel.getByRole("region", {
             name: "Edit channel details",
             exact: true,
+            // #482 hides the empty editor so it reserves no grid spacing.
+            includeHidden: true,
           });
           await expect(editor).toHaveAttribute("aria-busy", "true");
           await expect(editor).toBeEmpty();

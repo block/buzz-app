@@ -210,9 +210,11 @@ version and use a random in-memory device ID. Sections sort by canonical `(order
 and project dense display orders; new sections append after the canonical live
 maximum. Orphan assignments are omitted from the legacy projection, not deleted
 from metadata. Read projection accepts Desktop string values on retained section
-name/icon registers; only projected live text receives UI length limits. Writes
-still reject those out-of-policy retained values rather than dropping or truncating
-them. Unsupported/malformed metadata fails closed, including unknown fields;
+name/icon registers; only projected live text receives UI length limits. Already
+satisfied intents return without rewriting the head, including assignment removal
+when its register is absent or explicitly null. Actual rewrites still reject
+out-of-policy retained values rather than dropping or truncating them.
+Unsupported/malformed metadata fails closed, including unknown fields;
 this is not general forward-schema salvage. Live projection caps remain 100
 sections, 1,000 assignments and 104 sort overrides; retained tombstones are bounded
 by the existing 128 KiB plaintext budget, not live counts. Native signing/admission

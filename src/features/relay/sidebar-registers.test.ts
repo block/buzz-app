@@ -197,3 +197,26 @@ it("does not salvage malformed register envelopes or unknown retained fields on 
     expect(value).toEqual(before);
   }
 });
+
+it("keeps missing-assignment removal a no-op without suppressing other null registers", () => {
+  const current = sections();
+  expect(
+    editSidebarRecord("channel-sections", current, 1, [
+      [["a", "missing"], null],
+    ]),
+  ).toBe(current);
+  const next = editSidebarRecord("channel-sections", current, 1, [
+    [["s", "dead", "icon"], null],
+  ]);
+  expect(next).not.toBe(current);
+  expect(next.meta).toMatchObject({
+    s: { dead: { icon: [expect.any(Number), expect.any(String), null] } },
+  });
+  const sort = { version: 1, groups: {}, meta: { v: 1, g: {} } };
+  expect(
+    editSidebarRecord("channel-sort", sort, 1, [[["g", "channels"], null]])
+      .meta,
+  ).toMatchObject({
+    g: { channels: [expect.any(Number), expect.any(String), null] },
+  });
+});

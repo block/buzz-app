@@ -2,6 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { finalizeEvent, nip44 } from "nostr-tools";
 import { connectNativeTransport } from "./native";
+import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { keypair } from "./testing";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -463,5 +464,98 @@ it.each([false, true])(
         },
       },
     });
+  },
+);
+
+it.each([
+  { assigned: false, oversized: false },
+  { assigned: true, oversized: false },
+  { assigned: false, oversized: true },
+  { assigned: true, oversized: true },
+])(
+  "Unstar clears only stars when assignment is already clear: %j",
+  async ({ assigned, oversized }) => {
+    const reg = (value: unknown) => [100, "1111111111111111", value];
+    const sections = signedRecord("channel-sections", {
+      version: 1,
+      sections: [{ id: "stale", name: "Stale", order: 0 }],
+      assignments: { c1: "stale" },
+      meta: {
+        v: 1,
+        s: {
+          work: { name: reg("Work"), live: reg(true), order: reg(0) },
+          dead: {
+            name: reg(oversized ? "x".repeat(257) : "Deleted"),
+            live: reg(false),
+          },
+        },
+        a: { ...(assigned ? { c1: reg(null) } : {}), c2: reg("work") },
+      },
+    });
+    records.set("channel-sections", sections);
+    records.set(
+      "channel-stars",
+      signedRecord("channel-stars", {
+        version: 1,
+        channels: {
+          c1: { starred: true, updatedAt: 1 },
+          c2: { starred: true, updatedAt: 1 },
+        },
+      }),
+    );
+    const transport = await connectNativeTransport(community);
+    const owner = createSidebarPreferencesStore(
+      async () => {
+        const data = await transport.decodeSidebarPreferences?.(
+          [...records.values()],
+          signal,
+        );
+        if (!data) throw new Error("Sidebar decode unavailable");
+        return data;
+      },
+      true,
+      transport.writeSidebarAssignment,
+      transport.writeSidebarStar,
+    );
+    try {
+      const preferences = owner.queries;
+      await preferences.ensure();
+      expect(preferences.snapshot().data?.starred).toEqual(["c1", "c2"]);
+      await expect(preferences.setStar("c1", false)).resolves.toEqual(["c2"]);
+      expect(preferences.snapshot().data).toMatchObject({
+        starred: ["c2"],
+        sections: [{ id: "work", name: "Work", order: 0 }],
+        assignments: { c2: "work" },
+      });
+      expect(records.get("channel-sections")).toBe(sections);
+      expect(decode([...records.values()])["channel-stars"]).toMatchObject({
+        channels: { c1: { starred: false }, c2: { starred: true } },
+      });
+      const signing = vi
+        .mocked(invoke)
+        .mock.calls.filter(([command]) => command === "relay_sign_sidebar");
+      expect(signing).toEqual([
+        [
+          "relay_sign_sidebar",
+          expect.objectContaining({ coordinate: "channel-stars" }),
+        ],
+      ]);
+      const queries = vi
+        .mocked(invoke)
+        .mock.calls.filter(
+          ([command, args]) =>
+            command === "relay_http" &&
+            (args as { path: string }).path === "/query",
+        )
+        .flatMap(([, args]) => JSON.parse((args as { body: string }).body));
+      expect(queries).toContainEqual(
+        expect.objectContaining({
+          "#d": ["channel-sections"],
+          consistency: "strong",
+        }),
+      );
+    } finally {
+      owner.dispose();
+    }
   },
 );

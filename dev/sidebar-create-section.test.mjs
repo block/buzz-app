@@ -212,3 +212,48 @@ it("appends after the rounded order imported from a fractional legacy head", () 
   expect(saved.meta.s.work.order[2]).toBe(1);
   expect(saved.meta.s[id].order[2]).toBe(2);
 });
+
+it.each([
+  { assigned: false, oversized: false },
+  { assigned: true, oversized: false },
+  { assigned: false, oversized: true },
+  { assigned: true, oversized: true },
+])(
+  "does not publish an already-clear assignment: %j",
+  async ({ assigned, oversized }) => {
+    const reg = (value) => [100, "1111111111111111", value];
+    const blob = {
+      version: 1,
+      sections: [{ id: "stale", name: "Stale", order: 0 }],
+      assignments: { alpha: "stale" },
+      meta: {
+        v: 1,
+        s: {
+          work: { name: reg("Work"), live: reg(true), order: reg(0) },
+          dead: {
+            name: reg(oversized ? "x".repeat(257) : "Deleted"),
+            live: reg(false),
+          },
+        },
+        a: { ...(assigned ? { alpha: reg(null) } : {}), beta: reg("work") },
+      },
+    };
+    let head = event(blob);
+    const publications = [];
+    const groups = await mutateSidebarAssignment(
+      { channelId: "alpha" },
+      secret,
+      async () => [head],
+      async (value) => {
+        publications.push(value);
+        head = value;
+      },
+    );
+    expect(groups).toMatchObject({
+      sections: [{ id: "work", name: "Work", order: 0 }],
+      assignments: { beta: "work" },
+    });
+    expect(publications).toEqual([]);
+    expect(decode(head)).toEqual(blob);
+  },
+);

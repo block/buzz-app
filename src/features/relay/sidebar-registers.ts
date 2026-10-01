@@ -215,11 +215,21 @@ export function editSidebarRecord(
   const tree =
     current.meta === undefined
       ? importLegacy(coordinate, current, createdAt)
-      : metadata(coordinate, current.meta);
+      : metadata(coordinate, current.meta, true);
   const changed = writes.filter(([path, value]) => {
     let node: Tree | SidebarRegister | undefined = tree;
     for (const key of path)
       node = node && !Array.isArray(node) ? own(node, key) : undefined;
+    // Removing an absent assignment is already satisfied at the fresh head.
+    // Do not mint a tombstone (or rewrite unrelated retained text) for Unstar.
+    if (
+      node === undefined &&
+      value === null &&
+      coordinate === "channel-sections" &&
+      path.length === 2 &&
+      path[0] === "a"
+    )
+      return false;
     return !Array.isArray(node) || node[2] !== value;
   });
   if (!changed.length) return current;

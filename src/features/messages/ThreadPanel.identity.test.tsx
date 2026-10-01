@@ -22,6 +22,8 @@ import {
 } from "../relay/testing";
 import { ThreadPanel } from "./ThreadPanel";
 
+vi.mock("virtua", () => import("./virtua.testing"));
+
 const bodyRender = vi.fn();
 vi.mock("./MessageMarkdown", () => ({
   MessageMarkdown: ({ row }: { row: ChannelMessage }) => {

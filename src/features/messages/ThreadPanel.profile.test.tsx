@@ -25,6 +25,14 @@ vi.mock("./use-reading", () => ({
   Reading: () => null,
   readingPositioned: () => {},
 }));
+vi.mock("virtua", () => import("./virtua.testing"));
+vi.stubGlobal(
+  "ResizeObserver",
+  class {
+    observe() {}
+    disconnect() {}
+  },
+);
 
 function mount(session: RelaySession, channelId: string, messageId: string) {
   const container = document.createElement("div");

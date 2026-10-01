@@ -242,7 +242,7 @@ test.describe("large thread opening", () => {
     app,
   }) => {
     await open(page, app);
-    const { root } = app.presenceThread;
+    const { root, replies } = app.presenceThread;
     const trigger = page
       .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
       .getByRole("button", { name: /^View thread:/ });
@@ -251,7 +251,7 @@ test.describe("large thread opening", () => {
       exact: true,
     });
     for (const phase of ["cold", "reopened"]) {
-      const timing = await trigger.evaluate(async (button) => {
+      const timing = await trigger.evaluate(async (button, latest) => {
         const start = performance.now();
         button.click();
         let firstPaint;
@@ -278,9 +278,11 @@ test.describe("large thread opening", () => {
               });
             if (visible && firstPaint === undefined)
               firstPaint = performance.now() - start;
+            // Offscreen replies are virtualized. The legacy walk delivers the
+            // newest reply in its last page, so its row ends the traversal.
             if (
               !visible ||
-              rows.length !== 301 ||
+              ![...rows].some((row) => row.dataset.messageId === latest) ||
               panel.textContent.includes("Loading thread…")
             )
               return requestAnimationFrame(check);
@@ -295,13 +297,12 @@ test.describe("large thread opening", () => {
           firstVisibleMs: firstPaint,
           fullTraversalPaintMs: performance.now() - start,
         };
-      });
+      }, replies.at(-1).id);
       app.report.measurements.push({
         scenario: "300-author-thread",
         phase,
         ...timing,
       });
-      await expect(history.locator("[data-message-id]")).toHaveCount(301);
       await expect(
         history.getByText("Distinct author reply 299", { exact: true }),
       ).toBeInViewport();

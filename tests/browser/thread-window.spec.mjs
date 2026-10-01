@@ -154,15 +154,19 @@ test("legacy continuation failure exposes recovery after retained replies", asyn
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?failLegacyContinuation=1`,
     );
     const history = page.getByRole("region", { name: "Thread messages" });
-    const replies = history.locator("ol [data-message-id]");
     // The first page is started on mount; the next page is a separate read.
-    await expect(replies).toHaveCount(50);
+    // Offscreen replies are virtualized, so the newest loaded reply is the evidence.
+    await expect(
+      history.getByText("First root reply 49", { exact: true }),
+    ).toBeInViewport();
     const error = history.getByRole("alert");
     const retry = history.getByRole("button", { name: "Retry thread" });
     await expect(error).toContainText("Legacy continuation failed");
     await expect(retry).toBeVisible();
     await retry.click();
-    await expect(replies).toHaveCount(61);
+    await expect(
+      history.getByRole("heading", { name: "Agent Markdown" }),
+    ).toBeInViewport();
     await expect(error).toHaveCount(0);
   } finally {
     await server.close();
@@ -326,20 +330,28 @@ test("newest window positions immediately; scrollback preserves the visible repl
       history.getByText("Live reply", { exact: true }),
     ).toBeVisible();
     // Demand each remaining older page. No automatic full-history waterfall.
-    for (const count of [111, 161, 211, 261, 305]) {
+    // Offscreen replies are virtualized: each demand is one read, applied once
+    // its prepended page moves the reader off the top.
+    for (const reads of [3, 4, 5, 6, 7]) {
       await history.evaluate((el) => {
         el.scrollTop = 0;
         el.dispatchEvent(new Event("scroll"));
       });
       await history.hover();
       await page.mouse.wheel(0, -300);
-      await expect(replies).toHaveCount(count);
+      await expect
+        .poll(() => history.evaluate((el) => el.scrollTop))
+        .toBeGreaterThan(0);
+      expect(
+        await page.evaluate(() => window.messagesFixture.report.filters.length),
+      ).toBe(reads);
     }
-    expect(await history.locator("ol [data-message-id]").count()).toBe(305);
-    const ids = await history
-      .locator("ol [data-message-id]")
-      .evaluateAll((rows) => rows.map((r) => r.dataset.messageId));
-    expect(new Set(ids).size).toBe(305);
+    await history.evaluate((el) => {
+      el.scrollTop = 0;
+    });
+    await expect(
+      history.getByText("Reply with image", { exact: true }),
+    ).toBeInViewport();
     expect(
       (await page.evaluate(() => window.messagesFixture.report.filters)).every(
         (f) => f.thread_window && f.thread_cursor === undefined,

@@ -585,12 +585,24 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  /* Virtua owns anchoring. */
+  overflow-anchor: none;
   padding: 0 var(--space-panel-inset);
   padding-bottom: var(--space-panel-inset);
-  /* Older-history corrections hide overflow for a task (scroll-correction.ts). */
+  /* Virtua and older-history corrections hide overflow for a task
+     (patches/README.md, scroll-correction.ts). */
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--text) 20%, transparent) transparent;
+}
+/* Virtua hides a row until it is measured at a new index. Hiding blurs focus
+   and refuses the focus a reparented exact target takes in the same commit. */
+.threadHistory
+  > [data-thread-rows]
+  > ol
+  > li:is(:focus-within, :has([data-selected])) {
+  /* biome-ignore lint/complexity/noImportantStyles: Must win over Virtua's inline style. */
+  visibility: visible !important;
 }
 /* Measure loaded rows without painting a scroll position we will replace. */
 .threadHistory[data-positioning] > [data-thread-rows] {

@@ -128,7 +128,7 @@ function ImagePixels({
     const preview = canvas.current;
     if (hash && preview && typeof IntersectionObserver !== "undefined") {
       // Original requests keep native loading="lazy". Only preview CPU work is
-      // visibility-gated, including nonvirtualized thread rows. No new scheduler.
+      // visibility-gated, including rows mounted offscreen. No new scheduler.
       observer = new IntersectionObserver((entries) => {
         if (
           !active ||

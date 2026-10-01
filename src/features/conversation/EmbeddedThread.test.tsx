@@ -22,6 +22,7 @@ import type { RelaySession } from "../relay/session";
 
 // The real ThreadPanel and MessageManagement are composed; only leaf UI with
 // its own mounted suites is reduced to the props this owner supplies.
+vi.mock("virtua", () => import("../messages/virtua.testing"));
 vi.mock("../relay/react", () => {
   const profiles = new Map();
   return { useRowProfiles: () => profiles };

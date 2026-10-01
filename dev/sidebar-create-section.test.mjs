@@ -38,7 +38,7 @@ function decode(record) {
     key.fill(0);
   }
 }
-it("creates and assigns together, preserving raw unrelated fields and an idempotent retry", () => {
+it("creates and assigns together, imports legacy fields into registers and keeps retry idempotent", () => {
   const blob = {
     version: 1,
     future: { enabled: true },
@@ -46,11 +46,18 @@ it("creates and assigns together, preserving raw unrelated fields and an idempot
     assignments: { beta: "work", hidden: "missing" },
   };
   const created = prepareSidebarAssignment([event(blob)], intent, secret);
-  expect(decode(created.event)).toEqual({
+  const { meta, ...projection } = decode(created.event);
+  expect(projection).toEqual({
     ...blob,
-    sections: [...blob.sections, { id, name: "Launch", order: 4 }],
-    assignments: { ...blob.assignments, alpha: id },
+    sections: [
+      { id: "work", name: "Work", order: 0 },
+      { id, name: "Launch", order: 1 },
+    ],
+    assignments: { beta: "work", alpha: id },
   });
+  expect(meta.s.work.order).toEqual([5000, "0000000000000000", 3]);
+  expect(meta.s[id].order[2]).toBe(4);
+  expect(meta.a.alpha[2]).toBe(id);
   expect(
     prepareSidebarAssignment([created.event], intent, secret).event,
   ).toBeUndefined();

@@ -284,3 +284,76 @@ it("does not sign a redundant intent or continue after cancellation", async () =
     ),
   ).rejects.toMatchObject({ name: "AbortError" });
 });
+
+it("native writers update authoritative registers and preserve unrelated tombstones", async () => {
+  const stamp = (v: unknown) => [2_000_000_000_000, "1111111111111111", v];
+  const meta = {
+    v: 1,
+    s: {
+      work: { name: stamp("Work"), order: stamp(40), live: stamp(true) },
+      deleted: { name: stamp("Deleted"), live: stamp(false) },
+    },
+    a: { c1: stamp("work"), old: stamp(null) },
+  };
+  records.set(
+    "channel-sections",
+    signedRecord("channel-sections", {
+      version: 1,
+      sections: [{ id: "wrong", name: "Stale", order: 0 }],
+      assignments: {},
+      meta,
+    }),
+  );
+  records.set(
+    "channel-sort",
+    signedRecord("channel-sort", {
+      version: 1,
+      groups: {},
+      meta: { v: 1, g: { channels: stamp("recent"), forums: stamp(null) } },
+    }),
+  );
+  const transport = await connectNativeTransport(community);
+  expect(
+    await transport.writeSidebarAssignment?.(
+      { channelId: "c2", sectionId: "work" },
+      signal,
+    ),
+  ).toEqual({
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: { c1: "work", c2: "work" },
+  });
+  const saved = decode([...records.values()])["channel-sections"];
+  expect(saved).toMatchObject({
+    meta: {
+      s: meta.s,
+      a: {
+        old: meta.a.old,
+        c2: [
+          2_000_000_000_001,
+          expect.stringMatching(/^[0-9a-f]{16}$/),
+          "work",
+        ],
+      },
+    },
+    sections: [{ id: "work", name: "Work", order: 0 }],
+  });
+  expect(
+    await transport.writeSidebarSort?.("channels", "alpha", [], signal),
+  ).toEqual({});
+  const sort = decode([...records.values()])["channel-sort"];
+  expect(sort).toEqual({
+    version: 1,
+    groups: {},
+    meta: {
+      v: 1,
+      g: {
+        channels: [
+          2_000_000_000_001,
+          expect.stringMatching(/^[0-9a-f]{16}$/),
+          null,
+        ],
+        forums: stamp(null),
+      },
+    },
+  });
+});

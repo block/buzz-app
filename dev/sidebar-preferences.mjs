@@ -1,3 +1,8 @@
+import {
+  editSidebarRecord,
+  nextSidebarSectionOrder,
+  projectSidebarRecord,
+} from "../src/features/relay/sidebar-registers.ts";
 import { finalizeEvent, getPublicKey, nip44, verifyEvent } from "nostr-tools";
 import {
   projectSidebarPreferences,
@@ -128,7 +133,10 @@ function parseSectionsEvent(events, secret) {
       throw new Error("Sidebar plaintext budget exceeded");
     const blob = JSON.parse(plaintext);
     projectSidebarPreferences(blob, undefined);
-    return { blob, createdAt: event.created_at };
+    return {
+      blob: projectSidebarRecord("channel-sections", blob),
+      createdAt: event.created_at,
+    };
   } finally {
     key.fill(0);
   }
@@ -154,8 +162,7 @@ export function prepareSidebarAssignment(
     if (existing && existing.name !== name)
       throw new Error("The new section changed; reload and try again");
     if (!existing) {
-      const order =
-        Math.max(-1, ...sections.map((section) => section.order)) + 1;
+      const order = nextSidebarSectionOrder(current.blob);
       sections = [...sections, { id: sectionId, name, order }];
       created = true;
     }
@@ -165,19 +172,27 @@ export function prepareSidebarAssignment(
     !sections.some((section) => section.id === sectionId)
   )
     throw new Error("Sidebar group no longer exists");
-  const assignments = {
-    ...current.blob.assignments,
-    ...(sectionId === undefined ? {} : { [intent.channelId]: sectionId }),
-  };
-  if (sectionId === undefined) delete assignments[intent.channelId];
-  const blob = { ...current.blob, sections, assignments };
+  const writes = [[["a", intent.channelId], sectionId ?? null]];
+  if (created) {
+    const added = sections.find((section) => section.id === sectionId);
+    writes.push(
+      [["s", sectionId, "name"], added.name],
+      [["s", sectionId, "icon"], null],
+      [["s", sectionId, "order"], added.order],
+      [["s", sectionId, "live"], true],
+    );
+  }
+  const blob = editSidebarRecord(
+    SECTION_COORDINATE,
+    current.blob,
+    current.createdAt,
+    writes,
+    now,
+  );
   const groups = projectSidebarPreferences(blob, undefined);
   if (Buffer.byteLength(JSON.stringify(blob)) > 128 * 1024)
     throw new Error("Sidebar plaintext budget exceeded");
-  const previous = Object.hasOwn(current.blob.assignments, intent.channelId)
-    ? current.blob.assignments[intent.channelId]
-    : undefined;
-  if (!created && previous === sectionId) return { groups };
+  if (blob === current.blob) return { groups };
   const key = nip44.v2.utils.getConversationKey(secret, viewer);
   let content;
   try {

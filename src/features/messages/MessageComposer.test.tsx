@@ -2941,6 +2941,45 @@ it("uses the full channel choice set for one selected chip and follows membershi
   names.dispose();
 });
 
+it("asks before naming someone outside a DM and sends them as a reference", async () => {
+  const h = mount();
+  const add = vi.fn();
+  const list = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        channelType: "dm",
+        members: ["d".repeat(64), second.pubkey],
+        participants: [second.pubkey],
+      },
+    ],
+  };
+  Object.assign(h.session, {
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add },
+    // A writer that could add members still cannot add anyone to a DM.
+    outbox: { ...h.session.outbox, supports: () => true },
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(second);
+  });
+  fireEvent.submit(screen.getByRole("form"));
+  expect(
+    screen.getByRole("dialog", { name: "Mention people outside this DM?" }),
+  ).toHaveTextContent(
+    "Honey is not in this DM. People cannot be added to a DM. You can still send. They will not be notified.",
+  );
+  expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Send anyway" }));
+  await act(async () => {});
+  expect(h.messages.send).toHaveBeenCalledOnce();
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+  expect(add).not.toHaveBeenCalled();
+});
+
 for (const channelType of ["stream", "forum"] as const)
   it.each([undefined, "f".repeat(64)])(
     `keeps mixed nonmember mentions as references after Send anyway in ${channelType}, root=%s`,

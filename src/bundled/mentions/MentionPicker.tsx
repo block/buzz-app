@@ -1,3 +1,4 @@
+import { outsideMentionDetail } from "../../features/messages/mention-candidates";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -271,7 +272,7 @@ export function MentionPicker({
                               ? parentAdmission
                                 ? "Adds to session and parent channel when you send"
                                 : "Adds to session when you send"
-                              : "Not in channel · Choose whether to add when you send"}
+                              : outsideMentionDetail(channel)}
                           </small>
                         )}
                       </span>

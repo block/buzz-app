@@ -1,3 +1,4 @@
+import { outsideMentionDetail } from "../../features/messages/mention-candidates";
 import { useEffect, useState } from "react";
 import { useMentionChoices } from "./use-mention-choices";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
@@ -96,7 +97,7 @@ export function MentionCompletion({
             ? recipient.pubkey
             : inviteAgents
               ? `${parentAdmission ? "Adds to session and parent channel" : "Adds to session"} · ${recipient.pubkey}`
-              : "Not in channel · Choose whether to add when you send"),
+              : outsideMentionDetail(channel)),
         preview: (
           <Avatar
             alt=""

@@ -1061,7 +1061,7 @@ it("qualifies outside directory namesakes that have no cached profile", async ()
   names.dispose();
 });
 
-it.each(["dm", "session"] as const)(
+it.each(["session"] as const)(
   "never expands %s candidates from the community directory",
   async (channelType) => {
     const t = setup();
@@ -1103,6 +1103,52 @@ it.each(["dm", "session"] as const)(
     ).not.toBeInTheDocument();
   },
 );
+
+it("offers outside directory people in a DM, like a channel", async () => {
+  const t = setup();
+  const outside = { pubkey: "e".repeat(64), name: "Outside" };
+  const people = vi.fn(async () => ({ people: [outside], hasMore: false }));
+  const list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "dm",
+        name: "Conversation",
+        channelType: "dm" as const,
+        members: [t.member],
+        participants: [t.member],
+      },
+    ],
+  };
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    channels: { ...t.session.channels, list: () => list },
+  };
+  const publish = vi.fn();
+  render(
+    <MentionCompletion
+      session={session}
+      scope="test"
+      channelId="dm"
+      observation={{ revision: 1, text: "@Out", start: 4, end: 4 }}
+      publish={publish}
+      query={{ start: 0, end: 4, query: "Out" }}
+    />,
+  );
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
+  await waitFor(() =>
+    expect(
+      (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+        (item) => item.label,
+      ),
+    ).toEqual(["Outside"]),
+  );
+  expect(
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items[0]
+      ?.detail,
+  ).toBe("Not in DM · Will not be notified");
+});
 
 it("shows local rows before the directory, appends outside rows, and reuses settled pages", async () => {
   vi.useFakeTimers();

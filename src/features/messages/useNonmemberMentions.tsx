@@ -27,6 +27,7 @@ export function useNonmemberMentions(
     .list()
     .channels.find((item) => item.id === channelId);
   const canAdd = !!channel && canAddMembers(session, channel);
+  const place = channel?.channelType === "dm" ? "DM" : "channel";
   async function add() {
     if (!pending || adding.current || !canAdd) return;
     adding.current = true;
@@ -81,8 +82,8 @@ export function useNonmemberMentions(
         onOpenChange={(open) => {
           if (!open) pending?.finish(null);
         }}
-        title="Mention people outside this channel?"
-        description={pending && describe(pending.people, canAdd)}
+        title={`Mention people outside this ${place}?`}
+        description={pending && describe(pending.people, canAdd, place)}
         preventClose={!!pending?.busy}
         initialFocus={safeAction}
         finalFocus={() => {
@@ -126,12 +127,18 @@ export function useNonmemberMentions(
 }
 
 /** Match block/buzz desktop: name the people, then the available outcome. */
-function describe(people: readonly MentionRecipient[], canAdd: boolean) {
+function describe(
+  people: readonly MentionRecipient[],
+  canAdd: boolean,
+  place: "channel" | "DM",
+) {
   const names = people.map((person) => person.name).join(", ");
   const verb = people.length === 1 ? "is" : "are";
-  return `${names} ${verb} not in this channel. ${
+  return `${names} ${verb} not in this ${place}. ${
     canAdd
       ? "Invite them to the channel, or send without inviting them."
-      : "You cannot add people to this channel. You can still send without inviting them."
+      : place === "DM"
+        ? "People cannot be added to a DM. You can still send. They will not be notified."
+        : "You cannot add people to this channel. You can still send without inviting them."
   }`;
 }

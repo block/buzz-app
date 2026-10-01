@@ -50,14 +50,14 @@ not authorization.
 
 ## 1. Choice set
 
-For a stream or forum channel that is not archived and not read-only, the choice
+For a stream, forum or DM that is not archived and not read-only, the choice
 set is:
 
 1. the channel's members;
 2. the agents that the client offers for mention in this channel; and
 3. people and agents found by a community directory search for the current query.
 
-DMs and sessions MUST NOT add directory people. A session that invites agents
+Sessions MUST NOT add directory people. A session that invites agents
 uses its own agent list instead of item 3. Archived or read-only channels have
 no choices. Clients MUST exclude invalid keys and identities known to be
 archived, except the viewer's own key: a user always sees themself. Unknown
@@ -182,8 +182,8 @@ These rules keep a row from moving under the user's pointer or keyboard.
 
 ## 7. Sending to people outside the channel
 
-When a draft addresses an outside key in a stream or forum, the client MUST ask
-before it sends. The prompt names the outside people. It offers these actions,
+When a draft addresses an outside key in a stream, forum or DM, the client MUST
+ask before it sends. The prompt names the outside people. It offers these actions,
 like block/buzz desktop:
 
 | Action | Shown | Result |
@@ -192,6 +192,9 @@ like block/buzz desktop:
 | Do nothing | With add-member permission | Send. Outside keys become references. Nobody is added or notified. |
 | Send anyway | Without add-member permission | The same as Do nothing. |
 | Close or Escape | Always | Do not send. Keep the draft. |
+
+A DM has fixed participants, so it never offers Invite. Its prompt offers only
+Send anyway.
 
 Adding a member from this prompt MUST NOT start an agent. The sent message is
 what notifies it. If the draft or its attachments change while adding runs, the

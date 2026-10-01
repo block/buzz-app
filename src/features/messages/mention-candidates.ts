@@ -1,3 +1,4 @@
+import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { MentionRecipient } from "./mention-draft";
 import { availableMentionAgents } from "../agents/mention-choices";
@@ -12,6 +13,30 @@ export function archivedMention(session: RelaySession, pubkey: string) {
   return (
     pubkey !== session.viewer && session.archives?.state(pubkey) === "archived"
   );
+}
+
+/**
+ * Streams, forums and DMs can name people outside the destination. Selection
+ * grants nothing: sending asks first, and an outside key becomes a reference
+ * unless the sender adds that person (DMs cannot add anyone).
+ */
+export function outsideMentions(
+  channel: Pick<ChannelSummary, "channelType"> | undefined,
+) {
+  return (
+    channel?.channelType === "stream" ||
+    channel?.channelType === "forum" ||
+    channel?.channelType === "dm"
+  );
+}
+
+/** Row detail for an outside choice. Nobody can be added to a DM. */
+export function outsideMentionDetail(
+  channel: Pick<ChannelSummary, "channelType"> | undefined,
+) {
+  return channel?.channelType === "dm"
+    ? "Not in DM · Will not be notified"
+    : "Not in channel · Choose whether to add when you send";
 }
 
 /** Recipient eligibility, shared by menus, draft naming and insertion. No reads or writes. */
@@ -45,11 +70,7 @@ export function mentionCandidates(
             session.outbox?.supports(9000),
           )))
       choices.set(person.pubkey, { pubkey: person.pubkey, name: person.name });
-    if (
-      !roster &&
-      !inviteAgents &&
-      (channel?.channelType === "stream" || channel?.channelType === "forum")
-    )
+    if (!roster && !inviteAgents && outsideMentions(channel))
       for (const person of directory) choices.set(person.pubkey, person);
     for (const pubkey of members)
       choices.set(pubkey, {

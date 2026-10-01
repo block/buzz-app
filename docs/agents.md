@@ -139,7 +139,8 @@ its notification intent. Chips remain available without the Mentions chooser.
 
 Both the toolbar picker and inline completion use `mention-candidates.ts` and
 `mention-ranking.ts`. Membership permits notification, not a promise that an agent
-will accept or answer the prompt. DMs do not gain outside recipients. Ordinary
+will accept or answer the prompt. DMs, like channels, can name outside people;
+they become references because nobody can be added to a DM. Ordinary
 nonmember consent and session invitation rules remain the access owners;
 selection itself neither grants access nor starts an agent. Invalid recipient
 keys, known-archived identities, and archived/read-only destinations are excluded.

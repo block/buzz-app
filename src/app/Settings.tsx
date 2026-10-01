@@ -306,11 +306,18 @@ export function Settings({
                             {plugin.previous && (
                               <Button
                                 type="button"
-                                disabled={busy}
+                                disabled={
+                                  busy || !!plugin.rollbackBlockedReason
+                                }
                                 onClick={() => plugins.change("rollback", id)}
                               >
                                 Roll back
                               </Button>
+                            )}
+                            {plugin.rollbackBlockedReason && (
+                              <span className="text-body-sm text-muted">
+                                {plugin.rollbackBlockedReason}
+                              </span>
                             )}
                             {plugin.reloadable && !plugin.enabled && (
                               <Button

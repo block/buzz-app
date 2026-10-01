@@ -239,6 +239,7 @@ struct Release {
 }
 const RELEASE_MARKER: &str = "buzz-plugin-release-v1";
 const RELEASE_KIND: Kind = Kind::Custom(1064);
+const SIGNED_ROLLBACK_ERROR: &str = "Cannot roll back a signed plugin to an unsigned revision";
 
 fn publisher(bytes: &[u8], signature: &Event) -> Result<String> {
     publisher_for_hash(&hash(bytes), signature)
@@ -329,6 +330,8 @@ pub struct PluginInfo {
     pub enabled: bool,
     pub revision: String,
     pub previous: Option<String>,
+    pub has_signature: bool,
+    pub rollback_blocked_reason: Option<&'static str>,
     pub reloadable: bool,
     pub error: Option<String>,
     pub publisher: Option<String>,
@@ -429,10 +432,13 @@ impl Manager {
         Ok(r)
     }
     fn save(&self, r: &Registry) -> Result<()> {
-        atomic_write(
-            &self.root.join("registry.json"),
-            &serde_json::to_vec_pretty(r).map_err(err)?,
-        )
+        let bytes = serde_json::to_vec_pretty(r).map_err(err)?;
+        if bytes.len() as u64 > LIMIT {
+            return Err(
+                "Plugin registry exceeds 8 MiB; reduce release metadata or remove plugins".into(),
+            );
+        }
+        atomic_write(&self.root.join("registry.json"), &bytes)
     }
     fn artifact_path(&self, id: &str, revision: &str) -> PathBuf {
         self.root
@@ -502,6 +508,8 @@ impl Manager {
                     enabled,
                     revision: "bundled".into(),
                     previous: None,
+                    has_signature: false,
+                    rollback_blocked_reason: None,
                     reloadable: false,
                     error: None,
                     publisher: None,
@@ -510,6 +518,10 @@ impl Manager {
             .collect();
         for (id, p) in registry.installed {
             // Catalog polling stays cheap; verify content hashes before enabling/loading.
+            let has_signature = p.current_signature.is_some();
+            let rollback_blocked_reason =
+                (has_signature && p.previous.is_some() && p.previous_signature.is_none())
+                    .then_some(SIGNED_ROLLBACK_ERROR);
             let mut error = fs::metadata(self.artifact_path(&id, &p.current))
                 .map_err(err)
                 .err();
@@ -532,6 +544,8 @@ impl Manager {
                 enabled: p.enabled,
                 revision: p.current,
                 previous: p.previous,
+                has_signature,
+                rollback_blocked_reason,
                 reloadable: p.current_source.is_some(),
                 error,
                 publisher,
@@ -631,9 +645,7 @@ impl Manager {
                     "rollback" => {
                         let previous = p.previous.clone().ok_or("No previous revision")?;
                         if p.current_signature.is_some() && p.previous_signature.is_none() {
-                            return Err(
-                                "Cannot roll back a signed plugin to an unsigned revision".into()
-                            );
+                            return Err(SIGNED_ROLLBACK_ERROR.into());
                         }
                         let a = self.artifact(id, &previous, p.previous_signature.as_ref())?;
                         let previous_source = p.previous_source.clone();

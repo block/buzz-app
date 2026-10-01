@@ -6,6 +6,8 @@ export type PluginInfo = {
   enabled: boolean;
   revision: string;
   previous: string | null;
+  hasSignature?: boolean;
+  rollbackBlockedReason?: string | null;
   reloadable: boolean;
   error: string | null;
 };
@@ -27,7 +29,12 @@ export type ImportPreview = {
   token: string;
   source: string;
   commit: string | null;
-  candidates: { path: string; manifest: PluginManifest; revision: string }[];
+  candidates: {
+    path: string;
+    manifest: PluginManifest;
+    revision: string;
+    publisher?: string | null;
+  }[];
   warnings: string[];
 };
 export type PluginImports = {

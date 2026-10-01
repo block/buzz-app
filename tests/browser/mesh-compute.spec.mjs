@@ -20,7 +20,7 @@ test("enabling Mesh compute opens Settings Compute", async ({ page, app }) => {
     .getByRole("button", { name: "Compute", exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: "Compute — Consumer", exact: true }),
+    page.getByRole("heading", { name: "Use shared compute", exact: true }),
   ).toBeVisible();
   await expect(
     page

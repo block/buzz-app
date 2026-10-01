@@ -27,7 +27,7 @@ export function ConsumerComputeView({
     <FullPageSurface aria-label="Compute consumer">
       <div className="h-full overflow-auto p-panel-inset text-body">
         <div className={styles.content}>
-          <h1 className="m-0 text-title text-primary">Compute — Consumer</h1>
+          <h1 className="m-0 text-title text-primary">Use shared compute</h1>
           <p className="text-body text-secondary">
             Use a model shared by another device in the selected community. This
             app does not download or serve a local model. Your prompts run on

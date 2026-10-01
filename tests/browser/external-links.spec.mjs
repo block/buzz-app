@@ -213,6 +213,8 @@ test("PR state, changes and branch links use shared roles in both themes", async
       }),
     ),
   ).toBe("https://github.com/example/project/tree/small-improvement");
+  // Popup clicks leave the pointer on the branch. Assert rest paint off-target.
+  await panel.getByRole("heading", { name: "A small improvement" }).hover();
   for (const mode of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: mode });
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
@@ -225,6 +227,8 @@ test("PR state, changes and branch links use shared roles in both themes", async
         danger: "--text-danger",
         standard: "--text-standard",
         fill: "--affordance-success",
+        link: "--text-link",
+        linkFill: "--affordance-link-hover",
       })) {
         probe.style.color = `var(${token})`;
         result[name] = getComputedStyle(probe).color;
@@ -252,6 +256,17 @@ test("PR state, changes and branch links use shared roles in both themes", async
     );
     await expect(changes.locator("dd")).toHaveCSS("color", colors.standard);
     await expect(changes.locator("dd")).toHaveText("+174 / −28");
+    for (const name of ["example:small-improvement", "example:main"]) {
+      const branch = panel.getByRole("link", { name, exact: true });
+      await expect(branch).toHaveCSS("color", colors.link);
+      await expect(branch).toHaveCSS("background-color", colors.linkFill);
+      await expect(branch).toHaveCSS("font-size", "12px");
+      await expect(branch).toHaveCSS("border-radius", "6px");
+      await expect(branch).toHaveCSS("text-decoration-line", "none");
+      expect(
+        await branch.evaluate((node) => getComputedStyle(node).fontFamily),
+      ).toContain("JetBrains Mono");
+    }
     await panel.screenshot({
       path: testInfo.outputPath(`github-pr-${mode}.png`),
     });

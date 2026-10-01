@@ -143,7 +143,9 @@ function ObjectPanel({
                             {value.head.label}
                           </a>
                         ) : (
-                          value.head.label
+                          <span className={styles.branchLabel}>
+                            {value.head.label}
+                          </span>
                         )}
                         {" → "}
                         {value.base.url ? (
@@ -156,7 +158,9 @@ function ObjectPanel({
                             {value.base.label}
                           </a>
                         ) : (
-                          value.base.label
+                          <span className={styles.branchLabel}>
+                            {value.base.label}
+                          </span>
                         )}
                       </>
                     ) : (

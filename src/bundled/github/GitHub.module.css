@@ -91,13 +91,33 @@
 }
 .facts dd {
   margin: 0;
+  min-width: 0;
   text-align: right;
   overflow-wrap: anywhere;
 }
+.branch,
+.branchLabel {
+  font-family: var(--font-system-mono);
+  font-size: var(--text-mono);
+  font-weight: var(--text-mono--font-weight);
+  line-height: var(--text-mono--line-height);
+  letter-spacing: var(--text-mono--letter-spacing);
+}
 .branch {
+  display: inline-block;
+  max-width: 100%;
+  padding: var(--space-half) var(--space-1h);
+  border-radius: var(--radius-chip);
+  background: var(--affordance-link-hover);
   color: var(--text-link);
-  text-decoration: underline;
+  vertical-align: baseline;
+  text-decoration: none;
   text-underline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .branch:hover {
+    text-decoration: underline;
+  }
 }
 .body {
   overflow-wrap: anywhere;

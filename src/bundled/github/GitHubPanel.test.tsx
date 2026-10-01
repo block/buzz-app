@@ -7,8 +7,12 @@ import styles from "./GitHub.module.css";
 
 assert.exists(styles.additions);
 assert.exists(styles.deletions);
+assert.exists(styles.branch);
+assert.exists(styles.branchLabel);
 const additionsClass = styles.additions;
 const deletionsClass = styles.deletions;
+const branchClass = styles.branch;
+const branchLabelClass = styles.branchLabel;
 
 afterEach(() => {
   cleanup();
@@ -116,6 +120,10 @@ it("links branch labels to their own repositories and preserves unavailable bran
     "href",
     "https://github.com/contributor/project/tree/fix/small%20detail",
   );
+  expect(head).toHaveClass(branchClass);
+  expect(screen.getByRole("link", { name: "example:main" })).toHaveClass(
+    branchClass,
+  );
   expect(head).toHaveAttribute("target", "_blank");
   expect(head).toHaveAttribute("rel", "noreferrer");
   expect(screen.getByRole("link", { name: "example:main" })).toHaveAttribute(
@@ -142,7 +150,14 @@ it("links branch labels to their own repositories and preserves unavailable bran
     />,
   );
   await screen.findByRole("heading", { name: "An unavailable branch" });
-  expect(screen.getByText("contributor:deleted → example:main")).toBeVisible();
+  const deleted = screen.getByText("contributor:deleted");
+  expect(deleted).toBeVisible();
+  expect(deleted).toHaveClass(branchLabelClass);
+  expect(deleted).not.toHaveClass(branchClass);
+  expect(screen.getByText("example:main")).toHaveClass(branchLabelClass);
+  expect(deleted.parentElement).toHaveTextContent(
+    "contributor:deleted → example:main",
+  );
   expect(
     screen.queryByRole("link", { name: "contributor:deleted" }),
   ).not.toBeInTheDocument();

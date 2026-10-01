@@ -645,6 +645,107 @@ it("deleting the viewer's reply after a completed lookup ends the membership", a
   expect(relay.lookups).toHaveLength(count);
 });
 
+it("deleting one of the viewer's replies keeps the membership its other replies hold", async () => {
+  const h = setup();
+  const relay = conversationRelay(h);
+  const agentRoot = message(h.peer, "other", "agent post", 10);
+  const older = reply(h.viewer, "my older reply", 11, agentRoot, agentRoot);
+  const newer = reply(h.viewer, "my newer reply", 12, agentRoot, agentRoot);
+  const sibling = reply(h.peer, "same level", 700, agentRoot, agentRoot);
+  relay.store.push(agentRoot, older, newer, sibling, ...busy(h, 499));
+  await h.session.unread.ensure();
+  h.snapshot();
+  const attention = () => h.session.unread.attention("other", sibling.id);
+  await vi.waitFor(() =>
+    expect(attention()).toMatchObject({ category: "thread", unread: true }),
+  );
+  const asked = relay.lookups.length;
+  relay.store.splice(relay.store.indexOf(newer), 1);
+  h.receive([
+    signed(h.viewer, {
+      kind: 5,
+      content: "",
+      created_at: 800,
+      tags: [
+        ["h", "other"],
+        ["e", newer.id],
+      ],
+    }),
+  ]);
+  // The deleted reply was the lookup's witness; the parent is asked again.
+  await vi.waitFor(() => {
+    expect(attention()).toMatchObject({ category: "thread", unread: true });
+    expect(relay.lookups.length).toBeGreaterThan(asked);
+  });
+});
+
+it("a lookup batch larger than the witness bound keeps every membership deletable", async () => {
+  const h = setup();
+  const relay = conversationRelay(h);
+  // Ten parents, each with 500 old replies of the viewer: one batch returns
+  // 5,000 of the viewer's replies, more than the session keeps as witnesses.
+  // They are older than the busy rows, so the sampled window holds none.
+  const parents = Array.from({ length: 10 }, (_, i) =>
+    message(h.peer, "other", `agent post ${i}`, 10 + i),
+  );
+  const mine = parents.map((parent, i) =>
+    Array.from({ length: 500 }, (_, j) =>
+      reply(h.viewer, `my reply ${i}.${j}`, 20 + (j % 50), parent, parent),
+    ),
+  );
+  const siblings = parents.map((parent, i) =>
+    reply(h.peer, `same level ${i}`, 700 + i, parent, parent),
+  );
+  relay.store.push(...parents, ...mine.flat(), ...siblings, ...busy(h, 490));
+  await h.session.unread.ensure();
+  h.snapshot();
+  const attention = (i: number) => {
+    const sibling = siblings[i];
+    assert(sibling);
+    return h.session.unread.attention("other", sibling.id);
+  };
+  await vi.waitFor(() => {
+    for (const i of parents.keys())
+      expect(attention(i)).toMatchObject({ category: "thread", unread: true });
+  }, 20000);
+  // Witnessing every reply would evict the first-answered parent's 500
+  // replies before the batch ends. Another client deletes all of them.
+  const firstId = relay.lookups
+    .flat()
+    .find((filter) => filter.authors && filter["#e"]?.length === 1)?.[
+    "#e"
+  ]?.[0];
+  const first = parents.findIndex((parent) => parent.id === firstId);
+  const deleted = mine[first];
+  assert(deleted);
+  const asked = relay.lookups.length;
+  for (const event of deleted)
+    relay.store.splice(relay.store.indexOf(event), 1);
+  h.receive(
+    deleted.map((event, i) =>
+      signed(h.viewer, {
+        kind: 5,
+        content: "",
+        created_at: 800 + i,
+        tags: [
+          ["h", "other"],
+          ["e", event.id],
+        ],
+      }),
+    ),
+  );
+  await vi.waitFor(() => {
+    expect(attention(first).pending).toBeUndefined();
+    expect(attention(first)).toMatchObject({ unread: false });
+  }, 20000);
+  expect(attention(first).category).toBeUndefined();
+  // The viewer had other replies there, so the relay was asked again.
+  expect(relay.lookups.length).toBeGreaterThan(asked);
+  for (const i of parents.keys())
+    if (i !== first)
+      expect(attention(i)).toMatchObject({ category: "thread", unread: true });
+}, 60000);
+
 it("lookups for the same parent ID in two channels do not share a result", async () => {
   const h = setup(2);
   const relay = conversationRelay(h);

@@ -212,13 +212,17 @@ session reset clears them. Thread attention follows the direct parent, so a
 reply whose root could not be fetched still counts as the viewer's thread; it
 just cannot be grouped. A later reply of the viewer turns a negative result
 into membership, so it still counts after the window drops that reply. A
-positive result records which of the viewer's messages made it; when the viewer
-deletes all of them, even after the lookup, the membership ends. Those messages
-are kept (up to 4,096, not counted) so a deletion from another client still
-passes the target-visibility check after the window drops them; evicting one
-forgets the lookups it backs, which are asked again. One
-residual: a direct reply older than 5,000 of the viewer's root-tag matches is
-not seen. Replies still require retained evidence of their own.
+positive result records one of the viewer's messages that made it, the newest,
+as its witness, and whether the viewer has others. When the viewer deletes the
+witness, even after the lookup, the membership ends, or the parent is asked
+again if there were others (the deleted message stays excluded). Witnesses are
+kept (up to 4,096, not counted) so a deletion from another client still passes
+the target-visibility check after the window drops them. One witness per
+decided parent keeps every positive result inside that bound, however many
+replies one batch returns; evicting a witness forgets its lookup, which is
+asked again. Residuals: a direct reply older than 5,000 of the viewer's
+root-tag matches is not seen, and a single deletion event that names several
+of the viewer's messages is visible only if all of them are retained. Replies still require retained evidence of their own.
 
 ## Explicit clearing matrix
 

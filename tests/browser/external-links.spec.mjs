@@ -144,3 +144,116 @@ test("GitHub object identities have comparable visible artwork at one size", asy
     path: testInfo.outputPath("github-object-identities.png"),
   });
 });
+
+// Computed paint through the actual app's CSS cascade and theme switch needs a browser.
+test("PR state, changes and branch links use shared roles in both themes", async ({
+  page,
+  context,
+  app,
+}, testInfo) => {
+  for (const url of [
+    "https://github.com/example/project/tree/main",
+    "https://github.com/example/project/tree/small-improvement",
+  ]) {
+    await context.route(url, (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: "<!doctype html><title>Sample branch</title>",
+      }),
+    );
+  }
+  await page.route("https://api.github.com/repos/block/buzz/pulls/1", (route) =>
+    route.fulfill({
+      json: {
+        title: "A small improvement",
+        state: "open",
+        user: { login: "sample-author" },
+        head: {
+          label: "example:small-improvement",
+          ref: "small-improvement",
+          repo: { full_name: "example/project" },
+        },
+        base: {
+          label: "example:main",
+          ref: "main",
+          repo: { full_name: "example/project" },
+        },
+        changed_files: 6,
+        additions: 174,
+        deletions: 28,
+        comments: 0,
+      },
+    }),
+  );
+  await page.goto(app.origin);
+  await openMessages(page);
+  app.append("primary", "alpha", github);
+  await expect(link(page, github)).toBeVisible();
+  await link(page, github).click();
+  const panel = page.getByRole("complementary", {
+    name: "GitHub",
+    exact: true,
+  });
+  await expect(
+    panel.getByRole("heading", { name: "A small improvement" }),
+  ).toBeVisible();
+  const changes = panel.getByText("Changes", { exact: true }).locator("..");
+  expect(
+    await popup(
+      page,
+      panel.getByRole("link", { name: "example:main", exact: true }),
+    ),
+  ).toBe("https://github.com/example/project/tree/main");
+  expect(
+    await popup(
+      page,
+      panel.getByRole("link", {
+        name: "example:small-improvement",
+        exact: true,
+      }),
+    ),
+  ).toBe("https://github.com/example/project/tree/small-improvement");
+  for (const mode of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: mode });
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+    const colors = await panel.evaluate((node) => {
+      const probe = document.createElement("span");
+      node.append(probe);
+      const result = {};
+      for (const [name, token] of Object.entries({
+        success: "--text-success",
+        danger: "--text-danger",
+        standard: "--text-standard",
+        fill: "--affordance-success",
+      })) {
+        probe.style.color = `var(${token})`;
+        result[name] = getComputedStyle(probe).color;
+      }
+      probe.remove();
+      return result;
+    });
+    expect(colors.success).not.toBe(colors.standard);
+    expect(colors.danger).not.toBe(colors.standard);
+    await expect(panel.getByText("open", { exact: true })).toHaveCSS(
+      "color",
+      colors.success,
+    );
+    await expect(panel.getByText("open", { exact: true })).toHaveCSS(
+      "background-color",
+      colors.fill,
+    );
+    await expect(changes.getByText("+174", { exact: true })).toHaveCSS(
+      "color",
+      colors.success,
+    );
+    await expect(changes.getByText("−28", { exact: true })).toHaveCSS(
+      "color",
+      colors.danger,
+    );
+    await expect(changes.locator("dd")).toHaveCSS("color", colors.standard);
+    await expect(changes.locator("dd")).toHaveText("+174 / −28");
+    await panel.screenshot({
+      path: testInfo.outputPath(`github-pr-${mode}.png`),
+    });
+  }
+});

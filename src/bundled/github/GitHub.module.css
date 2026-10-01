@@ -63,6 +63,16 @@
   background: var(--affordance-selected);
   text-transform: capitalize;
 }
+.state[data-open] {
+  color: var(--text-success);
+  background: var(--affordance-success);
+}
+.additions {
+  color: var(--text-success);
+}
+.deletions {
+  color: var(--text-danger);
+}
 .facts {
   padding: var(--space-3);
   border: 1px solid var(--border-standard);
@@ -83,6 +93,11 @@
   margin: 0;
   text-align: right;
   overflow-wrap: anywhere;
+}
+.branch {
+  color: var(--text-link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .body {
   overflow-wrap: anywhere;

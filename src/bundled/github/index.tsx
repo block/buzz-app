@@ -109,7 +109,16 @@ function ObjectPanel({
         <>
           <div className={styles.byline}>
             {result.state && (
-              <span className={styles.state}>{result.state}</span>
+              <span
+                className={styles.state}
+                data-open={
+                  reference.kind === "pull" && result.state === "open"
+                    ? ""
+                    : undefined
+                }
+              >
+                {result.state}
+              </span>
             )}
             {result.author && <span>by {result.author}</span>}
           </div>
@@ -119,7 +128,49 @@ function ObjectPanel({
               {result.facts.map(([label, value]) => (
                 <div key={label}>
                   <dt>{label}</dt>
-                  <dd>{value}</dd>
+                  <dd>
+                    {typeof value !== "object" ? (
+                      value
+                    ) : "head" in value ? (
+                      <>
+                        {value.head.url ? (
+                          <a
+                            className={styles.branch}
+                            href={value.head.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {value.head.label}
+                          </a>
+                        ) : (
+                          value.head.label
+                        )}
+                        {" → "}
+                        {value.base.url ? (
+                          <a
+                            className={styles.branch}
+                            href={value.base.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {value.base.label}
+                          </a>
+                        ) : (
+                          value.base.label
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <span className={styles.additions}>
+                          +{value.additions}
+                        </span>
+                        {" / "}
+                        <span className={styles.deletions}>
+                          −{value.deletions}
+                        </span>
+                      </>
+                    )}
+                  </dd>
                 </div>
               ))}
             </dl>

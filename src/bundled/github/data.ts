@@ -1,13 +1,29 @@
 import type { GitHubReference } from "./references";
 
+type Branch = { label: string; url?: string | undefined };
+
 export type GitHubDetails = {
   title: string;
   body: string;
   bodyHtml?: string | undefined;
   state: string;
   author: string;
-  facts: [string, string | number][];
+  facts: [
+    string,
+    (
+      | string
+      | number
+      | { additions: number; deletions: number }
+      | { head: Branch; base: Branch }
+    ),
+  ][];
 };
+type BranchData = {
+  label: string;
+  ref?: string;
+  repo?: { full_name: string } | null;
+};
+
 type ResponseData = {
   title?: string;
   description?: string | null;
@@ -20,8 +36,8 @@ type ResponseData = {
   owner?: { login: string };
   author?: { login: string };
   commit?: { message: string; author: { name: string } };
-  base?: { label: string };
-  head?: { label: string };
+  base?: BranchData;
+  head?: BranchData;
   additions?: number;
   deletions?: number;
   changed_files?: number;
@@ -30,6 +46,19 @@ type ResponseData = {
   language?: string | null;
   default_branch?: string;
 };
+
+function branchLink(branch: BranchData): Branch {
+  const repository = branch.repo?.full_name;
+  return {
+    label: branch.label,
+    url:
+      repository &&
+      /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) &&
+      branch.ref
+        ? `https://github.com/${repository}/tree/${branch.ref.split("/").map(encodeURIComponent).join("/")}`
+        : undefined,
+  };
+}
 
 export async function loadGitHubDetails(
   reference: GitHubReference,
@@ -65,11 +94,17 @@ export async function loadGitHubDetails(
   const data: ResponseData = await response.json();
   const facts: GitHubDetails["facts"] = [];
   if (data.head && data.base)
-    facts.push(["Branch", `${data.head.label} → ${data.base.label}`]);
+    facts.push([
+      "Branch",
+      { head: branchLink(data.head), base: branchLink(data.base) },
+    ]);
   if (data.changed_files !== undefined)
     facts.push(["Files changed", data.changed_files]);
   if (data.additions !== undefined && data.deletions !== undefined)
-    facts.push(["Changes", `+${data.additions} / −${data.deletions}`]);
+    facts.push([
+      "Changes",
+      { additions: data.additions, deletions: data.deletions },
+    ]);
   if (data.comments !== undefined) facts.push(["Comments", data.comments]);
   if (data.stargazers_count !== undefined)
     facts.push(["Stars", data.stargazers_count]);

@@ -69,7 +69,10 @@ it("loads PR details and preserves merged state, branches, and change counts", a
     body: "An independent panel contract.",
     bodyHtml: "<p>An independent panel contract.</p>",
   });
-  expect(data.facts).toContainEqual(["Changes", "+10 / −80"]);
+  expect(data.facts).toContainEqual([
+    "Changes",
+    { additions: 10, deletions: 80 },
+  ]);
 });
 it.each([
   [404, "private or unavailable"],

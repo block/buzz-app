@@ -55,9 +55,10 @@ too. Oversized rows that never fit fully are not auto-read.
   targeted refetches take at most 20 channel IDs and context reads at most 20
   targets / 100 message IDs. A visible, requested session refreshes every 60 s and
   on window focus/visibility. Each thread summary lists at most 5 threads.
-- `attention` is the directed subset: DMs, mentions, broadcasts and replies in
-  threads the viewer participates in. It does not trigger notifications or
-  implement mute policy.
+- `attention` is the directed subset: DMs, mentions, broadcasts and relevant
+  conversation replies (see below). Every server-counted reply is attention;
+  thread summaries therefore carry only `unread`. Attention alone does not
+  trigger notifications or implement mute policy.
 - `markThrough(target, messageId)` is explicit prefix intent through a loaded,
   verified message in that target's context. It can mark unloaded earlier
   messages read; viewport observation goes through `reading()` instead, so dwell
@@ -104,18 +105,16 @@ label. Ordinary unread renders no row marker. DMs, mentions, broadcasts, and
 relevant thread replies add one accent dot; non-DM row numerals are omitted and DM
 avatars are reserved for eligible one-to-one offscreen cues. Thread activity reuses that dot:
 its hover/focus/click popover lists the relay's bounded set of newest unread
-threads, dropping only those with exact-zero attention (unknown attention stays, as
-possible attention), and opens the existing thread panel, so overlapping priority
-and thread activity never produce duplicate dots. Each preview is the thread's
-newest unread reply, not its newest attention reply, with agent envelopes unwrapped
+threads, dropping only those with exact-zero unread (unknown stays), and opens the
+existing thread panel, so overlapping priority and thread activity never produce duplicate dots. Each preview is the thread's
+newest relevant unread reply, with agent envelopes unwrapped
 and the author's edits applied as the relay returns them when the popover opens.
 That read is neither live nor unbounded, so a preview can differ from the timeline:
 an edit made or deleted while the popover is open shows on the next open, and the
 read takes the newest 500 edits across the listed replies, so a reply can show an
-older edit or its original text. The relay caps the list before
-the client filters it, so an older attention thread can be omitted; an incomplete
-list stays marked incomplete. Merely revealing the popover does not acknowledge a
-reply.
+older edit or its original text. The relay filters relevance before selecting
+previews and capping the list; an incomplete list stays marked incomplete.
+Merely revealing the popover does not acknowledge a reply.
 A local manual-unread mark strengthens the label without fabricating priority; the
 underlying relay count remains available.
 The sidebar row menu offers **Mark as Unread** on read channels and **Mark as Read**
@@ -153,6 +152,33 @@ dwelled message in its context.
 The relay resolves thread ancestry for counts; the client resolves a dwelled
 message's context with the same canonical marked-reference parser as thread
 opening. References alone do not grant access or trigger a read.
+
+## Relevant replies
+
+An eligible peer reply counts only when it is in the viewer's conversation,
+mentions the viewer, is in a DM, or is broadcast. A conversation is the **direct
+parent**: the viewer wrote it or has a live eligible reply to that same parent
+in the same channel. Owning the structural root or replying elsewhere below it
+does not join every nested conversation. Deleted witnesses do not count; deleting
+the parent removes author proof but a surviving own reply still proves membership.
+Joining later can make older replies unread, subject to the horizon and frontier.
+
+The relay decides this; the app has no membership lookup store. An unread context
+message carries `reason`: `direct` > `mention` > `conversation` > `broadcast`, or
+null for an ordinary top-level message. Notifications map the first three to
+Direct messages, Mentions, Thread replies; broadcast alone has no notification
+category. A reply proved outside the viewer's conversations is `not_counted`.
+Undecided replies are `unknown`, excluded from counts with honest lower bounds.
+A broadcast whose membership lookup times out remains unread with reason broadcast;
+a later context refresh can upgrade it to conversation.
+
+Fresh live notification candidates retain their context while undecided. The
+existing visible 60-second refresh, focus/reconnect and channel invalidation
+re-query retained selectors; no new retry loop or historical notification source
+is introduced. Retention expires two minutes after the original event timestamp,
+including time spent waiting for classification. Plain live replies do not paint
+unread before the relay classifies them; speculative hints retire on lower-bound
+responses as well as exact responses.
 
 ## Explicit clearing matrix
 

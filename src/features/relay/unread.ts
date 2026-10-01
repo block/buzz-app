@@ -296,7 +296,7 @@ export function createUnread({
     } else if (row && target.kind === "thread") {
       const thread = row.threads.items.find((t) => t.root_id === target.rootId);
       unread = thread?.unread ?? (row.threads.complete ? zero : unknown);
-      attention = thread?.attention ?? (row.threads.complete ? zero : unknown);
+      attention = unread;
       if (thread)
         latestMessage = {
           id: thread.latest_reply_id,
@@ -312,10 +312,7 @@ export function createUnread({
           : undefined;
       if (status?.status === "unread") {
         unread = { status: "exact", value: 1 };
-        attention =
-          status.attention === null
-            ? unknown
-            : { status: "exact", value: status.attention ? 1 : 0 };
+        attention = { status: "exact", value: status.reason === null ? 0 : 1 };
       } else if (status?.status === "read" || status?.status === "not_counted")
         unread = attention = zero;
     }
@@ -333,9 +330,7 @@ export function createUnread({
         : !!latestMessage &&
           (target.kind === "channel"
             ? row?.latest_message_complete === true
-            : row?.threads.complete === true &&
-              unread.status === "exact" &&
-              attention.status === "exact") &&
+            : row?.threads.complete === true && unread.status === "exact") &&
           state.covered(
             wireTarget(target),
             latestMessage.createdAt,
@@ -401,18 +396,13 @@ export function createUnread({
     const mentioned = message.tags.some(
       ([name, value]) => name === "p" && value?.toLowerCase() === viewer,
     );
+    const reason = status?.status === "unread" ? status.reason : null;
     const category =
-      channels.list().channels.find((c) => c.id === channelId)?.channelType ===
-      "dm"
-        ? "direct"
-        : mentioned ||
-            message.tags.some(
-              ([name, value]) => name === "broadcast" && value === "1",
-            )
-          ? "mention"
-          : target.root_id
-            ? "thread"
-            : undefined;
+      reason === "conversation"
+        ? "thread"
+        : reason === "direct" || reason === "mention"
+          ? reason
+          : undefined;
     const forced = state.journal.manual({
       kind: "message",
       channelId,
@@ -421,12 +411,13 @@ export function createUnread({
     return {
       status:
         status?.status === "unread"
-          ? status.attention === null
-            ? "unknown"
-            : status.attention
-              ? "eligible"
-              : "ineligible"
-          : status?.status === "read" || status?.status === "not_counted"
+          ? reason !== null
+            ? "eligible"
+            : "ineligible"
+          : status?.status === "read" ||
+              status?.status === "not_counted" ||
+              status?.status === "unavailable" ||
+              result?.status === "unavailable"
             ? "ineligible"
             : "unknown",
       ...(category ? { category } : {}),
@@ -454,12 +445,11 @@ export function createUnread({
         ? row.threads.items
             .filter(
               (t) =>
-                t.attention.status === "unknown" ||
-                (hasUnread(t.attention) &&
+                t.unread.status === "unknown" ||
+                (hasUnread(t.unread) &&
                   !(
                     row.threads.complete &&
                     t.unread.status === "exact" &&
-                    t.attention.status === "exact" &&
                     state.covered(
                       { channel_id: channelId, root_id: t.root_id },
                       t.latest_reply_at,
@@ -746,7 +736,7 @@ export function createUnread({
             ...(target ? { target } : {}),
             attention: direct,
           },
-          message.pubkey !== viewer,
+          message.pubkey !== viewer && (direct || !threadReference(message)),
         );
       }
     },

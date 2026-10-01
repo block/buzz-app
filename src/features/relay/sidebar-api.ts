@@ -15,7 +15,6 @@ export type ReadAccount = {
 export type ThreadReadSummary = {
   root_id: string;
   unread: ReadCount;
-  attention: ReadCount;
   latest_reply_id: string;
   latest_reply_at: number;
 };
@@ -37,9 +36,16 @@ export type SidebarPage = {
   channels: ChannelReadSummary[];
   next_cursor: string | null;
 };
+const unreadReasons = [
+  "direct",
+  "mention",
+  "conversation",
+  "broadcast",
+] as const;
+export type UnreadReason = (typeof unreadReasons)[number];
 export type MessageReadState = { message_id: string } & (
   | { status: "read" | "not_counted" | "unknown" | "unavailable" }
-  | { status: "unread"; attention: boolean | null }
+  | { status: "unread"; reason: UnreadReason | null }
 );
 export type ContextState =
   | { status: "unknown" | "unavailable" }
@@ -109,12 +115,11 @@ const message = (v: unknown) =>
     String(v.status),
   ) ||
     (v.status === "unread" &&
-      nullable(v.attention, (v) => typeof v === "boolean")));
+      nullable(v.reason, (v) => unreadReasons.some((reason) => reason === v))));
 const thread = (v: unknown) =>
   record(v) &&
   id(v.root_id) &&
   count(v.unread) &&
-  count(v.attention) &&
   id(v.latest_reply_id) &&
   integer(v.latest_reply_at);
 const channel = (v: unknown) =>

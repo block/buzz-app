@@ -35,6 +35,7 @@ const cleanups: (() => unknown)[] = [];
 afterEach(async () => {
   for (const stop of cleanups.splice(0)) await stop();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 async function setup(
   readBarrier: Promise<void> = Promise.resolve(),
@@ -82,7 +83,24 @@ async function setup(
             (frontier !== undefined && event.created_at <= frontier)
           )
             return { message_id, status: "read" };
-          return { message_id, status: "unread", attention: true };
+          const channel = owner.session.channels
+            .list()
+            .channels.find((channel) => channel.id === q.target.channel_id);
+          const mentioned = event.tags.some(
+            ([key, value]) => key === "p" && value === viewer.pubkey,
+          );
+          return {
+            message_id,
+            status: "unread",
+            reason:
+              channel?.channelType === "dm"
+                ? "direct"
+                : mentioned
+                  ? "mention"
+                  : q.target.root_id
+                    ? "conversation"
+                    : null,
+          };
         }),
       })),
     };
@@ -325,7 +343,8 @@ it.each(
     [
       { age: -30001, allowed: false },
       { age: -30000, allowed: true },
-      { age: 120000, allowed: true },
+      { age: 119999, allowed: true },
+      { age: 120000, allowed: false },
       { age: 120001, allowed: false },
     ].map((boundary) => ({ kind, ...boundary })),
   ),
@@ -1058,3 +1077,221 @@ it("alerts a fresh mention beside loaded thread history without bulk context dem
   h.emit([mention], "live");
   await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(1));
 });
+
+// M01–M03: relay uncertainty replaces #471's parent-lookup machinery.
+it.each(["conversation", "not_counted"] as const)(
+  "retains a live unknown reply, re-queries on refresh and settles %s without history alerts",
+  async (settled) => {
+    const h = await setup();
+    const channel = "01234567-89ab-cdef-0123-456789abcdef";
+    const root = message(h.peer, channel, "old parent", 10);
+    const reply = message(
+      h.peer,
+      channel,
+      "fresh answer",
+      Math.floor(Date.now() / 1000),
+      [
+        ["e", root.id, "", "root"],
+        ["e", root.id, "", "reply"],
+      ],
+    );
+    let resolved = false;
+    h.contextQuery.mockImplementation(async (queries) => ({
+      account: sidebarAccount,
+      contexts: queries.map((q) => ({
+        status: "available",
+        through_timestamp: null,
+        messages: q.message_ids.map((message_id) =>
+          !resolved
+            ? { message_id, status: "unknown" }
+            : settled === "conversation"
+              ? { message_id, status: "unread", reason: "conversation" }
+              : { message_id, status: "not_counted" },
+        ),
+      })),
+    }));
+    h.emit([root], "replay");
+    h.emit([reply], "live");
+    await h.owner.session.unread.refresh();
+    expect(
+      h.contextQuery.mock.calls.flatMap(([queries]) =>
+        queries.flatMap((q) => q.message_ids),
+      ),
+    ).toContain(reply.id);
+    expect(h.show).not.toHaveBeenCalled();
+    const before = h.contextQuery.mock.calls.length;
+    resolved = true;
+    await h.owner.session.unread.refresh();
+    expect(h.contextQuery.mock.calls.length).toBeGreaterThan(before);
+    if (settled === "conversation") {
+      await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(1));
+      expect(h.show.mock.calls[0]?.[0].body).toBe("fresh answer");
+    } else {
+      // Drain the same notification presentation queue with a known live mention.
+      const mention = h.make("barrier mention");
+      h.contextQuery.mockImplementation(async (queries) => ({
+        account: sidebarAccount,
+        contexts: queries.map((q) => ({
+          status: "available",
+          through_timestamp: null,
+          messages: q.message_ids.map((message_id) =>
+            message_id === mention.id
+              ? { message_id, status: "unread", reason: "mention" }
+              : { message_id, status: "not_counted" },
+          ),
+        })),
+      }));
+      h.emit([mention], "live");
+      await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(1));
+      expect(h.show.mock.calls[0]?.[0].body).toBe("barrier mention");
+    }
+    const history = message(
+      h.peer,
+      channel,
+      "history only",
+      Math.floor(Date.now() / 1000),
+      [["e", root.id, "", "reply"]],
+    );
+    h.emit([history], "replay");
+    await h.owner.session.unread.refresh();
+    expect(h.show).toHaveBeenCalledTimes(1);
+    expect(
+      h.query.mock.calls
+        .flatMap(([filters]) => filters)
+        .some((f) => f.authors && f["#e"]),
+    ).toBe(false);
+  },
+);
+
+it("keeps broadcast quiet but allows a fresh authoritative conversation upgrade", async () => {
+  const h = await setup();
+  const channel = "01234567-89ab-cdef-0123-456789abcdef";
+  const reply = message(
+    h.peer,
+    channel,
+    "broadcast answer",
+    Math.floor(Date.now() / 1000),
+    [
+      ["e", "a".repeat(64), "", "reply"],
+      ["broadcast", "1"],
+    ],
+  );
+  let reason: "broadcast" | "conversation" = "broadcast";
+  h.contextQuery.mockImplementation(async (queries) => ({
+    account: sidebarAccount,
+    contexts: queries.map((q) => ({
+      status: "available",
+      through_timestamp: null,
+      messages: q.message_ids.map((message_id) => ({
+        message_id,
+        status: "unread",
+        reason,
+      })),
+    })),
+  }));
+  h.emit([reply], "live");
+  await h.owner.session.unread.refresh();
+  expect(h.owner.session.unread.attention(channel, reply.id)).toMatchObject({
+    status: "eligible",
+    unread: true,
+  });
+  expect(
+    h.owner.session.unread.attention(channel, reply.id).category,
+  ).toBeUndefined();
+  expect(h.show).not.toHaveBeenCalled();
+  reason = "conversation";
+  await h.owner.session.unread.refresh();
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(1));
+});
+
+it("expires classification and admitted permission waits at the original event deadline", async () => {
+  const h = await setup();
+  vi.useFakeTimers();
+  vi.setSystemTime(1_780_000_000_000);
+  const reply = h.make("late classification");
+  let resolved = false;
+  h.contextQuery.mockImplementation(async (queries) => ({
+    account: sidebarAccount,
+    contexts: queries.map((q) => ({
+      status: "available",
+      through_timestamp: null,
+      messages: q.message_ids.map((message_id) =>
+        resolved
+          ? { message_id, status: "unread", reason: "mention" }
+          : { message_id, status: "unknown" },
+      ),
+    })),
+  }));
+  let permit!: (permission: "granted") => void;
+  h.permission.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        permit = resolve;
+      }),
+  );
+  h.emit([reply], "live");
+  await h.owner.session.unread.refresh();
+  vi.setSystemTime(1_780_000_119_000);
+  resolved = true;
+  await h.owner.session.unread.refresh();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(permit).toBeTypeOf("function");
+  await vi.advanceTimersByTimeAsync(1000);
+  permit("granted");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(h.show).not.toHaveBeenCalled();
+  h.contextQuery.mockClear();
+  await h.owner.session.unread.refresh();
+  expect(h.contextQuery).not.toHaveBeenCalled();
+});
+
+it.each(["expiry", "session", "access", "disabled"] as const)(
+  "releases pre-admission unknown demand on %s",
+  async (end) => {
+    const h = await setup();
+    vi.useFakeTimers();
+    vi.setSystemTime(1_780_000_000_000);
+    const row = h.make("undecided");
+    h.contextQuery.mockImplementation(async (queries) => ({
+      account: sidebarAccount,
+      contexts: queries.map((q) => ({
+        status: "available",
+        through_timestamp: null,
+        messages: q.message_ids.map((message_id) => ({
+          message_id,
+          status: "unknown",
+        })),
+      })),
+    }));
+    h.emit([row], "live");
+    await h.owner.session.unread.refresh();
+    expect(h.contextQuery).toHaveBeenCalled();
+    if (end === "expiry") await vi.advanceTimersByTimeAsync(120000);
+    else if (end === "session") h.deselect();
+    else if (end === "disabled") {
+      h.notifications.updatePreferences({ enabled: false });
+      h.notifications.updatePreferences({ enabled: true });
+    } else {
+      h.emit([
+        roster(
+          h.relay,
+          "01234567-89ab-cdef-0123-456789abcdef",
+          [],
+          1_780_000_001,
+        ),
+      ]);
+      h.emit([
+        roster(
+          h.relay,
+          "01234567-89ab-cdef-0123-456789abcdef",
+          [h.viewer.pubkey],
+          1_780_000_002,
+        ),
+      ]);
+    }
+    h.contextQuery.mockClear();
+    await h.owner.session.unread.refresh();
+    expect(h.contextQuery).not.toHaveBeenCalled();
+    expect(h.show).not.toHaveBeenCalled();
+  },
+);

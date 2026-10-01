@@ -41,15 +41,20 @@ checks, not that an OS banner was displayed or read.
 
 ## Running-app behavior
 
-- Built-in mentions, DMs and participating-thread replies consume the selected
+- Built-in mentions, DMs and conversation replies
+  ([relevant replies](unread.md#relevant-replies)) consume the selected
   community's verified live kind-9 and kind-40002 traffic and existing
   unread/visibility facts. Structured kind-40002 bodies use the same decoded text
   as message rows. No new socket, unread engine or background-community
   subscription is added.
 - History, initial/reconnect replay and own messages stay quiet. Candidates older
   than two minutes (or over 30 seconds in the future) are ignored. Unknown read
-  readiness waits; off/access loss cancels pending candidates. The app-global binding
-  starts the shared bounded unread observation even without Channels mounted.
+  readiness waits; off/access loss cancels pending candidates. A reply whose
+  authoritative context is unknown retains its message selector until the relay
+  classifies it or the original event becomes two minutes old. Existing refresh,
+  focus/reconnect and invalidation re-query that selector; only a resolved
+  notification category is admitted. A proven irrelevant reply is dropped.
+  The app-global binding starts the shared bounded unread observation even without Channels mounted.
   Remote-capable hosts wait for the initial marker merge (bounded observation or
   complete snapshot); local-only hosts wait only for local storage. Failed or
   cancelled observation does not release alerts. Visibility is checked after UI

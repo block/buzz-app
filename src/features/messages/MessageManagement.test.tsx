@@ -102,7 +102,7 @@ async function fixture(
   bff.messages.set(original.id, {
     message_id: original.id,
     status: own ? "not_counted" : "unread",
-    attention: false,
+    reason: null,
   });
   bff.api.write.mockImplementation(async (intents) => {
     for (const intent of intents) {

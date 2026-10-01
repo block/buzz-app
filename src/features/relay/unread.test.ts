@@ -54,7 +54,8 @@ function setup(initialGrant = true) {
     query,
     grant,
     unread,
-    emit: (events: readonly RelayEvent[]) => live.receive(events),
+    emit: (events: readonly RelayEvent[], phase?: "live" | "replay") =>
+      live.receive(events, phase ? { phase, channelId: channel } : undefined),
     snapshot: () => unread.snapshot(target),
   };
 }
@@ -90,7 +91,7 @@ it("retains message context only while subscribed, including replies without hyd
   h.bff.messages.set(row.id, {
     message_id: row.id,
     status: "unread",
-    attention: true,
+    reason: "conversation",
   });
   const stop = h.unread.subscribe(
     { kind: "message", channelId: channel, messageId: row.id },
@@ -124,7 +125,7 @@ it("retargets retained message demand when a signed parent reveals the canonical
   h.bff.messages.set(child.id, {
     message_id: child.id,
     status: "unread",
-    attention: true,
+    reason: "conversation",
   });
   const selected = {
     kind: "message",
@@ -198,7 +199,7 @@ it("retargets retained demand after verified parent evidence is evicted, preserv
   h.bff.messages.set(child.id, {
     message_id: child.id,
     status: "unread",
-    attention: true,
+    reason: "conversation",
   });
   const stop = owner.capability.subscribe(selected, () => {});
   const stopShared = owner.capability.subscribe(selected, () => {});
@@ -268,7 +269,11 @@ it.each(["unsubscribe", "revoke"])(
             status: "available",
             through_timestamp: null,
             messages: [
-              { message_id: child.id, status: "unread", attention: true },
+              {
+                message_id: child.id,
+                status: "unread",
+                reason: "conversation",
+              },
             ],
           },
         ],
@@ -445,7 +450,6 @@ it("hydrates only listed previews and does not turn an incomplete list into zero
             latest_reply_id: reply.id,
             latest_reply_at: 11,
             unread: { status: "at_least", value: 2 },
-            attention: { status: "unknown" },
           },
         ],
       },
@@ -468,7 +472,7 @@ it("hydrates only listed previews and does not turn an incomplete list into zero
   expect(h.bff.api.write).not.toHaveBeenCalled();
 });
 it.each([true, false])(
-  "filters only proven-zero attention from Activity; keeps completeness %s and hydrates selected previews",
+  "filters only proven-zero unread from Activity; keeps completeness %s and hydrates selected previews",
   async (complete) => {
     const h = setup();
     const attention = [
@@ -481,8 +485,7 @@ it.each([true, false])(
       root_id: String(i + 1).repeat(64),
       latest_reply_id: String(i + 5).repeat(64),
       latest_reply_at: 20 - i,
-      unread: { status: "exact" as const, value: 2 },
-      attention: count,
+      unread: count,
     }));
     h.bff.rows.set(
       channel,
@@ -716,7 +719,6 @@ it("a covered observed thread anchor does not mask an incomplete lower-bound tai
           {
             root_id: root.id,
             unread: { status: "at_least", value: 2 },
-            attention: { status: "at_least", value: 2 },
             latest_reply_id: reply.id,
             latest_reply_at: 20,
           },
@@ -1292,7 +1294,6 @@ it.each(
               latest_reply_id: reply.id,
               latest_reply_at: 11,
               unread: { status: "exact", value: 1 },
-              attention: { status: "exact", value: 1 },
             },
           ],
         },
@@ -1397,5 +1398,75 @@ it.each([
     expect(owner.capability.snapshot(target).unread).toEqual(
       restored ? { status: "exact", value: 3 } : { status: "unknown" },
     );
+  },
+);
+
+it("does not speculate unread for unclassified plain live replies", async () => {
+  const h = setup();
+  h.bff.rows.set(channel, sidebarRow(channel));
+  await h.unread.ensure();
+  const root = message(h.peer, channel, "parent", 10);
+  h.emit([root]);
+  const reply = message(
+    h.peer,
+    channel,
+    "unjoined reply",
+    Math.floor(Date.now() / 1000),
+    [["e", root.id, "", "reply"]],
+  );
+  h.emit([reply], "live");
+  expect(h.snapshot().unreadVisible).toBe(false);
+  expect(
+    h.unread.snapshot({ kind: "thread", channelId: channel, rootId: root.id })
+      .unreadVisible,
+  ).toBe(false);
+  h.bff.messages.set(reply.id, { message_id: reply.id, status: "not_counted" });
+  const stop = h.unread.subscribe(
+    { kind: "message", channelId: channel, messageId: reply.id },
+    () => {},
+  );
+  cleanups.push(stop);
+  await h.unread.refresh();
+  expect(h.snapshot().unreadVisible).toBe(false);
+  expect(h.unread.attention(channel, reply.id)).toMatchObject({
+    status: "ineligible",
+    unread: false,
+  });
+});
+
+it.each([
+  { reason: "direct", category: "direct", attention: 1 },
+  { reason: "mention", category: "mention", attention: 1 },
+  { reason: "conversation", category: "thread", attention: 1 },
+  { reason: "broadcast", category: undefined, attention: 1 },
+  { reason: null, category: undefined, attention: 0 },
+] as const)(
+  "uses relay reason $reason rather than local tags or root ownership",
+  async ({ reason, category, attention }) => {
+    const h = setup();
+    const reply = message(h.peer, channel, "tagged reply", 12, [
+      ["e", "a".repeat(64), "", "reply"],
+      ["p", h.viewer.pubkey],
+      ["broadcast", "1"],
+    ]);
+    h.emit([reply]);
+    h.bff.messages.set(reply.id, {
+      message_id: reply.id,
+      status: "unread",
+      reason,
+    });
+    const selected = {
+      kind: "message",
+      channelId: channel,
+      messageId: reply.id,
+    } as const;
+    cleanups.push(h.unread.subscribe(selected, () => {}));
+    await h.unread.refresh();
+    expect(h.unread.attention(channel, reply.id).category).toBe(category);
+    expect(h.unread.attention(channel, reply.id).mentioned).toBe(true);
+    expect(h.unread.snapshot(selected)).toMatchObject({
+      unread: { status: "exact", value: 1 },
+      attention: { status: "exact", value: attention },
+    });
   },
 );

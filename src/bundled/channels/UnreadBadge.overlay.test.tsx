@@ -208,7 +208,6 @@ it.each([
               latest_reply_id: anchor.id,
               latest_reply_at: 10,
               unread: { status: count, value: 1 },
-              attention: { status: count, value: 1 },
             },
           ],
         },
@@ -217,7 +216,7 @@ it.each([
     bff.messages.set(anchor.id, {
       message_id: anchor.id,
       status: "unread",
-      attention: true,
+      reason: "conversation",
     });
     let live!: LiveCallbacks;
     const owner = createRelaySession(
@@ -342,7 +341,6 @@ it("reconciles saturated applied surfaces before retry without losing the thread
           latest_reply_id: anchor.id,
           latest_reply_at: 10,
           unread: { status: "exact", value: 1 },
-          attention: { status: "exact", value: 1 },
         },
       ],
     },

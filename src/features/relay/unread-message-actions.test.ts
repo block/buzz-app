@@ -329,7 +329,7 @@ it("message read and unread toggle presentation before the local save or relay a
   h.messages.set(h.root, {
     message_id: h.root,
     status: "unread",
-    attention: true,
+    reason: "conversation",
   });
   h.api.write.mockImplementation(() => new Promise(() => {}));
   const stop = h.unread.subscribe(message, () => {});

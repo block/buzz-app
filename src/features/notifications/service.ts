@@ -320,6 +320,7 @@ export class NotificationsService extends Service implements Notifications {
       body: `New ${label.toLowerCase()}`,
     }),
     observe?: () => () => void,
+    expiresAt = Date.now() + FRESH_MS,
   ) {
     const viewer = this.state.viewer;
     if (this.closed || !viewer || !valid()) return false;
@@ -353,7 +354,7 @@ export class NotificationsService extends Service implements Notifications {
       valid,
       eligible,
       text,
-      expires: now + FRESH_MS,
+      expires: Math.min(expiresAt, now + FRESH_MS),
       cancelled: false,
       submitting: false,
     };
@@ -369,7 +370,10 @@ export class NotificationsService extends Service implements Notifications {
       if (first) this.seen.delete(first);
     }
     this.pending.add(item);
-    item.expiry = setTimeout(() => this.retire(item), FRESH_MS);
+    item.expiry = setTimeout(
+      () => this.retire(item),
+      Math.max(0, item.expires - now),
+    );
     try {
       item.release = observe?.();
     } catch (error) {

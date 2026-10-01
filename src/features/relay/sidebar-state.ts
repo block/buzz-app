@@ -195,8 +195,8 @@ export function createSidebarState({
       hint &&
       hint.latest.revision <= watermark &&
       row.latest_message_complete &&
-      row.unread.status === "exact" &&
-      row.attention.status === "exact"
+      row.unread.status !== "unknown" &&
+      row.attention.status !== "unknown"
     )
       liveHints.delete(row.channel_id);
     if (
@@ -206,10 +206,7 @@ export function createSidebarState({
     )
       settle(row.channel_id, `${row.channel_id}:sidebar`, watermark);
     for (const thread of row.threads.items)
-      if (
-        thread.unread.status === "exact" &&
-        thread.attention.status === "exact"
-      )
+      if (thread.unread.status === "exact")
         settle(
           row.channel_id,
           `${row.channel_id}:${thread.root_id}:summary`,

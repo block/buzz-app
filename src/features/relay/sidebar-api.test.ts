@@ -198,3 +198,63 @@ it("accepts base v1 without an exact-message capability", () => {
     true,
   );
 });
+
+it.each(["direct", "mention", "conversation", "broadcast", null])(
+  "decodes authoritative reason %s and thread summaries without attention",
+  async (reason) => {
+    const contexts = [
+      {
+        status: "available",
+        through_timestamp: null,
+        messages: [{ message_id: id, status: "unread", reason }],
+      },
+    ];
+    expect(
+      await createSidebarApi(async () => ({ account, contexts })).contexts(
+        [{ target: { channel_id: channel }, message_ids: [id] }],
+        signal(),
+      ),
+    ).toEqual({ account, contexts });
+    const value = {
+      ...row(),
+      threads: {
+        complete: true,
+        items: [
+          {
+            root_id: id,
+            unread: { status: "exact", value: 1 },
+            latest_reply_id: id,
+            latest_reply_at: 1,
+          },
+        ],
+      },
+    };
+    await expect(
+      createSidebarApi(async () => ({
+        account,
+        channels: [value],
+        next_cursor: null,
+      })).sidebar({}, signal()),
+    ).resolves.toMatchObject({ channels: [value] });
+  },
+);
+it.each([{ attention: true }, { reason: "thread" }, { reason: false }])(
+  "rejects obsolete or invalid classification %j",
+  async (classification) => {
+    await expect(
+      createSidebarApi(async () => ({
+        account,
+        contexts: [
+          {
+            status: "available",
+            through_timestamp: null,
+            messages: [{ message_id: id, status: "unread", ...classification }],
+          },
+        ],
+      })).contexts(
+        [{ target: { channel_id: channel }, message_ids: [id] }],
+        signal(),
+      ),
+    ).rejects.toThrow();
+  },
+);

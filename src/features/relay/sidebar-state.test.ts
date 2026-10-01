@@ -48,7 +48,7 @@ function harness() {
         messages: t.message_ids.map((message_id) => ({
           message_id,
           status: "unread",
-          attention: false,
+          reason: null,
         })),
       })),
     })),
@@ -483,7 +483,11 @@ it("does not reinstall a released context from a late response", async () => {
         status: "available",
         through_timestamp: null,
         messages: [
-          { message_id: "a".repeat(64), status: "unread", attention: true },
+          {
+            message_id: "a".repeat(64),
+            status: "unread",
+            reason: "conversation",
+          },
         ],
       },
     ],
@@ -816,3 +820,62 @@ it.each(["applied", "blocked"] as const)(
     }
   },
 );
+
+it("retires speculative live hints on a fresh lower-bound response", async () => {
+  const h = harness();
+  await h.owner.ensure();
+  h.owner.live(
+    channel,
+    { id: "b".repeat(64), createdAt: 2, attention: true },
+    true,
+  );
+  expect(h.owner.liveHint(channel)?.unread).toBeDefined();
+  h.api.sidebar.mockResolvedValue(
+    page([
+      {
+        ...row(),
+        unread: { status: "at_least", value: 1 },
+        attention: { status: "at_least", value: 1 },
+      },
+    ]),
+  );
+  await h.owner.refresh();
+  expect(h.owner.liveHint(channel)).toBeUndefined();
+});
+
+it("periodically re-queries retained unknown contexts without a dedicated retry timer", async () => {
+  vi.useFakeTimers();
+  const h = harness();
+  let resolved = false;
+  h.api.contexts.mockImplementation(async (targets) => ({
+    account,
+    contexts: targets.map((t) => ({
+      status: "available",
+      through_timestamp: null,
+      messages: t.message_ids.map((message_id) =>
+        resolved
+          ? { message_id, status: "unread", reason: "conversation" }
+          : { message_id, status: "unknown" },
+      ),
+    })),
+  }));
+  await h.owner.ensure();
+  const target = { channel_id: channel, root_id: "b".repeat(64) };
+  const lease = h.owner.retain({ target, message_ids: ["a".repeat(64)] });
+  await lease.ready;
+  expect(h.owner.context(target)).toMatchObject({
+    messages: [{ status: "unknown" }],
+  });
+  const calls = h.api.contexts.mock.calls.length;
+  resolved = true;
+  await vi.advanceTimersByTimeAsync(59999);
+  expect(h.api.contexts).toHaveBeenCalledTimes(calls);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(h.owner.context(target)).toMatchObject({
+    messages: [{ status: "unread", reason: "conversation" }],
+  });
+  lease.dispose();
+  const released = h.api.contexts.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(60000);
+  expect(h.api.contexts).toHaveBeenCalledTimes(released);
+});

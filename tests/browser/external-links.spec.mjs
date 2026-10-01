@@ -1,6 +1,7 @@
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { end, settle } from "./timeline.mjs";
+import { apcaContrast, wcagRatio } from "../../scripts/design-system/apca.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
 const github = "https://github.com/block/buzz/pull/1";
@@ -330,4 +331,187 @@ test("PR state, changes and branch links use shared roles in both themes", async
       path: testInfo.outputPath(`github-pr-${mode}.png`),
     });
   }
+});
+
+// The browser resolves plugin aliases through the real CSS cascade. Unit tests
+// cover state precedence; this case covers paint, themes and shared-role updates.
+// Contrast is diagnostic here, not a new threshold gate or accessibility audit.
+test("GitHub owns status mappings while shared colors and accent stay independent", async ({
+  page,
+  app,
+}, testInfo) => {
+  const samples = [
+    { id: 2, label: "Draft", state: "open", draft: true },
+    { id: 3, label: "open", state: "open" },
+    { id: 4, label: "closed", state: "closed", draft: true },
+    { id: 5, label: "Merged", state: "closed", merged: true },
+  ];
+  await page.route(
+    "https://api.github.com/repos/block/buzz/pulls/*",
+    (route) => {
+      const id = Number(
+        new URL(route.request().url()).pathname.split("/").at(-1),
+      );
+      const sample = samples.find((item) => item.id === id);
+      if (!sample) throw new Error(`Unknown sample PR ${id}`);
+      return route.fulfill({
+        json: {
+          ...sample,
+          title: "A small improvement",
+          user: { login: "sample-author" },
+          additions: 174,
+          deletions: 28,
+        },
+      });
+    },
+  );
+  await page.goto(app.origin);
+  await openMessages(page);
+  app.append(
+    "primary",
+    "alpha",
+    samples.map(({ id }) => `${github.slice(0, -1)}${id}`).join(" "),
+  );
+  const panel = page.getByRole("complementary", {
+    name: "GitHub",
+    exact: true,
+  });
+  const measurements = [];
+  for (const mode of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: mode });
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+    for (const sample of samples) {
+      await link(page, `${github.slice(0, -1)}${sample.id}`).click();
+      const badge = panel.getByText(sample.label, { exact: true });
+      await expect(badge).toHaveAttribute(
+        "data-pr-state",
+        sample.label.toLowerCase(),
+      );
+      const expected = await panel.evaluate((node, state) => {
+        const probe = document.createElement("span");
+        node.querySelector("[data-pr-state]").parentElement.append(probe);
+        const resolved = (token) => {
+          probe.style.color = `var(${token})`;
+          return getComputedStyle(probe).color;
+        };
+        const result = {
+          text: resolved(`--github-${state}-text`),
+          fill: resolved(`--github-${state}-bg`),
+        };
+        probe.remove();
+        return result;
+      }, sample.label.toLowerCase());
+      await expect(badge).toHaveCSS("color", expected.text);
+      await expect(badge).toHaveCSS("background-color", expected.fill);
+      await expect(badge.locator("svg")).toHaveAttribute("aria-hidden", "true");
+      await expect(badge.locator("svg")).toHaveCSS("width", "12px");
+      await expect(badge.locator("svg")).toHaveCSS("color", expected.text);
+      const pairs = await panel.evaluate((node) => {
+        const badge = node.querySelector("[data-pr-state]");
+        const facts = node.querySelector("dl");
+        const counts = [...facts.querySelectorAll("dd span")];
+        return [
+          {
+            name: badge.textContent,
+            text: getComputedStyle(badge).color,
+            fill: getComputedStyle(badge).backgroundColor,
+          },
+          ...counts.map((count) => ({
+            name: count.textContent,
+            text: getComputedStyle(count).color,
+            fill: getComputedStyle(facts).backgroundColor,
+          })),
+        ];
+      });
+      for (const pair of pairs) {
+        const hex = (rgb) => {
+          const channels = /^rgb\((\d+), (\d+), (\d+)\)$/.exec(rgb);
+          if (!channels)
+            throw new Error(`Expected opaque resolved color: ${rgb}`);
+          return `#${channels
+            .slice(1)
+            .map((channel) => Number(channel).toString(16).padStart(2, "0"))
+            .join("")}`;
+        };
+        measurements.push({
+          mode,
+          ...pair,
+          wcag: wcagRatio(hex(pair.text), hex(pair.fill)),
+          apca: Math.abs(apcaContrast(hex(pair.text), hex(pair.fill))),
+        });
+      }
+      if (sample.merged) {
+        await page.evaluate(() => {
+          document.documentElement.style.setProperty(
+            "--text-accent",
+            "var(--text-danger)",
+          );
+          document.documentElement.style.setProperty(
+            "--affordance-accent",
+            "var(--affordance-danger)",
+          );
+        });
+        await expect(badge).toHaveCSS("color", expected.text);
+        await expect(badge).toHaveCSS("background-color", expected.fill);
+        await panel.screenshot({
+          path: testInfo.outputPath(`github-merged-${mode}.png`),
+        });
+        await page.evaluate(() => {
+          document.documentElement.style.removeProperty("--text-accent");
+          document.documentElement.style.removeProperty("--affordance-accent");
+        });
+      } else if (sample.label === "open") {
+        await page.evaluate(() => {
+          document.documentElement.style.setProperty(
+            "--text-success",
+            "var(--text-link)",
+          );
+          document.documentElement.style.setProperty(
+            "--affordance-success",
+            "var(--affordance-link-hover)",
+          );
+          document.documentElement.style.setProperty(
+            "--text-danger",
+            "var(--text-link)",
+          );
+        });
+        const changed = await panel.evaluate((node) => {
+          const probe = document.createElement("span");
+          node.append(probe);
+          probe.style.color = "var(--text-link)";
+          const text = getComputedStyle(probe).color;
+          probe.style.color = "var(--affordance-link-hover)";
+          const fill = getComputedStyle(probe).color;
+          probe.remove();
+          return { text, fill };
+        });
+        await expect(badge).toHaveCSS("color", changed.text);
+        await expect(badge).toHaveCSS("background-color", changed.fill);
+        await expect(panel.getByText("+174", { exact: true })).toHaveCSS(
+          "color",
+          changed.text,
+        );
+        await expect(panel.getByText("−28", { exact: true })).toHaveCSS(
+          "color",
+          changed.text,
+        );
+        await page.evaluate(() => {
+          for (const token of [
+            "--text-success",
+            "--affordance-success",
+            "--text-danger",
+          ])
+            document.documentElement.style.removeProperty(token);
+        });
+      } else if (sample.draft && sample.state === "open") {
+        await panel.screenshot({
+          path: testInfo.outputPath(`github-draft-${mode}.png`),
+        });
+      }
+    }
+  }
+  await testInfo.attach("github-contrast-diagnostic", {
+    body: JSON.stringify(measurements, null, 2),
+    contentType: "application/json",
+  });
 });

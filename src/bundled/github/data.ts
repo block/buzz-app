@@ -126,7 +126,13 @@ export async function loadGitHubDetails(
     title: data.title ?? commitTitle ?? reference.repository,
     body: data.body ?? data.description ?? commitBody.join("\n").trim(),
     bodyHtml: data.body_html ?? undefined,
-    state: data.merged ? "Merged" : data.draft ? "Draft" : (data.state ?? ""),
+    state: data.merged
+      ? "Merged"
+      : data.state === "closed"
+        ? "closed"
+        : data.draft
+          ? "Draft"
+          : (data.state ?? ""),
     author:
       data.user?.login ??
       data.author?.login ??

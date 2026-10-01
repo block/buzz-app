@@ -20,13 +20,15 @@ afterEach(() => {
 });
 
 it.each([
-  ["open", false, false, "open", true],
-  ["open", true, false, "Draft", false],
-  ["closed", false, false, "closed", false],
-  ["closed", false, true, "Merged", false],
+  ["open", false, false, "open"],
+  ["open", true, false, "Draft"],
+  ["closed", true, false, "closed"],
+  ["closed", false, false, "closed"],
+  ["closed", false, true, "Merged"],
+  ["closed", true, true, "Merged"],
 ])(
-  "colors only open PRs: %s, draft=%s, merged=%s",
-  async (state, draft, merged, label, open) => {
+  "presents PR state with terminal states before draft: %s, draft=%s, merged=%s",
+  async (state, draft, merged, label) => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
@@ -50,7 +52,14 @@ it.each([
       />,
     );
     await screen.findByRole("heading", { name: "A small improvement #1" });
-    expect(screen.getByText(label).hasAttribute("data-open")).toBe(open);
+    expect(screen.getByText(label)).toHaveAttribute(
+      "data-pr-state",
+      label.toLowerCase(),
+    );
+    expect(screen.getByText(label).querySelector("svg")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
     const changes = screen.getByText("Changes").parentElement;
     if (!changes) throw new Error("Missing Changes row");
     expect(changes.querySelector("dd")).toHaveTextContent("+174 / −28");
@@ -80,7 +89,7 @@ it("preserves zero counts and leaves an open issue neutral", async () => {
     />,
   );
   await screen.findByRole("heading", { name: "A small improvement" });
-  expect(screen.getByText("open")).not.toHaveAttribute("data-open");
+  expect(screen.getByText("open")).not.toHaveAttribute("data-pr-state");
   expect(screen.getByText("+0")).toHaveClass(additionsClass);
   expect(screen.getByText("−0")).toHaveClass(deletionsClass);
 });

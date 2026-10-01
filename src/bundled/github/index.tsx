@@ -3,6 +3,9 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowSquareOutIcon,
   GitPullRequestIcon,
+  CircleDashedIcon,
+  XCircleIcon,
+  GitMergeIcon,
   GitHubIssueIcon,
   GitCommitIcon,
   FolderSimpleIcon,
@@ -35,6 +38,13 @@ const icons = {
   pull: GitPullRequestIcon,
   issue: GitHubIssueIcon,
   commit: GitCommitIcon,
+};
+
+const stateIcons = {
+  open: GitPullRequestIcon,
+  draft: CircleDashedIcon,
+  closed: XCircleIcon,
+  merged: GitMergeIcon,
 };
 
 export function GitHubPanel({ target }: PanelProps) {
@@ -76,6 +86,11 @@ function ObjectPanel({
     return () => controller.abort();
   }, [reference]);
   const Icon = icons[reference.kind];
+  const state = typeof result === "object" ? result.state.toLowerCase() : "";
+  const StateIcon =
+    reference.kind === "pull" && Object.hasOwn(stateIcons, state)
+      ? stateIcons[state as keyof typeof stateIcons]
+      : undefined;
   const [owner, repositoryName] = reference.repository.split("/");
   const title = (
     <h2 className={reference.kind === "pull" ? styles.pullTitle : undefined}>
@@ -161,12 +176,13 @@ function ObjectPanel({
             {result.state && (
               <span
                 className={styles.state}
-                data-open={
-                  reference.kind === "pull" && result.state === "open"
-                    ? ""
+                data-pr-state={
+                  reference.kind === "pull"
+                    ? result.state.toLowerCase()
                     : undefined
                 }
               >
+                {StateIcon && <StateIcon size={12} aria-hidden="true" />}
                 {result.state}
               </span>
             )}

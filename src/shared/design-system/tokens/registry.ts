@@ -261,6 +261,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "bg-surface-categorical-purple",
+        variable: "--surface-categorical-purple",
+        pointsAt: "purple-3 light / purple-3 dark",
+        use: "Accent-independent categorical fill, paired with text-categorical-purple.",
+        status: "core",
+      },
+      {
         token: "bg-surface-panel",
         variable: "--surface-panel",
         pointsAt: "neutral-1 light / neutral-3 dark",
@@ -356,6 +363,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--text-link",
         pointsAt: "blue-11 light / blue-11 dark",
         use: "Inline links and mentions in prose.",
+        status: "core",
+      },
+      {
+        token: "text-categorical-purple",
+        variable: "--text-categorical-purple",
+        pointsAt: "purple-12 light / purple-12 dark",
+        use: "Accent-independent categorical text, paired with surface-categorical-purple.",
         status: "core",
       },
       {

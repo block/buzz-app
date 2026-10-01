@@ -522,6 +522,8 @@
   --status-avatar-online-border: var(--green-11);
   --status-away: var(--amber-10);
   --status-offline: var(--neutral-8);
+  --text-categorical-purple: var(--purple-12);
+  --surface-categorical-purple: var(--purple-3);
   --text-accent: var(--purple-12);
   --text-link: var(--blue-11);
   --affordance-link-hover: var(--blue-3);
@@ -588,6 +590,8 @@
   --status-avatar-online-border: var(--green-11);
   --status-away: var(--amber-10);
   --status-offline: var(--neutral-10);
+  --text-categorical-purple: var(--purple-12);
+  --surface-categorical-purple: var(--purple-3);
   --text-accent: var(--purple-12);
   --text-link: var(--blue-11);
   --affordance-link-hover: var(--blue-3);
@@ -826,6 +830,8 @@
   --text-color-danger: var(--text-danger);
   --text-color-warning: var(--text-warning);
   --text-color-success: var(--text-success);
+  --text-color-categorical-purple: var(--text-categorical-purple);
+  --color-surface-categorical-purple: var(--surface-categorical-purple);
   --text-color-accent: var(--text-accent);
   --border-color-standard: var(--border-standard);
   --border-color-prominent: var(--border-prominent);

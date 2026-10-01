@@ -125,6 +125,13 @@ import { GitBranchIcon as PhosphorGitBranchIcon } from "@phosphor-icons/react/di
 export const GitBranchIcon = defineIcon("phosphor", PhosphorGitBranchIcon);
 import { GitCommitIcon as PhosphorGitCommitIcon } from "@phosphor-icons/react/dist/csr/GitCommit";
 export const GitCommitIcon = defineIcon("phosphor", PhosphorGitCommitIcon);
+import { CircleDashedIcon as PhosphorCircleDashedIcon } from "@phosphor-icons/react/dist/csr/CircleDashed";
+export const CircleDashedIcon = defineIcon(
+  "phosphor",
+  PhosphorCircleDashedIcon,
+);
+import { GitMergeIcon as PhosphorGitMergeIcon } from "@phosphor-icons/react/dist/csr/GitMerge";
+export const GitMergeIcon = defineIcon("phosphor", PhosphorGitMergeIcon);
 import { GitPullRequestIcon as PhosphorGitPullRequestIcon } from "@phosphor-icons/react/dist/csr/GitPullRequest";
 export const GitPullRequestIcon = defineIcon(
   "phosphor",

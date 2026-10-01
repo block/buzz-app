@@ -13,7 +13,6 @@ import {
   type SidebarManualTarget,
 } from "./sidebar-journal";
 import { ReadError } from "./errors";
-import { createNavigationPause } from "./navigation-pause";
 
 const MAX_CHANNELS = 1000;
 const MAX_CONTEXTS = 1000;
@@ -132,7 +131,6 @@ export function createSidebarState({
   const retry: {
     [lane in "read" | "write"]?: { at: number; error: ReadError };
   } = {};
-  const navigation = createNavigationPause();
   const journal = createSidebarJournal(storage, () => publish());
   const ready = journal.reload().catch((error) => fail(error));
   function publish(change: Partial<SidebarSync> = {}) {
@@ -163,9 +161,6 @@ export function createSidebarState({
     const generation = epoch,
       owner = active;
     const result = (lane === "write" ? writes : serial).then(async () => {
-      // Navigation pauses both lanes; their caller-owned work stays queued.
-      // A resumed page can leave again before this continuation runs.
-      while (navigation.paused() && !closed) await navigation.resumed();
       if (closed || generation !== epoch)
         throw new DOMException("Sidebar cancelled", "AbortError");
       const refused = retry[lane];
@@ -729,7 +724,6 @@ export function createSidebarState({
       clearTimeout(debounce);
       hostWindow?.removeEventListener("focus", activate);
       hostDocument?.removeEventListener("visibilitychange", activate);
-      navigation.dispose();
       listeners.clear();
       rows.clear();
       applied.clear();

@@ -1,7 +1,6 @@
 import { isWorkflowDefinitionBatch } from "../workflows/queries";
 import { verifyThreadWindows } from "./thread-window";
 import { yieldToHost } from "./yield";
-import { createNavigationPause } from "./navigation-pause";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import type { ReadFilter, RelayEvent } from "./events";
 import type { ReadTransport } from "./transport";
@@ -65,7 +64,36 @@ export function createRelayReader(
   const jobs = new Map<string, Job>();
   let closed = false;
   let recovering = false;
-  const navigation = createNavigationPause(pump);
+  // Finite reads keep their existing deadlines during navigation. beforeunload
+  // is reversible, so pause admission rather than disposing the session. Fetch
+  // rejection recovery (even a timer/MessageChannel) can run before pagehide.
+  // Resume only when this document renders again or is shown (e.g. cancelled
+  // navigation or BFCache restoration), not from a fetch-recovery task. A render
+  // is not proof navigation was cancelled: some browsers render while waiting
+  // for the destination. This gates finite reads, not the separate live stream.
+  const page = typeof window === "undefined" ? undefined : window;
+  let suspended = false;
+  let frame: number | undefined;
+  const cancelResume = () => {
+    if (frame !== undefined) page?.cancelAnimationFrame(frame);
+    frame = undefined;
+  };
+  const resume = () => {
+    cancelResume();
+    suspended = false;
+    pump();
+  };
+  const hidden = () => {
+    suspended = true;
+    cancelResume();
+  };
+  const leaving = () => {
+    hidden();
+    frame = page?.requestAnimationFrame(resume);
+  };
+  page?.addEventListener("beforeunload", leaving);
+  page?.addEventListener("pagehide", hidden);
+  page?.addEventListener("pageshow", resume);
   function failed(job: Job, error: unknown) {
     if (jobs.get(job.key) !== job) return;
     // A browser can reject fetches while its document loader is stopping.
@@ -95,8 +123,8 @@ export function createRelayReader(
     pump();
   }
   function pump() {
-    if (closed || navigation.paused() || recovering || !transport) return;
-    while (!closed && !navigation.paused() && !recovering) {
+    if (closed || suspended || recovering || !transport) return;
+    while (!closed && !suspended && !recovering) {
       const active = [...jobs.values()].filter((job) => job.running);
       if (active.length >= 3) return;
       const background = active.some((job) => job.priority === "background");
@@ -271,7 +299,10 @@ export function createRelayReader(
     },
     dispose() {
       closed = true;
-      navigation.dispose();
+      cancelResume();
+      page?.removeEventListener("beforeunload", leaving);
+      page?.removeEventListener("pagehide", hidden);
+      page?.removeEventListener("pageshow", resume);
       for (const job of [...jobs.values()]) finish(job, undefined, cancelled());
     },
   };

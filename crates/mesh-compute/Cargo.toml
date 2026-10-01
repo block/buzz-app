@@ -6,8 +6,15 @@ rust-version = "1.89"
 
 [features]
 default = []
-mesh = ["dep:mesh-llm-sdk"]
+mesh = ["dep:mesh-llm-sdk", "dep:mesh-llm-host-runtime", "dep:iroh", "dep:anyhow", "dep:base64", "dep:url", "dep:serde_json"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 mesh-llm-sdk = { git = "https://github.com/Mesh-LLM/mesh-llm.git", rev = "4ae1ace57dbbe28d0c3d10a05ee542328e8e64e7", default-features = false, features = ["client", "serving"], optional = true }
+
+mesh-llm-host-runtime = { git = "https://github.com/Mesh-LLM/mesh-llm.git", rev = "4ae1ace57dbbe28d0c3d10a05ee542328e8e64e7", default-features = false, features = ["dynamic-native-runtime"], optional = true }
+iroh = { version = "1.0.3", optional = true }
+anyhow = { version = "1", optional = true }
+base64 = { version = "0.22", optional = true }
+url = { version = "2", optional = true }
+serde_json = { version = "1", optional = true }

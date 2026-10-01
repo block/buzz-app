@@ -1,5 +1,8 @@
 //! Host-only startup configuration. Never deserialize admission policy from plugin input.
 
+use crate::transport_policy::{
+    iroh_relay_mode, sdk_iroh_relay_config, validate_advertised_endpoint,
+};
 use mesh_llm_sdk::{client, MeshDiscoveryMode, TrustPolicy};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -11,15 +14,18 @@ pub struct ClientConfig {
     pub console_port: u16,
     pub owner_key: PathBuf,
     pub trusted_owners: Vec<String>,
+    pub owner_id: String,
+    pub join_token: Option<String>,
+    pub mesh_name: Option<String>,
 }
 
 impl ClientConfig {
-    pub fn build(self) -> Result<client::EmbeddedClientConfig, &'static str> {
+    pub fn build(self) -> anyhow::Result<client::EmbeddedClientConfig> {
         if self.api_port == 0 || self.console_port == 0 || self.api_port == self.console_port {
-            return Err("Mesh needs two distinct non-zero ports");
+            anyhow::bail!("Mesh needs two distinct non-zero ports");
         }
         if !self.owner_key.is_absolute() {
-            return Err("Mesh owner keystore path must be absolute");
+            anyhow::bail!("Mesh owner keystore path must be absolute");
         }
         // Empty/unknown membership must not silently become TrustPolicy::Off.
         if self.trusted_owners.is_empty()
@@ -28,24 +34,58 @@ impl ClientConfig {
                 .iter()
                 .any(|owner| owner.trim().is_empty())
         {
-            return Err("Verified Mesh owner admission is required");
+            anyhow::bail!("Verified Mesh owner admission is required");
         }
-        Ok(client::EmbeddedClientConfig::builder()
+        if self.owner_id.trim().is_empty() {
+            anyhow::bail!("Mesh owner identity is required");
+        }
+        let owners = normalized_roster(&Some(self.trusted_owners), &self.owner_id)
+            .expect("roster supplied above");
+        let (disabled, relays) = sdk_iroh_relay_config(iroh_relay_mode()?);
+        let mut builder = client::EmbeddedClientConfig::builder()
             .api_port(self.api_port)
             .console_port(self.console_port)
             .owner_key(self.owner_key)
             .owner_required(true)
             .trust_policy(TrustPolicy::Allowlist)
-            .trust_owners(self.trusted_owners)
+            .trust_owners(owners)
+            .disable_iroh_relays(disabled)
+            .iroh_relays(relays)
             .publish(false)
             .auto_join(false)
             .discovery_mode(MeshDiscoveryMode::Nostr)
             .nostr_relays(Vec::<String>::new())
             .isolated_config(true)
             .console_ui(false)
-            .startup_timeout(Duration::from_secs(180))
-            .build())
+            .startup_timeout(MESH_CLIENT_MANAGEMENT_TIMEOUT);
+        if let Some(name) = self.mesh_name {
+            builder = builder.mesh_name(name);
+        }
+        if let Some(token) = self.join_token {
+            builder = builder.join_token(validate_advertised_endpoint(&token)?.join_token);
+        }
+        Ok(builder.build())
     }
+}
+
+// Legacy management wait is deliberately longer than the ingress readiness deadline.
+const MESH_CLIENT_MANAGEMENT_TIMEOUT: Duration = Duration::from_secs(365 * 24 * 60 * 60);
+
+// Ported from legacy normalized_roster; only the identity argument is narrowed to its ID.
+fn normalized_roster(
+    trusted_owner_ids: &Option<Vec<String>>,
+    owner_id: &str,
+) -> Option<Vec<String>> {
+    let ids = trusted_owner_ids.as_ref()?;
+    let mut owners: Vec<String> = ids
+        .iter()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+        .collect();
+    owners.push(owner_id.to_owned());
+    owners.sort();
+    owners.dedup();
+    Some(owners)
 }
 
 #[cfg(test)]
@@ -58,6 +98,9 @@ mod tests {
             console_port: 13131,
             owner_key: std::env::temp_dir().join("buzz-mesh-test-owner.json"),
             trusted_owners: vec!["fixture-owner".into()],
+            owner_id: "self-owner".into(),
+            join_token: None,
+            mesh_name: Some("fixture-community".into()),
         }
     }
 
@@ -72,7 +115,41 @@ mod tests {
         assert!(result.storage.isolated_config);
         assert_eq!(result.admission.owner_key, Some(expected_path));
         assert!(result.admission.owner_required);
+        assert_eq!(
+            result.network.mesh_name.as_deref(),
+            Some("fixture-community")
+        );
+        assert_eq!(result.startup_timeout, MESH_CLIENT_MANAGEMENT_TIMEOUT);
+        assert_eq!(
+            result.admission.trusted_owners,
+            vec!["fixture-owner", "self-owner"]
+        );
         assert_eq!(result.admission.trust_policy, Some(TrustPolicy::Allowlist));
+    }
+
+    #[test]
+    fn normalizes_roster_without_losing_self() {
+        assert_eq!(normalized_roster(&None, "self"), None);
+        assert_eq!(
+            normalized_roster(
+                &Some(vec![" peer ".into(), "peer".into(), "".into()]),
+                "self"
+            ),
+            Some(vec!["peer".into(), "self".into()])
+        );
+    }
+
+    #[test]
+    fn accepts_validated_initial_dial_target() {
+        let mut request = config();
+        let token = crate::transport_policy::endpoint_token_for_test([iroh::TransportAddr::Ip(
+            "192.168.1.20:47916".parse().unwrap(),
+        )]);
+        request.join_token = Some(token.clone());
+        assert_eq!(request.build().unwrap().network.join_tokens, vec![token]);
+        let mut request = config();
+        request.join_token = Some("invalid".into());
+        assert!(request.build().is_err());
     }
 
     #[test]

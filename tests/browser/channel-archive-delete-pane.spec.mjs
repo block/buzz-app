@@ -79,19 +79,16 @@ for (const action of ["archive", "delete"]) {
       if (action === "archive")
         await page.route("**/api/relay/**/query", holdPermissions);
       try {
-        await page
-          .getByRole("button", { name: "Channel settings", exact: true })
-          .click();
+        await openChannelDetails(page);
         if (action === "archive") {
           await permissionSeen.promise;
-          const editor = panel.getByRole("region", {
-            name: "Edit channel details",
-            exact: true,
-            // #482 hides the empty editor so it reserves no grid spacing.
-            includeHidden: true,
-          });
-          await expect(editor).toHaveAttribute("aria-busy", "true");
-          await expect(editor).toBeEmpty();
+          await expect(panel).toHaveAttribute("aria-busy", "true");
+          await expect(
+            panel.getByRole("button", { name: /^Edit / }),
+          ).toHaveCount(0);
+          await expect(
+            panel.getByText(/Checking channel permissions/),
+          ).toHaveCount(0);
           await panel.screenshot({
             path: testInfo.outputPath("details-permission-loading.png"),
           });
@@ -100,7 +97,7 @@ for (const action of ["archive", "delete"]) {
         permissionRelease.resolve();
       }
       await expect(
-        panel.getByRole("button", { name: "Edit details", exact: true }),
+        panel.getByRole("button", { name: "Edit description", exact: true }),
       ).toBeEnabled();
       if (action === "archive")
         await page.unroute("**/api/relay/**/query", holdPermissions);
@@ -234,9 +231,7 @@ for (const action of ["archive", "delete"]) {
       await page.reload();
       if (action === "archive") {
         await expect(page).toHaveURL(conversationUrl);
-        await page
-          .getByRole("button", { name: "Channel settings", exact: true })
-          .click();
+        await openChannelDetails(page);
         await expect(
           panel.getByRole("button", { name: "Unarchive channel", exact: true }),
         ).toBeVisible();
@@ -282,9 +277,7 @@ for (const action of ["archive", "delete"]) {
             exact: true,
           })
           .click();
-        await page
-          .getByRole("button", { name: "Channel settings", exact: true })
-          .click();
+        await openChannelDetails(page);
         const restore = panel.getByRole("button", {
           name: "Unarchive channel",
           exact: true,

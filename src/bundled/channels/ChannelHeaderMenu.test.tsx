@@ -131,8 +131,15 @@ it("supports keyboard dismissal, outside clicks, and Canvas with the stable head
     ).toHaveFocus(),
   );
   await user.keyboard("{Escape}");
-  await waitFor(() => expect(trigger).toHaveFocus());
+  await waitFor(() => {
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
   await user.click(trigger);
+  // Opening focuses the popup on the next frame. Finish that handoff before
+  // testing a new outside gesture, rather than racing the close/reopen effects.
+  const menu = await screen.findByRole("menu");
+  await waitFor(() => expect(menu.contains(document.activeElement)).toBe(true));
   await user.click(document.body);
   await waitFor(() =>
     expect(screen.queryByRole("menu")).not.toBeInTheDocument(),

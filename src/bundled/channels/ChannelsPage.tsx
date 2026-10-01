@@ -421,7 +421,8 @@ function ChannelWorkspace({
     navigation.target.panel === "members";
   const membersOpen =
     (navigator ? membersRequested : membersChannel === current?.id) &&
-    !!current && current.channelType !== "session";
+    !!current &&
+    current.channelType !== "session";
   useLayoutEffect(() => {
     // Sessions have no Members surface. Canonicalize an old/handwritten route
     // before a child reader can complete it, retaining its exact message address.
@@ -456,11 +457,13 @@ function ChannelWorkspace({
       return;
     }
     if (
-      !navigation || navigation.signal.aborted ||
+      !navigation ||
+      navigation.signal.aborted ||
       navigation.target.kind !== "conversation" ||
       navigation.target.channelId !== currentId ||
       navigator.snapshot().entry.id !== navigation.entryId
-    ) return;
+    )
+      return;
     // A profile keeps this conversation; a DM already owns a different visit.
     // Modal cleanup must not overwrite that destination or its exact address.
     const { panel: _panel, ...target } = navigation.target;
@@ -1407,13 +1410,18 @@ function ChannelWorkspace({
           channelId={current.id}
           control={agentControl}
           close={() => setMembersOpen(false)}
-          trigger={membersTrigger.current?.isConnected ? membersTrigger : membersHeaderTrigger}
+          trigger={
+            membersTrigger.current?.isConnected
+              ? membersTrigger
+              : membersHeaderTrigger
+          }
           canOpenLink={canOpenLink}
           onOpenLink={(url, returnFocus) => openLink(url, false, returnFocus)}
-          onOpenConversation={navigator && viewer
-            ? (id) => openLink(`buzz://channel/${encodeURIComponent(id)}`)
-            : undefined}
-
+          onOpenConversation={
+            navigator && viewer
+              ? (id) => openLink(`buzz://channel/${encodeURIComponent(id)}`)
+              : undefined
+          }
         />
       )}
       {current && !current.readOnly && canvasOpen && (

@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
@@ -147,9 +148,7 @@ test("Members has a reloadable history visit without replacing channel tabs or d
   const entry = () => page.evaluate(() => history.state.buzzNavigationV1.entry);
   await expect(composer).toBeVisible();
   await composer.fill("Keep this draft");
-  await conversation
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   const settings = page
     .locator("[data-panel-workspace]")
     .getByRole("tab", { name: "Channel settings", exact: true });

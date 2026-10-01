@@ -355,14 +355,16 @@ it("keeps details readable without editing authority or host support", async () 
   );
   expect(screen.getByText(channel.description)).toBeVisible();
   expect(screen.getByText("Public")).toBeVisible();
-  const editor = screen.getByRole("region", {
-    name: "Edit channel details",
+  const editor = screen.getByRole("complementary", {
+    name: "Channel settings",
     hidden: true,
   });
   expect(editor).toHaveAttribute("aria-busy", "true");
   await act(async () => loaded.resolve({ ...base, canEdit: false }));
   expect(editor).toHaveAttribute("aria-busy", "false");
-  expect(editor).toBeEmptyDOMElement();
+  expect(
+    screen.queryByRole("region", { name: "Edit channel details" }),
+  ).not.toBeInTheDocument();
   expect(
     screen.queryByText(/Only current channel owners/),
   ).not.toBeInTheDocument();
@@ -522,7 +524,9 @@ it.each(["save", "check"] as const)(
         Diagnostics
       </ChannelSettingsPanel>,
     );
-    const edit = await screen.findByRole("button", { name: "Edit description" });
+    const edit = await screen.findByRole("button", {
+      name: "Edit description",
+    });
     expect(edit).toBeEnabled();
     expect(edit).not.toHaveAttribute("aria-busy", "true");
     await user.click(edit);
@@ -538,10 +542,12 @@ it.each(["save", "check"] as const)(
     await user.click(action);
     try {
       expect(h[operation]).toHaveBeenCalledOnce();
-      expect(edit).toHaveAccessibleName("Edit details");
+      expect(edit).toHaveAccessibleName("Edit description");
       expect(edit).toBeDisabled();
       expect(edit).toHaveAttribute("aria-busy", "true");
-      expect(edit.querySelector(".buzz-button-spinner")).toBeInTheDocument();
+      expect(
+        edit.querySelector(".motion-safe\\:animate-spin"),
+      ).toBeInTheDocument();
       expect(action).toHaveAttribute("aria-busy", "true");
       expect(
         screen.queryByText(/Saving channel details/),
@@ -578,7 +584,9 @@ it.each(["save", "check"] as const)(
     expect(edit).toHaveFocus();
     expect(edit).toBeEnabled();
     expect(edit).not.toHaveAttribute("aria-busy", "true");
-    expect(edit.querySelector(".buzz-button-spinner")).not.toBeInTheDocument();
+    expect(
+      edit.querySelector(".motion-safe\\:animate-spin"),
+    ).not.toBeInTheDocument();
     expect(h[operation]).toHaveBeenCalledOnce();
     if (operation === "check") expect(h.save).not.toHaveBeenCalled();
   },
@@ -592,7 +600,8 @@ it("a save that becomes uncertain reopens through a settings row in check-only r
     throw new Error("The change may have been saved.");
   });
   render(
-    <ChannelSettingsPanel scope="community:viewer"
+    <ChannelSettingsPanel
+      scope="community:viewer"
       channel={channel}
       details={h.capability}
       close={() => {}}
@@ -613,9 +622,7 @@ it("a save that becomes uncertain reopens through a settings row in check-only r
   await user.click(
     screen.getByRole("button", { name: "Close edit channel details" }),
   );
-  await user.click(
-    screen.getByRole("button", { name: "Review pending changes visibility" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Edit visibility" }));
   expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(draft.name);
   expect(
     screen.queryByRole("button", { name: "Save changes" }),
@@ -1571,6 +1578,7 @@ it.each(["description", "visibility", "channel name"])(
     const user = userEvent.setup();
     render(
       <ChannelSettingsPanel
+        scope="community:viewer"
         channel={channel}
         details={h.capability}
         close={() => {}}
@@ -1635,6 +1643,7 @@ it.each([
   const h = harness();
   render(
     <ChannelSettingsPanel
+      scope="community:viewer"
       channel={{ ...channel, ...flags }}
       details={h.capability}
       close={() => {}}

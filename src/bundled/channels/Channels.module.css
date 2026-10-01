@@ -614,6 +614,7 @@
   top: 50%;
   transform: translateY(-50%);
 }
+.settingsTitleAction[aria-busy="true"] .settingsTitlePencil,
 .settingsTitleAction:hover .settingsTitlePencil,
 .settingsTitleAction:focus-visible .settingsTitlePencil {
   opacity: 1;
@@ -684,6 +685,7 @@
     opacity var(--duration-state) var(--easing-state),
     transform var(--duration-state) var(--easing-state);
 }
+.settingsDetailAction[aria-busy="true"] .settingsDetailIcon,
 .settingsDetailAction:hover .settingsDetailIcon,
 .settingsDetailAction:focus-visible .settingsDetailIcon {
   opacity: 1;

@@ -100,7 +100,8 @@ it("opens even an empty members list without an Edit ingress", async () => {
   const openMembers = vi.fn();
   const user = userEvent.setup();
   render(
-    <ChannelSettingsPanel scope="community:viewer"
+    <ChannelSettingsPanel
+      scope="community:viewer"
       channel={{ id: "alpha", name: "Alpha", members: [] }}
       openMembers={openMembers}
       close={() => {}}
@@ -119,7 +120,11 @@ it("opens even an empty members list without an Edit ingress", async () => {
 
 function idPanel(id = "11111111-1111-4111-8111-111111111111") {
   return (
-    <ChannelSettingsPanel scope="community:viewer" channel={{ id, name: "Alpha" }} close={() => {}}>
+    <ChannelSettingsPanel
+      scope="community:viewer"
+      channel={{ id, name: "Alpha" }}
+      close={() => {}}
+    >
       Diagnostics
     </ChannelSettingsPanel>
   );

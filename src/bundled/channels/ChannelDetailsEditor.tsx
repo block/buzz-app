@@ -30,7 +30,7 @@ import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../../features/relay/work
 import styles from "./Channels.module.css";
 
 export type ChannelDetailsAction = {
-  label: string;
+  pending: boolean;
   open(trigger: HTMLButtonElement, field?: "name" | "description"): void;
 };
 
@@ -47,6 +47,7 @@ export function ChannelDetailsEditor({
   renderSurface?(
     action: ChannelDetailsAction | undefined,
     status: ReactNode,
+    loading: boolean,
   ): ReactNode;
 }) {
   const id = channel.id;
@@ -195,7 +196,7 @@ export function ChannelDetailsEditor({
     dirty &&
     !Object.values(errors ?? {}).some(Boolean);
   const edit = (focusField: "name" | "description" = "name") => {
-    if (attempt || (!view.loading && canEdit))
+    if (!pending && (attempt || (!view.loading && canEdit)))
       patch({
         editing: true,
         focusField,
@@ -301,7 +302,11 @@ export function ChannelDetailsEditor({
       </div>
     ) : null;
   const trigger = (
-    <section className={styles.detailsEditor} aria-label="Edit channel details" aria-busy={view.loading}>
+    <section
+      className={styles.detailsEditor}
+      aria-label="Edit channel details"
+      aria-busy={view.loading}
+    >
       {(canEdit || attempt) && (
         <Button
           ref={editButton}
@@ -321,7 +326,7 @@ export function ChannelDetailsEditor({
         ? renderSurface(
             canEdit || attempt
               ? {
-                  label: attempt ? "Review pending changes" : "Edit",
+                  pending,
                   open: (origin, field) => {
                     editButton.current = origin;
                     edit(field);
@@ -329,6 +334,7 @@ export function ChannelDetailsEditor({
                 }
               : undefined,
             !view.editing && status,
+            view.loading,
           )
         : trigger}
       <Dialog
@@ -366,7 +372,13 @@ export function ChannelDetailsEditor({
             : "Close edit channel details"
         }
         preventClose={pending}
-        initialFocus={attempt ? undefined : view.focusField === "description" ? descriptionInput : nameInput}
+        initialFocus={
+          attempt
+            ? undefined
+            : view.focusField === "description"
+              ? descriptionInput
+              : nameInput
+        }
         finalFocus={editButton}
         actions={
           confirmDiscard ? (

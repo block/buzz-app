@@ -149,7 +149,9 @@ function fixture(
     disconnect() {},
     async clearCache() {},
   } satisfies RelayData;
-  const navigator = { open: vi.fn() } as unknown as Navigation;
+  const navigator = {
+    open: vi.fn().mockResolvedValue({ status: "opened" }),
+  } as unknown as Navigation;
   const view = (
     id: string,
     sessionsEnabled = true,

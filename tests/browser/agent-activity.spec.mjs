@@ -458,8 +458,8 @@ it("profile activity opens the exact agent and originating channel before its fi
   // readState fixture option. Exercise that publication before profile activity.
   await openChannelDetails(page);
   await expect(
-    page.getByRole("region", {
-      name: "Edit channel details",
+    page.getByRole("complementary", {
+      name: "Channel settings",
       exact: true,
       includeHidden: true,
     }),

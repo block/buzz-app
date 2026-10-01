@@ -12,6 +12,7 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import { channelIcon } from "../../features/channels/channel-icon";
 import {
   GearIcon,
+  CircleNotchIcon,
   CaretRightIcon,
   CopyIcon,
   PencilSimpleIcon,
@@ -54,10 +55,15 @@ export function ChannelSettingsPanel({
       ?.focus({ preventScroll: true });
   }, [tabbed]);
   const ChannelIcon = channelIcon(channel);
-  const renderPanel = (edit?: ChannelDetailsAction, editStatus?: ReactNode) => (
+  const renderPanel = (
+    edit?: ChannelDetailsAction,
+    editStatus?: ReactNode,
+    loading = false,
+  ) => (
     <Panel
       as="aside"
       aria-label="Channel settings"
+      aria-busy={loading}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.stopPropagation();
@@ -108,7 +114,9 @@ export function ChannelSettingsPanel({
                     <button
                       type="button"
                       className={styles.settingsTitleAction}
-                      aria-label={`${edit.label} channel name`}
+                      aria-label="Edit channel name"
+                      disabled={edit.pending}
+                      aria-busy={edit.pending}
                       aria-description={channel.name}
                       aria-haspopup="dialog"
                       onClick={(event) => edit.open(event.currentTarget)}
@@ -120,7 +128,14 @@ export function ChannelSettingsPanel({
                           className={styles.settingsTitlePencil}
                           aria-hidden="true"
                         >
-                          <PencilSimpleIcon size={16} />
+                          {edit.pending ? (
+                            <CircleNotchIcon
+                              size={16}
+                              className="motion-safe:animate-spin"
+                            />
+                          ) : (
+                            <PencilSimpleIcon size={16} />
+                          )}
                         </span>
                       </span>
                     </button>
@@ -141,7 +156,8 @@ export function ChannelSettingsPanel({
                             : channel.description || "No description"
                         }
                         valueClassName={styles.settingsDescription}
-                        actionLabel={edit?.label}
+                        actionLabel="Edit"
+                        loading={edit?.pending}
                         onOpen={
                           edit
                             ? (trigger) => edit.open(trigger, "description")
@@ -157,7 +173,8 @@ export function ChannelSettingsPanel({
                               ? "Private"
                               : "Not available"
                         }
-                        actionLabel={edit?.label}
+                        actionLabel="Edit"
+                        loading={edit?.pending}
                         onOpen={edit?.open}
                       />
                     </>
@@ -219,6 +236,7 @@ function SettingsDetail({
   onOpen,
   hasPopup = "dialog",
   disabled = false,
+  loading = false,
   renderAction = (action) => action,
 }: {
   label: string;
@@ -230,6 +248,7 @@ function SettingsDetail({
   trailingIcon?: ReactNode;
   hasPopup?: "dialog" | false;
   disabled?: boolean;
+  loading?: boolean | undefined;
   renderAction?(action: ReactElement<ComponentProps<"button">>): ReactNode;
   onOpen?: ((trigger: HTMLButtonElement) => void) | undefined;
 }) {
@@ -248,9 +267,11 @@ function SettingsDetail({
                 }
                 aria-description={value}
                 aria-haspopup={hasPopup}
+                disabled={loading}
+                aria-busy={loading || undefined}
                 aria-disabled={disabled || undefined}
                 onClick={(event) => {
-                  if (!disabled) onOpen(event.currentTarget);
+                  if (!disabled && !loading) onOpen(event.currentTarget);
                 }}
               >
                 <span className={styles.settingsDetailLabel}>
@@ -260,7 +281,14 @@ function SettingsDetail({
                       className={styles.settingsDetailIcon}
                       aria-hidden="true"
                     >
-                      {actionIcon}
+                      {loading ? (
+                        <CircleNotchIcon
+                          size={14}
+                          className="motion-safe:animate-spin"
+                        />
+                      ) : (
+                        actionIcon
+                      )}
                     </span>
                   )}
                 </span>

@@ -836,7 +836,7 @@ readTest(
     await row.focus();
     await expect(row).toBeFocused();
     // Programmatic opening deliberately does not focus the settings trigger first.
-    await openChannelDetails(page, { programmatic: true });
+    await openChannelDetails(page, { programmatic: true, clockPaused: true });
     await expect(
       page.getByRole("complementary", {
         name: "Channel settings",

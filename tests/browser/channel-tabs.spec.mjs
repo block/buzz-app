@@ -298,18 +298,18 @@ test("crowded tab strip scrolls only horizontally with Add tab fixed and a thin 
   });
   const initial = await add.boundingBox();
   const height = (await header.boundingBox()).height;
-  const tabBounds = await workspace.getByRole("tab").first().boundingBox();
+  const tabBounds = await list.getByRole("tab").first().boundingBox();
   const expectTabPosition = async () => {
-    const bounds = await workspace.getByRole("tab").last().boundingBox();
+    const bounds = await list.getByRole("tab").last().boundingBox();
     expect(bounds.y).toBeCloseTo(tabBounds.y, 1);
     expect(bounds.height).toBeCloseTo(tabBounds.height, 1);
   };
   for (let i = 0; i < 5; i++) {
     await add.click();
-    await expect(workspace.getByRole("tab")).toHaveCount(i + 2);
+    await expect(list.getByRole("tab")).toHaveCount(i + 2);
     await expect(workspace.getByRole("searchbox")).toBeFocused();
   }
-  const tabs = workspace.getByRole("tab");
+  const tabs = list.getByRole("tab");
   const closeButtons = workspace.getByRole("button", {
     name: "Close New tab tab",
     exact: true,
@@ -346,14 +346,14 @@ test("crowded tab strip scrolls only horizontally with Add tab fixed and a thin 
   expect(geometry.trackHeight).toBe("4px");
   expect((await add.boundingBox()).x).toBeCloseTo(initial.x, 1);
   expect((await header.boundingBox()).height).toBeCloseTo(height, 1);
-  await workspace.getByRole("tab").last().press("Home");
-  await expect(workspace.getByRole("tab").first()).toBeFocused();
+  await list.getByRole("tab").last().press("Home");
+  await expect(list.getByRole("tab").first()).toBeFocused();
   await expect(closeButtons.first()).toHaveCSS("opacity", "1");
   await expect(list).toHaveJSProperty("scrollTop", 0);
   await expectTabPosition();
   expect((await add.boundingBox()).x).toBeCloseTo(initial.x, 1);
-  await workspace.getByRole("tab").first().press("End");
-  await expect(workspace.getByRole("tab").last()).toBeFocused();
+  await list.getByRole("tab").first().press("End");
+  await expect(list.getByRole("tab").last()).toBeFocused();
   await expect(list).toHaveJSProperty("scrollTop", 0);
   await expectTabPosition();
   expect((await add.boundingBox()).x).toBeCloseTo(initial.x, 1);
@@ -365,4 +365,49 @@ test("crowded tab strip scrolls only horizontally with Add tab fixed and a thin 
   await expectTabPosition();
   await expect.poll(thumbColor).not.toBe("rgba(0, 0, 0, 0)");
   await page.screenshot({ path: testInfo.outputPath("crowded-tabs.png") });
+});
+
+// Real plugin registration, channel navigation and retained tab focus need app
+// wiring in both browsers. Save/conflict permutations belong to editor tests.
+test("Canvas opens once beside Thread and retains its channel draft", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const main = page.getByRole("article", { name: "Conversation", exact: true });
+  const row = main.locator("[data-message-id]").first();
+  await row.hover();
+  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  const workspace = page.locator("[data-panel-workspace]");
+  const thread = workspace.getByRole("tab", { name: "Thread", exact: true });
+  await expect(thread).toHaveAttribute("aria-selected", "true");
+  const launch = main.getByRole("button", { name: "Toggle channel canvas" });
+  await launch.click();
+  const canvas = workspace.getByRole("tab", { name: "Canvas", exact: true });
+  const text = workspace.getByRole("textbox", { name: "Canvas Markdown" });
+  await expect(canvas).toHaveAttribute("aria-selected", "true");
+  await expect(launch).toHaveAttribute("aria-pressed", "true");
+  await expect(text).toBeEnabled();
+  await text.fill("Channel-scoped draft");
+  await thread.click();
+  await expect(text).toBeHidden();
+  await expect(launch).toHaveAttribute("aria-pressed", "false");
+  await launch.click();
+  await expect(text).toHaveValue("Channel-scoped draft");
+  await launch.click();
+  await expect(canvas).toHaveCount(1);
+  await expect(canvas).toHaveAttribute("aria-selected", "true");
+  await workspace
+    .getByRole("button", { name: "Close Canvas tab", exact: true })
+    .click();
+  await expect(thread).toHaveAttribute("aria-selected", "true");
+  await launch.click();
+  await expect(text).toHaveValue("Channel-scoped draft");
+  await page.locator('button[data-channel-id="beta"]').click();
+  await launch.click();
+  await expect(text).toBeEnabled();
+  await expect(text).toHaveValue("");
+  await page.locator('button[data-channel-id="alpha"]').click();
+  await expect(canvas).toHaveAttribute("aria-selected", "true");
+  await expect(text).toHaveValue("Channel-scoped draft");
 });

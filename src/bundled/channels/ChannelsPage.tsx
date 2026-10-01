@@ -20,7 +20,6 @@ import { newSessionParent } from "../../features/channel-navigation/routes";
 import { personalGroups } from "../../features/channel-templates/setup";
 import type { TemplateProviders } from "../../features/channel-templates/provider";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
-import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
 import { Select } from "../../shared/design-system/ui/Select";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { Panel } from "../../shared/design-system/ui/Panel";
@@ -224,8 +223,6 @@ function ChannelWorkspace({
     groupEntry?.record.value.type === "groups"
       ? groupEntry.record.value
       : undefined;
-  const [canvasOpen, setCanvasOpen] = useState(false);
-  const canvasTrigger = useRef<HTMLButtonElement>(null);
   const [kitError, setKitError] = useState("");
   useEffect(() => {
     void queries.emoji.ensure();
@@ -1053,12 +1050,31 @@ function ChannelWorkspace({
       const entry = panelTabs.find(
         (entry) => entry.panel === panel && entry.channelContext,
       );
+      if (panel.pluginId === "buzz.canvas" && panel.id === "canvas") {
+        if (!drawerContext || current?.archived) return true;
+        drawer.close();
+        panelTrigger.current =
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
+        open(
+          entry ?? {
+            panel,
+            target: drawerContext.channelId,
+            channelId: drawerContext.channelId,
+            channelContext: drawerContext,
+          },
+          true,
+        );
+        return true;
+      }
       if (!entry) return false;
       if (tabState.paneOpen && tabState.selected === panelTabId(entry))
         tabState.setPaneOpen(false);
       else selectOpening(entry);
       return true;
     },
+    tabState.paneOpen ? panel : undefined,
   );
   const tabTools =
     drawerContext && !current?.archived
@@ -1238,12 +1254,6 @@ function ChannelWorkspace({
   const settingsContent = (
     <ChannelSettingsPanel
       scope={scope}
-      canvas={queries.canvas}
-      canvasOpen={canvasOpen}
-      openCanvas={(trigger) => {
-        canvasTrigger.current = trigger;
-        setCanvasOpen(true);
-      }}
       key={settings?.id}
       setupTools={
         current && (
@@ -1361,17 +1371,6 @@ function ChannelWorkspace({
   );
   const workspace = (
     <div ref={split.ref} style={split.style} className={styles.board}>
-      {current && !current.readOnly && canvasOpen && (
-        <ChannelCanvasDialog
-          key={`${scope}:${current.id}`}
-          canvas={queries.canvas}
-          scope={scope}
-          channelId={current.id}
-          open={canvasOpen}
-          onOpenChange={setCanvasOpen}
-          finalFocus={canvasTrigger}
-        />
-      )}
       <Panel as="article" aria-label="Conversation">
         {/* biome-ignore lint/a11y/noStaticElementInteractions: file-drop fallback; the composer also provides a keyboard-accessible picker. */}
         <div

@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 import { createAgentControl } from "../features/agents/control";
@@ -562,14 +569,26 @@ it("hands keyboard focus between a listed choice and its custom input", async ()
   expect(
     await screen.findByRole("option", { name: "Custom ID" }),
   ).toBeVisible();
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "High" })).toHaveFocus(),
+  );
   await user.keyboard("{End}");
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "Custom ID" })).toHaveFocus(),
+  );
   await user.keyboard("{Enter}");
   expect(
     within(card).getByRole("textbox", { name: "Custom default effort ID" }),
   ).toHaveFocus();
   await user.keyboard("{Shift>}{Tab}{/Shift}{Enter}");
   expect(await screen.findByRole("option", { name: "None" })).toBeVisible();
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "Custom ID" })).toHaveFocus(),
+  );
   await user.keyboard("{Home}{ArrowDown}");
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "None" })).toHaveFocus(),
+  );
   await user.keyboard("{Enter}");
   expect(
     within(card).queryByRole("textbox", { name: "Custom default effort ID" }),

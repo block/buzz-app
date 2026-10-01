@@ -19,6 +19,17 @@ test("enabling Mesh compute opens Settings Compute", async ({ page, app }) => {
     .getByRole("complementary", { name: "Settings sidebar", exact: true })
     .getByRole("button", { name: "Compute", exact: true })
     .click();
+  const compute = page
+    .getByRole("complementary", { name: "Settings sidebar", exact: true })
+    .getByRole("button", { name: "Compute", exact: true });
+  await expect(compute.locator("xpath=ancestor::section[1]")).toContainText(
+    "Primary",
+  );
+  await expect(
+    page
+      .getByRole("complementary", { name: "Settings sidebar", exact: true })
+      .getByText("Compute", { exact: true }),
+  ).toHaveCount(1);
   await expect(
     page.getByRole("heading", { name: "Use shared compute", exact: true }),
   ).toBeVisible();

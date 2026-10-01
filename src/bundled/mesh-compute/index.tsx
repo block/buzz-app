@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
 
+import { CpuIcon } from "../../shared/design-system/icons";
 import { ConsumerComputeView } from "./ConsumerComputeView";
 
 type MeshStatus = {
@@ -190,7 +191,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.settingsCards.register({
     id: "mesh",
     title: "Compute",
-    group: "Compute",
+    icon: CpuIcon,
     component: CommunityComputePage,
   });
 };

@@ -53,7 +53,7 @@ export function SettingsSidebar({
               .map((card) => ({
                 id: card.key,
                 label: card.title,
-                icon: ChatCircleIcon,
+                icon: card.icon ?? ChatCircleIcon,
               })),
           ]
         : [],
@@ -66,7 +66,7 @@ export function SettingsSidebar({
         .map((card) => ({
           id: card.key,
           label: card.title,
-          icon: UsersIcon,
+          icon: card.icon ?? UsersIcon,
         })),
     [contributed],
   );
@@ -80,7 +80,7 @@ export function SettingsSidebar({
             .map((card) => ({
               id: card.key,
               label: card.title,
-              icon: ChatCircleIcon,
+              icon: card.icon ?? ChatCircleIcon,
             })),
         }),
       ),

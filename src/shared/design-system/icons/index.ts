@@ -365,3 +365,6 @@ export const SpeakerSlashIcon = defineIcon(
 
 import { ColumnsIcon as PhosphorColumnsIcon } from "@phosphor-icons/react/dist/csr/Columns";
 export const ColumnsIcon = defineIcon("phosphor", PhosphorColumnsIcon);
+
+import { CpuIcon as PhosphorCpuIcon } from "@phosphor-icons/react/dist/csr/Cpu";
+export const CpuIcon = defineIcon("phosphor", PhosphorCpuIcon);

@@ -131,7 +131,7 @@ export function Settings({
             ...communityCards.map((card) => ({
               id: card.key,
               label: card.title,
-              icon: ChatCircleIcon,
+              icon: card.icon ?? ChatCircleIcon,
             })),
           ]
         : [],
@@ -144,7 +144,7 @@ export function Settings({
         ? administrationCards.map((card) => ({
             id: card.key,
             label: card.title,
-            icon: UsersIcon,
+            icon: card.icon ?? UsersIcon,
           }))
         : []),
       ...(!selectedCommunity ? personalProfile : []),
@@ -152,7 +152,7 @@ export function Settings({
         group.cards.map((card) => ({
           id: card.key,
           label: card.title,
-          icon: ChatCircleIcon,
+          icon: card.icon ?? ChatCircleIcon,
         })),
       ),
       ...appSettingsSections,

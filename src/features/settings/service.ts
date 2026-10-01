@@ -5,9 +5,13 @@ import {
   createContributions,
   type Contribution,
 } from "../../plugins/contributions";
+import type { DefinedIcon } from "../../shared/design-system/icons/createDecorativeIcon";
+
 export type SettingsCard = {
   id: string;
   title: string;
+  /** Optional navigation icon; the host supplies its existing default when absent. */
+  icon?: DefinedIcon;
   component: ComponentType<{
     active(): boolean;
     community?: { id: string; name: string };

@@ -37,6 +37,7 @@ export function AgentCard({
   avatar,
   identities,
   session,
+  media,
   editable = [],
   onEdit,
   onDuplicate,
@@ -54,6 +55,7 @@ export function AgentCard({
   avatar?: string | undefined;
   identities: AgentLibrary["identities"];
   session?: RelaySession;
+  media?: RelaySession["media"] | undefined;
   editable?: AgentView[];
   onEdit?: ((agent: AgentView, avatar?: string) => void) | undefined;
   onDuplicate?: ((agent: AgentView) => void) | undefined;
@@ -101,7 +103,7 @@ export function AgentCard({
       : source?.startsWith("data:")
         ? source
         : source
-          ? session?.media(source, "small")
+          ? (media ?? session?.media)?.(source, "small")
           : undefined;
   return (
     <article

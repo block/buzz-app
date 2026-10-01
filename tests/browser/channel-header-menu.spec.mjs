@@ -164,6 +164,10 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     await action.focus();
     await expect(action).toBeFocused();
     await expect(affordance).toHaveCSS("opacity", "1");
+    await expect(row).toHaveCSS("outline-style", "none");
+    await row.screenshot({
+      path: testInfo.outputPath("metadata-keyboard-focus.png"),
+    });
   };
   for (const label of ["Edit description", "Edit visibility", "View members"]) {
     const action = settings.getByRole("button", { name: label, exact: true });

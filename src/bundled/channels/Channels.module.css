@@ -715,10 +715,6 @@
   inset: 0;
   border-radius: inherit;
 }
-.settingsDetails > div:has(.settingsDetailAction:focus-visible) {
-  outline: 2px solid var(--border-focus);
-  outline-offset: -2px;
-}
 .settingsDetails > div + div {
   border-top: 1px solid var(--border-standard);
 }

@@ -15,7 +15,10 @@ import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import styles from "./Channels.module.css";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
-import { ChannelDetailsEditor } from "./ChannelDetailsEditor";
+import {
+  ChannelDetailsEditor,
+  type ChannelDetailsAction,
+} from "./ChannelDetailsEditor";
 
 export function ChannelSettingsPanel({
   channel,
@@ -27,6 +30,7 @@ export function ChannelSettingsPanel({
   openCanvas,
   canvas,
   canvasOpen = false,
+  openMembers,
 }: {
   channel: ChannelSummary | undefined;
   scope: string;
@@ -37,6 +41,7 @@ export function ChannelSettingsPanel({
   openCanvas?(trigger: HTMLButtonElement): void;
   canvas?: ChannelCanvas;
   canvasOpen?: boolean;
+  openMembers?(trigger: HTMLButtonElement): void;
 }) {
   const tabbed = !!usePanelTabHost();
   const header = useRef<HTMLDivElement>(null);
@@ -87,7 +92,7 @@ export function ChannelSettingsPanel({
       ? "No content yet"
       : "Loading preview…";
   const ChannelIcon = channelIcon(channel);
-  return (
+  const renderPanel = (edit?: ChannelDetailsAction, editStatus?: ReactNode) => (
     <Panel
       as="aside"
       aria-label="Channel settings"
@@ -139,45 +144,37 @@ export function ChannelSettingsPanel({
                 {channel.channelType !== "session" &&
                   channel.channelType !== "dm" && (
                     <>
-                      <div>
-                        <dt>Description</dt>
-                        <dd className={styles.settingsDescription}>
-                          {channel.description === undefined
+                      <SettingsDetail
+                        label="Description"
+                        value={
+                          channel.description === undefined
                             ? "Not available"
-                            : channel.description || "No description"}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Visibility</dt>
-                        <dd>
-                          {channel.visibility === "public"
+                            : channel.description || "No description"
+                        }
+                        valueClassName={styles.settingsDescription}
+                        actionLabel={edit?.label}
+                        onOpen={edit?.open}
+                      />
+                      <SettingsDetail
+                        label="Visibility"
+                        value={
+                          channel.visibility === "public"
                             ? "Public"
                             : channel.visibility === "private"
                               ? "Private"
-                              : "Not available"}
-                        </dd>
-                      </div>
+                              : "Not available"
+                        }
+                        actionLabel={edit?.label}
+                        onOpen={edit?.open}
+                      />
                     </>
                   )}
-                {channel.channelType && (
-                  <div>
-                    <dt>Channel type</dt>
-                    <dd>
-                      {channel.channelType === "dm"
-                        ? "Direct message"
-                        : channel.channelType === "forum"
-                          ? "Forum"
-                          : channel.channelType === "session"
-                            ? "Session"
-                            : "Channel"}
-                    </dd>
-                  </div>
-                )}
                 {channel.members && (
-                  <div>
-                    <dt>Members</dt>
-                    <dd>{channel.members.length}</dd>
-                  </div>
+                  <SettingsDetail
+                    label="Members"
+                    value={String(channel.members.length)}
+                    onOpen={openMembers}
+                  />
                 )}
                 <div>
                   <dt>Channel ID</dt>
@@ -211,21 +208,7 @@ export function ChannelSettingsPanel({
               />
             </button>
           )}
-          {channel &&
-            (channel.channelType === "stream" ||
-              channel.channelType === "forum") &&
-            !channel.readOnly &&
-            !channel.cached &&
-            !channel.archived &&
-            (details?.available ? (
-              <ChannelDetailsEditor
-                channel={channel}
-                capability={details}
-                scope={scope}
-              />
-            ) : (
-              <p>Editing is unavailable on this connection.</p>
-            ))}
+          {editStatus}
           {setupTools}
           <details className={styles.settingsDiagnostics}>
             <summary>Diagnostics</summary>
@@ -234,5 +217,66 @@ export function ChannelSettingsPanel({
         </div>
       </div>
     </Panel>
+  );
+  const editable =
+    channel &&
+    (channel.channelType === "stream" || channel.channelType === "forum") &&
+    !channel.readOnly &&
+    !channel.cached &&
+    !channel.archived;
+  return editable && details?.available ? (
+    <ChannelDetailsEditor
+      channel={channel}
+      capability={details}
+      scope={scope}
+      renderSurface={renderPanel}
+    />
+  ) : (
+    renderPanel(
+      undefined,
+      editable ? <p>Editing is unavailable on this connection.</p> : undefined,
+    )
+  );
+}
+
+/** A native button's hit area covers the row without nesting controls or losing list semantics. */
+function SettingsDetail({
+  label,
+  value,
+  valueClassName,
+  actionLabel,
+  onOpen,
+}: {
+  label: string;
+  value: string;
+  valueClassName?: string | undefined;
+  actionLabel?: string | undefined;
+  onOpen?: ((trigger: HTMLButtonElement) => void) | undefined;
+}) {
+  return (
+    <div>
+      <dt>
+        {onOpen ? (
+          <button
+            type="button"
+            className={styles.settingsDetailAction}
+            aria-label={
+              actionLabel
+                ? `${actionLabel} ${label.toLowerCase()}`
+                : `View ${label.toLowerCase()}`
+            }
+            aria-description={value}
+            aria-haspopup="dialog"
+            onClick={(event) => onOpen(event.currentTarget)}
+          >
+            <span>{label}</span>
+            {actionLabel && <span className="text-link">{actionLabel}</span>}
+          </button>
+        ) : (
+          label
+        )}
+      </dt>
+      <dd className={valueClassName}>{value}</dd>
+    </div>
   );
 }

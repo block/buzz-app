@@ -108,6 +108,61 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
       .locator("[data-panel-workspace]")
       .getByRole("tab", { name: "Channel settings", exact: true }),
   ).toBeFocused();
+  await expect(settings.getByText("Channel type", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(
+    settings.getByRole("button", { name: "Edit details", exact: true }),
+  ).toHaveCount(0);
+  for (const label of ["Edit description", "Edit visibility", "View members"]) {
+    const action = settings.getByRole("button", { name: label, exact: true });
+    const row = action.locator("xpath=../..");
+    await action.scrollIntoViewIfNeeded();
+    await page.mouse.move(0, 0);
+    const resting = await row.evaluate(
+      (node) => getComputedStyle(node).backgroundColor,
+    );
+    const box = await row.boundingBox();
+    // Hit the value/padding below the text control, not just its label.
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height - 8);
+    await expect
+      .poll(() =>
+        row.evaluate((node) => getComputedStyle(node).backgroundColor),
+      )
+      .not.toBe(resting);
+    await expect(action).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(action).toHaveCSS("padding", "0px");
+    if (label !== "View members") {
+      const editLink = action.getByText("Edit", { exact: true });
+      const linkColor = await editLink.evaluate(
+        (node) => getComputedStyle(node).color,
+      );
+      expect(linkColor).not.toBe(
+        await action.evaluate((node) => getComputedStyle(node).color),
+      );
+    } else {
+      await expect(action.getByText("Edit", { exact: true })).toHaveCount(0);
+    }
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height - 8);
+    const dialog = page.getByRole("dialog", {
+      name:
+        label === "View members" ? "Channel members" : "Edit channel details",
+      exact: true,
+    });
+    await expect(dialog).toBeVisible();
+    await expect(
+      label === "View members"
+        ? dialog.getByRole("searchbox")
+        : dialog.getByRole("textbox", { name: "Name", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(action).toBeFocused();
+    await expect(settings).toBeVisible();
+  }
+  await settings.screenshot({
+    path: testInfo.outputPath("channel-details-actions.png"),
+  });
   await page
     .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();

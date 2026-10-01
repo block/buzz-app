@@ -36,16 +36,26 @@ import { Switch } from "../../shared/design-system/ui/Switch";
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../../features/relay/work-sessions";
 import styles from "./Channels.module.css";
 
+export type ChannelDetailsAction = {
+  label: string;
+  open(trigger: HTMLButtonElement): void;
+};
+
 /** The capability owns writes; this view owns only a destination-bound editable draft. */
 export function ChannelDetailsEditor({
   capability,
   channel,
   scope,
   menu,
+  renderSurface,
 }: {
   scope: string;
   capability: ChannelDetailsCapability;
   channel: ChannelSummary;
+  renderSurface?(
+    action: ChannelDetailsAction | undefined,
+    status: ReactNode,
+  ): ReactNode;
   menu?: {
     open: boolean;
     finalFocus: DialogProps["finalFocus"];
@@ -348,7 +358,22 @@ export function ChannelDetailsEditor({
   );
   return (
     <>
-      {menu ? menu.render(trigger) : trigger}
+      {renderSurface
+        ? renderSurface(
+            canEdit || attempt
+              ? {
+                  label: attempt ? "Review pending changes" : "Edit",
+                  open: (origin) => {
+                    editButton.current = origin;
+                    edit();
+                  },
+                }
+              : undefined,
+            !view.editing && status,
+          )
+        : menu
+          ? menu.render(trigger)
+          : trigger}
       <Dialog
         open={view.editing}
         headerGap="compact"

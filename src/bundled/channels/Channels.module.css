@@ -593,7 +593,49 @@
   border-radius: var(--radius-card);
 }
 .settingsDetails > div {
+  position: relative;
   padding: var(--space-4);
+}
+.settingsDetails > div:first-child {
+  border-start-start-radius: inherit;
+  border-start-end-radius: inherit;
+}
+.settingsDetails > div:last-child {
+  border-end-start-radius: inherit;
+  border-end-end-radius: inherit;
+}
+.settingsDetails > div:has(.settingsDetailAction:hover) {
+  background: var(--affordance-panel-hover);
+}
+.settingsDetails > div:has(.settingsDetailAction:active) {
+  background: var(--affordance-subtle-pressed);
+}
+.settingsDetailAction {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.settingsDetailAction:focus-visible {
+  outline: none;
+}
+.settingsDetailAction::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.settingsDetails > div:has(.settingsDetailAction:focus-visible) {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
 }
 .settingsDetails > div + div {
   border-top: 1px solid var(--border-standard);

@@ -470,22 +470,26 @@ No dismissal saves, retries, replaces setup or confirms a destructive action.
 
 Channel Settings shows the signed name, description and explicit visibility for
 ordinary channels; missing visibility stays **Not available**, not implicitly
-Public. **Edit details** opens the shared Dialog with one Name/Description/Duration/Private
-draft. Duration uses Create's Ongoing/Temporary cards, and Private uses the same
+Public. Description and Visibility open the shared Dialog with one
+Name/Description/Duration/Private draft. Only authorized editors get interactive
+rows; other viewers retain plain metadata. Members opens the existing member list
+through its conversation navigation owner. The standalone Edit details button and
+Channel type row are omitted.
+Duration uses Create's Ongoing/Temporary cards, and Private uses the same
 switch in the action row. These controls stage changes; neither publishes immediately.
 **Save changes** submits the draft together and is enabled only for valid, changed values.
 **Cancel** explicitly discards edits and closes without confirmation. Close, Escape
 and backdrop clicks close untouched forms immediately; changed drafts first show
 **Discard changes?** with **Keep editing** initially focused. Keep editing, Escape,
 Close or a backdrop click in that confirmation returns to the intact form.
-**Discard changes** drops the draft and returns focus to Edit details without
+**Discard changes** drops the draft and returns focus to its originating control without
 closing Settings, as does the form’s explicit **Cancel**. Pending saves and status
 checks block dialog dismissal and show a
-loading spinner on the disabled **Edit details** button without changing its label.
+loading spinner on the disabled edit control without changing its label.
 Saving and permission loading do not add text status rows or reserve empty space;
-viewers without editing authority see neither Edit details nor an explanatory hint.
+viewers without editing authority see neither edit controls nor an explanatory hint.
 Actionable errors and uncertain-save warnings remain visible.
-After an uncertain outcome, **Edit details** re-enables so the save may be closed
+After an uncertain outcome, The edit controls re-enable so the save may be closed
 and reopened for check-only recovery, never a blind resend. The panel retains its
 own Close/Escape focus return, conversation and collapsed Diagnostics.
 Names accept 1–120 code points and descriptions up to 1,000. Typing and paste

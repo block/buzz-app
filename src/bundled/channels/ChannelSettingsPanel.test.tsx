@@ -75,7 +75,7 @@ it("does not invent unknown metadata and still exposes diagnostics without a cha
       Diagnostics content
     </ChannelSettingsPanel>,
   );
-  expect(screen.getByText("Direct message")).toBeVisible();
+  expect(screen.queryByText("Channel type")).not.toBeInTheDocument();
   expect(screen.queryByText("Members")).not.toBeInTheDocument();
   rerender(
     <ChannelSettingsPanel
@@ -308,4 +308,24 @@ it("replaces a saved preview with loading and failure states during refresh", as
     screen.queryByText("Google root-link preview submission deep dive"),
   ).not.toBeInTheDocument();
   expect(canvas.save).not.toHaveBeenCalled();
+});
+
+it("opens even an empty members list without an Edit ingress", async () => {
+  const openMembers = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <ChannelSettingsPanel
+      channel={{ id: "alpha", name: "Alpha", members: [] }}
+      openMembers={openMembers}
+      close={() => {}}
+    >
+      Diagnostics
+    </ChannelSettingsPanel>,
+  );
+  const members = screen.getByRole("button", { name: "View members" });
+  expect(members).toHaveAccessibleDescription("0");
+  expect(members).not.toHaveTextContent("Edit");
+  members.focus();
+  await user.keyboard("{Enter}");
+  expect(openMembers).toHaveBeenCalledWith(members);
 });

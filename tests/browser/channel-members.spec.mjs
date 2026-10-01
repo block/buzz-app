@@ -105,6 +105,23 @@ test("channel members opens from the header, fits each viewport, and returns key
     await expect(dialog).toHaveCount(0);
     await expect(trigger).toBeFocused();
   }
+  await page.setViewportSize({ width: 1440, height: 850 });
+  await trigger.click();
+  await expect(
+    page.getByRole("dialog", { name: "Channel members" }),
+  ).toBeVisible();
+  // Model navigation arriving while the modal is open, not a pointer through its backdrop.
+  await page
+    .locator('button[data-channel-id="beta"]')
+    .evaluate((node) => node.click());
+  await expect(
+    page.getByRole("dialog", { name: "Channel members" }),
+  ).toHaveCount(0);
+  await page.locator('button[data-channel-id="alpha"]').click();
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await expect(
+    page.getByRole("dialog", { name: "Channel members" }),
+  ).toHaveCount(0);
 });
 
 // Native history traversal/reload plus the real channel tab owner cannot be

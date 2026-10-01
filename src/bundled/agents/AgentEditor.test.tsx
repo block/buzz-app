@@ -72,3 +72,36 @@ it("keeps a requested update open with its edits when save fails", async () => {
   );
   control.dispose();
 });
+
+it("shows restart failures instead of dismissing a saved review", async () => {
+  const fixture = controlFixture();
+  const save = fixture.host.save;
+  const control = createAgentControl({
+    ...fixture.host,
+    save: async (id, revision, edit) => ({
+      ...(await save(id, revision, edit)),
+      restartFailures: 1,
+    }),
+  });
+  await control.refresh();
+  const onSaved = vi.fn();
+  render(
+    <AgentEditor
+      agent={fixture.agent}
+      control={control}
+      state={control.snapshot()}
+      initialDraft={{ ...agentDraft(fixture.agent), model: "gpt-6-sol" }}
+      notice="Requested by an agent. Review every field before saving."
+      onClose={() => {}}
+      onSaved={onSaved}
+    />,
+  );
+
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "1 agent couldn’t restart with the new settings; check Agents.",
+  );
+  expect(onSaved).not.toHaveBeenCalled();
+  expect(fixture.agent.harness.model).toBe("gpt-6-sol");
+  control.dispose();
+});

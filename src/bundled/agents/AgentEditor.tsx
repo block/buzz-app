@@ -156,7 +156,7 @@ export function AgentEditor({
                   setNotice(
                     savedMessage(saved.restarted, saved.restartFailures),
                   );
-                  onSaved?.();
+                  if (!saved.restartFailures) onSaved?.();
                 })
                 .catch((problem: Error) => setError(problem.message));
             }}

@@ -679,6 +679,49 @@ it("deleting one of the viewer's replies keeps the membership its other replies 
   });
 });
 
+it("deleting the viewer's parent and then their reply ends the membership", async () => {
+  const h = setup();
+  const relay = conversationRelay(h);
+  const mine = message(h.viewer, "other", "my old post", 10);
+  const myReply = reply(h.viewer, "my reply to it", 11, mine, mine);
+  const answer = reply(h.peer, "answer", 700, mine, mine);
+  relay.store.push(mine, myReply, answer, ...busy(h, 499));
+  await h.session.unread.ensure();
+  h.snapshot();
+  const attention = () => h.session.unread.attention("other", answer.id);
+  await vi.waitFor(() =>
+    expect(attention()).toMatchObject({ category: "thread", unread: true }),
+  );
+  const remove = (target: RelayEvent, time: number) => {
+    relay.store.splice(relay.store.indexOf(target), 1);
+    h.receive([
+      signed(h.viewer, {
+        kind: 5,
+        content: "",
+        created_at: time,
+        tags: [
+          ["h", "other"],
+          ["e", target.id],
+        ],
+      }),
+    ]);
+  };
+  // Another client deletes the parent, then the reply; this client loaded
+  // neither into its window.
+  expect(h.session.channels.window("other").rows).toEqual([]);
+  remove(mine, 800);
+  await vi.waitFor(() => {
+    expect(attention().pending).toBeUndefined();
+    expect(attention()).toMatchObject({ category: "thread", unread: true });
+  });
+  remove(myReply, 801);
+  await vi.waitFor(() => {
+    expect(attention().pending).toBeUndefined();
+    expect(attention()).toMatchObject({ unread: false });
+  });
+  expect(attention().category).toBeUndefined();
+});
+
 it("a lookup batch larger than the witness bound keeps every membership deletable", async () => {
   const h = setup();
   const relay = conversationRelay(h);

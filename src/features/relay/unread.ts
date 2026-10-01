@@ -272,7 +272,8 @@ export function createUnread({
   // Keyed by channel and parent, like `joined`. `evidence` is one of the
   // viewer's messages that make the viewer a member (the parent itself, or a
   // reply to it), held as a witness; `more` records that the viewer has
-  // others. Deleting the witness ends the membership, or asks again if `more`.
+  // others. The viewer's own parent is preferred, and the first witness is
+  // kept. Deleting the witness ends the membership, or asks again if `more`.
   // One witness per lookup keeps every positive lookup within the witness
   // bound, however many replies one batch returns.
   type Lookup = {
@@ -299,8 +300,12 @@ export function createUnread({
   const conversationKey = (channelId: string, parentId: string) =>
     `${channelId}:${parentId}`;
   function witness(lookup: Lookup, event: RelayEvent) {
-    if (lookup.evidence !== undefined && lookup.evidence !== event.id)
+    // Keep the first witness: replacing it could hide the deletion of a
+    // cached parent that a later lookup would reuse.
+    if (lookup.evidence !== undefined && lookup.evidence !== event.id) {
       lookup.more = true;
+      return;
+    }
     lookup.evidence = event.id;
     witnesses.delete(event.id);
     witnesses.set(event.id, event);
@@ -1050,20 +1055,24 @@ export function createUnread({
         }
         for (const [id, found] of mine) {
           const parent = structural(id);
-          if (parent?.pubkey === viewer && live(parent)) found.push(parent);
+          const ownParent = parent?.pubkey === viewer && live(parent);
           const lookup: Lookup = {
             channelId,
             done: true,
             evidence: undefined,
-            more: found.length > 1,
+            more: found.length + (ownParent ? 1 : 0) > 1,
           };
           remember(conversationKey(channelId, id), lookup);
+          // The viewer's own parent is the witness when there is one: it may
+          // come from the structural cache, which a later lookup reuses, so
+          // its deletion must stay observable. Replies are always refetched.
           const newest = found.reduce<RelayEvent | undefined>(
             (best, event) =>
               !best || event.created_at > best.created_at ? event : best,
             undefined,
           );
-          if (newest) witness(lookup, newest);
+          const chosen = ownParent ? parent : newest;
+          if (chosen) witness(lookup, chosen);
         }
         indexed = false;
         publish(new Set([channelId]));
@@ -1145,6 +1154,8 @@ export function createUnread({
       retracted.delete(id);
       retracted.add(id);
       witnesses.delete(id);
+      // A deleted message must be fetched again, not reused from the cache.
+      lookupEvents.delete(id);
       for (const [key, lookup] of lookups) {
         if (lookup.evidence !== id) continue;
         changed.add(lookup.channelId);

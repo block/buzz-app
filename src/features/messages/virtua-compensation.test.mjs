@@ -147,6 +147,8 @@ it("buffers below a shift frozen upward without letting those rows move the read
     [32, 150, null], // wholly below the 2500–3000 viewport
     [32, 60, null],
     [23, 150, 50], // above it, as prepended rows are
+    [29, 150, 50], // visible rows are still corrected
+    [30, 150, null], // starts exactly at the viewport end
   ]) {
     const c = setup({ offset: 500 });
     c.store.W(1, 400); // native upward scrolling

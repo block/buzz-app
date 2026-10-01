@@ -831,6 +831,13 @@ test.describe("thread activity", () => {
       name: "Reply to thread",
       exact: true,
     });
+    // Visible content can precede the dock's entrance finishing. Measure all
+    // alignment against the settled panel, not different animation frames.
+    await page.locator("[data-panel-dock]").evaluate(async (element) => {
+      await Promise.all(
+        element.getAnimations().map((animation) => animation.finished),
+      );
+    });
     const entryBox = await entry.boundingBox(),
       formBox = await form.boundingBox();
     expect(entryBox.y + entryBox.height).toBeLessThanOrEqual(formBox.y);

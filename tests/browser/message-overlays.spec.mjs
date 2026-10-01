@@ -55,8 +55,19 @@ test("video speed options escape the thread and restore focus after selection an
     .getByRole("button", { name: "Playback speed: 1x" })
     .first();
   await expect(trigger).toBeVisible();
-  // Put the speed control just below the scroller's top edge: the old inline
-  // fieldset loses its upper options behind that boundary.
+  await expect(
+    page.getByRole("slider", { name: "Video progress", exact: true }).first(),
+  ).toBeEnabled();
+  // Model the constrained grid cell that hosts ThreadPanel in the app.
+  // A height on a plain block wrapper does not constrain the panel itself.
+  await page
+    .getByRole("complementary", { name: "Thread", exact: true })
+    .evaluate((panel) => {
+      Object.assign(panel.parentElement.style, {
+        display: "grid",
+        height: "400px",
+      });
+    });
   await trigger.evaluate((button) => {
     const scroller = button.closest("[data-message-scroller]");
     scroller.scrollTop +=
@@ -64,8 +75,18 @@ test("video speed options escape the thread and restore focus after selection an
       scroller.getBoundingClientRect().top -
       40;
   });
-  await page.locator("[data-video-preview]").first().hover();
-  await trigger.click();
+  await expect
+    .poll(() =>
+      trigger.evaluate((button) => {
+        const scroller = button.closest("[data-message-scroller]");
+        return (
+          button.getBoundingClientRect().top -
+          scroller.getBoundingClientRect().top
+        );
+      }),
+    )
+    .toBeCloseTo(40, 0);
+  await trigger.press("Enter");
   const menu = page.getByRole("menu", { name: /^Playback speed:/ });
   await expect(menu).toBeVisible();
   // The scoped dark owner must keep the explicit floating recipe, not the
@@ -408,12 +429,11 @@ test("enlarged media review reflows comments and keeps playback controls reachab
   });
   for (const width of [1024, 800]) {
     await page.setViewportSize({ width, height: 768 });
-    await stage.hover();
+    await stage.hover({ position: { x: 8, y: 8 } });
     for (const control of [
       speed,
       mute,
       reaction,
-      review.getByRole("slider", { name: "Video volume", exact: true }),
       review.getByRole("slider", { name: "Video timeline", exact: true }),
     ]) {
       await expect(control).toBeInViewport();
@@ -436,11 +456,18 @@ test("enlarged media review reflows comments and keeps playback controls reachab
         .toBe(true);
     }
   }
+  await mute.hover();
+  const volume = page.getByRole("slider", {
+    name: "Video volume",
+    exact: true,
+  });
+  await expect(volume).toBeInViewport();
+  await volume.press("Escape");
   await speed.click();
   await page.getByRole("menuitemradio", { name: "2x", exact: true }).click();
   await expect(video).toHaveJSProperty("playbackRate", 2);
   const wasMuted = await video.evaluate((el) => el.muted);
-  await stage.hover();
+  await stage.hover({ position: { x: 8, y: 8 } });
   await mute.click();
   await expect(video).toHaveJSProperty("muted", !wasMuted);
   await reaction.click();

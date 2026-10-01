@@ -261,10 +261,10 @@ steps), Home/End, and double-click to reset. Each page retains its chosen split
 while the panel closes and reopens; widths clamp to the available space. Narrow
 overlay layouts hide this divider and keep their normal responsive sizing.
 
-Pointer-opened secondary panels fade and slide in over 180ms and out over 120ms
-with the shared strong ease-out curve. Desktop panels travel 12px; overlays travel
-their full width. The desktop split stays in place until the exit finishes, so
-closing content never collapses mid-transition. Keyboard actions stay immediate;
+Pointer-opened secondary panels fade and slide in over 180ms with the shared
+strong ease-out curve. Desktop panels travel 12px on entry and close immediately,
+so the main view reclaims its width without waiting for an invisible exit. Overlays
+travel their full width and exit over 120ms. Keyboard actions stay immediate;
 reduced motion uses only a fade. Resizing remains immediate.
 `features/panels/PanelDock` retains inert, accessibility-hidden closing content until
 its CSS transitions finish, cancels stale cleanup on reopening, and leaves selection

@@ -144,6 +144,7 @@ it("offers inline seek, speed and volume controls and hands off the scrubbed pos
   fireEvent.click(screen.getByRole("button", { name: "Playback speed: 1x" }));
   fireEvent.click(screen.getByRole("menuitemradio", { name: "0.25x" }));
   expect(video.playbackRate).toBe(0.25);
+  fireEvent.click(screen.getByRole("button", { name: "Mute video" }));
   fireEvent.change(screen.getByRole("slider", { name: "Video volume" }), {
     target: { value: "0.25" },
   });

@@ -82,9 +82,10 @@
       transform: translate(-50%, -50%);
     }
   }
-  /* A nested sheet needs a backdrop above its parent popup, not below it.
-     Matching the popup layer preserves DOM ordering: parent, backdrop, sheet. */
-  .buzz-dialog-backdrop[data-placement="right"] {
+  /* Nested sheets and pointer-dismissible dialogs need a backdrop above the
+     parent popup. Matching its layer preserves parent, backdrop, child order. */
+  .buzz-dialog-backdrop[data-placement="right"],
+  .buzz-dialog-backdrop[data-outside-dismissal] {
     z-index: var(--layer-dialog);
   }
   .buzz-dialog[data-placement="right"] {
@@ -164,6 +165,17 @@
     flex: 1;
     overflow: auto;
   }
+  /* Opt in when fixed controls and one inner scrollport share the body. */
+  .buzz-dialog[data-body-layout="flex"] > .buzz-dialog-body {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  /* Without footer actions, the popup already supplies the bottom gutter. */
+  .buzz-dialog[data-body-layout="flex"] > .buzz-dialog-body:last-child {
+    padding-bottom: 0;
+  }
   .buzz-tooltip-positioner {
     z-index: var(--layer-tooltip);
   }
@@ -237,7 +249,7 @@
     --text-metadata: var(--interaction-selected-metadata);
     background: var(--interaction-pressed);
   }
-  @media (max-width: 480px) {
+  @media (max-width: 30rem) {
     .buzz-dialog {
       --dialog-padding: var(--space-4);
     }
@@ -286,7 +298,7 @@
     /* Only toast cards intercept clicks, not the empty viewport or its gaps. */
     pointer-events: none;
   }
-  @media (max-width: 700px) {
+  @media (max-width: 43.75rem) {
     .buzz-toast-viewport {
       --toast-top: 12rem;
     }

@@ -3,6 +3,10 @@ import { npubEncode } from "nostr-tools/nip19";
 import { verifyEvent } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 
+// Configure the modeled session at its HTTP owner instead of proxying it through
+// route.fetch(), so session setup needs only the browser's original request.
+test.use({ sessionWriteKinds: [9, 9007, 40100] });
+
 // Browser-only boundary: real plugin Settings/launcher/panel wiring, Canvas
 // outbox -> signed HTTP receipt -> readback, native focus and drawer geometry.
 // Markdown/recovery permutations belong in colocated Vitest tests.
@@ -19,12 +23,6 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     created_at: 1700000000,
   });
   const writes = [];
-  await page.route("**/api/relay/primary/session", async (route) => {
-    const response = await route.fetch();
-    await route.fulfill({
-      json: { ...(await response.json()), writeKinds: [9, 9007, 40100] },
-    });
-  });
   await page.route("**/api/relay/primary/query", async (route) => {
     const filters = route.request().postDataJSON();
     if (
@@ -114,7 +112,13 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   const bounds = await drawer.boundingBox();
   expect(bounds.x).toBeGreaterThanOrEqual(conversation.x + conversation.width);
   expect(Math.abs(bounds.y - conversation.y)).toBeLessThan(2);
+  const dock = page
+    .getByRole("region", { name: "Channels", exact: true })
+    .locator("[data-panel-dock]:not([hidden])");
   await drawer.getByRole("button", { name: "Hide todos" }).click();
+  // The closing dock still owns a grid column. Wait for its removal before
+  // clicking the launcher, which moves when the conversation expands.
+  await expect(dock).toHaveCount(0);
   await launcher.click();
   await expect(assignee).toContainText("Fixture Reader");
   await assignee.click();
@@ -126,6 +130,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await assignee.press("Escape");
   await expect(drawer).toHaveCount(0);
   await expect(launcher).toBeFocused();
+  await expect(dock).toHaveCount(0);
   await launcher.click();
   await expect(assignee).toContainText("Fixture Reader");
   const expectCompactRow = async () => {

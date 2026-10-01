@@ -51,7 +51,14 @@ function mount(initial: string | MentionDraft = "") {
         disabled={false}
         placeholder="Draft"
         maxLength={16000}
-        decorationsFor={() => []}
+        // Explicit recipients render as mention tokens, as in RichComposerInput.
+        decorationsFor={(current) =>
+          current.recipients.map(({ start, end, name }) => ({
+            start,
+            end,
+            content: <span data-mention>@{name}</span>,
+          }))
+        }
         onFormatsChange={(active) => {
           formats = active;
         }}
@@ -1608,6 +1615,237 @@ it.each([true, false])(
   },
 );
 
+const imp = { pubkey: "a".repeat(64), name: "Imp" };
+const jitter = { pubkey: "b".repeat(64), name: "Jitter" };
+// Display names with a space are one token too; the label never splits.
+const maryJane = { pubkey: "c".repeat(64), name: "Mary Jane" };
+const mattToohey = { pubkey: "d".repeat(64), name: "Matt Toohey" };
+/** Every `@Name` of these people in the text is an explicit, resolved recipient. */
+function mentioned(text: string): MentionDraft {
+  return {
+    text,
+    recipients: [imp, jitter, maryJane, mattToohey].flatMap((recipient) => {
+      const start = text.indexOf(`@${recipient.name}`);
+      return start < 0
+        ? []
+        : [{ ...recipient, start, end: start + recipient.name.length + 1 }];
+    }),
+  };
+}
+const selection = (input: ComposerInputElement) =>
+  [input.selectionStart, input.selectionEnd, input.selectionDirection] as const;
+/** Arrow keys are deliberately low-level: user-event cannot extend a selection. */
+const shiftArrow = (
+  input: ComposerInputElement,
+  key: "ArrowLeft" | "ArrowRight",
+) =>
+  act(() => {
+    fireEvent.keyDown(input, { key: "Shift", keyCode: 16, shiftKey: true });
+    fireEvent.keyDown(input, {
+      key,
+      code: key,
+      keyCode: key === "ArrowLeft" ? 37 : 39,
+      shiftKey: true,
+    });
+  });
+
+it.each([jitter.name, maryJane.name])(
+  "extends a backward selection over @%s before it and keeps the anchor",
+  (name) => {
+    const text = `@Imp say hello to @${name} `;
+    const mention = text.lastIndexOf("@");
+    const h = mount(mentioned(text));
+    expect(h.input.querySelectorAll("[data-mention]")).toHaveLength(2);
+    act(() => h.input.setSelectionRange(text.length, text.length));
+    // The browser itself answers the first Shift+Left by selecting the trailing
+    // space. Model that native result, then let the editor handle the second.
+    act(() => {
+      const space = h.input.querySelector("p")?.lastChild;
+      if (!(space instanceof Text)) throw new Error("Missing trailing text");
+      document.getSelection()?.setBaseAndExtent(space, 1, space, 0);
+    });
+    shiftArrow(h.input, "ArrowLeft");
+    expect(selection(h.input)).toEqual([mention, text.length, "backward"]);
+    expect(text.slice(mention)).toBe(`@${name} `);
+    expect(h.input.selectionEnd - h.input.selectionStart).toBeLessThanOrEqual(
+      h.input.value.length,
+    );
+    shiftArrow(h.input, "ArrowRight");
+    expect(selection(h.input)).toEqual([
+      text.length - 1,
+      text.length,
+      "backward",
+    ]);
+  },
+);
+
+it.each([
+  [
+    "after a mention with no trailing space",
+    "@Imp say hello to @Jitter",
+    25,
+    "ArrowLeft",
+    [18, 25, "backward"],
+  ],
+  [
+    "before a mention",
+    "@Imp say hello to @Jitter ",
+    18,
+    "ArrowRight",
+    [18, 25, "forward"],
+  ],
+  [
+    "after the mention at the start",
+    "@Imp say hello to @Jitter ",
+    4,
+    "ArrowLeft",
+    [0, 4, "backward"],
+  ],
+  [
+    "the document start",
+    "@Imp say hello to @Jitter ",
+    0,
+    "ArrowRight",
+    [0, 4, "forward"],
+  ],
+  ["the document end", "hello @Jitter", 13, "ArrowLeft", [6, 13, "backward"]],
+  [
+    "after a two-word mention with no trailing space",
+    "@Imp say hello to @Mary Jane",
+    28,
+    "ArrowLeft",
+    [18, 28, "backward"],
+  ],
+  [
+    "before a two-word mention",
+    "@Imp say hello to @Mary Jane ",
+    18,
+    "ArrowRight",
+    [18, 28, "forward"],
+  ],
+  [
+    "after the two-word mention at the start",
+    "@Mary Jane says hello",
+    10,
+    "ArrowLeft",
+    [0, 10, "backward"],
+  ],
+  [
+    "the document start before a two-word mention",
+    "@Mary Jane says hello",
+    0,
+    "ArrowRight",
+    [0, 10, "forward"],
+  ],
+  [
+    "the document end after a two-word mention",
+    "hello @Mary Jane",
+    16,
+    "ArrowLeft",
+    [6, 16, "backward"],
+  ],
+] as const)(
+  "Shift+Arrow from %s selects the whole mention",
+  (_, text, caret, key, expected) => {
+    const h = mount(mentioned(text));
+    act(() => h.input.setSelectionRange(caret, caret));
+    shiftArrow(h.input, key);
+    expect(selection(h.input)).toEqual(expected);
+  },
+);
+
+it.each([
+  [
+    "extends a forward selection from prose over a mention",
+    "@Imp say hello to @Jitter ",
+    16,
+    18,
+    "forward",
+    "ArrowRight",
+    [16, 25, "forward"],
+  ],
+  [
+    "extends a backward selection from prose over a mention",
+    "@Imp say hello to @Jitter ",
+    4,
+    8,
+    "backward",
+    "ArrowLeft",
+    [0, 8, "backward"],
+  ],
+  [
+    "shrinks a forward selection off a mention",
+    "@Imp say hello to @Jitter ",
+    18,
+    25,
+    "forward",
+    "ArrowLeft",
+    [18, 18, "forward"],
+  ],
+  [
+    "shrinks a backward selection off a mention",
+    "@Imp say hello to @Jitter ",
+    18,
+    26,
+    "backward",
+    "ArrowRight",
+    [25, 26, "backward"],
+  ],
+  [
+    "extends a forward selection from prose over a two-word mention",
+    "@Imp say hello to @Mary Jane ",
+    16,
+    18,
+    "forward",
+    "ArrowRight",
+    [16, 28, "forward"],
+  ],
+  [
+    "shrinks a forward selection off a two-word mention",
+    "@Imp say hello to @Mary Jane ",
+    18,
+    28,
+    "forward",
+    "ArrowLeft",
+    [18, 18, "forward"],
+  ],
+  [
+    "shrinks a backward selection off a two-word mention",
+    "@Imp say hello to @Mary Jane ",
+    18,
+    29,
+    "backward",
+    "ArrowRight",
+    [28, 29, "backward"],
+  ],
+  // Two two-word mentions one space apart: the browser selects that space,
+  // then the editor extends over the first mention in the same direction.
+  [
+    "extends a backward selection over the first of two two-word mentions",
+    "@Mary Jane @Matt Toohey ",
+    10,
+    24,
+    "backward",
+    "ArrowLeft",
+    [0, 24, "backward"],
+  ],
+  [
+    "extends a forward selection over the second of two two-word mentions",
+    "@Mary Jane @Matt Toohey ",
+    0,
+    11,
+    "forward",
+    "ArrowRight",
+    [0, 23, "forward"],
+  ],
+] as const)("%s", (_, text, start, end, direction, key, expected) => {
+  const h = mount(mentioned(text));
+  act(() => h.input.setSelectionRange(start, end, direction));
+  expect(selection(h.input)).toEqual([start, end, direction]);
+  shiftArrow(h.input, key);
+  expect(selection(h.input)).toEqual(expected);
+});
+
 it("retains the native caret after replacing text with an unchanged suffix", async () => {
   const h = mount(":unknown:");
   act(() => {
@@ -1622,7 +1860,7 @@ it("retains the native caret after replacing text with an unchanged suffix", asy
 });
 
 /** A character the host's native text-input path can commit as typed text for
- * a caret or function key. The desktop build committed U+001D on every Right
+ * a caret or function key. The desktop build committed U+001D on a Right
  * Arrow press: a key's raw keyboard-layout translation is a C0 control (the
  * arrows are U+001C through U+001F), which WebKit does not strip from a key
  * event's text. AppKit's own NSEvent carries the private-use function-key
@@ -1668,6 +1906,26 @@ const caretKeys = [
   "Meta",
   "Escape",
 ] as const;
+/** A caret keydown as WebKit reports it when the key event's text is the key's
+ * layout translation: `key` is the control character while `code` and the
+ * legacy key code still name the key. */
+const mangledCaretKeys = {
+  ArrowLeft: { key: "\u001C", keyCode: 37 },
+  ArrowRight: { key: "\u001D", keyCode: 39 },
+  ArrowUp: { key: "\u001E", keyCode: 38 },
+  ArrowDown: { key: "\u001F", keyCode: 40 },
+  Home: { key: "\u0001", keyCode: 36 },
+  End: { key: "\u0004", keyCode: 35 },
+  PageUp: { key: "\u000B", keyCode: 33 },
+  PageDown: { key: "\u000C", keyCode: 34 },
+} as const;
+type MangledCaretKey = keyof typeof mangledCaretKeys;
+function mangled(
+  code: MangledCaretKey,
+  init: Omit<KeyboardEventInit, "key" | "code" | "keyCode"> = {},
+) {
+  return { ...mangledCaretKeys[code], code, ...init };
+}
 
 /** Everything the composer persists or shows: the draft with its document
  * snapshot, and the rendered DOM. */
@@ -1730,6 +1988,104 @@ function nativeInsert(
   return inserted;
 }
 
+/** jsdom has no `Selection.modify`. This stand-in records the browser caret
+ * motion the composer asks for and performs the moves it can without layout,
+ * so the editor's selection sync after the move is exercised too: a character
+ * within a text node, a line as the editor's text between newlines at the
+ * nearest column (the document's end past the last line, as in a browser),
+ * and the document boundaries. A focus at an element boundary, as ProseMirror
+ * places it after select-all, first resolves into the text ending there. */
+function stubSelectionModify() {
+  const texts = (node: Node) => {
+    if (node instanceof Text) return [node];
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    const found: Text[] = [];
+    while (walker.nextNode()) found.push(walker.currentNode as Text);
+    return found;
+  };
+  const resolve = (node: Node, offset: number): [Text, number] | null => {
+    if (node instanceof Text) return [node, offset];
+    const before = node.childNodes[offset - 1];
+    const after = node.childNodes[offset];
+    const end = before && texts(before).at(-1);
+    if (end) return [end, end.length];
+    const start = after && texts(after)[0];
+    return start ? [start, 0] : null;
+  };
+  const modify = vi.fn(function (
+    this: Selection,
+    alter: string,
+    direction: string,
+    granularity: string,
+  ) {
+    const focus = this.focusNode && resolve(this.focusNode, this.focusOffset);
+    const root = focus?.[0].parentElement?.closest('[role="textbox"]');
+    if (!focus || !root) return;
+    const [text, offset] = focus;
+    const forward = direction === "right" || direction === "forward";
+    let target: [Text, number] | undefined;
+    if (granularity === "character")
+      target = [
+        text,
+        Math.max(0, Math.min(text.length, offset + (forward ? 1 : -1))),
+      ];
+    else if (granularity === "line" || granularity === "documentboundary") {
+      const all = texts(root);
+      const value = all.map((node) => node.data).join("");
+      const at = all
+        .slice(0, all.indexOf(text))
+        .reduce((sum, node) => sum + node.length, offset);
+      const lineStart = (pos: number) =>
+        pos ? value.lastIndexOf("\n", pos - 1) + 1 : 0;
+      const lineEnd = (pos: number) => {
+        const end = value.indexOf("\n", pos);
+        return end === -1 ? value.length : end;
+      };
+      let next: number;
+      if (granularity === "documentboundary") next = forward ? value.length : 0;
+      else {
+        const start = lineStart(at);
+        const end = lineEnd(at);
+        if (forward)
+          next =
+            end === value.length
+              ? end
+              : Math.min(end + 1 + (at - start), lineEnd(end + 1));
+        else
+          next =
+            start === 0
+              ? 0
+              : Math.min(lineStart(start - 1) + (at - start), start - 1);
+      }
+      for (const node of all) {
+        if (next <= node.length) {
+          target = [node, next];
+          break;
+        }
+        next -= node.length;
+      }
+    }
+    if (!target) return;
+    if (alter === "extend") this.extend(...target);
+    else this.collapse(...target);
+  });
+  Object.defineProperty(Selection.prototype, "modify", {
+    configurable: true,
+    value: modify,
+  });
+  return modify;
+}
+function setPlatform(platform: string) {
+  Object.defineProperty(navigator, "platform", {
+    configurable: true,
+    value: platform,
+  });
+}
+afterEach(() => {
+  Reflect.deleteProperty(Selection.prototype, "modify");
+  Reflect.deleteProperty(navigator, "platform");
+});
+
 it.each(controlKeys)(
   "refuses %s committed as text at both native seams",
   async (_label, character) => {
@@ -1791,7 +2147,9 @@ it.each([
   [
     "inside a list item",
     async (h: ReturnType<typeof mount>) => {
-      await h.user.keyboard("{Shift>}{Enter}{/Shift}- item");
+      await h.user.keyboard("{Shift>}{Enter}{/Shift}");
+      act(() => h.input.toggleFormat("bullet_list"));
+      await h.user.keyboard("item");
       expect(h.input.querySelector("ul > li")).toHaveTextContent("item");
       return h.input.value;
     },
@@ -1839,3 +2197,206 @@ it.each(rightArrowCharacters)(
     expect(h.markdown()).toBe("**a**");
   },
 );
+
+it("moves the caret for a Right Arrow reported as U+001D instead of typing it", () => {
+  const h = mount("abc");
+  const modify = stubSelectionModify();
+  const before = snapshot(h);
+  act(() => h.input.setSelectionRange(1, 1));
+  let prevented = false;
+  act(() => {
+    prevented = !fireEvent.keyDown(h.input, mangled("ArrowRight"));
+  });
+  expect(prevented).toBe(true);
+  expect(modify).toHaveBeenCalledExactlyOnceWith("move", "right", "character");
+  expect(h.input.selectionStart).toBe(2);
+  expect(h.input.selectionEnd).toBe(2);
+  act(() => {
+    prevented = !fireEvent.keyDown(h.input, mangled("ArrowLeft"));
+  });
+  expect(prevented).toBe(true);
+  expect(modify).toHaveBeenLastCalledWith("move", "left", "character");
+  expect(h.input.selectionStart).toBe(1);
+  // Shift extends from the same anchor, as the named key would.
+  act(() => {
+    fireEvent.keyDown(h.input, mangled("ArrowRight", { shiftKey: true }));
+  });
+  expect(modify).toHaveBeenLastCalledWith("extend", "right", "character");
+  expect(h.input.selectionStart).toBe(1);
+  expect(h.input.selectionEnd).toBe(2);
+  expect(snapshot(h)).toEqual(before);
+});
+
+it("steps over a mention chip for an arrow reported as a control character, as the named key does", () => {
+  const h = mount("abc");
+  const modify = stubSelectionModify();
+  act(() => h.input.insertText("", { pubkey: "a".repeat(64), name: "Honey" }));
+  expect(h.input).toHaveValue("abc@Honey ");
+  for (const [code, from, to] of [
+    ["ArrowRight", 3, 9],
+    ["ArrowLeft", 9, 3],
+  ] as const) {
+    act(() => h.input.setSelectionRange(from, from));
+    let prevented = false;
+    act(() => {
+      prevented = !fireEvent.keyDown(h.input, mangled(code));
+    });
+    expect(prevented, code).toBe(true);
+    expect(h.input.selectionStart, code).toBe(to);
+    expect(h.input.selectionEnd, code).toBe(to);
+  }
+  expect(modify).not.toHaveBeenCalled();
+  expect(h.input).toHaveValue("abc@Honey ");
+  expect(h.draft().recipients.map((item) => item.name)).toEqual(["Honey"]);
+});
+
+/** The editor selection's anchor and head in source offsets, with the text
+ * between them. `selectionDirection` reads the editor's own anchor and head,
+ * so a backward range here is a TextSelection that kept its direction: an
+ * AllSelection always reports its anchor at the start. */
+function range(h: ReturnType<typeof mount>) {
+  const { selectionStart: start, selectionEnd: end } = h.input;
+  const backward = h.input.selectionDirection === "backward";
+  return {
+    anchor: backward ? end : start,
+    head: backward ? start : end,
+    text: h.input.value.slice(start, end),
+  };
+}
+
+it("keeps a Shift move reported as a control character directional when it reaches both document edges, so reversing it shrinks the selection", () => {
+  setPlatform("MacIntel");
+  const h = mount("abc\ndef");
+  const modify = stubSelectionModify();
+  const before = snapshot(h);
+  expect(range(h)).toEqual({ anchor: 7, head: 7, text: "" });
+  // Cmd+Shift+Up from the end selects everything, anchored at the end: not
+  // the AllSelection a DOM select-all becomes, whose anchor is the start.
+  act(() => {
+    fireEvent.keyDown(
+      h.input,
+      mangled("ArrowUp", { metaKey: true, shiftKey: true }),
+    );
+  });
+  expect(modify).toHaveBeenLastCalledWith(
+    "extend",
+    "backward",
+    "documentboundary",
+  );
+  expect(range(h)).toEqual({ anchor: 7, head: 0, text: "abc\ndef" });
+  // Shift+Down then shrinks the selection from its head, and again back to
+  // the anchor, instead of extending from the start.
+  act(() => {
+    fireEvent.keyDown(h.input, mangled("ArrowDown", { shiftKey: true }));
+  });
+  expect(modify).toHaveBeenLastCalledWith("extend", "forward", "line");
+  expect(range(h)).toEqual({ anchor: 7, head: 4, text: "def" });
+  act(() => {
+    fireEvent.keyDown(h.input, mangled("ArrowDown", { shiftKey: true }));
+  });
+  expect(range(h)).toEqual({ anchor: 7, head: 7, text: "" });
+  expect(snapshot(h)).toEqual(before);
+});
+
+it("shrinks a select-all by one character for a Shift+Left reported as a control character, instead of collapsing it", () => {
+  setPlatform("MacIntel");
+  const h = mount("abc");
+  const modify = stubSelectionModify();
+  const before = snapshot(h);
+  act(() => {
+    fireEvent.keyDown(h.input, { key: "a", code: "KeyA", metaKey: true });
+  });
+  expect(range(h)).toEqual({ anchor: 0, head: 3, text: "abc" });
+  // The whole-document selection's head sits after the paragraph, not after
+  // an inline leaf: the move is the browser's, one character at a time.
+  let prevented = false;
+  act(() => {
+    prevented = !fireEvent.keyDown(
+      h.input,
+      mangled("ArrowLeft", { shiftKey: true }),
+    );
+  });
+  expect(prevented).toBe(true);
+  expect(modify).toHaveBeenCalledExactlyOnceWith("extend", "left", "character");
+  expect(range(h)).toEqual({ anchor: 0, head: 2, text: "ab" });
+  expect(snapshot(h)).toEqual(before);
+});
+
+it.each([
+  ["MacIntel", "ArrowRight", { altKey: true }, ["move", "right", "word"]],
+  [
+    "MacIntel",
+    "ArrowLeft",
+    { metaKey: true },
+    ["move", "left", "lineboundary"],
+  ],
+  [
+    "MacIntel",
+    "ArrowLeft",
+    { metaKey: true, shiftKey: true },
+    ["extend", "left", "lineboundary"],
+  ],
+  ["MacIntel", "ArrowUp", {}, ["move", "backward", "line"]],
+  ["MacIntel", "ArrowDown", { shiftKey: true }, ["extend", "forward", "line"]],
+  [
+    "MacIntel",
+    "ArrowUp",
+    { altKey: true },
+    ["move", "backward", "paragraphboundary"],
+  ],
+  [
+    "MacIntel",
+    "ArrowDown",
+    { metaKey: true },
+    ["move", "forward", "documentboundary"],
+  ],
+  ["MacIntel", "Home", {}, null],
+  ["MacIntel", "End", {}, null],
+  [
+    "MacIntel",
+    "End",
+    { shiftKey: true },
+    ["extend", "forward", "documentboundary"],
+  ],
+  ["MacIntel", "PageUp", {}, null],
+  ["MacIntel", "PageDown", { shiftKey: true }, null],
+  ["Win32", "ArrowRight", { ctrlKey: true }, ["move", "right", "lineboundary"]],
+  ["Win32", "ArrowRight", { metaKey: true }, ["move", "right", "character"]],
+  ["Win32", "Home", {}, ["move", "backward", "lineboundary"]],
+  ["Win32", "End", { shiftKey: true }, ["extend", "forward", "lineboundary"]],
+] as const)(
+  "on %s asks the browser to move the caret for %s reported as a control character with %o",
+  (platform, code, init, call) => {
+    setPlatform(platform);
+    const h = mount("abc");
+    const modify = stubSelectionModify();
+    const before = snapshot(h);
+    act(() => h.input.setSelectionRange(1, 1));
+    let prevented = false;
+    act(() => {
+      prevented = !fireEvent.keyDown(h.input, mangled(code, init));
+    });
+    expect(prevented).toBe(true);
+    if (call) expect(modify).toHaveBeenCalledExactlyOnceWith(...call);
+    else expect(modify).not.toHaveBeenCalled();
+    expect(snapshot(h)).toEqual(before);
+    expect(h.input).toHaveValue("abc");
+  },
+);
+
+it("leaves a named caret key to the browser", () => {
+  const h = mount("abc");
+  const modify = stubSelectionModify();
+  act(() => h.input.setSelectionRange(1, 1));
+  let prevented = true;
+  act(() => {
+    prevented = !fireEvent.keyDown(h.input, {
+      key: "ArrowRight",
+      code: "ArrowRight",
+      keyCode: 39,
+    });
+  });
+  expect(prevented).toBe(false);
+  expect(modify).not.toHaveBeenCalled();
+  expect(h.input.selectionStart).toBe(1);
+});

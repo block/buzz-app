@@ -1,6 +1,9 @@
 import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
 
+// Exercise generic panel motion independently of the hidden Bestie launcher.
+test.use({ companionFixture: true });
+
 // Real CSS transitions, input modality, clipping, and pseudo-elements require a browser.
 test("joined header seams, drag feedback, and pointer-only overlay motion", async ({
   page,
@@ -13,10 +16,10 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
   const launch = page
-    .getByRole("button", { name: "Bestie", exact: true })
+    .getByRole("button", { name: "Companion fixture", exact: true })
     .and(page.locator("button[aria-expanded]"));
   const close = page.getByRole("button", {
-    name: "Close Bestie panel",
+    name: "Close Companion fixture panel",
     exact: true,
   });
   const dock = page.locator("[data-panel-dock]");
@@ -179,10 +182,10 @@ for (const destination of ["Messages", "Projects"]) {
     await page.goto(app.origin);
     await openPage(page, destination);
     const launch = page
-      .getByRole("button", { name: "Bestie", exact: true })
+      .getByRole("button", { name: "Companion fixture", exact: true })
       .and(page.locator("button[aria-expanded]"));
     const close = page.getByRole("button", {
-      name: "Close Bestie panel",
+      name: "Close Companion fixture panel",
       exact: true,
     });
     await launch.click();
@@ -282,20 +285,45 @@ for (const destination of ["Messages", "Projects"]) {
     await page.goto(app.origin);
     await openPage(page, destination);
     const launch = page
-      .getByRole("button", { name: "Bestie", exact: true })
+      .getByRole("button", { name: "Companion fixture", exact: true })
       .and(page.locator("button[aria-expanded]"));
     const close = page.getByRole("button", {
-      name: "Close Bestie panel",
+      name: "Close Companion fixture panel",
       exact: true,
     });
     const dock = page.locator("[data-panel-dock]");
-    await page.evaluate(() =>
-      document.addEventListener("transitionrun", (event) => {
-        if (!event.target.matches("[data-panel-dock]")) return;
-        for (const animation of event.target.getAnimations()) animation.pause();
-        event.target.dataset.motionHeld = "true";
-      }),
-    );
+    // Hold at DOM commit, not transitionrun: a delayed WebKit frame can dispatch
+    // that event after the short entrance has finished. getAnimations() flushes
+    // style, including @starting-style, before the next rendering opportunity.
+    await page.evaluate(() => {
+      new MutationObserver((records) => {
+        const docks = new Set();
+        for (const record of records) {
+          if (
+            record.target instanceof HTMLElement &&
+            record.target.matches("[data-panel-dock]")
+          )
+            docks.add(record.target);
+          for (const node of record.addedNodes)
+            if (node instanceof HTMLElement) {
+              if (node.matches("[data-panel-dock]")) docks.add(node);
+              for (const dock of node.querySelectorAll("[data-panel-dock]"))
+                docks.add(dock);
+            }
+        }
+        for (const dock of docks) {
+          const animations = dock.getAnimations();
+          for (const animation of animations) animation.pause();
+          if (animations.some((animation) => animation.playState === "paused"))
+            dock.dataset.motionHeld = "true";
+        }
+      }).observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["data-closing", "hidden", "style"],
+      });
+    });
     const release = () =>
       dock.evaluateAll((elements) => {
         for (const element of elements) {

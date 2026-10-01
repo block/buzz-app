@@ -167,6 +167,8 @@ function Timeline({
     ids: ReadonlySet<string>;
   }>({ ids: new Set() });
   const intent = useRef(0);
+  const upwardGesture = useRef(false);
+  const touchY = useRef<number | undefined>(undefined);
   const measuredPosition = useRef<{
     offset: number;
     height: number;
@@ -227,13 +229,14 @@ function Timeline({
       // Reflow can move the offset twice: the browser clamps a shrinking list,
       // then Virtua corrects its measured rows. That combined movement can exceed
       // the height delta, so a contracting list is not evidence of reader input.
-      // Later scrolls at stable/growing height still detect upward movement,
-      // including subsequent events from one keyboard scroll or scrollbar drag.
+      // Explicit upward input wins even when shrink and reader movement share
+      // one observation. A link-opening click is not directional scroll intent.
       const movedUp =
         previous &&
-        element.clientWidth === previous.width &&
-        element.clientHeight === previous.viewport &&
-        element.scrollHeight >= previous.height &&
+        (upwardGesture.current ||
+          (element.clientWidth === previous.width &&
+            element.clientHeight === previous.viewport &&
+            element.scrollHeight >= previous.height)) &&
         element.scrollTop < previous.offset;
       if (follow.current && !movedUp && (previous || !userScrolled.current))
         position.bottom = true;
@@ -263,6 +266,7 @@ function Timeline({
     follow.current = true;
     restoredAnchor.current = undefined;
     userScrolled.current = false;
+    upwardGesture.current = false;
     scroller.current?.focus({ preventScroll: true });
     setShowJumpToLatest(false);
     setNewMessageCount(0);
@@ -279,6 +283,7 @@ function Timeline({
     if (!handle.current) return;
     intent.current++;
     follow.current = false;
+    upwardGesture.current = false;
     restoredAnchor.current = undefined;
     settled.current = false;
     handle.current.scrollToIndex(targetIndex, { align: "center" });
@@ -414,6 +419,7 @@ function Timeline({
       savedPosition.current = { offset: 0, bottom: true };
       measuredPosition.current = null;
       userScrolled.current = false;
+      upwardGesture.current = false;
     }
     // virtua attaches its scroller in an effect; wait through the StrictMode probe.
     // A new gesture wins over restoration queued before that gesture.
@@ -564,11 +570,12 @@ function Timeline({
     if (olderDemand.current && scroller.current)
       loadNearTop(scroller.current, true);
   }, [loadNearTop]);
-  const gesture = () => {
+  const gesture = (upward = false) => {
     restoredAnchor.current = undefined;
     intent.current++;
     userScrolled.current = true;
     if (scroller.current) recordPosition(scroller.current);
+    upwardGesture.current = upward;
     // At a restored top edge, input cannot move the DOM and emits no scroll.
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
@@ -579,10 +586,31 @@ function Timeline({
       data-message-scroller
       className={styles.feed}
       data-channel-timeline={channelId}
-      onWheel={gesture}
-      onTouchMove={gesture}
-      onKeyDown={gesture}
-      onPointerDown={gesture}
+      onWheel={(event) => gesture(event.deltaY < 0 && !event.ctrlKey)}
+      onTouchStart={(event) => {
+        touchY.current = event.touches[0]?.clientY;
+      }}
+      onTouchMove={(event) => {
+        const next = event.touches[0]?.clientY;
+        gesture(
+          next !== undefined &&
+            touchY.current !== undefined &&
+            next > touchY.current,
+        );
+        touchY.current = next;
+      }}
+      onKeyDown={(event) =>
+        gesture(
+          event.target === event.currentTarget &&
+            !event.defaultPrevented &&
+            (["ArrowUp", "PageUp", "Home"].includes(event.key) ||
+              (event.key === " " && event.shiftKey)),
+        )
+      }
+      onPointerDown={() => gesture()}
+      onScrollEnd={() => {
+        upwardGesture.current = false;
+      }}
       onFocus={(event) => {
         setFocusedMessageId(
           event.target.closest<HTMLElement>("[data-message-id]")?.dataset

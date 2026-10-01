@@ -463,3 +463,60 @@ it.each(["converged", "gesture", "removed"])(
     ).toBe(true);
   },
 );
+
+// Intent and native/virtualizer shrink can arrive in one scroll observation.
+it.each(["wheel", "touch", "keyboard"] as const)(
+  "%s reader input wins over shrink in the same observation",
+  async (input) => {
+    const h = mount(true);
+    await frame();
+    const region = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    region.scrollTop = 1400;
+    fireEvent.scroll(region);
+    if (input === "wheel") fireEvent.wheel(region, { deltaY: -200 });
+    if (input === "keyboard") fireEvent.keyDown(region, { key: "PageUp" });
+    if (input === "touch") {
+      fireEvent.touchStart(region, { touches: [{ clientY: 100 }] });
+      fireEvent.touchMove(region, { touches: [{ clientY: 300 }] });
+    }
+    // No intermediate stable-height scroll: native clamp, virtualizer correction
+    // and the reader's movement are first seen together.
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(
+      1600,
+    );
+    region.scrollTop = 400;
+    fireEvent.scroll(region);
+    scroll.toIndex.mockClear();
+    h.promote();
+    await frame();
+    await h.measured();
+    await frame();
+    expect(scroll.toIndex).not.toHaveBeenCalled();
+    h.unmount();
+    expect(readView("scope", "scroll:c", null)).toMatchObject({
+      bottom: false,
+    });
+  },
+);
+it("a finished near-bottom wheel does not taint a later layout-only shrink", async () => {
+  const h = mount(true);
+  await frame();
+  const region = screen.getByRole("region", {
+    name: "Channel message history",
+  });
+  region.scrollTop = 1400;
+  fireEvent.scroll(region);
+  fireEvent.wheel(region, { deltaY: -1 });
+  region.scrollTop -= 1;
+  fireEvent.scroll(region);
+  fireEvent(region, new Event("scrollend"));
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(1600);
+  region.scrollTop = 600;
+  fireEvent.scroll(region);
+  h.promote();
+  await frame();
+  h.unmount();
+  expect(readView("scope", "scroll:c", null)).toMatchObject({ bottom: true });
+});

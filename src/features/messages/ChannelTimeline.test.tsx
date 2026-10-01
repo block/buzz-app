@@ -262,7 +262,7 @@ function setup({
     ref: { current: unknown };
     children: unknown[];
     onScroll: (event: unknown) => void;
-    onWheel: () => void;
+    onPointerDown: () => void;
     onFocus: (event: unknown) => void;
     onBlur: (event: unknown) => void;
   }>;
@@ -400,7 +400,7 @@ function setup({
       flush();
     },
     gesture() {
-      section.props.onWheel();
+      section.props.onPointerDown();
     },
     dispatchScroll() {
       section.props.onScroll({ currentTarget: element });
@@ -408,7 +408,7 @@ function setup({
     scroll(user = true) {
       resized(element);
       render();
-      if (user) section.props.onWheel();
+      if (user) section.props.onPointerDown();
       section.props.onScroll({ currentTarget: element });
     },
     edit(runFrames = true) {

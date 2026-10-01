@@ -128,6 +128,13 @@
   color: var(--github-merged-text);
   background: var(--github-merged-bg);
 }
+.additions,
+.deletions {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: bold;
+}
 .additions {
   color: var(--github-additions-text);
 }

@@ -314,6 +314,18 @@ test("PR state, changes and branch links use shared roles in both themes", async
       "color",
       colors.danger,
     );
+    for (const count of ["+174", "−28"]) {
+      await expect(changes.getByText(count, { exact: true })).toHaveCSS(
+        "font-size",
+        "12px",
+      );
+      await expect(changes.getByText(count, { exact: true })).toHaveCSS(
+        "font-weight",
+        "700",
+      );
+    }
+    await expect(changes.locator("dd")).toHaveCSS("font-size", "14px");
+    await expect(changes.locator("dd")).toHaveCSS("font-weight", "400");
     await expect(changes.locator("dd")).toHaveCSS("color", colors.standard);
     await expect(changes.locator("dd")).toHaveText("+174 / −28");
     for (const name of ["small-improvement", "main"]) {

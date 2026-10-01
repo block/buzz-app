@@ -87,6 +87,7 @@ export const test = base.extend({
   exactMessages: [false, { option: true }],
   openSearch: [false, { option: true }],
   sessionChannels: [[], { option: true }],
+  sessionWriteKinds: [null, { option: true }],
   sessionParents: [{}, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
@@ -112,6 +113,7 @@ export const test = base.extend({
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
+  companionFixture: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   app: async (
     {
@@ -129,6 +131,7 @@ export const test = base.extend({
       exactMessages,
       openSearch,
       sessionChannels,
+      sessionWriteKinds,
       sessionParents,
       sidebarUnread,
       savedSidebar,
@@ -1448,7 +1451,9 @@ export const test = base.extend({
           return send(response, {
             viewer,
             relayAuthor: getPublicKey(relayKey),
-            writeKinds: sessionChannels.length ? [9, 9007, 30315] : [9, 30315],
+            writeKinds:
+              sessionWriteKinds ??
+              (sessionChannels.length ? [9, 9007, 30315] : [9, 30315]),
             relayUrl: JSON.parse(fixtureAliases)[community],
             live: true,
           });

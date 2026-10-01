@@ -35,6 +35,9 @@ jobs:
     env:
       CI: "true"
       CARGO_TERM_COLOR: always
+      # Public verification inputs; the native build and plugins.updater must match.
+      BUZZ_UPDATER_PUBLIC_KEY: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJDQjQ2RDZFMUEwOERFMTEKUldRUjNnZ2FibTIwTE10QkVaMzFyYkZlY0R4ajhmbFBjdncvNVRCYnNpSm9kaFNBaHQzemZlZHkK
+      BUZZ_UPDATER_ENDPOINT: https://github.com/block/buzz-app/releases/download/preview-feed/latest.json
     steps:
       - name: Require main and signing configuration
         env:
@@ -66,7 +69,11 @@ jobs:
           const base = config.version.split('-')[0];
           if (!/^\d+\.\d+\.\d+$/.test(base)) throw new Error('Expected a numeric Tauri version');
           const version = `${base}-preview.${process.env.GITHUB_RUN_NUMBER}.${process.env.GITHUB_RUN_ATTEMPT}`;
-          writeFileSync(`${process.env.RUNNER_TEMP}/release.json`, JSON.stringify({ version, bundle: { createUpdaterArtifacts: false } }));
+          writeFileSync(`${process.env.RUNNER_TEMP}/release.json`, JSON.stringify({
+            version,
+            bundle: { createUpdaterArtifacts: false },
+            plugins: { updater: { pubkey: process.env.BUZZ_UPDATER_PUBLIC_KEY, endpoints: [process.env.BUZZ_UPDATER_ENDPOINT] } },
+          }));
           appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
           JS
 
@@ -112,7 +119,8 @@ jobs:
           const directory = process.argv[2];
           const source = JSON.parse(readFileSync('runtime/agent-runtime.json', 'utf8'));
           const manifest = JSON.parse(readFileSync(`${directory}/manifest.json`, 'utf8'));
-          assert.equal(manifest.version, 1);
+          assert.equal(manifest.version, 2);
+          assert.deepEqual(manifest.goose, source.goose);
           assert.equal(manifest.revision, source.revision);
           assert.equal(manifest.target, 'aarch64-apple-darwin');
           assert.deepEqual(Object.keys(manifest.files).sort(), [...source.tools].sort());
@@ -234,6 +242,13 @@ jobs:
           fi
           gh release download preview-feed --pattern latest.json --dir "$RUNNER_TEMP/served"
           cmp "$RUNNER_TEMP/candidate/latest.json" "$RUNNER_TEMP/served/latest.json"
+
+      - name: Prune old preview releases and tags
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: node scripts/prune-preview-releases.mjs --apply
 
   windows:
     if: github.repository == 'block/buzz-app' && inputs.candidates

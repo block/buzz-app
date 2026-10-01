@@ -1,13 +1,8 @@
 /**
- * The token registry.
- *
- * This is the machine-readable description of the colour system: what exists,
- * what each name is for, what it points at, and whether it is core or proposed.
- * The design system pages render from this, so a token added here appears in the
- * documentation automatically and the docs cannot drift from the system.
- *
- * Adding to this file is a normal, unreviewed action — see the growth procedure
- * in DESIGN.md. Every entry needs a `use` sentence and, if proposed, an `owner`.
+ * Documentation metadata for the shared tokens: names, purposes, sources,
+ * and adoption status. The viewer renders these entries; token guards check
+ * them against the CSS. Keep each description aligned with its current use.
+ * Add a `use` sentence and, for proposed roles, an `owner`. Follow DESIGN.md.
  */
 
 /** Whether a token is part of the vetted system or someone's addition. */
@@ -63,23 +58,9 @@ export interface RoleGroup {
    ============================================================ */
 
 /**
- * What each of the twelve steps is *for*, as a starting point.
- *
- * The same twelve jobs in every hue is what makes a twelve-step scale useful and
- * the step-to-role mapping deterministic: a role picks a step number, not a
- * colour.
- *
- * **These are the scale's general intentions, not a record of Buzz's decisions,
- * and the two have already diverged.** The list came with the values and said
- * step 4 was "component hover" and step 6 "subtle border" — while in this product
- * step 4 is the one border weight and step 6 has one reader on a documentation
- * page. A generic label that contradicts the product is worse than none, because
- * a designer reading `/design` takes it for a decision someone made.
- *
- * So: **the label answers "what is this step generally for", and the neutral
- * ramp's own comments in `tokens.css` answer "what does Buzz actually do with
- * it".** When a step's real use settles into something durable, move it here.
- * `pnpm census` lists the real readers of every role.
+ * General purposes for the twelve palette steps. Actual role mappings live
+ * in tokens.css and can differ from these defaults. Use `pnpm design:census`
+ * to inspect current consumers before changing a mapping.
  */
 const STEP_JOBS = [
   "lightest surface",
@@ -122,17 +103,9 @@ export interface BackdropTreatment {
 }
 
 /**
- * Every hue in the palette.
- *
- * The bottom layer, and the only place a literal colour lives.
- * Values are Radix Colors (MIT), transcribed rather than depended on — Radix is
- * not on Block's Tech Radar, so this is a values-only copy with no package.
- *
- * It exists for two reasons. The tokens above it were 114 hand-picked hex
- * values with nothing enforcing that two tokens doing the same job agreed, and
- * they drifted. And a hue's dark steps are not its light steps dimmed: reaching
- * for a subtler dark purple by writing `purple-950/50` in a component put a real
- * colour decision somewhere it could not be named, paired, or measured.
+ * Raw palette values are based on Radix Colors (MIT), with Buzz adjustments
+ * in tokens.css. These are copied values, not a Radix component dependency.
+ * Each hue has authored light and dark steps; components use semantic roles.
  */
 export const PALETTE: PaletteHue[] = [
   { id: "neutral", usedBy: "structure", steps: [] },
@@ -257,7 +230,7 @@ export const RAMPS: Ramp[] = [
     id: "glass",
     name: "Glass",
     description:
-      "A translucency ramp of fills. Each step is the mode's surface colour at an increasing opacity, which is what lets a hover move one step up the ramp instead of holding its own literal. Fills only — a glass surface's bright rim is a border, and it is a documented exception.",
+      "Glass fills increase in opacity within each mode. Materials use these steps for rest and hover, and add a separate rim and blur.",
     translucent: true,
     steps: [
       { step: 1, job: "barely there", variable: "--glass-1" },
@@ -297,7 +270,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-surface-popover",
         variable: "--surface-popover",
-        pointsAt: "neutral-1 light / neutral-5 dark",
+        pointsAt: "neutral-1 light / neutral-raised dark",
         use: "A menu, dialog or other raised surface.",
         status: "core",
       },
@@ -479,6 +452,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "border-floating-control",
+        variable: "--border-floating-control",
+        pointsAt: "border-prominent light / neutral-9 dark",
+        use: "Control boundary on floating surfaces, including fields and unchecked choices.",
+        status: "proposed",
+      },
+      {
         token: "border-focus",
         variable: "--border-focus",
         pointsAt: "neutral-12 light / neutral-12 dark",
@@ -537,21 +517,21 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-subtle",
         variable: "--affordance-subtle",
-        pointsAt: "neutral-2 light / neutral-5 dark",
+        pointsAt: "neutral-2 light / neutral-4 dark",
         use: "A secondary action fill.",
         status: "core",
       },
       {
         token: "bg-affordance-subtle-hover",
         variable: "--affordance-subtle-hover",
-        pointsAt: "neutral-quiet-hover (#efeff0) light / neutral-6 dark",
+        pointsAt: "neutral-quiet-hover in both modes",
         use: "A secondary action under a pointer.",
         status: "core",
       },
       {
         token: "bg-affordance-subtle-pressed",
         variable: "--affordance-subtle-pressed",
-        pointsAt: "neutral-4 light / neutral-7 dark",
+        pointsAt: "neutral-4 light / neutral-5 dark",
         use: "A secondary action while pressed.",
         status: "core",
       },
@@ -587,9 +567,44 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-floating-hover",
         variable: "--affordance-floating-hover",
-        pointsAt: "neutral-3 light / neutral-7 dark",
+        pointsAt: "neutral-2 light / neutral-5 dark",
         use: "Highlighted rows on floating surfaces. Pair with standard text, including supporting copy, to preserve readability in dark mode.",
         status: "core",
+      },
+      {
+        token: "bg-affordance-popover-selected",
+        variable: "--affordance-popover-selected",
+        pointsAt: "neutral-2 light / neutral-6 dark",
+        use: "Selection within anchored popups, including mention and emoji suggestions. Remains distinct from the raised dark popup surface independently of neutral button hover.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-floating-control",
+        variable: "--affordance-floating-control",
+        pointsAt: "affordance-subtle light / neutral-6 dark",
+        use: "Secondary action at rest on floating surfaces.",
+        status: "proposed",
+      },
+      {
+        token: "bg-affordance-floating-control-hover",
+        variable: "--affordance-floating-control-hover",
+        pointsAt: "affordance-subtle-hover light / neutral-7 dark",
+        use: "Secondary action hover on floating surfaces; pair with standard text.",
+        status: "proposed",
+      },
+      {
+        token: "bg-affordance-floating-control-pressed",
+        variable: "--affordance-floating-control-pressed",
+        pointsAt: "affordance-subtle-pressed light / neutral-8 dark",
+        use: "Pressed action on floating surfaces; pair with standard text.",
+        status: "proposed",
+      },
+      {
+        token: "bg-affordance-floating-selected",
+        variable: "--affordance-floating-selected",
+        pointsAt: "affordance-subtle-pressed light / neutral-6 dark",
+        use: "Persistent selection on floating surfaces, distinct from row hover; pair supporting copy with standard text.",
+        status: "proposed",
       },
       {
         token: "bg-affordance-selected",
@@ -688,21 +703,21 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "bg-app",
         variable: "--bg-app",
         pointsAt: "gradient-1 (Sky field light / Night garden dark)",
-        use: "The backdrop everything sits on. It takes the first paired appearance choice by default.",
+        use: "The app backdrop. Uses the first paired appearance choice by default.",
         status: "core",
       },
       {
         token: "bg-panel",
         variable: "--bg-panel",
         pointsAt: "neutral 1 light / neutral 3 dark",
-        use: "Everything sitting on the backdrop: the navigation column, content, timelines, cards, rows.",
+        use: "An opaque content surface on the backdrop, including navigation, panels, and timelines.",
         status: "core",
       },
       {
         token: "bg-float",
         variable: "--bg-float",
         pointsAt: "neutral 1 light / neutral 5 dark",
-        use: "Anything hovering above the page: menus, dialogs, tooltips, toasts. Shares a light value with bg-panel and diverges in dark, because a shadow cannot carry elevation on a near-black background.",
+        use: "A raised surface for menus, dialogs, and popups. Shares the panel fill in light mode and uses a lighter fill in dark mode.",
         status: "core",
       },
     ],
@@ -711,7 +726,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
     id: "emphasis",
     name: "Emphasis",
     description:
-      "One three-level ramp shared by text and borders: normal, lesser, really lesser. States that are not levels of emphasis get their own names rather than extending the ramp.",
+      "Compatibility names for primary text, supporting text, metadata, and quiet borders. Disabled is a separate state.",
     roles: [
       {
         token: "text-primary",
@@ -738,14 +753,14 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "text-disabled",
         variable: "--text-disabled",
         pointsAt: "neutral 8",
-        use: "Unavailable. A state, not a fourth level of the ramp.",
+        use: "Text on unavailable controls. Do not use for information people need to read.",
         status: "core",
       },
       {
         token: "border-primary",
         variable: "--border-primary",
         pointsAt: "neutral 4",
-        use: "Every deliberate line: panel boundaries, dividers, separators. One quiet weight; add another only when a design proves a different boundary needs it.",
+        use: "Quiet panel boundaries and dividers. Use semantic control or state borders where the boundary must identify an interaction.",
         status: "core",
       },
     ],
@@ -754,7 +769,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
     id: "material",
     name: "Material",
     description:
-      "Glass is applied as a whole material — a fill, a blur, a rim, and sometimes a lift — through the `glass-primary` and `glass-secondary` utilities. The fills below are what those utilities read; they are deliberately not registered as Tailwind colour utilities, because a bare `bg-glass-primary` class would be the fill without the rest, which is the failure the materials exist to prevent. Named by stacking depth: primary sits on the backdrop, secondary sits over something already glass. See the glass page.",
+      "Apply glass-primary or glass-secondary as a complete material: fill, blur, rim, and optional shadow. Primary sits on the backdrop; secondary sits over glass. These underlying fills are not standalone Tailwind color utilities.",
     roles: [
       {
         token: "media-glass",
@@ -788,28 +803,28 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "glass-primary",
         variable: "--bg-glass-primary",
         pointsAt: "glass 2 + blur-md + rim",
-        use: "Glass sitting directly on the backdrop: chrome, nav, a region in glass. The most translucent, because the backdrop is the thing worth seeing through to.",
+        use: "Primary glass for chrome and navigation directly on the app backdrop.",
         status: "core",
       },
       {
         token: "glass-secondary",
         variable: "--bg-glass-secondary",
         pointsAt: "glass 4 + blur-lg + rim + shadow-sm",
-        use: "Glass over something already glass: popovers, menus, a modal over a panel. Less translucent so it separates, and a real shadow because it is genuinely above.",
+        use: "Secondary glass above another glass surface. A more opaque fill and shadow separate the layers.",
         status: "core",
       },
       {
         token: "bg-chrome-selected",
         variable: "--bg-chrome-selected",
         pointsAt: "neutral 1 light / neutral 5 dark",
-        use: "The selected item inside chrome. Opaque rather than a glass step, because on glass elevation reads as less translucency, not a lighter colour.",
+        use: "An opaque selection inside glass chrome, where opacity distinguishes the selected item.",
         status: "core",
       },
       {
         token: "glass-primary-interactive",
         variable: "--bg-glass-primary-hover",
         pointsAt: "glass 3 on hover",
-        use: "Primary glass you can click: chrome buttons, topbar controls. The hover moves one step up the ramp and never changes blur — re-blurring a large surface every frame is expensive enough to feel.",
+        use: "Interactive primary glass for chrome controls. Hover increases the fill by one step; blur stays fixed.",
         status: "core",
       },
     ],
@@ -850,15 +865,15 @@ export const GRAMMAR_EXAMPLES = {
   illegal: ["bg-chrome-hover-glass", "bg-hover-chrome"],
 };
 
-/** Runs per change, by whoever needs the value. Nothing here needs permission. */
+/** Steps for proposing a token change; use the repository review workflow. */
 export const GROWTH_PROCEDURE = [
-  "Search the role list by intent, not by colour.",
-  "A state of an existing role — add the -hover, -selected, or -disabled sibling with both values.",
-  "A material variant of an existing role — add the -glass sibling with both values and its blur token.",
-  "A new role using existing words — add the name, both values, a one-sentence description, and an owner.",
-  "A new hue — generate its ramp, add roles pointing at steps. Never a literal.",
-  "A new vocabulary word — allowed, but it is the thing the audit reports on its own line, so use an existing word if one fits.",
-  "Never write a raw value. If nothing above applies, say so rather than reaching for a literal.",
+  "Find an existing role that serves the same purpose.",
+  "For a required state, add the -hover, -selected, or -disabled sibling with light and dark values.",
+  "For a required glass variant, add paired fills and its blur token through the shared material recipe.",
+  "For a new role, add its name, both values, a one-sentence purpose, and an owner.",
+  "For a new hue, define its palette ramp and point semantic roles at the steps. Keep raw values in the palette.",
+  "Reuse vocabulary where it fits. Explain a new term so it can be reviewed as a shared decision.",
+  "Do not add raw values above the palette. Document any required exception with its reason.",
 ];
 
 /* ============================================================
@@ -891,7 +906,7 @@ export const TYPE_ROLES: TypeRole[] = [
     token: "text-display",
     pointsAt: "display/hero",
     size: "56px",
-    lineHeight: "56px",
+    lineHeight: "1.1 (61.6px at default)",
     tracking: "-0.04em",
     weight: "400",
     use: "Expressive welcome or hero.",
@@ -901,7 +916,7 @@ export const TYPE_ROLES: TypeRole[] = [
     token: "text-title",
     pointsAt: "display/page-title",
     size: "32px",
-    lineHeight: "32px",
+    lineHeight: "1.1 (35.2px at default)",
     tracking: "-0.015em",
     weight: "500",
     use: "Screen title.",
@@ -911,7 +926,7 @@ export const TYPE_ROLES: TypeRole[] = [
     token: "text-heading",
     pointsAt: "display/section-title",
     size: "24px",
-    lineHeight: "24px",
+    lineHeight: "1.1 (26.4px at default)",
     tracking: "-0.0075em",
     weight: "500",
     use: "Content section title.",
@@ -1210,7 +1225,7 @@ export const SPACE_ROLES = [
     token: "space-section-gap",
     variable: "--space-section-gap",
     pointsAt: "space 8",
-    use: "The gap between adjacent navigator sections. Larger than the 1px between rows inside one, because that difference is the only thing saying where a group ends.",
+    use: "The gap between related sections. Keep it larger than the spacing within each group.",
   },
 ];
 
@@ -1219,7 +1234,7 @@ export const RADII = [
     token: "corner-control",
     variable: "--corner-control",
     value: "16px",
-    use: "Legacy controls; distinct from the compact 8px radius-control and 24px radius-panel.",
+    use: "Legacy control corners. New fields use radius-control (12px); panels use radius-panel (24px).",
   },
   {
     token: "radius-row",
@@ -1254,6 +1269,18 @@ export const RADII = [
 ];
 
 export const MOTION = [
+  {
+    token: "duration-panel-enter",
+    variable: "--duration-panel-enter",
+    value: "180ms",
+    use: "An occasional pointer-opened overlay panel entering from the edge.",
+  },
+  {
+    token: "easing-enter",
+    variable: "--easing-enter",
+    value: "cubic-bezier(.23,1,.32,1)",
+    use: "Responsive entrances and exits with immediate initial movement.",
+  },
   {
     token: "duration-fast",
     variable: "--duration-fast",
@@ -1313,14 +1340,14 @@ export const EXCEPTIONS = [
   },
   {
     name: "text-on-accent, text-on-inverse, and the four status pairings",
-    why: "Computed from their fill's lightness rather than fixed, because white is readable on a blue or purple fill and unreadable on yellow or lime. This is what keeps a free choice of accent hue from becoming a contrast lottery.",
+    why: "Computed from the fill’s lightness so text remains paired with the selected accent or status color.",
   },
   {
     name: "--rim-lit, --rim-shade",
-    why: "The glass rim is a directional light effect, not a solid line. It is not on the glass ramp — that is a ramp of fills, and in dark mode the fill is translucent near-black while the rim stays translucent white. It is not one of the numbered gradients either: those are background treatments, this is a material detail.",
+    why: "The glass rim models directional light independently of its fill. In dark mode, translucent white rim values remain distinct from the near-black glass fill.",
   },
   {
     name: "backdrop treatments and gradient-1…4, texture-dots",
-    why: "Not colours in the ramp sense. A named backdrop treatment is a complete visual composition; gradient-1…4 pair one light scene and one dark scene for a stable appearance choice.",
+    why: "Backdrop treatments define complete scenes. Each gradient-1…4 choice pairs one light scene with one dark scene.",
   },
 ];

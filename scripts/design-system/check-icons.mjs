@@ -13,6 +13,7 @@ const nonIconDependencies = new Set([
   "@biomejs/biome",
   "@buzz/author",
   "@deepseek-ai/cordis",
+  "@dnd-kit/core", // Pointer drag and drop for sidebar channel moves.
   "@emoji-mart/data",
   "@fontsource-variable/inter",
   "@fontsource/jetbrains-mono",
@@ -23,6 +24,7 @@ const nonIconDependencies = new Set([
   "@tanstack/react-router",
   "@tauri-apps/api",
   "@tauri-apps/cli",
+  "@tauri-apps/plugin-updater",
   "@testing-library/dom",
   "@testing-library/jest-dom",
   "@testing-library/react",

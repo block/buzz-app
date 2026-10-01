@@ -9,7 +9,9 @@ import {
   verifyEvent,
 } from "nostr-tools";
 import { writeFile } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import { platform, arch } from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -37,6 +39,7 @@ export const test = base.extend({
   exactMessages: [false, { option: true }],
   openSearch: [false, { option: true }],
   sessionChannels: [[], { option: true }],
+  sessionWriteKinds: [null, { option: true }],
   sessionParents: [{}, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
@@ -45,6 +48,7 @@ export const test = base.extend({
   initialSidebarSort: [{}, { option: true }],
   channelLifecycle: [false, { option: true }],
   lifecycleRole: ["owner", { option: true }],
+  lifecycleOwnerAgent: [false, { option: true }],
   lifecycleVisibility: [{ archived: [], hidden: [] }, { option: true }],
   sidebarIcons: [false, { option: true }],
   channelNames: [{}, { option: true }],
@@ -52,6 +56,7 @@ export const test = base.extend({
   largeSidebar: [false, { option: true }],
   iconCongestion: [false, { option: true }],
   dmLabels: [false, { option: true }],
+  dmMembers: [{}, { option: true }],
   agentPeers: [false, { option: true }],
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
@@ -59,6 +64,7 @@ export const test = base.extend({
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
+  companionFixture: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   app: async (
     {
@@ -76,6 +82,7 @@ export const test = base.extend({
       exactMessages,
       openSearch,
       sessionChannels,
+      sessionWriteKinds,
       sessionParents,
       sidebarUnread,
       savedSidebar,
@@ -84,6 +91,7 @@ export const test = base.extend({
       initialSidebarSort,
       channelLifecycle,
       lifecycleRole,
+      lifecycleOwnerAgent,
       lifecycleVisibility,
       sidebarIcons,
       channelNames,
@@ -91,6 +99,7 @@ export const test = base.extend({
       largeSidebar,
       iconCongestion,
       dmLabels,
+      dmMembers,
       agentPeers,
       tallMessages,
       membershipActivity,
@@ -166,19 +175,45 @@ export const test = base.extend({
     );
     // Kind 0 by author for keys a test creates; served on later profile reads.
     const servedProfiles = new Map();
+    const ownerAgentKey = lifecycleOwnerAgent ? generateSecretKey() : undefined;
+    const ownerAgent = ownerAgentKey ? getPublicKey(ownerAgentKey) : undefined;
+    const ownerAgentProfile = ownerAgentKey
+      ? sign(
+          0,
+          [
+            [
+              "auth",
+              viewer,
+              "",
+              bytesToHex(
+                schnorr.sign(
+                  createHash("sha256")
+                    .update(`nostr:agent-auth:${ownerAgent}:`)
+                    .digest(),
+                  userKey,
+                ),
+              ),
+            ],
+          ],
+          JSON.stringify({ name: "Owner Agent", is_agent: true }),
+          ownerAgentKey,
+        )
+      : undefined;
     const participants = largeSidebar
       ? Array.from({ length: 1001 }, (_, i) =>
           (i + 1).toString(16).padStart(64, "0"),
         )
       : peerKeys.map(getPublicKey);
-    const dmIds = largeSidebar
-      ? Array.from(
-          { length: 128 },
-          (_, i) => `dm-${i.toString().padStart(3, "0")}`,
-        )
-      : dmLabels
-        ? ["dm-peer", "dm-group"]
-        : [];
+    const dmIds = Object.keys(dmMembers).length
+      ? Object.keys(dmMembers)
+      : largeSidebar
+        ? Array.from(
+            { length: 128 },
+            (_, i) => `dm-${i.toString().padStart(3, "0")}`,
+          )
+        : dmLabels
+          ? ["dm-peer", "dm-group"]
+          : [];
     const personalChannel = "11111111-1111-4111-8111-111111111111";
     const sortingIds = sortingSidebar ? ["cedar", "maple", "willow"] : [];
     const renamedChannels = new Map();
@@ -428,7 +463,9 @@ export const test = base.extend({
       );
     }
     if (sidebarUnread) {
-      for (const id of ["dm-030", "dm-090"])
+      for (const id of Object.keys(dmMembers).length
+        ? Object.keys(dmMembers)
+        : ["dm-030", "dm-090"])
         histories.set(`primary/${id}`, [
           sign(9, [["h", id]], `Unread in ${id}`, peerKey, 1700000900),
         ]);
@@ -654,7 +691,15 @@ export const test = base.extend({
         return [sign(13534, [["member", viewer, "member"]])];
       }
       if (filter.kinds?.includes(30617) || filter.kinds?.includes(30621)) {
-        expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
+        if ("#buzz-channel" in filter) {
+          // A channel's project-home read: one kind per filter, one channel.
+          expect([[30617], [30621]]).toContainEqual(filter.kinds);
+          expect(filter).toEqual({
+            kinds: filter.kinds,
+            "#buzz-channel": [expect.any(String)],
+            limit: 100,
+          });
+        } else expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
         return [];
       }
       if (personalSidebar && filter.ids)
@@ -688,6 +733,14 @@ export const test = base.extend({
               ),
             ]
           : [];
+      if (filter.kinds?.includes(13534)) {
+        expect(filter).toEqual({
+          authors: [getPublicKey(relayKey)],
+          kinds: [13534],
+          limit: 1,
+        });
+        return [sign(13534, [["member", viewer, "owner"]], "", relayKey)];
+      }
       if (filter.kinds?.includes(39001))
         return rosterIds
           .filter((id) => !filter["#d"] || filter["#d"].includes(id))
@@ -697,8 +750,11 @@ export const test = base.extend({
               [
                 ["d", id],
                 ...(lifecycleRows.some((row) => row.id === id) &&
-                lifecycleRole === "owner"
-                  ? [["p", viewer, "owner"]]
+                ["owner", "admin"].includes(lifecycleRole)
+                  ? [["p", viewer, lifecycleRole]]
+                  : []),
+                ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
+                  ? [["p", ownerAgent, "owner"]]
                   : []),
               ],
               "",
@@ -720,18 +776,33 @@ export const test = base.extend({
                   ? lifecycleRole
                   : "member",
               ],
-              ...(agentPeers && channels.includes(id)
-                ? participants.map((pubkey) => ["p", pubkey, "", "member"])
-                : dmLabels && id === "dm-peer"
-                  ? [["p", participants[0], "", "member"]]
-                  : dmLabels && id === "dm-group"
-                    ? participants.map((pubkey) => ["p", pubkey, "", "member"])
-                    : participants
-                        .slice(
-                          dmIds.indexOf(id) * 8,
-                          (dmIds.indexOf(id) + 1) * 8,
-                        )
-                        .map((pubkey) => ["p", pubkey, "", "member"])),
+              ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
+                ? [["p", ownerAgent, "", "owner"]]
+                : []),
+              ...(dmMembers[id]
+                ? dmMembers[id].map((index) => [
+                    "p",
+                    participants[index],
+                    "",
+                    "member",
+                  ])
+                : agentPeers && channels.includes(id)
+                  ? participants.map((pubkey) => ["p", pubkey, "", "member"])
+                  : dmLabels && id === "dm-peer"
+                    ? [["p", participants[0], "", "member"]]
+                    : dmLabels && id === "dm-group"
+                      ? participants.map((pubkey) => [
+                          "p",
+                          pubkey,
+                          "",
+                          "member",
+                        ])
+                      : participants
+                          .slice(
+                            dmIds.indexOf(id) * 8,
+                            (dmIds.indexOf(id) + 1) * 8,
+                          )
+                          .map((pubkey) => ["p", pubkey, "", "member"])),
             ]),
           );
       if (filter.kinds?.includes(39000))
@@ -869,10 +940,15 @@ export const test = base.extend({
       }
       if (filter.kinds?.includes(0))
         return [
-          profiles.get(community),
           ...[...servedProfiles.values()].filter((event) =>
             filter.authors?.includes(event.pubkey),
           ),
+          ...(ownerAgentProfile && filter.authors?.includes(ownerAgent)
+            ? [ownerAgentProfile]
+            : []),
+          ...(filter.authors?.includes(viewer)
+            ? [profiles.get(community)]
+            : []),
           ...membershipKeys
             .filter((key) => filter.authors?.includes(getPublicKey(key)))
             .map((key) =>
@@ -1225,23 +1301,19 @@ export const test = base.extend({
                 },
               }
             : {}),
-          ...(readState || savedSidebar
-            ? {
-                ...(readState
-                  ? {
-                      discovery: (community) => ({
-                        self: getPublicKey(relayKey),
-                        read_state_snapshot: {
-                          version: 1,
-                          community_id: communityIds[community],
-                          max_events: 4096,
-                          max_bytes: 8388608,
-                        },
-                      }),
-                    }
-                  : {}),
-              }
-            : {}),
+          discovery: (community) => ({
+            self: getPublicKey(relayKey),
+            ...(readState
+              ? {
+                  read_state_snapshot: {
+                    version: 1,
+                    community_id: communityIds[community],
+                    max_events: 4096,
+                    max_bytes: 8388608,
+                  },
+                }
+              : {}),
+          }),
         })
       : undefined;
     const middleware = async (request, response, next) => {
@@ -1268,12 +1340,22 @@ export const test = base.extend({
           request.method === "GET"
         )
           return send(response, { policy: null });
+        if (route === "invite" && request.method === "POST")
+          return send(response, {
+            code: "fixture",
+            url: `${JSON.parse(fixtureAliases)[community]}/invite/fixture`,
+            expires_at: 1700003600,
+            max_uses: body.max_uses ?? null,
+            uses_remaining: body.max_uses ?? null,
+          });
         if (route === "session") {
           report.sessions.push(community);
           return send(response, {
             viewer,
             relayAuthor: getPublicKey(relayKey),
-            writeKinds: sessionChannels.length ? [9, 9007, 30315] : [9, 30315],
+            writeKinds:
+              sessionWriteKinds ??
+              (sessionChannels.length ? [9, 9007, 30315] : [9, 30315]),
             relayUrl: JSON.parse(fixtureAliases)[community],
             live: true,
           });
@@ -1297,6 +1379,14 @@ export const test = base.extend({
           )
         ) {
           const owner = streamOwners.get(body.streamId);
+          // Reload may retire the SSE owner after a control was dispatched.
+          // Match the broker for that exact known stream; unknown IDs still fail.
+          if (!owner && retiredStreams.has(body.streamId))
+            return send(
+              response,
+              { error: "Live stream no longer available" },
+              404,
+            );
           expect(owner?.community).toBe(community);
           if (route === "stream-interests") {
             expect(body.interestRevision).toBeGreaterThan(
@@ -1348,6 +1438,7 @@ export const test = base.extend({
             clearInterval(heartbeat);
             clients.delete(owner);
             streamOwners.delete(streamId);
+            retiredStreams.add(streamId);
           });
           return;
         }
@@ -1459,7 +1550,7 @@ export const test = base.extend({
                   communityAliases: fixtureAliases,
                   identity: () => userKey.slice(),
                   agentLibrary: () => ({ definitions: [], identities: [] }),
-                  ...(readState
+                  ...(readState || channelLifecycle
                     ? {}
                     : {
                         authority: async () => ({
@@ -1544,6 +1635,10 @@ export const test = base.extend({
       );
       await use({
         sign: (template) => finalizeEvent(template, userKey),
+        membershipSnapshot(role) {
+          expect(["owner", "admin", "member"]).toContain(role);
+          return sign(13534, [["member", viewer, role]], "", relayKey);
+        },
         origin,
         report,
         watchPageErrors(other) {

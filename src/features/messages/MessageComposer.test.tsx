@@ -5,7 +5,7 @@ import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
 import { bindNames } from "../identity-names/service";
 import { createAgentDirectory } from "../identity-names/testing";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
@@ -42,11 +42,22 @@ import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji
 import type { ComposerInputElement } from "./composer-dom";
 import { profileTarget } from "../profiles/target";
 import { setRememberAgentsPreference } from "./mention-preferences";
+import { ResourcePicker } from "../../bundled/projects/ResourcePicker";
+import { entityHref } from "../projects/routes";
+import type { Entity } from "../projects/destinations";
 
 composerDOMFixture();
 
 const first = { pubkey: "a".repeat(64), name: "Honey" };
 const second = { pubkey: "b".repeat(64), name: "Honey" };
+const resourceOwner = "c".repeat(64);
+const resourceRoute = {
+  type: "issue",
+  owner: resourceOwner,
+  dtag: "game",
+  id: "d".repeat(64),
+} as const;
+const resource = { uri: entityHref(resourceRoute), label: "Fix login" };
 
 beforeEach(() => {
   localStorage.clear();
@@ -465,6 +476,22 @@ it("autofocuses each selected conversation once without stealing focus on update
   }
 });
 
+it("does not take focus from a modal when the conversation mounts behind it", () => {
+  const dialog = document.createElement("div");
+  dialog.setAttribute("role", "dialog");
+  dialog.setAttribute("aria-modal", "true");
+  const search = document.createElement("input");
+  dialog.append(search);
+  document.body.append(dialog);
+  try {
+    search.focus();
+    mount({ autoFocus: true });
+    expect(search).toHaveFocus();
+  } finally {
+    dialog.remove();
+  }
+});
+
 it("restores the draft end through StrictMode replay without resetting a deliberate selection on updates", () => {
   writeView("scope", "draft:channel", "Saved draft");
   const h = mount({ autoFocus: true });
@@ -683,6 +710,123 @@ it("sends channel messages and thread replies through real form and keyboard eve
   expect(h.messages.send).toHaveBeenCalledTimes(1);
   expect(h.onSend.mock.calls).toEqual([["channel-id"], ["reply-id"]]);
   expect(h.input()).toHaveValue("");
+});
+
+it("opens a code block as ``` is typed without waiting for Enter, then sends the fenced block", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "```");
+  expect(h.input().querySelector("pre > code")).not.toBeNull();
+  expect(h.input()).toHaveValue("");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  await h.user.keyboard("const answer = 42;{Shift>}{Enter}{/Shift}answer");
+  expect(h.input()).toHaveValue("const answer = 42;\nanswer");
+  await h.user.keyboard("{Enter}");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "```\nconst answer = 42;\nanswer\n```",
+    [],
+    [],
+  );
+  expect(h.input()).toHaveValue("");
+  expect(h.input().querySelector("pre")).toBeNull();
+});
+
+it("opens a bullet as `- ` is typed, continues it with Shift+Enter and sends the list on Enter", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "- first");
+  expect(h.input().querySelector("ul > li")).toHaveTextContent("first");
+  expect(h.input()).toHaveValue("first");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}second{Enter}");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "- first\n- second",
+    [],
+    [],
+  );
+  expect(h.input()).toHaveValue("");
+  expect(h.input().querySelector("ul")).toBeNull();
+});
+
+it("sends a pasted fenced block verbatim on Enter instead of opening a block from its closing fence", async () => {
+  const h = mount();
+  act(() => {
+    h.input().focus();
+    fireEvent.paste(h.input(), {
+      clipboardData: {
+        items: [],
+        getData: (type: string) =>
+          type === "text/plain" ? "```\ncode\n```" : "",
+      },
+    });
+  });
+  expect(h.input()).toHaveValue("```\ncode\n```");
+  await h.user.keyboard("{Enter}");
+  expect(h.input().querySelector("pre")).toBeNull();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "```\ncode\n```",
+    [],
+    [],
+  );
+  expect(h.input()).toHaveValue("");
+});
+
+it("keeps a composed message unchanged through caret keys at its end and refuses a Right Arrow committed as text in either form", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "```");
+  expect(h.input().querySelector("pre")).not.toBeNull();
+  await h.user.keyboard(
+    "Hello!{Shift>}{Enter}{Enter}{/Shift}acascac{Shift>}{Enter}{/Shift}a**a** _a_{Shift>}{Enter}{/Shift}- acacs{Shift>}{Enter}{Enter}{/Shift}",
+  );
+  expect(h.input().querySelector("pre code")).toHaveTextContent("Hello!");
+  expect(h.input().querySelector("strong")).toHaveTextContent("a");
+  expect(h.input().querySelector("em")).toHaveTextContent("a");
+  expect(h.input().querySelector("ul > li")).toHaveTextContent("acacs");
+  expect(h.input()).toHaveValue("Hello!\nacascac\naa a\nacacs\n");
+  const html = h.input().innerHTML;
+  for (let i = 0; i < 11; i++) await h.user.keyboard("{ArrowRight}");
+  for (const key of [
+    "ArrowLeft",
+    "ArrowUp",
+    "ArrowDown",
+    "Shift",
+    "Meta",
+    "Escape",
+  ])
+    await h.user.keyboard(`{${key}}`);
+  // jsdom does not model Home and End on a contenteditable element.
+  for (const key of ["Home", "End"]) {
+    fireEvent.keyDown(h.input(), { key, code: key });
+    fireEvent.keyUp(h.input(), { key, code: key });
+  }
+  expect(h.input()).toHaveValue("Hello!\nacascac\naa a\nacacs\n");
+  expect(h.input().innerHTML).toBe(html);
+  expect(h.messages.send).not.toHaveBeenCalled();
+  // The desktop build committed Right Arrow's raw keyboard-layout translation
+  // U+001D; AppKit's function-key character for the key is U+F703. Neither
+  // has a glyph, so each assertion names its form rather than the character.
+  for (const [label, character] of [
+    ["Right Arrow's layout translation U+001D", "\u001D"],
+    ["Right Arrow's function-key character U+F703", "\uF703"],
+  ] as const) {
+    let prevented = false;
+    act(() => {
+      h.input().focus();
+      prevented = !h.input().dispatchEvent(
+        new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertText",
+          data: character,
+        }),
+      );
+    });
+    expect(prevented, label).toBe(true);
+    expect(h.input(), label).toHaveValue("Hello!\nacascac\naa a\nacacs\n");
+    expect(h.input().innerHTML, label).toBe(html);
+    expect(h.messages.send, label).not.toHaveBeenCalled();
+  }
 });
 
 it("prefixes thread replies with the selected media time and clears it after send", async () => {
@@ -1190,12 +1334,14 @@ it("revokes captured tool commands after retargeting, disabling and unmounting",
   act(() => {
     expect(channel.insertText("stale")).toBe(false);
     expect(channel.insertMention(first)).toBe(false);
+    expect(channel.insertResource(resource)).not.toBe(true);
   });
   expect(h.input()).toHaveValue("");
   const thread = h.commands();
   h.retarget({ disabled: true });
   act(() => {
     expect(thread.insertText("disabled")).toBe(false);
+    expect(thread.insertResource(resource)).not.toBe(true);
   });
   h.retarget({ disabled: false });
   act(() => {
@@ -2240,6 +2386,27 @@ it.each(["bullet_list", "ordered_list", "code_block"] as const)(
   },
 );
 
+it("saves an edited fenced message on Enter instead of opening a block from its closing fence", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage({ content: "```js\ncode\n```" })]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveValue("```js\ncode\n```");
+  act(() => {
+    h.input().setSelectionRange(10, 10);
+    h.input().insertText("!");
+    const end = h.input().value.length;
+    h.input().setSelectionRange(end, end);
+  });
+  fireEvent.keyDown(h.input(), { key: "Enter", keyCode: 13 });
+  expect(h.input().querySelector("pre")).toBeNull();
+  expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
+    "c".repeat(64),
+    "```js\ncode!\n```",
+    "c".repeat(64),
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
 it("saves only once, locks until delivery, and restores the new-message composer on acceptance", () => {
   const h = mount({}, undefined, first.pubkey);
   const row = editableMessage();
@@ -2904,4 +3071,312 @@ it("rejects a known archived recipient at send entry without clearing the draft"
       "A selected recipient is archived. Remove it before sending.",
     ),
   ).toBeVisible();
+});
+
+it("sends a resource between mentions and keeps both after a failed send", () => {
+  const h = mount();
+  act(() => {
+    const { insertMention, insertResource } = h.commands();
+    expect(insertMention(first)).toBe(true);
+    expect(insertResource(resource)).toBe(true);
+    expect(insertMention(second)).toBe(true);
+  });
+  h.messages.send.mockImplementationOnce(() => {
+    throw new Error("outbox full");
+  });
+  h.submit();
+  expect(h.input()).toHaveTextContent("Resource: Fix login");
+  h.submit();
+  expect(h.messages.send.mock.calls.at(-1)?.slice(1, 3)).toEqual([
+    `@Honey [Fix login](${resource.uri}) @Honey `,
+    [first.pubkey, second.pubkey],
+  ]);
+});
+
+describe("project resource picker", () => {
+  const empty: readonly never[] = [];
+  const repository = {
+    type: "repo",
+    owner: resourceOwner,
+    dtag: "game",
+    address: `30617:${resourceOwner}:game`,
+    name: "Game repo",
+    description: "",
+    event: {} as never,
+  } satisfies Entity;
+  const project = {
+    ...repository,
+    type: "project",
+    dtag: "proj",
+    address: `30621:${resourceOwner}:proj`,
+    name: "Proj",
+  } satisfies Entity;
+  const item = {
+    id: resourceRoute.id,
+    kind: 1621,
+    pubkey: resourceOwner,
+    created_at: 5,
+    content: "Fix login",
+    tags: [
+      ["a", repository.address],
+      ["subject", "Fix login"],
+    ],
+  };
+  const row = /^Fix login, Issue in Game repo$/;
+  function picker(
+    home: () => Promise<unknown> = () =>
+      Promise.resolve({ status: "home", project }),
+  ) {
+    const h = mount({ extensions: undefined });
+    let release: (() => void) | undefined;
+    let fail: (() => void) | undefined;
+    const validations: AbortSignal[] = [];
+    const load = vi.fn(
+      (route: { type: string; tab?: string }, signal: AbortSignal) => {
+        if (route.type === "project")
+          return Promise.resolve({
+            items: route.tab === "prs" ? [] : [item],
+            repositories: [repository],
+            truncated: route.tab === "prs",
+          });
+        validations.push(signal);
+        return new Promise((resolve, reject) => {
+          release = () => resolve({});
+          fail = () => reject(new Error("offline"));
+        });
+      },
+    );
+    const homes = vi.fn(home);
+    Object.assign(h.session as object, { projects: { home: homes, load } });
+    const tools: readonly Contribution<ComposerTool>[] = [
+      {
+        id: "resources",
+        key: "projects/resources",
+        pluginId: "projects",
+        revision: "1",
+        title: "Issues and pull requests",
+        component: ResourcePicker,
+      },
+    ];
+    h.retarget({
+      extensions: {
+        tools: { snapshot: () => tools, subscribe: () => () => {} },
+        inline: { snapshot: () => empty, subscribe: () => () => {} },
+        completions: { snapshot: () => empty, subscribe: () => () => {} },
+      },
+    });
+    return {
+      h,
+      homes,
+      validations,
+      release: async () => {
+        await act(async () => {
+          release?.();
+        });
+      },
+      fail: async () => {
+        await act(async () => {
+          fail?.();
+        });
+      },
+      async open() {
+        const trigger = await screen.findByRole("button", {
+          name: "Add issue or pull request",
+        });
+        await waitFor(() => expect(trigger).not.toBeDisabled());
+        await h.user.click(trigger);
+        return trigger;
+      },
+    };
+  }
+
+  it("validates the chosen row, inserts it, closes and leaves focus in the draft", async () => {
+    const p = picker();
+    await p.open();
+    expect(
+      await screen.findByText(/Some issues or pull requests may be missing/),
+    ).toBeVisible();
+    const choice = await screen.findByRole("button", { name: row });
+    expect(choice).toHaveTextContent("Issue · Game repo");
+    // Keyboard: ArrowDown moves from search to the row; Enter in search chooses it.
+    await p.h.user.keyboard("{ArrowDown}");
+    expect(choice).toHaveFocus();
+    await p.h.user.click(screen.getByRole("searchbox"));
+    await p.h.user.keyboard("{Enter}");
+    expect(p.validations).toHaveLength(1);
+    expect(choice).toHaveTextContent("Checking…");
+    await p.release();
+    expect(screen.queryByRole("button", { name: row })).toBeNull();
+    expect(p.h.input()).toHaveTextContent("Resource: Fix login");
+    expect(p.h.input()).toHaveFocus();
+    p.h.submit();
+    expect(p.h.messages.send.mock.calls[0]?.[1]).toBe(
+      `[Fix login](${resource.uri}) `,
+    );
+  });
+
+  it("keeps focus in the popover while a clicked row is checked", async () => {
+    const p = picker();
+    await p.open();
+    await p.h.user.click(await screen.findByRole("button", { name: row }));
+    expect(screen.getByRole("button", { name: row })).toBeDisabled();
+    expect(screen.getByRole("searchbox")).toHaveFocus();
+    expect(screen.getByText("Checking the chosen item…")).toHaveAttribute(
+      "role",
+      "status",
+    );
+    await p.fail();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not check this item",
+    );
+    expect(screen.getByRole("searchbox")).toHaveFocus();
+    expect(screen.queryByText("Checking the chosen item…")).toBeNull();
+  });
+
+  it("keeps a rejected insertion in the popover with the host reason", async () => {
+    const p = picker();
+    p.h.fill("`ab`");
+    p.h.input().setSelectionRange(2, 2);
+    await p.open();
+    await p.h.user.click(await screen.findByRole("button", { name: row }));
+    await p.release();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Links can't be added inside code or other Markdown here",
+    );
+    expect(screen.getByRole("button", { name: row })).toBeVisible();
+    expect(p.h.input()).toHaveValue("`ab`");
+  });
+
+  it("drops a pending choice when the composer is disabled and re-enabled", async () => {
+    const p = picker();
+    await p.open();
+    await p.h.user.click(await screen.findByRole("button", { name: row }));
+    p.h.retarget({ disabled: true });
+    p.h.retarget({ disabled: false });
+    expect(p.validations[0]?.aborted).toBe(true);
+    expect(screen.queryByRole("button", { name: row })).toBeNull();
+    await p.release();
+    expect(p.h.input()).toHaveValue("");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("drops a pending choice on send instead of landing it in the next draft", async () => {
+    const p = picker();
+    p.h.fill("first message");
+    await p.open();
+    await p.h.user.click(await screen.findByRole("button", { name: row }));
+    await p.h.user.click(screen.getByRole("button", { name: /^Send/ }));
+    expect(p.h.messages.send.mock.calls[0]?.[1]).toBe("first message");
+    expect(p.validations[0]?.aborted).toBe(true);
+    await p.release();
+    expect(p.h.input()).toHaveValue("");
+    expect(screen.queryByRole("button", { name: row })).toBeNull();
+  });
+
+  it("hides only for no project, and explains ambiguity or failure with a retry", async () => {
+    const none = picker(() => Promise.resolve({ status: "none" }));
+    await waitFor(() => expect(none.homes).toHaveBeenCalled());
+    await act(async () => {});
+    expect(
+      screen.queryByRole("button", { name: "Add issue or pull request" }),
+    ).toBeNull();
+    cleanup();
+    let resolveHome: ((value: unknown) => void) | undefined;
+    const ambiguous = picker(() =>
+      resolveHome
+        ? new Promise((resolve) => {
+            resolveHome = resolve;
+          })
+        : Promise.resolve({ status: "ambiguous" }),
+    );
+    await ambiguous.open();
+    expect(
+      await screen.findByText(/belongs to more than one project/),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: row })).toBeNull();
+    // Ambiguity is recoverable: once the conflict is resolved, retry rereads.
+    resolveHome = () => {};
+    await ambiguous.h.user.click(
+      screen.getByRole("button", { name: "Retry project" }),
+    );
+    expect(await screen.findByText("Loading project…")).toBeInTheDocument();
+    await act(async () => {
+      resolveHome?.({ status: "home", project });
+    });
+    expect(await screen.findByRole("button", { name: row })).toBeVisible();
+    expect(screen.queryByText(/belongs to more than one project/)).toBeNull();
+    cleanup();
+    const failed = picker(() => Promise.reject(new Error("offline")));
+    await failed.open();
+    const retry = await screen.findByRole("button", { name: "Retry project" });
+    const reads = failed.homes.mock.calls.length;
+    await failed.h.user.click(retry);
+    await waitFor(() =>
+      expect(failed.homes.mock.calls.length).toBeGreaterThan(reads),
+    );
+  });
+});
+
+it("keeps a composed message unchanged through caret keys at its end and refuses a Right Arrow committed as text in either form", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "Hello!");
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}world");
+  expect(h.input()).toHaveValue("Hello!\nworld");
+  const html = h.input().innerHTML;
+  for (let i = 0; i < 3; i++) await h.user.keyboard("{ArrowRight}");
+  for (const key of [
+    "ArrowLeft",
+    "ArrowUp",
+    "ArrowDown",
+    "Shift",
+    "Meta",
+    "Escape",
+  ])
+    await h.user.keyboard(`{${key}}`);
+  // jsdom does not model Home and End on a contenteditable element.
+  for (const key of ["Home", "End"]) {
+    fireEvent.keyDown(h.input(), { key, code: key });
+    fireEvent.keyUp(h.input(), { key, code: key });
+  }
+  expect(h.input()).toHaveValue("Hello!\nworld");
+  expect(h.input().innerHTML).toBe(html);
+  expect(h.messages.send).not.toHaveBeenCalled();
+  // The desktop build committed Right Arrow's raw keyboard-layout translation
+  // U+001D; AppKit's function-key character for the key is U+F703. Neither
+  // has a glyph, so each assertion names its form rather than the character.
+  for (const [label, character] of [
+    ["Right Arrow's layout translation U+001D", "\u001D"],
+    ["Right Arrow's function-key character U+F703", "\uF703"],
+  ] as const) {
+    let prevented = false;
+    act(() => {
+      h.input().focus();
+      prevented = !h.input().dispatchEvent(
+        new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertText",
+          data: character,
+        }),
+      );
+    });
+    expect(prevented, label).toBe(true);
+    expect(h.input(), label).toHaveValue("Hello!\nworld");
+    expect(h.input().innerHTML, label).toBe(html);
+  }
+  // The keydown such a press arrives as: `key` is the control character while
+  // `code` and the legacy key code still name Right Arrow. It is claimed before
+  // the native path can type it, and neither sends nor edits the message.
+  let prevented = false;
+  act(() => {
+    prevented = !fireEvent.keyDown(h.input(), {
+      key: "\u001D",
+      code: "ArrowRight",
+      keyCode: 39,
+    });
+  });
+  expect(prevented).toBe(true);
+  expect(h.input()).toHaveValue("Hello!\nworld");
+  expect(h.input().innerHTML).toBe(html);
+  expect(h.messages.send).not.toHaveBeenCalled();
 });

@@ -1,18 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Input } from "../../shared/design-system/ui/Input";
 import {
   ChannelLifecycleUnconfirmed,
   type ChannelLifecycleCapability,
 } from "../../features/relay/channel-lifecycle";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
-import styles from "./ChannelLifecycleDialog.module.css";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
 
 const copy = {
   archive: {
     title: "Archive channel",
     detail:
-      "Archive this channel for everyone and remove it from the sidebar. Messages are retained. A channel administrator can unarchive it from another supported client.",
+      "Archive this channel for everyone and remove it from the sidebar. Messages are kept. A channel administrator can unarchive it later using another supported client; this app cannot restore it yet.",
   },
   delete: {
     title: "Delete channel",
@@ -46,25 +45,18 @@ export function ChannelLifecycleDialog({
   close(): void;
   completed(): void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
+  const cancel = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [refreshRequired, setRefreshRequired] = useState(false);
-  const [confirmation, setConfirmation] = useState("");
   const operation = useRef<AbortController | undefined>(undefined);
   useEffect(() => {
-    dialog.current?.showModal();
     return () => {
       operation.current?.abort();
     };
   }, []);
   const submit = async () => {
-    if (
-      operation.current ||
-      refreshRequired ||
-      (action === "delete" && confirmation !== channelName)
-    )
-      return;
+    if (operation.current || refreshRequired) return;
     const controller = new AbortController();
     operation.current = controller;
     setBusy(true);
@@ -83,61 +75,40 @@ export function ChannelLifecycleDialog({
     }
   };
   return (
-    <dialog
-      ref={dialog}
-      data-buzz-ui=""
-      className={styles.dialog}
-      aria-labelledby="channel-lifecycle-title"
-      aria-describedby="channel-lifecycle-description"
-      onKeyDown={(event) => {
-        // Keep the navigation disclosure open; native cancel still owns Escape.
-        if (event.key === "Escape") event.stopPropagation();
+    <Dialog
+      open
+      dismissOnOutsideClick
+      preventClose={busy}
+      initialFocus={cancel}
+      // The sidebar owns both cancellation and completed-navigation focus.
+      finalFocus={false}
+      onOpenChange={(open) => {
+        if (!open) close();
       }}
-      onCancel={(event) => {
-        event.preventDefault();
-        if (!busy) close();
-      }}
+      title={`${copy[action].title}: ${channelName}`}
+      description={copy[action].detail}
+      actions={
+        <>
+          <Button ref={cancel} type="button" disabled={busy} onClick={close}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant={action === "delete" ? "destructive" : "prominent"}
+            disabled={busy || refreshRequired}
+            onClick={() => void submit()}
+          >
+            {copy[action].title}
+          </Button>
+        </>
+      }
     >
-      <h2 id="channel-lifecycle-title">
-        {copy[action].title}: {channelName}
-      </h2>
-      <p id="channel-lifecycle-description">{copy[action].detail}</p>
-      {action === "delete" && (
-        <label htmlFor="channel-lifecycle-confirmation">
-          Type {channelName} to confirm
-          <Input
-            id="channel-lifecycle-confirmation"
-            aria-label="Channel name confirmation"
-            value={confirmation}
-            disabled={busy}
-            onChange={(event) => setConfirmation(event.target.value)}
-            autoComplete="off"
-          />
-        </label>
-      )}
       {error && <p role="alert">{error}</p>}
       {busy && (
         <p role="status">
           Checking permissions and waiting for relay confirmation…
         </p>
       )}
-      <div className={styles.actions}>
-        <Button type="button" disabled={busy} onClick={close}>
-          Cancel
-        </Button>
-        <Button
-          type="button"
-          variant="destructive"
-          disabled={
-            busy ||
-            refreshRequired ||
-            (action === "delete" && confirmation !== channelName)
-          }
-          onClick={() => void submit()}
-        >
-          {copy[action].title}
-        </Button>
-      </div>
-    </dialog>
+    </Dialog>
   );
 }

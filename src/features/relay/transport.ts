@@ -4,7 +4,8 @@ import {
   type MemoryListing,
 } from "../agents/memory";
 import { publicationRefusal } from "../developer/traffic";
-import { brokerUpload, type AttachmentUpload } from "./attachments";
+import { avatarSource } from "../../shared/avatar-source";
+import { brokerUpload, hostUpload, type AttachmentUpload } from "./attachments";
 import type { ChannelKitHost } from "../channel-templates/host";
 import type { KitRecord } from "../channel-templates/model";
 import { workflowHost } from "../workflows/http";
@@ -85,6 +86,7 @@ export interface ReadTransport {
   readonly channelLifecycle?: RelayWriter;
   /** Name/about/private-only metadata writer, separate from lifecycle and outbox. */
   readonly channelDetails?: RelayWriter;
+  readonly memberAdministration?: RelayWriter;
   /** Narrow NIP-IA 9035/9036 signer/publisher; never supplied to the message outbox. */
   readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
@@ -156,6 +158,7 @@ export function mediaUrl(
   relayOrigin: string | undefined,
   size?: "small",
 ): string | undefined {
+  if (url.startsWith("data:")) return avatarSource(url);
   if (url.startsWith(`${relayOrigin}/media/`)) {
     const media =
       size === "small"
@@ -170,6 +173,10 @@ export interface Signer {
   signEvent(event: EventTemplate): Promise<VerifiedEvent>;
   /** Native hosts authenticate and send exact bytes without exposing credentials to JS. */
   request?(url: string, body: string, signal?: AbortSignal): Promise<Response>;
+  /** Native hosts sign and send `PUT /upload` for these exact bytes. */
+  upload?(file: File, signal: AbortSignal): Promise<Response>;
+  /** Native hosts serve relay `/media/` URLs through an authenticated proxy. */
+  media?(url: string): string;
 }
 
 /** The host's explicit HTTP base wins; otherwise translate the ws(s) relay URL's scheme. */
@@ -369,6 +376,7 @@ export async function connectBrokerTransport(
     directMessages?: boolean;
     channelLifecycle?: boolean;
     channelDetails?: boolean;
+    memberAdministration?: boolean;
     identityArchives?: boolean;
     relayUrl?: string;
     relayHttpUrl?: string;
@@ -818,6 +826,9 @@ export async function connectBrokerTransport(
     ...(session.channelDetails === true
       ? { channelDetails: routeWriter("channel-details") }
       : {}),
+    ...(session.memberAdministration === true
+      ? { memberAdministration: routeWriter("member-administration") }
+      : {}),
     ...(session.channelLifecycle === true
       ? { channelLifecycle: routeWriter("channel-lifecycle") }
       : {}),
@@ -976,6 +987,32 @@ const hex = (buffer: ArrayBuffer) =>
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 const signedAdmissions = createHostAdmission();
+/** A native purpose-bound read shares signed HTTP capacity and server cooldowns. */
+export function admittedSignedWorkflowRead(
+  origin: string,
+  viewer: string,
+  request: () => Promise<Response>,
+  signal: AbortSignal,
+): Promise<Response> {
+  const lane = signedAdmissions(relayOrigin(origin), viewer).api;
+  return lane.prepare(() =>
+    admitSignedRequest(origin, viewer, request, signal),
+  );
+}
+
+export const admitSignedRequest = (
+  origin: string,
+  viewer: string,
+  request: () => Promise<Response>,
+  signal?: AbortSignal,
+  priority: "foreground" | "background" = "foreground",
+) =>
+  admittedApiRequest(
+    signedAdmissions(relayOrigin(origin), viewer).api,
+    request,
+    signal,
+    priority,
+  );
 /** NIP-98 signed reads for a host that owns a signer (Tauri, NIP-07). Reads and writes use the same identity and relay scope. */
 export async function connectSignedTransport(
   signer: Signer,
@@ -988,8 +1025,10 @@ export async function connectSignedTransport(
   const profiling = createRelayProfiler();
   const verify = createEventVerifier();
   const presence = presenceObservation();
+  const upload = signer.upload?.bind(signer);
   return {
     profiling,
+    ...(upload ? { uploadAttachment: hostUpload(upload, httpOrigin) } : {}),
     observePresence: presence.observe,
     async presenceSnapshot(authors, signal) {
       const filters = [{ kinds: [20001], authors, limit: authors.length }];
@@ -1067,7 +1106,8 @@ export async function connectSignedTransport(
     relayHttpUrl: httpOrigin,
     viewer,
     relayAuthor,
-    media: (url, size) => mediaUrl(url, undefined, httpOrigin, size),
+    media: (url, size) =>
+      mediaUrl(url, signer.media?.bind(signer), httpOrigin, size),
     writer: {
       sign: (event) => signer.signEvent(event),
       async publish(event, signal) {
@@ -1193,8 +1233,15 @@ async function signedPost(
   });
 }
 /** A transport failure is an unknown outcome; only a definitive rejection is a failed write. */
-async function acceptPublish(response: Response, id: string) {
+export async function acceptPublish(response: Response, id: string) {
   if (!response.ok) {
+    // The relay answers 409 only for a compare-and-set refusal before mutation,
+    // and the broker relays the socket's equivalent the same way. The fixed
+    // prefix tells the writer to reload and reconcile rather than retry.
+    if (response.status === 409)
+      throw new PublishRejected(
+        "conflict: the relay state changed; reload before writing again",
+      );
     if ([400, 401, 403, 404, 413, 422].includes(response.status))
       throw new PublishRejected(
         `Relay rejected the message (${response.status})`,

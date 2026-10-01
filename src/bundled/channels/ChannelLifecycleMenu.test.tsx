@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -223,12 +224,6 @@ it("keeps the unavailable section separated without loading permissions", async 
   expect(lifecycle.load).not.toHaveBeenCalled();
 });
 it("confirmation, pending lockout and failed-write recovery stay in the actual dialog", async () => {
-  // jsdom does not implement top-layer focus; that contract is covered in browsers.
-  HTMLDialogElement.prototype.showModal = vi.fn(function (
-    this: HTMLDialogElement,
-  ) {
-    this.setAttribute("open", "");
-  });
   const user = userEvent.setup();
   const lifecycle = capability();
   const completed = vi.fn();
@@ -252,11 +247,18 @@ it("confirmation, pending lockout and failed-write recovery stay in the actual d
   const confirm = screen.getByRole("button", {
     name: "Delete channel",
   }) as HTMLButtonElement;
-  expect(confirm.disabled).toBe(true);
-  await user.type(
-    screen.getByRole("textbox", { name: "Channel name confirmation" }),
-    "Fixture",
-  );
+  expect(confirm.getAttribute("data-variant")).toBe("destructive");
+  expect(confirm.disabled).toBe(false);
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(
+    screen.getByRole("dialog", { name: "Delete channel: Fixture" }),
+  ).toBeDefined();
+  expect(
+    screen.getByText(
+      "Delete this channel for everyone. You cannot undo this action from Buzz.",
+    ),
+  ).toBeDefined();
+  expect(lifecycle.run).not.toHaveBeenCalled();
   await user.click(confirm);
   await waitFor(() => expect(lifecycle.run).toHaveBeenCalledOnce());
   expect(confirm.disabled).toBe(true);
@@ -264,7 +266,15 @@ it("confirmation, pending lockout and failed-write recovery stay in the actual d
     (screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement)
       .disabled,
   ).toBe(true);
-  gate.resolve();
+  try {
+    await user.click(
+      document.querySelector(".buzz-dialog-backdrop") as Element,
+    );
+    await user.keyboard("{Escape}");
+    expect(close).not.toHaveBeenCalled();
+  } finally {
+    gate.resolve();
+  }
   expect((await screen.findByRole("alert")).textContent).toBe("relay rejected");
   expect(completed).not.toHaveBeenCalled();
   expect(confirm.disabled).toBe(false);
@@ -275,11 +285,6 @@ it("confirmation, pending lockout and failed-write recovery stay in the actual d
 it.each(["leave", "hide", "archive"] as const)(
   "%s requires confirmation and ignores completion after unmount",
   async (action) => {
-    HTMLDialogElement.prototype.showModal = vi.fn(function (
-      this: HTMLDialogElement,
-    ) {
-      this.setAttribute("open", "");
-    });
     const lifecycle = capability();
     const gate = deferred<void>();
     lifecycle.run.mockImplementationOnce(() => gate.promise);
@@ -301,7 +306,16 @@ it.each(["leave", "hide", "archive"] as const)(
       hide: "Hide conversation",
       archive: "Archive channel",
     }[action];
-    await user.click(screen.getByRole("button", { name: label }));
+    const confirm = screen.getByRole("button", { name: label });
+    expect(confirm.getAttribute("data-variant")).toBe("prominent");
+    if (action === "archive") {
+      expect(
+        screen.getByText(
+          "Archive this channel for everyone and remove it from the sidebar. Messages are kept. A channel administrator can unarchive it later using another supported client; this app cannot restore it yet.",
+        ),
+      ).toBeDefined();
+    }
+    await user.click(confirm);
     expect(lifecycle.run).toHaveBeenCalledWith(
       action,
       "id",
@@ -316,11 +330,6 @@ it.each(["leave", "hide", "archive"] as const)(
   },
 );
 it("uncertain delivery keeps the dialog recoverable without offering blind resubmission", async () => {
-  HTMLDialogElement.prototype.showModal = vi.fn(function (
-    this: HTMLDialogElement,
-  ) {
-    this.setAttribute("open", "");
-  });
   const lifecycle = capability();
   lifecycle.run.mockRejectedValueOnce(
     new ChannelLifecycleUnconfirmed("connection lost"),
@@ -349,3 +358,98 @@ it("uncertain delivery keeps the dialog recoverable without offering blind resub
   expect(close).toHaveBeenCalledOnce();
   expect(lifecycle.run).toHaveBeenCalledOnce();
 });
+
+it.each([true, false])(
+  "Delete outage preserves sidebar Archive=%s and Leave, then retries",
+  async (canArchive) => {
+    const lifecycle = capability(),
+      choose = vi.fn();
+    lifecycle.load.mockResolvedValueOnce({
+      ...settings,
+      canArchive,
+      canLeave: true,
+      canDelete: false,
+      deleteUnavailable: true,
+    });
+    render(
+      <ContextMenuRoot open>
+        <MenuPopup>
+          <ChannelLifecycleMenu
+            channelId="id"
+            lifecycle={lifecycle}
+            choose={choose}
+            disabled={false}
+            separator
+          />
+        </MenuPopup>
+      </ContextMenuRoot>,
+    );
+    expect(
+      await screen.findByRole("menuitem", {
+        name: "Delete check unavailable",
+      }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("menuitem", { name: "Leave channel" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
+    expect(!!screen.queryByRole("menuitem", { name: "Archive channel" })).toBe(
+      canArchive,
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: "Delete channel" }),
+    ).toBeNull();
+    lifecycle.load.mockResolvedValue({
+      ...settings,
+      canArchive,
+      canLeave: true,
+    });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("menuitem", { name: "Retry Delete check" }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Delete channel" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByText("Delete check unavailable")).toBeNull();
+    expect(choose).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["backdrop", "escape", "close", "cancel"])(
+  "lifecycle %s dismissal cancels without executing and starts on Cancel",
+  async (dismissal) => {
+    const user = userEvent.setup();
+    const lifecycle = capability();
+    const close = vi.fn();
+    const completed = vi.fn();
+    render(
+      <ChannelLifecycleDialog
+        channelId="id"
+        channelName="Fixture"
+        action="delete"
+        lifecycle={lifecycle}
+        close={close}
+        completed={completed}
+      />,
+    );
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    await waitFor(() => expect(document.activeElement).toBe(cancel));
+    await user.click(
+      screen.getByRole("heading", { name: "Delete channel: Fixture" }),
+    );
+    expect(close).not.toHaveBeenCalled();
+    if (dismissal === "backdrop")
+      await user.click(
+        document.querySelector(".buzz-dialog-backdrop") as Element,
+      );
+    else if (dismissal === "escape") await user.keyboard("{Escape}");
+    else
+      await user.click(
+        screen.getByRole("button", {
+          name: dismissal === "close" ? "Close" : "Cancel",
+        }),
+      );
+    expect(close).toHaveBeenCalledOnce();
+    expect(lifecycle.run).not.toHaveBeenCalled();
+    expect(completed).not.toHaveBeenCalled();
+  },
+);

@@ -27,6 +27,11 @@ export type Page = Readonly<{
   }>;
   /** This page acknowledges its own domain reveal rather than just successful mounting. */
   handlesNavigation?: boolean;
+  /**
+   * Opt in to a row in the shell's page navigation. Every active page stays
+   * listed in search and reachable by deep link or from another page.
+   */
+  primary?: boolean;
 }>;
 export type RegisteredPage = Contribution<Page>;
 export type PagesReader = {
@@ -59,7 +64,8 @@ export class PagesService extends Service implements Pages {
       (page.layout !== undefined &&
         page.layout !== "document" &&
         page.layout !== "workspace") ||
-      (page.companion !== undefined && typeof page.companion !== "boolean")
+      (page.companion !== undefined && typeof page.companion !== "boolean") ||
+      (page.primary !== undefined && typeof page.primary !== "boolean")
     ) {
       throw new Error(
         "A page needs an id, a title, and a React component function",

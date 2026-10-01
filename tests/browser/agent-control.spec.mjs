@@ -330,6 +330,9 @@ for (const previouslyStopped of [false, true]) {
     });
     await server.listen();
     try {
+      // Install before the five-second status poll exists; paused below at a
+      // fixed instant beyond this test's timeout, never runner "now".
+      await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
       await page.goto(
         `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
       );
@@ -350,6 +353,9 @@ for (const previouslyStopped of [false, true]) {
         .fill("wss://chosen.example");
       await panel.getByRole("button", { name: "Load agents" }).click();
       await openEditor(page);
+      // Pending here: the status poll, the card's bounded refresh and Vite's
+      // HMR ping. Each ticks once at this instant against the still-healthy host.
+      await page.clock.pauseAt(new Date("2026-01-01T00:30:00Z"));
       await page.evaluate(() => {
         const fixture = window.agentControlFixture;
         const { snapshot, action } = fixture.host;
@@ -395,6 +401,9 @@ for (const previouslyStopped of [false, true]) {
           (call) => call.action !== "snapshot",
         ),
       );
+      // From here only explicit actions may read or write: a poll tick would
+      // replace the failed Stop's guidance, or recover before the explicit retry.
+      await page.clock.pauseAt(new Date("2026-01-01T01:00:00Z"));
       await stop.click();
       await expect(page.getByRole("alert")).toContainText(
         "could not persist disabled settings",
@@ -441,6 +450,8 @@ for (const previouslyStopped of [false, true]) {
         ...before,
         { action: "stop", payload: { id: "fixture-agent" } },
       ]);
+      await page.clock.runFor(5000);
+      await expect(page.getByRole("alert")).toContainText("Could not refresh");
       // Repairing the host does not implicitly retry. A second explicit Stop can recover.
       await page.evaluate(() => window.agentControlFixture.restoreStore());
       await stop.click();

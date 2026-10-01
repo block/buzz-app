@@ -35,6 +35,7 @@ export function AgentCard({
   avatar,
   identities,
   session,
+  media,
   editable = [],
   onEdit,
   onViewProfile,
@@ -42,19 +43,25 @@ export function AgentCard({
   onDelete,
   children,
   identityLabel = (identity) => identity.name,
+  layout = "tile",
+  headingLevel = 3,
 }: {
   children?: ReactNode;
   identityLabel?: (identity: { pubkey: string; name: string }) => string;
+  layout?: "tile" | "row";
+  headingLevel?: 3 | 4;
   name: string;
   avatar?: string | undefined;
   identities: AgentLibrary["identities"];
   session?: RelaySession;
+  media?: RelaySession["media"] | undefined;
   editable?: AgentView[];
   onEdit?: ((agent: AgentView, avatar?: string) => void) | undefined;
   onViewProfile?: ((trigger: HTMLButtonElement) => void) | undefined;
   onDuplicate?: ((agent: AgentView) => void) | undefined;
   onDelete?: ((agent: AgentView) => void) | undefined;
 }) {
+  const Heading = headingLevel === 4 ? "h4" : "h3";
   const trigger = useRef<HTMLButtonElement>(null);
   const presence = usePresenceStatus(
     session?.presence,
@@ -96,12 +103,12 @@ export function AgentCard({
       : source?.startsWith("data:")
         ? source
         : source
-          ? session?.media(source, "small")
+          ? (media ?? session?.media)?.(source, "small")
           : undefined;
   return (
     <article
       aria-label={`Agent ${name}`}
-      className={`relative flex min-w-0 flex-col gap-4 rounded-2xl border border-primary ${children ? "p-4" : "px-4 py-8"}`}
+      className={`relative min-w-0 ${layout === "row" ? "agent-inventory-row" : `flex flex-col gap-4 rounded-2xl border border-primary ${children ? "p-4" : "px-4 py-8"}`}`}
     >
       {(onEdit || onViewProfile) && (
         <div className="absolute right-2 top-2">
@@ -219,17 +226,28 @@ export function AgentCard({
             alt={name}
             fallback={name}
             src={picture ?? null}
-            size={children ? "large" : "fill"}
+            size={layout === "row" ? "default" : children ? "large" : "fill"}
             shape="squircle"
             statusBadge={presence === "unknown" ? undefined : presence}
           />
         </div>
-        <h3 className="m-0 min-w-0 max-w-full truncate text-label" title={name}>
+        <Heading
+          className="m-0 min-w-0 max-w-full truncate text-label"
+          title={name}
+        >
           {name}
-        </h3>
+        </Heading>
       </div>
       {children && (
-        <div className="flex min-w-0 flex-col gap-3">{children}</div>
+        <div
+          className={
+            layout === "row"
+              ? `flex min-w-0 flex-wrap items-center gap-2 ${onEdit ? "pr-8" : ""}`
+              : "flex min-w-0 flex-col gap-3"
+          }
+        >
+          {children}
+        </div>
       )}
       {identities.length && !children ? (
         <div className="-mt-3 flex justify-center">

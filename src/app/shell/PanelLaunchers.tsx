@@ -13,12 +13,12 @@ export function PanelLaunchers({
   launch(panel: RegisteredPanel, trigger: HTMLButtonElement): void;
 }) {
   return panels
-    .filter((panel) => panel.launcher)
+    .filter((panel) => panel.launcher && panel.pluginId !== "buzz.bestie")
     .map((panel) => (
       <IconButton
         type="button"
         key={`${panel.key}:${panel.revision}`}
-        variant="chrome"
+        variant="ghost"
         shape="round"
         aria-label={panel.title}
         title={panel.title}
@@ -36,12 +36,12 @@ export function PanelLaunchers({
 function LauncherIcon({ src }: { src: string }) {
   const [failed, setFailed] = useState(false);
   return failed ? (
-    <SidebarIcon size={18} aria-hidden="true" />
+    <SidebarIcon size={16} aria-hidden="true" />
   ) : (
     <img
       src={src}
       alt=""
-      className="size-4 object-contain"
+      className="object-contain"
       onError={() => setFailed(true)}
     />
   );

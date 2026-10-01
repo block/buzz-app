@@ -1,4 +1,5 @@
 import { UnifiedInventory } from "./UnifiedInventory";
+import type { CommunityReader } from "../../features/communities/service";
 import { useIdentityNames } from "../../features/identity-names/react";
 import {
   useEffect,
@@ -39,6 +40,7 @@ import { PanelFrame } from "../../features/panels/PanelFrame";
 const noPanels = Object.freeze([]) as readonly RegisteredPanel[];
 const noPanelSnapshot = () => noPanels;
 const noPanelSubscribe = () => () => {};
+const noCommunities = { subscribe: () => () => {}, snapshot: () => undefined };
 
 export function AgentsPage({
   relay,
@@ -48,10 +50,12 @@ export function AgentsPage({
   panels,
   companion,
   companionOpening,
+  communities,
 }: PageProps & {
   relay: RelayData;
   control?: AgentControl;
   panels?: Panels;
+  communities?: CommunityReader;
   open?: (
     target: OpenTarget,
     options?: { replace?: boolean },
@@ -166,6 +170,12 @@ export function AgentsPage({
     )
       request.complete({ status: "failed", reason: "unavailable" });
   }, [request, target, editTarget, control, connection.status]);
+  const reader = communities ?? noCommunities;
+  const client = useSyncExternalStore(
+    reader.subscribe,
+    reader.snapshot,
+    reader.snapshot,
+  );
   let importDestination = "";
   if (
     connection.viewer &&
@@ -282,6 +292,7 @@ export function AgentsPage({
                           importedId={importedId}
                           control={control}
                           connection={connection}
+                          client={client}
                           resolveProfile={resolveProfile}
                           profileKeys={
                             new Set(
@@ -355,7 +366,7 @@ function ManagedAgents({
   destination: string;
   resolveProfile: ProfileResolver;
   headerActions: HTMLElement | null;
-  onUseHere(pubkey: string): void;
+  onUseHere(pubkey: string, action: "use" | "clone"): void;
 }) {
   const library = connection.session.agentLibrary;
   const snapshot = useSyncExternalStore(

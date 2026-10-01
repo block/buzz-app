@@ -32,7 +32,7 @@
   background: var(--affordance-panel-hover);
 }
 .row[data-selected]::before {
-  background: var(--affordance-selected);
+  background: var(--interaction-selected);
 }
 .row .select [data-buzz-ui][data-variant="row"] {
   background: transparent;
@@ -47,6 +47,9 @@
   padding-inline: var(--space-2)
     calc(var(--channel-row-fill-end, 0%) + var(--space-1) + var(--space-half));
 }
+.row .select [data-variant="row"]:has([data-channel-working]) {
+  padding-inline-end: calc(var(--channel-row-fill-end, 0%) + var(--space-1));
+}
 .select [class~="navigation-item-label"],
 .sessions [class~="navigation-item-label"] {
   text-overflow: clip;
@@ -55,9 +58,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
+  width: 1.25rem;
   height: var(--space-6);
-  flex: 0 0 20px;
+  flex: 0 0 1.25rem;
 }
 .iconSpace[data-dm-cue] {
   margin-inline-end: var(--space-half);
@@ -78,6 +81,10 @@
   align-items: center;
   padding-inline-end: var(--space-1);
   gap: var(--space-2);
+}
+.badges:has([data-channel-working]) {
+  padding-block: var(--space-1);
+  padding-inline-end: 0;
 }
 .nameContent {
   --user-status-emoji-size: var(--sidenav-emoji-size);
@@ -105,7 +112,7 @@
   max-width: 100%;
   flex: 0 1 auto;
 }
-.row:has([data-channel-unread], [data-channel-activity]) .label {
+.row:has([data-channel-ordinary="true"]) .label {
   color: var(--text-navigation-unread);
   font-weight: var(--type-weight-semibold);
 }
@@ -115,7 +122,7 @@
 }
 .row .disclosure {
   position: absolute;
-  left: calc(var(--space-2) - ((var(--space-6) - 15px) / 2) - 1.5px);
+  left: calc(var(--space-2) - ((var(--space-6) - 0.9375rem) / 2) - 1.5px);
   z-index: 2;
 }
 .hashIcon {

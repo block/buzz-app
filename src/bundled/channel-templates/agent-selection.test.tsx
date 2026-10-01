@@ -7,7 +7,7 @@ import type { SidebarPreferences } from "../../features/relay/sidebar-preference
 import {
   act,
   cleanup,
-  render,
+  render as rtlRender,
   screen,
   waitFor,
   within,
@@ -44,10 +44,14 @@ import type {
 import type { Contribution } from "../../plugins/contributions";
 import { CreateChannelDialog } from "../channels/CreateChannelDialog";
 import { TemplateEditor } from "./TemplateEditor";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { SaveAsTemplate } from "./TemplateSettings";
 import { MentionPicker } from "../mentions/MentionPicker";
 import { MentionCompletion } from "../mentions/MentionCompletion";
 import type { CompletionResult } from "../../features/conversation/contracts";
+
+const render = (ui: Parameters<typeof rtlRender>[0]) =>
+  rtlRender(ui, { wrapper: ToastProvider });
 
 beforeEach(() => {
   localStorage.clear();
@@ -515,7 +519,7 @@ it("copies a complete managed lineup without an unused legacy warning", async ()
     );
     expect(
       await screen.findByRole("checkbox", {
-        name: `Calvin ${formatPublicKey(test.fixture.agent.pubkey)}`,
+        name: `Calvin Agent · ${formatPublicKey(test.fixture.agent.pubkey)}`,
       }),
     ).toBeChecked();
     expect(
@@ -693,7 +697,7 @@ it("copies the saved Canvas and eligible member keys without silently creating a
     ).toHaveValue("# Saved plan");
     expect(
       screen.getByRole("checkbox", {
-        name: `Calvin ${formatPublicKey(test.fixture.agent.pubkey)}`,
+        name: `Calvin Agent · ${formatPublicKey(test.fixture.agent.pubkey)}`,
       }),
     ).toBeChecked();
     expect(
@@ -919,18 +923,23 @@ it("shows an avatar, searchable npub and removable unavailable keys without rend
     />,
   );
   const row = screen
-    .getByRole("checkbox", { name: `Calvin ${formatPublicKey(key)}` })
+    .getByRole("checkbox", { name: `Calvin Agent · ${formatPublicKey(key)}` })
     .closest("label");
   assert.exists(row);
   expect(row.querySelector("img")).toHaveAttribute("src", avatar);
-  expect(screen.getByTitle(npubEncode(key))).toHaveTextContent(
-    formatPublicKey(key) ?? "",
-  );
+  expect(row).toHaveTextContent(formatPublicKey(key) ?? "");
+  const user = userEvent.setup();
+  await user.hover(row);
+  const preview = await screen.findByRole("dialog", {
+    name: "Calvin identity",
+  });
+  expect(preview).toHaveTextContent(npubEncode(key));
+  await user.unhover(row);
   expect(document.body.textContent).not.toContain(key);
   expect(document.body.textContent).not.toContain(missing);
   await userEvent.click(
     screen.getByRole("checkbox", {
-      name: `Unavailable agent ${formatPublicKey(missing)}`,
+      name: `Unavailable agent Agent · ${formatPublicKey(missing)}`,
     }),
   );
   expect(change).toHaveBeenCalledWith([]);
@@ -1207,8 +1216,9 @@ it.each([
                 },
               }}
               sessionsEnabled
-              agentsEnabled
-            />
+            >
+              {null}
+            </ChannelSidebar>
           </ChannelNavigationProvider>
         </ToastProvider>,
       );
@@ -1449,7 +1459,7 @@ it("settings offers only the managed namesake and saves its exact key; creation 
       await screen.findByRole("button", { name: "Save as template…" }),
     );
     const checkbox = await screen.findByRole("checkbox", {
-      name: `Calvin ${formatPublicKey(test.fixture.agent.pubkey)}`,
+      name: `Calvin Agent · ${formatPublicKey(test.fixture.agent.pubkey)}`,
     });
     expect(screen.getAllByRole("checkbox")).toHaveLength(1);
     expect(checkbox).toBeChecked();
@@ -1666,3 +1676,88 @@ it.each([
     }
   },
 );
+
+beforeEach(() => {
+  // jsdom hides [popover] but has no native top layer. Browser tests own paint.
+  HTMLElement.prototype.showPopover = function () {
+    this.style.display = "block";
+  };
+});
+afterEach(() => {
+  Reflect.deleteProperty(HTMLElement.prototype, "showPopover");
+});
+
+it("template replacement dismisses only its confirmation and preserves setup until accepted", async () => {
+  const user = userEvent.setup();
+  const test = harness(async () => ({ definitions: [], identities: [] }));
+  test.setRecord(savedTemplate([]));
+  const chosen = vi.fn();
+  const close = vi.fn();
+  render(
+    <Dialog
+      open
+      onOpenChange={close}
+      title="Create a channel"
+      dismissOnOutsideClick
+    >
+      <Editor
+        test={test}
+        initial={{
+          templateId: "",
+          lineup: { ...emptyLineup(), canvas: "Unsaved plan" },
+          agents: [],
+        }}
+        chosen={chosen}
+      />
+    </Dialog>,
+  );
+  try {
+    await waitFor(() =>
+      expect(test.owner.session.channelKit.snapshot().status).toBe("ready"),
+    );
+    const template = screen.getByRole("combobox", { name: "Template" });
+    for (const dismissal of ["backdrop", "escape", "close", "cancel"]) {
+      await chooseSaved();
+      const confirmation = screen.getByRole("dialog", {
+        name: "Replace channel setup?",
+      });
+      await waitFor(() =>
+        expect(
+          within(confirmation).getByRole("button", { name: "Cancel" }),
+        ).toHaveFocus(),
+      );
+      if (dismissal === "backdrop")
+        await user.click(
+          confirmation.parentElement?.querySelector(
+            ".buzz-dialog-backdrop",
+          ) as Element,
+        );
+      else if (dismissal === "escape") await user.keyboard("{Escape}");
+      else
+        await user.click(
+          within(confirmation).getByRole("button", {
+            name: dismissal === "close" ? "Close" : "Cancel",
+          }),
+        );
+      await waitFor(() => expect(confirmation).not.toBeInTheDocument());
+      // jsdom lacks focus({ preventScroll }) detection; browser coverage checks pointer return.
+      if (dismissal !== "backdrop")
+        await waitFor(() => expect(template).toHaveFocus());
+      expect(template).toHaveTextContent("None — blank channel");
+      expect(chosen).not.toHaveBeenCalled();
+      expect(close).not.toHaveBeenCalled();
+    }
+    await chooseSaved();
+    await user.click(screen.getByRole("button", { name: "Replace setup" }));
+    expect(chosen).toHaveBeenCalledExactlyOnceWith({
+      templateId: "saved",
+      lineup: { ...emptyLineup(), canvas: "# Plan" },
+      agents: [],
+      problem: undefined,
+    });
+    expect(close).not.toHaveBeenCalled();
+    expect(test.published).toEqual([]);
+  } finally {
+    test.dispose();
+  }
+});

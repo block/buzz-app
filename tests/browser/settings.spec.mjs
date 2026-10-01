@@ -1,3 +1,4 @@
+import { settleShellToggle } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
@@ -54,7 +55,7 @@ test("Settings replaces the channel sidenav and Back restores the prior view", a
   await expect(communityRail).toBeVisible();
 });
 
-test("short narrow Settings keeps full plugin rows usable at 200% text size", async ({
+test("short narrow Settings keeps full plugin rows usable at 200% interface size", async ({
   page,
   app,
 }, testInfo) => {
@@ -133,6 +134,84 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   await expect(channelsSidebar).toBeVisible();
 });
 
+test.describe("community administration permissions", () => {
+  test("shows Membership to a verified owner", async ({ page, app }) => {
+    let rosterGate;
+    let rosterStarted = () => {};
+    await page.route("**/api/relay/primary/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      if (filters.some((filter) => filter.kinds?.includes(13534))) {
+        rosterStarted();
+        await rosterGate;
+        return route.fulfill({ json: [app.membershipSnapshot("owner")] });
+      }
+      return route.continue();
+    });
+    await page.goto(app.origin);
+    await button(page, "Your profile").click();
+    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    const sections = page.getByRole("navigation", {
+      name: "Settings sections",
+    });
+    await expect(sections).toContainText("Administration");
+    // The account menu finishes its focus handoff before testing section focus.
+    await expect(page.getByRole("main")).toBeFocused();
+    const membership = sections.getByRole("button", {
+      name: "Membership",
+      exact: true,
+    });
+    await membership.focus();
+    await membership.press("Enter");
+    await expect(membership).toBeFocused();
+    await expect(
+      page.getByRole("heading", { name: "Membership", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Invite members" }).click();
+    const dialog = page.getByRole("dialog", { name: "Add or invite people" });
+    await expect(
+      dialog.getByRole("heading", { name: "Add directly" }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("heading", { name: "Invite with a link" }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("textbox", { name: "Public identity" }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("combobox", { name: /Search people/ }),
+    ).toHaveCount(0);
+
+    // Keep browser history/reload, real roster verification, and host wiring real.
+    // A held response proves this route cannot fall through to Profile or failure.
+    await page.keyboard.press("Escape");
+    let releaseRoster;
+    rosterGate = new Promise((resolve) => {
+      releaseRoster = resolve;
+    });
+    const started = new Promise((resolve) => {
+      rosterStarted = resolve;
+    });
+    try {
+      await page.reload();
+      await started;
+      await expect(
+        page.getByText("Opening destination…", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("This destination couldn’t open", { exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        sections.getByRole("button", { name: "Membership", exact: true }),
+      ).toHaveCount(0);
+    } finally {
+      releaseRoster();
+    }
+    await expect(
+      page.getByRole("heading", { name: "Membership", exact: true }),
+    ).toBeVisible();
+  });
+});
+
 // Only this journey requires a confirmed Online badge/radio. Keep unrelated
 // Settings fixtures on their existing synthetic broker.
 const confirmedPresence = test.extend({ productionBroker: true });
@@ -145,6 +224,12 @@ confirmedPresence(
       page.keyboard.press(
         `${browserName === "webkit" && process.platform === "darwin" ? "Alt+" : ""}${backwards ? "Shift+" : ""}Tab`,
       );
+    await page.route("**/api/relay/primary/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      if (filters.some((filter) => filter.kinds?.includes(13534)))
+        return route.fulfill({ json: [app.membershipSnapshot("member")] });
+      return route.continue();
+    });
     await page.goto(app.origin);
     const avatar = button(page, "Your profile");
     const account = page.getByRole("menu", {
@@ -152,6 +237,10 @@ confirmedPresence(
     });
     const settings = account.getByRole("menuitem", {
       name: "Settings",
+      exact: true,
+    });
+    const viewProfile = account.getByRole("menuitem", {
+      name: "View your profile",
       exact: true,
     });
     const statusEntry = account.getByRole("menuitem", {
@@ -206,21 +295,23 @@ confirmedPresence(
       // Click the lower content area, genuinely outside the popup.
       const main = page.getByRole("main");
       const bounds = await main.boundingBox();
-      await main.click({ position: { x: 5, y: bounds.height - 5 } });
+      await main.click({ position: { x: 24, y: bounds.height - 5 } });
       await expect(account).toBeHidden();
       await avatar.focus();
       await page.keyboard.press("Enter");
-      await expect(availability).toBeFocused();
+      await expect(viewProfile).toBeFocused();
       await page.keyboard.press("End");
       await expect(settings).toBeFocused();
       await page.keyboard.press("Home");
+      await expect(viewProfile).toBeFocused();
+      await page.keyboard.press("ArrowDown");
       await expect(statusEntry).toBeFocused();
       await page.keyboard.press("ArrowDown");
       await expect(feedback).toBeFocused();
       await page.keyboard.press("ArrowDown");
       await expect(settings).toBeFocused();
       await page.keyboard.press("Home");
-      await expect(statusEntry).toBeFocused();
+      await expect(viewProfile).toBeFocused();
       await tab(true);
       await expect(account).toBeHidden();
       await expect(avatar).toBeFocused();
@@ -230,7 +321,7 @@ confirmedPresence(
     await page.setViewportSize({ width: 1280, height: 844 });
     await avatar.focus();
     await page.keyboard.press("Enter");
-    await expect(availability).toBeFocused();
+    await expect(viewProfile).toBeFocused();
     await page.keyboard.press("End");
     await expect(settings).toBeFocused();
     await page.keyboard.press("Enter");
@@ -240,6 +331,9 @@ confirmedPresence(
       name: "Settings sidebar",
       includeHidden: true,
     });
+    // The toggle keeps the 390 px label until the resize's media-query change
+    // renders; guard only once it reads the 1280 px one.
+    await settleShellToggle(page);
     if (await button(page, "Show navigation").isVisible())
       await button(page, "Show navigation").click();
     await expect(settingsSidebar).toBeVisible();
@@ -262,10 +356,6 @@ confirmedPresence(
     });
     const hostedCommunities = sections.getByRole("button", {
       name: "Hosted communities",
-      exact: true,
-    });
-    const invites = sections.getByRole("button", {
-      name: "Invites",
       exact: true,
     });
     const plugins = sections.getByRole("button", {
@@ -310,8 +400,14 @@ confirmedPresence(
     await profile.click();
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
-      if (await button(page, "Show navigation").isVisible())
+      // The narrow toggle appears only after the resize's media-query change renders.
+      if (width === 390) {
         await button(page, "Show navigation").click();
+        // A mis-toggle fails here, at the toggle, not at the sidebar below.
+        await expect(
+          page.locator("[data-shell-sidebar-toggle]"),
+        ).toHaveAccessibleName("Hide navigation");
+      }
       await expect(settingsSidebar).toBeVisible();
       await profile.focus();
       await tab();
@@ -320,8 +416,6 @@ confirmedPresence(
       await expect(customEmoji).toBeFocused();
       await tab();
       await expect(hostedCommunities).toBeFocused();
-      await tab();
-      await expect(invites).toBeFocused();
       await tab();
       await expect(
         sections.getByRole("button", { name: "Appearance", exact: true }),
@@ -345,7 +439,11 @@ confirmedPresence(
         "background-color",
         "rgb(255, 255, 255)",
       );
-      await expect(settingsRegion).toHaveCSS("border-radius", "24px");
+      await expect(settingsRegion).toHaveCSS("border-radius", "0px");
+      await expect(page.locator(".shell-body > [data-joined]")).toHaveCSS(
+        "border-radius",
+        "24px",
+      );
       const frame = await settingsRegion.boundingBox();
       expect(frame.height).toBeGreaterThan(700);
       if (width === 1280) {
@@ -355,7 +453,7 @@ confirmedPresence(
         expect(navigation).not.toBeNull();
         expect(content).not.toBeNull();
         expect(navigation.x + navigation.width).toBeLessThan(content.x);
-        expect(content.y - frame.y).toBe(25);
+        expect(content.y - frame.y).toBe(24);
       } else {
         await expect(settingsSidebar).toBeHidden();
         expect(
@@ -385,8 +483,6 @@ confirmedPresence(
       await tab();
       await expect(hostedCommunities).toBeFocused();
       await tab();
-      await expect(invites).toBeFocused();
-      await tab();
       await expect(
         sections.getByRole("button", { name: "Appearance", exact: true }),
       ).toBeFocused();
@@ -402,6 +498,10 @@ confirmedPresence(
       await expect(agents).toBeFocused();
       await tab();
       await expect(plugins).toBeFocused();
+      await tab();
+      await expect(
+        sections.getByRole("button", { name: "Updates", exact: true }),
+      ).toBeFocused();
       await tab();
       // The current profile form begins with its avatar editor before text fields.
       await expect(

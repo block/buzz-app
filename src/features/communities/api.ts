@@ -1,6 +1,8 @@
 import { nativeIdentityEnabled } from "../identity/service";
 import { nativeCommunityRequest } from "./native-api";
-import { connectCommunityTransport } from "./connection";
+import { connectCommunityTransport, registerCommunity } from "./connection";
+import { settledRefusal, type SettledRefusal } from "./leave-protocol";
+import { registerBrokerCommunity } from "../relay/transport";
 import type { RelaySession } from "../relay/session";
 import type { PersonalProfile } from "./service";
 export type CommunityInfo = {
@@ -13,19 +15,20 @@ export type CommunityInfo = {
     age_attestation_required: boolean;
   } | null;
 };
-/**
- * Use here needs the destination to confirm the agent with its owner's key.
- * Only the development broker serves that confirmation; the packaged adapter
- * rejects it, so callers must not offer the action there.
- */
-export const agentSetupConfirmationAvailable = () => !nativeIdentityEnabled();
 export async function communityRequest<T>(
   id: string,
   route: string,
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   if (nativeIdentityEnabled())
-    return nativeCommunityRequest(id, route, body) as Promise<T>;
+    return nativeCommunityRequest(id, route, body, signal) as Promise<T>;
+  signal = signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(25000)])
+    : AbortSignal.timeout(25000);
+  // Scoped HTTP reads need broker registration, not an acquired relay session.
+  await registerBrokerCommunity(id, signal);
+  signal.throwIfAborted();
   const response = await fetch(
     `/api/relay/${encodeURIComponent(id)}/${route}`,
     {
@@ -36,7 +39,7 @@ export async function communityRequest<T>(
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
           }),
-      signal: AbortSignal.timeout(25000),
+      signal,
     },
   );
   const result = await response.json();
@@ -95,4 +98,29 @@ export async function publishProfile(
   }>(id, "profile", { ...profile, existing });
   if (!receipt.accepted || !receipt.event_id)
     throw new Error(receipt.message ?? "Profile publication was not confirmed");
+}
+export type LeaveOutcome = "left" | SettledRefusal;
+/** Publishes a NIP-43 leave request to the community's relay by origin, without
+ * acquiring a session. Resolves only once the relay accepts it, answers that
+ * it holds no membership for the viewer, or refuses the viewer as banned (the
+ * membership stays on the relay, but no retry can reach it while the ban
+ * lasts); any other refusal, transport failure or timeout throws and leaves
+ * the membership for the caller to retry. */
+export async function requestLeave(id: string): Promise<LeaveOutcome> {
+  await registerCommunity(id, AbortSignal.timeout(12000));
+  try {
+    const receipt = await communityRequest<{
+      accepted: boolean;
+      event_id: string;
+      message?: string;
+    }>(id, "leave", {});
+    if (!receipt.accepted || !receipt.event_id)
+      throw new Error(receipt.message ?? "The leave request was not confirmed");
+    return "left";
+  } catch (error) {
+    const settled =
+      error instanceof Error ? settledRefusal(error.message) : undefined;
+    if (settled) return settled;
+    throw error;
+  }
 }

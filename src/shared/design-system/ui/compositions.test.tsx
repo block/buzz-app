@@ -365,3 +365,106 @@ test("a nested right dialog renders its own dismissal backdrop", () => {
     document.querySelector('.buzz-dialog-backdrop[data-placement="right"]'),
   ).not.toBeNull();
 });
+
+test("dialog content-owned layout is opt-in and retains the shared body", () => {
+  const props = {
+    open: true,
+    onOpenChange: () => {},
+    title: "Browse",
+    children: <p>Results</p>,
+  };
+  const { rerender } = render(<Dialog {...props} />);
+  expect(screen.getByRole("dialog")).toHaveAttribute(
+    "data-body-layout",
+    "flow",
+  );
+  rerender(<Dialog {...props} height="stable" bodyLayout="flex" />);
+  expect(screen.getByRole("dialog")).toHaveAttribute(
+    "data-body-layout",
+    "flex",
+  );
+  expect(screen.getByText("Results").parentElement).toHaveClass(
+    "buzz-dialog-body",
+  );
+  rerender(<Dialog {...props} />);
+  expect(screen.getByRole("dialog")).toHaveAttribute(
+    "data-body-layout",
+    "flow",
+  );
+});
+
+test("navigation tabs retain keyboard selection and separate close buttons", async () => {
+  const user = userEvent.setup();
+  const close = vi.fn();
+  function Example() {
+    const [value, setValue] = useState("thread");
+    return (
+      <Tabs
+        value={value}
+        onValueChange={setValue}
+        label="Panel tabs"
+        variant="navigation"
+        items={[
+          {
+            value: "thread",
+            label: "Thread",
+            icon: <span aria-hidden="true">T</span>,
+          },
+          { value: "profile", label: "Ada", onClose: close },
+        ]}
+        renderPanel={(tab) => <p>{tab} content</p>}
+      />
+    );
+  }
+  render(<Example />);
+  const thread = screen.getByRole("tab", { name: "Thread" });
+  expect(thread).toHaveClass("navigation-item");
+  expect(thread).not.toHaveAttribute("aria-current", "page");
+  await user.click(thread);
+  await user.keyboard("{ArrowRight}");
+  const profile = screen.getByRole("tab", { name: "Ada" });
+  expect(profile).toHaveFocus();
+  expect(profile).toHaveAttribute("aria-selected", "false");
+  await user.keyboard("{Enter}");
+  expect(profile).toHaveAttribute("aria-selected", "true");
+  expect(profile).toHaveAttribute("data-selected");
+  expect(screen.getByRole("tabpanel")).toHaveAccessibleName("Ada");
+  const dismiss = screen.getByRole("button", { name: "Close Ada tab" });
+  expect(profile).not.toContainElement(dismiss);
+  await user.click(dismiss);
+  expect(close).toHaveBeenCalledOnce();
+  await user.click(profile);
+  await user.keyboard("{Delete}");
+  expect(close).toHaveBeenCalledTimes(2);
+});
+
+test("centered nested pointer-dismissal owns a backdrop and leaves the parent open", async () => {
+  const user = userEvent.setup();
+  const parent = vi.fn();
+  const child = vi.fn();
+  render(
+    <Dialog open title="Editor" onOpenChange={parent} dismissOnOutsideClick>
+      <Dialog open title="Confirm" onOpenChange={child} dismissOnOutsideClick>
+        <Button>Cancel</Button>
+      </Dialog>
+    </Dialog>,
+  );
+  const popup = screen.getByRole("dialog", { name: "Confirm" });
+  const backdrop = popup.parentElement?.querySelector(".buzz-dialog-backdrop");
+  expect(backdrop).toHaveAttribute("data-outside-dismissal", "true");
+  await user.click(backdrop as Element);
+  expect(child).toHaveBeenCalledExactlyOnceWith(false);
+  expect(parent).not.toHaveBeenCalled();
+});
+
+test("outside dismissal remains opt-in", async () => {
+  const user = userEvent.setup();
+  const change = vi.fn();
+  render(
+    <Dialog open title="Editor" onOpenChange={change}>
+      <Button>Save</Button>
+    </Dialog>,
+  );
+  await user.click(document.querySelector(".buzz-dialog-backdrop") as Element);
+  expect(change).not.toHaveBeenCalled();
+});

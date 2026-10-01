@@ -3,16 +3,14 @@ import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
-import { InputGroup } from "../../shared/design-system/ui/InputGroup";
 import { Select } from "../../shared/design-system/ui/Select";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { EyeIcon, EyeSlashIcon } from "../../shared/design-system/icons/index";
 import type {
   AgentControl,
   AgentControlState,
 } from "../../features/agents/control";
 import {
   gooseApiKey,
+  effectiveGooseProvider,
   harnessKind,
   isGoose,
   PI_API_KEYS,
@@ -21,20 +19,50 @@ import {
 import { AgentEnvironmentEditor } from "./AgentEnvironmentEditor";
 import { AgentHarnessEditor } from "./AgentHarnessEditor";
 import { AgentModelPicker } from "./AgentModelPicker";
+import { ProviderApiKeyField } from "./ProviderApiKeyField";
 
-function effectiveGooseProvider(draft: AgentDraft, savedKeys: string[]) {
-  const override = draft.environment.GOOSE_PROVIDER;
+// Draft → Agent defaults → build floor, as native resolves it; null when a
+// saved or global BUZZ_AGENT_PROVIDER override hides the effective value.
+function effectiveBuzzProvider(
+  draft: AgentDraft,
+  savedKeys: string[],
+  data: AgentControlState["data"],
+) {
+  const key = "BUZZ_AGENT_PROVIDER";
+  const override = draft.environment[key];
   if (typeof override === "string") return override;
-  if (override === undefined && savedKeys.includes("GOOSE_PROVIDER"))
+  if (
+    data?.defaultSettings?.environmentKeys.includes(key) ||
+    (override === undefined && savedKeys.includes(key))
+  )
     return null;
-  return draft.provider;
+  const inherited = data?.defaultSettings?.harness === "buzz-agent";
+  return (
+    draft.provider ||
+    (inherited ? data?.defaultSettings?.provider : "") ||
+    data?.agentDefaults?.provider
+  );
 }
 
-function providerApiKey(draft: AgentDraft, savedKeys: string[]) {
+function providerApiKey(
+  draft: AgentDraft,
+  savedKeys: string[],
+  data: AgentControlState["data"],
+) {
   if (draft.command.split("/").at(-1) === "buzz-pi-acp")
     return PI_API_KEYS[draft.provider];
+  if (harnessKind(draft.command) === "buzz-agent")
+    return ["openai", "openai-compat"].includes(
+      effectiveBuzzProvider(draft, savedKeys, data) ?? "",
+    )
+      ? { label: "OpenAI", env: "OPENAI_COMPAT_API_KEY" }
+      : undefined;
   if (!isGoose(draft.command)) return undefined;
-  const provider = effectiveGooseProvider(draft, savedKeys);
+  const provider = effectiveGooseProvider(
+    draft.provider,
+    draft.environment,
+    savedKeys,
+  );
   return provider ? gooseApiKey(provider) : undefined;
 }
 
@@ -63,7 +91,6 @@ export function AgentSettingsFields({
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   const [piProviders, setPiProviders] = useState<string[] | null>([]);
-  const [revealed, setRevealed] = useState<string | null>(null);
   const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
   const goose = isGoose(draft.command);
   const globalKeys = state.data?.defaultSettings?.environmentKeys ?? [];
@@ -80,12 +107,11 @@ export function AgentSettingsFields({
     state.data?.defaultSettings?.harness === harnessKind(draft.command)
       ? state.data?.defaultSettings
       : undefined;
-  // Draft → same-harness Agent default → build floor, as native resolves it.
-  const buzzProvider =
-    draft.environment.BUZZ_AGENT_PROVIDER ??
-    (draft.provider ||
-      inherited?.provider ||
-      state.data?.agentDefaults?.provider);
+  const buzzProvider = effectiveBuzzProvider(
+    draft,
+    environmentKeys,
+    state.data,
+  );
   const modelDefaultKnown =
     (typeof draft.environment.BUZZ_AGENT_PROVIDER === "string" ||
       !overridden("BUZZ_AGENT_PROVIDER")) &&
@@ -94,9 +120,10 @@ export function AgentSettingsFields({
     buzzProvider ?? "",
   );
   const gooseProvider = goose
-    ? effectiveGooseProvider(draft, environmentKeys)
+    ? effectiveGooseProvider(draft.provider, draft.environment, environmentKeys)
     : null;
   const buzzAgent = harnessKind(draft.command) === "buzz-agent";
+  const windows = /Win/i.test(globalThis.navigator?.platform ?? "");
   // An environment selector can override the visible scalar default.
   const [modelKey, providerKey] = buzzAgent
     ? ["BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER"]
@@ -124,20 +151,15 @@ export function AgentSettingsFields({
     host: inheritedKey("DATABRICKS_HOST"),
     filter: inheritedKey("DATABRICKS_MODEL_FILTER"),
   };
-  const apiKey = providerApiKey(draft, environmentKeys);
+  const apiKey = providerApiKey(draft, environmentKeys, state.data);
   const savedKey = !!apiKey && environmentKeys.includes(apiKey.env);
-  // Saved keys are write-only; only a key typed for this provider can be shown.
-  const typedKey = apiKey && draft.environment[apiKey.env] ? apiKey.env : null;
-  // Reveal consent covers one typed key. Clear it during render once that key
-  // is removed or the provider changes, so a replacement starts masked.
-  if (revealed !== null && revealed !== typedKey) setRevealed(null);
-  const revealKey = revealed !== null && revealed === typedKey;
   const change = (patch: Partial<AgentDraft>) => {
     const key = apiKey?.env;
     // A typed key belongs to the provider it was entered for.
     if (
       key &&
-      providerApiKey({ ...draft, ...patch }, environmentKeys)?.env !== key
+      providerApiKey({ ...draft, ...patch }, environmentKeys, state.data)
+        ?.env !== key
     ) {
       const environment = { ...(patch.environment ?? draft.environment) };
       if (typeof environment[key] === "string") {
@@ -182,6 +204,19 @@ export function AgentSettingsFields({
             onOpenHarnesses={onOpenHarnesses}
             discardEdits={discardEdits}
           />
+          {buzzAgent && windows && (
+            <p className="text-body-sm text-secondary">
+              Shell setup not verified. On Windows, the shell tool needs Git
+              Bash from Git for Windows, or a shell set with BUZZ_SHELL under
+              Advanced → Environment. Buzz does not check this before starting.
+            </p>
+          )}
+          {buzzAgent && windows && databricks && (
+            <p role="status" className="text-body-sm text-secondary">
+              Databricks sign-in is not supported on Windows yet. Choose OpenAI
+              for this agent.
+            </p>
+          )}
           {goose && gooseProvider === null && (
             <p role="status" className="text-body-sm text-secondary">
               This agent has a saved GOOSE_PROVIDER override whose value is
@@ -191,57 +226,33 @@ export function AgentSettingsFields({
           )}
           {apiKey && (
             <div className="space-y-2">
-              <Field label={`${apiKey.label} API key`}>
-                <InputGroup
-                  trailing={
-                    typedKey ? (
-                      <IconButton
-                        aria-label={revealKey ? "Hide API key" : "Show API key"}
-                        icon={
-                          revealKey ? (
-                            <EyeSlashIcon size={16} aria-hidden="true" />
-                          ) : (
-                            <EyeIcon size={16} aria-hidden="true" />
-                          )
-                        }
-                        size="sm"
-                        disabled={disabled}
-                        onClick={() => setRevealed(revealKey ? null : typedKey)}
-                      />
-                    ) : undefined
-                  }
-                >
-                  <Input
-                    type={revealKey ? "text" : "password"}
-                    autoComplete="new-password"
-                    spellCheck={false}
-                    disabled={disabled}
-                    value={draft.environment[apiKey.env] ?? ""}
-                    placeholder={
-                      draft.environment[apiKey.env] === null
-                        ? "Will remove on save"
-                        : savedKey
-                          ? "Saved key unchanged"
-                          : pi
-                            ? "Paste API key or use an existing Pi sign-in"
-                            : "Paste API key or use existing Goose credentials"
-                    }
-                    onChange={(event) => {
-                      const environment = { ...draft.environment };
-                      if (event.target.value)
-                        environment[apiKey.env] = event.target.value;
-                      else delete environment[apiKey.env];
-                      change({ environment });
-                    }}
-                  />
-                </InputGroup>
-              </Field>
+              <ProviderApiKeyField
+                key={`${draft.command}-${gooseProvider ?? draft.provider}`}
+                apiKey={apiKey}
+                value={draft.environment[apiKey.env]}
+                saved={savedKey}
+                disabled={disabled}
+                emptyPlaceholder={
+                  buzzAgent
+                    ? "Paste API key"
+                    : pi
+                      ? "Paste API key or use an existing Pi sign-in"
+                      : "Paste API key or use existing Goose credentials"
+                }
+                onChange={(value) => {
+                  const environment = { ...draft.environment };
+                  if (value) environment[apiKey.env] = value;
+                  else delete environment[apiKey.env];
+                  change({ environment });
+                }}
+              />
               <p className="text-body-sm text-secondary">
-                {apiKey.env} is used for this agent and model lookup. Leave
-                blank to keep a saved key, if present, or use{" "}
-                {pi ? "your Pi sign-in" : "Goose credentials"}. Keys exported in
-                your shell profile are not used. Saved keys are stored in this
-                device’s local agent settings files.
+                {apiKey.env}{" "}
+                {buzzAgent
+                  ? "is required for OpenAI. Leave blank to keep a saved key, if present, or use one from Agent defaults."
+                  : `is used for this agent and model lookup. Leave blank to keep a saved key, if present, or use ${pi ? "your Pi sign-in" : "Goose credentials"}.`}{" "}
+                Keys exported in your shell profile are not used. Saved keys are
+                stored in this device’s local agent settings files.
               </p>
             </div>
           )}

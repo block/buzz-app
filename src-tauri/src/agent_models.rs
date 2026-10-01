@@ -59,6 +59,8 @@ pub(crate) struct Catalog {
     models: Vec<Model>,
     model_overridden: bool,
     disconnected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tested_model: Option<String>,
 }
 #[derive(Serialize)]
 struct Model {
@@ -279,15 +281,17 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                 if request.action == Operation::Disconnect {
                     return Err("Pi credentials are managed by Pi".into());
                 }
-                let context = prepared?;
+                let context = crate::pi_models::verify(prepared?).await?.into_context();
                 if request.action == Operation::Test {
                     let harness = &edit.harness;
-                    crate::pi_models::test(context, &harness.provider, &harness.model).await?;
+                    let tested_model =
+                        crate::pi_models::test(context, &harness.provider, &harness.model).await?;
                     return Ok(Catalog {
                         host: String::new(),
                         models: vec![],
                         model_overridden: false,
                         disconnected: false,
+                        tested_model: Some(tested_model),
                     });
                 }
                 let models = crate::pi_models::fetch(context)
@@ -303,6 +307,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                     models,
                     model_overridden: false,
                     disconnected: false,
+                    tested_model: None,
                 })
             })
             .await;
@@ -311,7 +316,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
         std::path::Path::new(&edit.harness.command)
             .file_name()
             .and_then(|name| name.to_str())
-            == Some("goose")
+            .is_some_and(|name| matches!(name.trim_end_matches(".exe"), "goose" | "goose-acp"))
     });
     if goose {
         // Goose's catalog handler may start OAuth on a cache miss. Only an
@@ -335,12 +340,17 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
             .run(ticket, async move {
                 let context = prepared?;
                 if request.action == Operation::Test {
-                    crate::goose_models::test(context).await?;
+                    // Saved environment overrides are write-only. Testing them
+                    // must not return their hidden provider/model values to IPC.
+                    let selection_overridden = context.model_overridden
+                        || context.environment.contains_key("GOOSE_PROVIDER");
+                    let tested_model = crate::goose_models::test(context).await?;
                     return Ok(Catalog {
                         host: String::new(),
                         models: vec![],
                         model_overridden: false,
                         disconnected: false,
+                        tested_model: (!selection_overridden).then_some(tested_model),
                     });
                 }
                 let model_overridden = context.model_overridden;
@@ -357,6 +367,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                     models,
                     model_overridden,
                     disconnected: false,
+                    tested_model: None,
                 })
             })
             .await;
@@ -426,6 +437,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                 models: vec![],
                 model_overridden,
                 disconnected: true,
+                tested_model: None,
             });
         }
         execute(
@@ -499,6 +511,9 @@ impl RuntimeConnection {
         cache: &std::path::Path,
         opener: Arc<dyn BrowserOpener>,
     ) -> Result<Self, String> {
+        if cfg!(windows) {
+            return Err(buzz_agent_controller::connection::DATABRICKS_WINDOWS.into());
+        }
         // Match the pinned runtime's discovery/client/scopes/namespace exactly.
         // Do not call the convenience wrapper: its default opener logs the URL.
         let auth = PkceOAuthTokenSource::new_with(
@@ -603,11 +618,13 @@ async fn execute(
         models,
         model_overridden,
         disconnected: false,
+        tested_model: None,
     })
 }
 
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
+// Windows refuses this OAuth engine: see databricks_oauth_is_unsupported_on_windows.
+#[cfg(all(test, unix))]
 mod bundled_tests;

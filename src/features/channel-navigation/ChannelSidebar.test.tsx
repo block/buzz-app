@@ -17,8 +17,10 @@ import type { SidebarPreferences } from "../relay/sidebar-preferences";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { ChannelList } from "../relay/contracts";
 import type { Navigation } from "../navigation/controller";
+import type { ReactNode } from "react";
 import { ChannelSidebar } from "./ChannelSidebar";
 import { ChannelNavigationProvider } from "./ChannelNavigationState";
+import styles from "../../bundled/channels/Channels.module.css";
 
 const { rowRender, menuRender } = vi.hoisted(() => ({
   rowRender: vi.fn(),
@@ -89,7 +91,7 @@ function fixture(
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
-  const list: ChannelList = {
+  let list: ChannelList = {
     status: "ready",
     channels: ["alpha", "beta", "gamma"].map((id) => ({
       id,
@@ -97,6 +99,7 @@ function fixture(
       channelType: "stream",
     })),
   };
+  const listeners = new Set<() => void>();
   const live = {
     ...owner.session.live.snapshot(),
     roster: { state: "verified" as const },
@@ -105,8 +108,30 @@ function fixture(
     ...owner.session,
     ...(sidebarPreferences ? { sidebarPreferences } : {}),
     live: { ...owner.session.live, snapshot: () => live },
-    channels: { ...owner.session.channels, list: () => list, ensureList() {} },
+    channels: {
+      ...owner.session.channels,
+      list: () => list,
+      ensureList() {},
+      subscribeList(listener: () => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
   };
+  // Like the store: changed summaries are replaced, the rest keep identity.
+  const publish = (
+    id: string,
+    change: Partial<ChannelList["channels"][number]>,
+  ) =>
+    act(() => {
+      list = {
+        ...list,
+        channels: list.channels.map((channel) =>
+          channel.id === id ? { ...channel, ...change } : channel,
+        ),
+      };
+      for (const listener of listeners) listener();
+    });
   const snapshot: RelaySnapshot = {
     status,
     ...(status === "ready"
@@ -123,7 +148,15 @@ function fixture(
     async clearCache() {},
   } satisfies RelayData;
   const navigator = { open: vi.fn() } as unknown as Navigation;
-  const view = (id: string, sessionsEnabled = true) => (
+  const view = (
+    id: string,
+    sessionsEnabled = true,
+    pages: ReactNode = (
+      <nav aria-label="Pages">
+        <button type="button">Projects</button>
+      </nav>
+    ),
+  ) => (
     <ChannelNavigationProvider relay={relay}>
       <ChannelSidebar
         relay={relay}
@@ -136,11 +169,12 @@ function fixture(
           scope: { viewer: "viewer", communityOrigin: "https://relay.test" },
         }}
         sessionsEnabled={sessionsEnabled}
-        agentsEnabled={true}
-      />
+      >
+        {pages}
+      </ChannelSidebar>
     </ChannelNavigationProvider>
   );
-  return { view, navigator, snapshot, list, session };
+  return { view, navigator, snapshot, list, session, publish };
 }
 
 it("does not rebuild unchanged rows on channel switches and refreshes session action eligibility", async () => {
@@ -186,6 +220,31 @@ it("does not rebuild unchanged rows on channel switches and refreshes session ac
   fireEvent.click(screen.getByRole("button", { name: "gamma" }));
   expect(h.navigator.open).toHaveBeenCalledWith(
     expect.objectContaining({ kind: "conversation", channelId: "gamma" }),
+  );
+});
+
+it("rebuilds only the changed row on a list publish and keeps session actions current", async () => {
+  const h = fixture();
+  render(h.view("alpha"));
+  await screen.findByRole("button", { name: "gamma" });
+  const alpha = rowRender.mock.calls
+    .filter(([props]) => props.channel.id === "alpha")
+    .pop()?.[0];
+  rowRender.mockClear();
+  h.publish("beta", { preview: "hello" });
+  expect(rowRender.mock.calls.map(([props]) => props.channel.id)).toEqual([
+    "beta",
+  ]);
+  // The callbacks alpha kept must still see the published list.
+  h.publish("gamma", { readOnly: true });
+  alpha.onNewSession("gamma");
+  expect(h.navigator.open).not.toHaveBeenCalled();
+  alpha.onNewSession("beta");
+  expect(h.navigator.open).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: "page",
+      route: { version: 1, params: { kind: "new-session", parentId: "beta" } },
+    }),
   );
 });
 
@@ -269,37 +328,29 @@ it("explains and disables unavailable move retries, then enables them after pref
   }
 });
 
-it.each(["connecting", "disconnected", "error"] as const)(
-  "explicitly disables Inbox and Bestie while the relay is %s",
+it.each(["ready", "connecting", "error"] as const)(
+  "keeps the supplied page navigation while the relay is %s",
   (status) => {
     const h = fixture(undefined, status);
     render(h.view("alpha"));
-    for (const name of ["Inbox", "Bestie"]) {
-      const button = screen.getByRole("button", { name });
-      expect(button).toBeDisabled();
-      fireEvent.click(button);
-    }
-    expect(h.navigator.open).not.toHaveBeenCalled();
+    const pages = screen.getByRole("navigation", { name: "Pages" });
+    expect(
+      within(pages).getByRole("button", { name: "Projects" }),
+    ).toBeVisible();
+    expect(pages.closest(`.${styles.destinations}`)).not.toBeNull();
   },
 );
 
-it("opens Inbox and Bestie in the ready community", () => {
-  const h = fixture();
-  render(h.view("alpha"));
-  for (const name of ["Inbox", "Bestie"]) {
-    const button = screen.getByRole("button", { name });
-    expect(button).toBeEnabled();
-    fireEvent.click(button);
-    expect(h.navigator.open).toHaveBeenLastCalledWith({
-      version: 1,
-      kind: "page",
-      pluginId: "buzz.channels",
-      pageId: "channels",
-      scope: { viewer: "viewer", communityOrigin: "https://relay.test" },
-      route: { version: 1, params: name },
-    });
-  }
-});
+it.each(["ready", "connecting", "error"] as const)(
+  "omits the page destinations wrapper when the shell passes none while %s",
+  (status) => {
+    const h = fixture(undefined, status);
+    const { container } = render(h.view("alpha", true, null));
+    expect(screen.queryByRole("navigation", { name: "Pages" })).toBeNull();
+    expect(container.querySelector(`.${styles.destinations}`)).toBeNull();
+    expect(screen.getByRole("img", { name: "Buzz" })).toBeInTheDocument();
+  },
+);
 
 it("opens creation from a legacy subgroup + with that destination selected and retained in the create input", async () => {
   const preferences = createSidebarPreferencesStore(

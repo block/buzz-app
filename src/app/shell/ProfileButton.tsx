@@ -18,6 +18,7 @@ import {
 import {
   CircleNotchIcon,
   SmileyIcon,
+  ThumbsUpIcon,
   CheckIcon,
   GearIcon,
   UserIcon,
@@ -50,11 +51,14 @@ export function ProfileButton({
   accountActions,
   settingsSelected,
   onSettings,
+  onProfile,
 }: {
   communities: Communities;
   accountActions: AccountActionsService;
   settingsSelected: boolean;
   onSettings(): void;
+  /** Present only while a panel can show the viewer's own profile. */
+  onProfile?: ((trigger: HTMLButtonElement) => void) | undefined;
 }) {
   const {
     profile: localProfile,
@@ -161,7 +165,8 @@ export function ProfileButton({
   const profileTrigger = useRef<HTMLButtonElement>(null);
   const openingStatus = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const openingSettings = useRef(false);
+  // Settings or the profile panel takes focus once the menu has closed.
+  const handoff = useRef(false);
   const actions = useSyncExternalStore(
     accountActions.subscribe,
     accountActions.snapshot,
@@ -191,7 +196,7 @@ export function ProfileButton({
         onOpenChange={(open) => {
           setMenuOpen(open);
           if (open) {
-            openingSettings.current = false;
+            handoff.current = false;
             openingStatus.current = false;
           } else {
             statusEditor.cancelOpening();
@@ -201,9 +206,10 @@ export function ProfileButton({
         onOpenChangeComplete={(open) => {
           // Let the menu finish its keyboard handling before handing focus to
           // the page. Other dismissals retain the shared menu's focus behavior.
-          if (!open && openingSettings.current) {
+          if (!open && handoff.current) {
             const main = document.getElementById("main-content");
-            // A user may already be editing Settings while the menu animates out.
+            // A user may already be editing Settings, or the profile panel may
+            // have focused itself, while the menu animates out.
             if (!main?.contains(document.activeElement)) main?.focus();
           }
         }}
@@ -219,7 +225,7 @@ export function ProfileButton({
               shape="round"
               icon={
                 <span
-                  className="pointer-events-none relative flex size-full items-center justify-center rounded-full"
+                  className={styles.triggerAvatar}
                   role="img"
                   aria-label={
                     viewer
@@ -236,18 +242,42 @@ export function ProfileButton({
           }
         />
         <MenuPopup
+          data-profile-menu=""
           align="end"
           sideOffset={8}
           aria-labelledby={accountLabel}
-          finalFocus={() => !openingSettings.current && !openingStatus.current}
+          finalFocus={() => !handoff.current && !openingStatus.current}
         >
           <span id={accountLabel} className="sr-only">
             {name}
           </span>
           <div className={styles.profileHeader}>
-            <span className={styles.profileAvatar}>{avatar}</span>
+            <span className={styles.profileAvatar}>
+              {onProfile ? (
+                <MenuItem
+                  nativeButton
+                  onClick={() => {
+                    const trigger = profileTrigger.current;
+                    if (!trigger) return;
+                    handoff.current = true;
+                    onProfile(trigger);
+                  }}
+                  render={
+                    <IconButton
+                      type="button"
+                      aria-label="View your profile"
+                      variant="avatar"
+                      shape="round"
+                      icon={avatar}
+                    />
+                  }
+                />
+              ) : (
+                avatar
+              )}
+            </span>
             <div className={styles.profileDetails}>
-              <p className="m-0 truncate text-label-sm">{name}</p>
+              <p className="m-0 truncate text-body">{name}</p>
               {viewer && (
                 <MenuRoot modal={false}>
                   <span className={styles.availability} data-status={observed}>
@@ -272,7 +302,7 @@ export function ProfileButton({
                       }
                     />
                   </span>
-                  <MenuPopup align="start">
+                  <MenuPopup align="start" data-profile-submenu>
                     <MenuRadioGroup
                       value={observed === "unknown" ? "" : observed}
                       onValueChange={(value) => {
@@ -360,7 +390,7 @@ export function ProfileButton({
                   ) : (
                     <>
                       <MenuIcon>
-                        <SmileyIcon size={17} aria-hidden="true" />
+                        <SmileyIcon size={16} aria-hidden="true" />
                       </MenuIcon>
                       {statusEditor.loading
                         ? "Loading status…"
@@ -387,24 +417,29 @@ export function ProfileButton({
               )}
             </>
           )}
+          <MenuSeparator />
           {actions.map((action) => (
             <MenuItem
               key={action.key}
               onClick={() => setSelectedAction(action)}
             >
+              {action.pluginId === "buzz.feedback" && (
+                <MenuIcon>
+                  <ThumbsUpIcon size={16} aria-hidden="true" />
+                </MenuIcon>
+              )}
               {action.title}
             </MenuItem>
           ))}
-          <MenuSeparator />
           <MenuItem
             aria-current={settingsSelected ? "page" : undefined}
             onClick={() => {
-              openingSettings.current = true;
+              handoff.current = true;
               onSettings();
             }}
           >
             <MenuIcon>
-              <GearIcon aria-hidden="true" size={17} />
+              <GearIcon aria-hidden="true" size={16} />
             </MenuIcon>
             Settings
             {settingsSelected && (

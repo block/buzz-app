@@ -8,17 +8,71 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 const FAILURE: &str = "Pi models unavailable. Check Pi sign-in and extension configuration, then retry or enter a custom ID";
 
 // Extensions may spawn helpers. Cancellation must retire the whole lookup group.
-struct LookupChild(tokio::process::Child);
+struct LookupChild {
+    child: tokio::process::Child,
+    #[cfg(unix)]
+    group: Option<u32>,
+}
+impl LookupChild {
+    fn new(child: tokio::process::Child) -> Self {
+        Self {
+            #[cfg(unix)]
+            group: child.id(),
+            child,
+        }
+    }
+}
 impl Drop for LookupChild {
     fn drop(&mut self) {
         #[cfg(unix)]
-        if let Some(pid) = self.0.id() {
+        if let Some(pid) = self.group {
             unsafe {
                 libc::kill(-(pid as i32), libc::SIGKILL);
             }
         }
-        let _ = self.0.start_kill();
+        let _ = self.child.start_kill();
     }
+}
+
+/// Used by Start and ticket-owned model work, outside controller admission.
+pub(crate) async fn verify(
+    context: PiContext,
+) -> Result<buzz_agent_controller::pi::VerifiedPiContext, String> {
+    let mut command = tokio::process::Command::from(context.version_command());
+    command.kill_on_drop(true);
+    let mut child = LookupChild::new(
+        command
+            .spawn()
+            .map_err(|_| context.version_error("Could not verify the Pi CLI version"))?,
+    );
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let stdout = child
+            .child
+            .stdout
+            .take()
+            .ok_or("Could not verify the Pi CLI version")?;
+        let mut output = String::new();
+        stdout
+            .take(129)
+            .read_to_string(&mut output)
+            .await
+            .map_err(|_| "Could not verify the Pi CLI version")?;
+        if output.len() > 128
+            || !child
+                .child
+                .wait()
+                .await
+                .map_err(|_| "Could not verify the Pi CLI version")?
+                .success()
+        {
+            return Err("Could not verify the Pi CLI version");
+        }
+        Ok(output)
+    })
+    .await
+    .map_err(|_| context.version_error("Pi CLI version check timed out"))?
+    .map_err(|error| context.version_error(error))?;
+    context.accept_version(&result)
 }
 
 type Output = BufReader<tokio::io::Take<tokio::process::ChildStdout>>;
@@ -52,9 +106,9 @@ fn spawn(
     command.envs(context.environment).env("PATH", context.path);
     #[cfg(unix)]
     command.process_group(0);
-    let mut child = LookupChild(command.spawn().map_err(|_| "Could not start Pi")?);
-    let stdin = child.0.stdin.take().ok_or(FAILURE)?;
-    let stdout = child.0.stdout.take().ok_or(FAILURE)?;
+    let mut child = LookupChild::new(command.spawn().map_err(|_| "Could not start Pi")?);
+    let stdin = child.child.stdin.take().ok_or(FAILURE)?;
+    let stdout = child.child.stdout.take().ok_or(FAILURE)?;
     Ok((
         child,
         stdin,
@@ -93,13 +147,29 @@ pub(super) async fn fetch(context: PiContext) -> Result<Vec<String>, String> {
 const TEST_FAILURE: &str =
     "Connection test failed. Check the provider, model and network, then test again.";
 
-/// Sends one tiny prompt through the agent's Pi setup. The first assistant
-/// reply decides the result, so Pi never gets to retry a failing request.
-pub(super) async fn test(context: PiContext, provider: &str, model: &str) -> Result<(), String> {
-    if provider.is_empty() || model.is_empty() {
-        return Err("Choose a provider and model to test".into());
+/// Verifies Pi's selected provider, then sends one tiny prompt through the
+/// agent's setup. The first assistant reply decides the result.
+pub(super) async fn test(
+    context: PiContext,
+    provider: &str,
+    model: &str,
+) -> Result<String, String> {
+    if provider.is_empty() {
+        return Err("Choose a provider to test".into());
     }
-    buzz_agent_controller::pi::validate_selection(provider, model)?;
+    if model.is_empty() {
+        // Launch still requires a model. For this check validate the provider
+        // independently, since Pi owns choosing a model inside its scope.
+        if provider.len() > 128
+            || provider.starts_with('-')
+            || provider.contains([',', '/', '*', '?', '[', ']', '{', '}', '\\'])
+            || provider.chars().any(char::is_control)
+        {
+            return Err("Invalid Pi provider ID".into());
+        }
+    } else {
+        buzz_agent_controller::pi::validate_selection(provider, model)?;
+    }
     let mut args = context.catalog_args()?;
     args.extend(
         [
@@ -109,27 +179,39 @@ pub(super) async fn test(context: PiContext, provider: &str, model: &str) -> Res
             "--no-prompt-templates",
             "--system-prompt",
             "Reply with OK.",
-            "--provider",
-            provider,
-            "--model",
-            model,
         ]
         .map(String::from),
     );
+    if model.is_empty() {
+        args.extend(["--models".into(), format!("{provider}/*")]);
+    } else {
+        args.extend(["--model".into(), format!("{provider}/{model}")]);
+    }
     let (child, mut stdin, mut reader) = spawn(context, args)?;
-    stdin
-        .write_all(b"{\"id\":\"test\",\"type\":\"prompt\",\"message\":\"Reply with OK.\"}\n")
-        .await
-        .map_err(|_| TEST_FAILURE)?;
     let result = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        stdin
+            .write_all(b"{\"id\":\"selection\",\"type\":\"get_state\"}\n")
+            .await
+            .map_err(|_| TEST_FAILURE)?;
+        let selection = response(&mut reader, "selection").await?;
+        let chosen = &selection["data"]["model"];
+        let chosen_id = chosen["id"].as_str().unwrap_or_default();
+        // Empty scopes can silently fall back to another signed-in provider.
+        // Inspect Pi's actual selection BEFORE sending any inference request.
+        if chosen["provider"] != provider || chosen_id.is_empty() {
+            return Err("No test model available for this provider. Add its API key or sign in with Pi, then test again.".into());
+        }
+        buzz_agent_controller::pi::validate_selection(provider, chosen_id)?;
+        if !model.is_empty() && chosen_id != model {
+            return Err("Pi selected a different model. Check the model ID, then test again.".into());
+        }
+        stdin
+            .write_all(b"{\"id\":\"test\",\"type\":\"prompt\",\"message\":\"Reply with OK.\"}\n")
+            .await
+            .map_err(|_| TEST_FAILURE)?;
         for _ in 0..10_000 {
             let mut line = String::new();
-            if reader
-                .read_line(&mut line)
-                .await
-                .map_err(|_| TEST_FAILURE)?
-                == 0
-            {
+            if reader.read_line(&mut line).await.map_err(|_| TEST_FAILURE)? == 0 {
                 break;
             }
             let Ok(value) = serde_json::from_str::<Value>(&line) else {
@@ -140,12 +222,16 @@ pub(super) async fn test(context: PiContext, provider: &str, model: &str) -> Res
             }
             let message = &value["message"];
             if value["type"] == "message_end" && message["role"] == "assistant" {
-                return match message["stopReason"].as_str() {
-                    Some("error" | "aborted") => Err(classify(
-                        message["errorMessage"].as_str().unwrap_or_default(),
-                    )),
-                    _ => Ok(()),
-                };
+                if matches!(message["stopReason"].as_str(), Some("error" | "aborted")) {
+                    return Err(classify(message["errorMessage"].as_str().unwrap_or_default()));
+                }
+                if message["provider"] == provider && message["model"] == chosen_id
+                    && message["content"].as_array().is_some_and(|content| content.iter().any(|item|
+                        item["type"] == "text" && item["text"].as_str().is_some_and(|text| !text.trim().is_empty())
+                    )) {
+                    return Ok(format!("{provider}/{chosen_id}"));
+                }
+                return Err(TEST_FAILURE.into());
             }
         }
         Err(TEST_FAILURE.into())
@@ -155,6 +241,31 @@ pub(super) async fn test(context: PiContext, provider: &str, model: &str) -> Res
     drop(stdin);
     drop(child);
     result
+}
+
+async fn response(reader: &mut Output, id: &str) -> Result<Value, String> {
+    for _ in 0..100 {
+        let mut line = String::new();
+        if reader
+            .read_line(&mut line)
+            .await
+            .map_err(|_| TEST_FAILURE)?
+            == 0
+        {
+            break;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if value["id"] == id {
+            return if value["success"] == true {
+                Ok(value)
+            } else {
+                Err(classify(value["error"].as_str().unwrap_or_default()))
+            };
+        }
+    }
+    Err(TEST_FAILURE.into())
 }
 
 /// Provider errors can echo part of the key, so only fixed text leaves here.

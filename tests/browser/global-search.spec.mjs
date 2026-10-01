@@ -163,15 +163,13 @@ test("keyboard selection follows its action while recent conversations arrive ab
   page,
   app,
 }) => {
-  await page.goto(app.origin);
   const rail = page.getByRole("button", {
     name: "Switch to Primary",
     exact: true,
   });
-  await expect(rail).toBeVisible();
-  // Hold the membership read across a reload so the channel list arrives after
-  // the palette has opened, as it can after a restored conversation. Other
-  // reads continue, so the held read stays well inside its own deadline.
+  // Hold startup membership before navigation so the channel list arrives after
+  // the palette opens. A reload here can retire a live stream while its initial
+  // control request is still in flight; that race is unrelated to selection.
   const held = [];
   let holding = true;
   await page.route("**/api/relay/*/query", async (route) => {
@@ -181,7 +179,7 @@ test("keyboard selection follows its action while recent conversations arrive ab
     await route.continue();
   });
   try {
-    await page.reload();
+    await page.goto(app.origin);
     await expect(rail).toBeVisible();
     await button(page, "Search Buzz").click();
     const dialog = page.getByRole("dialog", {
@@ -208,6 +206,14 @@ test("keyboard selection follows its action while recent conversations arrive ab
     holding = false;
     for (const resolve of held.splice(0)) resolve();
     await expect(recent.first()).toBeVisible();
+    await expect(
+      page.getByRole("textbox", {
+        name: "Message #Alpha",
+        exact: true,
+        includeHidden: true,
+      }),
+    ).toBeAttached();
+    await expect(input).toBeFocused();
     // The arrivals moved the action; the selection stays with it.
     expect((await projects.boundingBox()).y).toBeGreaterThan(before.y);
     await expect(input).toHaveAttribute("aria-activedescendant", id);

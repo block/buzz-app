@@ -2114,6 +2114,112 @@ test("member change receipts must match the signed command", async () => {
   }
 });
 
+test("leave requests sign the exact NIP-43 shape for the selected community only", async () => {
+  const { h, post } = await communityAdmin((call) =>
+    Response.json({ accepted: true, event_id: call.body.id, message: "" }),
+  );
+  try {
+    const response = await post("leave", {});
+    expect(response.status).toBe(200);
+    const sent = h.calls.at(-1);
+    expect(sent.url).toBe(`${fixtureRelayUrl}/events`);
+    expect(verifyEvent(sent.body)).toBe(true);
+    expect(sent.body).toMatchObject({
+      kind: 28936,
+      tags: [["-"]],
+      content: "",
+      pubkey: h.event.pubkey,
+      created_at: Math.floor(Date.now() / 1000),
+    });
+    expect(await response.json()).toMatchObject({
+      accepted: true,
+      event_id: sent.body.id,
+    });
+    // The request body carries nothing: a client cannot smuggle another kind
+    // or extra tags into the signed event.
+    const shaped = await post("leave", {
+      kind: 9031,
+      tags: [["p", "a".repeat(64)]],
+      content: "bye",
+    });
+    expect(shaped.status).toBe(200);
+    expect(h.calls.at(-1).body).toMatchObject({
+      kind: 28936,
+      tags: [["-"]],
+      content: "",
+    });
+    // Unscoped requests name no community to leave.
+    expect((await h.post("leave", {})).status).toBe(400);
+    expect(h.calls).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+});
+
+test("leave receipts must match the signed request", async () => {
+  const { h, post } = await communityAdmin(() =>
+    Response.json({ accepted: true, event_id: "wrong" }),
+  );
+  try {
+    const response = await post("leave", {});
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      error: "Leave request could not be confirmed",
+    });
+  } finally {
+    await h.close();
+  }
+});
+
+test.each([
+  [
+    400,
+    "invalid: you are not a relay member",
+    "invalid: you are not a relay member",
+  ],
+  [
+    400,
+    "invalid: relay membership is not enabled",
+    "invalid: relay membership is not enabled",
+  ],
+  [
+    400,
+    "invalid: relay owner cannot leave",
+    "invalid: relay owner cannot leave",
+  ],
+  [
+    403,
+    "blocked: you are banned from this community",
+    "blocked: you are banned from this community",
+  ],
+  [
+    503,
+    "community writes are temporarily unavailable",
+    "community writes are temporarily unavailable",
+  ],
+  // Admin refusals are not leave refusals.
+  [400, "invalid: cannot remove yourself", "Relay request failed (400)"],
+  [
+    400,
+    "invalid: database error: connection reset <script>",
+    "Relay request failed (400)",
+  ],
+])(
+  "leave refusal %i %j is surfaced only when whitelisted",
+  async (status, error, shown) => {
+    const { h, post } = await communityAdmin(() =>
+      Response.json({ error }, { status }),
+    );
+    try {
+      const response = await post("leave", {});
+      expect(response.status).toBe(status);
+      expect((await response.json()).error).toBe(shown);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
 test.each([
   [400, "invalid: cannot remove yourself", "invalid: cannot remove yourself"],
   [
@@ -2785,6 +2891,213 @@ test("details routes are narrow, require the live owner, and do not widen lifecy
     expect(h.publications).toHaveLength(1);
   } finally {
     live?.dispose();
+    await h.close();
+  }
+});
+
+test("member administration uses isolated shape-limited routes and the current community socket", async () => {
+  const h = await harness(success);
+  let live;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const id = "11111111-1111-4111-8111-111111111111";
+    const target = getPublicKey(new Uint8Array(32).fill(5));
+    const signal = new AbortController().signal;
+    const template = {
+      kind: 9000,
+      created_at: 1700000000,
+      content: "",
+      tags: [
+        ["h", id],
+        ["p", target],
+        ["role", "admin"],
+      ],
+    };
+    const invalid = [
+      { ...template, kind: 9002 },
+      { ...template, content: "metadata" },
+      {
+        ...template,
+        tags: [
+          ["h", id],
+          ["p", target],
+          ["role", "owner"],
+        ],
+      },
+      {
+        ...template,
+        tags: [
+          ["h", id],
+          ["p", target],
+          ["role", "bot"],
+        ],
+      },
+      {
+        ...template,
+        tags: [
+          ["h", id],
+          ["p", transport.viewer],
+          ["role", "member"],
+        ],
+      },
+      {
+        ...template,
+        kind: 9001,
+        tags: [
+          ["h", id],
+          ["p", transport.viewer],
+        ],
+      },
+      { ...template, tags: [...template.tags, ["h", id]] },
+      { ...template, tags: null },
+      { ...template, tags: [null] },
+    ];
+    for (const event of invalid)
+      for (const route of [
+        "member-administration-sign",
+        "member-administration-publish",
+      ])
+        expect((await h.post(route, event)).status).toBe(400);
+    expect((await h.post("sign", template)).status).toBe(400);
+    const signed = await transport.memberAdministration.sign(template, signal);
+    expect(verifyEvent(signed)).toBe(true);
+    expect(signed).toMatchObject(template);
+    expect((await h.post("publish", signed)).status).toBe(400);
+    await expect(
+      transport.memberAdministration.publish(signed, signal),
+    ).rejects.toBeInstanceOf(PublishRejected);
+    expect(h.publications).toHaveLength(0);
+    live = await openBrokerSocket(transport);
+    await transport.memberAdministration.publish(signed, signal);
+    const removal = await transport.memberAdministration.sign(
+      { ...template, kind: 9001, tags: template.tags.slice(0, 2) },
+      signal,
+    );
+    expect(
+      (
+        await h.post("sign", {
+          ...template,
+          kind: 9001,
+          tags: template.tags.slice(0, 2),
+        })
+      ).status,
+    ).toBe(400);
+    await transport.memberAdministration.publish(removal, signal);
+    const foreign = finalizeEvent(
+      structuredClone(template),
+      new Uint8Array(32).fill(5),
+    );
+    expect(
+      (await h.post("member-administration-publish", foreign)).status,
+    ).toBe(400);
+    expect(h.publications).toHaveLength(2);
+  } finally {
+    live?.dispose();
+    await h.close();
+  }
+});
+
+test("inventory inspection returns saved identities without owner resolution or publication", async () => {
+  const key = new Uint8Array(32);
+  key[31] = 7;
+  const pubkey = "ab".repeat(32);
+  let forged = false;
+  let member = true;
+  const h = await harness(
+    () => {
+      const event = finalizeEvent(
+        {
+          kind: 30177,
+          created_at: 1700000000,
+          content: JSON.stringify({ name: "Saved agent" }),
+          tags: [["d", member ? pubkey : "cd".repeat(32)]],
+        },
+        key,
+      );
+      if (forged) event.sig = "00".repeat(64);
+      return Response.json([event]);
+    },
+    { archiveAuthority: getPublicKey(key) },
+  );
+  const route = `${encodeURIComponent(fixtureRelayUrl)}/agent-inventory`;
+  try {
+    expect((await h.post("agent-inventory", {})).status).toBe(400);
+    expect((await h.post(route, { confirmed: true })).status).toBe(400);
+    expect(h.calls).toHaveLength(0);
+    expect(await (await h.post(route, {})).json()).toEqual({
+      identities: [pubkey],
+    });
+    member = false;
+    expect(await (await h.post(route, {})).json()).toEqual({
+      identities: ["cd".repeat(32)],
+    });
+    forged = true;
+    expect((await h.post(route, {})).status).toBe(409);
+    expect(h.publications).toHaveLength(0);
+  } finally {
+    await h.close();
+  }
+  const unavailable = await harness(() => Response.json([]));
+  try {
+    expect(await (await unavailable.post(route, {})).json()).toEqual({
+      identities: [],
+    });
+    expect(unavailable.calls).toHaveLength(1);
+  } finally {
+    await unavailable.close();
+  }
+});
+
+test("inventory rejects foreign pages, ignores invalid heads and follows exact-key pages", async () => {
+  const key = new Uint8Array(32);
+  key[31] = 7;
+  const foreign = new Uint8Array(32);
+  foreign[31] = 8;
+  const pubkey = "ab".repeat(32);
+  const record = (
+    d,
+    content = '{"name":"Same name"}',
+    time = 1,
+    author = key,
+    kind = 30177,
+  ) =>
+    finalizeEvent(
+      { kind, created_at: time, content, tags: [["d", d]] },
+      author,
+    );
+  let rows = [];
+  const h = await harness(({ body }) =>
+    Response.json(body[0].before_id ? [record(pubkey)] : rows),
+  );
+  const route = `${encodeURIComponent(fixtureRelayUrl)}/agent-inventory`;
+  const input = {};
+  try {
+    rows = [record(pubkey, undefined, 1, foreign)];
+    expect((await h.post(route, input)).status).toBe(409);
+    for (const invalid of [
+      [record(pubkey, "not JSON")],
+      [record(pubkey), record(pubkey, "null", 2)],
+
+      [record(pubkey, '{"display_name":"Template"}', 1, key, 30175)],
+    ]) {
+      rows = invalid;
+      expect(await (await h.post(route, input)).json()).toEqual({
+        identities: [],
+      });
+    }
+    rows = Array.from({ length: 200 }, (_, i) =>
+      record(i.toString(16).padStart(64, "0")),
+    );
+    expect((await h.post(route, input)).status).toBe(200);
+    expect(h.calls.at(-1).body[0]).toMatchObject({
+      until: 1,
+      before_id: [...rows]
+        .map((e) => e.id)
+        .sort()
+        .at(-1),
+    });
+    expect(h.publications).toHaveLength(0);
+  } finally {
     await h.close();
   }
 });

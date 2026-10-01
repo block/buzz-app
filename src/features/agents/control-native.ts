@@ -32,7 +32,6 @@ export function nativeAgentControlHost(): AgentControlHost | null {
         signature,
       });
     },
-    installGoose: () => invoke("goose_install"),
     installPi: () => invoke("pi_install"),
     save: (id, expectedRevision, edit) =>
       invoke("agent_control_save", { id, expectedRevision, edit }),
@@ -53,6 +52,8 @@ export function nativeAgentControlHost(): AgentControlHost | null {
       }),
     configureHere: (id, resolution) =>
       invoke("agent_control_use_here", { id, resolution }),
+    localCloneSettings: (id) =>
+      invoke("agent_control_local_clone_settings", { id }),
     cloneSettings: (source, pubkey) =>
       invoke("agent_control_clone_settings", { source, pubkey }),
     previewImport: (source, destination) =>

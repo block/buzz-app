@@ -1,5 +1,6 @@
 //! Membership-change confirmation, independent of node restart and request admission.
-//! Two consecutive successful observations are required; read failures reset confirmation.
+//! Classic policy: growth is immediate; shrink needs two matching successful polls.
+//! Read failures reset confirmation; startup defers only the restart action.
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Decision {
@@ -47,16 +48,20 @@ impl Reconcile {
         let mut current = current.to_vec();
         current.sort();
         current.dedup();
-        if starting || fresh == current {
+        if fresh == current {
             self.pending = None;
             return Decision::Keep;
         }
-        if self.pending.as_ref() != Some(&fresh) {
+        let shrinking = current.iter().any(|owner| !fresh.contains(owner));
+        if shrinking && self.pending.as_ref() != Some(&fresh) {
             self.pending = Some(fresh);
             return Decision::AwaitConfirmation;
         }
         self.pending = None;
-        if current.iter().any(|owner| !fresh.contains(owner)) {
+        if starting {
+            return Decision::Keep;
+        }
+        if shrinking {
             Decision::Shrink(fresh)
         } else {
             Decision::Grow(fresh)
@@ -71,24 +76,20 @@ mod tests {
         Observation::Members(values.iter().map(|s| (*s).into()).collect())
     }
     #[test]
-    fn growth_and_shrink_require_consecutive_matching_successes() {
+    fn growth_is_immediate_but_shrink_needs_two_consecutive_successes() {
         let current = vec!["a".into()];
         let mut state = Reconcile::default();
         assert_eq!(
             state.observe(&current, members(&["b", "a", "a"]), false),
+            Decision::Grow(vec!["a".into(), "b".into()])
+        );
+        assert_eq!(
+            state.observe(&current, members(&[]), false),
             Decision::AwaitConfirmation
         );
         assert_eq!(
             state.observe(&current, Observation::ReadFailed, false),
             Decision::Keep
-        );
-        assert_eq!(
-            state.observe(&current, members(&["a", "b"]), false),
-            Decision::AwaitConfirmation
-        );
-        assert_eq!(
-            state.observe(&current, members(&["b", "a"]), false),
-            Decision::Grow(vec!["a".into(), "b".into()])
         );
         assert_eq!(
             state.observe(&current, members(&[]), false),
@@ -100,7 +101,7 @@ mod tests {
         );
     }
     #[test]
-    fn recovery_changed_candidate_and_startup_reset_confirmation() {
+    fn recovery_and_different_shrink_reset_confirmation() {
         let current = vec!["a".into(), "b".into()];
         let mut state = Reconcile::default();
         assert_eq!(
@@ -112,20 +113,46 @@ mod tests {
             Decision::AwaitConfirmation
         );
         assert_eq!(
+            state.observe(&current, members(&["b", "a"]), false),
+            Decision::Keep
+        );
+        assert_eq!(
+            state.observe(&current, members(&["b"]), false),
+            Decision::AwaitConfirmation
+        );
+        assert_eq!(
+            state.observe(&current, members(&["b"]), false),
+            Decision::Shrink(vec!["b".into()])
+        );
+    }
+    #[test]
+    fn startup_defers_action_not_observation_and_viewer_removal_is_immediate() {
+        let current = vec!["a".into()];
+        let mut state = Reconcile::default();
+        assert_eq!(
+            state.observe(&current, members(&[]), true),
+            Decision::AwaitConfirmation
+        );
+        assert_eq!(
+            state.observe(&current, members(&[]), false),
+            Decision::Shrink(vec![])
+        );
+        assert_eq!(
+            state.observe(&current, members(&[]), true),
+            Decision::AwaitConfirmation
+        );
+        assert_eq!(state.observe(&current, members(&[]), true), Decision::Keep);
+        assert_eq!(
+            state.observe(&current, members(&[]), false),
+            Decision::AwaitConfirmation
+        );
+        assert_eq!(
+            state.observe(&current, members(&["a", "b"]), true),
+            Decision::Keep
+        );
+        assert_eq!(
             state.observe(&current, members(&["a", "b"]), false),
-            Decision::Keep
-        );
-        assert_eq!(
-            state.observe(&current, members(&["b"]), false),
-            Decision::AwaitConfirmation
-        );
-        assert_eq!(
-            state.observe(&current, members(&["b"]), true),
-            Decision::Keep
-        );
-        assert_eq!(
-            state.observe(&current, members(&["b"]), false),
-            Decision::AwaitConfirmation
+            Decision::Grow(vec!["a".into(), "b".into()])
         );
         assert_eq!(
             state.observe(&current, Observation::ViewerRemoved, true),

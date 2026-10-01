@@ -11,6 +11,9 @@ test("Messages receives scoped typing through authenticated live traffic and exp
   page,
   app,
 }, testInfo) => {
+  // Typing expires eight seconds after its signed timestamp; the controlled
+  // clock crosses that lifetime.
+  await page.clock.install();
   await open(page, app);
   await expect
     .poll(() =>
@@ -60,8 +63,9 @@ test("Messages receives scoped typing through authenticated live traffic and exp
   await page.screenshot({
     path: testInfo.outputPath("messages-thread-typing.png"),
   });
-  // Real browser timer, signed timestamp TTL, no polling transport or fixture cleanup.
-  await expect(indicator).toHaveCount(0, { timeout: 10000 });
+  // Signed timestamp TTL, no polling transport or fixture cleanup.
+  await page.clock.fastForward(8000);
+  await expect(indicator).toHaveCount(0);
   expect(app.report.publications).toEqual([]);
 });
 
@@ -70,6 +74,7 @@ for (const scope of ["channel", "thread"]) {
     page,
     app,
   }) => {
+    await page.clock.install();
     await open(page, app);
     await expect
       .poll(() =>
@@ -148,7 +153,8 @@ for (const scope of ["channel", "thread"]) {
     app.activity({ ...target, author: 1 });
     await expect(indicator).toContainText("is typing…");
     await stable();
-    await expect(indicator).toHaveCount(0, { timeout: 10000 });
+    await page.clock.fastForward(8000);
+    await expect(indicator).toHaveCount(0);
     await stable();
     expect(app.report.publications).toEqual([]);
   });

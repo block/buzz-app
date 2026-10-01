@@ -479,6 +479,22 @@ native acceptance.
 
 ## Member administration
 
+**Channel members** has a scoped conversation history visit (`panel: "members"`)
+through the host navigation owner. Opening creates a visit; browser Back dismisses
+and Forward restores the list. Reload restores the same channel and Members,
+including the underlying message/thread address when present. Close, Escape and
+outside dismissal open the underlying conversation as a new visit, so Back can
+recover the list. Profile/DM handoffs dismiss Members without replacing the new
+destination, and history traversal never repeats a DM open or membership mutation.
+Search, role filters, menus and confirmations are transient, not address data.
+Scoped history still requires the original viewer, joined community and current
+channel access. Tabs remain session-owned: navigation preserves them, but this
+change does not add disk persistence for tab sets. Draft persistence is unchanged.
+A covering Members modal owns focus while underlying exact-message readers verify
+and restore their targets without focusing through the modal. Session conversations
+have no Members surface; a restored/handwritten Members route to a session resolves
+to its underlying conversation/message without that panel.
+
 The existing **Channel members** dialog keeps ordinary invitations and adds
 verified roles plus per-member administration. Current members appear in separate
 **Owners**, **Admins**, **Members** and **Agents** groups with sticky headings and counts.

@@ -408,6 +408,7 @@ const providers = new TemplateProvidersService(context);
 Object.assign(window, {
   profilesFixture: {
     report,
+    navigation: context.navigation,
     async deleteSecond() {
       native.data.agents = native.data.agents.filter(
         (agent) => agent.id !== "second",

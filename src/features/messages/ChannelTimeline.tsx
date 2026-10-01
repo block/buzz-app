@@ -338,6 +338,10 @@ function Timeline({
   }, [navigation]);
   const exactRevealed = useMessageReveal({
     scroller,
+    focus: !(
+      navigation?.target.kind === "conversation" &&
+      navigation.target.panel === "members"
+    ),
     settled,
     messageId: targetId,
     signal: navigation?.signal,

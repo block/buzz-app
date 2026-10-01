@@ -873,5 +873,24 @@ test("member Send message navigates a human DM without sending or returning focu
   expect(
     await page.evaluate(() => window.profilesFixture.report.publications),
   ).toBe(0);
+  // Returning to the Members visit must not repeat the DM open or send.
+  await page.evaluate(() => window.profilesFixture.navigation.back());
+  await expect(dialog.getByRole("searchbox")).toBeFocused();
+  expect(
+    await page.evaluate(
+      () => window.profilesFixture.navigation.snapshot().entry.target.panel,
+    ),
+  ).toBe("members");
+  await page.evaluate(() => window.profilesFixture.navigation.forward());
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Message #Mic", exact: true }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => window.profilesFixture.dmOpens)).toEqual([
+    [await page.evaluate(() => window.profilesFixture.keys.mic)],
+  ]);
+  expect(
+    await page.evaluate(() => window.profilesFixture.report.publications),
+  ).toBe(0);
   expect(errors.unexplained()).toEqual([]);
 });

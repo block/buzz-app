@@ -290,12 +290,18 @@ export function ChannelMembersButton({
   canOpenLink,
   onOpenLink,
   onOpenConversation,
+  presentation,
 }: {
   session: RelaySession;
   channelId: string;
   control?: AgentControl | undefined;
+  presentation?:
+    | { open: boolean; onOpenChange(open: boolean): void }
+    | undefined;
 } & MemberNavigation) {
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = presentation ? presentation.open : localOpen;
+  const setOpen = presentation ? presentation.onOpenChange : setLocalOpen;
   const trigger = useRef<HTMLButtonElement>(null);
   return (
     <>

@@ -1217,3 +1217,33 @@ it("pages combined local and relay invitations without losing matches, and reset
   ).toBeNull();
   expect(t.publish).not.toHaveBeenCalled();
 });
+
+it("controlled presentation restores the dialog without retaining its search or issuing writes", async () => {
+  const t = await setup();
+  cleanup();
+  const onOpenChange = vi.fn();
+  const button = (open: boolean) => (
+    <ToastProvider>
+      <ChannelMembersButton
+        session={t.session}
+        channelId="11111111-1111-4111-8111-111111111111"
+        presentation={{ open, onOpenChange }}
+      />
+    </ToastProvider>
+  );
+  const view = render(button(false));
+  await t.user.click(screen.getByRole("button", { name: "Channel members" }));
+  expect(onOpenChange).toHaveBeenLastCalledWith(true);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  view.rerender(button(true));
+  await screen.findByText("Carl (you)");
+  await t.user.type(screen.getByRole("searchbox"), "Carl");
+  await t.user.keyboard("{Escape}");
+  expect(onOpenChange).toHaveBeenLastCalledWith(false);
+  view.rerender(button(false));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  view.rerender(button(true));
+  await screen.findByText("Carl (you)");
+  expect(screen.getByRole("searchbox")).toHaveValue("");
+  expect(t.publish).not.toHaveBeenCalled();
+});

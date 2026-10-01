@@ -266,11 +266,14 @@ it.each([true, false])(
 
 const imp = { pubkey: "a".repeat(64), name: "Imp" };
 const jitter = { pubkey: "b".repeat(64), name: "Jitter" };
-/** Every `@Imp`/`@Jitter` in the text is an explicit, resolved recipient. */
+// Display names with a space are one token too; the label never splits.
+const maryJane = { pubkey: "c".repeat(64), name: "Mary Jane" };
+const mattToohey = { pubkey: "d".repeat(64), name: "Matt Toohey" };
+/** Every `@Name` of these people in the text is an explicit, resolved recipient. */
 function mentioned(text: string): MentionDraft {
   return {
     text,
-    recipients: [imp, jitter].flatMap((recipient) => {
+    recipients: [imp, jitter, maryJane, mattToohey].flatMap((recipient) => {
       const start = text.indexOf(`@${recipient.name}`);
       return start < 0
         ? []
@@ -295,24 +298,35 @@ const shiftArrow = (
     });
   });
 
-it("extends a backward selection over the mention before it and keeps the anchor", () => {
-  const text = "@Imp say hello to @Jitter ";
-  const h = mount(mentioned(text));
-  expect(h.input.querySelectorAll("[data-mention]")).toHaveLength(2);
-  act(() => h.input.setSelectionRange(text.length, text.length));
-  // The browser itself answers the first Shift+Left by selecting the trailing
-  // space. Model that native result, then let the editor handle the second.
-  act(() => {
-    const space = h.input.querySelector("p")?.lastChild;
-    if (!(space instanceof Text)) throw new Error("Missing trailing text");
-    document.getSelection()?.setBaseAndExtent(space, 1, space, 0);
-  });
-  shiftArrow(h.input, "ArrowLeft");
-  expect(selection(h.input)).toEqual([18, 26, "backward"]);
-  expect(text.slice(18, 26)).toBe("@Jitter ");
-  shiftArrow(h.input, "ArrowRight");
-  expect(selection(h.input)).toEqual([25, 26, "backward"]);
-});
+it.each([jitter.name, maryJane.name])(
+  "extends a backward selection over @%s before it and keeps the anchor",
+  (name) => {
+    const text = `@Imp say hello to @${name} `;
+    const mention = text.lastIndexOf("@");
+    const h = mount(mentioned(text));
+    expect(h.input.querySelectorAll("[data-mention]")).toHaveLength(2);
+    act(() => h.input.setSelectionRange(text.length, text.length));
+    // The browser itself answers the first Shift+Left by selecting the trailing
+    // space. Model that native result, then let the editor handle the second.
+    act(() => {
+      const space = h.input.querySelector("p")?.lastChild;
+      if (!(space instanceof Text)) throw new Error("Missing trailing text");
+      document.getSelection()?.setBaseAndExtent(space, 1, space, 0);
+    });
+    shiftArrow(h.input, "ArrowLeft");
+    expect(selection(h.input)).toEqual([mention, text.length, "backward"]);
+    expect(text.slice(mention)).toBe(`@${name} `);
+    expect(h.input.selectionEnd - h.input.selectionStart).toBeLessThanOrEqual(
+      h.input.value.length,
+    );
+    shiftArrow(h.input, "ArrowRight");
+    expect(selection(h.input)).toEqual([
+      text.length - 1,
+      text.length,
+      "backward",
+    ]);
+  },
+);
 
 it.each([
   [
@@ -344,6 +358,41 @@ it.each([
     [0, 4, "forward"],
   ],
   ["the document end", "hello @Jitter", 13, "ArrowLeft", [6, 13, "backward"]],
+  [
+    "after a two-word mention with no trailing space",
+    "@Imp say hello to @Mary Jane",
+    28,
+    "ArrowLeft",
+    [18, 28, "backward"],
+  ],
+  [
+    "before a two-word mention",
+    "@Imp say hello to @Mary Jane ",
+    18,
+    "ArrowRight",
+    [18, 28, "forward"],
+  ],
+  [
+    "after the two-word mention at the start",
+    "@Mary Jane says hello",
+    10,
+    "ArrowLeft",
+    [0, 10, "backward"],
+  ],
+  [
+    "the document start before a two-word mention",
+    "@Mary Jane says hello",
+    0,
+    "ArrowRight",
+    [0, 10, "forward"],
+  ],
+  [
+    "the document end after a two-word mention",
+    "hello @Mary Jane",
+    16,
+    "ArrowLeft",
+    [6, 16, "backward"],
+  ],
 ] as const)(
   "Shift+Arrow from %s selects the whole mention",
   (_, text, caret, key, expected) => {
@@ -357,6 +406,7 @@ it.each([
 it.each([
   [
     "extends a forward selection from prose over a mention",
+    "@Imp say hello to @Jitter ",
     16,
     18,
     "forward",
@@ -365,6 +415,7 @@ it.each([
   ],
   [
     "extends a backward selection from prose over a mention",
+    "@Imp say hello to @Jitter ",
     4,
     8,
     "backward",
@@ -373,6 +424,7 @@ it.each([
   ],
   [
     "shrinks a forward selection off a mention",
+    "@Imp say hello to @Jitter ",
     18,
     25,
     "forward",
@@ -381,14 +433,62 @@ it.each([
   ],
   [
     "shrinks a backward selection off a mention",
+    "@Imp say hello to @Jitter ",
     18,
     26,
     "backward",
     "ArrowRight",
     [25, 26, "backward"],
   ],
-] as const)("%s", (_, start, end, direction, key, expected) => {
-  const h = mount(mentioned("@Imp say hello to @Jitter "));
+  [
+    "extends a forward selection from prose over a two-word mention",
+    "@Imp say hello to @Mary Jane ",
+    16,
+    18,
+    "forward",
+    "ArrowRight",
+    [16, 28, "forward"],
+  ],
+  [
+    "shrinks a forward selection off a two-word mention",
+    "@Imp say hello to @Mary Jane ",
+    18,
+    28,
+    "forward",
+    "ArrowLeft",
+    [18, 18, "forward"],
+  ],
+  [
+    "shrinks a backward selection off a two-word mention",
+    "@Imp say hello to @Mary Jane ",
+    18,
+    29,
+    "backward",
+    "ArrowRight",
+    [28, 29, "backward"],
+  ],
+  // Two two-word mentions one space apart: the browser selects that space,
+  // then the editor extends over the first mention in the same direction.
+  [
+    "extends a backward selection over the first of two two-word mentions",
+    "@Mary Jane @Matt Toohey ",
+    10,
+    24,
+    "backward",
+    "ArrowLeft",
+    [0, 24, "backward"],
+  ],
+  [
+    "extends a forward selection over the second of two two-word mentions",
+    "@Mary Jane @Matt Toohey ",
+    0,
+    11,
+    "forward",
+    "ArrowRight",
+    [0, 23, "forward"],
+  ],
+] as const)("%s", (_, text, start, end, direction, key, expected) => {
+  const h = mount(mentioned(text));
   act(() => h.input.setSelectionRange(start, end, direction));
   expect(selection(h.input)).toEqual([start, end, direction]);
   shiftArrow(h.input, key);

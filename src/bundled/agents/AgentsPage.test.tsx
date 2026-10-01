@@ -203,7 +203,9 @@ it("opens the selected managed agent in the existing profile panel", async () =>
     await screen.findByRole("complementary", { name: "Profile" }),
   ).toBeVisible();
   expect(screen.getByText("Existing profile panel")).toBeVisible();
-  expect(profileTargetSeen).toBe(profileTarget(f.agent.pubkey));
+  expect(profileTargetSeen).toBe(
+    profileTarget(f.agent.pubkey, { agent: true }),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Close Profile panel" }));
   expect(screen.queryByRole("complementary", { name: "Profile" })).toBeNull();
   await waitFor(() =>
@@ -266,7 +268,7 @@ it("lets the hosted profile replace itself with another profile target", async (
       within(card).getByRole("button", { name: "Actions for Fixture agent" }),
     ).toHaveFocus(),
   );
-  expect(targets).toContain(profileTarget(f.agent.pubkey));
+  expect(targets).toContain(profileTarget(f.agent.pubkey, { agent: true }));
 });
 
 it("focuses the Agents surface when the profile trigger was removed", async () => {

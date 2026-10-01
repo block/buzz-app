@@ -140,7 +140,7 @@ export function AgentsPage({
     );
   };
   const resolveProfile: ProfileResolver = (pubkey) => {
-    const target = profileTarget(pubkey);
+    const target = profileTarget(pubkey, { agent: true });
     const panel = target && panels?.resolve(target);
     return target && panel
       ? (trigger: HTMLButtonElement) =>

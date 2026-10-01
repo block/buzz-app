@@ -2,6 +2,9 @@
 //!
 //! Initial integration checkpoint: no runtime is launched until the SDK adapter lands.
 
+#[cfg(feature = "mesh")]
+pub mod config;
+
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

@@ -85,6 +85,8 @@ for (const place of ["channel", "DM"])
     await page.goto(
       `/tests/fixtures/mentions.html?nonmember-admission${place === "DM" ? "&dm" : ""}`,
     );
+    // Fixture-only label: the &dm fixture keeps the "General" name, so the
+    // textbox label is not what a real DM composer shows.
     const input = page.getByRole("textbox", { name: "Message #General" });
     await input.fill("@Outside");
     await expect(

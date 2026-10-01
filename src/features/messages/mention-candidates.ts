@@ -20,7 +20,7 @@ export function archivedMention(session: RelaySession, pubkey: string) {
  * grants nothing: sending asks first, and an outside key becomes a reference
  * unless the sender adds that person (DMs cannot add anyone).
  */
-export function outsideMentions(
+export function allowsOutsideMentions(
   channel: Pick<ChannelSummary, "channelType"> | undefined,
 ) {
   return (
@@ -70,7 +70,7 @@ export function mentionCandidates(
             session.outbox?.supports(9000),
           )))
       choices.set(person.pubkey, { pubkey: person.pubkey, name: person.name });
-    if (!roster && !inviteAgents && outsideMentions(channel))
+    if (!roster && !inviteAgents && allowsOutsideMentions(channel))
       for (const person of directory) choices.set(person.pubkey, person);
     for (const pubkey of members)
       choices.set(pubkey, {

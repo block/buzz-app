@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
-import { outsideMentions } from "../../features/messages/mention-candidates";
+import { allowsOutsideMentions } from "../../features/messages/mention-candidates";
 
 type Person = Awaited<
   ReturnType<RelaySession["directMessages"]["people"]>
@@ -70,7 +70,7 @@ export function useMentionDirectory(
     enabled &&
     !channel?.archived &&
     !channel?.readOnly &&
-    outsideMentions(channel);
+    allowsOutsideMentions(channel);
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<{
     session: RelaySession;

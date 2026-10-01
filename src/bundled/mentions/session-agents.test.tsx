@@ -1061,48 +1061,45 @@ it("qualifies outside directory namesakes that have no cached profile", async ()
   names.dispose();
 });
 
-it.each(["session"] as const)(
-  "never expands %s candidates from the community directory",
-  async (channelType) => {
-    const t = setup();
-    const people = vi.fn(async () => ({
-      people: [{ pubkey: "e".repeat(64), name: "Outside" }],
-      hasMore: false,
-    }));
-    const list = {
-      status: "ready" as const,
-      channels: [
-        {
-          id: "parent",
-          name: "Conversation",
-          channelType,
-          members: ["a".repeat(64)],
-        },
-      ],
-    };
-    const session = {
-      ...t.session,
-      directMessages: { ...t.session.directMessages, people },
-      channels: { ...t.session.channels, list: () => list },
-    };
-    render(
-      <MentionPicker
-        session={session}
-        scope="test"
-        channelId="parent"
-        disabled={false}
-        select={() => true}
-      />,
-    );
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: "Mention a member" }));
-    expect(people).not.toHaveBeenCalled();
-    expect(
-      screen.queryByRole("button", { name: /Outside/ }),
-    ).not.toBeInTheDocument();
-  },
-);
+it("never expands session candidates from the community directory", async () => {
+  const t = setup();
+  const people = vi.fn(async () => ({
+    people: [{ pubkey: "e".repeat(64), name: "Outside" }],
+    hasMore: false,
+  }));
+  const list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "parent",
+        name: "Conversation",
+        channelType: "session" as const,
+        members: ["a".repeat(64)],
+      },
+    ],
+  };
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    channels: { ...t.session.channels, list: () => list },
+  };
+  render(
+    <MentionPicker
+      session={session}
+      scope="test"
+      channelId="parent"
+      disabled={false}
+      select={() => true}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Mention a member" }));
+  expect(people).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole("button", { name: /Outside/ }),
+  ).not.toBeInTheDocument();
+});
 
 it("offers outside directory people in a DM, like a channel", async () => {
   const t = setup();
@@ -1148,6 +1145,45 @@ it("offers outside directory people in a DM, like a channel", async () => {
     (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items[0]
       ?.detail,
   ).toBe("Not in DM · Will not be notified");
+});
+
+it("labels outside directory people in the DM toolbar picker", async () => {
+  const t = setup();
+  const people = vi.fn(async () => ({
+    people: [{ pubkey: "e".repeat(64), name: "Outside" }],
+    hasMore: false,
+  }));
+  const list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "dm",
+        name: "Conversation",
+        channelType: "dm" as const,
+        members: [t.member],
+        participants: [t.member],
+      },
+    ],
+  };
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    channels: { ...t.session.channels, list: () => list },
+  };
+  render(
+    <MentionPicker
+      session={session}
+      scope="test"
+      channelId="dm"
+      disabled={false}
+      select={() => true}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Mention a member" }));
+  const row = await screen.findByRole("button", { name: /Outside/ });
+  expect(row).toHaveTextContent("Not in DM · Will not be notified");
 });
 
 it("shows local rows before the directory, appends outside rows, and reuses settled pages", async () => {

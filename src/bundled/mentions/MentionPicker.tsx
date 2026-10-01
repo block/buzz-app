@@ -1,4 +1,3 @@
-import { outsideMentionDetail } from "../../features/messages/mention-candidates";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -13,6 +12,7 @@ import { AtIcon } from "../../shared/design-system/icons/index";
 import { useEffect, useId, useRef, useState } from "react";
 import { useMentionChoices } from "./use-mention-choices";
 import type { RelaySession } from "../../features/relay/session";
+import { outsideMentionDetail } from "../../features/messages/mention-candidates";
 import "../../shared/design-system/styles/scrollbars.css";
 import styles from "./Mentions.module.css";
 

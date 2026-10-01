@@ -523,12 +523,12 @@ test.describe("sorting with lifecycle visibility", () => {
       .toEqual([ids.willow, ids.maple, ids.cedar, archivedId]);
     const channel = channels.locator(`[data-channel-id="${archivedId}"]`);
     await channel.click();
-    await expect(
-      page.getByRole("textbox", {
-        name: "Message #Lifecycle channel",
-        exact: true,
-      }),
-    ).toBeVisible();
+    const composer = page.getByRole("textbox", {
+      name: "Message #Lifecycle channel",
+      exact: true,
+    });
+    await expect(composer).toBeVisible();
+    const conversationUrl = page.url();
     await channel.click({ button: "right" });
     await page
       .getByRole("menuitem", { name: "Archive channel", exact: true })
@@ -541,12 +541,10 @@ test.describe("sorting with lifecycle visibility", () => {
       .click();
     await expect(archive).toHaveCount(0);
     await expect.poll(rowIds).toEqual([ids.willow, ids.maple, ids.cedar]);
-    await expect(
-      page.getByRole("textbox", {
-        name: "Message #Alpha",
-        exact: true,
-      }),
-    ).toBeVisible();
+    // Archive removes the sidebar row, not the selected conversation.
+    await expect(page).toHaveURL(conversationUrl);
+    await expect(composer).toBeVisible();
+    await expect(composer).toBeDisabled();
 
     const dm = sidebar.locator(`[data-channel-id="${hiddenId}"]`);
     await dm.click({ button: "right" });
@@ -562,6 +560,9 @@ test.describe("sorting with lifecycle visibility", () => {
     await expect.poll(rowIds).toEqual([ids.willow, ids.maple, ids.cedar]);
     await page.reload();
     await expect.poll(rowIds).toEqual([ids.willow, ids.maple, ids.cedar]);
+    await expect(page).toHaveURL(conversationUrl);
+    await expect(composer).toBeVisible();
+    await expect(composer).toBeDisabled();
     // Opening Sort proves saved preference decoding and sidebar startup settled.
     await channels
       .getByRole("button", { name: "More actions for Channels" })

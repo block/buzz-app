@@ -96,8 +96,8 @@ it("loads only on demand, uses the non-compact shared menu, and opens details wi
   expect(
     screen.getAllByRole("menuitem").map((item) => item.textContent),
   ).toEqual([
-    "Open channel details",
-    "Canvas",
+    "View channel details",
+    "View canvas",
     "Edit details",
     "Archive channel",
     "Delete channel",
@@ -110,7 +110,7 @@ it("loads only on demand, uses the non-compact shared menu, and opens details wi
   expect(h.run).not.toHaveBeenCalled();
   expect(h.save).not.toHaveBeenCalled();
   await user.click(
-    screen.getByRole("menuitem", { name: "Open channel details" }),
+    screen.getByRole("menuitem", { name: "View channel details" }),
   );
   expect(h.props.openDetails).toHaveBeenCalledOnce();
   await waitFor(() =>
@@ -119,7 +119,7 @@ it("loads only on demand, uses the non-compact shared menu, and opens details wi
   trigger.focus();
   await user.keyboard("{ArrowDown}");
   await user.click(
-    await screen.findByRole("menuitem", { name: "Open channel details" }),
+    await screen.findByRole("menuitem", { name: "View channel details" }),
   );
   expect(h.props.openDetails).toHaveBeenCalledTimes(2);
 });
@@ -132,7 +132,7 @@ it("supports keyboard dismissal, outside clicks, and Canvas with the stable head
   await user.keyboard("{ArrowDown}");
   await waitFor(() =>
     expect(
-      screen.getByRole("menuitem", { name: "Open channel details" }),
+      screen.getByRole("menuitem", { name: "View channel details" }),
     ).toHaveFocus(),
   );
   await user.keyboard("{Escape}");
@@ -144,7 +144,9 @@ it("supports keyboard dismissal, outside clicks, and Canvas with the stable head
   );
   trigger.focus();
   await user.keyboard("{ArrowDown}");
-  await user.click(await screen.findByRole("menuitem", { name: "Canvas" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "View canvas" }),
+  );
   expect(h.props.openCanvas).toHaveBeenCalledWith(trigger);
 });
 it("keeps the real details dialog alive after menu dismissal and returns focus on Cancel", async () => {
@@ -207,7 +209,7 @@ it.each([
   h.mount();
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Channel actions" }));
-  await screen.findByRole("menuitem", { name: "Open channel details" });
+  await screen.findByRole("menuitem", { name: "View channel details" });
   expect(h.load).not.toHaveBeenCalled();
   expect(h.lifecycleLoad).not.toHaveBeenCalled();
   expect(

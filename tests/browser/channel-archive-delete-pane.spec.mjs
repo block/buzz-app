@@ -563,7 +563,7 @@ test.describe("owner-profile retry focus", () => {
       await trigger.focus();
       await trigger.press("Enter");
       await page
-        .getByRole("menuitem", { name: "Open channel details", exact: true })
+        .getByRole("menuitem", { name: "View channel details", exact: true })
         .click();
       await expect(retry).toBeVisible();
     };

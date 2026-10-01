@@ -44,10 +44,10 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await trigger.press("ArrowDown");
   await expect(menu).toHaveAttribute("data-size", "default");
   await expect(menu.getByRole("menuitem").first()).toHaveText(
-    "Open channel details",
+    "View channel details",
   );
   await expect(
-    menu.getByRole("menuitem", { name: "Open channel details", exact: true }),
+    menu.getByRole("menuitem", { name: "View channel details", exact: true }),
   ).toBeFocused();
   await expect(
     menu.getByRole("menuitem", { name: "Edit details", exact: true }),
@@ -75,8 +75,8 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await expect(menu).toHaveCount(0);
   await trigger.click();
   for (const label of [
-    "Open channel details",
-    "Canvas",
+    "View channel details",
+    "View canvas",
     "Edit details",
     "Save as template…",
     "New session",
@@ -128,7 +128,9 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await edit.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(trigger).toBeFocused();
   await trigger.click();
-  await menu.getByRole("menuitem", { name: "Canvas", exact: true }).click();
+  await menu
+    .getByRole("menuitem", { name: "View canvas", exact: true })
+    .click();
   const canvas = page.getByRole("dialog", {
     name: "Channel Canvas",
     exact: true,

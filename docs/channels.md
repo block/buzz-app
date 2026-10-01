@@ -297,8 +297,8 @@ and modeled upstream I/O; it does not send messages to a live community.
 ## Channel header actions
 
 The conversation header’s **Channel actions** ellipsis opens the shared, default-size
-(non-compact) menu. **Open channel details** is first and opens or focuses the existing
-Channel Settings tab; selecting it again never closes the pane. **Canvas**, eligible
+(non-compact) menu. **View channel details** is first and opens or focuses the existing
+Channel Settings tab; selecting it again never closes the pane. **View canvas**, eligible
 **Edit details** / **Review pending changes**, optional **Save as template…** and
 **New session**, **Move channel**, **Mute/Unmute**, and **Mark as Read/Unread**
 reuse the sidebar’s action composition and persistent mutation/recovery owners.

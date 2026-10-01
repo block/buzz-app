@@ -1886,7 +1886,7 @@ it("retires an in-flight header template copy when its optional provider is disa
       screen.queryByRole("menuitem", { name: "Save as template…" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("menuitem", { name: "Open channel details" }),
+      screen.getByRole("menuitem", { name: "View channel details" }),
     ).toBeVisible();
     expect(test.published).toEqual([]);
   } finally {

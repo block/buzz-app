@@ -89,7 +89,7 @@ export function ChannelHeaderMenu({
         <MenuIcon>
           <InfoIcon size={16} />
         </MenuIcon>
-        Open channel details
+        View channel details
       </MenuItem>
       {channel && !channel.readOnly && (
         <MenuItem
@@ -100,7 +100,7 @@ export function ChannelHeaderMenu({
           <MenuIcon>
             <FileTextIcon size={16} />
           </MenuIcon>
-          Canvas
+          View canvas
         </MenuItem>
       )}
       {edit}

@@ -209,21 +209,44 @@
   gap: var(--space-half);
   padding-block-end: var(--sidebar-padding);
 }
-/* The cue floats over scrolled rows, so it needs the panel surface beneath
-   it. `display: grid` keeps the wrapper flush with the control so no sliver
-   of fill shows around the pill. */
+/* Match the timeline jump cue while keeping sidebar geometry local. */
 .unreadEdge {
   position: absolute;
   left: 50%;
   display: grid;
-  transform: translateX(-50%);
+  transform: translateX(-50%) translateY(2px) scale(0.97);
   z-index: 3;
   isolation: isolate;
   width: max-content;
   max-width: calc(100% - var(--space-2));
-  border-radius: var(--radius-capsule);
-  background: var(--affordance-prominent);
-  box-shadow: var(--shadow-sm);
+  @apply glass-secondary;
+  border-radius: var(--radius-pill);
+  visibility: hidden;
+  pointer-events: none;
+  opacity: 0;
+  filter: blur(2px);
+  transition:
+    opacity var(--duration-fast) var(--easing-state),
+    transform var(--duration-fast) var(--easing-settle),
+    filter var(--duration-fast) var(--easing-state),
+    visibility 0s var(--duration-fast);
+}
+.unreadEdge[data-visible="true"] {
+  visibility: visible;
+  pointer-events: auto;
+  opacity: 1;
+  transform: translateX(-50%) translateY(0) scale(1);
+  filter: blur(0);
+  transition-duration: var(--duration-state);
+  transition-delay: 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .unreadEdge,
+  .unreadEdge[data-visible="true"] {
+    transform: translateX(-50%);
+    filter: none;
+    transition-property: opacity, visibility;
+  }
 }
 
 .unreadEdge [class~="buzz-button-label"] {
@@ -260,7 +283,7 @@
   top: var(--space-5);
 }
 .unreadEdge[data-edge="below"] {
-  bottom: 0.25rem;
+  bottom: 0;
 }
 .channelSection {
   position: relative;

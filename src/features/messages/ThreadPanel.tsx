@@ -914,12 +914,11 @@ function ThreadMessages({
         }}
         tabIndex={0}
       >
-        {showJumpToLatest && (
-          <JumpToLatestButton
-            newMessageCount={newMessageCount}
-            onClick={jumpToLatest}
-          />
-        )}
+        <JumpToLatestButton
+          visible={showJumpToLatest}
+          newMessageCount={newMessageCount}
+          onClick={jumpToLatest}
+        />
         <div data-thread-rows="" inert={positioning}>
           {snapshot.root ? (
             <MessageRow

@@ -56,8 +56,8 @@ for (const action of ["archive", "delete"]) {
       if (action === "archive") await composer.fill(draft);
       const conversationUrl = page.url();
       const panel = panelFor(page);
-      // Hold the real permission read to prove the button, not a visible
-      // paragraph, owns loading in the built app's Settings layout.
+      // Hold the real permission read to verify #482's loading contract:
+      // a busy region without an action or status row before authority arrives.
       const permissionSeen = Promise.withResolvers();
       const permissionRelease = Promise.withResolvers();
       const holdPermissions = async (route) => {
@@ -87,16 +87,8 @@ for (const action of ["archive", "delete"]) {
             name: "Edit channel details",
             exact: true,
           });
-          const edit = editor.getByRole("button", { name: "Edit details" });
-          await expect(edit).toHaveAttribute("aria-busy", "true");
-          await expect(edit).toBeDisabled();
-          await expect(edit.locator(".buzz-button-spinner")).toBeVisible();
-          await expect(edit.locator(".buzz-button-label")).toHaveCSS(
-            "opacity",
-            "0",
-          );
-          await expect(editor.getByRole("status")).toHaveClass("sr-only");
-          await expect(editor.getByRole("status")).toHaveCSS("height", "1px");
+          await expect(editor).toHaveAttribute("aria-busy", "true");
+          await expect(editor).toBeEmpty();
           await panel.screenshot({
             path: testInfo.outputPath("details-permission-loading.png"),
           });

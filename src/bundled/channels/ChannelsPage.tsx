@@ -1237,6 +1237,7 @@ function ChannelWorkspace({
   }, [settingsFocus, split.ref]);
   const settingsContent = (
     <ChannelSettingsPanel
+      scope={scope}
       canvas={queries.canvas}
       canvasOpen={canvasOpen}
       openCanvas={(trigger) => {

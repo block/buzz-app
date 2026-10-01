@@ -39,6 +39,7 @@ export const test = base.extend({
   exactMessages: [false, { option: true }],
   openSearch: [false, { option: true }],
   sessionChannels: [[], { option: true }],
+  sessionWriteKinds: [null, { option: true }],
   sessionParents: [{}, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
@@ -81,6 +82,7 @@ export const test = base.extend({
       exactMessages,
       openSearch,
       sessionChannels,
+      sessionWriteKinds,
       sessionParents,
       sidebarUnread,
       savedSidebar,
@@ -1351,7 +1353,9 @@ export const test = base.extend({
           return send(response, {
             viewer,
             relayAuthor: getPublicKey(relayKey),
-            writeKinds: sessionChannels.length ? [9, 9007, 30315] : [9, 30315],
+            writeKinds:
+              sessionWriteKinds ??
+              (sessionChannels.length ? [9, 9007, 30315] : [9, 30315]),
             relayUrl: JSON.parse(fixtureAliases)[community],
             live: true,
           });

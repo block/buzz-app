@@ -17,21 +17,21 @@ test("enabling Mesh compute opens Settings Compute", async ({ page, app }) => {
   // Contributed cards own their region label rather than the built-in section wrapper.
   await page
     .getByRole("complementary", { name: "Settings sidebar", exact: true })
-    .getByRole("button", { name: "Compute", exact: true })
+    .getByRole("button", { name: "Shared compute", exact: true })
     .click();
   const compute = page
     .getByRole("complementary", { name: "Settings sidebar", exact: true })
-    .getByRole("button", { name: "Compute", exact: true });
+    .getByRole("button", { name: "Shared compute", exact: true });
   await expect(compute.locator("xpath=ancestor::section[1]")).toContainText(
     "Primary",
   );
   await expect(
     page
       .getByRole("complementary", { name: "Settings sidebar", exact: true })
-      .getByText("Compute", { exact: true }),
+      .getByText("Shared compute", { exact: true }),
   ).toHaveCount(1);
   await expect(
-    page.getByRole("heading", { name: "Use shared compute", exact: true }),
+    page.getByRole("heading", { name: "Shared compute", exact: true }),
   ).toBeVisible();
   await expect(
     page
@@ -41,6 +41,6 @@ test("enabling Mesh compute opens Settings Compute", async ({ page, app }) => {
   await expect(
     page.getByText("Shared compute for Primary", { exact: true }),
   ).toBeVisible();
-  await expect(button("Connect to community compute")).toBeDisabled();
+  await expect(button("Connect to community compute")).toHaveCount(0);
   await expect(page.getByText("This destination couldn’t open")).toHaveCount(0);
 });

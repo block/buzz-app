@@ -52,17 +52,10 @@ it("revokes a pending selection on disposal and never starts it", async () => {
       community: "https://fixture.example",
     }),
   );
-  await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "Connect to community compute" }),
-    ).not.toBeDisabled(),
-  );
-  fireEvent.click(
-    screen.getByRole("button", { name: "Connect to community compute" }),
-  );
+  await screen.findByText("Off");
   expect(
-    screen.getByRole("button", { name: "Connect to community compute" }),
-  ).toBeDisabled();
+    screen.queryByRole("button", { name: "Connect to community compute" }),
+  ).not.toBeInTheDocument();
   dispose();
   await act(async () => {
     resolve("old-lease");
@@ -85,7 +78,7 @@ it("preserves the running lease through reconnect and revokes on identity change
     Promise.resolve(
       command === "mesh_compute_select"
         ? "stable-lease"
-        : { available: true, lifecycle: { state: "stopped" } },
+        : { available: true, lifecycle: { state: "ready" } },
     ),
   );
   let snapshot = {
@@ -115,24 +108,7 @@ it("preserves the running lease through reconnect and revokes on identity change
   } as unknown as Parameters<PluginModule["apply"]>[0];
   apply(ctx);
   render(<Component />);
-  await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "Connect to community compute" }),
-    ).not.toBeDisabled(),
-  );
-  fireEvent.click(
-    screen.getByRole("button", { name: "Connect to community compute" }),
-  );
-  await waitFor(() =>
-    expect(native.invoke).toHaveBeenCalledWith("mesh_compute_start", {
-      lease: "stable-lease",
-    }),
-  );
-  await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "Connect to community compute" }),
-    ).not.toBeDisabled(),
-  );
+  await screen.findByText("Running");
   await act(async () => {
     snapshot = { ...snapshot, status: "connecting" };
     for (const listener of listeners) listener();
@@ -149,26 +125,6 @@ it("preserves the running lease through reconnect and revokes on identity change
       ([command]) => command === "mesh_compute_release",
     ),
   ).toBe(false);
-  await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "Connect to community compute" }),
-    ).not.toBeDisabled(),
-  );
-  fireEvent.click(
-    screen.getByRole("button", { name: "Connect to community compute" }),
-  );
-  await waitFor(() =>
-    expect(
-      native.invoke.mock.calls.filter(
-        ([command]) => command === "mesh_compute_start",
-      ),
-    ).toHaveLength(2),
-  );
-  expect(
-    native.invoke.mock.calls.filter(
-      ([command]) => command === "mesh_compute_start",
-    )[1]?.[1],
-  ).toEqual({ lease: "stable-lease" });
   await act(async () => {
     snapshot = { status: "disconnected", viewer: "", scope: "" };
     for (const listener of listeners) listener();

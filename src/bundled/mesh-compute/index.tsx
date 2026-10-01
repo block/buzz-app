@@ -195,7 +195,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   }
   ctx.settingsCards.register({
     id: "mesh",
-    title: "Compute",
+    title: "Shared compute",
     icon: CpuIcon,
     component: CommunityComputePage,
   });

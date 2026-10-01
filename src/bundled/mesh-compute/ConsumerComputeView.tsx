@@ -29,7 +29,7 @@ export function ConsumerComputeView({
     <FullPageSurface aria-label="Compute consumer">
       <div className="h-full overflow-auto p-panel-inset text-body">
         <div className={styles.content}>
-          <h1 className="m-0 text-title text-primary">Use shared compute</h1>
+          <h1 className="m-0 text-title text-primary">Shared compute</h1>
           {communityName && (
             <p className="text-body text-secondary">
               Shared compute for <strong>{communityName}</strong>
@@ -40,13 +40,11 @@ export function ConsumerComputeView({
             app does not download or serve a local model. Your prompts run on
             other members’ machines.
           </p>
-          <Button onClick={connect} disabled={disabled}>
-            {active
-              ? starting
-                ? "Cancel connection"
-                : "Disconnect"
-              : "Connect to community compute"}
-          </Button>
+          {active && (
+            <Button onClick={connect} disabled={disabled}>
+              {starting ? "Cancel connection" : "Disconnect"}
+            </Button>
+          )}
           <p role="status">{status}</p>
           {status === "Running" && (
             <p className="text-body-sm text-secondary">

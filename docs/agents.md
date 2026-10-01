@@ -535,5 +535,6 @@ matching community. A failed source leaves the other source visible with a warni
 
 Discovery is not global coverage, verified membership, credentials, or execution
 status. Native cards keep their controls. Other known identities appear in a
-read-only section, while the existing old-desktop import flow stays available.
+read-only section. Each card offers its own Import; the separate installation
+browser appears only for repair.
 No keys, config, memory, membership, or runtime state are changed by discovery.

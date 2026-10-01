@@ -78,9 +78,8 @@ Older hosts retain the separate installation browser as a compatibility path.
 step after Import. It retains the identity/key, requires owner-authorized community
 confirmation, and leaves the recovered setup stopped with app-launch start off.
 The development broker and the packaged desktop app both provide that
-confirmation; the desktop app signs it natively (`relay_agent_resolve`). A host
-without local inventory actions hides **Use here** and asks the user to update
-the desktop app; **Clone** is unaffected. Native code refuses a new
+confirmation; the desktop app signs it natively (`relay_agent_resolve`). Native
+code refuses a new
 community when that identity already has a configured setup elsewhere. A retry
 for the already recovered destination is harmless. Existing historical setups
 remain visible and controllable; this rule does not move or delete them.
@@ -879,14 +878,17 @@ action; a later deliberate mention can also start a configured agent. Existing
 saved setups without the configured flag keep their prior behavior.
 
 The unified card's **Import** opens the existing installation form with its exact
-identity and known local source selected. The source remains editable. **Clone**
+identity and known local source selected. The source is fixed during review;
+if the preview fails or the identity is unavailable there, you can choose
+another source. **Clone**
 from a local source or imported identity opens a review of only its name and
 instructions; creation generates a fresh key. Clone never imports the old key.
 
 Community groups show known associations, not exclusive membership or admission.
-An inventory failure does not block local Import or setup confirmation. Configured
-setups show Start, Stop and Edit only in the current community. Other-community
-local agents offer Clone to bring a new identity here, without changing the source.
+An inventory failure does not block local Import or setup confirmation. Every
+configured setup keeps Start, Stop and Edit, whichever community is selected.
+Cards for other communities also offer Clone to bring a new identity here,
+without changing the source.
 Archived discovery rows remain hidden after sources join, except where local
 controls must remain reachable. Linked profiles remain visible on identity cards.
 

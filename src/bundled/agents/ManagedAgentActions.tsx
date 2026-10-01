@@ -51,9 +51,6 @@ export function ManagedAgentActions({
       details.current?.focus();
     }
   }, [imported]);
-  const canUseHere = !!(
-    state.data?.localInventoryActions && control.configureHere
-  );
   const startBlock = agentLaunchBlock(state, agent);
   const act = (action: "start" | "stop") => {
     setNotice(null);
@@ -100,21 +97,19 @@ export function ManagedAgentActions({
         <p role="status" className="m-0 text-body-sm">
           Imported, not started.{" "}
           {agent.configured === false
-            ? canUseHere
-              ? "Choose Use here to set up this identity in a community."
-              : ""
+            ? "Choose Use here to set up this identity in a community."
             : "Start it when you are ready."}
         </p>
       )}
       {agent.configured === false &&
-        (onUseHere && canUseHere ? (
+        (onUseHere ? (
           <Button
             disabled={state.busy || state.status !== "ready"}
             onClick={() => onUseHere(agent.pubkey, "use")}
           >
             Use here
           </Button>
-        ) : canUseHere ? (
+        ) : control.configureHere ? (
           <LocalInventoryAction
             control={control}
             agent={agent}

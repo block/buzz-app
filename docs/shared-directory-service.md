@@ -20,6 +20,11 @@ authentication, fetching and caching. Consumers keep their features and saved
 selections. Optional consumers retain existing names and inputs without Directory;
 required consumers depend on its service registration.
 
+Start with an **experimental provider/consumer pair and provider-owned types**.
+Stabilize the shared API after a second real consumer demonstrates reuse, or an
+explicit product decision establishes another concrete need for that contract.
+No stable Buzz-owned API is proposed.
+
 **Build the provider and first consumer integration. Extract no built-in Buzz
 service.** This PR proposes the design only. Organization charts, directory writes,
 multiple simultaneous providers, Nostr naming changes and resolving Buzz recipients
@@ -126,8 +131,8 @@ case-insensitively for lookup and before adding saved selections.
 | Status | `loadedAt` is the last successful load in epoch milliseconds, absent before success. `failure` is sanitized text, never raw responses or credentials. Publish the service before fetching so loading does not delay activation. |
 
 The service name versions the contract: v2-only providers cannot satisfy v1
-consumers. Breaking changes require a new name and continued v1 support during
-migration; plugin `apiVersion: 1` does not negotiate services. Distribute shared
+consumers. After stabilization, breaking changes require a new name and continued
+v1 support during migration; plugin `apiVersion: 1` does not negotiate services. Distribute shared
 types, not provider implementation, through Directory’s authoring files by
 default; confirm the location in question 1.
 
@@ -164,11 +169,13 @@ ships in the first delivery.
 | Refresh loading / failed with cache | Keep cached results in the same authorization context; show failure/freshness without blocking existing features. | Same cached-data behavior. |
 | Disabled or replaced after use | Clear derived UI; preserve features/selections. | Return to `starting`; timeout may require retry. |
 
-For replacement in Settings → Plugins, disable the old provider, await disposal,
-then enable the new one. `ctx.provide` is scope-owned and removed on disposal.
-Duplicate registration fails visibly while the existing provider keeps serving;
-a disposal timeout never permits overlap. At cold start the first registration
-serves, with no guaranteed ordering. Disable the unwanted provider explicitly.
+For replacement in Settings → Plugins, disable the old provider, then enable the
+new one. Only one `directoryV1` is registered at a time; its scope owns the
+registration. Settings does not expose disposal completion. Old cleanup or
+in-flight host work may overlap startup under another plugin ID; discard late
+results as specified below. Duplicate registration fails while the existing
+provider keeps serving. After disabling the old provider, retry the failed one
+with disable/enable or reload. Cold-start registration order is unspecified.
 
 A required consumer missing its service fails after the current **10-second
 activation timeout**. Recovery then needs explicit disable/enable or reload;
@@ -218,8 +225,9 @@ failed loads, stale data and missing mappings without logging people or credenti
 
 ## Example and edge cases [sketch]
 
-A review plugin shows `lookup("github.com/login", authorLogin)`’s name or the
-GitHub login. One subscription updates names after refresh without refetching
+A review plugin shows `lookup("github.com/login", authorLogin)`’s display label or
+the GitHub login. The label may be a username; full names require a source that
+provides them. One subscription updates names after refresh without refetching
 GitHub. Its priority-account (VIP) picker calls
 `search(query, 20, "github.com/login")`. At the cap, show “Refine your search”;
 the API supplies no total for a numeric remainder. Unusable accounts do not occupy result
@@ -239,9 +247,9 @@ preserves saved accounts and manual entry.
 
 ## Delivery and verification [sketch]
 
-1. Verify source/credential command and agree the contract. Implement the provider,
-   status/refresh UI, shared types and first consumer together; no unused registry
-   or alternate provider.
+1. Verify source/credential command and agree the experimental contract. Implement
+   the provider, status/refresh UI, provider-owned types and first consumer together;
+   no unused registry or alternate provider.
 2. Deploy Directory before migrating the consumer. Remove local directory
    fetch/cache/configuration so only one implementation runs per plugin version;
    preserve feature settings and saved selections. Other consumers follow as needed.

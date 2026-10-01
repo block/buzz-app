@@ -1,8 +1,50 @@
 import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
 
-// Exercise generic panel motion independently of the hidden Bestie launcher.
+// Exercise generic panel motion independently of the bundled Bestie content.
 test.use({ companionFixture: true });
+
+// Capture real CSS transitions at the DOM-change boundary, before rendering can
+// finish them. transitionrun is queued: a busy renderer can deliver it after the
+// animation has gone, so that event alone is not evidence of a successful hold.
+async function holdPanelMotion(page) {
+  await page.evaluate(() => {
+    new MutationObserver((records) => {
+      const docks = new Set();
+      for (const record of records) {
+        if (
+          record.target instanceof HTMLElement &&
+          record.target.matches("[data-panel-dock]")
+        )
+          docks.add(record.target);
+        for (const node of record.addedNodes)
+          if (node instanceof HTMLElement) {
+            if (node.matches("[data-panel-dock]")) docks.add(node);
+            for (const dock of node.querySelectorAll("[data-panel-dock]"))
+              docks.add(dock);
+          }
+      }
+      for (const dock of docks) {
+        const animations = dock.getAnimations();
+        for (const animation of animations) animation.pause();
+        if (animations.some((animation) => animation.playState === "paused"))
+          dock.dataset.motionHeld = "true";
+      }
+    }).observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-closing", "hidden", "style"],
+    });
+  });
+  return () =>
+    page.locator("[data-panel-dock]").evaluateAll((elements) => {
+      for (const element of elements) {
+        delete element.dataset.motionHeld;
+        for (const animation of element.getAnimations()) animation.finish();
+      }
+    });
+}
 
 // Real CSS transitions, input modality, clipping, and pseudo-elements require a browser.
 test("joined header seams, drag feedback, and pointer-only overlay motion", async ({
@@ -108,21 +150,7 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
   );
 
   await page.setViewportSize({ width: 800, height: 600 });
-  // Hold real transitions as soon as they start; never race a 180ms duration.
-  await page.evaluate(() => {
-    document.addEventListener("transitionrun", (event) => {
-      if (!event.target.matches("[data-panel-dock]")) return;
-      for (const animation of event.target.getAnimations()) animation.pause();
-      event.target.dataset.motionHeld = "true";
-    });
-  });
-  const release = () =>
-    dock.evaluateAll((elements) => {
-      for (const element of elements) {
-        delete element.dataset.motionHeld;
-        for (const animation of element.getAnimations()) animation.finish();
-      }
-    });
+  const release = await holdPanelMotion(page);
   try {
     await launch.click();
     await expect(dock).toHaveAttribute("data-motion-held", "true");
@@ -145,6 +173,13 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
     await expect(dock).toHaveAttribute("inert");
     await expect(dock).toHaveAttribute("data-motion-held", "true");
     await expect(dock).toHaveCSS("transition-duration", "0.12s");
+    // Reverse the held overlay exit; its old completion cannot remove live content.
+    await launch.click();
+    await expect(dock).not.toHaveAttribute("data-closing");
+    await release();
+    await expect(close).toBeVisible();
+    await close.click();
+    await expect(dock).toHaveAttribute("data-motion-held", "true");
     await release();
     await expect(dock).toHaveCount(0);
 
@@ -277,7 +312,7 @@ for (const destination of ["Messages", "Projects"]) {
 }
 
 for (const destination of ["Messages", "Projects"]) {
-  test(`${destination} desktop panel enters and exits without collapsing its split early`, async ({
+  test(`${destination} desktop panel closes immediately and reopens at its saved width`, async ({
     page,
     app,
   }) => {
@@ -292,45 +327,7 @@ for (const destination of ["Messages", "Projects"]) {
       exact: true,
     });
     const dock = page.locator("[data-panel-dock]");
-    // Hold at DOM commit, not transitionrun: a delayed WebKit frame can dispatch
-    // that event after the short entrance has finished. getAnimations() flushes
-    // style, including @starting-style, before the next rendering opportunity.
-    await page.evaluate(() => {
-      new MutationObserver((records) => {
-        const docks = new Set();
-        for (const record of records) {
-          if (
-            record.target instanceof HTMLElement &&
-            record.target.matches("[data-panel-dock]")
-          )
-            docks.add(record.target);
-          for (const node of record.addedNodes)
-            if (node instanceof HTMLElement) {
-              if (node.matches("[data-panel-dock]")) docks.add(node);
-              for (const dock of node.querySelectorAll("[data-panel-dock]"))
-                docks.add(dock);
-            }
-        }
-        for (const dock of docks) {
-          const animations = dock.getAnimations();
-          for (const animation of animations) animation.pause();
-          if (animations.some((animation) => animation.playState === "paused"))
-            dock.dataset.motionHeld = "true";
-        }
-      }).observe(document.body, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ["data-closing", "hidden", "style"],
-      });
-    });
-    const release = () =>
-      dock.evaluateAll((elements) => {
-        for (const element of elements) {
-          delete element.dataset.motionHeld;
-          for (const animation of element.getAnimations()) animation.finish();
-        }
-      });
+    const release = await holdPanelMotion(page);
     try {
       await launch.click();
       await expect(dock).toHaveAttribute("data-motion-held", "true");
@@ -352,28 +349,17 @@ for (const destination of ["Messages", "Projects"]) {
       ).toBe(true);
       await release();
       await expect(dock).toHaveCSS("transform", "none");
-      const split = await dock.evaluate((el) => ({
-        width: getComputedStyle(el).width,
-        columns: getComputedStyle(el.parentElement).gridTemplateColumns,
-      }));
+      const width = await dock.evaluate((el) => getComputedStyle(el).width);
+      // The observer holds every real transition. A retained desktop exit would
+      // stay mounted here, so this proves close does not wait for its fade.
       await close.click();
-      await expect(dock).toHaveAttribute("data-motion-held", "true");
-      await expect(dock).toHaveAttribute("inert");
-      await expect(dock).toHaveCSS("transition-duration", "0.12s");
-      expect(
-        await dock.evaluate((el) => ({
-          width: getComputedStyle(el).width,
-          columns: getComputedStyle(el.parentElement).gridTemplateColumns,
-        })),
-      ).toEqual(split);
-      // Reverse the held exit: stale completion must not remove the reopened dock.
+      await expect(dock).toHaveCount(0);
       await launch.click();
       await expect(dock).not.toHaveAttribute("data-closing");
+      await expect(dock).toHaveCSS("width", width);
       await release();
       await expect(close).toBeVisible();
       await close.click();
-      await expect(dock).toHaveAttribute("data-motion-held", "true");
-      await release();
       await expect(dock).toHaveCount(0);
       await launch.press("Enter");
       await expect(dock).toHaveCSS("transition-duration", "0s");

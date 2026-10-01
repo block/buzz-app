@@ -319,27 +319,41 @@ it("resumes frozen setup with the plugin off and unavailable catalogs without re
   await waitFor(() => expect(onCreate).toHaveBeenCalledWith(pending));
 });
 
-it("outside dismissal cancels an ordinary create draft without creating", async () => {
-  const user = userEvent.setup();
-  const onCreate = vi.fn(async () => {});
-  const onOpenChange = vi.fn();
-  render(
-    <CreateChannelDialog
-      {...setupProps()}
-      open
-      onCreate={onCreate}
-      onOpenChange={onOpenChange}
-    />,
-  );
-  await user.type(
-    screen.getByRole("textbox", { name: "Name" }),
-    "Unsent draft",
-  );
-  expect(onOpenChange).not.toHaveBeenCalled();
-  await user.click(document.querySelector(".buzz-dialog-backdrop") as Element);
-  expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
-  expect(onCreate).not.toHaveBeenCalled();
-});
+it.each([false, true])(
+  "outside dismissal never creates and confirms only changed drafts (changed: %s)",
+  async (changed) => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn(async () => {});
+    const onOpenChange = vi.fn();
+    render(
+      <CreateChannelDialog
+        {...setupProps()}
+        open
+        onCreate={onCreate}
+        onOpenChange={onOpenChange}
+      />,
+    );
+    if (changed)
+      await user.type(
+        screen.getByRole("textbox", { name: "Name" }),
+        "Unsent draft",
+      );
+    expect(onOpenChange).not.toHaveBeenCalled();
+    await user.click(
+      document.querySelector(".buzz-dialog-backdrop") as Element,
+    );
+    if (changed) {
+      expect(screen.getByRole("dialog")).toHaveAccessibleName(
+        "Discard changes?",
+      );
+      expect(onOpenChange).not.toHaveBeenCalled();
+      expect(onCreate).not.toHaveBeenCalled();
+      await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    }
+    expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
+    expect(onCreate).not.toHaveBeenCalled();
+  },
+);
 
 it.each([
   { field: "Name", threshold: 108, limit: 120 },

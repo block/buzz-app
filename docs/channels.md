@@ -401,9 +401,11 @@ navigation to a hidden DM remains supported.
 ## Channel-management modal dismissal
 
 Channel-management modals explicitly opt into the shared Dialog's backdrop-click
-cancellation. Create, Edit details, Canvas, Members, lifecycle confirmations,
-new sections, personal groups and templates/teams use the same Close/Cancel path
-for outside clicks. Clicks inside or in portaled controls do not dismiss them.
+cancellation. Canvas, Members, lifecycle confirmations, new sections, personal
+groups and templates/teams use the same Close/Cancel path for outside clicks.
+Create and Edit details use their Close path: untouched forms close immediately;
+changed drafts require discard confirmation, while explicit Cancel discards immediately.
+Clicks inside or in portaled controls do not dismiss them.
 The non-modal Settings panel is unchanged; the shared Dialog default stays opt-in.
 
 Canvas reload, template/team deletion and template replacement use nested shared

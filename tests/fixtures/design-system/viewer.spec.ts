@@ -1722,15 +1722,27 @@ test("toast recovery stays reachable across themes, sizes, keyboard scrolling an
   await expect(
     modal.getByRole("button", { name: "Close", exact: true }),
   ).toBeFocused();
-  await page.keyboard.press("F6");
-  await expect
-    .poll(() =>
-      modal.evaluate((element) => element.contains(document.activeElement)),
-    )
-    .toBe(true);
+  for (const key of ["F6", "Shift+F6", "Tab", "Shift+Tab"]) {
+    await page.keyboard.press(key);
+    await expect(
+      modal.getByRole("button", { name: "Close", exact: true }),
+    ).toBeFocused();
+  }
   await page.keyboard.press("Escape");
   await expect(modal).toHaveCount(0);
   await expect(region.getByRole("dialog")).toHaveCount(5);
+  await expect(
+    page.getByRole("button", { name: "Open example dialog", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("F6");
+  await expect(region).toBeFocused();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  await expect(
+    page.getByRole("button", { name: "Resolve 6", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(region.getByRole("dialog")).toHaveCount(4);
   await page
     .getByRole("navigation", { name: "Design system" })
     .getByRole("link", { name: "Button", exact: true })
@@ -1753,6 +1765,11 @@ test("Messages gallery fullscreen stays reachable and returns focus to its trigg
       const trigger = gallery
         .getByRole("button", { name: "Open video fullscreen", exact: true })
         .first();
+      // Fullscreen is revealed by hovering the video, not an invisible hit target.
+      await gallery
+        .getByRole("region", { name: "Video attachment", exact: true })
+        .first()
+        .hover();
       await trigger.click();
       const dialog = gallery.getByRole("dialog", {
         name: "Video attachment",

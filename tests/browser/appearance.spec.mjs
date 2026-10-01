@@ -218,6 +218,25 @@ test("storage denial is visible and retryable; another window updates a live con
         exact: true,
       }),
     ).toHaveCount(1);
+    // The host stack must not let its F6 shortcut escape the real search modal.
+    await button(other, "Search Buzz").click();
+    const search = other.getByRole("dialog", {
+      name: "Search Buzz",
+      exact: true,
+    });
+    await expect(search).toBeVisible();
+    await other.keyboard.press("F6");
+    await expect
+      .poll(() =>
+        search.evaluate((element) => element.contains(document.activeElement)),
+      )
+      .toBe(true);
+    await other.keyboard.press("Escape");
+    await expect(search).toHaveCount(0);
+    await other.keyboard.press("F6");
+    await expect(
+      other.getByRole("region", { name: "App notifications" }),
+    ).toBeFocused();
     await other.evaluate(() => window.restoreStorage());
     await button(other, "Retry saving appearance").click();
     await expect(

@@ -582,86 +582,88 @@ test("a reveal while the narrow drawer is closed runs when the drawer opens", as
 });
 
 // Back/Forward leaves through Projects, so Projects needs no case of its own.
-for (const destination of ["Agents", "Workflows", "Settings", "Back/Forward"]) {
-  test(`sidebar state survives Messages → ${destination} → Messages`, async ({
-    page,
-    app,
-  }) => {
-    await open(page, app);
-    const sidebar = page.getByRole("navigation", {
-      name: "Subscribed channels",
+// One launch visits every destination. Each visit starts from the collapsed
+// group scrolled to the bottom, as a separate launch would.
+test("sidebar state survives leaving Messages for Agents, Workflows, Settings and Back/Forward", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const sidebar = page.getByRole("navigation", {
+    name: "Subscribed channels",
+  });
+  const group = sidebar
+    .locator("details")
+    .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
+  const toBottom = () =>
+    sidebar.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
     });
-    const group = sidebar
-      .locator("details")
-      .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
-    const node = await sidebar.elementHandle();
-    const toBottom = () =>
-      sidebar.evaluate((element) => {
-        element.scrollTop = element.scrollHeight;
-        return element.scrollTop;
-      });
-    const pageEntry = (name) =>
-      page
-        .getByRole("navigation", { name: "Pages" })
-        .getByRole("button", { name, exact: true });
-    const leave = async () => {
-      if (destination === "Settings") {
-        await button(page, "Your profile").click();
-        await page
-          .getByRole("menuitem", { name: "Settings", exact: true })
-          .click();
-        await expect(
-          page.getByRole("complementary", {
-            name: "Settings sidebar",
-            exact: true,
-          }),
-        ).toBeVisible();
-      } else {
-        await openPage(
-          page,
-          destination === "Back/Forward" ? "Projects" : destination,
-        );
-      }
-      if (destination === "Settings") {
-        await expect(sidebar).toHaveCount(0);
-        expect(await node.evaluate((element) => element.isConnected)).toBe(
-          false,
-        );
-      } else {
-        await expect(sidebar).toBeVisible();
-        expect(await node.evaluate((element) => element.isConnected)).toBe(
-          true,
-        );
-        await expect(
-          pageEntry(destination === "Back/Forward" ? "Projects" : destination),
-        ).toBeInViewport({ ratio: 1 });
-        await toBottom();
-      }
-      await expect(
-        page.getByRole("region", { name: "Channel message history" }),
-      ).toHaveCount(0);
-      if (destination === "Back/Forward") await button(page, "Go back").click();
-      else if (destination === "Settings")
-        await page
-          .getByRole("complementary", { name: "Settings sidebar" })
-          .getByRole("button", { name: "Back", exact: true })
-          .click();
-      else await openPage(page, "Messages");
-    };
-    await group.locator("summary").click();
-    await expect(group).not.toHaveAttribute("open");
-    const scroll = await toBottom();
-    expect(scroll).toBeGreaterThan(100);
-    await leave();
-    await expect(group).not.toHaveAttribute("open");
+  const pageEntry = (name) =>
+    page
+      .getByRole("navigation", { name: "Pages" })
+      .getByRole("button", { name, exact: true });
+  const restored = async (destination, scroll) => {
+    await expect(group, destination).not.toHaveAttribute("open");
     if (destination === "Settings")
       // Settings replaces the sidebar; returning to the same channel restores
       // the saved position instead of revealing it again.
       await expect
-        .poll(() => sidebar.evaluate((element) => element.scrollTop))
+        .poll(() => sidebar.evaluate((element) => element.scrollTop), {
+          message: destination,
+        })
         .toBeCloseTo(scroll, 0);
     // The current channel is in the collapsed group; its header shows it.
-    else await expect(group.locator("summary")).toBeInViewport({ ratio: 1 });
+    else
+      await expect(group.locator("summary"), destination).toBeInViewport({
+        ratio: 1,
+      });
+  };
+  await group.locator("summary").click();
+  await expect(group).not.toHaveAttribute("open");
+  for (const destination of [
+    "Agents",
+    "Workflows",
+    "Settings",
+    "Back/Forward",
+  ]) {
+    const scroll = await toBottom();
+    expect(scroll, destination).toBeGreaterThan(100);
+    // Settings replaces the sidebar, so each visit holds the current node.
+    const node = await sidebar.elementHandle();
+    if (destination === "Settings") {
+      await button(page, "Your profile").click();
+      await page
+        .getByRole("menuitem", { name: "Settings", exact: true })
+        .click();
+      await expect(
+        page.getByRole("complementary", {
+          name: "Settings sidebar",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(sidebar).toHaveCount(0);
+      expect(await node.evaluate((element) => element.isConnected)).toBe(false);
+    } else {
+      const entry = destination === "Back/Forward" ? "Projects" : destination;
+      await openPage(page, entry);
+      await expect(sidebar).toBeVisible();
+      expect(await node.evaluate((element) => element.isConnected)).toBe(true);
+      await expect(pageEntry(entry)).toBeInViewport({ ratio: 1 });
+      await toBottom();
+    }
+    await expect(
+      page.getByRole("region", { name: "Channel message history" }),
+    ).toHaveCount(0);
+    if (destination === "Back/Forward") await button(page, "Go back").click();
+    else if (destination === "Settings")
+      await page
+        .getByRole("complementary", { name: "Settings sidebar" })
+        .getByRole("button", { name: "Back", exact: true })
+        .click();
+    else await openPage(page, "Messages");
+    await restored(destination, scroll);
     if (destination === "Back/Forward") {
       await button(page, "Go forward").click();
       await expect(sidebar).toBeVisible();
@@ -672,11 +674,10 @@ for (const destination of ["Agents", "Workflows", "Settings", "Back/Forward"]) {
       await expect(pageEntry("Projects")).toBeInViewport({ ratio: 1 });
       await toBottom();
       await button(page, "Go back").click();
-      await expect(group).not.toHaveAttribute("open");
-      await expect(group.locator("summary")).toBeInViewport({ ratio: 1 });
+      await restored(destination, scroll);
     }
-  });
-}
+  }
+});
 
 test("community rail stays visible across pages and switches without a picker", async ({
   page,

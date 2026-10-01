@@ -181,7 +181,6 @@ it("links the author login to their external GitHub profile", async () => {
   );
   const author = await screen.findByRole("link", {
     name: "tellaho",
-    exact: true,
   });
   expect(author).toHaveAttribute("href", "https://github.com/tellaho");
   expect(author).toHaveAttribute("target", "_blank");
@@ -212,8 +211,6 @@ it.each([
       />,
     );
     await screen.findByText(`by ${name}`);
-    expect(
-      screen.queryByRole("link", { name, exact: true }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
   },
 );

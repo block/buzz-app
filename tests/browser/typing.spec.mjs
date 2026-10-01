@@ -128,7 +128,9 @@ for (const scope of ["channel", "thread"]) {
       // Scrollback deliberately moved away from the tail.
       // Establish the bottom-reading precondition with real browser input before
       // capturing geometry; the assertions below verify typing keeps it there.
-      await history.hover();
+      // Point at message text: the hovered row's floating toolbar can cover
+      // the centre, and a wheel over it does not scroll the thread.
+      await history.hover({ position: { x: 100, y: 100 } });
       await page.mouse.wheel(0, Math.max(1, await gap()));
     }
     await expect.poll(gap).toBeLessThan(2);

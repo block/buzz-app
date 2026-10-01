@@ -79,8 +79,9 @@ function Specimen({ example }: { example: Example }) {
         <p className="text-body-sm text-tertiary">{example.description}</p>
       </header>
       <div className="message-gallery-frame">
-        {rows.map((row, index) =>
-          row.membership ? (
+        {rows.map((row, index) => {
+          const nextRow = rows[index + 1];
+          return row.membership ? (
             <MembershipRow
               key={row.id}
               row={row}
@@ -96,11 +97,7 @@ function Specimen({ example }: { example: Example }) {
               row={row}
               viewer={reader}
               stackPrevious={continuesMessageGroup(rows[index - 1], row)}
-              stackNext={
-                rows[index + 1]
-                  ? continuesMessageGroup(row, rows[index + 1])
-                  : false
-              }
+              stackNext={nextRow ? continuesMessageGroup(row, nextRow) : false}
               profile={profiles.get(row.authorId)}
               participantProfiles={profiles}
               agentPubkeys={agentPubkeys}
@@ -129,8 +126,8 @@ function Specimen({ example }: { example: Example }) {
                   }
                 : {})}
             />
-          ),
-        )}
+          );
+        })}
         {thread && (
           <section
             aria-label="Sample thread replies"

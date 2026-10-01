@@ -288,11 +288,7 @@ test("crowded tab strip scrolls only horizontally with Add tab fixed and a thin 
     .click();
   const workspace = page.locator("[data-panel-workspace]");
   const add = workspace.getByRole("button", { name: "Add tab", exact: true });
-  const list = workspace.getByRole("tablist", {
-    name: "Panel tabs",
-    exact: true,
-  });
-  const tabs = list.getByRole("tab");
+  const list = workspace.getByRole("tablist", { name: "Panel tabs" });
   const header = workspace.locator(":scope > header");
   await expect(workspace.getByRole("searchbox")).toBeFocused();
   await page.locator("[data-panel-dock]").evaluate(async (el) => {
@@ -302,18 +298,19 @@ test("crowded tab strip scrolls only horizontally with Add tab fixed and a thin 
   });
   const initial = await add.boundingBox();
   const height = (await header.boundingBox()).height;
-  const tabBounds = await tabs.first().boundingBox();
+  const tabBounds = await list.getByRole("tab").first().boundingBox();
   const expectTabPosition = async () => {
-    const bounds = await tabs.last().boundingBox();
+    const bounds = await list.getByRole("tab").last().boundingBox();
     expect(bounds.y).toBeCloseTo(tabBounds.y, 1);
     expect(bounds.height).toBeCloseTo(tabBounds.height, 1);
   };
   for (let i = 0; i < 5; i++) {
     await add.click();
-    await expect(tabs).toHaveCount(i + 2);
+    await expect(list.getByRole("tab")).toHaveCount(i + 2);
     await expect(workspace.getByRole("searchbox")).toBeFocused();
   }
-  const closeButtons = list.getByRole("button", {
+  const tabs = list.getByRole("tab");
+  const closeButtons = workspace.getByRole("button", {
     name: "Close New tab tab",
     exact: true,
   });
@@ -349,14 +346,14 @@ test("crowded tab strip scrolls only horizontally with Add tab fixed and a thin 
   expect(geometry.trackHeight).toBe("4px");
   expect((await add.boundingBox()).x).toBeCloseTo(initial.x, 1);
   expect((await header.boundingBox()).height).toBeCloseTo(height, 1);
-  await tabs.last().press("Home");
-  await expect(tabs.first()).toBeFocused();
+  await list.getByRole("tab").last().press("Home");
+  await expect(list.getByRole("tab").first()).toBeFocused();
   await expect(closeButtons.first()).toHaveCSS("opacity", "1");
   await expect(list).toHaveJSProperty("scrollTop", 0);
   await expectTabPosition();
   expect((await add.boundingBox()).x).toBeCloseTo(initial.x, 1);
-  await tabs.first().press("End");
-  await expect(tabs.last()).toBeFocused();
+  await list.getByRole("tab").first().press("End");
+  await expect(list.getByRole("tab").last()).toBeFocused();
   await expect(list).toHaveJSProperty("scrollTop", 0);
   await expectTabPosition();
   expect((await add.boundingBox()).x).toBeCloseTo(initial.x, 1);

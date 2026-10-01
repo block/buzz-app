@@ -1,9 +1,10 @@
-/* Temporary text-field policy: keep shared fields' perimeter borders and hide
-   rich textboxes' inner outline. Rich editors retain the visible-focus exception;
-   focus and caret behavior are unchanged. Preserve the recipes for a future pass. */
+/* Temporary text-field policy: keep editable fields' perimeter borders and hide
+   rich textboxes' inner outline. Read-only controls keep their keyboard rings;
+   rich editors retain the visible-focus exception. Focus and caret behavior are
+   unchanged. Preserve the recipes for a future pass. */
 :is(
-  .buzz-input,
-  .buzz-textarea,
+  .buzz-input:not([readonly]),
+  .buzz-textarea:not([readonly]),
   [contenteditable="true"][role="textbox"]
 ):focus {
   /* biome-ignore lint/complexity/noImportantStyles: Central text-field policy must override layered recipes and unlayered editor outlines without deleting them. */

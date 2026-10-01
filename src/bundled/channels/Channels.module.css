@@ -209,7 +209,7 @@
   gap: var(--space-half);
   padding-block-end: var(--sidebar-padding);
 }
-/* Match the timeline jump cue while keeping sidebar geometry local. */
+/* Keep the prominent unread cue while matching the timeline reveal motion. */
 .unreadEdge {
   position: absolute;
   left: 50%;
@@ -219,8 +219,9 @@
   isolation: isolate;
   width: max-content;
   max-width: calc(100% - var(--space-2));
-  @apply glass-secondary;
-  border-radius: var(--radius-pill);
+  background: var(--affordance-prominent);
+  box-shadow: var(--shadow-sm);
+  border-radius: var(--radius-capsule);
   visibility: hidden;
   pointer-events: none;
   opacity: 0;

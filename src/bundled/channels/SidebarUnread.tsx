@@ -198,7 +198,7 @@ export function SidebarUnread({
             aria-hidden={count === 0}
           >
             <Button
-              variant="ghost"
+              variant="prominent"
               aria-label={`${count} unread ${count === 1 ? "conversation" : "conversations"} ${edge}`}
               data-edge={edge}
               data-attention={edges[edge].some(({ attention }) => attention)}

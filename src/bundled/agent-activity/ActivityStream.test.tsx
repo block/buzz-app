@@ -132,8 +132,21 @@ it("shows the most recently updated operation first without losing folded detail
     "agent",
     "channel",
   );
-  render(<ActivityStream records={source} />);
+  const view = render(<ActivityStream records={source.slice(0, 2)} />);
   expect(
     screen.getAllByRole("button").map((button) => button.textContent),
-  ).toEqual(["First operation updated", "Second operation"]);
+  ).toEqual(["Second operation", "First operation"]);
+  fireEvent.click(screen.getByRole("button", { name: "Second operation" }));
+  expect(
+    screen.getByRole("button", { name: "Second operation" }),
+  ).toHaveAttribute("aria-expanded", "true");
+
+  view.rerender(<ActivityStream records={source} />);
+  const first = screen.getByRole("button", { name: "First operation updated" });
+  const second = screen.getByRole("button", { name: "Second operation" });
+  expect(
+    first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(first).toHaveAttribute("aria-expanded", "false");
+  expect(second).toHaveAttribute("aria-expanded", "true");
 });

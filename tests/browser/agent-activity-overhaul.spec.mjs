@@ -132,9 +132,7 @@ test("bottom activity opens one agent popup and profile Activity without losing 
         family: getComputedStyle(element).fontFamily,
       })),
     ).toEqual({ fits: true, family: expect.not.stringMatching(/mono/i) });
-    await popup
-      .getByRole("button", { name: "Progress and responses (1)" })
-      .click();
+    // Keep the response expanded so screenshots show the wrapping just asserted.
     // Wait for the real disclosure expansion, not only mounted text, before geometry/screenshots.
     await expect
       .poll(() =>

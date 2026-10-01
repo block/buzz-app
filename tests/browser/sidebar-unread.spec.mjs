@@ -406,6 +406,8 @@ test("session changes discard the previous sidebar targets and manual unread sti
   page,
   app,
 }) => {
+  // Keep automatic dwell from reading Secondary before the explicit menu actions.
+  await holdReadingFocus(page);
   let release;
   const held = new Promise((resolve) => {
     release = resolve;

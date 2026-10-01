@@ -2,7 +2,10 @@
 import { afterEach, beforeEach, assert, expect, it, vi } from "vitest";
 import { createChannelSetup, type ChannelCreationInput } from "./setup";
 import type { Outbox, OutgoingEvent } from "../relay/outbox";
-import { keypair, signed } from "../relay/testing";
+import { keypair, metadata, roster, signed } from "../relay/testing";
+import { createRelaySession } from "../relay/session";
+import { matchesEvent } from "../relay/projection";
+import type { ReadFilter, RelayEvent } from "../relay/events";
 
 const viewer = keypair();
 const agent = keypair().pubkey;
@@ -103,6 +106,100 @@ function hold() {
   });
   return { promise, release };
 }
+
+it.each([true, false])(
+  "confirms a setup seed against the writer without replay (writer visible: %s)",
+  async (visible) => {
+    const relay = keypair();
+    const events: RelayEvent[] = [];
+    const published: RelayEvent[] = [];
+    const query = vi.fn(async (filters: readonly ReadFilter[]) =>
+      events.filter((event) =>
+        filters.some(
+          (filter) =>
+            matchesEvent(event, filter) &&
+            (event.kind !== 40100 ||
+              (visible && filter.consistency === "strong")),
+        ),
+      ),
+    );
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        scope: "https://setup.example.test",
+        media: () => undefined,
+        query,
+        channelKit: { prepare: async () => "", decode: async () => [] },
+        writer: {
+          kinds: [9007, 40100],
+          sign: async (template) => signed(viewer, template),
+          publish: async (event) => {
+            published.push(event);
+            events.push(event);
+            if (event.kind === 9007) {
+              const id = event.tags.find(([tag]) => tag === "h")?.[1];
+              assert.exists(id);
+              events.push(
+                metadata(relay, id, "Daily"),
+                roster(relay, id, [viewer.pubkey]),
+              );
+            }
+          },
+        },
+      },
+      { outboxStorage: { load: async () => [], save: async () => {} } },
+    );
+    try {
+      const id = await owner.session.channelCreation.create({
+        name: "Daily",
+        visibility: "open",
+        setup: { canvas: "# Plan", agents: [], groupId: "", templateId: "" },
+      });
+      const receipt = `buzz-channel-setup.v2:https://setup.example.test:${viewer.pubkey}:${id}`;
+      if (visible) {
+        await vi.waitFor(() =>
+          expect(localStorage.getItem(receipt)).toBeNull(),
+        );
+        expect(owner.session.channelCreation.notices()).toEqual([]);
+        expect(owner.session.outbox?.snapshot()).toEqual([]);
+      } else {
+        await vi.waitFor(() =>
+          expect(owner.session.channelCreation.notices()).toEqual([
+            expect.objectContaining({
+              id,
+              error: expect.stringContaining(
+                "awaiting exact relay confirmation",
+              ),
+            }),
+          ]),
+        );
+        expect(
+          JSON.parse(localStorage.getItem(receipt) ?? "null"),
+        ).toMatchObject({
+          canvasDone: false,
+        });
+      }
+      // Receipt retirement / completion failure is the barrier: confirmation
+      // must not republish even when the writer cannot prove the accepted seed.
+      expect(published.map((event) => event.kind)).toEqual([9007, 40100]);
+      const seed = published[1];
+      assert.exists(seed);
+      const exact = query.mock.calls.flatMap(([filters]) =>
+        filters.filter((filter) => filter.ids?.includes(seed.id)),
+      );
+      // Outbox delivery may also observe by ID; this pins setup's separate,
+      // fresh confirmation read rather than incidental background read counts.
+      expect(exact).toContainEqual({
+        ids: [seed.id],
+        limit: 1,
+        consistency: "strong",
+      });
+    } finally {
+      owner.dispose();
+    }
+  },
+);
 
 it("opens after confirmed creation, before Canvas completes; places independently and never sends a message", async () => {
   const f = fixture();

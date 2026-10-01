@@ -1181,10 +1181,13 @@ export function createRelaySession(
             await workSessions.delivered(id, undefined, false, false);
             if (
               !(
-                await verified.read([{ ids: [id], limit: 1 }], {
-                  signal: lifetime.signal,
-                  fresh: true,
-                })
+                await verified.read(
+                  [{ ids: [id], limit: 1, consistency: "strong" }],
+                  {
+                    signal: lifetime.signal,
+                    fresh: true,
+                  },
+                )
               ).some((event) => event.id === id)
             )
               throw new Error("Setup is awaiting exact relay confirmation");

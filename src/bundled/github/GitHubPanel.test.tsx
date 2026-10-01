@@ -241,13 +241,27 @@ it("links the PR owner and repository and moves its number to the title", async 
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noreferrer");
   }
-  const identity = screen.getByText("Pull request").parentElement;
+  const identity = screen.getByText("Pull request", {
+    selector: "small",
+  }).parentElement;
   expect(identity).toHaveTextContent("block / buzz-appPull request");
   expect(identity).not.toHaveTextContent("#629");
   const title = await screen.findByRole("heading", {
     name: "A small improvement #629",
   });
   expect(within(title).getByText("#629")).toBeVisible();
+  const titleLink = within(title).getByRole("link", {
+    name: "A small improvement #629",
+  });
+  expect(titleLink).toHaveAttribute(
+    "href",
+    "https://github.com/block/buzz-app/pull/629",
+  );
+  expect(titleLink).toHaveAttribute("target", "_blank");
+  expect(titleLink).toHaveAttribute("rel", "noreferrer");
+  expect(
+    screen.queryByRole("link", { name: "Open on GitHub" }),
+  ).not.toBeInTheDocument();
 });
 
 it.each([
@@ -272,5 +286,32 @@ it.each([
       screen.queryByRole("link", { name: "example" }),
     ).not.toBeInTheDocument();
     await screen.findByRole("heading", { name: "GitHub object" });
+    expect(
+      screen.getByRole("link", { name: "Open on GitHub" }),
+    ).toHaveAttribute("href", target);
   },
 );
+
+it("keeps the PR title link usable while loading and after API failure", async () => {
+  let finish!: (response: Response) => void;
+  const response = new Promise<Response>((resolve) => {
+    finish = resolve;
+  });
+  vi.stubGlobal("fetch", vi.fn().mockReturnValue(response));
+  render(
+    <GitHubPanel
+      target="https://github.com/block/buzz-app/pull/629#discussion_r1"
+      close={() => {}}
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("Loading");
+  const titleLink = screen.getByRole("link", { name: "Pull request #629" });
+  expect(titleLink).toHaveAttribute(
+    "href",
+    "https://github.com/block/buzz-app/pull/629#discussion_r1",
+  );
+  finish(new Response(null, { status: 404 }));
+  await screen.findByRole("alert");
+  expect(titleLink).toBeVisible();
+  expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+});

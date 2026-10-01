@@ -77,6 +77,23 @@ function ObjectPanel({
   }, [reference]);
   const Icon = icons[reference.kind];
   const [owner, repositoryName] = reference.repository.split("/");
+  const title = (
+    <h2>
+      {reference.kind === "pull" ? (
+        <a
+          className={`${inlineStyles.link} ${styles.titleLink}`}
+          href={reference.url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {typeof result === "object" ? result.title : labels.pull}{" "}
+          <span className={styles.titleNumber}>{reference.label}</span>
+        </a>
+      ) : (
+        typeof result === "object" && result.title
+      )}
+    </h2>
+  );
   return (
     <div className={styles.root}>
       <div className={styles.identity}>
@@ -117,14 +134,17 @@ function ObjectPanel({
           )}
         </div>
       </div>
-      <a
-        className={styles.external}
-        href={reference.url}
-        target="_blank"
-        rel="noreferrer"
-      >
-        Open on GitHub <ArrowSquareOutIcon size={14} />
-      </a>
+      {reference.kind !== "pull" && (
+        <a
+          className={styles.external}
+          href={reference.url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Open on GitHub <ArrowSquareOutIcon size={14} />
+        </a>
+      )}
+      {reference.kind === "pull" && typeof result !== "object" && title}
       {result === undefined ? (
         <p role="status">Loading from GitHub…</p>
       ) : typeof result === "string" ? (
@@ -136,6 +156,7 @@ function ObjectPanel({
         </div>
       ) : (
         <>
+          {reference.kind === "pull" && title}
           <div className={styles.byline}>
             {result.state && (
               <span
@@ -167,15 +188,7 @@ function ObjectPanel({
               </span>
             )}
           </div>
-          <h2>
-            {result.title}
-            {reference.kind === "pull" && (
-              <>
-                {" "}
-                <span className={styles.titleNumber}>{reference.label}</span>
-              </>
-            )}
-          </h2>
+          {reference.kind !== "pull" && title}
           {!!result.facts.length && (
             <dl className={styles.facts}>
               {result.facts.map(([label, value]) => (

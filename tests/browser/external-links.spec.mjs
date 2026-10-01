@@ -61,7 +61,7 @@ test("unhandled links open externally and disabling GitHub restores the fallback
   ).toBeVisible();
   expect(context.pages()).toHaveLength(1);
   expect(
-    await popup(page, panel.getByRole("link", { name: "Open on GitHub" })),
+    await popup(page, panel.getByRole("link", { name: "A useful change #1" })),
   ).toBe(github);
   expect(await popup(page, link(page, ordinary))).toBe(ordinary);
   expect(await popup(page, link(page, unsupported))).toBe(unsupported);
@@ -113,6 +113,14 @@ test("GitHub object identities have comparable visible artwork at one size", asy
   for (const [kind, target] of targets) {
     await expect(link(page, target)).toBeVisible();
     await link(page, target).click();
+    await expect(
+      page
+        .getByRole("complementary", { name: "GitHub", exact: true })
+        .getByRole("heading", {
+          name: kind === "Pull request" ? "GitHub object #1" : "GitHub object",
+          exact: true,
+        }),
+    ).toBeVisible();
     const identity = page
       .getByRole("complementary", { name: "GitHub", exact: true })
       .getByText(new RegExp(`^${kind}(?: |$)`))
@@ -152,6 +160,7 @@ test("PR state, changes and branch links use shared roles in both themes", async
   app,
 }, testInfo) => {
   for (const url of [
+    github,
     "https://github.com/block",
     "https://github.com/block/buzz",
     "https://github.com/sample-author",
@@ -200,6 +209,15 @@ test("PR state, changes and branch links use shared roles in both themes", async
   await expect(
     panel.getByRole("heading", { name: "A small improvement #1" }),
   ).toBeVisible();
+  const title = panel.getByRole("heading", { name: "A small improvement #1" });
+  const byline = panel
+    .getByRole("link", { name: "sample-author", exact: true })
+    .locator("../..");
+  const titleBox = await title.boundingBox();
+  const bylineBox = await byline.boundingBox();
+  expect(titleBox).not.toBeNull();
+  expect(bylineBox).not.toBeNull();
+  expect(bylineBox.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
   expect(
     await popup(
       page,
@@ -211,13 +229,22 @@ test("PR state, changes and branch links use shared roles in both themes", async
     ["buzz", "https://github.com/block/buzz"],
   ]) {
     const repositoryLink = panel.getByRole("link", { name, exact: true });
-    await expect(repositoryLink).toHaveCSS("font-size", "24px");
+    await expect(repositoryLink).toHaveCSS("font-size", "16px");
     expect(await popup(page, repositoryLink)).toBe(url);
   }
   await expect(panel.getByText("Pull request", { exact: true })).toBeVisible();
   await expect(panel.getByText("Pull request #1", { exact: true })).toHaveCount(
     0,
   );
+  await expect(panel.getByRole("link", { name: "Open on GitHub" })).toHaveCount(
+    0,
+  );
+  expect(
+    await popup(
+      page,
+      panel.getByRole("link", { name: "A small improvement #1" }),
+    ),
+  ).toBe(github);
   const changes = panel.getByText("Changes", { exact: true }).locator("..");
   expect(
     await popup(page, panel.getByRole("link", { name: "main", exact: true })),
@@ -258,6 +285,9 @@ test("PR state, changes and branch links use shared roles in both themes", async
     await expect(
       panel.getByRole("link", { name: "sample-author", exact: true }),
     ).toHaveCSS("color", colors.link);
+    await expect(
+      panel.getByRole("link", { name: "A small improvement #1" }),
+    ).toHaveCSS("color", colors.standard);
     await expect(panel.getByText("#1", { exact: true })).toHaveCSS(
       "color",
       colors.subtle,

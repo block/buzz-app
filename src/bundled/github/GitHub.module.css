@@ -17,10 +17,10 @@
   min-width: 0;
 }
 .repository {
-  font-size: var(--text-heading);
-  font-weight: var(--text-heading--font-weight);
-  line-height: var(--text-heading--line-height);
-  letter-spacing: var(--text-heading--letter-spacing);
+  font-size: var(--text-label);
+  font-weight: var(--text-label--font-weight);
+  line-height: var(--text-label--line-height);
+  letter-spacing: var(--text-label--letter-spacing);
   overflow-wrap: anywhere;
 }
 .repositorySeparator,
@@ -30,6 +30,16 @@
 .titleNumber {
   font-weight: var(--text-body-lg--font-weight);
   white-space: nowrap;
+}
+.titleLink {
+  --link-text: var(--text-standard);
+  --link-hover: transparent;
+  text-underline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .titleLink:hover {
+    text-decoration: underline;
+  }
 }
 .identity small,
 .identity strong {

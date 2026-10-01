@@ -51,3 +51,6 @@ pub async fn mesh_compute_stop(host: tauri::State<'_, MeshHost>) -> Result<(), S
         Err("Mesh native runtime is not included in this build".into())
     }
 }
+
+#[cfg(all(test, feature = "mesh"))]
+mod smoke;

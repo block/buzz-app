@@ -72,7 +72,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     lease = undefined;
   });
 
-  function CommunityComputePage() {
+  function CommunityComputePage({
+    community,
+  }: {
+    community?: { id: string; name: string };
+  }) {
     const snapshot = useSyncExternalStore(
       ctx.relay.subscribe,
       ctx.relay.snapshot,
@@ -162,6 +166,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       phase === "starting" || phase === "ready" || phase === "stopping";
     return (
       <ConsumerComputeView
+        communityName={community?.name}
         active={enabled}
         starting={phase === "starting"}
         disabled={

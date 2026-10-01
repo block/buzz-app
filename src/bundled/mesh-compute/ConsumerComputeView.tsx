@@ -5,6 +5,7 @@ import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import styles from "./Compute.module.css";
 
 export function ConsumerComputeView({
+  communityName,
   active,
   starting,
   disabled,
@@ -14,6 +15,7 @@ export function ConsumerComputeView({
   connect,
   refresh,
 }: {
+  communityName: string | undefined;
   active: boolean;
   starting: boolean;
   disabled: boolean;
@@ -28,6 +30,11 @@ export function ConsumerComputeView({
       <div className="h-full overflow-auto p-panel-inset text-body">
         <div className={styles.content}>
           <h1 className="m-0 text-title text-primary">Use shared compute</h1>
+          {communityName && (
+            <p className="text-body text-secondary">
+              Shared compute for <strong>{communityName}</strong>
+            </p>
+          )}
           <p className="text-body text-secondary">
             Use a model shared by another device in the selected community. This
             app does not download or serve a local model. Your prompts run on

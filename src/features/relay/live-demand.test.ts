@@ -290,11 +290,13 @@ it("queued membership hints and reconnect cannot bypass a learned roster pause",
 });
 
 it.each([
-  { name: "rate-limited", retryAfterMs: 60_000 },
-  { name: "refused without a cooldown", retryAfterMs: undefined },
+  { name: "rate-limited roster", retryAfterMs: 60_000, metadata: false },
+  { name: "refused roster", retryAfterMs: undefined, metadata: false },
+  { name: "rate-limited metadata", retryAfterMs: 60_000, metadata: true },
+  { name: "refused metadata", retryAfterMs: undefined, metadata: true },
 ])(
-  "a $name strong roster pass keeps writer routing for explicit retry",
-  async ({ retryAfterMs }) => {
+  "a $name read keeps writer routing for explicit retry",
+  async ({ retryAfterMs, metadata: failMetadata }) => {
     const h = setup();
     try {
       h.connected();
@@ -310,8 +312,21 @@ it.each([
         }),
       ]);
       await flush();
-      const refused = h.wire.next();
+      const membership = roster(h.relay, "new", [h.viewer.pubkey]);
+      let refused = h.wire.next();
       expect(refused.filters[0]?.consistency).toBe("strong");
+      if (failMetadata) {
+        refused.respond([membership]);
+        await flush();
+        expect(
+          h.owner.session.channels.list().channels.map((c) => c.id),
+        ).toEqual(["new"]);
+        refused = h.wire.next();
+        expect(refused.filters[0]).toMatchObject({
+          kinds: [39000],
+          consistency: "strong",
+        });
+      }
       refused.fail(
         new ReadError(
           "unavailable",
@@ -335,10 +350,7 @@ it.each([
       await flush();
       const retry = h.wire.next();
       expect(retry.filters[0]?.consistency).toBe("strong");
-      const granted = [
-        roster(h.relay, "new", [h.viewer.pubkey]),
-        metadata(h.relay, "new", "New channel"),
-      ];
+      const granted = [membership, metadata(h.relay, "new", "New channel")];
       // Only the writer has the newly granted membership; no live roster echo.
       retry.respond(retry.filters[0]?.consistency === "strong" ? granted : []);
       await flush();

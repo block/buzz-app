@@ -31,7 +31,16 @@ for (const action of ["archive", "delete"]) {
       await page.addInitScript(() => {
         localStorage.setItem("buzz-appearance.v1", "dark");
       });
+      const presenceAccepted = () =>
+        page.waitForResponse(
+          async (response) =>
+            response.url().endsWith("/stream-presence") &&
+            (await response.json()).accepted === true,
+        );
+      // Establish startup before observing the publication restarted by deletion.
+      const initialPresence = presenceAccepted();
       await page.goto(app.origin);
+      await initialPresence;
       await openPage(page, "Messages");
       const sidebar = page.getByRole("navigation", {
         name: "Subscribed channels",
@@ -150,6 +159,7 @@ for (const action of ["archive", "delete"]) {
           await route.continue();
         },
       );
+      const republished = action === "delete" ? presenceAccepted() : undefined;
       try {
         await trigger.click();
         const confirm = dialog.getByRole("button", {
@@ -223,6 +233,9 @@ for (const action of ["archive", "delete"]) {
           page.getByRole("textbox", { name: /^Message #/ }),
         ).toHaveCount(0);
       }
+      // Revocation restarts presence asynchronously. Wait through any admission
+      // retry until accepted before reloading; visible UI is not that boundary.
+      await republished;
       await page.reload();
       if (action === "archive") {
         await expect(page).toHaveURL(conversationUrl);
@@ -309,6 +322,14 @@ for (const action of ["archive", "delete"]) {
         });
         await page.keyboard.press("Escape");
         await expect(restore).toBeFocused();
+        await restore.click();
+        await expect(
+          unarchive.getByRole("button", { name: "Cancel", exact: true }),
+        ).toBeFocused();
+        await page.mouse.click(8, 8);
+        await expect(unarchive).toHaveCount(0);
+        await expect(restore).toBeFocused();
+        expect(app.report.lifecyclePublications).toHaveLength(1);
         await restore.click();
         await unarchive
           .getByRole("button", { name: "Unarchive channel", exact: true })

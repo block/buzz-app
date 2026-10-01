@@ -1164,3 +1164,55 @@ sidebarActions(
     }
   },
 );
+
+// Native default keyboard scrolling from a focused descendant is browser-owned;
+// deterministic same-shrink ordering is covered in ChannelTimeline.restore.test.
+for (const control of ["link", "button"]) {
+  readingTest(
+    `Page Up from a message ${control} leaves bottom follow`,
+    async ({ page, app }) => {
+      await open(page, app);
+      await settle(page);
+      const target = "https://example.com/keyboard-reading";
+      const added = app.append(
+        "primary",
+        "alpha",
+        `Read ${target}`,
+        true,
+        false,
+      );
+      const row = page.locator(`[data-message-id="${added.id}"]`);
+      await expect(row).toBeInViewport();
+      await settle(page);
+      const history = page.getByRole("region", {
+        name: "Channel message history",
+      });
+      const focused =
+        control === "link"
+          ? row.getByRole("link", { name: target, exact: true })
+          : row.getByRole("button", { name: /^View .* profile$/ }).first();
+      await focused.evaluate((element) =>
+        element.focus({ preventScroll: true }),
+      );
+      await expect(focused).toBeFocused();
+      const before = await history.evaluate((element) => element.scrollTop);
+      await page.keyboard.press("PageUp");
+      await expect
+        .poll(() => history.evaluate((element) => element.scrollTop))
+        .toBeLessThan(before - 80);
+      await settle(page);
+      const reading = await anchor(page);
+      const next = app.append(
+        "primary",
+        "alpha",
+        "Do not steal the reader's position",
+      );
+      await expect(
+        page.locator(`[data-message-id="${next.id}"]`),
+      ).toBeAttached();
+      await settle(page);
+      await expectAnchor(page, reading);
+      await expect(history.locator("[data-jump-to-latest]")).toBeVisible();
+    },
+  );
+}

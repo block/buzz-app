@@ -5,7 +5,14 @@ import { MembershipRow } from "./MembershipRow";
 import { membershipRows } from "./membership-rows";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
@@ -20,6 +27,37 @@ import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
+
+// Native page/arrow scrolling can start on a focused message link or button.
+// Editable widgets and inner scrollports own their keys, not the history.
+function scrollsHistoryUp(event: KeyboardEvent<HTMLElement>): boolean {
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey)
+    return false;
+  if (
+    !["ArrowUp", "PageUp", "Home"].includes(event.key) &&
+    !(event.key === " " && event.shiftKey)
+  )
+    return false;
+  let target = event.target instanceof HTMLElement ? event.target : null;
+  if (!target || !event.currentTarget.contains(target)) return false;
+  while (target && target !== event.currentTarget) {
+    if (
+      target.matches(
+        "input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox'], [role='combobox'], [role='listbox'], [role='slider'], [role='spinbutton']",
+      ) ||
+      (event.key === " " && target.matches("button, [role='button']"))
+    )
+      return false;
+    const overflow = getComputedStyle(target).overflowY;
+    if (
+      ["auto", "scroll", "overlay"].includes(overflow) &&
+      target.scrollHeight > target.clientHeight
+    )
+      return false;
+    target = target.parentElement;
+  }
+  return target === event.currentTarget;
+}
 
 type ReadingPosition = {
   offset: number;
@@ -599,14 +637,7 @@ function Timeline({
         );
         touchY.current = next;
       }}
-      onKeyDown={(event) =>
-        gesture(
-          event.target === event.currentTarget &&
-            !event.defaultPrevented &&
-            (["ArrowUp", "PageUp", "Home"].includes(event.key) ||
-              (event.key === " " && event.shiftKey)),
-        )
-      }
+      onKeyDown={(event) => gesture(scrollsHistoryUp(event))}
       onPointerDown={() => gesture()}
       onScrollEnd={() => {
         upwardGesture.current = false;

@@ -465,7 +465,7 @@ it.each(["converged", "gesture", "removed"])(
 );
 
 // Intent and native/virtualizer shrink can arrive in one scroll observation.
-it.each(["wheel", "touch", "keyboard"] as const)(
+it.each(["wheel", "touch", "keyboard", "link", "button"] as const)(
   "%s reader input wins over shrink in the same observation",
   async (input) => {
     const h = mount(true);
@@ -477,6 +477,15 @@ it.each(["wheel", "touch", "keyboard"] as const)(
     fireEvent.scroll(region);
     if (input === "wheel") fireEvent.wheel(region, { deltaY: -200 });
     if (input === "keyboard") fireEvent.keyDown(region, { key: "PageUp" });
+    if (input === "link" || input === "button") {
+      const control = document.createElement(input === "link" ? "a" : "button");
+      if (control instanceof HTMLAnchorElement)
+        control.href = "https://example.com";
+      control.textContent = "Message control";
+      region.append(control);
+      control.focus();
+      fireEvent.keyDown(control, { key: "PageUp" });
+    }
     if (input === "touch") {
       fireEvent.touchStart(region, { touches: [{ clientY: 100 }] });
       fireEvent.touchMove(region, { touches: [{ clientY: 300 }] });
@@ -520,3 +529,42 @@ it("a finished near-bottom wheel does not taint a later layout-only shrink", asy
   h.unmount();
   expect(readView("scope", "scroll:c", null)).toMatchObject({ bottom: true });
 });
+
+it.each([
+  "editable",
+  "nested scroll",
+  "prevented",
+  "button activation",
+] as const)(
+  "%s keyboard input does not claim history scrolling during shrink",
+  async (input) => {
+    const h = mount(true);
+    await frame();
+    const region = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    region.scrollTop = 1400;
+    fireEvent.scroll(region);
+    const control = document.createElement(
+      input === "editable" ? "textarea" : "button",
+    );
+    region.append(control);
+    if (input === "nested scroll") control.style.overflowY = "auto";
+    if (input === "prevented")
+      control.addEventListener("keydown", (event) => event.preventDefault());
+    control.focus();
+    fireEvent.keyDown(control, {
+      key: input === "button activation" ? " " : "PageUp",
+      shiftKey: input === "button activation",
+    });
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(
+      1600,
+    );
+    region.scrollTop = 400;
+    fireEvent.scroll(region);
+    h.promote();
+    await frame();
+    h.unmount();
+    expect(readView("scope", "scroll:c", null)).toMatchObject({ bottom: true });
+  },
+);

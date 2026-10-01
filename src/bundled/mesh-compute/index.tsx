@@ -1,6 +1,26 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
+
+import { Button } from "../../shared/design-system/ui/Button";
+import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
+import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
+
+type MeshStatus = {
+  available: boolean;
+  lifecycle?: {
+    state: "stopped" | "starting" | "ready" | "stopping" | "failed";
+    reason?: string;
+  };
+  reason?: string;
+};
+const phaseLabels = {
+  stopped: "Off",
+  starting: "Starting…",
+  ready: "Running",
+  stopping: "Stopping…",
+  failed: "Needs attention",
+};
 
 export const inject = ["relay", "settingsCards"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -58,11 +78,32 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ctx.relay.subscribe,
       ctx.relay.snapshot,
     );
-    const [status, setStatus] = useState("Not checked");
+    const [status, setStatus] = useState<MeshStatus | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    useEffect(() => {
+      let active = true;
+      setStatus(null);
+      setError(null);
+      if (isTauri()) {
+        void invoke<MeshStatus>("mesh_compute_status").then(
+          (result) => {
+            if (active && snapshot === ctx.relay.snapshot()) setStatus(result);
+          },
+          (error) => {
+            if (active && snapshot === ctx.relay.snapshot())
+              setError(String(error));
+          },
+        );
+      }
+      return () => {
+        active = false;
+      };
+    }, [snapshot]);
     const [busy, setBusy] = useState(false);
     const run = async (action: "start" | "stop" | "status") => {
       const selected = lease;
       setBusy(true);
+      setError(null);
       try {
         if (action === "start") {
           if (!selected) throw new Error("Connect to a community first");
@@ -82,45 +123,64 @@ export const apply: PluginModule["apply"] = (ctx) => {
             void lease.catch(() => {});
           }
         }
-        const result = await invoke<unknown>("mesh_compute_status");
-        if (!disposed && snapshot === ctx.relay.snapshot())
-          setStatus(JSON.stringify(result));
+        const result = await invoke<MeshStatus>("mesh_compute_status");
+        if (!disposed && snapshot === ctx.relay.snapshot()) setStatus(result);
       } catch (error) {
-        if (!disposed) setStatus(String(error));
+        if (!disposed && snapshot === ctx.relay.snapshot())
+          setError(String(error));
       } finally {
         if (!disposed) setBusy(false);
       }
     };
+    const phase = status?.lifecycle?.state;
+    const enabled =
+      phase === "starting" || phase === "ready" || phase === "stopping";
+    const message = error ?? status?.lifecycle?.reason ?? status?.reason;
     return (
-      <section>
-        <p>
-          Use compute shared by members of this community. Your prompts run on
-          their machines.
-        </p>
-        <p>This preview uses shared compute; it does not share your machine.</p>
-        <p>{!isTauri() && "Open Buzz desktop to connect to shared compute."}</p>
-        <button
-          type="button"
-          disabled={busy || !isTauri() || snapshot.status !== "ready"}
-          onClick={() => void run("start")}
-        >
-          Start Mesh client
-        </button>
-        <button
-          type="button"
-          disabled={busy || !isTauri()}
-          onClick={() => void run("stop")}
-        >
-          Stop
-        </button>
-        <button
-          type="button"
-          disabled={busy || !isTauri()}
-          onClick={() => void run("status")}
-        >
-          Refresh status
-        </button>
-        <output aria-live="polite">{status}</output>
+      <section aria-label="Mesh compute">
+        <SwitchPreferenceRow
+          label="Use shared compute"
+          description="Use compute shared by members of this community. Your prompts run on their machines."
+          checked={enabled}
+          disabled={
+            busy ||
+            !isTauri() ||
+            !status?.available ||
+            !phase ||
+            phase === "stopping" ||
+            (!enabled && snapshot.status !== "ready")
+          }
+          onCheckedChange={(checked) => void run(checked ? "start" : "stop")}
+        />
+        <PreferenceRow
+          title="Status"
+          subtitle={
+            <span role="status">
+              {!isTauri()
+                ? "Open Buzz desktop to use shared compute."
+                : phase
+                  ? phaseLabels[phase]
+                  : status?.available === false
+                    ? "Unavailable"
+                    : "Checking status…"}
+            </span>
+          }
+          trailing={
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy || !isTauri()}
+              onClick={() => void run("status")}
+            >
+              Refresh
+            </Button>
+          }
+        />
+        {message && (
+          <p role="alert" className="text-body-sm text-danger">
+            {message}
+          </p>
+        )}
       </section>
     );
   }

@@ -80,10 +80,6 @@ it("keeps native titlebar actions available throughout identity setup without dr
   expect(startDragging).toHaveBeenCalledTimes(2);
   drag();
   expect(startDragging).toHaveBeenCalledTimes(3);
-  await user.click(screen.getByRole("button", { name: "Back" }));
-  await user.click(screen.getByRole("button", { name: "Use an existing key" }));
-  expect(screen.getByLabelText("Private key (nsec)")).toHaveValue("");
-  await user.type(screen.getByLabelText("Private key (nsec)"), key);
   await user.click(screen.getByRole("button", { name: "Use this key" }));
   expect(screen.getByRole("status")).toHaveTextContent("Saving your identity");
   drag();

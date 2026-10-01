@@ -217,7 +217,10 @@ test("PR state, changes and branch links use shared roles in both themes", async
   const bylineBox = await byline.boundingBox();
   expect(titleBox).not.toBeNull();
   expect(bylineBox).not.toBeNull();
-  expect(bylineBox.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+  expect(bylineBox.y - (titleBox.y + titleBox.height)).toBeCloseTo(8, 0);
+  const factsBox = await panel.locator("dl").boundingBox();
+  expect(factsBox).not.toBeNull();
+  expect(factsBox.y - (bylineBox.y + bylineBox.height)).toBeCloseTo(24, 0);
   expect(
     await popup(
       page,

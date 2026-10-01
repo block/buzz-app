@@ -85,6 +85,12 @@
   letter-spacing: var(--text-body-lg--letter-spacing);
   overflow-wrap: anywhere;
 }
+.root .pullTitle {
+  margin-bottom: var(--space-2);
+}
+.pullTitle + .byline {
+  margin-bottom: var(--space-6);
+}
 .state {
   border-radius: var(--radius-chip);
   padding: var(--space-half) var(--space-1h);

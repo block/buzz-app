@@ -78,7 +78,7 @@ function ObjectPanel({
   const Icon = icons[reference.kind];
   const [owner, repositoryName] = reference.repository.split("/");
   const title = (
-    <h2>
+    <h2 className={reference.kind === "pull" ? styles.pullTitle : undefined}>
       {reference.kind === "pull" ? (
         <a
           className={`${inlineStyles.link} ${styles.titleLink}`}

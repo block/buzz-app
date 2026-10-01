@@ -1,5 +1,5 @@
 //! Allowlisted relay-advertised inventory. Never exports routing tokens or owner bindings.
-use crate::discovery_types::MeshAvailability;
+use crate::discovery_types::{AvailabilityState, MeshAvailability};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -22,9 +22,15 @@ pub struct Entry {
 
 /// Project only already-verified discovery results; preserve unavailable evidence.
 pub fn project(availability: MeshAvailability) -> Inventory {
-    let unavailable = availability
-        .reason
-        .filter(|reason| reason != "no Buzz shared compute serving members are available");
+    let unavailable = if availability.state == AvailabilityState::Unavailable {
+        Some(
+            availability
+                .reason
+                .unwrap_or_else(|| "Community mesh is unavailable".into()),
+        )
+    } else {
+        None
+    };
     let entries = availability
         .serve_targets
         .into_iter()
@@ -70,6 +76,7 @@ mod tests {
             device_name: Some("Workstation".into()),
         };
         let value = serde_json::to_value(project(MeshAvailability {
+            state: AvailabilityState::Available,
             reason: None,
             models: vec![],
             serve_targets: vec![target],
@@ -93,9 +100,12 @@ mod tests {
         ))
         .unavailable
         .is_some());
-        let empty = project(MeshAvailability::unavailable(
-            "no Buzz shared compute serving members are available",
-        ));
+        let empty = project(MeshAvailability {
+            state: AvailabilityState::Empty,
+            reason: Some("Any future display wording".into()),
+            models: vec![],
+            serve_targets: vec![],
+        });
         assert!(empty.unavailable.is_none());
         assert!(empty.entries.is_empty());
     }

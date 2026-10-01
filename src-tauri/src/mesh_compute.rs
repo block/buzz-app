@@ -94,8 +94,8 @@ pub async fn mesh_compute_start(
         let mut targets = targets.into_iter();
         host.lifecycle
             .start(buzz_mesh_compute::config::ClientConfig {
-                api_port: mesh_port("BUZZ_MESH_API_PORT", 9337)?,
-                console_port: mesh_port("BUZZ_MESH_CONSOLE_PORT", 3131)?,
+                api_port: mesh_port("BUZZ_MESH_API_PORT", 19337)?,
+                console_port: mesh_port("BUZZ_MESH_CONSOLE_PORT", 13131)?,
                 owner_key: path,
                 owner_id: owner,
                 trusted_owners: owners,

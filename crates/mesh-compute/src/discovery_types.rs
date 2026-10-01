@@ -38,9 +38,20 @@ pub struct MeshTargetCapacity {
     pub vram_gb: Option<f64>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AvailabilityState {
+    #[default]
+    Unavailable,
+    Empty,
+    Available,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MeshAvailability {
+    #[serde(default)]
+    pub state: AvailabilityState,
     pub reason: Option<String>,
     pub models: Vec<MeshModelOption>,
     pub serve_targets: Vec<MeshServeTarget>,
@@ -49,6 +60,7 @@ pub struct MeshAvailability {
 impl MeshAvailability {
     pub fn unavailable(reason: impl Into<String>) -> Self {
         Self {
+            state: AvailabilityState::Unavailable,
             reason: Some(reason.into()),
             models: Vec::new(),
             serve_targets: Vec::new(),

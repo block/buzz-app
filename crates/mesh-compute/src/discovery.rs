@@ -269,6 +269,11 @@ pub fn availability_from_events(events: Vec<nostr::event::Event>) -> MeshAvailab
     let models = dedupe_models(all_models);
     let available = !serve_targets.is_empty();
     MeshAvailability {
+        state: if available {
+            crate::discovery_types::AvailabilityState::Available
+        } else {
+            crate::discovery_types::AvailabilityState::Empty
+        },
         reason: if available {
             None
         } else {

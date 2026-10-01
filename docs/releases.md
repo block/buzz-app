@@ -166,9 +166,9 @@ Scheduled runs and dispatches without this switch build and publish all three
 platforms. A `promote_version` recovery run skips all platform builds and only
 updates the macOS feed. Candidate-only runs remain artifact-only and can run from
 a feature branch, without signing credentials or publication. They use the same
-preview version, source commit, pinned
-runtime revision and five-tool manifest; they never use legacy Buzz's sidecars,
-updater feed, application identifier, or signing secrets. The workflow records
+preview version, source commit, pinned runtime revision and five-tool manifest;
+they never use legacy Buzz's sidecars, updater feed, application identifier, or
+signing secrets. The workflow records
 `SOURCE_COMMIT` and checksums over final installer bytes. Download the
 `windows-x64-candidate` and `linux-x64-candidates` artifacts from that Actions run
 within seven days. These are **ready to try only after their build and payload

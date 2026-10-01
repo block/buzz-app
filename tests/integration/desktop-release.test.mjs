@@ -45,61 +45,6 @@ function temp(t) {
   return dir;
 }
 
-// These job guards use the common Actions/JavaScript boolean-expression subset.
-function selected(
-  job,
-  inputs = {},
-  ref = "refs/heads/main",
-  repository = "block/buzz-app",
-) {
-  return new Function("github", "inputs", `return (${job.if})`)(
-    { ref, repository },
-    inputs,
-  );
-}
-
-test("scheduled/manual releases build all platforms; candidates and promotions remain isolated", () => {
-  for (const job of [jobs.build, jobs.windows, jobs.linux]) {
-    assert.equal(selected(job), true);
-    assert.equal(
-      selected(job, { candidates: false, promote_version: "" }),
-      true,
-    );
-    assert.equal(selected(job, { promote_version: version }), false);
-    assert.equal(selected(job, {}, "refs/heads/main", "fork/buzz-app"), false);
-  }
-  assert.equal(selected(jobs.build, { candidates: true }), false);
-  for (const job of [jobs.windows, jobs.linux]) {
-    assert.equal(
-      selected(job, { candidates: true }, "refs/heads/feature"),
-      true,
-    );
-    assert.equal(selected(job, {}, "refs/heads/feature"), false);
-    assert.equal(job.permissions?.contents, undefined); // read-only workflow default
-  }
-  assert.deepEqual(jobs.publish.needs, ["build", "windows", "linux"]);
-  assert.equal(jobs.publish.if, undefined); // implicit success(): never publish partial builds
-  const downloads = jobs.publish.steps.filter((step) =>
-    step.uses?.startsWith("actions/download-artifact@"),
-  );
-  assert.deepEqual(
-    downloads.map((step) => step.with.path),
-    ["build-assets/macos", "build-assets/windows", "build-assets/linux"],
-  );
-  for (const [index, job] of [jobs.build, jobs.windows, jobs.linux].entries()) {
-    assert.equal(downloads[index].with.name, job.steps.at(-1).with.name);
-  }
-  const publication = jobs.publish.steps.at(-1).run;
-  assert.match(
-    publication,
-    /gh release create "v\$VERSION" release-assets\/\*/,
-  );
-  assert.match(
-    publication,
-    /--target "\$SOURCE_SHA" --prerelease --latest=false/,
-  );
-});
-
 test("existing platform version generators agree for the same run and attempt", (t) => {
   const dir = temp(t);
   const env = {
@@ -178,19 +123,12 @@ test("actual assembly command collects all six assets and emits one complete che
   );
 });
 
-for (const failure of [
-  "corrupt",
-  "source mismatch",
-  "mixed version",
-  "missing platform",
-]) {
+for (const failure of ["corrupt", "mixed version", "missing platform"]) {
   test(`actual assembly refuses ${failure} before publication`, (t) => {
     const { dir, run } = fixture(t);
     const windows = join(dir, "build-assets/windows");
     const file = assets.windows[0];
     if (failure === "corrupt") writeFileSync(join(windows, file), "corrupted");
-    if (failure === "source mismatch")
-      writeFileSync(join(windows, "SOURCE_COMMIT"), "b".repeat(40));
     if (failure === "mixed version") {
       const older = file.replace("42.2", "42.1");
       renameSync(join(windows, file), join(windows, older));

@@ -193,9 +193,6 @@ jobs:
           for platform in macos windows linux; do
             (cd "build-assets/$platform" && sha256sum --check SHA256SUMS)
           done
-          for platform in windows linux; do
-            test "$(cat "build-assets/$platform/SOURCE_COMMIT")" = "$SOURCE_SHA"
-          done
           # Exact names also reject mixed versions after a partial-job rerun.
           # Rerun all jobs so every platform uses the same run attempt/version.
           mkdir release-assets

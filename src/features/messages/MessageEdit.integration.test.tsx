@@ -33,9 +33,19 @@ import type { ComposerInputElement } from "./composer-dom";
 import { composerDOMFixture } from "./composer-testing";
 
 composerDOMFixture();
+// jsdom has no viewport measurement. Keep the real thread/edit/media lifecycle,
+// but render its small virtual list directly; browser tests own scroll geometry.
+vi.mock("virtua", () => ({
+  Virtualizer: ({ children }: { children: import("react").ReactNode }) => (
+    <ol>{children}</ol>
+  ),
+}));
 
 beforeEach(() => {
   localStorage.clear();
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(600);
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -48,6 +58,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });

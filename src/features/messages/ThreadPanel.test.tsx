@@ -8,7 +8,7 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import { StrictMode, type ReactNode } from "react";
+import { StrictMode, type RefObject, type ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
@@ -28,10 +28,19 @@ vi.mock("virtua", async () => {
   const { forwardRef, useImperativeHandle } = await import("react");
   return {
     Virtualizer: forwardRef(function Virtualizer(
-      { children }: { children: ReactNode },
+      {
+        children,
+        scrollRef,
+      }: { children: ReactNode; scrollRef: RefObject<HTMLElement | null> },
       ref,
     ) {
-      useImperativeHandle(ref, () => ({ scrollToIndex: vi.fn() }));
+      useImperativeHandle(ref, () => ({
+        scrollToIndex: () => {
+          const element = scrollRef.current;
+          if (element)
+            element.scrollTop = element.scrollHeight - element.clientHeight;
+        },
+      }));
       return <ol>{children}</ol>;
     }),
   };
@@ -577,6 +586,7 @@ it.each([false, true])(
     h.props.active = true;
     h.rerenderProps();
     host.removeAttribute("inert");
+    h.frame(); // Virtual positioning commits before the reading dwell starts.
     h.element.focus();
     await act(() => vi.advanceTimersByTimeAsync(299));
     expect(observe).not.toHaveBeenCalled();

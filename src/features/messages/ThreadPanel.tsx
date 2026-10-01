@@ -699,7 +699,15 @@ function ThreadMessages({
       if (bottom) setNewMessageCount(0);
     };
     const followLatest = () => {
-      if (!follow.current || !branches.length) return;
+      if (!follow.current) return;
+      if (!branches.length) {
+        // A root-only thread has no virtual item to target.
+        correctScrollTop(
+          element,
+          element.scrollHeight - element.clientHeight - element.scrollTop,
+        );
+        return;
+      }
       virtualizer.current?.scrollToIndex(branches.length - 1, {
         align: "end",
         offset: Number.parseFloat(getComputedStyle(element).paddingBottom) || 0,

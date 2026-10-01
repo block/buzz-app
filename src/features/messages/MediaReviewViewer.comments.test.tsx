@@ -3,6 +3,14 @@ import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
 
 composerDOMFixture();
+// jsdom has no viewport measurement. Keep the real thread/edit/media lifecycle,
+// but render its small virtual list directly; browser tests own scroll geometry.
+vi.mock("virtua", () => ({
+  Virtualizer: ({ children }: { children: import("react").ReactNode }) => (
+    <ol>{children}</ol>
+  ),
+}));
+
 import {
   cleanup,
   fireEvent,
@@ -56,6 +64,9 @@ async function setupReview({
   fromThread = false,
   attachmentInReply = false,
 }: ReviewFixtureOptions) {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(600);
   // The DOM emulator has no playback engine; keep native playback calls observable.
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});

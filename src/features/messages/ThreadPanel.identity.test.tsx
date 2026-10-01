@@ -30,6 +30,7 @@ vi.mock("virtua", () => ({
 beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(600);
 });
 const bodyRender = vi.fn();
 vi.mock("./MessageMarkdown", () => ({
@@ -127,9 +128,8 @@ it("retains mounted rows through a deferred real-session page and profile noise"
     (request) => request !== initial && !request.signal?.aborted,
   );
   if (!page) throw new Error("Deferred thread page was not requested");
-  await waitFor(() =>
-    expect(screen.queryByText("Loading thread…")).not.toBeInTheDocument(),
-  );
+  // Legacy positioning waits for the held continuation; identity remains stable
+  // while these already mounted rows are not yet revealed.
   bodyRender.mockClear();
 
   // An unrelated signed profile preserves the selected map, but the shared

@@ -136,9 +136,7 @@ pub fn mesh_compute_select(
     community: String,
 ) -> Result<String, String> {
     crate::relay::mesh_origin(&community)?;
-    let lease = host.lease.select(community)?;
-    host.lifecycle.stop();
-    Ok(lease)
+    host.lease.select_with(community, || host.lifecycle.stop())
 }
 #[cfg(feature = "mesh")]
 #[tauri::command]

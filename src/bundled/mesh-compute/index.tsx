@@ -6,6 +6,7 @@ export const inject = ["relay", "settingsCards"];
 export const apply: PluginModule["apply"] = (ctx) => {
   let lease: Promise<string> | undefined;
   let scope: string | undefined;
+  let viewer: string | undefined;
   let disposed = false;
   let selectionQueue: Promise<unknown> = Promise.resolve();
   const select = (community: string) => {
@@ -22,6 +23,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
   };
   const sync = () => {
     const snapshot = ctx.relay.snapshot();
+    const identityChanged = viewer !== undefined && snapshot.viewer !== viewer;
+    if (snapshot.status !== "ready" && !identityChanged) return;
+    if (identityChanged) {
+      release(lease);
+      lease = undefined;
+      scope = undefined;
+    }
+    viewer = snapshot.viewer;
     const next =
       snapshot.status === "ready" &&
       snapshot.viewer &&

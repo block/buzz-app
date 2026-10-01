@@ -4,9 +4,20 @@ use std::sync::Mutex;
 #[derive(Default)]
 pub(super) struct Lease(Mutex<Option<(String, String)>>);
 impl Lease {
+    #[cfg(test)]
     pub fn select(&self, community: String) -> Result<String, String> {
+        self.select_with(community, || {})
+    }
+    pub fn select_with(&self, community: String, changed: impl FnOnce()) -> Result<String, String> {
         let id = uuid::Uuid::new_v4().to_string();
-        *self.0.lock().map_err(|_| "Mesh lease unavailable")? = Some((id.clone(), community));
+        let mut current = self.0.lock().map_err(|_| "Mesh lease unavailable")?;
+        let same = current
+            .as_ref()
+            .is_some_and(|(_, previous)| previous == &community);
+        *current = Some((id.clone(), community));
+        if !same {
+            changed();
+        }
         Ok(id)
     }
     pub fn community(&self, id: &str) -> Result<String, String> {
@@ -82,5 +93,16 @@ mod tests {
         assert!(lease.community(&old).is_err());
         assert!(!lease.revoke(&old).unwrap());
         assert_eq!(lease.community(&new).unwrap(), "https://new.example");
+    }
+    #[test]
+    fn same_community_rotates_lease_without_stopping() {
+        let lease = Lease::default();
+        let old = lease.select("https://same.example".into()).unwrap();
+        let new = lease
+            .select_with("https://same.example".into(), || panic!("must not stop"))
+            .unwrap();
+        assert_ne!(old, new);
+        assert!(!lease.revoke(&old).unwrap());
+        assert!(lease.community(&new).is_ok());
     }
 }

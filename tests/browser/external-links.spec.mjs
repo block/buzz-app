@@ -152,8 +152,8 @@ test("PR state, changes and branch links use shared roles in both themes", async
   app,
 }, testInfo) => {
   for (const url of [
-    "https://github.com/example/project/tree/main",
-    "https://github.com/example/project/tree/small-improvement",
+    "https://github.com/block/buzz/tree/main",
+    "https://github.com/block/buzz/tree/small-improvement",
   ]) {
     await context.route(url, (route) =>
       route.fulfill({
@@ -169,14 +169,14 @@ test("PR state, changes and branch links use shared roles in both themes", async
         state: "open",
         user: { login: "sample-author" },
         head: {
-          label: "example:small-improvement",
+          label: "block:small-improvement",
           ref: "small-improvement",
-          repo: { full_name: "example/project" },
+          repo: { full_name: "block/buzz" },
         },
         base: {
-          label: "example:main",
+          label: "block:main",
           ref: "main",
-          repo: { full_name: "example/project" },
+          repo: { full_name: "block/buzz" },
         },
         changed_files: 6,
         additions: 174,
@@ -199,20 +199,17 @@ test("PR state, changes and branch links use shared roles in both themes", async
   ).toBeVisible();
   const changes = panel.getByText("Changes", { exact: true }).locator("..");
   expect(
-    await popup(
-      page,
-      panel.getByRole("link", { name: "example:main", exact: true }),
-    ),
-  ).toBe("https://github.com/example/project/tree/main");
+    await popup(page, panel.getByRole("link", { name: "main", exact: true })),
+  ).toBe("https://github.com/block/buzz/tree/main");
   expect(
     await popup(
       page,
       panel.getByRole("link", {
-        name: "example:small-improvement",
+        name: "small-improvement",
         exact: true,
       }),
     ),
-  ).toBe("https://github.com/example/project/tree/small-improvement");
+  ).toBe("https://github.com/block/buzz/tree/small-improvement");
   // Popup clicks leave the pointer on the branch. Assert rest paint off-target.
   await panel.getByRole("heading", { name: "A small improvement" }).hover();
   for (const mode of ["light", "dark"]) {
@@ -256,7 +253,7 @@ test("PR state, changes and branch links use shared roles in both themes", async
     );
     await expect(changes.locator("dd")).toHaveCSS("color", colors.standard);
     await expect(changes.locator("dd")).toHaveText("+174 / −28");
-    for (const name of ["example:small-improvement", "example:main"]) {
+    for (const name of ["small-improvement", "main"]) {
       const branch = panel.getByRole("link", { name, exact: true });
       await expect(branch).toHaveCSS("color", colors.link);
       await expect(branch).toHaveCSS("background-color", colors.linkFill);

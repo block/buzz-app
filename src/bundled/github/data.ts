@@ -47,10 +47,13 @@ type ResponseData = {
   default_branch?: string;
 };
 
-function branchLink(branch: BranchData): Branch {
+function branchLink(branch: BranchData, pullRepository: string): Branch {
   const repository = branch.repo?.full_name;
   return {
-    label: branch.label,
+    label:
+      repository?.toLowerCase() === pullRepository.toLowerCase() && branch.ref
+        ? branch.ref
+        : branch.label,
     url:
       repository &&
       /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) &&
@@ -96,7 +99,10 @@ export async function loadGitHubDetails(
   if (data.head && data.base)
     facts.push([
       "Branch",
-      { head: branchLink(data.head), base: branchLink(data.base) },
+      {
+        head: branchLink(data.head, reference.repository),
+        base: branchLink(data.base, reference.repository),
+      },
     ]);
   if (data.changed_files !== undefined)
     facts.push(["Files changed", data.changed_files]);

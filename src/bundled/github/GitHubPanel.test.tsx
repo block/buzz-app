@@ -121,12 +121,10 @@ it("links branch labels to their own repositories and preserves unavailable bran
     "https://github.com/contributor/project/tree/fix/small%20detail",
   );
   expect(head).toHaveClass(branchClass);
-  expect(screen.getByRole("link", { name: "example:main" })).toHaveClass(
-    branchClass,
-  );
+  expect(screen.getByRole("link", { name: "main" })).toHaveClass(branchClass);
   expect(head).toHaveAttribute("target", "_blank");
   expect(head).toHaveAttribute("rel", "noreferrer");
-  expect(screen.getByRole("link", { name: "example:main" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "main" })).toHaveAttribute(
     "href",
     "https://github.com/example/project/tree/main",
   );

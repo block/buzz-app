@@ -88,3 +88,56 @@ it.each([
     loadGitHubDetails(reference, new AbortController().signal),
   ).rejects.toThrow(String(message));
 });
+
+it.each([
+  ["block/buzz", "tho/small-improvement", "tho/small-improvement"],
+  ["BLOCK/Buzz", "tho/small-improvement", "tho/small-improvement"],
+  ["contributor/buzz", "tho/small-improvement", "block:tho/small-improvement"],
+  [
+    "block/another-repo",
+    "tho/small-improvement",
+    "block:tho/small-improvement",
+  ],
+  [null, "tho/small-improvement", "block:tho/small-improvement"],
+  ["block/buzz", undefined, "block:tho/small-improvement"],
+])(
+  "shortens branches only for a known matching repository: %s, %s",
+  async (repository, ref, label) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            head: {
+              label: "block:tho/small-improvement",
+              ref,
+              repo: repository ? { full_name: repository } : null,
+            },
+            base: {
+              label: "block:main",
+              ref: "main",
+              repo: { full_name: "block/buzz" },
+            },
+          }),
+        ),
+      ),
+    );
+    const data = await loadGitHubDetails(
+      reference,
+      new AbortController().signal,
+    );
+    expect(data.facts).toContainEqual([
+      "Branch",
+      {
+        head: {
+          label,
+          url:
+            repository && ref
+              ? `https://github.com/${repository}/tree/${ref}`
+              : undefined,
+        },
+        base: { label: "main", url: "https://github.com/block/buzz/tree/main" },
+      },
+    ]);
+  },
+);

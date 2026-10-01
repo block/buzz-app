@@ -312,29 +312,49 @@ fn short_endpoint_label(endpoint_id: &str) -> String {
     endpoint_id.chars().take(12).collect()
 }
 
-/// Reject unauthenticated evidence before applying legacy membership intersection.
+/// Keep independently verified records; a bad member note cannot veto the community.
 /// The authority is obtained by the host from this community's NIP-11 `self`.
 pub fn verify_evidence(
     events: Vec<nostr::event::Event>,
     authority: &nostr::key::PublicKey,
 ) -> anyhow::Result<Vec<nostr::event::Event>> {
-    for event in &events {
-        event.verify()?;
-        match event.kind.as_u16() {
-            13534 if &event.pubkey == authority => {}
-            30003
-                if event.tags.iter().any(|tag| {
-                    let values = tag.as_slice();
-                    values.first().map(String::as_str) == Some("k")
-                        && values.get(1).map(String::as_str) == Some("buzz-mesh-status")
-                }) => {}
-            _ => anyhow::bail!("Unexpected Mesh discovery evidence or membership authority"),
-        }
-    }
+    let events: Vec<_> = events
+        .into_iter()
+        .filter(|event| {
+            let expected = match event.kind.as_u16() {
+                13534 => &event.pubkey == authority,
+                30003 => {
+                    event.tags.iter().any(|tag| {
+                        let values = tag.as_slice();
+                        values.first().map(String::as_str) == Some("k")
+                            && values.get(1).map(String::as_str) == Some("buzz-mesh-status")
+                    }) && serde_json::from_str::<serde_json::Value>(&event.content)
+                        .is_ok_and(|value| value.is_object())
+                }
+                _ => false,
+            };
+            let accepted = expected && event.verify().is_ok();
+            if !accepted {
+                // Never echo member-controlled content, credentials or dial tokens.
+                eprintln!(
+                    "Mesh discovery discarded event {}: invalid signature, shape or authority",
+                    event.id
+                );
+            }
+            accepted
+        })
+        .collect();
     if !has_membership_snapshot(&events) {
-        anyhow::bail!("Relay returned no membership snapshot");
+        anyhow::bail!("Relay returned no verified membership snapshot from its authority");
     }
     Ok(events)
+}
+
+/// Only the captured relay authority may supply membership, never member notes.
+pub fn authoritative_membership_filter(authority: &nostr::key::PublicKey) -> serde_json::Value {
+    let mut filter = relay_membership_filter();
+    filter["authors"] = serde_json::json!([authority.to_hex()]);
+    filter
 }
 
 #[cfg(test)]
@@ -358,5 +378,51 @@ mod tests {
         let mut corrupt = event;
         corrupt.content = "tampered".into();
         assert!(verify_evidence(vec![corrupt], &keys.public_key()).is_err());
+    }
+    #[test]
+    fn bad_member_notes_do_not_hide_a_valid_target() {
+        use mesh_llm_host_runtime::crypto::OwnerKeypair;
+        use nostr::event::{Kind, Tag};
+        let relay = Keys::generate();
+        let member = Keys::generate();
+        let attacker = Keys::generate();
+        let owner = OwnerKeypair::generate();
+        let token = crate::transport_policy::endpoint_token_for_test([iroh::TransportAddr::Ip(
+            "192.168.1.20:47916".parse().unwrap(),
+        )]);
+        let content = serde_json::json!({
+            "ownerId": owner.owner_id(),
+            "ownerVerifyingKey": hex::encode(owner.verifying_key().as_bytes()),
+            "ownerBindingSig": hex::encode(owner.sign_bytes(&crate::identity::member_binding_bytes(&member.public_key().to_hex()))),
+            "ownerEndpointBindingSig": hex::encode(owner.sign_bytes(&crate::identity::member_endpoint_binding_bytes(&member.public_key().to_hex(), std::slice::from_ref(&token)))),
+            "serveTargets": [{"modelId":"fixture", "endpointAddr":token}]
+        });
+        let roster = EventBuilder::new(Kind::Custom(13534), "")
+            .tags([Tag::parse(["member", &member.public_key().to_hex()]).unwrap()])
+            .finalize(&relay)
+            .unwrap();
+        let status = EventBuilder::new(Kind::Custom(30003), content.to_string())
+            .tags([Tag::parse(["k", "buzz-mesh-status"]).unwrap()])
+            .finalize(&member)
+            .unwrap();
+        let mut tampered = status.clone();
+        tampered.content = "tampered".into();
+        let foreign_roster = EventBuilder::new(Kind::Custom(13534), "")
+            .finalize(&attacker)
+            .unwrap();
+        let verified = verify_evidence(
+            vec![roster, status, tampered, foreign_roster],
+            &relay.public_key(),
+        )
+        .unwrap();
+        assert_eq!(verified.len(), 2);
+        assert_eq!(owner_ids_from_events(&verified), vec![owner.owner_id()]);
+        let available = availability_from_events(verified);
+        assert_eq!(available.serve_targets.len(), 1);
+        assert_eq!(available.serve_targets[0].model_id, "fixture");
+        assert_eq!(
+            authoritative_membership_filter(&relay.public_key())["authors"],
+            serde_json::json!([relay.public_key().to_hex()])
+        );
     }
 }

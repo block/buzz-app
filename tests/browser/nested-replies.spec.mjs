@@ -22,6 +22,7 @@ test("nested replies send, stay open, and reveal through links at readable panel
   page,
   app,
 }) => {
+  await page.clock.install();
   await open(page, app);
   const root = app.histories
     .get("primary/alpha")
@@ -94,9 +95,15 @@ test("nested replies send, stay open, and reveal through links at readable panel
   const failed = panel
     .locator("[data-message-id]")
     .filter({ hasText: "Nested browser reply" });
-  await expect(
-    failed.getByText("Couldn’t send this message.", { exact: true }),
-  ).toBeVisible({ timeout: 15000 });
+  await expect.poll(() => rejected).toBeTruthy();
+  // The rejection stays quiet for the delivery grace (DELIVERY_GRACE_MS); cross
+  // it on the controlled clock.
+  const failure = failed.getByText("Couldn’t send this message.", {
+    exact: true,
+  });
+  await expect(failure).toHaveCount(0);
+  await page.clock.fastForward(10_000);
+  await expect(failure).toBeVisible();
   await failed.getByRole("button", { name: "Retry", exact: true }).click();
   await expect
     .poll(
@@ -463,7 +470,10 @@ test.describe("touch branch controls", () => {
 });
 
 // Real pointer hit testing and focus cannot be verified in jsdom.
-for (const width of [1492, 1280, 1024, 700, 390])
+// One viewport per indentation tier of the thread panel: six levels (1492),
+// four (700) and three (390). 390 is also the always-visible bar below 640px;
+// 700 reaches the narrowest rows that carry the hover bar.
+for (const width of [1492, 700, 390])
   test(`crowded capped branches expand once with readable actions at ${width}`, async ({
     page,
     app,
@@ -473,13 +483,16 @@ for (const width of [1492, 1280, 1024, 700, 390])
       .find((e) => e.content === "Thread root 0");
     let parent = root.id;
     const ids = [];
-    for (let i = 0; i < 13; i++) {
+    // Indentation stops at depth 6, or sooner in narrow panels. Nine levels
+    // cover every indented depth plus capped rows with and without an author
+    // change; deeper levels render exactly like depth 6.
+    for (let i = 0; i < 9; i++) {
       parent = app.append(
         "primary",
         "alpha",
         `Crowded reply ${i}`,
         false,
-        i < 9 ? i % 2 === 0 : true,
+        i < 6 ? i % 2 === 0 : true,
         root.id,
         parent,
       ).id;

@@ -1,12 +1,15 @@
-import { test, expect } from "@playwright/test";
-import { createServer } from "./vite-server.mjs";
-import react from "@vitejs/plugin-react";
-import { fileURLToPath } from "node:url";
-import { settle, wheel, anchor, expectAnchor } from "./timeline.mjs";
+import { test, expect } from "./source-fixture.mjs";
+import {
+  settle,
+  wheel,
+  anchor,
+  expectAnchor,
+  negativeControl,
+} from "./timeline.mjs";
 
 // Setup only: callers hold image responses until navigation has finished, then
 // release them and assert stability without any corrective scrolling.
-async function navigate(page, direction) {
+async function navigate(page, direction, options) {
   const feed = page.getByRole("region", { name: "Channel message history" });
   const remaining = () =>
     feed.evaluate(
@@ -26,7 +29,7 @@ async function navigate(page, direction) {
   while (true) {
     const before = await remaining();
     if (before < 4) break;
-    await wheel(page, direction * Math.min(2000, before));
+    await wheel(page, direction * Math.min(2000, before), undefined, options);
     expect(
       before - (await remaining()),
       "image navigation retains progress after settling",
@@ -35,18 +38,6 @@ async function navigate(page, direction) {
   expect(await remaining(), "image navigation reaches its setup").toBeLessThan(
     4,
   );
-}
-
-async function fixtureServer() {
-  const server = await createServer({
-    root: fileURLToPath(new URL("../../", import.meta.url)),
-    configFile: false,
-    envFile: false,
-    plugins: [react()],
-    logLevel: "error",
-    server: { host: "127.0.0.1", port: 0, strictPort: false },
-  });
-  return server;
 }
 
 test("delayed and failed images preserve bottom and reading anchors across remounts", async ({
@@ -99,12 +90,8 @@ test("delayed and failed images preserve bottom and reading anchors across remou
         ),
       )
       .toBe(true);
-  const server = await fixtureServer();
   try {
-    await server.listen();
-    await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/image-scroll.html`,
-    );
+    await page.goto("/tests/fixtures/image-scroll.html");
     await expect.poll(() => pending.size).toBeGreaterThan(0);
     await settle(page);
     expect(await gap()).toBeLessThan(4);
@@ -185,12 +172,8 @@ test("delayed and failed images preserve bottom and reading anchors across remou
       expect(box.height).toBeGreaterThan(0);
     }
   } finally {
-    try {
-      await release();
-      await page.unrouteAll({ behavior: "wait" });
-    } finally {
-      await server.close();
-    }
+    await release();
+    await page.unrouteAll({ behavior: "wait" });
   }
 });
 
@@ -201,7 +184,7 @@ test("image navigation handles partial gestures and rejects blocked input", asyn
 }) => {
   await page.setContent(`
     <section role="region" aria-label="Channel message history"
-      style="height:700px;overflow:auto"><div style="height:14000px"></div></section>
+      style="height:700px;overflow:auto"><div style="height:7000px"></div></section>
   `);
   // Install the fixture's input policy before hover commits WebKit's wheel
   // event regions; adding the first listener immediately before input can lose it.
@@ -230,7 +213,7 @@ test("image navigation handles partial gestures and rejects blocked input", asyn
       element.setAttribute("data-block-wheel", "");
     });
     gestures = 0;
-    await expect(navigate(page, 1)).rejects.toThrow(
+    await expect(navigate(page, 1, negativeControl)).rejects.toThrow(
       "timeline wheel gesture completes",
     );
     expect(gestures).toBe(1);
@@ -341,12 +324,8 @@ test("blurhash visibility, decode swap, failure and retired source lifetimes", a
   const requests = [];
   await holdDecodes(page);
   await routeOriginals(page, requests);
-  const server = await fixtureServer();
   try {
-    await server.listen();
-    await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/attachment-image.html`,
-    );
+    await page.goto("/tests/fixtures/attachment-image.html");
     // Mounted but offscreen (as in a long thread) must not spend pixel work.
     // The product observes the canvas in a passive effect, so wait for that
     // registration first. Barrier: an IntersectionObserver created after the
@@ -448,11 +427,7 @@ test("blurhash visibility, decode swap, failure and retired source lifetimes", a
       contentType: "application/json",
     });
   } finally {
-    try {
-      await page.unrouteAll({ behavior: "wait" });
-    } finally {
-      await server.close();
-    }
+    await page.unrouteAll({ behavior: "wait" });
   }
 });
 
@@ -461,12 +436,8 @@ test("original ready first cannot regress on late visibility; missing and invali
 }) => {
   await holdDecodes(page, true);
   await routeOriginals(page, []);
-  const server = await fixtureServer();
   try {
-    await server.listen();
-    await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/attachment-image.html`,
-    );
+    await page.goto("/tests/fixtures/attachment-image.html");
     await page.getByRole("button", { name: "Reveal", exact: true }).click();
     await waiting(page, "first");
     await releaseDecode(page, "first");
@@ -482,11 +453,7 @@ test("original ready first cannot regress on late visibility; missing and invali
       await shown(page);
     }
   } finally {
-    try {
-      await page.unrouteAll({ behavior: "wait" });
-    } finally {
-      await server.close();
-    }
+    await page.unrouteAll({ behavior: "wait" });
   }
 });
 
@@ -495,12 +462,8 @@ test("original decode rejection retains blur and the next source still recovers"
 }) => {
   await holdDecodes(page);
   await routeOriginals(page, []);
-  const server = await fixtureServer();
   try {
-    await server.listen();
-    await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/attachment-image.html`,
-    );
+    await page.goto("/tests/fixtures/attachment-image.html");
     await page.getByRole("button", { name: "Reveal", exact: true }).click();
     await expect
       .poll(() => page.evaluate(() => window.imageTest.paints.length))
@@ -515,11 +478,7 @@ test("original decode rejection retains blur and the next source still recovers"
     await shown(page);
     await expect(frame(page).locator("canvas")).toHaveCount(0);
   } finally {
-    try {
-      await page.unrouteAll({ behavior: "wait" });
-    } finally {
-      await server.close();
-    }
+    await page.unrouteAll({ behavior: "wait" });
   }
 });
 
@@ -534,12 +493,8 @@ for (const unavailable of ["canvas", "visibility"]) {
       else window.IntersectionObserver = undefined;
     }, unavailable);
     await routeOriginals(page, []);
-    const server = await fixtureServer();
     try {
-      await server.listen();
-      await page.goto(
-        `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/attachment-image.html`,
-      );
+      await page.goto("/tests/fixtures/attachment-image.html");
       await page.getByRole("button", { name: "Reveal", exact: true }).click();
       await waiting(page, "first");
       expect(await page.evaluate(() => window.imageTest.paints)).toEqual([]);
@@ -551,11 +506,7 @@ for (const unavailable of ["canvas", "visibility"]) {
       await shown(page);
       await expect(frame(page).locator("canvas")).toHaveCount(0);
     } finally {
-      try {
-        await page.unrouteAll({ behavior: "wait" });
-      } finally {
-        await server.close();
-      }
+      await page.unrouteAll({ behavior: "wait" });
     }
   });
 }

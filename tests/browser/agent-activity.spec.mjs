@@ -761,6 +761,8 @@ test.describe("thread activity", () => {
     page,
     app,
   }, testInfo) => {
+    // Typing expires after eight seconds; the controlled clock crosses it.
+    await page.clock.install();
     await open(page, app);
     await expect
       .poll(() => app.relay.hasRoute("primary", "observer"))
@@ -905,7 +907,8 @@ test.describe("thread activity", () => {
       .getByRole("form", { name: "Send a message to Alpha", exact: true })
       .boundingBox();
     expect(channelBox.y + channelBox.height).toBeLessThanOrEqual(channelForm.y);
-    await expect(marker).toHaveCount(0, { timeout: 10_000 });
+    await page.clock.fastForward(8000);
+    await expect(marker).toHaveCount(0);
     await expect(channelActivity(page)).toHaveCount(0);
   });
 });

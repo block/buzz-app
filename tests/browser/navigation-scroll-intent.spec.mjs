@@ -9,13 +9,13 @@ test.use({
   historyCounts: { alpha: 1, beta: 1 },
 });
 
+// A cached startup restores before the held refresh, so that refresh takes one
+// path whatever the viewport did since. Two cases prove it neither resets nor
+// reapplies the position; the cold launch keeps every user-intent branch.
 for (const cachedStartup of [false, true]) {
-  for (const action of [
-    "untouched",
-    "scrolled",
-    "returned to top",
-    "scroll event pending",
-  ]) {
+  for (const action of cachedStartup
+    ? ["untouched", "returned to top"]
+    : ["untouched", "scrolled", "returned to top", "scroll event pending"]) {
     test(`delayed sidebar restoration respects ${action} viewport (cached startup: ${cachedStartup})`, async ({
       page,
       app,

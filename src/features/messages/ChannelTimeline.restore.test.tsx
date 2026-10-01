@@ -465,7 +465,18 @@ it.each(["converged", "gesture", "removed"])(
 );
 
 // Intent and native/virtualizer shrink can arrive in one scroll observation.
-it.each(["wheel", "touch", "keyboard", "link", "button"] as const)(
+it.each([
+  "wheel",
+  "touch",
+  "keyboard",
+  "link",
+  "button",
+  "command up",
+  "option up",
+  "control up",
+  "control home",
+  "nested top",
+] as const)(
   "%s reader input wins over shrink in the same observation",
   async (input) => {
     const h = mount(true);
@@ -477,14 +488,42 @@ it.each(["wheel", "touch", "keyboard", "link", "button"] as const)(
     fireEvent.scroll(region);
     if (input === "wheel") fireEvent.wheel(region, { deltaY: -200 });
     if (input === "keyboard") fireEvent.keyDown(region, { key: "PageUp" });
-    if (input === "link" || input === "button") {
-      const control = document.createElement(input === "link" ? "a" : "button");
+    if (
+      [
+        "link",
+        "button",
+        "command up",
+        "option up",
+        "control up",
+        "control home",
+        "nested top",
+      ].includes(input)
+    ) {
+      const control = document.createElement(
+        input === "button" ? "button" : "a",
+      );
       if (control instanceof HTMLAnchorElement)
         control.href = "https://example.com";
       control.textContent = "Message control";
       region.append(control);
+      if (input === "nested top") {
+        const inner = document.createElement("div");
+        inner.style.overflowY = "auto";
+        region.append(inner);
+        inner.append(control);
+        inner.scrollTop = 0;
+      }
       control.focus();
-      fireEvent.keyDown(control, { key: "PageUp" });
+      fireEvent.keyDown(control, {
+        key: input.endsWith("up")
+          ? "ArrowUp"
+          : input === "control home"
+            ? "Home"
+            : "PageUp",
+        metaKey: input === "command up",
+        altKey: input === "option up",
+        ctrlKey: input.startsWith("control"),
+      });
     }
     if (input === "touch") {
       fireEvent.touchStart(region, { touches: [{ clientY: 100 }] });
@@ -533,8 +572,11 @@ it("a finished near-bottom wheel does not taint a later layout-only shrink", asy
 it.each([
   "editable",
   "nested scroll",
+  "contained top",
+  "no overscroll",
   "prevented",
   "button activation",
+  "modified page up",
 ] as const)(
   "%s keyboard input does not claim history scrolling during shrink",
   async (input) => {
@@ -549,13 +591,26 @@ it.each([
       input === "editable" ? "textarea" : "button",
     );
     region.append(control);
-    if (input === "nested scroll") control.style.overflowY = "auto";
+    if (["nested scroll", "contained top", "no overscroll"].includes(input)) {
+      const inner = document.createElement("div");
+      inner.style.overflowY = "auto";
+      inner.style.overscrollBehaviorY =
+        input === "contained top"
+          ? "contain"
+          : input === "no overscroll"
+            ? "none"
+            : "auto";
+      region.append(inner);
+      inner.append(control);
+      inner.scrollTop = input === "nested scroll" ? 100 : 0;
+    }
     if (input === "prevented")
       control.addEventListener("keydown", (event) => event.preventDefault());
     control.focus();
     fireEvent.keyDown(control, {
       key: input === "button activation" ? " " : "PageUp",
       shiftKey: input === "button activation",
+      altKey: input === "modified page up",
     });
     vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(
       1600,

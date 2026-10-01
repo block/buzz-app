@@ -28,16 +28,21 @@ import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
 
-// Native page/arrow scrolling can start on a focused message link or button.
-// Editable widgets and inner scrollports own their keys, not the history.
+// Native upward scrolling can start on a focused message link or button.
+// Inner scrollports own the key only while they can move or contain the chain.
 function scrollsHistoryUp(event: KeyboardEvent<HTMLElement>): boolean {
-  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey)
-    return false;
-  if (
-    !["ArrowUp", "PageUp", "Home"].includes(event.key) &&
-    !(event.key === " " && event.shiftKey)
-  )
-    return false;
+  if (event.defaultPrevented) return false;
+  const modified = event.altKey || event.ctrlKey || event.metaKey;
+  // ArrowUp includes native Command/Option/Control+Up variants; Control+Home
+  // is the Windows/Linux start chord. These are intent candidates: only an
+  // observed upward history scroll can actually leave bottom follow.
+  const upward =
+    event.key === "ArrowUp" ||
+    (!modified &&
+      (["PageUp", "Home"].includes(event.key) ||
+        (event.key === " " && event.shiftKey))) ||
+    (event.key === "Home" && event.ctrlKey && !event.altKey && !event.metaKey);
+  if (!upward) return false;
   let target = event.target instanceof HTMLElement ? event.target : null;
   if (!target || !event.currentTarget.contains(target)) return false;
   while (target && target !== event.currentTarget) {
@@ -48,10 +53,11 @@ function scrollsHistoryUp(event: KeyboardEvent<HTMLElement>): boolean {
       (event.key === " " && target.matches("button, [role='button']"))
     )
       return false;
-    const overflow = getComputedStyle(target).overflowY;
+    const style = getComputedStyle(target);
     if (
-      ["auto", "scroll", "overlay"].includes(overflow) &&
-      target.scrollHeight > target.clientHeight
+      ["auto", "scroll", "overlay"].includes(style.overflowY) &&
+      (target.scrollTop > 0 ||
+        ["contain", "none"].includes(style.overscrollBehaviorY))
     )
       return false;
     target = target.parentElement;

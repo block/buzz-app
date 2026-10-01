@@ -5,6 +5,7 @@ import {
   selectSettingsSection,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
+import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { wheel, anchor, settle, upper, expectAnchor } from "./timeline.mjs";
 
 const scroll = test.extend({ historyCounts: { alpha: 20, beta: 1 } });
@@ -1167,9 +1168,14 @@ sidebarActions(
 
 // Native default keyboard scrolling from a focused descendant is browser-owned;
 // deterministic same-shrink ordering is covered in ChannelTimeline.restore.test.
-for (const control of ["link", "button"]) {
+for (const [control, key] of [
+  ["link", "PageUp"],
+  ["button", "PageUp"],
+  ["link", process.platform === "darwin" ? "Meta+ArrowUp" : "Control+Home"],
+  ...(process.platform === "darwin" ? [["link", "Alt+ArrowUp"]] : []),
+]) {
   readingTest(
-    `Page Up from a message ${control} leaves bottom follow`,
+    `${key} from a message ${control} leaves bottom follow`,
     async ({ page, app }) => {
       await open(page, app);
       await settle(page);
@@ -1196,23 +1202,93 @@ for (const control of ["link", "button"]) {
       );
       await expect(focused).toBeFocused();
       const before = await history.evaluate((element) => element.scrollTop);
-      await page.keyboard.press("PageUp");
+      await page.keyboard.press(key);
       await expect
         .poll(() => history.evaluate((element) => element.scrollTop))
         .toBeLessThan(before - 80);
       await settle(page);
       const reading = await anchor(page);
-      const next = app.append(
-        "primary",
-        "alpha",
-        "Do not steal the reader's position",
-      );
+      app.append("primary", "alpha", "Do not steal the reader's position");
       await expect(
-        page.locator(`[data-message-id="${next.id}"]`),
-      ).toBeAttached();
+        history.locator("[data-jump-to-latest]"),
+      ).toHaveAccessibleName(/new message/i);
       await settle(page);
       await expectAnchor(page, reading);
       await expect(history.locator("[data-jump-to-latest]")).toBeVisible();
     },
   );
 }
+
+// The browser, not jsdom, decides whether Page Up chains out of the real raw
+// diff. Chromium chains at its upper boundary; macOS WebKit keeps it inside.
+readingTest(
+  "Page Up respects the raw diff scroll owner and its boundary",
+  async ({ page, app, browserName }) => {
+    const historyEvents = app.histories.get("primary/alpha");
+    historyEvents.push(
+      finalizeEvent(
+        {
+          kind: 40008,
+          created_at: historyEvents.at(-1).created_at + 1,
+          tags: [
+            ["h", "alpha"],
+            ["file", "reading.txt"],
+          ],
+          content: "Raw, unparseable patch line\n".repeat(100),
+        },
+        generateSecretKey(),
+      ),
+    );
+    await open(page, app);
+    const raw = page.getByRole("region", { name: "Raw diff", exact: true });
+    await expect(raw).toBeVisible();
+    // The enabled diff renderer owns vertical overflow in its preview wrapper.
+    const inner = page.getByRole("region", {
+      name: "Diff preview: reading.txt",
+    });
+    await expect(inner).toBeVisible();
+    await settle(page);
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    const before = await history.evaluate((el) => el.scrollTop);
+    await inner.evaluate((el) => {
+      el.scrollTop = 100;
+    });
+    await raw.evaluate((el) => el.focus({ preventScroll: true }));
+    await expect(raw).toBeFocused();
+    await page.keyboard.press("PageUp");
+    await expect.poll(() => inner.evaluate((el) => el.scrollTop)).toBe(0);
+    await settle(page);
+    expect(await history.evaluate((el) => el.scrollTop)).toBe(before);
+
+    // At the boundary, containment must still prevent parent movement.
+    await inner.evaluate((el) => {
+      el.style.overscrollBehaviorY = "contain";
+    });
+    await page.keyboard.press("PageUp");
+    await settle(page);
+    expect(await history.evaluate((el) => el.scrollTop)).toBe(before);
+
+    await inner.evaluate((el) => {
+      el.style.overscrollBehaviorY = "auto";
+    });
+    await page.keyboard.press("PageUp");
+    if (browserName === "chromium") {
+      await expect
+        .poll(() => history.evaluate((el) => el.scrollTop))
+        .toBeLessThan(before - 80);
+      await settle(page);
+      const reading = await anchor(page);
+      app.append("primary", "alpha", "Keep the reader above the diff");
+      await expect(
+        history.locator("[data-jump-to-latest]"),
+      ).toHaveAccessibleName(/new message/i);
+      await settle(page);
+      await expectAnchor(page, reading);
+    } else {
+      await settle(page);
+      expect(await history.evaluate((el) => el.scrollTop)).toBe(before);
+    }
+  },
+);

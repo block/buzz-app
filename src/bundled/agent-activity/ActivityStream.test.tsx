@@ -99,3 +99,41 @@ it("drops details when the underlying capture is cleared", () => {
     screen.getByText("No tool activity captured yet."),
   ).toBeInTheDocument();
 });
+
+it("shows the most recently updated operation first without losing folded details", () => {
+  const source = activityRecords(
+    [
+      ["first", "First operation"],
+      ["second", "Second operation"],
+      ["first", "First operation updated"],
+    ].map(([toolCallId, title], index) => ({
+      id: String(index),
+      agent: "agent",
+      kind: "acp_read",
+      receivedAt: index,
+      plaintext: JSON.stringify({
+        kind: "acp_read",
+        channelId: "channel",
+        turnId: "turn",
+        sessionId: "session",
+        payload: {
+          method: "session/update",
+          params: {
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId,
+              title,
+              status: "completed",
+            },
+          },
+        },
+      }),
+    })),
+    "agent",
+    "channel",
+  );
+  render(<ActivityStream records={source} />);
+  expect(
+    screen.getAllByRole("button").map((button) => button.textContent),
+  ).toEqual(["First operation updated", "Second operation"]);
+});

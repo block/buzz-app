@@ -22,42 +22,6 @@ function basename(value: unknown): string | undefined {
   return name && name !== "." && name !== ".." ? name : undefined;
 }
 
-const toolActions = {
-  "buzz-dev-mcp__shell": {
-    action: "command",
-    active: "Running a command…",
-    completed: "Last action: Run command",
-  },
-  "buzz-dev-mcp__read_file": {
-    action: "read",
-    active: "Reading file…",
-    completed: "Last action: Read file",
-  },
-  "buzz-dev-mcp__str_replace": {
-    action: "edit",
-    active: "Editing file…",
-    completed: "Last action: Edit file",
-  },
-  "buzz-dev-mcp__view_image": {
-    action: "image",
-    active: "Viewing image…",
-    completed: "Last action: View image",
-  },
-} as const;
-function knownTool(entry: TranscriptEntry) {
-  const name = entry.toolName ?? entry.title;
-  return Object.hasOwn(toolActions, name)
-    ? toolActions[name as keyof typeof toolActions]
-    : undefined;
-}
-/** Exact reported kinds only. Shell input never changes its action category. */
-export function activityAction(entry: TranscriptEntry) {
-  if (entry.kind === "tool") return knownTool(entry)?.action ?? "tool";
-  if (entry.kind === "thought") return "thought";
-  if (entry.kind === "message" || entry.kind === "prompt") return "message";
-  return "event";
-}
-
 /** Display only. Never feeds send association, status, permissions or execution. */
 export function activityPresentation(entry: TranscriptEntry) {
   const input = parsed(entry.input);

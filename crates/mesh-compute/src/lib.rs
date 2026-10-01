@@ -5,6 +5,8 @@
 #[cfg(feature = "mesh")]
 pub mod config;
 #[cfg(feature = "mesh")]
+pub mod lifecycle;
+#[cfg(feature = "mesh")]
 mod transport_policy;
 
 use serde::Serialize;

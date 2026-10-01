@@ -1,3 +1,4 @@
+import type { ReadFilter } from "./events";
 import type { CustomEmoji } from "./emoji";
 import type { ReadOptions } from "./reader";
 import type { Delivery } from "./outbox";
@@ -147,17 +148,25 @@ export type ChannelWindow = Readonly<{
   freshness?: "cached" | "verified";
   historyLimited?: boolean;
 }>;
+/** Post-write discovery opts into writer reads; browsing keeps the default. */
+export type ChannelReadOptions = ReadOptions & Pick<ReadFilter, "consistency">;
 /** Reads are side-effect-free; snapshots retain identity until their value changes.
  * Commands are idempotent requests; the store decides whether network work is needed. */
 export interface ChannelQueries {
   list(): ChannelList;
   /** Bounded discovery lookup; never inserts public previews into list(). */
   get?(channelId: string): ChannelSummary | undefined;
-  resolve?(channelIds: readonly string[], options?: ReadOptions): Promise<void>;
+  resolve?(
+    channelIds: readonly string[],
+    options?: ChannelReadOptions,
+  ): Promise<void>;
   /** Exact re-read of one already-listed channel's roster, merged into the
    * ready list. `resolve` admits channels the list lacks; this confirms a
    * membership change on one it already carries, without a full rediscovery. */
-  refreshRoster?(channelId: string, options?: ReadOptions): Promise<void>;
+  refreshRoster?(
+    channelId: string,
+    options?: ChannelReadOptions,
+  ): Promise<void>;
   subscribeList(listener: () => void): () => void;
   window(channelId: string): ChannelWindow;
   subscribeWindow(channelId: string, listener: () => void): () => void;
@@ -171,5 +180,5 @@ export interface ChannelQueries {
   /** Roster warming is optional for fixture-only query implementations. The
    * caller supplies preferred (e.g. starred) ids; the store orders the rest. */
   warm?(preferred: readonly string[]): void;
-  refreshList?(): void;
+  refreshList?(options?: Pick<ChannelReadOptions, "consistency">): void;
 }

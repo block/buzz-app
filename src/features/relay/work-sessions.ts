@@ -57,7 +57,10 @@ export function createWorkSessions(
         check();
         return;
       }
-      const events = await reader.read([{ ids: [id], limit: 1 }], { signal });
+      const events = await reader.read(
+        [{ ids: [id], limit: 1, consistency: "strong" }],
+        { signal },
+      );
       if (events.some((event) => event.id === id)) {
         check();
         return;
@@ -83,8 +86,13 @@ export function createWorkSessions(
         // by a stale roster. The verified reader applies signed discovery first.
         const events = await reader.read(
           [
-            { kinds: [39000, 39002], "#d": [channelId], limit: 2 },
-            { ids: [id], limit: 1 },
+            {
+              kinds: [39000, 39002],
+              "#d": [channelId],
+              limit: 2,
+              consistency: "strong",
+            },
+            { ids: [id], limit: 1, consistency: "strong" },
           ],
           { signal },
         );
@@ -100,7 +108,10 @@ export function createWorkSessions(
       }
       check();
       if (!retry) {
-        const events = await reader.read([{ ids: [id], limit: 1 }], { signal });
+        const events = await reader.read(
+          [{ ids: [id], limit: 1, consistency: "strong" }],
+          { signal },
+        );
         if (events.some((event) => event.id === id)) return;
         throw new Error(
           existing.error ?? "The operation could not be confirmed.",
@@ -251,6 +262,7 @@ export function createWorkSessions(
           try {
             const options = {
               signal: AbortSignal.any([signal, exact.signal]),
+              consistency: "strong" as const,
             };
             await (listed
               ? channels.refreshRoster?.(id, options)
@@ -261,7 +273,7 @@ export function createWorkSessions(
         })(),
       ]);
     }
-    if (!settled) channels.refreshList?.();
+    if (!settled) channels.refreshList?.({ consistency: "strong" });
     await wait;
   }
   async function refreshMembership(id: string) {
@@ -269,7 +281,15 @@ export function createWorkSessions(
       throw new Error("Channel membership is unavailable.");
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
     const events = await reader.read(
-      [{ kinds: [39002], authors: [relayAuthor], "#d": [id], limit: 1 }],
+      [
+        {
+          kinds: [39002],
+          authors: [relayAuthor],
+          "#d": [id],
+          limit: 1,
+          consistency: "strong",
+        },
+      ],
       { signal, fresh: true, priority: "foreground" },
     );
     const channel =

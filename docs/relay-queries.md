@@ -66,6 +66,26 @@ locally authored event is **not proof of relay acceptance**. Signature-verified
 membership, bounds and persistence. Domain folds can consume local payloads, but
 must not let them manufacture relay-authored authority.
 
+## Read-your-writes consistency
+
+`fresh: true` prevents sharing an older in-flight request; it does not select
+the writer. Channel creation/admission and recovery, DM opening, channel edits,
+member administration, lifecycle confirmations, and mention preflights request
+`consistency: "strong"` on their authoritative filters. Signed evidence remains
+required; an accepted command is not membership, and writer routing does not
+wait for asynchronous relay side effects. Existing cancellation and bounded
+confirmation retries are unchanged.
+
+Channel discovery accepts an explicit consistency option for post-write exact
+reads and the full-roster fallback. A queued writer-backed refresh survives an
+older in-flight pass or quota pause, then reverts to ordinary routing. Signed
+membership hints request that same full writer-backed pass, including metadata;
+ordinary startup, browsing, reconnect, and DM visibility refresh stay replica-
+eligible. Details/member-admin dialogs use writer-backed state for their shared
+load/preflight/confirmation reads. Work-session membership preflights (including
+session sends and canvas saves) also use the writer, so a just-added member does
+not fail the next operation.
+
 ## Community emoji
 
 `session.emoji` owns the current community's kind-30030 `d=buzz:custom-emoji`

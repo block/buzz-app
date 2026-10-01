@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
-import { describe, expect, it, vi } from "vitest";
+import { assert, describe, expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { PublishRejected } from "./outbox";
 import {
@@ -139,6 +139,41 @@ function harness(role = "owner", type = "stream", owners = 1) {
     },
   };
 }
+
+it.each(["archive", "delete", "leave", "hide"] as const)(
+  "confirms %s while ordinary reads still see pre-write state",
+  async (action) => {
+    const h = harness("owner", action === "hide" ? "dm" : "stream", 2);
+    const replica = h.getEvents();
+    const currentRead = h.read.getMockImplementation();
+    assert(currentRead);
+    h.read.mockImplementation(async (filters, options) => {
+      if (filters.every((filter) => filter.consistency === "strong"))
+        return currentRead(filters, options);
+      if (filters[0]?.kinds?.[0] === 30622) return [];
+      return replica.filter((event) =>
+        filters.some((filter) => filter.kinds?.includes(event.kind)),
+      );
+    });
+    try {
+      await h.owner.capability.refreshVisibility();
+      expect(h.read.mock.calls[0]?.[0][0]).not.toHaveProperty("consistency");
+      await h.owner.capability.run(action, id);
+      for (const [filters] of h.read.mock.calls.slice(1, 3))
+        for (const filter of filters)
+          expect(filter).not.toHaveProperty("consistency");
+      expect(h.publish).toHaveBeenCalledOnce();
+      expect(h.read.mock.calls.at(-1)?.[0][0]?.consistency).toBe("strong");
+      if (action === "hide")
+        expect(h.owner.capability.snapshot().hidden).toEqual([id]);
+      else if (action === "archive")
+        expect(h.acceptDiscovery).toHaveBeenCalledOnce();
+      else expect(h.removed).toHaveBeenCalledExactlyOnceWith(id);
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
 
 describe("type and role boundaries", () => {
   it.each([
@@ -295,6 +330,7 @@ it.each(["archive", "delete", "leave", "hide"] as const)(
         expect(h.read.mock.calls.at(-1)?.[0]).toEqual([
           {
             kinds: [39002],
+            consistency: "strong",
             authors: [relayAuthor],
             "#d": [id],
             "#p": [viewer],

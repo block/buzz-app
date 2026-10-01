@@ -219,6 +219,7 @@ it("coalesces hints during a busy roster without letting retry clicks create wor
     h.live.established();
     await flush();
     const first = h.wire.next();
+    expect(first.filters[0]).not.toHaveProperty("consistency");
     h.owner.session.live.retry();
     h.owner.session.live.retry();
     first.respond([]);
@@ -237,7 +238,9 @@ it("coalesces hints during a busy roster without letting retry clicks create wor
     second.respond([]);
     await flush();
     expect(h.wire.pending).toHaveLength(1);
-    h.wire.next().respond([]);
+    const confirmation = h.wire.next();
+    expect(confirmation.filters[0]?.consistency).toBe("strong");
+    confirmation.respond([]);
     await flush();
     expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
     expect(h.wire.pending).toHaveLength(0);
@@ -253,6 +256,7 @@ it("queued membership hints and reconnect cannot bypass a learned roster pause",
     h.live.established();
     await flush();
     const first = h.wire.next();
+    expect(first.filters[0]).not.toHaveProperty("consistency");
     h.live.receive([
       signed(h.relay, {
         kind: 44100,
@@ -274,7 +278,9 @@ it("queued membership hints and reconnect cannot bypass a learned roster pause",
     h.owner.session.live.retry();
     await flush();
     expect(h.wire.pending).toHaveLength(1);
-    h.wire.next().respond([]);
+    const confirmation = h.wire.next();
+    expect(confirmation.filters[0]?.consistency).toBe("strong");
+    confirmation.respond([]);
     await flush();
     expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
     expect(h.wire.pending).toHaveLength(0);

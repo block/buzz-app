@@ -943,6 +943,7 @@ export function createRelaySession(
       [
         {
           kinds: [39002],
+          consistency: "strong",
           authors: [transport.relayAuthor],
           "#d": [channelId],
           limit: 1,
@@ -999,7 +1000,15 @@ export function createRelaySession(
       // Confirm only this viewer's exact creation receipt. Discovery may be
       // incomplete; this never admits the channel or grants content access.
       const events = await requests.reader.read(
-        [{ kinds: [9007], ids: [id], authors: [transport.viewer], limit: 1 }],
+        [
+          {
+            kinds: [9007],
+            ids: [id],
+            authors: [transport.viewer],
+            limit: 1,
+            consistency: "strong",
+          },
+        ],
         { signal: lifetime.signal, fresh: true },
       );
       return events.some(
@@ -1846,12 +1855,19 @@ export function createRelaySession(
     }
   }
   let rosterTimer: ReturnType<typeof setTimeout> | undefined;
-  function refreshRoster() {
-    if (closed || rosterTimer) return;
+  let strongRosterRefresh = false;
+  function refreshRoster(strong = false) {
+    if (closed) return;
+    strongRosterRefresh ||= strong;
+    if (rosterTimer) return;
     const timer = setTimeout(() => {
       timers.delete(timer);
       rosterTimer = undefined;
-      if (!closed) channels.queries.refreshList?.();
+      const consistency = strongRosterRefresh
+        ? { consistency: "strong" as const }
+        : {};
+      strongRosterRefresh = false;
+      if (!closed) channels.queries.refreshList?.(consistency);
     }, 0);
     rosterTimer = timer;
     timers.add(timer);
@@ -2029,7 +2045,7 @@ export function createRelaySession(
             ),
         )
       )
-        refreshRoster();
+        refreshRoster(true);
       const epoch = accessEpoch;
       const generation = liveGeneration;
       const visible = accept(events);

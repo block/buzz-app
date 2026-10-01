@@ -96,15 +96,22 @@ it("loads only on demand, uses the non-compact shared menu, and opens details wi
   expect(
     screen.getAllByRole("menuitem").map((item) => item.textContent),
   ).toEqual([
-    "Channel details",
+    "Open channel details",
     "Canvas",
     "Edit details",
     "Archive channel",
     "Delete channel",
   ]);
+  expect(
+    screen
+      .getByRole("menuitem", { name: "Edit details" })
+      .querySelector(".buzz-menu-icon svg"),
+  ).toHaveAttribute("aria-hidden", "true");
   expect(h.run).not.toHaveBeenCalled();
   expect(h.save).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("menuitem", { name: "Channel details" }));
+  await user.click(
+    screen.getByRole("menuitem", { name: "Open channel details" }),
+  );
   expect(h.props.openDetails).toHaveBeenCalledOnce();
   await waitFor(() =>
     expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
@@ -112,7 +119,7 @@ it("loads only on demand, uses the non-compact shared menu, and opens details wi
   trigger.focus();
   await user.keyboard("{ArrowDown}");
   await user.click(
-    await screen.findByRole("menuitem", { name: "Channel details" }),
+    await screen.findByRole("menuitem", { name: "Open channel details" }),
   );
   expect(h.props.openDetails).toHaveBeenCalledTimes(2);
 });
@@ -125,7 +132,7 @@ it("supports keyboard dismissal, outside clicks, and Canvas with the stable head
   await user.keyboard("{ArrowDown}");
   await waitFor(() =>
     expect(
-      screen.getByRole("menuitem", { name: "Channel details" }),
+      screen.getByRole("menuitem", { name: "Open channel details" }),
     ).toHaveFocus(),
   );
   await user.keyboard("{Escape}");
@@ -200,7 +207,7 @@ it.each([
   h.mount();
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Channel actions" }));
-  await screen.findByRole("menuitem", { name: "Channel details" });
+  await screen.findByRole("menuitem", { name: "Open channel details" });
   expect(h.load).not.toHaveBeenCalled();
   expect(h.lifecycleLoad).not.toHaveBeenCalled();
   expect(
@@ -274,8 +281,13 @@ it("keeps shared read pending/errors in the header and retires dismissed complet
   await act(async () => reject(new Error("Read failed")));
   expect(await screen.findByRole("alert")).toHaveTextContent("Read failed");
   await user.click(screen.getByRole("menuitem", { name: "Mark as Read" }));
+  expect(write).toHaveBeenCalledTimes(2);
   await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+  );
   await user.click(trigger);
+  await screen.findByRole("menu");
   await act(async () => resolve());
   expect(screen.getByRole("menu")).toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();

@@ -7,6 +7,6 @@ export async function openChannelDetails(page, { programmatic = false } = {}) {
   if (programmatic) await trigger.evaluate((element) => element.click());
   else await trigger.click();
   await page
-    .getByRole("menuitem", { name: "Channel details", exact: true })
+    .getByRole("menuitem", { name: "Open channel details", exact: true })
     .click();
 }

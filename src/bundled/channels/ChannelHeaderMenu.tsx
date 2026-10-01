@@ -89,7 +89,7 @@ export function ChannelHeaderMenu({
         <MenuIcon>
           <InfoIcon size={16} />
         </MenuIcon>
-        Channel details
+        Open channel details
       </MenuItem>
       {channel && !channel.readOnly && (
         <MenuItem

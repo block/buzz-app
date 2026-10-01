@@ -16,7 +16,12 @@ import {
   type ChannelDetails,
   type ChannelDetailsDraft,
 } from "../../features/relay/channel-details-protocol";
-import { MenuItem, MenuNote } from "../../shared/design-system/ui/Menu";
+import { PencilSimpleIcon } from "../../shared/design-system/icons";
+import {
+  MenuIcon,
+  MenuItem,
+  MenuNote,
+} from "../../shared/design-system/ui/Menu";
 import type { DialogProps } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -303,7 +308,14 @@ export function ChannelDetailsEditor({
   const label = "Edit details";
   const trigger = menu ? (
     <>
-      {(canEdit || attempt) && <MenuItem disabled={pending} onClick={edit}>{label}</MenuItem>}
+      {(canEdit || attempt) && (
+        <MenuItem disabled={pending} onClick={edit}>
+          <MenuIcon>
+            <PencilSimpleIcon size={16} />
+          </MenuIcon>
+          {label}
+        </MenuItem>
+      )}
       {!attempt && view.error && (
         <>
           <MenuNote role="alert">Channel details unavailable</MenuNote>

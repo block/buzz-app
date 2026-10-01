@@ -343,6 +343,20 @@ it.each(["recipe", "Canvas"])(
   },
 );
 
+it("keeps display-only Canvas reads replica-eligible without weakening editor reads", async () => {
+  const f = fixture();
+  await f.canvas.read(channel, { strong: false });
+  expect(f.reader.read).toHaveBeenLastCalledWith(
+    [{ kinds: [40100], "#h": [channel], limit: 1 }],
+    { signal: f.controller.signal, fresh: true },
+  );
+  await f.canvas.read(channel);
+  expect(f.reader.read).toHaveBeenLastCalledWith(
+    [{ kinds: [40100], "#h": [channel], limit: 1, consistency: "strong" }],
+    { signal: f.controller.signal, fresh: true },
+  );
+});
+
 it.each([false, true])(
   "carries a strong-read revision precondition for existing=%s",
   async (existing) => {
@@ -491,3 +505,105 @@ it.each([false, true])(
     }
   },
 );
+
+it("retains an uncertain Canvas after lost ACK and CAS-refused exact retry, blocking replacement", async () => {
+  const f = fixture();
+  const before = signed(viewer, {
+    kind: 40100,
+    tags: [["h", channel]],
+    content: "Before",
+    created_at: 100,
+  });
+  const winner = signed(viewer, {
+    kind: 40100,
+    tags: [["h", channel]],
+    content: "Other editor",
+    created_at: 101,
+  });
+  let head = before;
+  const reader: RelayReader = {
+    // No exact-ID confirmation is available for the uncertain publication.
+    read: async (filters) =>
+      filters.some((filter) => !filter.ids) ? [head] : [],
+  };
+  const sign = vi.fn(async (event: Parameters<RelayWriter["sign"]>[0]) =>
+    signed(viewer, event),
+  );
+  const publish = vi
+    .fn(async (_event: RelayEvent) => {})
+    .mockRejectedValueOnce(new Error("Lost ACK"))
+    .mockRejectedValueOnce(
+      new PublishRejected("conflict: the relay state changed"),
+    );
+  const storage = { load: () => [], save: vi.fn() };
+  const owner = createOutbox(
+    viewer.pubkey,
+    { kinds: [40100], sign, publish },
+    storage,
+  );
+  const dismiss = vi.fn(owner.outbox.dismiss);
+  const delivered = async (id: string) => {
+    await vi.waitFor(() =>
+      expect(
+        owner.outbox.snapshot().find((item) => item.event.id === id)?.delivery,
+      ).toBe("unknown"),
+    );
+    throw new Error(
+      owner.outbox.snapshot().find((item) => item.event.id === id)?.error,
+    );
+  };
+  const kit = createChannelKit({
+    host: undefined,
+    reader,
+    outbox: { ...owner.outbox, dismiss },
+    local: owner.local,
+    ready: owner.outbox.ready(),
+    viewer: viewer.pubkey,
+    community,
+    signal: f.controller.signal,
+    canWrite: () => true,
+    delivered,
+  });
+  try {
+    await expect(
+      kit.canvas.save(channel, "My draft", before.id),
+    ).rejects.toThrow("Lost ACK");
+    const original = publish.mock.calls[0]?.[0];
+    expect(original).toBeDefined();
+    if (!original) throw new Error("Missing initial publication");
+    expect(original.tags).toContainEqual(["expected-revision", before.id]);
+    expect(owner.outbox.snapshot()[0]).toMatchObject({
+      signed: original,
+      delivery: "unknown",
+    });
+    head = winner;
+    owner.outbox.retry(original.id);
+    await vi.waitFor(() =>
+      expect(owner.outbox.snapshot()[0]).toMatchObject({
+        delivery: "unknown",
+        error: "Retry blocked: conflict: the relay state changed",
+      }),
+    );
+    // Canvas cleanup must respect the outbox's earlier uncertain dispatch,
+    // even though this later attempt was definitively refused.
+    await expect(kit.confirm(original.id)).rejects.toThrow(
+      "Retry blocked: conflict:",
+    );
+    await expect(
+      kit.canvas.save(channel, "Reviewed draft", winner.id),
+    ).rejects.toThrow(/unresolved Canvas save/);
+    expect(dismiss).not.toHaveBeenCalled();
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(publish.mock.calls.map(([event]) => event)).toEqual([
+      original,
+      original,
+    ]);
+    expect(storage.save).toHaveBeenLastCalledWith([
+      expect.objectContaining({ signed: original, delivery: "unknown" }),
+    ]);
+    expect(head).toBe(winner);
+  } finally {
+    owner.dispose();
+    f.controller.abort();
+  }
+});

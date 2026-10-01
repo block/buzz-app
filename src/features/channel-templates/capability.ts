@@ -260,13 +260,18 @@ export function createChannelKit({
   });
   const canvas = Object.freeze({
     available: !!outbox?.supports(40100),
-    async read(channel: string) {
+    async read(channel: string, { strong = true }: { strong?: boolean } = {}) {
       signal.throwIfAborted();
       if (!canWrite(channel))
         throw new Error("Canvas is unavailable after channel access changed");
       return selectedHead(
         await fresh([
-          { kinds: [40100], "#h": [channel], limit: 1, consistency: "strong" },
+          {
+            kinds: [40100],
+            "#h": [channel],
+            limit: 1,
+            ...(strong ? { consistency: "strong" as const } : {}),
+          },
         ]),
       );
     },

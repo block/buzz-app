@@ -189,7 +189,7 @@ it("shows Canvas as the first line and saved plain text as the secondary preview
   expect(row.querySelector(".buzz-choice-row-description")).toHaveTextContent(
     "Google root-link preview submission deep dive",
   );
-  expect(canvas.read).toHaveBeenCalledWith("alpha");
+  expect(canvas.read).toHaveBeenCalledWith("alpha", { strong: false });
   expect(canvas.save).not.toHaveBeenCalled();
   expect(container.querySelector("img, script")).toBeNull();
 });

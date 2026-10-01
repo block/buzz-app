@@ -57,7 +57,7 @@ export function ChannelSettingsPanel({
     if (!canvas || !channelId || canvasOpen) return;
     setPreview(undefined);
     let active = true;
-    void canvas.read(channelId).then(
+    void canvas.read(channelId, { strong: false }).then(
       (event) => {
         if (active)
           setPreview({

@@ -256,7 +256,9 @@ a single cancellable wait respects its timestamp ordering; there is no backgroun
 retry loop. Failures and recovered drafts expose Retry rather than silently publishing
 on reopen. Save uses the existing session Canvas/outbox contract, including its
 24 KiB limit, fresh membership check, writer-backed Canvas head/editor-confirmation
-reads and exact signed-event recovery. Editor/Todos saves carry `expected-revision=<loaded
+reads and exact signed-event recovery. Canvas reads default to strong consistency
+for editor/Todos bases and setup preconditions; Settings previews and template
+copies explicitly opt out and remain replica-eligible. Editor/Todos saves carry `expected-revision=<loaded
 head id>` (or `none` when absent); template seeds carry `none`. On relays supporting
 Canvas compare-and-swap, stale preconditions are refused atomically before mutation.
 A proven conflict keeps the local draft and dismisses only that rejected outbox

@@ -100,7 +100,9 @@ export function SaveAsTemplate({
           setBusy(true);
           setError("");
           try {
-            const canvas = await session.canvas.read(channel.id);
+            const canvas = await session.canvas.read(channel.id, {
+              strong: false,
+            });
             if (!active()) return;
             setCopyWarning(
               catalog.agentsComplete

@@ -29,7 +29,9 @@ import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
 
 // Native upward scrolling can start on a focused message link or button.
-// Inner scrollports own the key only while they can move or contain the chain.
+// Inner scrollports own the key while they can move. At their top boundary,
+// native keyboard chaining differs by engine/OS, even with CSS containment.
+// Admit a candidate there; only observed history movement can leave follow.
 function scrollsHistoryUp(event: KeyboardEvent<HTMLElement>): boolean {
   if (event.defaultPrevented) return false;
   const modified = event.altKey || event.ctrlKey || event.metaKey;
@@ -56,8 +58,7 @@ function scrollsHistoryUp(event: KeyboardEvent<HTMLElement>): boolean {
     const style = getComputedStyle(target);
     if (
       ["auto", "scroll", "overlay"].includes(style.overflowY) &&
-      (target.scrollTop > 0 ||
-        ["contain", "none"].includes(style.overscrollBehaviorY))
+      target.scrollTop > 0
     )
       return false;
     target = target.parentElement;

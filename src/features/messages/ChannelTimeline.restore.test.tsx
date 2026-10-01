@@ -476,6 +476,8 @@ it.each([
   "control up",
   "control home",
   "nested top",
+  "contained top",
+  "no overscroll",
 ] as const)(
   "%s reader input wins over shrink in the same observation",
   async (input) => {
@@ -497,6 +499,8 @@ it.each([
         "control up",
         "control home",
         "nested top",
+        "contained top",
+        "no overscroll",
       ].includes(input)
     ) {
       const control = document.createElement(
@@ -506,9 +510,15 @@ it.each([
         control.href = "https://example.com";
       control.textContent = "Message control";
       region.append(control);
-      if (input === "nested top") {
+      if (["nested top", "contained top", "no overscroll"].includes(input)) {
         const inner = document.createElement("div");
         inner.style.overflowY = "auto";
+        inner.style.overscrollBehaviorY =
+          input === "contained top"
+            ? "contain"
+            : input === "no overscroll"
+              ? "none"
+              : "auto";
         region.append(inner);
         inner.append(control);
         inner.scrollTop = 0;
@@ -548,35 +558,41 @@ it.each([
     });
   },
 );
-it("retires an unconsumed inner-top PageUp before a later layout-only shrink", async () => {
-  const h = mount(true);
-  await frame();
-  const region = screen.getByRole("region", {
-    name: "Channel message history",
-  });
-  region.scrollTop = 1400;
-  fireEvent.scroll(region);
-  const inner = document.createElement("div");
-  inner.style.overflowY = "auto";
-  const control = document.createElement("a");
-  control.href = "https://example.com";
-  inner.append(control);
-  region.append(inner);
-  control.focus();
-  fireEvent.keyDown(control, { key: "PageUp" });
-  // WebKit can consume this key without moving either scrollport. No scroll or
-  // scrollend follows; let that rendering opportunity pass before later reflow.
-  await frame();
-  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(1600);
-  region.scrollTop = 800;
-  fireEvent.scroll(region);
-  scroll.toIndex.mockClear();
-  h.promote();
-  await frame();
-  expect(scroll.toIndex).toHaveBeenCalled();
-  h.unmount();
-  expect(readView("scope", "scroll:c", null)).toMatchObject({ bottom: true });
-});
+it.each(["auto", "contain", "none"])(
+  "retires an unconsumed %s inner-top PageUp before a later layout-only shrink",
+  async (containment) => {
+    const h = mount(true);
+    await frame();
+    const region = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    region.scrollTop = 1400;
+    fireEvent.scroll(region);
+    const inner = document.createElement("div");
+    inner.style.overflowY = "auto";
+    inner.style.overscrollBehaviorY = containment;
+    const control = document.createElement("a");
+    control.href = "https://example.com";
+    inner.append(control);
+    region.append(inner);
+    control.focus();
+    fireEvent.keyDown(control, { key: "PageUp" });
+    // WebKit can consume this key without moving either scrollport. No scroll or
+    // scrollend follows; let that rendering opportunity pass before later reflow.
+    await frame();
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(
+      1600,
+    );
+    region.scrollTop = 800;
+    fireEvent.scroll(region);
+    scroll.toIndex.mockClear();
+    h.promote();
+    await frame();
+    expect(scroll.toIndex).toHaveBeenCalled();
+    h.unmount();
+    expect(readView("scope", "scroll:c", null)).toMatchObject({ bottom: true });
+  },
+);
 
 it("a finished near-bottom wheel does not taint a later layout-only shrink", async () => {
   const h = mount(true);
@@ -602,8 +618,6 @@ it("a finished near-bottom wheel does not taint a later layout-only shrink", asy
 it.each([
   "editable",
   "nested scroll",
-  "contained top",
-  "no overscroll",
   "prevented",
   "button activation",
   "modified page up",
@@ -621,18 +635,12 @@ it.each([
       input === "editable" ? "textarea" : "button",
     );
     region.append(control);
-    if (["nested scroll", "contained top", "no overscroll"].includes(input)) {
+    if (input === "nested scroll") {
       const inner = document.createElement("div");
       inner.style.overflowY = "auto";
-      inner.style.overscrollBehaviorY =
-        input === "contained top"
-          ? "contain"
-          : input === "no overscroll"
-            ? "none"
-            : "auto";
       region.append(inner);
       inner.append(control);
-      inner.scrollTop = input === "nested scroll" ? 100 : 0;
+      inner.scrollTop = 100;
     }
     if (input === "prevented")
       control.addEventListener("keydown", (event) => event.preventDefault());

@@ -199,14 +199,18 @@ The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
   fallback (Node.js required):
 
   ```sh
-  npm install -g @earendil-works/pi-coding-agent
+  npm install -g '@earendil-works/pi-coding-agent@>=0.99.0'
   npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#72015de'
   ```
 
 **Check again** re-detects installed Harnesses without reopening Buzz. Status
 is executable detection, not a guarantee of sign-in, ACP readiness or inference.
 The reviewed Pi adapter revision supports native steering, which needs Pi 0.99.0
-or later. Each app-owned install goes into a new release under
+or later. Buzz checks the selected Pi CLI's version before agent startup or
+model browsing. An older or unreadable version fails with an error naming the
+selected CLI path and the required update.
+
+Each app-owned install goes into a new release under
 `node-tools/releases/<adapter revision>.<time>`. Buzz then renames the `pi` and
 `buzz-pi-acp` shims in `node-tools/bin` to point at it, so an agent that starts
 during an update never sees a partial install. Buzz keeps the previous release

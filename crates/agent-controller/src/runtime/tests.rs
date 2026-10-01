@@ -1537,6 +1537,48 @@ fn discovery_accepts_only_v2_from_saved_environment_or_build_provider() {
 
 #[test]
 #[cfg(unix)]
+fn pi_launch_rejects_old_user_global_cli() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let adapter = dir.path().join("buzz-pi-acp");
+    let pi = dir.path().join("pi");
+    for path in [&adapter, &pi, &dir.path().join("node")] {
+        fs::write(path, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let runtime = bundle(dir.path());
+    let mut selected = agent(dir.path());
+    selected.harness.command = adapter.display().to_string();
+    let key = Secret::parse(KEY, PUB).unwrap();
+    for (version, accepted) in [
+        ("0.87.1", false),
+        ("0.99.0", true),
+        ("0.99.1", true),
+        ("0.99.0-beta.1", false),
+    ] {
+        fs::write(&pi, format!("#!/bin/sh\nprintf '{version}\\n'\n")).unwrap();
+        let launch = runtime.command(&selected, &key);
+        if accepted {
+            let launch = launch.unwrap();
+            assert!(launch.get_envs().any(|(name, value)| {
+                name == "PI_ACP_PI_COMMAND" && value == Some(pi.as_os_str())
+            }));
+        } else {
+            let error = launch.err().unwrap();
+            if version == "0.87.1" {
+                assert!(error.contains("0.87.1"), "{error}");
+            }
+            assert!(error.contains("0.99.0"), "{error}");
+            assert!(error.contains(&pi.display().to_string()), "{error}");
+        }
+    }
+    fs::write(&pi, "#!/bin/sh\nexit 1\n").unwrap();
+    let error = runtime.command(&selected, &key).err().unwrap();
+    assert!(error.contains("0.99.0"), "{error}");
+}
+
+#[test]
+#[cfg(unix)]
 fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
@@ -1560,6 +1602,11 @@ fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
     for tool in ["pi", "node"] {
         fs::copy(&adapter, tools.path().join(tool)).unwrap();
     }
+    fs::write(
+        tools.path().join("pi"),
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.99.1\\n'; fi\n",
+    )
+    .unwrap();
     a.environment.insert(
         "PI_CODING_AGENT_DIR".into(),
         dir.path().display().to_string(),
@@ -1908,7 +1955,7 @@ fn managed_prefix_detection_and_shim_launch_path_use_pinned_node() {
         node_bin.join("node"),
     ] {
         let script = if path.file_name().is_some_and(|name| name == "node") {
-            "#!/bin/sh\nprintf 'managed-node\\n'\n"
+            "#!/bin/sh\nif [ \"$2\" = --version ]; then printf '0.99.1\\n'; else printf 'managed-node\\n'; fi\n"
         } else {
             "#!/usr/bin/env node\n"
         };

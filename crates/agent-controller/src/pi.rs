@@ -6,6 +6,7 @@ use crate::{
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 /// Native only: contains local environment values, never serialized over IPC.
@@ -78,6 +79,27 @@ impl PiContext {
             Path::new("/sbin"),
         ])
         .map_err(|_| "Invalid Pi tools path")?;
+        let update = format!(
+            "Update the Pi CLI at {} to version 0.99.0 or later, then retry",
+            command.display()
+        );
+        let output = Command::new(&command)
+            .arg("--version")
+            .env("PATH", &path)
+            .output()
+            .map_err(|_| format!("Could not verify the Pi CLI version. {update}"))?;
+        let version = std::str::from_utf8(&output.stdout).unwrap_or("").trim();
+        let parts = version
+            .split('.')
+            .map(str::parse::<u64>)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap_or_default();
+        if !output.status.success() || parts.len() != 3 {
+            return Err(format!("Could not verify the Pi CLI version. {update}"));
+        }
+        if (parts[0], parts[1], parts[2]) < (0, 99, 0) {
+            return Err(format!("Pi CLI {version} is too old. {update}"));
+        }
         let mut environment = environment.clone();
         environment.insert(
             "PI_ACP_PI_COMMAND".into(),

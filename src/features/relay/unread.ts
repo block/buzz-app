@@ -1,3 +1,4 @@
+import type { InboxItem, InboxSnapshot } from "./inbox";
 import type { ChannelQueries } from "./contracts";
 import type { RelayEvent } from "./events";
 import {
@@ -66,6 +67,8 @@ export type ReadingHandle = Readonly<{
   dispose(): void;
 }>;
 export interface UnreadCapability {
+  inbox(): InboxSnapshot;
+  subscribeInbox(listener: () => void): () => void;
   snapshot(target: ReadTarget): UnreadSnapshot;
   /** Same verified attention/frontier policy as badges, not a notification event source. */
   attention(channelId: string, messageId: string): MessageAttention;
@@ -77,6 +80,10 @@ export interface UnreadCapability {
   ensure(): Promise<void>;
   refresh(): Promise<void>;
   retrySync(): Promise<void>;
+  /** Durable local intent revision, not sync-health changes. */
+  revision(): number;
+  /** Access/cache/connection retirement fence. */
+  generation(): number;
   reading(channelId: string): ReadingHandle;
   /** Explicit prefix intent, unlike individual-message visibility observations. */
   markThrough(
@@ -186,6 +193,10 @@ export function createUnread({
   const activityListeners = new Map<string, Set<() => void>>();
   const activitySnapshots = new Map<string, ThreadActivitySnapshot>();
   const activityDirty = new Set<string>();
+  const inboxListeners = new Set<() => void>();
+  let inboxSnapshot: InboxSnapshot | undefined;
+  let inboxDirty = true;
+  let inboxLoading = false;
   const handles = new Set<() => void>();
   const views = new Map<
     () => void,
@@ -640,6 +651,137 @@ export function createUnread({
     snapshots.set(key, value);
     return value;
   }
+  function inbox(): InboxSnapshot {
+    if (inboxSnapshot && !inboxDirty) return inboxSnapshot;
+    inboxDirty = false;
+    indexEvidence();
+    const state = reads.state();
+    const items: InboxItem[] = [];
+    if (!closed)
+      for (const channel of channels.list().channels) {
+        if (channel.cached || !channel.members?.includes(viewer)) continue;
+        const dm = channel.channelType === "dm";
+        const groups = new Map<string, Evidence[]>();
+        for (const entry of byChannel.get(channel.id) ?? []) {
+          if (entry.event.pubkey === viewer || !category(entry, dm)) continue;
+          const id = dm ? channel.id : (entry.rootId ?? entry.event.id);
+          const group = groups.get(id) ?? [];
+          group.push(entry);
+          groups.set(id, group);
+        }
+        if (!groups.size) continue;
+        const content = new Map(
+          foldMessages(channel.id, "", [...events.values()], {
+            includeReplies: true,
+          }).map((row) => [row.id, row.content]),
+        );
+        for (const [id, entries] of groups) {
+          entries.sort(
+            (a, b) =>
+              a.event.created_at - b.event.created_at ||
+              a.event.id.localeCompare(b.event.id),
+          );
+          const latest = entries[entries.length - 1];
+          if (!latest) continue;
+          const unread = entries.filter((entry) => isUnread(entry, state, dm));
+          const representative = unread[0] ?? latest;
+          const replies = entries.filter((entry) => entry.rootId !== undefined);
+          const lastReply = replies[replies.length - 1];
+          const target: ReadTarget = dm
+            ? { kind: "channel", channelId: channel.id }
+            : lastReply?.rootId && !tombstones.has(lastReply.rootId)
+              ? {
+                  kind: "thread",
+                  channelId: channel.id,
+                  rootId: lastReply.rootId,
+                }
+              : {
+                  kind: "message",
+                  channelId: channel.id,
+                  messageId: latest.event.id,
+                };
+          const readThrough: { target: ReadTarget; messageId: string }[] = dm
+            ? []
+            : entries
+                .filter(
+                  (entry) =>
+                    !entry.rootId ||
+                    !!reads.localUnread(`msg:${entry.event.id}`),
+                )
+                .map((entry) => ({
+                  target: {
+                    kind: "message" as const,
+                    channelId: channel.id,
+                    messageId: entry.event.id,
+                  },
+                  messageId: entry.event.id,
+                }));
+          if (!dm && lastReply?.rootId)
+            readThrough.push({
+              target: {
+                kind: "thread",
+                channelId: channel.id,
+                rootId: lastReply.rootId,
+              },
+              messageId: lastReply.event.id,
+            });
+          items.push(
+            Object.freeze({
+              id: `${channel.id}:${id}`,
+              channelId: channel.id,
+              target: Object.freeze(target),
+              messageId: representative.event.id,
+              latestMessageId: latest.event.id,
+              messageIds: Object.freeze(entries.map((entry) => entry.event.id)),
+              ...(representative.rootId
+                ? { rootId: representative.rootId }
+                : {}),
+              authorId: representative.event.pubkey,
+              preview:
+                content.get(representative.event.id) ??
+                representative.event.content,
+              createdAt: latest.event.created_at,
+              mentioned: entries.some((entry) => entry.mentioned),
+              thread: replies.length > 0,
+              unreadCount: unread.length,
+              manual:
+                !!reads.localUnread(targetKey(target)) ||
+                readThrough.some(
+                  ({ target }) => !!reads.localUnread(targetKey(target)),
+                ),
+              readThrough: Object.freeze(
+                readThrough.map((step) =>
+                  Object.freeze({
+                    ...step,
+                    target: Object.freeze(step.target),
+                  }),
+                ),
+              ),
+            }),
+          );
+        }
+      }
+    items.sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+    const next: InboxSnapshot = Object.freeze({
+      status: error
+        ? "error"
+        : inboxLoading
+          ? "loading"
+          : freshness === "unknown"
+            ? "idle"
+            : "ready",
+      items: Object.freeze(items),
+      freshness,
+      ...(error ? { error } : {}),
+    });
+    // Keep React's snapshot stable for irrelevant evidence and duplicate deliveries.
+    if (
+      !inboxSnapshot ||
+      JSON.stringify(inboxSnapshot) !== JSON.stringify(next)
+    )
+      inboxSnapshot = next;
+    return inboxSnapshot;
+  }
   function addActivityListener(channelId: string, listener: () => void) {
     activity(channelId);
     const set = activityListeners.get(channelId) ?? new Set();
@@ -652,6 +794,9 @@ export function createUnread({
   }
   function publish(channelIds?: ReadonlySet<string>) {
     if (closed) return;
+    inboxDirty = true;
+    const previousInbox = inboxSnapshot;
+    const nextInbox = inboxListeners.size ? inbox() : undefined;
     const changed: string[] = [];
     const changedActivity: string[] = [];
     for (const [key, old] of snapshots) {
@@ -680,6 +825,8 @@ export function createUnread({
       }
     }
     // Replace/invalidate ALL affected projections before any reentrant callback.
+    if (nextInbox && nextInbox !== previousInbox)
+      for (const listener of inboxListeners) notify(listener);
     for (const key of changed)
       for (const listener of listeners.get(key) ?? []) notify(listener);
     for (const channelId of changedActivity)
@@ -770,6 +917,7 @@ export function createUnread({
     if (closed) return;
     if (refresh) return refresh;
     repairAgain = false;
+    inboxLoading = true;
     const generation = epoch;
     refresh = (async () => {
       await reads.ensure();
@@ -780,7 +928,11 @@ export function createUnread({
           (channel) => !channel.cached && channel.members?.includes(viewer),
         )
         .map((channel) => channel.id);
-      if (!ids.length) return;
+      if (!ids.length) {
+        freshness = "observed";
+        error = undefined;
+        return;
+      }
       try {
         // The relay caps aggregate explicit #h values at 128 per request.
         // Keep roster scope: an unscoped read also includes unjoined open channels.
@@ -817,8 +969,11 @@ export function createUnread({
       }
     })().finally(() => {
       refresh = undefined;
+      inboxLoading = false;
+      publish();
       if (!closed && repairAgain) void repair();
     });
+    publish();
     return refresh;
   }
   function accept(batch: readonly RelayEvent[]) {
@@ -962,6 +1117,12 @@ export function createUnread({
     };
   }
   const capability: UnreadCapability = Object.freeze<UnreadCapability>({
+    inbox,
+    subscribeInbox(listener) {
+      inbox();
+      inboxListeners.add(listener);
+      return () => inboxListeners.delete(listener);
+    },
     snapshot,
     attention,
     subscribe(target, listener) {
@@ -984,6 +1145,8 @@ export function createUnread({
       await reads.refresh("foreground");
       await repair();
     },
+    revision: reads.revision,
+    generation: () => epoch,
     retrySync: async () => {
       await reads.refresh();
       await reads.flush();
@@ -1351,6 +1514,9 @@ export function createUnread({
       activitySnapshots.clear();
       activityDirty.clear();
       events.clear();
+      inboxSnapshot = undefined;
+      inboxDirty = true;
+      inboxListeners.clear();
       forcedMessages.clear();
       entered.clear();
       reads.dispose();

@@ -2214,3 +2214,236 @@ it.each(["channel", "thread", "message"] as const)(
     lease.dispose();
   },
 );
+
+it("inbox groups relevant conversations, preserves read rows and exact unread resume points", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("dm");
+  h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+  const root = message(h.viewer, "room", "My thread", 20);
+  const mention = message(h.alice, "room", "Mention", 21, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const reply = message(h.alice, "room", "First reply", 22, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const newer = message(h.alice, "room", "Mentioned reply", 23, [
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  const dm = message(h.alice, "dm", "Direct hello", 24);
+  h.emit([
+    root,
+    mention,
+    reply,
+    newer,
+    dm,
+    message(h.alice, "room", "Not relevant", 25),
+  ]);
+  const unread = h.session.unread;
+  const before = unread.inbox();
+  expect(before.items).toHaveLength(3);
+  const thread = before.items.find((item) => item.thread);
+  assert(thread);
+  expect(thread).toMatchObject({
+    messageId: reply.id,
+    latestMessageId: newer.id,
+    mentioned: true,
+    unreadCount: 2,
+    preview: "First reply",
+  });
+  expect(before.items[0]).toMatchObject({
+    channelId: "dm",
+    target: { kind: "channel", channelId: "dm" },
+  });
+  expect(unread.inbox()).toBe(before);
+  const listener = vi.fn();
+  const stop = unread.subscribeInbox(listener);
+  h.emit([newer]);
+  expect(listener).not.toHaveBeenCalled();
+  expect(unread.inbox()).toBe(before);
+  await unread.markThrough(thread.target, thread.latestMessageId);
+  const read = unread.inbox().items.find((item) => item.id === thread.id);
+  assert(read);
+  expect(read).toMatchObject({ unreadCount: 0, messageId: newer.id });
+  expect(unread.activity("room").items).toHaveLength(0);
+  await unread.markUnreadLocal(thread.target);
+  expect(
+    unread.inbox().items.find((item) => item.id === thread.id),
+  ).toMatchObject({ unreadCount: 0, manual: true });
+  await unread.markThrough(thread.target, thread.latestMessageId);
+  expect(
+    unread.inbox().items.find((item) => item.id === thread.id)?.manual,
+  ).toBe(false);
+  expect(unread.inbox().items).toHaveLength(3);
+  expect(
+    unread.snapshot({ kind: "channel", channelId: "room" }).observedCount,
+  ).toBe(2);
+  stop();
+});
+
+it("inbox folds edits and deletions and revokes all evidence before a reentrant subscriber", async () => {
+  const h = setup();
+  h.grant("room");
+  const row = message(h.alice, "room", "original", 20, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([row]);
+  expect(h.session.unread.inbox().items[0]?.preview).toBe("original");
+  h.emit([
+    signed(h.alice, {
+      kind: 40003,
+      created_at: 21,
+      content: "edited",
+      tags: [
+        ["h", "room"],
+        ["e", row.id],
+      ],
+    }),
+  ]);
+  expect(h.session.unread.inbox().items[0]?.preview).toBe("edited");
+  const noticed: number[] = [];
+  h.session.unread.subscribe(h.target, () =>
+    noticed.push(h.session.unread.inbox().items.length),
+  );
+  h.emit([roster(h.relay, "room", [], 30)]);
+  expect(noticed.at(-1)).toBe(0);
+  expect(h.session.unread.inbox().items).toHaveLength(0);
+  h.grant("room", 31);
+  expect(h.session.unread.inbox().items).toHaveLength(0);
+  h.emit([row]);
+  h.emit([
+    signed(h.alice, {
+      kind: 5,
+      created_at: 32,
+      content: "",
+      tags: [["e", row.id]],
+    }),
+  ]);
+  expect(h.session.unread.inbox().items).toHaveLength(0);
+  h.dispose();
+  expect(h.session.unread.inbox().items).toHaveLength(0);
+});
+
+it("inbox keeps unresolved mentions exact, joins a verified root, and never clears unrelated roots", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "Mentioned root", 20, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const reply = message(h.alice, "room", "Mentioned reply", 21, [
+    ["p", h.viewer.pubkey],
+    ["e", root.id, "", "reply"],
+  ]);
+  const other = message(h.alice, "room", "Other mention", 22, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([reply, other]);
+  expect(
+    h.session.unread.inbox().items.find((item) => item.messageId === reply.id)
+      ?.target.kind,
+  ).toBe("message");
+  h.emit([root]);
+  const item = h.session.unread.inbox().items.find((item) => item.thread);
+  assert(item);
+  expect(h.session.unread.inbox().items).toHaveLength(2);
+  expect(item.readThrough.map((step) => step.target.kind)).toEqual([
+    "message",
+    "thread",
+  ]);
+  await h.session.unread.markUnreadLocal({
+    kind: "message",
+    channelId: "room",
+    messageId: root.id,
+  });
+  for (const step of item.readThrough)
+    await h.session.unread.markThrough(step.target, step.messageId);
+  expect(
+    h.session.unread.inbox().items.find((row) => row.id === item.id),
+  ).toMatchObject({ unreadCount: 0, manual: false });
+  expect(
+    h.session.unread.inbox().items.find((row) => row.messageId === other.id)
+      ?.unreadCount,
+  ).toBe(1);
+});
+
+it("inbox observation exposes empty, failure, recovery and cache clear without a new read owner", async () => {
+  const h = setup();
+  h.grant("room");
+  expect(h.session.unread.inbox().status).toBe("idle");
+  let release!: () => void;
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  h.query.mockImplementation(async (filters) => {
+    if (filters[0]?.kinds?.includes(9)) {
+      await hold;
+      throw new Error("offline");
+    }
+    return [];
+  });
+  const work = h.session.unread.ensure();
+  try {
+    await vi.waitFor(() =>
+      expect(
+        h.query.mock.calls.some(([filters]) => filters[0]?.kinds?.includes(9)),
+      ).toBe(true),
+    );
+    expect(h.session.unread.inbox().status).toBe("loading");
+  } finally {
+    release();
+  }
+  await work;
+  expect(h.session.unread.inbox()).toMatchObject({
+    status: "error",
+    error: "offline",
+  });
+  h.query.mockResolvedValue([]);
+  await h.session.unread.refresh();
+  expect(h.session.unread.inbox()).toMatchObject({
+    status: "ready",
+    items: [],
+  });
+  h.emit([message(h.alice, "room", "fresh", 20, [["p", h.viewer.pubkey]])]);
+  expect(h.session.unread.inbox().items).toHaveLength(1);
+  await h.clearCache();
+  expect(h.session.unread.inbox().items).toHaveLength(0);
+});
+
+it("a reply surviving root deletion can be marked unread and then cleared", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "root", 20);
+  const reply = message(h.alice, "room", "surviving mention", 21, [
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([
+    root,
+    reply,
+    signed(h.alice, {
+      kind: 5,
+      content: "",
+      created_at: 22,
+      tags: [["e", root.id]],
+    }),
+  ]);
+  const item = h.session.unread.inbox().items[0];
+  assert(item);
+  expect(item).toMatchObject({
+    target: { kind: "message", messageId: reply.id },
+    rootId: root.id,
+  });
+  for (const step of item.readThrough)
+    await h.session.unread.markThrough(step.target, step.messageId);
+  await h.session.unread.markUnreadLocal(item.target);
+  const marked = h.session.unread.inbox().items[0];
+  assert(marked);
+  expect(marked.manual).toBe(true);
+  for (const step of marked.readThrough)
+    await h.session.unread.markThrough(step.target, step.messageId);
+  expect(h.session.unread.inbox().items[0]).toMatchObject({
+    manual: false,
+    unreadCount: 0,
+  });
+});

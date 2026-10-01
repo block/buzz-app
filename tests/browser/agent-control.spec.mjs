@@ -732,8 +732,10 @@ test("editor renders host choices rather than its own catalog, and tolerates an 
   ).toBeDisabled();
 });
 
+// control.test.ts crosses both launches with both late results. The real
+// buttons need each launch and each late result once.
 for (const launch of ["start", "restart"]) {
-  for (const lateFailure of [false, true]) {
+  for (const lateFailure of launch === "start" ? [false] : [true]) {
     test(`${launch} credential wait leaves real Stop buttons usable and ignores late ${lateFailure ? "failure" : "success"}`, async ({
       page,
     }) => {

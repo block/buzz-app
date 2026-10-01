@@ -99,14 +99,19 @@ function setup(
     status:
       mode === "disconnected"
         ? "disconnected"
-        : mode === "connecting"
-          ? "connecting"
-          : "ready",
+        : mode === "cached"
+          ? "error"
+          : mode === "connecting"
+            ? "connecting"
+            : "ready",
     scope:
-      mode === "connected"
+      mode === "connected" || mode === "cached"
         ? `https://relay.example.test:${"de".repeat(32)}`
         : "A",
-    ...(mode === "connected" ? { viewer: "de".repeat(32) } : {}),
+    ...(mode === "connected" || mode === "cached"
+      ? { viewer: "de".repeat(32) }
+      : {}),
+    ...(mode === "cached" ? { cached: true as const } : {}),
     generation: 1,
     session,
   };
@@ -172,7 +177,11 @@ it("opens the selected managed agent in the existing profile panel", async () =>
     matches: (_target: string) => true,
     component: ({ target }: { target: string }) => {
       profileTargetSeen = target;
-      return <p>Existing profile panel</p>;
+      return (
+        <button type="button" ref={(button) => button?.focus()}>
+          Existing profile panel
+        </button>
+      );
     },
     key: "buzz.profiles/profile",
     pluginId: "buzz.profiles",
@@ -203,6 +212,9 @@ it("opens the selected managed agent in the existing profile panel", async () =>
     await screen.findByRole("complementary", { name: "Profile" }),
   ).toBeVisible();
   expect(screen.getByText("Existing profile panel")).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Existing profile panel" }),
+  ).toHaveFocus();
   expect(profileTargetSeen).toBe(
     profileTarget(f.agent.pubkey, { agent: true }),
   );
@@ -213,6 +225,41 @@ it("opens the selected managed agent in the existing profile panel", async () =>
       within(card).getByRole("button", { name: "Actions for Fixture agent" }),
     ).toHaveFocus(),
   );
+});
+
+it("focuses the profile card when a cached profile cannot focus its content", async () => {
+  const panel = {
+    id: "profile",
+    title: "Profile",
+    matches: (_target: string) => true,
+    component: () => <p>Connect to a community to view this profile.</p>,
+    key: "buzz.profiles/profile",
+    pluginId: "buzz.profiles",
+    revision: "test",
+  } satisfies RegisteredPanel;
+  const installed = [panel];
+  const panels: Panels = {
+    snapshot: () => installed,
+    subscribe: () => () => {},
+    resolve: (target) => (panel.matches(target) ? panel : undefined),
+    register: () => {},
+  };
+  setup("cached", undefined, undefined, undefined, panels);
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing retained agent card");
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "View profile" }),
+  );
+  const profile = await screen.findByRole("complementary", { name: "Profile" });
+  expect(
+    within(profile).getByText("Connect to a community to view this profile."),
+  ).toBeVisible();
+  expect(profile).toHaveFocus();
 });
 
 it("lets the hosted profile replace itself with another profile target", async () => {

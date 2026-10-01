@@ -72,6 +72,7 @@ export function AgentsPage({
     panels?.snapshot ?? noPanelSnapshot,
   );
   const opening = useRef(0);
+  const profileCard = useRef<HTMLElement>(null);
   const [profile, setProfile] = useState<{
     panel: RegisteredPanel;
     target: string;
@@ -83,6 +84,12 @@ export function AgentsPage({
   useEffect(() => {
     const before = previousProfile.current;
     previousProfile.current = profile;
+    if (
+      profile &&
+      before !== profile &&
+      !profileCard.current?.contains(document.activeElement)
+    )
+      profileCard.current?.focus({ preventScroll: true });
     if (before && !profile && restoreProfileFocus.current) {
       const target = before.trigger.isConnected
         ? before.trigger
@@ -210,6 +217,7 @@ export function AgentsPage({
         {companion && <div hidden={profile !== undefined}>{companion}</div>}
         {profile && (
           <PanelCard
+            ref={profileCard}
             panel={profile.panel}
             target={profile.target}
             context={panelContext}

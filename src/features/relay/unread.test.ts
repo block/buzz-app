@@ -805,6 +805,61 @@ it("community sweep skips grants revoked while its first save is committing", as
   ]);
 });
 
+// Any access loss in the community cancels every unsaved channel, not only the
+// revoked one; the sweep rejects and can be repeated. A grant cancels nothing.
+it.each(["grant", "revoke"] as const)(
+  "community sweep after an unrelated %s during its first save",
+  async (access) => {
+    const h = setup();
+    h.grant(other);
+    const third = "21234567-89ab-cdef-0123-456789abcdef";
+    h.grant(third);
+    const [first, second, last] = h.session.channels
+      .list()
+      .channels.map((c) => c.id);
+    if (!first || !second || !last) throw new Error("Missing sweep channels");
+    for (const id of [first, second, last]) h.bff.rows.set(id, sidebarRow(id));
+    await h.unread.ensure();
+    for (const id of [first, second, last])
+      await h.unread.markUnreadLocal({ kind: "channel", channelId: id });
+    const held = deferredSidebar<void>(),
+      started = deferredSidebar<void>();
+    const update = h.bff.storage.update;
+    vi.spyOn(h.bff.storage, "update").mockImplementationOnce(async (change) => {
+      const result = await update(change);
+      started.resolve();
+      await held.promise;
+      return result;
+    });
+    const sweep = h.unread.markAllChannelsRead();
+    const later = "31234567-89ab-cdef-0123-456789abcdef";
+    try {
+      await started.promise;
+      if (access === "grant") h.grant(later);
+      else h.grant(second, [], 20);
+    } finally {
+      held.resolve();
+    }
+    if (access === "grant") {
+      expect(h.session.channels.list().channels.map((c) => c.id)).toContain(
+        later,
+      );
+      expect(await sweep).toHaveLength(3);
+      expect(h.bff.journal().manual).toEqual([]);
+      return;
+    }
+    await expect(sweep).rejects.toThrow("Reading context changed");
+    expect(h.bff.journal().manual).toEqual([
+      { kind: "channel", channelId: second },
+      { kind: "channel", channelId: last },
+    ]);
+    expect(await h.unread.markAllChannelsRead()).toHaveLength(1);
+    expect(h.bff.journal().manual).toEqual([
+      { kind: "channel", channelId: second },
+    ]);
+  },
+);
+
 it("community sweep captures every channel cut before the first journal save", async () => {
   const h = setup();
   h.grant(other);

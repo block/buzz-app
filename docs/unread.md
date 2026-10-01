@@ -69,9 +69,14 @@ too. Oversized rows that never fit fully are not auto-read.
   evidence or a local mark. It captures every selected fixed cut and local clear
   at invocation, before yielding; the journal then commits them one channel at
   a time. Already-read channels cost no
-  writes. A revoked channel is skipped; other failures do not stop the sweep,
-  and the first failure is rethrown afterwards. Newly granted channels wait for
-  the next action. The community rail uses this for the selected community only.
+  writes. Losing access to any channel in the community while the sweep saves
+  cancels every channel not yet saved, not only the revoked one: the sweep
+  rejects with `Reading context changed`, those channels keep their unread
+  state and marks, and repeating the sweep clears them. Only when the revoked
+  channel is the last one unsaved is it simply skipped. Other failures do not
+  stop the sweep, and the first failure is rethrown afterwards. Newly granted
+  channels wait for the next action and cancel nothing. The community rail uses
+  this for the selected community only.
 - `markUnreadLocal(target)` is durable **on this browser profile/device only**.
   Automatic reading does not clear it. An explicit mark-through clears that
   target's local mark. `syncedManualUnread` is `false`.
@@ -156,8 +161,11 @@ wrong context (`invalid`). The action has already resolved once its intent was
 saved, so either outcome is recorded as the channel's `error` on the unread and
 thread-activity snapshots, which the bundled UI does not render; the channel is
 re-read, and its unread count returning is the feedback. Disposal, cache
-clear or access revoke/regrant invalidates queued intent. Automatic dwell leases
-are invalidated by a newer manual-unread action on the channel.
+clear, or an access revoke/regrant of any channel in the community, invalidates
+all queued intent in that community, not only the affected channel's; a waiting
+explicit action rejects with `Reading context changed` and can be repeated.
+Automatic dwell leases are invalidated by a newer manual-unread action on the
+channel.
 
 ## Durable sync
 

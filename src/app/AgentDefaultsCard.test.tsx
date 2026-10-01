@@ -391,6 +391,7 @@ it("searches the full catalog by ID while bounding choices and distinguishing du
   ).toHaveTextContent("model-11");
   expect(requests).toHaveLength(1);
   await user.type(within(card).getByLabelText("OpenAI API key"), "draft-key");
+  expect(within(card).getByLabelText("OpenAI API key")).toHaveFocus();
   expect(
     within(card).getByRole("textbox", { name: "Custom default model ID" }),
   ).toHaveValue("model-11");
@@ -401,6 +402,231 @@ it("searches the full catalog by ID while bounding choices and distinguishing du
     within(card).getByRole("textbox", { name: "Custom default model ID" }),
   ).toHaveValue("model-11");
 });
+
+it.each([
+  {
+    environment: { DATABRICKS_HOST: "https://draft.example.test" },
+    host: "",
+    filter: "build-filter",
+  },
+  {
+    environment: { DATABRICKS_MODEL_FILTER: "" },
+    host: "https://build.example.test",
+    filter: "",
+  },
+  {
+    environment: {
+      DATABRICKS_HOST: "https://draft.example.test",
+      DATABRICKS_MODEL_FILTER: "draft-filter",
+    },
+    host: "",
+    filter: "",
+  },
+])(
+  "browses with draft Databricks environment $environment without saving",
+  async ({ environment, host, filter }) => {
+    const user = userEvent.setup();
+    const requests: ModelRequest[] = [];
+    const { fixture, control } = setup(0, 0, (f) => {
+      f.data.databricksDefaults = {
+        host: "https://build.example.test",
+        filter: "build-filter",
+      };
+      f.host.models = {
+        begin: async () => 1,
+        cancel: async () => {},
+        run: async (_ticket, request) => {
+          requests.push(request);
+          return {
+            host: "",
+            models: [{ id: "draft-model", name: "Draft model" }],
+            modelOverridden: false,
+            disconnected: false,
+          };
+        },
+      };
+    });
+    await control.refresh();
+    const card = await screen.findByRole("region", { name: "Agent defaults" });
+    for (const [key, value] of Object.entries(environment)) {
+      await user.type(within(card).getByLabelText("Name"), key);
+      if (value) await user.type(within(card).getByLabelText("Value"), value);
+      await user.click(
+        within(card).getByRole("button", { name: "Add variable" }),
+      );
+    }
+    await user.click(
+      within(card).getByRole("button", { name: "Browse models" }),
+    );
+    expect(await within(card).findByText(/Model choices loaded/)).toBeVisible();
+    expect(requests[0]).toMatchObject({
+      host,
+      filter,
+      inheritWorkspace: true,
+      edit: { environment },
+    });
+    expect(
+      fixture.calls.filter((call) => call.action === "saveDefaults"),
+    ).toHaveLength(0);
+  },
+);
+
+it.each([
+  {
+    provider: "databricks_v2",
+    savedKeys: [],
+    draft: undefined,
+    buildVisible: true,
+  },
+  { provider: "openai", savedKeys: [], draft: undefined, buildVisible: false },
+  {
+    provider: "",
+    savedKeys: ["BUZZ_AGENT_PROVIDER"],
+    draft: undefined,
+    buildVisible: false,
+  },
+  {
+    provider: "databricks_v2",
+    savedKeys: ["DATABRICKS_MODEL"],
+    draft: undefined,
+    buildVisible: false,
+  },
+  {
+    provider: "databricks_v2",
+    savedKeys: ["BUZZ_AGENT_MODEL"],
+    draft: undefined,
+    buildVisible: false,
+  },
+  {
+    provider: "databricks_v2",
+    savedKeys: [],
+    draft: { key: "BUZZ_AGENT_PROVIDER", value: "openai" },
+    buildVisible: false,
+  },
+  {
+    provider: "openai",
+    savedKeys: [],
+    draft: { key: "BUZZ_AGENT_PROVIDER", value: "databricks-v2" },
+    buildVisible: true,
+  },
+  {
+    provider: "databricks_v2",
+    savedKeys: [],
+    draft: { key: "DATABRICKS_MODEL", value: "" },
+    buildVisible: false,
+  },
+])(
+  "names the build model only when its fallback applies: $provider $savedKeys $draft",
+  async ({ provider, savedKeys, draft, buildVisible }) => {
+    const user = userEvent.setup();
+    const { control } = setup(0, 0, (f) => {
+      if (!f.data.defaultSettings) throw Error("Missing defaults fixture");
+      Object.assign(f.data.defaultSettings, {
+        provider,
+        model: "",
+        environmentKeys: savedKeys,
+      });
+      f.data.agentDefaults = {
+        provider: "databricks_v2",
+        model: "build-model",
+        ownerOnly: true,
+      };
+    });
+    await control.refresh();
+    const card = await screen.findByRole("region", { name: "Agent defaults" });
+    if (draft) {
+      await user.type(within(card).getByLabelText("Name"), draft.key);
+      if (draft.value)
+        await user.type(within(card).getByLabelText("Value"), draft.value);
+      await user.click(
+        within(card).getByRole("button", { name: "Add variable" }),
+      );
+    }
+    expect(
+      within(card).getByRole("combobox", { name: "Default model" }),
+    ).toHaveTextContent(
+      buildVisible
+        ? "Use build default (build-model)"
+        : "Not set (use harness default)",
+    );
+  },
+);
+
+it("hands keyboard focus between a listed choice and its custom input", async () => {
+  const user = userEvent.setup();
+  const { control } = setup();
+  await control.refresh();
+  const card = await screen.findByRole("region", { name: "Agent defaults" });
+  within(card).getByRole("combobox", { name: "Default effort" }).focus();
+  await user.keyboard("{Enter}");
+  expect(
+    await screen.findByRole("option", { name: "Custom ID" }),
+  ).toBeVisible();
+  await user.keyboard("{End}");
+  await user.keyboard("{Enter}");
+  expect(
+    within(card).getByRole("textbox", { name: "Custom default effort ID" }),
+  ).toHaveFocus();
+  await user.keyboard("{Shift>}{Tab}{/Shift}{Enter}");
+  expect(await screen.findByRole("option", { name: "None" })).toBeVisible();
+  await user.keyboard("{Home}{ArrowDown}");
+  await user.keyboard("{Enter}");
+  expect(
+    within(card).queryByRole("textbox", { name: "Custom default effort ID" }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(card).getByRole("combobox", { name: "Default effort" }),
+  ).toHaveFocus();
+  expect(
+    within(card).getByRole("combobox", { name: "Default effort" }),
+  ).toHaveTextContent("None");
+});
+
+it.each([false, true])(
+  "discards a typed Pi key when clearing Model while retaining saved keys (%s)",
+  async (savedKey) => {
+    const user = userEvent.setup();
+    const { fixture, control } = setup(0, 0, (f) => {
+      if (!f.data.defaultSettings) throw Error("Missing defaults fixture");
+      Object.assign(f.data.defaultSettings, {
+        harness: "pi",
+        provider: "openai",
+        model: "gpt-test",
+        environmentKeys: savedKey ? ["OPENAI_API_KEY"] : [],
+      });
+    });
+    await control.refresh();
+    const card = await screen.findByRole("region", { name: "Agent defaults" });
+    await user.type(
+      within(card).getByLabelText("OpenAI API key"),
+      "unsaved-key",
+    );
+    await user.click(
+      within(card).getByRole("combobox", { name: "Default model" }),
+    );
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Not set (use harness default)",
+      }),
+    );
+    await user.click(
+      within(card).getByRole("button", { name: "Save defaults" }),
+    );
+    expect(await within(card).findByText("Saved.")).toBeVisible();
+    expect(
+      fixture.calls.find((call) => call.action === "saveDefaults")?.payload,
+    ).toEqual({
+      edit: expect.objectContaining({
+        provider: "",
+        model: "",
+        environment: {},
+      }),
+    });
+    expect(fixture.data.defaultSettings?.environmentKeys).toEqual(
+      savedKey ? ["OPENAI_API_KEY"] : [],
+    );
+  },
+);
 
 it.each([
   { harness: "buzz-agent" as const, override: "BUZZ_AGENT_MODEL" },

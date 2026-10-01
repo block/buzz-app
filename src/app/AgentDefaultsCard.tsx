@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   savedMessage,
   type AgentControl,
@@ -43,6 +43,17 @@ function defaultLabel(harness: AgentDefaultsEdit["harness"], value: string) {
 
 type Choice = { value: string; label: string };
 
+function environmentSet(
+  current: AgentDefaultsEdit,
+  savedKeys: string[],
+  key: string,
+) {
+  return (
+    typeof current.environment[key] === "string" ||
+    (current.environment[key] === undefined && savedKeys.includes(key))
+  );
+}
+
 /** A saved ID stays editable even when it is absent from today's suggestions. */
 function DefaultsChoice({
   label,
@@ -64,12 +75,25 @@ function DefaultsChoice({
   resetKey: string;
 }) {
   const [custom, setCustom] = useState(false);
+  const container = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const focusAfterSelection = useRef<"input" | "trigger" | null>(null);
+  // Only a user-selected mode change transfers focus; catalog retirement must
+  // leave focus in the credential or environment field being edited.
+  useLayoutEffect(() => {
+    if (focusAfterSelection.current === "input") input.current?.focus();
+    else if (focusAfterSelection.current === "trigger")
+      container.current
+        ?.querySelector<HTMLElement>('[role="combobox"]')
+        ?.focus();
+    focusAfterSelection.current = null;
+  });
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new editing session resets the local input mode.
   useEffect(() => setCustom(false), [resetKey]);
   const index = choices.findIndex((choice) => choice.value === value);
   const showInput = custom || index < 0;
   return (
-    <div className="space-y-3">
+    <div ref={container} className="space-y-3">
       <Select
         // A removed catalog option becomes editable text; retire the old
         // Select so its option-removal fallback cannot clear the chosen ID.
@@ -91,6 +115,10 @@ function DefaultsChoice({
           },
         ]}
         onValueChange={(selected) => {
+          if (selected === "custom") {
+            if (showInput) input.current?.focus();
+            else focusAfterSelection.current = "input";
+          } else if (showInput) focusAfterSelection.current = "trigger";
           setCustom(selected === "custom");
           if (selected !== "custom") {
             const choice = choices.find(
@@ -103,6 +131,7 @@ function DefaultsChoice({
       {showInput && (
         <Field label={`Custom ${label.toLowerCase()} ID`}>
           <Input
+            ref={input}
             disabled={disabled}
             spellCheck={false}
             value={customValue}
@@ -168,9 +197,11 @@ function ProviderChoice({
         : null;
   const providerOverridden =
     !!overrideKey &&
-    (typeof current.environment[overrideKey] === "string" ||
-      (current.environment[overrideKey] === undefined &&
-        !!state.data?.defaultSettings?.environmentKeys.includes(overrideKey)));
+    environmentSet(
+      current,
+      state.data?.defaultSettings?.environmentKeys ?? [],
+      overrideKey,
+    );
   return (
     <div className="space-y-2">
       <DefaultsChoice
@@ -286,18 +317,30 @@ function ModelChoice({
     goose: "GOOSE_MODEL",
     pi: "",
   }[current.harness];
+  const savedKeys = state.data?.defaultSettings?.environmentKeys ?? [];
   const modelOverridden =
-    !!modelKey &&
-    (typeof current.environment[modelKey] === "string" ||
-      (current.environment[modelKey] === undefined &&
-        !!state.data?.defaultSettings?.environmentKeys.includes(modelKey)));
+    !!modelKey && environmentSet(current, savedKeys, modelKey);
+  const providerOverride = current.environment.BUZZ_AGENT_PROVIDER;
+  const effectiveProvider =
+    typeof providerOverride === "string"
+      ? providerOverride
+      : environmentSet(current, savedKeys, "BUZZ_AGENT_PROVIDER")
+        ? null
+        : current.provider || state.data?.agentDefaults?.provider;
+  const buildModelApplies =
+    current.harness === "buzz-agent" &&
+    ["databricks_v2", "databricks-v2", "databricks"].includes(
+      effectiveProvider ?? "",
+    ) &&
+    !modelOverridden &&
+    !environmentSet(current, savedKeys, "DATABRICKS_MODEL");
   const removingEnvironment = Object.values(current.environment).includes(null);
   const choices: Choice[] = [
     {
       value: "",
       label: defaultLabel(
         current.harness,
-        state.data?.agentDefaults?.model ?? "",
+        buildModelApplies ? (state.data?.agentDefaults?.model ?? "") : "",
       ),
     },
     ...matching.map((model) => ({
@@ -329,9 +372,14 @@ function ModelChoice({
     setBusy(true);
     setAttempted(true);
     setStatus(`Loading ${harness.label} models…`);
-    const hiddenHost =
-      state.data?.defaultSettings?.environmentKeys.includes("DATABRICKS_HOST");
-    const hiddenFilter = state.data?.defaultSettings?.environmentKeys.includes(
+    const environmentHost = environmentSet(
+      current,
+      savedKeys,
+      "DATABRICKS_HOST",
+    );
+    const environmentFilter = environmentSet(
+      current,
+      savedKeys,
       "DATABRICKS_MODEL_FILTER",
     );
     const edit: AgentEdit = {
@@ -355,15 +403,17 @@ function ModelChoice({
         {
           edit,
           host:
-            current.harness === "buzz-agent" && !hiddenHost
+            current.harness === "buzz-agent" && !environmentHost
               ? (state.data?.databricksDefaults?.host ?? "")
               : "",
           filter:
-            current.harness === "buzz-agent" && !hiddenFilter
+            current.harness === "buzz-agent" && !environmentFilter
               ? (state.data?.databricksDefaults?.filter ?? "")
               : "",
           action: "connect",
-          ...(hiddenHost || hiddenFilter ? { inheritWorkspace: true } : {}),
+          ...(environmentHost || environmentFilter
+            ? { inheritWorkspace: true }
+            : {}),
         },
         run.signal,
       );
@@ -520,7 +570,18 @@ export function AgentDefaultsCard({
       : undefined;
   const change = (patch: Partial<AgentDefaultsEdit>) => {
     setNotice("");
-    setDraft({ ...current, ...patch });
+    const next = { ...current, ...patch };
+    const previousKey = apiKey?.env;
+    if (
+      previousKey &&
+      (next.harness !== current.harness ||
+        defaultsApiKey(next, saved.environmentKeys)?.env !== previousKey) &&
+      typeof next.environment[previousKey] === "string"
+    ) {
+      next.environment = { ...next.environment };
+      delete next.environment[previousKey];
+    }
+    setDraft(next);
   };
   const keys = [
     ...new Set([...saved.environmentKeys, ...Object.keys(current.environment)]),
@@ -562,19 +623,10 @@ export function AgentDefaultsCard({
         value={current.harness}
         groups={[{ label: "", options: harnesses }]}
         onValueChange={(harness) => {
-          const environment = { ...current.environment };
-          const previousKey = apiKey?.env;
-          if (
-            harness !== current.harness &&
-            previousKey &&
-            typeof environment[previousKey] === "string"
-          )
-            delete environment[previousKey];
           change({
             harness: harness as AgentDefaultsEdit["harness"],
             // Keep the provider, but clear values tied to the old harness.
             ...(harness === current.harness ? {} : { model: "", effort: "" }),
-            environment,
           });
         }}
       />
@@ -585,20 +637,9 @@ export function AgentDefaultsCard({
         disabled={disabled}
         editSession={editSession}
         onChange={(provider) => {
-          const previousKey = apiKey?.env;
-          const environment = { ...current.environment };
-          if (
-            previousKey &&
-            previousKey !==
-              defaultsApiKey({ ...current, provider }, saved.environmentKeys)
-                ?.env &&
-            typeof environment[previousKey] === "string"
-          )
-            delete environment[previousKey];
           change({
             provider,
             ...(provider === current.provider ? {} : { model: "" }),
-            environment,
           });
         }}
       />

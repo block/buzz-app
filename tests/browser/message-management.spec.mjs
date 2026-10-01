@@ -95,33 +95,44 @@ test("manage a channel message, peer unread state, and its thread", async ({
     `[data-channel-timeline] [data-message-id="${peer.id}"]`,
   );
   await expect(peerRow).toBeVisible();
-  await peerRow.hover();
   const peerTrigger = peerRow.getByRole("button", {
     name: "More message actions",
   });
+  // A focused composer reads fully visible rows after 300 ms (docs/unread.md),
+  // which can land before the menu's status. Let it land, then take a manual
+  // unread: automatic reading never clears it, so the next label is stable.
+  await page
+    .getByRole("textbox", { name: "Message #Alpha", exact: true })
+    .focus();
+  await expect
+    .poll(() =>
+      app.report.readWrites.some(({ intents, outcomes }) =>
+        intents.some(
+          (intent, i) =>
+            intent.type === "mark_through" &&
+            intent.message_id === peer.id &&
+            outcomes[i].status === "applied",
+        ),
+      ),
+    )
+    .toBe(true);
+  await peerRow.hover();
   await peerTrigger.click();
-  // The menu can mount before its BFF message-status lease resolves. Establish
-  // authoritative unread before choosing an action, not a transient label that
-  // may change between textContent() and click(). Menu focus is not read dwell.
+  await page
+    .getByRole("menuitem", { name: "Mark unread", exact: true })
+    .click();
+  await peerRow.hover();
+  await peerTrigger.click();
   await page
     .getByRole("menuitem", { name: "Mark read through here", exact: true })
     .click();
   await expect
-    .poll(() =>
-      app.report.readWrites
-        .flatMap(({ intents }) => intents)
-        .filter(
-          (intent) =>
-            intent.type === "mark_through" && intent.message_id === peer.id,
-        ),
-    )
-    .toEqual([
-      {
-        type: "mark_through",
-        target: { channel_id: ids.alpha },
-        message_id: peer.id,
-      },
-    ]);
+    .poll(() => app.report.readWrites.flatMap(({ intents }) => intents))
+    .toContainEqual({
+      type: "mark_through",
+      target: { channel_id: ids.alpha },
+      message_id: peer.id,
+    });
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
   await peerRow.hover();
   await peerTrigger.click();

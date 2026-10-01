@@ -483,25 +483,41 @@ it("profile activity opens the exact agent and originating channel before its fi
   const initialRow = page.locator(
     `[data-channel-timeline] [data-message-id="${initialMessage.id}"]`,
   );
+  const initialTrigger = initialRow.getByRole("button", {
+    name: "More message actions",
+  });
+  const applied = () =>
+    app.report.readWrites.some(({ intents, outcomes }) =>
+      intents.some(
+        (intent, i) =>
+          intent.type === "mark_through" &&
+          intent.message_id === initialMessage.id &&
+          outcomes[i].status === "applied",
+      ),
+    );
+  // The focused composer reads the visible row after 300 ms (docs/unread.md).
+  // Let that land, then take a manual unread, which automatic reading keeps.
+  await page
+    .getByRole("textbox", { name: "Message #Alpha", exact: true })
+    .focus();
+  await expect.poll(applied).toBe(true);
   await initialRow.hover();
-  await initialRow
-    .getByRole("button", { name: "More message actions" })
+  await initialTrigger.click();
+  await page
+    .getByRole("menuitem", { name: "Mark unread", exact: true })
     .click();
+  await initialRow.hover();
+  await initialTrigger.click();
   await page
     .getByRole("menuitem", { name: "Mark read through here", exact: true })
     .click();
-  await expect
-    .poll(() =>
-      app.report.readWrites.some(({ intents, outcomes }) =>
-        intents.some(
-          (intent, i) =>
-            intent.type === "mark_through" &&
-            intent.message_id === initialMessage.id &&
-            outcomes[i].status === "applied",
-        ),
-      ),
-    )
-    .toBe(true);
+  // Only the explicit action clears the manual mark.
+  await initialRow.hover();
+  await initialTrigger.click();
+  await expect(
+    page.getByRole("menuitem", { name: "Mark unread", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   const profile = page.getByRole("complementary", {

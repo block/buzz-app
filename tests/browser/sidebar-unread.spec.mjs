@@ -320,6 +320,8 @@ test("resizing, collapsed groups and new unread evidence update only the display
   page,
   app,
 }) => {
+  // Keep automatic dwell from reading dm-127 before the explicit menu read.
+  await holdReadingFocus(page);
   await open(page, app);
   await expect(row(page, ids["dm-090"]).getByRole("img")).toHaveCount(1);
   await expect(cue(page, "below")).toBeVisible();

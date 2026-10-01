@@ -18,6 +18,15 @@ impl RuntimeBundle {
         key: &crate::Secret,
         defaults: &crate::BuildDefaults,
     ) -> Result<Command> {
+        self.command_checked(agent, key, defaults, None)
+    }
+    fn command_checked(
+        &self,
+        agent: &Agent,
+        key: &crate::Secret,
+        defaults: &crate::BuildDefaults,
+        preflight: Option<&crate::pi::LaunchPreflight>,
+    ) -> Result<Command> {
         agent.validate()?;
         let harness = defaults.resolve(&agent.harness, &agent.environment);
         if key.pubkey() != agent.pubkey {
@@ -26,7 +35,9 @@ impl RuntimeBundle {
         if !Path::new(&agent.workspace).is_dir() {
             return Err("Agent workspace does not exist".into());
         }
-        let worker = if harness.command == "buzz-agent" {
+        let worker = if matches!(harness.command.as_str(), "goose" | "goose-acp") {
+            self.executable("goose-acp")?
+        } else if harness.command == "buzz-agent" {
             self.executable("buzz-agent")?
         } else {
             let path = PathBuf::from(&harness.command);
@@ -118,6 +129,7 @@ impl RuntimeBundle {
                 crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment)
             })
             .transpose()?;
+        let pi = crate::pi::verify_launch(pi, preflight)?;
         let (args, environment, tools_path) = if let Some(pi) = &pi {
             (
                 pi.adapter_args(&agent.harness)?,
@@ -126,7 +138,7 @@ impl RuntimeBundle {
             )
         } else {
             (
-                agent.harness.args.clone(),
+                goose_args(&harness.command, &agent.harness.args),
                 &agent.environment,
                 tools_path()?,
             )
@@ -371,6 +383,7 @@ pub struct ModelContext {
 /// Native-only Goose model context; environment values never enter a snapshot.
 pub struct GooseModelContext {
     pub command: PathBuf,
+    pub args: Vec<String>,
     pub workspace: PathBuf,
     pub provider_id: String,
     pub model_id: String,
@@ -380,10 +393,12 @@ pub struct GooseModelContext {
 pub struct Controller {
     pub(crate) store: Store,
     credentials: Arc<dyn Credentials>,
-    bundle: Result<RuntimeBundle>,
+    pub(crate) bundle: Result<RuntimeBundle>,
     running: BTreeMap<String, Running>,
     errors: BTreeMap<String, String>,
-    ownership_root: PathBuf,
+    pub(crate) ownership_root: PathBuf,
+    pub(crate) protection_paths: Result<Vec<PathBuf>>,
+    pub(crate) security_providers: BTreeMap<String, crate::security::Provider>,
 }
 impl Controller {
     pub fn new(
@@ -399,6 +414,8 @@ impl Controller {
             running: BTreeMap::new(),
             errors: BTreeMap::new(),
             ownership_root,
+            security_providers: BTreeMap::new(),
+            protection_paths: Ok(Vec::new()),
         }
     }
     pub fn snapshot(&mut self) -> Result<ControlSnapshot> {
@@ -486,7 +503,7 @@ impl Controller {
         edit: AgentEdit,
     ) -> Result<GooseModelContext> {
         let agent = self.edited_agent(id, revision, edit)?;
-        goose_model_context(&agent.harness, &agent.workspace, &agent.environment)
+        self.resolve_goose_model_context(&agent.harness, &agent.workspace, &agent.environment)
     }
     pub fn pi_model_context(
         &self,
@@ -496,6 +513,30 @@ impl Controller {
     ) -> Result<crate::pi::PiContext> {
         let agent = self.edited_agent(id, revision, edit)?;
         crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment)
+    }
+    pub fn pi_launch_context(
+        &self,
+        id: &str,
+        revision: u64,
+    ) -> Result<Option<crate::pi::PiContext>> {
+        let agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|agent| agent.id == id)
+            .ok_or("Agent no longer exists")?;
+        if agent.revision != revision {
+            return Err("Saved settings changed; retry Start".into());
+        }
+        let agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);
+        if Path::new(&agent.harness.command)
+            .file_name()
+            .and_then(|name| name.to_str())
+            != Some("buzz-pi-acp")
+        {
+            return Ok(None);
+        }
+        crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment).map(Some)
     }
     /// Resolve unsaved Create drafts against the same native defaults as a saved start.
     pub fn effective_draft(&self, mut edit: AgentEdit) -> Result<AgentEdit> {
@@ -518,9 +559,59 @@ impl Controller {
             &draft_environment(edit.environment),
         )
     }
-    pub fn draft_goose_model_context(edit: AgentEdit) -> Result<GooseModelContext> {
+    pub fn draft_goose_model_context(&self, edit: AgentEdit) -> Result<GooseModelContext> {
         let environment = draft_environment(edit.environment);
-        goose_model_context(&edit.harness, &edit.workspace, &environment)
+        self.resolve_goose_model_context(&edit.harness, &edit.workspace, &environment)
+    }
+    fn resolve_goose_model_context(
+        &self,
+        harness: &crate::HarnessEdit,
+        workspace: &str,
+        environment: &BTreeMap<String, String>,
+    ) -> Result<GooseModelContext> {
+        crate::config::validate_environment(environment)?;
+        let command = if matches!(harness.command.as_str(), "goose" | "goose-acp") {
+            self.bundle
+                .as_ref()
+                .map_err(Clone::clone)?
+                .executable("goose-acp")?
+        } else {
+            PathBuf::from(&harness.command)
+        };
+        let name = command
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .trim_end_matches(".exe");
+        if !matches!(name, "goose" | "goose-acp") || !command.is_absolute() {
+            return Err("Model discovery requires an absolute Goose executable path".into());
+        }
+        executable(&command)?;
+        let provider = environment
+            .get("GOOSE_PROVIDER")
+            .unwrap_or(&harness.provider);
+        if provider.trim().is_empty()
+            || provider.len() > 128
+            || provider.chars().any(char::is_control)
+        {
+            return Err("Choose a valid Goose provider before browsing models".into());
+        }
+        Ok(GooseModelContext {
+            args: if name == "goose" {
+                vec!["acp".into()]
+            } else {
+                vec![]
+            },
+            command,
+            workspace: workspace.into(),
+            provider_id: provider.clone(),
+            model_id: environment
+                .get("GOOSE_MODEL")
+                .unwrap_or(&harness.model)
+                .clone(),
+            environment: environment.clone(),
+            model_overridden: environment.contains_key("GOOSE_MODEL"),
+        })
     }
     pub fn draft_model_context(edit: AgentEdit) -> Result<ModelContext> {
         let environment = draft_environment(edit.environment);
@@ -760,8 +851,33 @@ impl Controller {
         key: &crate::Secret,
         replay_floor: Option<u64>,
     ) -> Result<()> {
+        self.action_checked(id, action, revision, key, replay_floor, None)
+    }
+    pub fn action_with_preflight(
+        &mut self,
+        id: &str,
+        action: Action,
+        revision: u64,
+        key: &crate::Secret,
+        replay_floor: Option<u64>,
+        preflight: &crate::pi::LaunchPreflight,
+    ) -> Result<()> {
+        self.action_checked(id, action, revision, key, replay_floor, Some(preflight))
+    }
+    fn action_checked(
+        &mut self,
+        id: &str,
+        action: Action,
+        revision: u64,
+        key: &crate::Secret,
+        replay_floor: Option<u64>,
+        preflight: Option<&crate::pi::LaunchPreflight>,
+    ) -> Result<()> {
         if self.credential_request(id)?.2 != revision {
             return Err("Saved settings changed while opening credentials; retry Start".into());
+        }
+        if let Some(preflight) = preflight {
+            preflight.check(&self.pi_launch_context(id, revision)?)?;
         }
         self.store.enabled(id, true)?;
         if matches!(action, Action::Restart) {
@@ -770,7 +886,7 @@ impl Controller {
                 return Ok(());
             }
         }
-        match self.start_with_key(id, Some(key), replay_floor) {
+        match self.start_with_key(id, Some(key), replay_floor, preflight) {
             Ok(()) => {
                 self.errors.remove(id);
             }
@@ -793,13 +909,14 @@ impl Controller {
             .collect())
     }
     fn start(&mut self, id: &str) -> Result<()> {
-        self.start_with_key(id, None, None)
+        self.start_with_key(id, None, None, None)
     }
     fn start_with_key(
         &mut self,
         id: &str,
         supplied: Option<&crate::Secret>,
         replay_floor: Option<u64>,
+        preflight: Option<&crate::pi::LaunchPreflight>,
     ) -> Result<()> {
         if let Some(run) = self.running.get_mut(id) {
             if run.process.alive()? {
@@ -842,7 +959,13 @@ impl Controller {
             .prefix("agent-")
             .tempdir_in(&runs)
             .map_err(|_| "Could not create private runtime directory")?;
-        let mut command = bundle.command(&agent, key)?;
+        let scratch = temporary.path().join("tmp");
+        crate::connection::private_directory(&scratch)?;
+        let mut command = if let Some(preflight) = preflight {
+            bundle.command_checked(&agent, key, &crate::build_defaults(), Some(preflight))?
+        } else {
+            bundle.command(&agent, key)?
+        };
         // Per-send startup input, never saved configuration or inherited environment.
         if let Some(floor) = replay_floor {
             command.env("BUZZ_ACP_REPLAY_FLOOR", floor.to_string());
@@ -851,24 +974,27 @@ impl Controller {
         // may redirect credentials/temp signing material outside this app profile.
         command
             .env("BUZZ_AGENT_CONFIG_DIR", config)
-            .env("TMPDIR", temporary.path())
-            .env("TMP", temporary.path())
-            .env("TEMP", temporary.path());
+            .env("TMPDIR", &scratch)
+            .env("TMP", &scratch)
+            .env("TEMP", &scratch);
         if let Some(settings) = &settings {
             command
                 .env("DATABRICKS_HOST", &settings.host)
                 .env("DATABRICKS_MODEL_FILTER", &settings.filter)
                 .env_remove("DATABRICKS_TOKEN");
         }
+        let control = self.wrap_protected_worker(&agent, &mut command)?;
         // Disarm app-side deletion before a child can use this directory. The
         // supervisor deletes it only after confirmed whole-session teardown.
         let log_path = crate::logs::path(config, &agent.id)?;
         let temporary = temporary.keep();
+        let control = control.map(tempfile::TempDir::keep);
         let process = Supervised::spawn(
             &command,
             &self.ownership_root,
             &agent.id,
             &temporary,
+            control.as_deref(),
             &log_path,
         )?;
         self.running.insert(
@@ -988,33 +1114,24 @@ fn model_context_with_defaults(
     })
 }
 
-fn goose_model_context(
-    harness: &crate::HarnessEdit,
-    workspace: &str,
-    environment: &BTreeMap<String, String>,
-) -> Result<GooseModelContext> {
-    crate::config::validate_environment(environment)?;
-    let command = PathBuf::from(&harness.command);
-    if command.file_name().and_then(|s| s.to_str()) != Some("goose") || !command.is_absolute() {
-        return Err("Model discovery requires an absolute Goose executable path".into());
+// Saved legacy Goose selections may still carry the CLI's ACP subcommand.
+// Explicit external paths keep their original arguments.
+fn goose_args(command: &str, args: &[String]) -> Vec<String> {
+    if !matches!(command, "goose" | "goose-acp") {
+        return args.to_vec();
     }
-    executable(&command)?;
-    let provider = environment
-        .get("GOOSE_PROVIDER")
-        .unwrap_or(&harness.provider);
-    if provider.trim().is_empty() || provider.len() > 128 || provider.chars().any(char::is_control)
+    // Match the pinned ACP runner's trim/filter rule before removing the CLI subcommand.
+    let mut normalized: Vec<_> = args
+        .iter()
+        .map(|arg| arg.trim())
+        .filter(|arg| !arg.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if normalized
+        .first()
+        .is_some_and(|arg| arg.eq_ignore_ascii_case("acp"))
     {
-        return Err("Choose a valid Goose provider before browsing models".into());
+        normalized.remove(0);
     }
-    Ok(GooseModelContext {
-        command,
-        workspace: workspace.into(),
-        provider_id: provider.clone(),
-        model_id: environment
-            .get("GOOSE_MODEL")
-            .unwrap_or(&harness.model)
-            .clone(),
-        environment: environment.clone(),
-        model_overridden: environment.contains_key("GOOSE_MODEL"),
-    })
+    normalized
 }

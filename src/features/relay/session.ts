@@ -18,6 +18,7 @@ import { createAgentMemories } from "../agents/memory";
 import type { PresenceActivity } from "../presence/activity";
 import { bindNames, type IdentityNames } from "../identity-names/service";
 import { sessionMetadata } from "../sessions/metadata";
+import { createMemberAdministration } from "../channel-members/administration";
 import { createChannelLifecycle } from "./channel-lifecycle";
 import { createChannelDetails } from "./channel-details";
 import { createWorkflows } from "../workflows/capability";
@@ -51,7 +52,7 @@ import { createTyping } from "./typing";
 import { createUnread } from "./unread";
 import type { IncomingListener, IncomingMessage } from "./incoming";
 import { objectBody } from "./body";
-import type { ChannelList } from "./contracts";
+import type { ChannelList, ChannelSummary } from "./contracts";
 import { createChannelActivity } from "./channel-activity";
 import { readSidebarPreferences } from "./sidebar-preferences";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
@@ -347,6 +348,7 @@ export function createRelaySession(
       cancelUploads();
       lifecycle.cancel();
       details.cancel();
+      memberAdministration.clear();
       typing.clear();
       // Saved owner inventory does not depend on channel access. Preserve only
       // that narrow read; broad, mixed, ID and channel reads must still retire.
@@ -699,6 +701,15 @@ export function createRelaySession(
     removed: (id) =>
       channels.denyChannel(id, new Error("Channel is no longer available")),
   });
+  const memberAdministration = createMemberAdministration({
+    reader: transport && !options.cachedOnly ? requests.reader : undefined,
+    writer: transport?.memberAdministration,
+    viewer: transport?.viewer ?? "",
+    relayAuthor: transport?.relayAuthor ?? "",
+    canAccess: (id) =>
+      !closed && !revoking && !cacheClearing && canReadRemote(id),
+    acceptDiscovery: (events) => channels.acceptDiscovery(events),
+  });
   const workflows = createWorkflows({
     reader: transport ? verified : undefined,
     viewer: transport?.viewer ?? "",
@@ -715,6 +726,7 @@ export function createRelaySession(
     activityStatus: channelActivity.status(),
   });
   let channelActivityRevision = channelActivity.revision();
+  const projectedChannels = new WeakMap<ChannelSummary, ChannelSummary>();
   const channelQueries = Object.freeze({
     ...channels.queries,
     list() {
@@ -729,9 +741,12 @@ export function createRelaySession(
       channelActivityRevision = activityRevision;
       const projected = snapshot.channels.map((channel) => {
         const lastActivityAt = channelActivity.last(channel.id);
-        return lastActivityAt === undefined
-          ? channel
-          : Object.freeze({ ...channel, lastActivityAt });
+        if (lastActivityAt === undefined) return channel;
+        const previous = projectedChannels.get(channel);
+        if (previous?.lastActivityAt === lastActivityAt) return previous;
+        const next = Object.freeze({ ...channel, lastActivityAt });
+        projectedChannels.set(channel, next);
+        return next;
       });
       activityChannelList = Object.freeze({
         ...snapshot,
@@ -1677,6 +1692,7 @@ export function createRelaySession(
       : undefined,
     channelLifecycle: lifecycle.capability,
     channelDetails: details.capability,
+    memberAdministration: memberAdministration.capability,
     agentActivity: activity.queries,
     agentMemories: memories.capability,
     archives: archives.queries,
@@ -2364,6 +2380,7 @@ export function createRelaySession(
         channelKit.clear();
         lifecycle.clear();
         details.clear();
+        memberAdministration.clear();
         // New windows must not yield to or receive errors from retired owners.
         catchups.clear();
         catchupQueue.clear();
@@ -2397,6 +2414,7 @@ export function createRelaySession(
       sidebarPreferences.dispose();
       lifecycle.dispose();
       details.dispose();
+      memberAdministration.dispose();
       stopInterests();
       stopHintGuard();
       stopWarmPreferences();

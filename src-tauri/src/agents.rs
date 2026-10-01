@@ -69,6 +69,8 @@ struct HarnessOption {
     status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     install_supported: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    update_supported: Option<bool>,
     default_args: &'static [&'static str],
     providers: &'static [ProviderOption],
 }
@@ -154,12 +156,14 @@ struct PiTools {
     node: Option<PathBuf>,
 }
 
-fn pi_choice(user: PiTools, managed: PiTools) -> (Option<PathBuf>, &'static str) {
+fn pi_choice(user: PiTools, managed: PiTools) -> (Option<PathBuf>, &'static str, bool) {
     // An existing, complete user install always wins. Otherwise use the
     // app-owned pair only when its pinned Node can run its npm shims.
-    let selected = if user.cli.is_some() && user.adapter.is_some() && user.node.is_some() {
+    let user_ready = user.cli.is_some() && user.adapter.is_some() && user.node.is_some();
+    let managed_selected = !user_ready && managed.adapter.is_some() && managed.node.is_some();
+    let selected = if user_ready {
         user
-    } else if managed.adapter.is_some() && managed.node.is_some() {
+    } else if managed_selected {
         PiTools {
             cli: managed.cli.or(user.cli),
             ..managed
@@ -172,12 +176,20 @@ fn pi_choice(user: PiTools, managed: PiTools) -> (Option<PathBuf>, &'static str)
         selected.adapter.is_some(),
         selected.node.is_some(),
     );
-    (selected.adapter, status)
+    (selected.adapter, status, managed_selected)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn pi_current(app_data: &std::path::Path) -> bool {
+    crate::managed_pi::current(app_data)
+}
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn pi_current(_: &std::path::Path) -> bool {
+    true
 }
 
 fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
-    let goose = installed_goose();
-    let (pi, pi_status) = pi_choice(
+    let (pi, pi_status, pi_managed) = pi_choice(
         PiTools {
             cli: buzz_agent_controller::installed("pi"),
             adapter: buzz_agent_controller::installed("buzz-pi-acp"),
@@ -196,6 +208,7 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             available: true,
             status: "ready",
             install_supported: None,
+            update_supported: None,
             default_args: &[],
             // Windows refuses Databricks sign-in (DATABRICKS_WINDOWS): omit it.
             providers: &[
@@ -210,19 +223,13 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             ][usize::from(cfg!(windows))..],
         },
         HarnessOption {
-            command: goose.as_ref().map_or_else(
-                || "goose".into(),
-                |path| path.to_string_lossy().into_owned(),
-            ),
+            command: "goose".into(),
             label: "Goose",
-            available: goose.is_some(),
-            status: if goose.is_some() {
-                "ready"
-            } else {
-                "cli-needed"
-            },
-            install_supported: Some(cfg!(any(target_os = "macos", target_os = "linux"))),
-            default_args: &["acp"],
+            available: true,
+            status: "ready",
+            install_supported: None,
+            update_supported: None,
+            default_args: &[],
             providers: GOOSE_PROVIDERS,
         },
         HarnessOption {
@@ -237,15 +244,12 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
                 any(target_os = "macos", target_os = "linux"),
                 any(target_arch = "x86_64", target_arch = "aarch64")
             ))),
+            update_supported: Some(pi_managed && pi_status == "ready" && !pi_current(app_data)),
             default_args: &[],
             // Pi reports signed-in providers through its model catalog.
             providers: &[],
         },
     ]
-}
-
-fn installed_goose() -> Option<PathBuf> {
-    buzz_agent_controller::installed("goose")
 }
 
 struct LogChallenge {
@@ -314,11 +318,14 @@ impl Host {
                 agent.start_on_app_launch.then_some((agent.id, None))
             })
             .collect();
-        let controller = Controller::new(
+        let mut controller = Controller::new(
             store,
             credentials.clone(),
             bundle,
             legacy_parent.join("dev.local.buzz.agent-ownership"),
+        );
+        controller.protect_control_paths(
+            crate::Manager::from_env().map(|manager| vec![manager.storage_root().to_path_buf()]),
         );
         Ok(Self {
             inventory_warnings,
@@ -479,33 +486,43 @@ impl AgentHost {
         paths: Result<(PathBuf, PathBuf, PathBuf), String>,
         resources: Result<PathBuf, String>,
     ) -> Self {
+        Self::initialize_with(move || {
+            let bundle = resources.and_then(RuntimeBundle::new);
+            paths.and_then(|(root, legacy, workspace)| {
+                Host::open(
+                    root,
+                    legacy,
+                    workspace,
+                    bundle,
+                    Arc::new(PlatformCredentials::default()),
+                )
+            })
+        })
+    }
+    fn initialize_with(open: impl FnOnce() -> Result<Host, String> + Send + 'static) -> Self {
         let state = Arc::new(Mutex::new(Err(
             "Agent runtime is initializing; retry shortly".into(),
         )));
         let closed = Arc::new(AtomicBool::new(false));
         let admission = Arc::new(tokio::sync::Mutex::new(()));
+        // Initialization is the first admitted operation. Callers wait for its
+        // real outcome rather than treating the placeholder as a permanent error.
+        let initializing = admission
+            .clone()
+            .try_lock_owned()
+            .expect("new admission mutex");
         let owner = Self(state.clone(), closed.clone(), admission.clone());
         tauri::async_runtime::spawn(async move {
-            let opened = tauri::async_runtime::spawn_blocking(move || {
-                let bundle = resources.and_then(RuntimeBundle::new);
-                paths.and_then(|(root, legacy, workspace)| {
-                    Host::open(
-                        root,
-                        legacy,
-                        workspace,
-                        bundle,
-                        Arc::new(PlatformCredentials::default()),
-                    )
-                })
-            })
-            .await
-            .unwrap_or_else(|_| Err("Agent runtime initialization failed".into()));
+            let opened = tauri::async_runtime::spawn_blocking(open)
+                .await
+                .unwrap_or_else(|_| Err("Agent runtime initialization failed".into()));
             if closed.load(Ordering::SeqCst) {
                 return;
             }
             if let Ok(mut state) = state.lock() {
                 *state = opened;
             }
+            drop(initializing); // restore itself enters through native admission.
             Self(state, closed, admission).restore().await;
         });
         owner
@@ -585,11 +602,6 @@ impl AgentHost {
     }
     pub(crate) async fn inherited_workspace(&self) -> Result<Option<String>, String> {
         run(self.clone(), |host| host.controller.inherited_workspace()).await
-    }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    pub(crate) async fn waiting_for_goose(&self) -> Result<Vec<String>, String> {
-        self.waiting_for(crate::harness_setup::waiting_for_goose)
-            .await
     }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub(crate) async fn waiting_for_pi(&self) -> Result<Vec<String>, String> {
@@ -674,9 +686,9 @@ impl AgentHost {
         let id = id.map(str::to_owned);
         run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.goose_model_context(id, revision, edit),
-            (None, None) => {
-                Controller::draft_goose_model_context(host.controller.effective_draft(edit)?)
-            }
+            (None, None) => host
+                .controller
+                .draft_goose_model_context(host.controller.effective_draft(edit)?),
             _ => Err("Invalid agent model context".into()),
         })
         .await
@@ -925,7 +937,6 @@ fn startup_trace(value: serde_json::Value) {
         );
     }
 }
-pub(crate) const NOT_WAITING_FOR_GOOSE: &str = "Agent no longer waiting for Goose";
 pub(crate) const NOT_WAITING_FOR_PI: &str = "Agent no longer waiting for Pi";
 #[derive(Clone, Copy)]
 #[cfg_attr(
@@ -936,7 +947,6 @@ pub(crate) const NOT_WAITING_FOR_PI: &str = "Agent no longer waiting for Pi";
     )
 )]
 pub(crate) enum InstallRestart {
-    Goose,
     Pi,
 }
 pub(crate) async fn start(
@@ -949,10 +959,6 @@ pub(crate) async fn start(
 ) -> Result<Snapshot, String> {
     let guard = install_restart.map(|harness| -> StartGuard {
         match harness {
-            InstallRestart::Goose => (
-                crate::harness_setup::waiting_for_goose,
-                NOT_WAITING_FOR_GOOSE,
-            ),
             InstallRestart::Pi => (crate::harness_setup::waiting_for_pi, NOT_WAITING_FOR_PI),
         }
     });
@@ -1037,22 +1043,46 @@ async fn start_guarded(
                 replay_floor,
             },
         );
-        Ok((request, ticket, host.credentials.clone()))
+        let pi = host.controller.pi_launch_context(&id, request.2);
+        Ok((request, ticket, host.credentials.clone(), pi))
     })
     .await?;
-    let ((credential, pubkey, revision, _workspace), ticket, credentials) = prepared;
+    let ((credential, pubkey, revision, _workspace), ticket, credentials, pi) = prepared;
+    let probed_pi = matches!(&pi, Ok(Some(_)));
+    let preflight = match pi {
+        Ok(Some(pi)) => crate::pi_models::verify(pi)
+            .await
+            .map(|pi| buzz_agent_controller::pi::LaunchPreflight::new(Some(pi))),
+        Ok(None) => Ok(buzz_agent_controller::pi::LaunchPreflight::new(None)),
+        Err(error) => Err(error),
+    };
+    if probed_pi && preflight.is_ok() {
+        let target = id.clone();
+        run(owner.clone(), move |host| {
+            host.starts
+                .get(&target)
+                .filter(|pending| pending.ticket == ticket)
+                .ok_or(START_CANCELLED)?;
+            Ok(())
+        })
+        .await?;
+    }
     // OS permission prompts never hold the controller. Stop/quit invalidate the
     // ticket while the OS owns its dialog; a late key cannot start a listener.
-    let acquired = tauri::async_runtime::spawn_blocking(move || {
-        if !restore && replay_floor.is_none() && guard.is_none() {
-            credentials.retry();
-        }
-        credentials.read(&credential, &pubkey)
-    })
-    .await
-    .map_err(|_| "Native credential operation failed".to_owned())
-    .and_then(|v| v)
-    .and_then(|v| v.ok_or("Saved agent key is unavailable; nothing was started".into()));
+    let acquired = if preflight.is_ok() {
+        tauri::async_runtime::spawn_blocking(move || {
+            if !restore && replay_floor.is_none() && guard.is_none() {
+                credentials.retry();
+            }
+            credentials.read(&credential, &pubkey)
+        })
+        .await
+        .map_err(|_| "Native credential operation failed".to_owned())
+        .and_then(|v| v)
+        .and_then(|v| v.ok_or("Saved agent key is unavailable; nothing was started".into()))
+    } else {
+        Err(preflight.as_ref().err().unwrap().clone())
+    };
     let target = id.clone();
     if acquired.is_ok() {
         run(owner.clone(), move |host| {
@@ -1082,10 +1112,14 @@ async fn start_guarded(
         // The OS credential prompt can outlast the agent (e.g. its listener
         // exited); eligibility must still hold right before Restart enables it.
         check_guard(host, &id, guard)?;
-        if let Err(error) =
-            host.controller
-                .action_with_key(&id, action, revision, &key, replay_floor)
-        {
+        if let Err(error) = host.controller.action_with_preflight(
+            &id,
+            action,
+            revision,
+            &key,
+            replay_floor,
+            &preflight?,
+        ) {
             host.controller.record_error(&id, error);
         }
         host.snapshot()
@@ -1357,4 +1391,31 @@ fn refuse_legacy() -> Result<(), String> {
         return Err("Could not check old Buzz processes; Start refused".into());
     }
     refuse_legacy_listing(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Trusted plugin service: native state remains authoritative for all start paths.
+#[tauri::command]
+pub(crate) async fn agent_security(
+    state: tauri::State<'_, AgentHost>,
+    request: buzz_agent_controller::security::Request,
+) -> Result<serde_json::Value, String> {
+    let owner = state.inner().clone();
+    let provider = match &request {
+        buzz_agent_controller::security::Request::Register { provider, .. } => {
+            Some(provider.clone())
+        }
+        _ => None,
+    };
+    let result = run(owner.clone(), move |host| host.controller.security(request)).await?;
+    if let Some(provider) = provider {
+        tauri::async_runtime::spawn(async move {
+            let ids = owner
+                .with(|host| host.controller.security_restore_ids(&provider))
+                .unwrap_or_default();
+            for id in ids {
+                let _ = start(owner.clone(), id, Action::Start, true, None, None).await;
+            }
+        });
+    }
+    Ok(result)
 }

@@ -4,6 +4,7 @@ import {
   type MemoryListing,
 } from "../agents/memory";
 import { publicationRefusal } from "../developer/traffic";
+import { avatarSource } from "../../shared/avatar-source";
 import { brokerUpload, hostUpload, type AttachmentUpload } from "./attachments";
 import type { ChannelKitHost } from "../channel-templates/host";
 import type { KitRecord } from "../channel-templates/model";
@@ -85,6 +86,7 @@ export interface ReadTransport {
   readonly channelLifecycle?: RelayWriter;
   /** Name/about/private-only metadata writer, separate from lifecycle and outbox. */
   readonly channelDetails?: RelayWriter;
+  readonly memberAdministration?: RelayWriter;
   /** Narrow NIP-IA 9035/9036 signer/publisher; never supplied to the message outbox. */
   readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
@@ -156,6 +158,7 @@ export function mediaUrl(
   relayOrigin: string | undefined,
   size?: "small",
 ): string | undefined {
+  if (url.startsWith("data:")) return avatarSource(url);
   if (url.startsWith(`${relayOrigin}/media/`)) {
     const media =
       size === "small"
@@ -373,6 +376,7 @@ export async function connectBrokerTransport(
     directMessages?: boolean;
     channelLifecycle?: boolean;
     channelDetails?: boolean;
+    memberAdministration?: boolean;
     identityArchives?: boolean;
     relayUrl?: string;
     relayHttpUrl?: string;
@@ -821,6 +825,9 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.channelDetails === true
       ? { channelDetails: routeWriter("channel-details") }
+      : {}),
+    ...(session.memberAdministration === true
+      ? { memberAdministration: routeWriter("member-administration") }
       : {}),
     ...(session.channelLifecycle === true
       ? { channelLifecycle: routeWriter("channel-lifecycle") }

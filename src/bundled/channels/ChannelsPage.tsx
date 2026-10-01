@@ -1270,9 +1270,6 @@ function ChannelWorkspace({
   const settingsContent = (
     <ChannelSettingsPanel
       scope={scope}
-      canvas={queries.canvas}
-      canvasOpen={canvasOpen}
-      openCanvas={openCanvas}
       openMembers={openMembers}
       key={settings?.id}
       setupTools={

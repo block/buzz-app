@@ -105,6 +105,9 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await page.keyboard.press("Escape");
   await openChannelDetails(page);
   await expect(settings).toBeVisible();
+  await expect(
+    settings.getByRole("button", { name: "Canvas", exact: true }),
+  ).toHaveCount(0);
   await openChannelDetails(page);
   await expect(settings).toBeVisible();
   await expect(

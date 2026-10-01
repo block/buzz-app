@@ -10,14 +10,10 @@ import {
 } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { channelIcon } from "../../features/channels/channel-icon";
-import type { ChannelCanvas } from "../../features/channel-templates/capability";
-import { canvasPreviewText } from "./canvas-preview";
-import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import {
   GearIcon,
   CaretRightIcon,
   CopyIcon,
-  FileTextIcon,
   PencilSimpleIcon,
 } from "../../shared/design-system/icons/index";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
@@ -38,9 +34,6 @@ export function ChannelSettingsPanel({
   children,
   setupTools,
   details,
-  openCanvas,
-  canvas,
-  canvasOpen = false,
   openMembers,
 }: {
   channel: ChannelSummary | undefined;
@@ -49,9 +42,6 @@ export function ChannelSettingsPanel({
   children: ReactNode;
   setupTools?: ReactNode;
   details?: ChannelDetailsCapability;
-  openCanvas?(trigger: HTMLButtonElement): void;
-  canvas?: ChannelCanvas;
-  canvasOpen?: boolean;
   openMembers?(trigger: HTMLButtonElement): void;
 }) {
   const tabbed = !!usePanelTabHost();
@@ -63,45 +53,6 @@ export function ChannelSettingsPanel({
       ?.querySelector<HTMLElement>('[role="tab"]')
       ?.focus({ preventScroll: true });
   }, [tabbed]);
-  const channelId =
-    channel && !channel.readOnly && openCanvas ? channel.id : undefined;
-  const [preview, setPreview] = useState<{
-    canvas: ChannelCanvas;
-    channelId: string;
-    text: string;
-    failed?: boolean;
-  }>();
-  useEffect(() => {
-    if (!canvas || !channelId || canvasOpen) return;
-    setPreview(undefined);
-    let active = true;
-    void canvas.read(channelId).then(
-      (event) => {
-        if (active)
-          setPreview({
-            canvas,
-            channelId,
-            text: canvasPreviewText(event?.content ?? ""),
-          });
-      },
-      () => {
-        if (active) setPreview({ canvas, channelId, text: "", failed: true });
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, [canvas, channelId, canvasOpen]);
-  const currentPreview =
-    preview?.canvas === canvas && preview?.channelId === channelId
-      ? preview
-      : undefined;
-  const previewText = currentPreview?.text ?? "";
-  const previewFallback = currentPreview?.failed
-    ? "Preview unavailable. Open to retry."
-    : currentPreview
-      ? "No content yet"
-      : "Loading preview…";
   const ChannelIcon = channelIcon(channel);
   const renderPanel = (edit?: ChannelDetailsAction, editStatus?: ReactNode) => (
     <Panel
@@ -224,31 +175,6 @@ export function ChannelSettingsPanel({
                 <ChannelIdDetail key={channel.id} id={channel.id} />
               </dl>
             </>
-          )}
-          {channel && !channel.readOnly && openCanvas && (
-            <button
-              type="button"
-              className={styles.settingsCanvas}
-              aria-label="Canvas"
-              aria-description={previewText || previewFallback}
-              aria-haspopup="dialog"
-              onClick={(event) => openCanvas(event.currentTarget)}
-            >
-              <ChoiceRow
-                leading={<FileTextIcon size={20} aria-hidden="true" />}
-                label="Canvas"
-                description={
-                  previewText ? (
-                    <span className={styles.settingsCanvasPreview}>
-                      {previewText}
-                    </span>
-                  ) : (
-                    previewFallback
-                  )
-                }
-                trailing={<CaretRightIcon size={16} aria-hidden="true" />}
-              />
-            </button>
           )}
           {editStatus}
           {setupTools}

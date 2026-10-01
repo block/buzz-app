@@ -82,9 +82,8 @@ it("edits deliberately, cancels every field, and sends all fields only on Save",
     />,
   );
   await user.click(await screen.findByRole("button", { name: "Edit details" }));
-  expect(screen.getByRole("textbox", { name: "Name" })).toHaveAttribute(
+  expect(screen.getByRole("textbox", { name: "Name" })).not.toHaveAttribute(
     "autocomplete",
-    "off",
   );
   await user.clear(screen.getByRole("textbox", { name: "Name" }));
   await user.type(screen.getByRole("textbox", { name: "Name" }), "Renamed");
@@ -398,7 +397,7 @@ it("keeps details readable without editing authority or host support", async () 
   ).toBeVisible();
 });
 
-it("orders metadata, Canvas, and actions and dismisses each edit layer with Escape", async () => {
+it("orders metadata before actions and dismisses each edit layer with Escape", async () => {
   const h = harness();
   const user = userEvent.setup();
   const close = vi.fn();
@@ -407,7 +406,6 @@ it("orders metadata, Canvas, and actions and dismisses each edit layer with Esca
       scope="community:viewer"
       channel={channel}
       details={h.capability}
-      openCanvas={() => {}}
       setupTools={<button type="button">Leave channel</button>}
       close={close}
     >
@@ -415,9 +413,9 @@ it("orders metadata, Canvas, and actions and dismisses each edit layer with Esca
     </ChannelSettingsPanel>,
   );
   const edit = await screen.findByRole("button", { name: "Edit description" });
-  const canvas = screen.getByRole("button", { name: "Canvas" });
+  const leave = screen.getByRole("button", { name: "Leave channel" });
   expect(
-    screen.getByText(channel.description).compareDocumentPosition(canvas) &
+    screen.getByText(channel.description).compareDocumentPosition(leave) &
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
   expect(screen.getByRole("tab", { name: "Channel settings" })).toHaveFocus();
@@ -435,8 +433,6 @@ it("orders metadata, Canvas, and actions and dismisses each edit layer with Esca
   expect(screen.getByRole("button", { name: "Edit visibility" })).toHaveFocus();
   await user.tab();
   expect(screen.getByRole("button", { name: "Copy channel id" })).toHaveFocus();
-  await user.tab();
-  expect(canvas).toHaveFocus();
   await user.tab();
   expect(screen.getByRole("button", { name: "Leave channel" })).toHaveFocus();
   await user.click(edit);

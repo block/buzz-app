@@ -14,7 +14,15 @@ export function ActivityStream({
   records: readonly ActivityRecord[];
 }) {
   const transcript = useMemo(() => activityTranscript(records), [records]);
-  const entries = transcript.groups.flatMap((group) => group.entries);
+  const latest = (entry: TranscriptEntry) =>
+    Math.max(
+      ...entry.sourceIds.map(
+        (id) => transcript.sourceOrder.get(id) ?? -Infinity,
+      ),
+    );
+  const entries = transcript.groups
+    .flatMap((group) => group.entries)
+    .sort((a, b) => latest(b) - latest(a));
   const operations = entries.filter(
     (entry) => activityCategory(entry) === "operation",
   );
@@ -33,9 +41,9 @@ export function ActivityStream({
         content: (
           <div className="flex min-w-0 flex-col gap-2">
             {entry.body && (
-              <pre className="max-h-96 overflow-auto text-body-sm">
+              <div className="max-h-96 overflow-auto whitespace-pre-wrap break-words text-body-sm">
                 {entry.body}
-              </pre>
+              </div>
             )}
             {entry.input && (
               <div>

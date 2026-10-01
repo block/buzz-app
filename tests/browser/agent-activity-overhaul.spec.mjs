@@ -75,7 +75,12 @@ test("bottom activity opens one agent popup and profile Activity without losing 
       params: {
         update: {
           sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "Checking the result" },
+          content: {
+            type: "text",
+            text: "Checking the result and explaining the next steps in ordinary prose. ".repeat(
+              8,
+            ),
+          },
         },
       },
     });
@@ -114,6 +119,22 @@ test("bottom activity opens one agent popup and profile Activity without losing 
     await expect(
       popup.getByRole("button", { name: "Progress and responses (1)" }),
     ).toHaveAttribute("aria-expanded", "false");
+    await popup
+      .getByRole("button", { name: "Progress and responses (1)" })
+      .click();
+    await popup.getByRole("button", { name: "Response", exact: true }).click();
+    const prose = popup.getByText(/^Checking the result and explaining/);
+    await expect(prose).toBeVisible();
+    await expect(prose).toHaveCSS("white-space", "pre-wrap");
+    expect(
+      await prose.evaluate((element) => ({
+        fits: element.scrollWidth <= element.clientWidth,
+        family: getComputedStyle(element).fontFamily,
+      })),
+    ).toEqual({ fits: true, family: expect.not.stringMatching(/mono/i) });
+    await popup
+      .getByRole("button", { name: "Progress and responses (1)" })
+      .click();
     // Wait for the real disclosure expansion, not only mounted text, before geometry/screenshots.
     await expect
       .poll(() =>

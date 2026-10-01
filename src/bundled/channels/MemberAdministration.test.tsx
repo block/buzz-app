@@ -1304,3 +1304,76 @@ it("closing Members aborts the DM waiter and prevents late navigation", async ()
   expect(t.onOpenConversation).not.toHaveBeenCalled();
   expect(t.publish).not.toHaveBeenCalled();
 });
+
+it("filters by present groups and resets to All on any search input", async () => {
+  const t = await setup("admin", "member", true, undefined, true);
+  const list = screen.getByRole("region", { name: "Member list" });
+  const filter = () =>
+    screen.getByRole("combobox", { name: "Filter members by role" });
+  expect(filter()).toHaveTextContent("All");
+  await t.user.click(filter());
+  await screen.findByRole("option", { name: /^All/ });
+  expect(screen.getAllByRole("option").map((item) => item.textContent)).toEqual(
+    ["All · 3", "Owners · 1", "Admins · 1", "Agents · 1"],
+  );
+  expect(screen.getByRole("option", { name: "All · 3" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await t.user.click(screen.getByRole("option", { name: "Agents · 1" }));
+  expect(within(list).getByText("Morgan")).toBeVisible();
+  expect(within(list).queryByText("Carl (you)")).not.toBeInTheDocument();
+  expect(within(list).queryByText("Owner")).not.toBeInTheDocument();
+  expect(filter()).toHaveTextContent("Agents");
+  // Whitespace still starts search mode, even though matching trims it.
+  await t.user.type(screen.getByRole("searchbox"), " ");
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  expect(within(list).getByText("Carl (you)")).toBeVisible();
+  await t.user.clear(screen.getByRole("searchbox"));
+  expect(filter()).toHaveTextContent("All");
+  await t.user.click(filter());
+  await t.user.click(await screen.findByRole("option", { name: "Agents · 1" }));
+  await t.user.type(screen.getByRole("searchbox"), "Carl");
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  expect(within(list).getByText("Carl (you)")).toBeVisible();
+  expect(within(list).queryByText("Morgan")).not.toBeInTheDocument();
+  await t.user.clear(screen.getByRole("searchbox"));
+  expect(within(list).getByText("Carl (you)")).toBeVisible();
+  expect(within(list).getByText("Morgan")).toBeVisible();
+  expect(within(list).getByText("Owner")).toBeVisible();
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
+it("hides the role filter for a single group, including agents who are owners", async () => {
+  await setup("owner", "owner", true, undefined, true);
+  expect(
+    screen.queryByRole("combobox", { name: "Filter members by role" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Owners · 3" })).toBeVisible();
+});
+
+it("returns to All when a refreshed role group disappears and resets on reopen", async () => {
+  const t = await setup("admin", "member");
+  const filter = () =>
+    screen.getByRole("combobox", { name: "Filter members by role" });
+  await t.user.click(filter());
+  await screen.findByRole("option", { name: /^All/ });
+  await t.user.click(screen.getByRole("option", { name: "Members · 1" }));
+  t.confirm("admin");
+  await act(async () => {
+    await t.session.memberAdministration.refresh(id);
+  });
+  expect(filter()).toHaveTextContent("All");
+  await t.user.click(filter());
+  await screen.findByRole("option", { name: /^All/ });
+  expect(
+    screen.queryByRole("option", { name: /Members/ }),
+  ).not.toBeInTheDocument();
+  await t.user.click(screen.getByRole("option", { name: "Admins · 2" }));
+  await t.user.click(
+    screen.getByRole("button", { name: "Close channel members" }),
+  );
+  await t.user.click(screen.getByRole("button", { name: "Channel members" }));
+  await screen.findByText("Morgan");
+  expect(filter()).toHaveTextContent("All");
+});

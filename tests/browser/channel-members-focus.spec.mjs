@@ -1087,3 +1087,90 @@ test("large known-agent searches mount only the first invitation page", async ({
   expect(await page.evaluate(() => window.focusFixture.additions)).toEqual([]);
   expect(errors).toEqual([]);
 });
+
+// Browser-only: shared Select/modal focus, animated search geometry and native
+// full-height row action hit testing cannot be established by jsdom.
+test("member role dropdown fits beside search and preserves modal focus", async ({
+  page,
+}) => {
+  for (const width of [1280, 768, 390]) {
+    await page.setViewportSize({ width, height: 832 });
+    await page.goto(`${url}?search-scale`);
+    await page.getByRole("button", { name: "Channel members" }).click();
+    const dialog = page.getByRole("dialog", {
+      name: "Channel members",
+      exact: true,
+    });
+    const search = dialog.getByRole("searchbox");
+    const filter = dialog.getByRole("combobox", {
+      name: "Filter members by role",
+    });
+    await expect(filter).toBeVisible();
+    const searchBounds = await search.boundingBox();
+    const filterBounds = await filter.boundingBox();
+    expect(filterBounds.x).toBeGreaterThan(searchBounds.x + searchBounds.width);
+    expect(filterBounds.x + filterBounds.width).toBeLessThan(width);
+    await filter.focus();
+    await page.keyboard.press("ArrowDown");
+    const all = page.getByRole("option", { name: "All · 61" });
+    const agents = page.getByRole("option", { name: "Agents · 60" });
+    await expect(all).toBeVisible();
+    await agents.click();
+    await expect(filter).toBeFocused();
+    await expect(filter).toHaveText("Agents");
+    await expect(
+      dialog.getByRole("region", { name: "Members", exact: true }),
+    ).toHaveCount(0);
+    await search.fill("Agent 12");
+    await expect(dialog.getByRole("listitem")).toHaveCount(1);
+    await expect(filter).toHaveCount(0);
+    const picker = dialog.locator('[inert][aria-hidden="true"]');
+    await expect(picker).toHaveCSS("width", "0px");
+    expect((await search.boundingBox()).width).toBeGreaterThan(
+      searchBounds.width,
+    );
+    await expect(search).toBeFocused();
+    await search.fill("");
+    await expect(filter).toBeVisible();
+    await expect(filter).toHaveText("All");
+    await expect(dialog.getByRole("listitem")).toHaveCount(61);
+    await filter.click();
+    await expect(all).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeVisible();
+    await expect(filter).toBeFocused();
+
+    // Hit the top edge, outside the former centered circular target.
+    const row = dialog.getByRole("listitem").filter({ hasText: "Agent 12" });
+    const action = row.getByRole("button", { name: "Actions for Agent 12" });
+    await row.hover();
+    const rowBounds = await row.boundingBox();
+    const actionBounds = await action.boundingBox();
+    expect(actionBounds.height).toBe(rowBounds.height);
+    expect(actionBounds.y).toBe(rowBounds.y);
+    expect(actionBounds.x + actionBounds.width).toBe(
+      rowBounds.x + rowBounds.width,
+    );
+    const geometry = await action.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        width: style.width,
+        expectedWidth: getComputedStyle(document.documentElement)
+          .getPropertyValue("--size-control-sm")
+          .trim(),
+        radius: style.borderTopRightRadius,
+        rowRadius: getComputedStyle(element.closest("li")).borderTopRightRadius,
+        leftRadius: style.borderTopLeftRadius,
+      };
+    });
+    expect(actionBounds.width).toBe(32);
+    expect(geometry.radius).toBe(geometry.rowRadius);
+    expect(geometry.leftRadius).toBe("0px");
+    await action.click({ position: { x: actionBounds.width / 2, y: 2 } });
+    await expect(
+      page.getByRole("menu", { name: "Actions for Agent 12" }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(action).toBeFocused();
+  }
+});

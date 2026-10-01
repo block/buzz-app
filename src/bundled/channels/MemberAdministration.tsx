@@ -294,6 +294,7 @@ export function MemberRow({
                     <IconButton
                       variant="ghost"
                       size="sm"
+                      shape="row-end"
                       aria-label={`Actions for ${name}`}
                       icon={<DotsThreeIcon size={18} aria-hidden="true" />}
                     />

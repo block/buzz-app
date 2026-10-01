@@ -29,6 +29,7 @@ import {
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Select } from "../../shared/design-system/ui/Select";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
@@ -355,6 +356,7 @@ export function ChannelMembersDialog({
   );
   const lifetime = useRef<AbortController>(undefined);
   const [query, setQuery] = useState("");
+  const [selectedRole, setSelectedRole] = useState("All");
   const additions = useSyncExternalStore(
     session.memberAdditions.subscribe,
     session.memberAdditions.snapshot,
@@ -399,7 +401,6 @@ export function ChannelMembersDialog({
     list.channels.find((item) => item.id === channelId) ??
     session.channels.get?.(channelId);
   const canAdd = canAddMembers(session, channel);
-  const search = useMemberSearch(session, query, canAdd);
   const text = query.trim();
   const [invitationPage, setInvitationPage] = useState({
     text,
@@ -553,6 +554,23 @@ export function ChannelMembersDialog({
       keys: keys.filter((key) => matches(key, label(key))),
     };
   });
+  const presentGroups = groups.filter((group) => group.count > 0);
+  const roleFilter =
+    query.length === 0 &&
+    presentGroups.length > 1 &&
+    presentGroups.some((group) => group.name === selectedRole)
+      ? selectedRole
+      : "All";
+  if (
+    !initialLoading &&
+    administration.status !== "loading" &&
+    selectedRole !== roleFilter
+  )
+    setSelectedRole(roleFilter);
+  const filteredGroups = groups.filter(
+    (group) => roleFilter === "All" || group.name === roleFilter,
+  );
+  const search = useMemberSearch(session, query, canAdd);
   const candidates = new Map(
     search.people.map((person) => [person.pubkey, person]),
   );
@@ -574,7 +592,8 @@ export function ChannelMembersDialog({
     invitationPage.text === text
       ? invitationPage.size
       : MEMBER_SEARCH_PAGE_SIZE;
-  const visibleCandidates = available.slice(0, invitationSize);
+  const visibleCandidates =
+    roleFilter === "All" ? available.slice(0, invitationSize) : [];
   const moreCandidates = available.length > invitationSize;
   // Keep roster ownership observed while filtering; retiring the view clears
   // valid hints and forces every retained agent row through recovery renders.
@@ -836,15 +855,60 @@ export function ChannelMembersDialog({
       finalFocus={() => (openingDestination.current ? false : trigger.current)}
     >
       <div className={styles.layout}>
-        <div className="shrink-0">
-          <SearchField
-            inputRef={input}
-            label="Search people and agents"
-            placeholder={canAdd ? "Add people and agents" : "Search members"}
-            value={query}
-            onValueChange={setQuery}
-            maxLength={256}
-          />
+        <div className="flex shrink-0 items-center">
+          <div className="min-w-0 flex-1">
+            <SearchField
+              inputRef={input}
+              label="Search people and agents"
+              placeholder={canAdd ? "Add people and agents" : "Search members"}
+              value={query}
+              onValueChange={(value) => {
+                setQuery(value);
+                if (value.length > 0) setSelectedRole("All");
+              }}
+              maxLength={256}
+            />
+          </div>
+          {!initialLoading && presentGroups.length > 1 && (
+            <motion.div
+              className="shrink-0 overflow-hidden"
+              initial={false}
+              animate={
+                query.length > 0
+                  ? { width: 0, opacity: 0, marginLeft: 0 }
+                  : { width: "auto", opacity: 1, marginLeft: "var(--space-2)" }
+              }
+              transition={{
+                duration: reducedMotion ? 0 : 0.14,
+                ease: [0.23, 1, 0.32, 1],
+              }}
+              inert={query.length > 0}
+              aria-hidden={query.length > 0 || undefined}
+            >
+              <Select
+                variant="compact"
+                label="Filter members by role"
+                value={roleFilter}
+                valueLabel={roleFilter}
+                groups={[
+                  {
+                    label: "",
+                    options: [
+                      { name: "All", count: members.size },
+                      ...presentGroups,
+                    ].map((group) => ({
+                      value: group.name,
+                      label: `${group.name} · ${group.count}`,
+                    })),
+                  },
+                ]}
+                onValueChange={(value) => {
+                  setSelectedRole(value);
+                  if (scrollport.current) scrollport.current.scrollTop = 0;
+                }}
+              />
+            </motion.div>
+          )}
         </div>
         <section
           ref={scrollport}
@@ -882,8 +946,13 @@ export function ChannelMembersDialog({
               <span className="sr-only">Loading members…</span>
             </div>
           ) : (
-            groups
-              .filter((group) => group.keys.length || group.name === "Members")
+            filteredGroups
+              .filter(
+                (group) =>
+                  group.keys.length ||
+                  group.name ===
+                    (roleFilter === "All" ? "Members" : roleFilter),
+              )
               .map((group) => (
                 <section key={group.name} aria-label={group.name}>
                   <h3
@@ -894,8 +963,7 @@ export function ChannelMembersDialog({
                   <ul>
                     {group.keys.map((key) => row(key, label(key), false))}
                   </ul>
-                  {group.name === "Members" &&
-                    !groups.some((item) => item.keys.length) &&
+                  {!filteredGroups.some((item) => item.keys.length) &&
                     !rosterBusy && (
                       <p className="px-control-inset text-body-sm text-subtle">
                         {query
@@ -906,66 +974,69 @@ export function ChannelMembersDialog({
                 </section>
               ))
           )}
-          {!initialLoading && canAdd && query.trim() && (
-            <section
-              className={styles.memberGroup}
-              aria-label="Not in this channel"
-            >
-              <h3
-                className={`${styles.groupHeading} px-control-inset pb-2 text-caption text-subtle`}
+          {!initialLoading &&
+            canAdd &&
+            roleFilter === "All" &&
+            query.trim() && (
+              <section
+                className={styles.memberGroup}
+                aria-label="Not in this channel"
               >
-                Not in this channel
-              </h3>
-              {visibleCandidates.map((person) =>
-                row(
-                  person.pubkey,
-                  label(person.pubkey, person.name),
-                  true,
-                  person.picture,
-                  person.isAgent,
-                ),
-              )}
-              {search.loading && (
-                <p
-                  role="status"
-                  className="px-control-inset text-body-sm text-subtle"
+                <h3
+                  className={`${styles.groupHeading} px-control-inset pb-2 text-caption text-subtle`}
                 >
-                  Searching…
-                </p>
-              )}
-              {!search.loading && !search.error && !available.length && (
-                <p className="px-control-inset text-body-sm text-subtle">
-                  No other matching people or agents.
-                </p>
-              )}
-              {search.error && (
-                <p
-                  role="alert"
-                  className="px-control-inset text-body-sm text-danger"
-                >
-                  {search.error}
-                </p>
-              )}
-              {(moreCandidates || search.more) && (
-                <div className="flex justify-center">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setInvitationPage({
-                        text,
-                        size: invitationSize + MEMBER_SEARCH_PAGE_SIZE,
-                      });
-                      if (!moreCandidates) search.next();
-                    }}
-                    disabled={search.loading}
+                  Not in this channel
+                </h3>
+                {visibleCandidates.map((person) =>
+                  row(
+                    person.pubkey,
+                    label(person.pubkey, person.name),
+                    true,
+                    person.picture,
+                    person.isAgent,
+                  ),
+                )}
+                {search.loading && (
+                  <p
+                    role="status"
+                    className="px-control-inset text-body-sm text-subtle"
                   >
-                    Show more results
-                  </Button>
-                </div>
-              )}
-            </section>
-          )}
+                    Searching…
+                  </p>
+                )}
+                {!search.loading && !search.error && !available.length && (
+                  <p className="px-control-inset text-body-sm text-subtle">
+                    No other matching people or agents.
+                  </p>
+                )}
+                {search.error && (
+                  <p
+                    role="alert"
+                    className="px-control-inset text-body-sm text-danger"
+                  >
+                    {search.error}
+                  </p>
+                )}
+                {(moreCandidates || search.more) && (
+                  <div className="flex justify-center">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setInvitationPage({
+                          text,
+                          size: invitationSize + MEMBER_SEARCH_PAGE_SIZE,
+                        });
+                        if (!moreCandidates) search.next();
+                      }}
+                      disabled={search.loading}
+                    >
+                      Show more results
+                    </Button>
+                  </div>
+                )}
+              </section>
+            )}
           {nameError && (
             <p role="status" className="text-body-sm text-subtle">
               {nameError}

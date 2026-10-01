@@ -82,6 +82,11 @@ remain enforced. This exception is not an accessibility pass. Dark Away meets
 3:1 on these opaque surfaces. Offline stays unoutlined. Badge footprints,
 Bézier artwork cutouts, presence behavior and accessible names are unchanged.
 
+For a separate trailing action attached to a row, use `IconButton shape="row-end"`
+in a stretched flex slot. It keeps the size-selected width, fills the row height,
+and rounds only the right corners with `radius-row`. The ordinary shared hover,
+pressed and keyboard behavior remains unchanged.
+
 ## Public identity text
 
 Public-key recognition labels use the shared pure formatter in

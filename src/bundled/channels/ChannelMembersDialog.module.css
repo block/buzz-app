@@ -61,6 +61,8 @@
   padding: var(--space-1) var(--space-2) var(--space-1) 0;
 }
 .memberActions {
+  display: flex;
+  align-self: stretch;
   flex-shrink: 0;
 }
 @media (hover: hover) and (pointer: fine) {

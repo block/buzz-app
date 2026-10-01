@@ -578,6 +578,18 @@ Retry; data refresh never resubmits an invitation, role change or removal.
 Supporting buttons use outline emphasis; **Show more results** uses the small size
 and is horizontally centered beneath the search results.
 Role confirmations use prominent, and removal remains destructive.
+The search has a role dropdown on its right when at least two roster groups are
+present. It defaults to All and offers only populated Owners, Admins, Members and
+Agents groups, with whole-roster counts (including the All total), using the shared
+compact Select. Any search input, including whitespace, resets to All and animates
+the picker out while the search expands. Clearing the input restores All; search
+never combines with a role filter, and ordinary invitations stay available.
+Reduced motion makes the transition immediate. Existing owner/admin
+precedence over agent identity is unchanged. Selecting a role returns the list to
+the top; a vanished group or a single-group roster returns to All. Closing and
+reopening Members resets the filter. This is display state, not role authority.
+The member action trigger retains its compact width and fills the row height, with
+right-hand corners matching the row; profile and action targets remain separate.
 The title, channel name and search stay fixed. Members uses the shared Dialog
 with `dismissOnOutsideClick` enabled. Adjacent role groups use an 8px gap in
 addition to the heading’s own top inset; invitation/recovery spacing is unchanged.

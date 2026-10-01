@@ -71,6 +71,14 @@ export default defineConfig(async ({ command, mode }) => {
         openRelay ? defaultOrigin : "",
       ),
     },
+    build: {
+      rollupOptions: {
+        input: {
+          main: fileURLToPath(new URL("index.html", import.meta.url)),
+          huddle: fileURLToPath(new URL("huddle.html", import.meta.url)),
+        },
+      },
+    },
     clearScreen: false,
     server: {
       // Derived from this checkout's path, exactly as `just desktop` does, so

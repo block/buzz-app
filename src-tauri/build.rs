@@ -25,6 +25,14 @@ fn main() {
     }
     tauri_build::try_build(
         attributes.app_manifest(tauri_build::AppManifest::new().commands(&[
+            "huddle_window_open",
+            "huddle_window_update",
+            "huddle_window_watch",
+            "huddle_window_action",
+            "huddle_open",
+            "huddle_close",
+            "huddle_pcm",
+            "huddle_touch",
             "identity_restore",
             "identity_import",
             "identity_create",

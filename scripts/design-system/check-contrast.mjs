@@ -183,6 +183,8 @@ const BOUNDARY_ROLES = [
 const TINT_PAIRS = [
   ["--text-warning", "--affordance-warning"],
   ["--text-success", "--affordance-success"],
+  ["--text-success", "--affordance-success-hover"],
+  ["--text-success", "--affordance-success-pressed"],
   ["--text-accent", "--affordance-accent"],
   ["--text-accent", "--affordance-accent-hover"],
   ["--text-on-accent", "--affordance-accent-prominent"],

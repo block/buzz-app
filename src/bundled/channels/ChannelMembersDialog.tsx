@@ -29,12 +29,18 @@ export function ChannelMembersButton({
   session,
   channelId,
   control,
+  open: controlledOpen,
+  onOpenChange,
 }: {
   session: RelaySession;
   channelId: string;
   control?: AgentControl | undefined;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = controlledOpen ?? localOpen;
+  const setOpen = onOpenChange ?? setLocalOpen;
   const trigger = useRef<HTMLButtonElement>(null);
   return (
     <>

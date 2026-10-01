@@ -493,6 +493,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "border-success-subtle",
+        variable: "--border-success-subtle",
+        pointsAt: "green-6 light / green-6 dark",
+        use: "A decorative separator inside a success control.",
+        status: "core",
+      },
+      {
         token: "border-danger",
         variable: "--border-danger",
         pointsAt: "red-9 light / red-9 dark",
@@ -680,6 +687,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--affordance-success",
         pointsAt: "green-3 light / green-3 dark",
         use: "A success fill.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-success-hover",
+        variable: "--affordance-success-hover",
+        pointsAt: "green-4 light / green-4 dark",
+        use: "A success control under a pointer.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-success-pressed",
+        variable: "--affordance-success-pressed",
+        pointsAt: "green-5 light / green-5 dark",
+        use: "A success control while pressed or expanded.",
         status: "core",
       },
       {

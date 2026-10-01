@@ -3,6 +3,12 @@
   "identifier": "main-window",
   "description": "Allow the main application commands, title bar controls and external HTTP(S) links.",
   "permissions": [
+    "allow-huddle-window-open",
+    "allow-huddle-window-update",
+    "allow-huddle-open",
+    "allow-huddle-close",
+    "allow-huddle-pcm",
+    "allow-huddle-touch",
     "allow-identity-restore",
     "allow-identity-import",
     "allow-identity-create",

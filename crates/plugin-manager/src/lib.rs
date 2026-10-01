@@ -99,6 +99,8 @@ pub fn valid_id(id: &str) -> Result<()> {
 }
 pub fn bundled_manifests() -> Vec<Manifest> {
     vec![
+        serde_json::from_str(include_str!("../../../src/bundled/huddles/manifest.json"))
+            .expect("huddles manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/todos/manifest.json"))
             .expect("todos manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/diffs/manifest.json"))
@@ -850,6 +852,26 @@ mod tests {
             .unwrap()
             .commands
             .is_empty());
+    }
+
+    #[test]
+    fn huddles_are_available_on_desktop_and_can_be_disabled() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(temp.path().into()), "huddles-test", false).unwrap();
+        let huddles = || {
+            manager
+                .catalog()
+                .unwrap()
+                .plugins
+                .into_iter()
+                .find(|plugin| plugin.manifest.id == "buzz.huddles")
+                .expect("Desktop must expose the Huddles plugin")
+        };
+        assert!(huddles().enabled);
+        manager.change("disable", "buzz.huddles").unwrap();
+        assert!(!huddles().enabled);
+        manager.change("enable", "buzz.huddles").unwrap();
+        assert!(huddles().enabled);
     }
 
     #[test]

@@ -1019,6 +1019,19 @@ function ChannelWorkspace({
         : undefined,
     [scope, viewer, current, showingThread],
   );
+  const [membersAt, setMembersAt] = useState<{
+    channelId: string;
+    scope: string;
+  }>();
+  const membersOpen =
+    membersAt?.channelId === currentId && membersAt?.scope === scope;
+  const setMembersOpen = (open: boolean) =>
+    setMembersAt(
+      open && currentId ? { channelId: currentId, scope } : undefined,
+    );
+  useEffect(() => {
+    if (membersAt && !membersOpen) setMembersAt(undefined);
+  }, [membersAt, membersOpen]);
   const drawer = useChannelPanels(
     panels,
     drawerContext,
@@ -1036,6 +1049,7 @@ function ChannelWorkspace({
       else selectOpening(entry);
       return true;
     },
+    () => setMembersOpen(true),
   );
   const tabTools =
     drawerContext && !current?.archived
@@ -1434,6 +1448,8 @@ function ChannelWorkspace({
                           session={queries}
                           channelId={current.id}
                           control={agentControl}
+                          open={membersOpen}
+                          onOpenChange={setMembersOpen}
                         />
                       )}
                       {drawer.launchers}

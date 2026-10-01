@@ -365,3 +365,21 @@ export const SpeakerSlashIcon = defineIcon(
 
 import { ColumnsIcon as PhosphorColumnsIcon } from "@phosphor-icons/react/dist/csr/Columns";
 export const ColumnsIcon = defineIcon("phosphor", PhosphorColumnsIcon);
+
+import { HeadphonesIcon as PhosphorHeadphonesIcon } from "@phosphor-icons/react/dist/csr/Headphones";
+export const HeadphonesIcon = defineIcon("phosphor", PhosphorHeadphonesIcon);
+
+import { MicrophoneIcon as PhosphorMicrophoneIcon } from "@phosphor-icons/react/dist/csr/Microphone";
+export const MicrophoneIcon = defineIcon("phosphor", PhosphorMicrophoneIcon);
+
+import { MicrophoneSlashIcon as PhosphorMicrophoneSlashIcon } from "@phosphor-icons/react/dist/csr/MicrophoneSlash";
+export const MicrophoneSlashIcon = defineIcon(
+  "phosphor",
+  PhosphorMicrophoneSlashIcon,
+);
+
+import { PhoneDisconnectIcon as PhosphorPhoneDisconnectIcon } from "@phosphor-icons/react/dist/csr/PhoneDisconnect";
+export const PhoneDisconnectIcon = defineIcon(
+  "phosphor",
+  PhosphorPhoneDisconnectIcon,
+);

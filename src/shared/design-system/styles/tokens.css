@@ -550,6 +550,9 @@
   --affordance-danger-pressed: var(--red-5);
   --affordance-warning: var(--amber-3);
   --affordance-success: var(--green-3);
+  --affordance-success-hover: var(--green-4);
+  --affordance-success-pressed: var(--green-5);
+  --border-success-subtle: var(--green-6);
   --affordance-accent: var(--purple-3);
   --affordance-accent-hover: var(--purple-4);
   --affordance-accent-prominent: var(--purple-9);
@@ -610,6 +613,9 @@
   --affordance-danger-pressed: var(--red-5);
   --affordance-warning: var(--amber-3);
   --affordance-success: var(--green-3);
+  --affordance-success-hover: var(--green-4);
+  --affordance-success-pressed: var(--green-5);
+  --border-success-subtle: var(--green-6);
   --affordance-accent: var(--purple-3);
   --affordance-accent-hover: var(--purple-4);
   --affordance-accent-prominent: var(--purple-9);
@@ -841,6 +847,9 @@
   --color-affordance-danger-pressed: var(--affordance-danger-pressed);
   --color-affordance-warning: var(--affordance-warning);
   --color-affordance-success: var(--affordance-success);
+  --color-affordance-success-hover: var(--affordance-success-hover);
+  --color-affordance-success-pressed: var(--affordance-success-pressed);
+  --border-color-success-subtle: var(--border-success-subtle);
   --color-affordance-accent: var(--affordance-accent);
   --color-affordance-accent-hover: var(--affordance-accent-hover);
   --color-affordance-accent-prominent: var(--affordance-accent-prominent);

@@ -20,6 +20,11 @@ buzzodz-plugins = { path = "../crates/plugin-manager" }
 buzz-agent-controller = { path = "../crates/agent-controller" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
+opus = "0.3"
+futures-util = { version = "0.3", features = ["sink"] }
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+rustls-native-certs = "0.8"
 buzz-agent = { git = "https://github.com/block/buzz.git", rev = "48884848f566d02c42ce07636636c4ad5f164c27" }
 tokio = { version = "1", features = ["sync", "time", "macros", "process", "io-util"] }
 sha2 = "0.10"

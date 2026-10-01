@@ -27,6 +27,8 @@ export type ChannelPanelContext = Readonly<{
 export type ChannelLauncherProps = {
   context: ChannelPanelContext;
   pressed: boolean;
+  /** Open the current conversation’s host-owned member picker. */
+  openMembers?: (() => void) | undefined;
   /** Toggles this exact contribution in the page-owned channel panel. */
   toggle(target: string): void;
   /** False after this page binding or exact contribution is retired. */
@@ -45,6 +47,8 @@ export type Panel = Readonly<{
   matches: (url: string) => boolean;
   // Optional host launcher; placement stays with the current page or host fallback.
   launcher?: Readonly<{ icon: string; target: string }>;
+  /** Optional live controls beside shell search; lifetime remains plugin-owned. */
+  toolbar?: ComponentType;
   // Optional channel-header launcher. The page supplies context and owns placement.
   channelLauncher?: ComponentType<ChannelLauncherProps>;
   /** Channel launchers default to the bottom drawer; side reuses the companion column. */
@@ -100,6 +104,8 @@ export class PanelsService extends Service implements Panels {
     ) {
       throw new Error("A panel launcher needs an icon and target string");
     }
+    if (panel.toolbar !== undefined && typeof panel.toolbar !== "function")
+      throw new Error("A panel toolbar needs a component");
     if (
       panel.channelLauncher !== undefined &&
       typeof panel.channelLauncher !== "function"

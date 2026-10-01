@@ -129,6 +129,19 @@ export function SettingsSidebar({
             <SettingsGroup label="App">
               {!selectedCommunity &&
                 section({ id: "profile", label: "Profile", icon: UserIcon })}
+              {!selectedCommunity &&
+                contributed
+                  .filter(
+                    (card) =>
+                      !card.group && !card.section && card.showInPersonalSpace,
+                  )
+                  .map((card) =>
+                    section({
+                      id: card.key,
+                      label: card.title,
+                      icon: card.icon ?? ChatCircleIcon,
+                    }),
+                  )}
               {appSettingsSections.map(section)}
             </SettingsGroup>
             {developerMode && (

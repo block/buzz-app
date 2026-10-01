@@ -109,6 +109,17 @@ export function Settings({
     () => contributed.filter((card) => !card.group && !card.section),
     [contributed],
   );
+  const personalCards = useMemo(
+    () =>
+      communityCards
+        .filter((card) => card.showInPersonalSpace)
+        .map((card) => ({
+          id: card.key,
+          label: card.title,
+          icon: card.icon ?? ChatCircleIcon,
+        })),
+    [communityCards],
+  );
   const administrationCards = useMemo(
     () => contributed.filter((card) => card.section === "administration"),
     [contributed],
@@ -147,7 +158,7 @@ export function Settings({
             icon: card.icon ?? UsersIcon,
           }))
         : []),
-      ...(!selectedCommunity ? personalProfile : []),
+      ...(!selectedCommunity ? [...personalProfile, ...personalCards] : []),
       ...contributedGroups.flatMap((group) =>
         group.cards.map((card) => ({
           id: card.key,
@@ -161,6 +172,7 @@ export function Settings({
         : []),
     ],
     [
+      personalCards,
       administrationCards,
       communitySections,
       contributedGroups,
@@ -267,7 +279,9 @@ export function Settings({
               ))}
               <NavigationSection label="App">
                 {[
-                  ...(!selectedCommunity ? personalProfile : []),
+                  ...(!selectedCommunity
+                    ? [...personalProfile, ...personalCards]
+                    : []),
                   ...appSettingsSections,
                 ].map(({ id, label, icon: Icon }) => (
                   <NavigationItem

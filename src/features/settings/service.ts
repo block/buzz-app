@@ -12,6 +12,8 @@ export type SettingsCard = {
   title: string;
   /** Optional navigation icon; the host supplies its existing default when absent. */
   icon?: DefinedIcon;
+  /** Keep an ungrouped card available under App when no community is selected. */
+  showInPersonalSpace?: boolean;
   component: ComponentType<{
     active(): boolean;
     community?: { id: string; name: string };

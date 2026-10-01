@@ -33,20 +33,26 @@ it("revokes a pending selection on disposal and never starts it", async () => {
     scope: "https://fixture.example:viewer",
   };
   let dispose!: () => void;
-  let Component!: React.ComponentType;
+  let Component!: React.ComponentType<{
+    community?: { id: string; name: string };
+  }>;
   const ctx = {
     relay: { snapshot: () => snapshot, subscribe: () => () => {} },
     effect: (setup: () => () => void) => {
       dispose = setup();
     },
     settingsCards: {
-      register: (card: { component: React.ComponentType }) => {
+      register: (card: {
+        component: React.ComponentType<{
+          community?: { id: string; name: string };
+        }>;
+      }) => {
         Component = card.component;
       },
     },
   } as unknown as Parameters<PluginModule["apply"]>[0];
   apply(ctx);
-  render(<Component />);
+  render(<Component community={{ id: "primary", name: "Primary" }} />);
   await waitFor(() =>
     expect(native.invoke).toHaveBeenCalledWith("mesh_compute_select", {
       community: "https://fixture.example",
@@ -95,7 +101,9 @@ it("preserves the running lease through reconnect and revokes on identity change
   };
   const listeners = new Set<() => void>();
   let dispose!: () => void;
-  let Component!: React.ComponentType;
+  let Component!: React.ComponentType<{
+    community?: { id: string; name: string };
+  }>;
   const ctx = {
     relay: {
       snapshot: () => snapshot,
@@ -108,13 +116,17 @@ it("preserves the running lease through reconnect and revokes on identity change
       dispose = setup();
     },
     settingsCards: {
-      register: (card: { component: React.ComponentType }) => {
+      register: (card: {
+        component: React.ComponentType<{
+          community?: { id: string; name: string };
+        }>;
+      }) => {
         Component = card.component;
       },
     },
   } as unknown as Parameters<PluginModule["apply"]>[0];
   apply(ctx);
-  render(<Component />);
+  render(<Component community={{ id: "primary", name: "Primary" }} />);
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Connect to community compute" }),
@@ -196,7 +208,9 @@ it("renders Running without claiming connectivity, stops by lease, and separates
     viewer: "viewer",
     scope: "https://fixture.example:viewer",
   };
-  let Component!: React.ComponentType;
+  let Component!: React.ComponentType<{
+    community?: { id: string; name: string };
+  }>;
   let dispose!: () => void;
   apply({
     relay: { snapshot: () => snapshot, subscribe: () => () => {} },
@@ -204,12 +218,16 @@ it("renders Running without claiming connectivity, stops by lease, and separates
       dispose = setup();
     },
     settingsCards: {
-      register: (card: { component: React.ComponentType }) => {
+      register: (card: {
+        component: React.ComponentType<{
+          community?: { id: string; name: string };
+        }>;
+      }) => {
         Component = card.component;
       },
     },
   } as unknown as Parameters<PluginModule["apply"]>[0]);
-  render(<Component />);
+  render(<Component community={{ id: "primary", name: "Primary" }} />);
   await screen.findByText("Running");
   expect(screen.queryByText("Connected")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Disconnect" })).toBeEnabled();
@@ -242,7 +260,9 @@ it("polls transient states serially, stops at Running, and cancels on unmount", 
     viewer: "viewer",
     scope: "https://fixture.example:viewer",
   };
-  let Component!: React.ComponentType;
+  let Component!: React.ComponentType<{
+    community?: { id: string; name: string };
+  }>;
   let dispose!: () => void;
   apply({
     relay: { snapshot: () => snapshot, subscribe: () => () => {} },
@@ -250,14 +270,18 @@ it("polls transient states serially, stops at Running, and cancels on unmount", 
       dispose = setup();
     },
     settingsCards: {
-      register: (page: { component: React.ComponentType }) => {
+      register: (page: {
+        component: React.ComponentType<{
+          community?: { id: string; name: string };
+        }>;
+      }) => {
         Component = page.component;
       },
     },
   } as unknown as Parameters<PluginModule["apply"]>[0]);
   try {
     await act(async () => {
-      render(<Component />);
+      render(<Component community={{ id: "primary", name: "Primary" }} />);
     });
     expect(screen.getByRole("status")).toHaveTextContent("Starting…");
     await act(async () => {

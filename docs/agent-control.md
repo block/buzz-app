@@ -54,11 +54,15 @@ keep their settings; add the variable and restart them to enable more workers.
 Pi and Goose apply permitted Environment overrides after saved fields and
 imported settings. For example, `BUZZ_ACP_MODEL`, `BUZZ_ACP_SYSTEM_PROMPT`, and
 `BUZZ_ACP_AGENTS` take precedence at launch; worker counts must be from 1 to 32.
-Removing an override restores the saved/default setting. Identity, relay routing,
-executable commands, response policy, team instructions, and host lifecycle,
-readiness, and replay controls remain protected. Device-wide Pi/Goose behavior
-overrides are inherited only by harnesses that permit them. Buzz Agent retains
-its existing environment policy. Pi model browsing and connection tests use the
+Removing an override restores the saved/default setting. Identity keys, the relay
+URL, executable commands, saved response policy, and team instructions remain
+protected, along with specific host controls: session policy, presence, inactivity
+exit, idle-pool sleep, setup payload, and replay floor. Pi and Goose still permit
+subscription, relay observer, deduplication, and event-handling overrides, as old
+Buzz did. Device-wide overrides are inherited only by harnesses that permit them;
+`BUZZ_ACP_MODEL` also requires the same default harness. Buzz Agent keeps its key
+restrictions; its worker override takes precedence over imported parallelism.
+Pi model browsing and connection tests use the
 Provider/Model fields; ACP overrides apply to the listener's sessions at launch.
 
 **Clone to this community** opens the existing creation dialog with only the old
@@ -291,8 +295,10 @@ provider, model, effort and environment variables.
   leaves blank, only when the agent uses the default harness; per-agent values
   win. The editor shows a blank field as “Use agent defaults (…)”. Effort has no
   per-agent field: an imported agent's `effort_level` stays its override.
-- Environment variables apply to every agent and merge **per key**; the agent's
-  key wins. A saved Databricks workspace/filter also wins over the corresponding
+- Permitted environment variables merge **per key**; the agent's key wins.
+  `BUZZ_ACP_MODEL` inherits only within the default harness, while shared controls
+  such as worker count and system prompt can inherit across Pi and Goose.
+  A saved Databricks workspace/filter also wins over the corresponding
   global `DATABRICKS_HOST` / `DATABRICKS_MODEL_FILTER` pair. Agents without their
   own workspace/filter inherit the global pair.
 - Changing the default harness in the card clears the default model and effort;

@@ -73,6 +73,45 @@ fn selectors_do_not_cross_harnesses_but_environment_does() {
 }
 
 #[test]
+fn model_environment_overrides_inherit_only_within_their_harness() {
+    for (source, destination) in [("pi", "goose-acp"), ("goose", "/opt/tools/buzz-pi-acp")] {
+        let mut defaults = defaults(source);
+        defaults.environment.extend([
+            (
+                "BUZZ_ACP_MODEL".into(),
+                "default-provider/default-model".into(),
+            ),
+            ("BUZZ_ACP_AGENTS".into(), "10".into()),
+            ("BUZZ_ACP_SYSTEM_PROMPT".into(), "shared prompt".into()),
+        ]);
+        let mut agent = fixture();
+        agent.harness.command = destination.into();
+        let out = effective(&agent, &defaults);
+        let launch = crate::build_defaults().launch_view(&out.harness, &out.environment);
+        assert_eq!(launch.model.as_deref(), Some("test-model"));
+        assert_eq!(launch.model_env, None);
+        assert!(!out.environment.contains_key("BUZZ_ACP_MODEL"));
+        assert_eq!(out.environment["BUZZ_ACP_AGENTS"], "10");
+        assert_eq!(out.environment["BUZZ_ACP_SYSTEM_PROMPT"], "shared prompt");
+        assert_eq!(out.environment["GLOBAL_ONLY"], "global");
+
+        agent
+            .environment
+            .insert("BUZZ_ACP_MODEL".into(), "own-model".into());
+        assert_eq!(
+            effective(&agent, &defaults).environment["BUZZ_ACP_MODEL"],
+            "own-model"
+        );
+        agent.environment.clear();
+        defaults.harness = harness_kind(destination).unwrap().into();
+        assert_eq!(
+            effective(&agent, &defaults).environment["BUZZ_ACP_MODEL"],
+            "default-provider/default-model"
+        );
+    }
+}
+
+#[test]
 fn conversation_context_inherits_defaults_unless_agent_or_imported_definition_selects_it() {
     let mut agent = fixture();
     let mut defaults = defaults("buzz-agent");

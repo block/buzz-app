@@ -236,6 +236,9 @@ impl RuntimeBundle {
             // Validated user behavior overrides win over saved/imported fields.
             // Tool discovery remains host-owned, including Pi's pinned Node.
             command.envs(environment).env("PATH", path);
+        } else if let Some(workers) = environment.get("BUZZ_ACP_AGENTS") {
+            // The editable worker count wins over imported parallelism for every harness.
+            command.env("BUZZ_ACP_AGENTS", workers);
         }
         Ok(command)
     }

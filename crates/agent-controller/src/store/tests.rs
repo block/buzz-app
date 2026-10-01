@@ -363,6 +363,44 @@ fn environment_patch_preserves_deletes_and_rejects_host_overrides_without_writin
     }
 }
 #[test]
+fn environment_override_removal_allows_a_harness_switch_without_weakening_validation() {
+    for command in ["goose-acp", "/opt/tools/buzz-pi-acp"] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().to_owned()).unwrap();
+        let mut a = fixture();
+        a.harness.command = command.into();
+        a.environment
+            .insert("BUZZ_ACP_MODEL".into(), "private-model".into());
+        store.insert(vec![a.clone()]).unwrap();
+        let before = fs::read(store.path()).unwrap();
+
+        // Keeping or replacing the override is invalid for Buzz Agent.
+        for value in [None, Some("replacement")] {
+            let mut update = edit();
+            if let Some(value) = value {
+                update
+                    .environment
+                    .insert("BUZZ_ACP_MODEL".into(), Some(value.into()));
+            }
+            assert!(store.save(&a.id, a.revision, update).is_err());
+            assert_eq!(fs::read(store.path()).unwrap(), before);
+        }
+        let mut update = edit();
+        update.environment.insert("BUZZ_ACP_MODEL".into(), None);
+        store.save(&a.id, a.revision, update).unwrap();
+        drop(store);
+        let saved = Store::open(dir.path().to_owned())
+            .unwrap()
+            .agents()
+            .unwrap()
+            .remove(0);
+        assert_eq!(saved.harness.command, "buzz-agent");
+        assert!(!saved.environment.contains_key("BUZZ_ACP_MODEL"));
+        assert_eq!(saved.environment["TEST_TOKEN"], "secret-env-value");
+    }
+}
+
+#[test]
 fn worker_count_override_persists_only_within_runtime_limits() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = Store::open(dir.path().to_owned()).unwrap();

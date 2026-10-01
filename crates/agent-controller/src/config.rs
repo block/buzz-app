@@ -286,8 +286,8 @@ impl Agent {
         self.workspace = edit.workspace;
         self.harness = edit.harness;
         for (key, value) in edit.environment {
-            validate_env_key(&key, &self.harness.command)?;
             if let Some(value) = value {
+                validate_env_key(&key, &self.harness.command)?;
                 text(&value, 32 * 1024, "Environment value")?;
                 self.environment.insert(key, value);
             } else {

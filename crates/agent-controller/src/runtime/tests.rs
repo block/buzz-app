@@ -180,6 +180,7 @@ if [ -n "$BUZZ_ACP_LAUNCH_PREFIX" ]; then
 fi
 printf '%s\n' "$BUZZ_ACP_LAZY_POOL" "$BUZZ_ACP_IDLE_POOL_SLEEP" "$BUZZ_ACP_SYSTEM_PROMPT" "$BUZZ_ACP_MODEL" "$BUZZ_ACP_AGENT_ARGS" "$BUZZ_RELAY_URL" "$BUZZ_ACP_RESPOND_TO" "$BUZZ_MANAGED_AGENT" "$BUZZ_ACP_REPLAY_FLOOR" "$PROVIDER_TEST_SETTING" >> starts
 printf '%s' "$BUZZ_ACP_TEAM_INSTRUCTIONS" > team-instructions
+printf '%s' "$BUZZ_ACP_AGENTS" > worker-count
 printf '%s\n' "$BUZZ_AGENT_CONFIG_DIR" "$DATABRICKS_HOST" "$DATABRICKS_MODEL_FILTER" "${DATABRICKS_TOKEN-unset}" "$TMPDIR" "$PATH" > runtime-env
 printf 'harness fixture output\n'
 trap 'exit 0' TERM INT
@@ -1912,6 +1913,33 @@ fn pi_version_probe_times_out_and_retires_helpers() {
         }
         assert!(Instant::now() < deadline, "Helper still running: {state}");
         std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn worker_environment_override_beats_imported_parallelism_and_removal_restores_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    let mut a = agent(dir.path());
+    let key = Secret::parse(KEY, PUB).unwrap();
+    fs::write(dir.path().join("exit-listener"), "").unwrap();
+    for (override_value, expected) in [(Some("10"), "10"), (None, "2")] {
+        if let Some(value) = override_value {
+            a.environment.insert("BUZZ_ACP_AGENTS".into(), value.into());
+        } else {
+            a.environment.remove("BUZZ_ACP_AGENTS");
+        }
+        let mut command = runtime
+            .command_with_defaults(&a, &key, &deployment_defaults())
+            .unwrap();
+        command.env("BUZZ_AGENT_CONFIG_DIR", dir.path());
+        assert!(command.output().unwrap().status.success());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("worker-count")).unwrap(),
+            expected
+        );
     }
 }
 

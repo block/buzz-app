@@ -82,6 +82,10 @@ it("edits deliberately, cancels every field, and sends all fields only on Save",
     />,
   );
   await user.click(await screen.findByRole("button", { name: "Edit details" }));
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveAttribute(
+    "autocomplete",
+    "off",
+  );
   await user.clear(screen.getByRole("textbox", { name: "Name" }));
   await user.type(screen.getByRole("textbox", { name: "Name" }), "Renamed");
   await user.clear(screen.getByRole("textbox", { name: "Description" }));
@@ -440,7 +444,7 @@ it("orders metadata, Canvas, and actions and dismisses each edit layer with Esca
     screen.getByRole("dialog", { name: "Edit channel details" }),
   ).toBeVisible();
   await waitFor(() =>
-    expect(screen.getByRole("textbox", { name: "Name" })).toHaveFocus(),
+    expect(screen.getByRole("textbox", { name: "Description" })).toHaveFocus(),
   );
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -1595,6 +1599,10 @@ it.each(["description", "visibility", "channel name"])(
     expect(screen.queryByText("Channel type")).not.toBeInTheDocument();
     row.focus();
     await user.keyboard("{Enter}");
+    const focusName = field === "description" ? "Description" : "Name";
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: focusName })).toHaveFocus(),
+    );
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
       channel.name,
     );
@@ -1605,8 +1613,17 @@ it.each(["description", "visibility", "channel name"])(
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(row).toHaveFocus());
     await user.keyboard(" ");
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: focusName })).toHaveFocus(),
+    );
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
       channel.name,
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(row).toHaveFocus());
+    await user.click(screen.getByRole("button", { name: "Edit channel name" }));
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Name" })).toHaveFocus(),
     );
     expect(h.save).not.toHaveBeenCalled();
   },

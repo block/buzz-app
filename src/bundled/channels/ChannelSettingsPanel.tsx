@@ -191,7 +191,11 @@ export function ChannelSettingsPanel({
                         }
                         valueClassName={styles.settingsDescription}
                         actionLabel={edit?.label}
-                        onOpen={edit?.open}
+                        onOpen={
+                          edit
+                            ? (trigger) => edit.open(trigger, "description")
+                            : undefined
+                        }
                       />
                       <SettingsDetail
                         label="Visibility"

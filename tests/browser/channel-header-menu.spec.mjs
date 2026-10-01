@@ -199,7 +199,10 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     await expect(
       label === "View members"
         ? dialog.getByRole("searchbox")
-        : dialog.getByRole("textbox", { name: "Name", exact: true }),
+        : dialog.getByRole("textbox", {
+            name: label === "Edit description" ? "Description" : "Name",
+            exact: true,
+          }),
     ).toBeFocused();
     if (label === "Edit description") {
       await dialog.getByRole("button", { name: "Cancel", exact: true }).click();

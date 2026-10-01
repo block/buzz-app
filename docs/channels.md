@@ -478,6 +478,7 @@ Description and Visibility have small pencils immediately after their labels,
 revealed with a short left-to-right fade on whole-row hover or keyboard focus
 (always visible on touch, no animation for reduced motion) without shifting layout;
 each whole row opens the shared Dialog with one Name/Description/Duration/Private draft.
+Opening Description focuses its textarea; the title and Visibility still focus Name.
 Only authorized editors get the interactive rows; other viewers retain plain metadata.
 Members has a right chevron and opens the existing member list. Channel ID has a
 small inline copy icon with the same hover/focus/touch behavior; selecting its row

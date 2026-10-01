@@ -31,7 +31,7 @@ import styles from "./Channels.module.css";
 
 export type ChannelDetailsAction = {
   label: string;
-  open(trigger: HTMLButtonElement): void;
+  open(trigger: HTMLButtonElement, field?: "name" | "description"): void;
 };
 
 /** The capability owns writes; this view owns only a destination-bound editable draft. */
@@ -60,6 +60,7 @@ export function ChannelDetailsEditor({
     skipWarning: false,
     loading: true,
     editing: false,
+    focusField: "name" as "name" | "description",
     confirmDiscard: false,
     pending: false,
     temporaryTtl: undefined as number | undefined,
@@ -79,6 +80,7 @@ export function ChannelDetailsEditor({
   const lifetime = useRef<AbortController | undefined>(undefined);
   const busy = useRef(false);
   const nameInput = useRef<HTMLInputElement>(null);
+  const descriptionInput = useRef<HTMLTextAreaElement>(null);
   const privacyCancel = useRef<HTMLButtonElement>(null);
   const keepEditing = useRef<HTMLButtonElement>(null);
   const confirmDiscard = view.confirmDiscard && !attempt;
@@ -192,10 +194,11 @@ export function ChannelDetailsEditor({
     canEdit &&
     dirty &&
     !Object.values(errors ?? {}).some(Boolean);
-  const edit = () => {
+  const edit = (focusField: "name" | "description" = "name") => {
     if (attempt || (!view.loading && canEdit))
       patch({
         editing: true,
+        focusField,
         confirmDiscard: false,
         draft: attempt?.draft ?? view.base,
         temporaryTtl: undefined,
@@ -302,7 +305,7 @@ export function ChannelDetailsEditor({
       {(canEdit || attempt) && (
         <Button
           ref={editButton}
-          onClick={edit}
+          onClick={() => edit()}
           loading={pending}
           disabled={pending}
         >
@@ -319,9 +322,9 @@ export function ChannelDetailsEditor({
             canEdit || attempt
               ? {
                   label: attempt ? "Review pending changes" : "Edit",
-                  open: (origin) => {
+                  open: (origin, field) => {
                     editButton.current = origin;
-                    edit();
+                    edit(field);
                   },
                 }
               : undefined,
@@ -363,7 +366,7 @@ export function ChannelDetailsEditor({
             : "Close edit channel details"
         }
         preventClose={pending}
-        initialFocus={attempt ? undefined : nameInput}
+        initialFocus={attempt ? undefined : view.focusField === "description" ? descriptionInput : nameInput}
         finalFocus={editButton}
         actions={
           confirmDiscard ? (
@@ -484,6 +487,7 @@ export function ChannelDetailsEditor({
                 />
                 <ChannelTextField
                   field="description"
+                  inputRef={descriptionInput}
                   value={draft.description}
                   error={errors?.description}
                   disabled={locked || !canEdit}

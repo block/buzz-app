@@ -7,7 +7,7 @@ is found. The Huddle window opens and receives focus by default once connected. 
 player stays visible beside search at the same time. Closing the window or using
 its minimize control keeps audio connected; the mini player can reopen and focus it. If opening fails, the mini player stays available to retry. No side panel opens
 and the header shows a green headphone/divider/chevron capsule only in the chat
-where your call is connected. Its headphone changes to a leave icon on hover or
+where your call is connected. While a connection is pending, the header button offers Cancel Huddle connection; canceling releases audio and ignores a late connection result. Its headphone changes to a leave icon on hover or
 keyboard focus, and clicking leaves the call. Elsewhere the neutral headphone
 focuses the existing player. Its Add someone menu opens the existing member
 picker for the Huddle's private room. Adding someone grants access to the room's

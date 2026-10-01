@@ -15,6 +15,52 @@ test.afterAll(async () => {
   await server?.close();
 });
 
+test("the header cancels a pending Huddle and ignores late connection events", async ({
+  page,
+}) => {
+  await page.goto(`${origin}/tests/fixtures/huddles.html?deferConnection`);
+  const header = page.getByRole("region", {
+    name: "Conversation",
+    exact: true,
+  });
+  await header
+    .getByRole("button", { name: /Start or join a huddle|Join active huddle/ })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => window.huddleFixture.stats.opens))
+    .toBe(1);
+  await header
+    .getByRole("button", { name: "Cancel Huddle connection" })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => window.huddleFixture.stats.audioClosed))
+    .toBe(1);
+  await expect
+    .poll(() => page.evaluate(() => window.huddleFixture.stats.closes))
+    .toBe(1);
+  await expect(
+    header.getByRole("button", { name: "Start or join a huddle" }),
+  ).toBeVisible();
+  await page.evaluate(() => window.huddleFixture.connect());
+  await expect(
+    page.getByRole("group", { name: "Active Huddle", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("complementary", { name: "Huddle window preview" }),
+  ).toHaveCount(0);
+  await expect(
+    header.getByRole("button", { name: "Start or join a huddle" }),
+  ).toBeVisible();
+  await header.getByRole("button", { name: "Start or join a huddle" }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.huddleFixture.stats.opens))
+    .toBe(2);
+  await page.evaluate(() => window.huddleFixture.connect());
+  await expect(
+    page.getByRole("group", { name: "Active Huddle", exact: true }),
+  ).toBeVisible();
+});
+
 test("connected Huddles keep compact controls beside the default window", async ({
   page,
 }) => {

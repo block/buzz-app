@@ -49,11 +49,14 @@ export function HuddleLauncher(props: Props) {
     return <ActiveHuddle key={call.id} {...props} callId={call.id} />;
   const joinable =
     !active && incoming && huddles.canJoin(context.scope, incoming.id);
-  const label = active
-    ? "Show active Huddle"
-    : joinable
-      ? `Join active huddle (${incoming.participants} ${incoming.participants === 1 ? "participant" : "participants"})`
-      : "Start or join a huddle";
+  const label =
+    call.phase === "connecting"
+      ? "Cancel Huddle connection"
+      : active
+        ? "Show active Huddle"
+        : joinable
+          ? `Join active huddle (${incoming.participants} ${incoming.participants === 1 ? "participant" : "participants"})`
+          : "Start or join a huddle";
   return (
     <span className={joinable ? styles.activeLauncher : undefined}>
       <IconButton
@@ -65,7 +68,8 @@ export function HuddleLauncher(props: Props) {
         title={label}
         onClick={() => {
           if (!available()) return;
-          if (active) {
+          if (call.phase === "connecting") void huddles.leave();
+          else if (active) {
             if (document.getElementById("huddle-capsule")) focusPlayer();
             else void props.showWindow().catch(() => {});
           } else if (joinable) void huddles.join(context, incoming.id);

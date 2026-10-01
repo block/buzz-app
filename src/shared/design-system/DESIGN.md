@@ -522,7 +522,9 @@ Use a finite timeout for transient feedback. Recovery defaults to no expiry and
 no dismissal unless the source supplies onDismiss; preserve all recovery actions.
 The bounded, scrollable stack keeps older actions available without covering the
 shell header or composer. F6 enters notifications, Tab reaches actions. Modals
-remain above the stack. Content updates do not restart expiry; timeout changes do.
+remain above the stack: F6 leaves modal focus intact while live notifications
+remain announced. Closing the modal restores access to the same recovery actions.
+Content updates do not restart expiry; timeout changes do.
 
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
 Route navigation uses NavigationItem with aria-current instead. Tabs can also

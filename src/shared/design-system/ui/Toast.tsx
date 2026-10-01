@@ -1,6 +1,13 @@
 import { Toast as BaseToast } from "@base-ui/react/toast";
-import { useEffect, useEffectEvent, useId, type ReactNode } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useId,
+  useRef,
+  type ReactNode,
+} from "react";
 import { XIcon } from "../icons";
+import { behindActiveModal } from "../modalLayer";
 import { IconButton } from "./IconButton";
 
 type NoticeData = {
@@ -21,9 +28,29 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 function ToastViewport() {
   const { toasts } = BaseToast.useToastManager<NoticeData>();
+  const viewport = useRef<HTMLDivElement>(null);
+  const hasToasts = toasts.length > 0;
+  useEffect(() => {
+    if (!hasToasts) return;
+    // Base UI keeps live regions available during modals, but its global F6
+    // shortcut must not focus recovery controls behind the modal backdrop.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key === "F6" &&
+        viewport.current &&
+        behindActiveModal(viewport.current)
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [hasToasts]);
   return (
     <BaseToast.Portal>
       <BaseToast.Viewport
+        ref={viewport}
         data-buzz-ui=""
         className="buzz-toast-viewport"
         aria-label="App notifications"

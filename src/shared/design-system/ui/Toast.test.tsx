@@ -12,6 +12,7 @@ import {
 import { afterEach, expect, it, vi } from "vitest";
 import { ToastNotice, ToastProvider } from "./Toast";
 import { Button } from "./Button";
+import { Dialog } from "./Dialog";
 
 afterEach(() => {
   cleanup();
@@ -71,6 +72,69 @@ it("keeps all unresolved recovery controls accessible, including after Escape an
   fireEvent.pointerUp(oldest, { pointerId: 1, clientX: 400, clientY: 10 });
   expect(oldest).not.toHaveAttribute("data-ending-style");
   expect(screen.getAllByRole("button", { name: /Retry/ })).toHaveLength(5);
+});
+
+it("keeps F6 inside a modal, restores notification access after close, and cleans up its guard", async () => {
+  const added = vi.spyOn(document, "addEventListener");
+  const removed = vi.spyOn(document, "removeEventListener");
+  const content = (open: boolean, notice = true) => (
+    <StrictMode>
+      <ToastProvider>
+        {notice && (
+          <ToastNotice title="Save failed">
+            <Button>Retry</Button>
+          </ToastNotice>
+        )}
+        <Dialog
+          open={open}
+          onOpenChange={() => {}}
+          title="Editor"
+          motion="none"
+        >
+          Unsaved changes
+        </Dialog>
+      </ToastProvider>
+    </StrictMode>
+  );
+  const view = render(content(true));
+  const close = screen.getByRole("button", { name: "Close" });
+  await waitFor(() => expect(close).toHaveFocus());
+  const region = screen.getByRole("region", { name: "App notifications" });
+  expect(region).toHaveAttribute("aria-live", "polite");
+  for (const shiftKey of [false, true]) {
+    expect(fireEvent.keyDown(close, { key: "F6", shiftKey })).toBe(false);
+    expect(close).toHaveFocus();
+  }
+  view.rerender(content(false));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Editor" }),
+    ).not.toBeInTheDocument(),
+  );
+  fireEvent.keyDown(document.body, { key: "F6" });
+  expect(region).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+
+  // An empty stack must not claim F6, even while a modal remains open.
+  view.rerender(content(true, false));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Retry" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(
+    fireEvent.keyDown(screen.getByRole("button", { name: "Close" }), {
+      key: "F6",
+    }),
+  ).toBe(true);
+  view.rerender(content(true));
+  const guard = added.mock.calls
+    .filter(([type, , options]) => type === "keydown" && options === true)
+    .at(-1);
+  expect(guard).toBeDefined();
+  view.unmount();
+  expect(removed.mock.calls).toContainEqual(guard);
+  expect(fireEvent.keyDown(document.body, { key: "F6" })).toBe(true);
 });
 
 it("explicit dismissal calls the source once", async () => {

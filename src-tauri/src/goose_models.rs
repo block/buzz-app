@@ -556,12 +556,14 @@ mod tests {
             } else {
                 json!({"sessionCapabilities":{"delete":{}}})
             };
+            if case == "no-delete" {
+                // Signal before the terminal response: the parent can kill us
+                // immediately after reading it. Do not assert anything afterward.
+                gate.write_all(b"I").unwrap();
+                gate.read_exact(&mut [0]).unwrap();
+            }
             writeln!(output, "{}", json!({"jsonrpc":"2.0","id":initialize["id"],"result":{"protocolVersion":1,"agentCapabilities":capabilities}})).unwrap();
             if case == "no-delete" {
-                gate.write_all(b"I").unwrap();
-                // The parent must return without creating a session.
-                let mut line = String::new();
-                assert_eq!(input.read_line(&mut line).unwrap(), 0);
                 return;
             }
             let new = request();
@@ -651,18 +653,17 @@ mod tests {
             }
             assert_eq!(next["method"], "session/delete");
             assert_eq!(next["params"]["sessionId"], "test-session");
-            if case == "cleanup-error" {
-                writeln!(output, "{}", json!({"jsonrpc":"2.0","id":next["id"],"error":{"code":-32603,"message":"DO_NOT_PROJECT_SECRET"}})).unwrap();
+            let deleted = if case == "cleanup-error" {
+                json!({"jsonrpc":"2.0","id":next["id"],"error":{"code":-32603,"message":"DO_NOT_PROJECT_SECRET"}})
             } else {
                 std::fs::remove_file(session_file).unwrap();
-                writeln!(
-                    output,
-                    "{}",
-                    json!({"jsonrpc":"2.0","id":next["id"],"result":{}})
-                )
-                .unwrap();
-            }
+                json!({"jsonrpc":"2.0","id":next["id"],"result":{}})
+            };
+            // Keep the child alive until the parent observes cleanup, including
+            // cancellation paths whose background guard owns the final response.
             gate.write_all(b"D").unwrap();
+            gate.read_exact(&mut [0]).unwrap();
+            writeln!(output, "{deleted}").unwrap();
             return;
         }
         let dir = tempfile::Builder::new()
@@ -718,9 +719,16 @@ exec "$BUZZ_GOOSE_TEST_EXE" --exact goose_models::tests::acp_connection_test_che
                 .unwrap()
                 .0;
             let mut stage = [0];
-            gate.read_exact(&mut stage).await.unwrap();
+            gate.read_exact(&mut stage)
+                .await
+                .unwrap_or_else(|error| panic!("{case}: initial stage: {error}"));
             if case == "no-delete" {
-                assert_eq!(stage, *b"I");
+                assert_eq!(stage, *b"I", "{case}");
+                assert!(
+                    !task.is_finished(),
+                    "{case}: returned before initialize response"
+                );
+                gate.write_all(&[1]).await.unwrap();
                 assert!(task
                     .await
                     .unwrap()
@@ -729,15 +737,17 @@ exec "$BUZZ_GOOSE_TEST_EXE" --exact goose_models::tests::acp_connection_test_che
                 assert!(!dir.path().join("session").exists());
                 continue;
             }
-            assert_eq!(stage, *b"C");
+            assert_eq!(stage, *b"C", "{case}");
             assert!(dir.path().join("session").exists());
             if case == "cancel-new" {
                 task.abort();
             }
             gate.write_all(&[1]).await.unwrap();
             if case != "cancel-new" {
-                gate.read_exact(&mut stage).await.unwrap();
-                assert_eq!(stage, *b"P");
+                gate.read_exact(&mut stage)
+                    .await
+                    .unwrap_or_else(|error| panic!("{case}: prompt stage: {error}"));
+                assert_eq!(stage, *b"P", "{case}");
                 if case == "cancel-prompt" {
                     task.abort();
                 }
@@ -750,9 +760,16 @@ exec "$BUZZ_GOOSE_TEST_EXE" --exact goose_models::tests::acp_connection_test_che
             }
             tokio::time::timeout(Duration::from_secs(10), gate.read_exact(&mut stage))
                 .await
-                .unwrap()
-                .unwrap();
+                .unwrap_or_else(|error| panic!("{case}: cleanup stage timed out: {error}"))
+                .unwrap_or_else(|error| panic!("{case}: cleanup stage: {error}"));
             assert_eq!(stage, *b"D", "{case}");
+            if !case.starts_with("cancel-") {
+                assert!(
+                    !task.is_finished(),
+                    "{case}: returned before cleanup response"
+                );
+            }
+            gate.write_all(&[1]).await.unwrap();
             let result = task.await;
             if case.starts_with("cancel-") {
                 assert!(result.unwrap_err().is_cancelled());

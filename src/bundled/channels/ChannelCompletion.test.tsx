@@ -269,7 +269,8 @@ it.each([true, false])(
       />,
     );
     const link = screen.getByRole("link", { name: `#${name}` });
-    expect(link.textContent).toBe(`#${name}`);
+    // The channel icon supplies the visible hash; the label must not repeat it.
+    expect(link.textContent).toBe(name);
     expect(link.getAttribute("href")).toBe("buzz://channel/stable");
     expect(screen.getAllByRole("link")).toHaveLength(1);
     fireEvent.click(link);

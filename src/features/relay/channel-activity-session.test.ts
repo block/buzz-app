@@ -86,6 +86,29 @@ it("uses the shared sidebar response for Recent, with no sort-owned reads or liv
   const snapshot = h.session.channels.list();
   expect(h.session.channels.list()).toBe(snapshot);
 });
+it("keeps other channels' summaries when one channel's live activity advances", async () => {
+  const h = setup();
+  const other = "11234567-89ab-cdef-0123-456789abcdef";
+  h.live.receive([
+    roster(h.relay, other, [h.viewer.pubkey]),
+    metadata(h.relay, other, "Other"),
+  ]);
+  h.bff.rows.set(channel, h.row(50));
+  h.bff.rows.set(other, sidebarRow(other, { latest_message_at: 60 }));
+  await h.session.unread.ensure();
+  const find = (id: string) =>
+    h.session.channels.list().channels.find((entry) => entry.id === id);
+  const first = find(channel);
+  const second = find(other);
+  expect(second?.lastActivityAt).toBe(60);
+  h.live.receive([message(keypair(), channel, "live", 90)], {
+    phase: "live",
+    channelId: channel,
+  });
+  expect(find(channel)).not.toBe(first);
+  expect(find(channel)?.lastActivityAt).toBe(90);
+  expect(find(other)).toBe(second);
+});
 it("keeps last server activity on failure, exposes error and recovers by explicit refresh", async () => {
   const h = setup();
   h.bff.rows.set(channel, h.row(50));

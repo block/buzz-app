@@ -422,41 +422,52 @@ test("enlarged media review reflows comments and keeps playback controls reachab
     .poll(() => stage.evaluate((el) => el.getBoundingClientRect().width))
     .toBeGreaterThan(700);
   const speed = review.getByRole("button", { name: "Playback speed: 1x" });
-  const mute = review.getByRole("button", { name: /^(Unmute|Mute) video$/ });
+  const volumeTrigger = review.getByRole("button", {
+    name: "Video volume",
+    exact: true,
+  });
   const reaction = review.getByRole("button", {
     name: "React 😂 at current frame",
     exact: true,
   });
+  const mute = page
+    .getByRole("dialog", { name: "Video volume controls", exact: true })
+    .getByRole("button", { name: /^(Unmute|Mute) video$/ });
+  const expectReachable = async (control) => {
+    await expect(control).toBeInViewport();
+    await expect
+      .poll(() =>
+        control.evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          return (
+            r.left >= 0 &&
+            r.right <= innerWidth &&
+            el.contains(
+              document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2),
+            )
+          );
+        }),
+      )
+      .toBe(true);
+  };
   for (const width of [1024, 800]) {
     await page.setViewportSize({ width, height: 768 });
     await stage.hover({ position: { x: 8, y: 8 } });
     for (const control of [
       speed,
-      mute,
+      volumeTrigger,
       reaction,
       review.getByRole("slider", { name: "Video timeline", exact: true }),
     ]) {
-      await expect(control).toBeInViewport();
-      await expect
-        .poll(() =>
-          control.evaluate((el) => {
-            const r = el.getBoundingClientRect();
-            return (
-              r.left >= 0 &&
-              r.right <= innerWidth &&
-              el.contains(
-                document.elementFromPoint(
-                  r.x + r.width / 2,
-                  r.y + r.height / 2,
-                ),
-              )
-            );
-          }),
-        )
-        .toBe(true);
+      await expectReachable(control);
     }
+    await volumeTrigger.hover();
+    await expectReachable(mute);
+    await mute.press("Escape");
+    await expect(mute).toBeHidden();
   }
-  await mute.hover();
+  await stage.hover({ position: { x: 8, y: 8 } });
+  await volumeTrigger.hover();
   const volume = page.getByRole("slider", {
     name: "Video volume",
     exact: true,
@@ -468,6 +479,9 @@ test("enlarged media review reflows comments and keeps playback controls reachab
   await expect(video).toHaveJSProperty("playbackRate", 2);
   const wasMuted = await video.evaluate((el) => el.muted);
   await stage.hover({ position: { x: 8, y: 8 } });
+  await volumeTrigger.hover();
+  await expectReachable(mute);
+  await expect(video).toHaveJSProperty("muted", wasMuted);
   await mute.click();
   await expect(video).toHaveJSProperty("muted", !wasMuted);
   await reaction.click();

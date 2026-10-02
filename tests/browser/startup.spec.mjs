@@ -330,9 +330,18 @@ for (const theme of ["light", "dark"]) {
         "filter",
         theme === "dark" ? "invert(1)" : "none",
       );
-      const mark = await launch
-        .getByRole("img", { name: "Buzz" })
-        .boundingBox();
+      const image = launch.getByRole("img", { name: "Buzz" });
+      const displayedAsset = () =>
+        image.evaluate((element) =>
+          element.currentSrc ? new URL(element.currentSrc).pathname : "",
+        );
+      await expect(image).toHaveAttribute("src", "/buzz-loading-mark.svg");
+      await expect.poll(displayedAsset).toBe("/buzz-loading-mark.svg");
+      await expect(launch).toHaveAttribute("data-started-at", /^\d+(\.\d+)?$/);
+      await expect(
+        launch.locator('source[media="(prefers-reduced-motion: reduce)"]'),
+      ).toHaveAttribute("srcset", "/buzz-mark.svg");
+      const mark = await image.boundingBox();
       const viewport = page.viewportSize();
       expect(
         Math.abs(mark.x + mark.width / 2 - viewport.width / 2),
@@ -340,6 +349,8 @@ for (const theme of ["light", "dark"]) {
       expect(
         Math.abs(mark.y + mark.height / 2 - viewport.height / 2),
       ).toBeLessThan(1);
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await expect.poll(displayedAsset).toBe("/buzz-mark.svg");
     } finally {
       gate.release();
     }
@@ -348,6 +359,57 @@ for (const theme of ["light", "dark"]) {
     ).toHaveCount(0);
   });
 }
+
+test("launch waits for the initial sidebar and message history before revealing the workspace", async ({
+  page,
+  app,
+}) => {
+  await page.clock.install();
+  app.relay.holdUnread();
+  const head = held();
+  let requested = false;
+  await page.route("**/api/relay/**/query", async (route) => {
+    if (
+      route
+        .request()
+        .postDataJSON()
+        .some((filter) => filter.top_level && filter["#h"]?.includes("alpha"))
+    ) {
+      requested = true;
+      await head.promise;
+    }
+    await route.continue().catch(() => {});
+  });
+  try {
+    await page.goto(app.origin, { waitUntil: "domcontentloaded" });
+    const launch = page.getByRole("status", { name: "Opening Buzz" });
+    await expect(launch).toBeVisible();
+    await expect(
+      page.locator('[aria-label="Channel sidebar"][data-buzz-launch-pending]'),
+    ).toBeAttached();
+    await page.clock.runFor(1900);
+    await expect(launch).toBeVisible();
+
+    app.relay.releaseUnread();
+    await expect.poll(() => requested).toBe(true);
+    await expect(
+      page.locator('[aria-label="Channel sidebar"][data-buzz-launch-pending]'),
+    ).toHaveCount(0);
+    await expect(page.locator("[data-buzz-launch-pending]")).toBeAttached();
+    await page.clock.runFor(1900);
+    await expect(launch).toBeVisible();
+
+    head.release();
+    await expect(
+      page.getByRole("region", { name: "Channel message history" }),
+    ).toContainText("primary alpha message 0");
+    await expect(page.locator("[data-buzz-launch-pending]")).toHaveCount(0);
+    await expect(launch).toHaveCount(0);
+  } finally {
+    app.relay.releaseUnread();
+    head.release();
+  }
+});
 
 test.describe("personal sidebar startup", () => {
   test.use({ personalSidebar: true });

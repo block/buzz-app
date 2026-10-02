@@ -108,7 +108,13 @@ export function ChannelSidebar(props: Props) {
         />
       ) : (
         <div className="shell-sidebar-default">
-          <Panel as="aside" aria-label="Channel sidebar">
+          <Panel
+            as="aside"
+            aria-label="Channel sidebar"
+            data-buzz-launch-pending={
+              connection.status === "connecting" ? "" : undefined
+            }
+          >
             <div className={styles.sidebar}>
               <div className={styles.sidebarScroll}>
                 {navigation}
@@ -982,6 +988,16 @@ function ReadySidebar({
         <Panel
           as="aside"
           aria-label="Channel sidebar"
+          data-buzz-launch-pending={
+            (cached ||
+              !startup.ready ||
+              startup.updating ||
+              list.status === "idle" ||
+              list.status === "loading") &&
+            !connectionError
+              ? ""
+              : undefined
+          }
           aria-busy={
             preferences.status === "loading" || startup.updating || undefined
           }

@@ -41,6 +41,9 @@ import {
   BellIcon,
   BellSlashIcon,
   FolderSimpleIcon,
+  GitBranchIcon,
+  MinusIcon,
+  PlusIcon,
 } from "../../shared/design-system/icons";
 import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
 import { useOptimisticMute } from "../../bundled/channels/useOptimisticMute";
@@ -105,7 +108,13 @@ export function ChannelSidebar(props: Props) {
         />
       ) : (
         <div className="shell-sidebar-default">
-          <Panel as="aside" aria-label="Channel sidebar">
+          <Panel
+            as="aside"
+            aria-label="Channel sidebar"
+            data-buzz-launch-pending={
+              connection.status === "connecting" ? "required" : undefined
+            }
+          >
             <div className={styles.sidebar}>
               <div className={styles.sidebarScroll}>
                 {navigation}
@@ -628,6 +637,9 @@ function ReadySidebar({
             startSession(channel.id);
           }}
         >
+          <MenuIcon>
+            <GitBranchIcon size={14} />
+          </MenuIcon>
           New session
         </MenuItem>,
       );
@@ -689,11 +701,13 @@ function ReadySidebar({
                   value={`group:${group.id}`}
                   closeOnClick={false}
                 >
-                  {group.icon && (
-                    <MenuIcon>
+                  <MenuIcon>
+                    {group.icon ? (
                       <SidebarGroupIcon icon={group.icon} session={queries} />
-                    </MenuIcon>
-                  )}
+                    ) : (
+                      <FolderSimpleIcon size={14} />
+                    )}
+                  </MenuIcon>
                   {group.name}
                 </MenuRadioItem>
               ))}
@@ -704,7 +718,10 @@ function ReadySidebar({
                 pendingCreate.current = channel;
               }}
             >
-              <MenuIcon>＋</MenuIcon>Create new…
+              <MenuIcon>
+                <PlusIcon size={14} />
+              </MenuIcon>
+              Create new…
             </MenuItem>
             {(starred || currentSectionId) && (
               <MenuItem
@@ -714,6 +731,9 @@ function ReadySidebar({
                   else void assignGroup(channel.id);
                 }}
               >
+                <MenuIcon>
+                  <MinusIcon size={14} />
+                </MenuIcon>
                 Remove from{" "}
                 {sections.find((section) => section.key === sectionKey)?.title}
               </MenuItem>
@@ -796,6 +816,9 @@ function ReadySidebar({
             hiddenDms.hide(channel.id);
           }}
         >
+          <MenuIcon>
+            <MinusIcon size={14} />
+          </MenuIcon>
           Remove from Messages
         </MenuItem>,
       );
@@ -895,13 +918,25 @@ function ReadySidebar({
           lifecycle={lifecycle}
           close={() => {
             lifecycleFocus.current = lifecycleDialog.channel.id;
-            lifecycleTrigger.current = lifecycleDialog.trigger;
+            lifecycleTrigger.current = lifecycleDialog.trigger?.isConnected
+              ? lifecycleDialog.trigger
+              : lifecycleDialog.focusFallback;
             handoff?.closeLifecycle();
           }}
           completed={() => {
             const id = lifecycleDialog.channel.id;
             lifecycleFocus.current = id;
             handoff?.closeLifecycle();
+            // Archive changes visibility, not access or the current destination.
+            if (
+              lifecycleDialog.action === "archive" ||
+              lifecycleDialog.action === "unarchive"
+            ) {
+              lifecycleTrigger.current = lifecycleDialog.trigger?.isConnected
+                ? lifecycleDialog.trigger
+                : lifecycleDialog.focusFallback;
+              return;
+            }
             // Confirmed access loss can already have removed current from the roster.
             if (
               (target.kind === "conversation"
@@ -953,6 +988,17 @@ function ReadySidebar({
         <Panel
           as="aside"
           aria-label="Channel sidebar"
+          data-buzz-launch-pending={
+            connectionError
+              ? undefined
+              : !startup.ready ||
+                  (!cached &&
+                    (list.status === "idle" || list.status === "loading"))
+                ? "required"
+                : cached || startup.updating
+                  ? "settling"
+                  : undefined
+          }
           aria-busy={
             preferences.status === "loading" || startup.updating || undefined
           }

@@ -5,12 +5,18 @@ import {
   MenuTrigger,
   MenuPopup,
   MenuItem,
+  MenuIcon,
   MenuNote,
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
-import { DotsThreeIcon } from "../../shared/design-system/icons/index";
+import {
+  CopyIcon,
+  DotsThreeIcon,
+  PencilSimpleIcon,
+  TrashIcon,
+} from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { AgentAvatar } from "../../features/agents/AgentAvatar";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -31,6 +37,7 @@ export function AgentCard({
   avatar,
   identities,
   session,
+  media,
   editable = [],
   onEdit,
   onDuplicate,
@@ -48,6 +55,7 @@ export function AgentCard({
   avatar?: string | undefined;
   identities: AgentLibrary["identities"];
   session?: RelaySession;
+  media?: RelaySession["media"] | undefined;
   editable?: AgentView[];
   onEdit?: ((agent: AgentView, avatar?: string) => void) | undefined;
   onDuplicate?: ((agent: AgentView) => void) | undefined;
@@ -95,7 +103,7 @@ export function AgentCard({
       : source?.startsWith("data:")
         ? source
         : source
-          ? session?.media(source, "small")
+          ? (media ?? session?.media)?.(source, "small")
           : undefined;
   return (
     <article
@@ -126,6 +134,9 @@ export function AgentCard({
                         onEdit(agent, source);
                       }}
                     >
+                      <MenuIcon>
+                        <PencilSimpleIcon size={14} />
+                      </MenuIcon>
                       {editable.length === 1 ? (
                         "Edit"
                       ) : (
@@ -151,6 +162,9 @@ export function AgentCard({
                           onDuplicate(agent);
                         }}
                       >
+                        <MenuIcon>
+                          <CopyIcon size={14} />
+                        </MenuIcon>
                         {editable.length === 1
                           ? "Duplicate"
                           : `Duplicate ${identityLabel(agent)}`}
@@ -166,6 +180,9 @@ export function AgentCard({
                             onDelete(agent);
                           }}
                         >
+                          <MenuIcon>
+                            <TrashIcon size={14} />
+                          </MenuIcon>
                           {editable.length === 1
                             ? "Delete"
                             : `Delete ${identityLabel(agent)}`}
@@ -176,7 +193,12 @@ export function AgentCard({
                 ))
               ) : (
                 <>
-                  <MenuItem disabled>Edit</MenuItem>
+                  <MenuItem disabled>
+                    <MenuIcon>
+                      <PencilSimpleIcon size={14} />
+                    </MenuIcon>
+                    Edit
+                  </MenuItem>
                   <MenuNote>
                     {identities.length
                       ? "Import this identity to edit in Foundation."

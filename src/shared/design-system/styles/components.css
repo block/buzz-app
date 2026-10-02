@@ -1,6 +1,11 @@
 @import "./composer.css" layer(components);
 
 @layer components {
+  /* Optical alignment: lift Robot face artwork without moving its layout box. */
+  .tabler-icon-robot-face {
+    translate: 0 -1px;
+  }
+
   .buzz-button {
     position: relative;
     display: inline-flex;
@@ -512,11 +517,23 @@
   .buzz-tabs-item {
     display: contents;
   }
+  /* Match header artwork without changing compact tab-close hit areas. */
+  .buzz-tabs-item > .buzz-button[data-icon-size="xs"] .buzz-button-label svg {
+    width: var(--space-4);
+    height: var(--space-4);
+  }
   .buzz-tabs-item[data-closable] {
     display: inline-flex;
     gap: var(--space-1);
     align-items: center;
     flex-shrink: 0;
+  }
+  @media (hover: hover) {
+    .buzz-tabs-item:not(:hover, :focus-within)
+      > [role="tab"][aria-selected="false"]
+      + .buzz-button {
+      opacity: 0;
+    }
   }
   .buzz-tabs-list {
     position: relative;
@@ -911,11 +928,13 @@
   }
   .buzz-tabs[data-variant="navigation"] .buzz-tabs-list {
     min-width: 0;
+    height: var(--size-panel-header);
+    align-items: flex-start;
     overflow-x: auto;
+    overflow-y: hidden;
     gap: var(--space-1);
-    padding-block: 0;
-    scrollbar-width: thin;
-    scrollbar-color: var(--scrollbar-thumb) transparent;
+    /* The scrollbar uses the bottom inset without moving the tab row. */
+    padding-block: var(--space-1) 0;
   }
   .buzz-tabs[data-variant="navigation"] .buzz-tabs-item {
     display: flex;
@@ -947,6 +966,21 @@
     top: 50%;
     translate: 0 -50%;
   }
+  .panel-header-label {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-row-gap);
+    padding-inline: var(--space-2);
+    @apply text-body-sm;
+  }
+  .panel-header-label > h2 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font: inherit;
+  }
+  .panel-header-label-icon,
   .buzz-tabs-icon {
     display: inline-flex;
     flex: 0 0 1rem;

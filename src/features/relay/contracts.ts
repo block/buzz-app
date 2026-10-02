@@ -116,6 +116,9 @@ export type ChannelMessage = Readonly<{
   threadRootId?: string | undefined;
   /** Immediate signed reply target; separate from the canonical thread root. */
   replyParentId?: string | undefined;
+  sentFromThread?:
+    | Readonly<{ rootId: string; excerpt?: string | undefined }>
+    | undefined;
   /** Relay-signed whole-thread reply total (including nested replies).
    * Falls back to direct replies when the summary lacks a valid descendant total. */
   replyCount: number;

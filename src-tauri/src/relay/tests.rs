@@ -440,6 +440,51 @@ fn isolated_agent_ipc_probe() {
     .contains("Invalid workflow read"));
 }
 
+#[test]
+fn managed_agent_registration_signs_as_owner_through_existing_ipc() {
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+        .build()
+        .unwrap();
+    let invoke = |cmd: &str, body: serde_json::Value| {
+        get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: cmd.into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(body),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.into(),
+            },
+        )
+        .map(|body| body.deserialize::<serde_json::Value>().unwrap())
+    };
+    let public = invoke("identity_restore", serde_json::json!({})).unwrap();
+    let registration = serde_json::json!({
+        "kind": 30177, "created_at": 123, "tags": [["d", "02".repeat(32)]],
+        "content": r#"{"name":"Remote agent","parallelism":1,"respond_to":"owner-only"}"#
+    });
+    let registered = invoke(
+        "relay_sign",
+        serde_json::json!({
+            "community": "https://relay.test", "event": registration
+        }),
+    )
+    .unwrap();
+    assert_eq!(registered["pubkey"], public);
+    for field in ["kind", "created_at", "tags", "content"] {
+        assert_eq!(registered[field], registration[field]);
+    }
+    verify(&registered);
+}
+
 #[tokio::test]
 async fn signing_is_verifiable_and_does_not_export_a_key() {
     let event = IdentityHost::fixture()
@@ -665,7 +710,7 @@ fn native_write_commands_reach_handlers_through_production_ipc() {
 }
 
 #[test]
-fn channel_commands_reject_malformed_tags_through_ipc() {
+fn channel_commands_sign_archive_and_unarchive_and_reject_malformed_tags_through_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
@@ -694,11 +739,19 @@ fn channel_commands_reject_malformed_tags_through_ipc() {
     };
     let h = vec!["h".into(), uuid::Uuid::nil().to_string()];
     let archived = vec!["archived".into(), "true".into()];
-    assert!(invoke(vec![h.clone(), archived.clone()]).is_ok());
+    for value in ["true", "false"] {
+        let tags = vec![h.clone(), vec!["archived".into(), value.into()]];
+        let event: serde_json::Value = invoke(tags.clone()).unwrap().deserialize().unwrap();
+        verify(&event);
+        assert_eq!(event["tags"], serde_json::json!(tags));
+        assert_eq!(event["kind"], 9002);
+        assert_eq!(event["content"], "");
+    }
     for tags in [
         vec![vec![], archived.clone()],
         vec![vec!["h".into()], archived.clone()],
         vec![h.clone(), vec!["archived".into()]],
+        vec![h.clone(), vec!["archived".into(), "invalid".into()]],
         vec![h.clone(), h.clone()],
         vec![archived.clone(), h.clone()],
     ] {

@@ -122,6 +122,7 @@ export type ChannelTimelineProps = {
   /** A parent keyed by connection generation can preserve its timeline on cache promotion. */
   continuityKey?: string | undefined;
   window: ChannelWindow;
+  launchPending?: boolean | undefined;
   onOpenLink(url: string): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
@@ -159,6 +160,7 @@ function Timeline({
   viewer,
   queries,
   window,
+  launchPending,
   onOpenLink,
   canOpenLink,
   revealMessageId,
@@ -212,7 +214,7 @@ function Timeline({
     ids: ReadonlySet<string>;
   }>({ ids: new Set() });
   const intent = useRef(0);
-  const upwardGesture = useRef(false);
+  const upwardGesture = useRef<false | "candidate" | "moving">(false);
   const gestureFrame = useRef<number | undefined>(undefined);
   const touchY = useRef<number | undefined>(undefined);
   const measuredPosition = useRef<{
@@ -284,6 +286,10 @@ function Timeline({
             element.clientHeight === previous.viewport &&
             element.scrollHeight >= previous.height)) &&
         element.scrollTop < previous.offset;
+      // One smooth key scroll or scrollbar drag can cross several frames.
+      // Keep observed upward movement until scrollend or a newer intent, even
+      // when its first event has not left the near-bottom threshold yet.
+      if (movedUp) upwardGesture.current = "moving";
       if (follow.current && !movedUp && (previous || !userScrolled.current))
         position.bottom = true;
       // Restoration can scroll before Virtua measures rows beneath the anchor,
@@ -629,7 +635,7 @@ function Timeline({
     intent.current++;
     userScrolled.current = true;
     if (scroller.current) recordPosition(scroller.current);
-    upwardGesture.current = upward;
+    upwardGesture.current = upward ? "candidate" : false;
     if (gestureFrame.current !== undefined)
       cancelAnimationFrame(gestureFrame.current);
     gestureFrame.current = undefined;
@@ -642,7 +648,8 @@ function Timeline({
         // even when the browser has not delivered its scroll event yet.
         if (upwardGesture.current && scroller.current)
           recordPosition(scroller.current);
-        upwardGesture.current = false;
+        if (upwardGesture.current === "candidate")
+          upwardGesture.current = false;
       });
     // At a restored top edge, input cannot move the DOM and emits no scroll.
     if (scroller.current && scroller.current.scrollTop <= 0)
@@ -654,6 +661,7 @@ function Timeline({
       data-message-scroller
       className={styles.feed}
       data-channel-timeline={channelId}
+      data-buzz-launch-pending={launchPending ? "settling" : undefined}
       onWheel={(event) => gesture(event.deltaY < 0 && !event.ctrlKey)}
       onTouchStart={(event) => {
         touchY.current = event.touches[0]?.clientY;

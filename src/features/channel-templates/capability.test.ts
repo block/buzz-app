@@ -607,3 +607,116 @@ it("retains an uncertain Canvas after lost ACK and CAS-refused exact retry, bloc
     f.controller.abort();
   }
 });
+
+it("pages retained Canvas history across equal timestamps without changing the strong head contract", async () => {
+  const f = fixture();
+  for (let i = 0; i < 52; i++)
+    f.events.push(
+      signed(viewer, {
+        kind: 40100,
+        tags: [["h", channel]],
+        content: i === 0 ? "" : `Revision ${i}`,
+        created_at: 1700000000 - Math.floor(i / 30),
+      }),
+    );
+  vi.mocked(f.reader.read).mockImplementation(async (filters) =>
+    filters.flatMap((filter) =>
+      f.events
+        .filter((event) => matchesEvent(event, filter))
+        .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
+        .slice(0, filter.limit),
+    ),
+  );
+  const first = await f.canvas.history(channel);
+  const second = await f.canvas.history(channel, first.next);
+  const third = await f.canvas.history(channel, second.next);
+  expect([
+    first.revisions.length,
+    second.revisions.length,
+    third.revisions.length,
+  ]).toEqual([25, 25, 2]);
+  const revisions = [
+    ...first.revisions,
+    ...second.revisions,
+    ...third.revisions,
+  ];
+  expect(new Set(revisions.map((row) => row.id)).size).toBe(52);
+  expect(revisions).toEqual(
+    [...f.events].sort(
+      (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+    ),
+  );
+  expect(revisions.some((row) => row.content === "")).toBe(true);
+  expect(third.next).toBeUndefined();
+  expect(f.reader.read).toHaveBeenNthCalledWith(
+    1,
+    [{ kinds: [40100], "#h": [channel], limit: 25, consistency: "strong" }],
+    { signal: f.controller.signal, fresh: true },
+  );
+  expect(f.reader.read).toHaveBeenNthCalledWith(
+    2,
+    [
+      {
+        kinds: [40100],
+        "#h": [channel],
+        limit: 25,
+        until: first.revisions[24]?.created_at,
+        before_id: first.revisions[24]?.id,
+      },
+    ],
+    { signal: f.controller.signal, fresh: true },
+  );
+  expect(await f.canvas.read(channel)).toEqual(first.revisions[0]);
+  expect(f.outbox.send).not.toHaveBeenCalled();
+});
+it.each(["wrong kind", "wrong channel", "repeated cursor", "newer timestamp"])(
+  "rejects %s history rows without exposing them",
+  async (problem) => {
+    const f = fixture();
+    const row = signed(viewer, {
+      kind: 40100,
+      tags: [["h", channel]],
+      content: "Private",
+      created_at: 1700000000,
+    });
+    const cursor = { until: row.created_at, before_id: row.id };
+    vi.mocked(f.reader.read).mockResolvedValueOnce([
+      {
+        ...row,
+        ...(problem === "wrong kind" ? { kind: 9 } : {}),
+        ...(problem === "wrong channel" ? { tags: [["h", "elsewhere"]] } : {}),
+        ...(problem === "newer timestamp"
+          ? { created_at: row.created_at + 1 }
+          : {}),
+      },
+    ]);
+    await expect(
+      f.canvas.history(
+        channel,
+        problem === "repeated cursor" || problem === "newer timestamp"
+          ? cursor
+          : undefined,
+      ),
+    ).rejects.toThrow(/invalid or non-advancing/);
+  },
+);
+it("fences Canvas history after access loss or session retirement, including during a read", async () => {
+  const f = fixture();
+  f.canWrite.mockReturnValue(false);
+  await expect(f.canvas.history(channel)).rejects.toThrow(/access changed/);
+  expect(f.reader.read).not.toHaveBeenCalled();
+  f.canWrite.mockReturnValue(true);
+  vi.mocked(f.reader.read).mockImplementationOnce(async () => {
+    f.canWrite.mockReturnValue(false);
+    return [];
+  });
+  await expect(f.canvas.history(channel)).rejects.toThrow(/access changed/);
+  f.canWrite.mockReturnValue(true);
+  vi.mocked(f.reader.read).mockImplementationOnce(async () => {
+    f.controller.abort();
+    return [];
+  });
+  await expect(f.canvas.history(channel)).rejects.toMatchObject({
+    name: "AbortError",
+  });
+});

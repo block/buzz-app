@@ -8,6 +8,10 @@ import {
   type MessageComposerProps,
 } from "../messages/MessageComposer";
 import { MessageRow, type MessageRowProps } from "../messages/MessageRow";
+import {
+  formatDayGroupLabel,
+  formatItemTimestamp,
+} from "../../shared/datetime";
 import type {
   ComposerTool,
   ComposerAccessory,
@@ -35,6 +39,14 @@ export type Conversation = {
     Thread: (props: EmbeddedThreadProps) => ReactNode;
     Composer: (props: Omit<MessageComposerProps, "extensions">) => ReactNode;
     Message: (props: Omit<MessageRowProps, "extensions">) => ReactNode;
+  };
+  /** The host's date labels, so plugin text reads like the message rows. */
+  format: {
+    /** "9:05 AM", "Yesterday", "Monday", "Sat, Jun 20", "Jun 20, 2025";
+     * `withTime` appends " at 9:05 AM" outside today. */
+    itemTimestamp: typeof formatItemTimestamp;
+    /** "Today", "Yesterday", "Monday", "Saturday, June 20", "June 20, 2025". */
+    dayGroupLabel: typeof formatDayGroupLabel;
   };
 };
 declare module "@deepseek-ai/cordis" {
@@ -139,6 +151,10 @@ export class ConversationService extends Service implements Conversation {
       throw new Error("A link renderer class must be a string");
     this.linkEntries.register(this.ctx, value);
   }
+  readonly format = Object.freeze({
+    itemTimestamp: formatItemTimestamp,
+    dayGroupLabel: formatDayGroupLabel,
+  });
   readonly ui = {
     Thread: (props: EmbeddedThreadProps) => (
       <EmbeddedThread {...props} host={this.ctx} extensions={this} />

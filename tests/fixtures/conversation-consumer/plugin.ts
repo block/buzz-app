@@ -30,6 +30,11 @@ export function apply(ctx: Context) {
         "Test-only consumer of the shared session, composer and message UI.",
       ),
       h(
+        "p",
+        null,
+        `Consumer dates ${ui.format.dayGroupLabel(Date.now() / 1000)}, ${ui.format.itemTimestamp(Date.now() / 1000 - 86_400)}`,
+      ),
+      h(
         "label",
         null,
         "Consumer channel",

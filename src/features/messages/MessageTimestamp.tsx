@@ -1,4 +1,5 @@
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
+import { formatItemTimestamp } from "../../shared/datetime";
 import styles from "./Messages.module.css";
 
 // Retain only the current locale/zone pair, never message content. Resolve the
@@ -30,7 +31,10 @@ function timestampFormats() {
   return formats;
 }
 
-/** One date source for the byline and the compact continuation clock. */
+/** One date source for the byline and the compact continuation clock. The
+ * byline names the day outside today ("Yesterday at 9:05 AM"): a day divider
+ * scrolls away, and surfaces such as Activity have none. The continuation
+ * clock sits under a byline, so it shows the time only. */
 export function MessageTimestamp({
   createdAt,
   compact = false,
@@ -47,7 +51,7 @@ export function MessageTimestamp({
         .map((part) => part.value)
         .join("")
         .trim()
-    : clock.format(date);
+    : formatItemTimestamp(createdAt, { withTime: true });
   const fullDate = full.format(date);
   return (
     // The action bar can sit over the byline; keep the date hint non-interactive

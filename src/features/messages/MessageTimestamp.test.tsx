@@ -14,13 +14,14 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 it.each([
-  [new Date(2026, 8, 24, 9, 5)],
-  [new Date(2026, 8, 23, 9, 5)],
-  [new Date(2026, 8, 17, 9, 5)],
-  [new Date(2025, 8, 17, 9, 5)],
+  [new Date(2026, 8, 24, 9, 5), "9:05 AM"],
+  [new Date(2026, 8, 23, 9, 5), "Yesterday at 9:05 AM"],
+  [new Date(2026, 8, 21, 9, 5), "Monday at 9:05 AM"],
+  [new Date(2026, 8, 17, 9, 5), "Thu, Sep 17 at 9:05 AM"],
+  [new Date(2025, 8, 17, 9, 5), "Sep 17, 2025 at 9:05 AM"],
 ])(
-  "shows only the clock for %s while retaining the full accessible date",
-  (date) => {
+  "names the day outside today for %s while retaining the full accessible date",
+  (date, label) => {
     const { container } = render(
       <MessageTimestamp createdAt={date.getTime() / 1000} />,
     );
@@ -29,10 +30,7 @@ it.each([
       date.toISOString(),
     );
     expect(container.querySelector('[aria-hidden="true"]')).toHaveTextContent(
-      new Intl.DateTimeFormat(undefined, {
-        hour: "numeric",
-        minute: "2-digit",
-      }).format(date),
+      new RegExp(`^${label}$`),
     );
     expect(
       screen.getByText(

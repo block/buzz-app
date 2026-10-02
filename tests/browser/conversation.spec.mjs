@@ -267,6 +267,10 @@ test("independent packed author consumer and native-installed contribution survi
       page.getByRole("heading", { name: "Test conversation consumer" }),
     ).toBeVisible();
     await expect(draft).toHaveJSProperty("value", "Channels draft");
+    // The independently built page uses the host's date labels.
+    await expect(
+      page.getByText("Consumer dates Today, Yesterday", { exact: true }),
+    ).toBeVisible();
     // The independently built page consumes the host's registered Mentions tool.
     await page
       .getByRole("button", { name: "Mention a member", exact: true })

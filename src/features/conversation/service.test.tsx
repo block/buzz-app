@@ -43,6 +43,14 @@ it("registers both surfaces under the injecting plugin scope, removes and replac
       expect(conversation.ui.Composer).toBe(conversation.ui.Composer);
       expect(conversation.ui.Message).toBe(conversation.ui.Message);
       expect(conversation.ui.Thread).toBe(conversation.ui.Thread);
+      const now = new Date(2026, 9, 2, 14, 30).getTime() / 1000;
+      expect(conversation.format.dayGroupLabel(now, now)).toBe("Today");
+      expect(
+        conversation.format.itemTimestamp(now - 86_400, {
+          withTime: true,
+          nowSeconds: now,
+        }),
+      ).toBe("Yesterday at 2:30 PM");
       ctx.conversation.registerTool({
         id: "tool",
         title: "Tool",

@@ -17,6 +17,9 @@ import * as api from "../features/communities/api";
 import { ProfileSettings } from "./ProfileSettings";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { useSyncExternalStore } from "react";
+import { stubAvatarBrowserApis } from "../features/agents/avatar-testing";
+
+stubAvatarBrowserApis();
 
 vi.mock("../features/communities/api", () => ({
   inspectProfile: vi.fn(),
@@ -25,6 +28,7 @@ vi.mock("../features/communities/api", () => ({
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
+  vi.unstubAllGlobals();
 });
 const a = "https://a.example";
 const b = "https://b.example";

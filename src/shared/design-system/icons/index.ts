@@ -77,6 +77,8 @@ import TablerTicketIcon from "@tabler/icons-react/dist/esm/icons/IconTicket.mjs"
 export const TicketIcon = defineIcon("tabler", TablerTicketIcon);
 import TablerCopyIcon from "@tabler/icons-react/dist/esm/icons/IconCopy.mjs";
 export const CopyIcon = defineIcon("tabler", TablerCopyIcon);
+import TablerCloudUploadIcon from "@tabler/icons-react/dist/esm/icons/IconCloudUpload.mjs";
+export const CloudUploadIcon = defineIcon("tabler", TablerCloudUploadIcon);
 import TablerCrownIcon from "@tabler/icons-react/dist/esm/icons/IconCrown.mjs";
 export const CrownIcon = defineIcon("tabler", TablerCrownIcon);
 import TablerDotsThreeIcon from "@tabler/icons-react/dist/esm/icons/IconDots.mjs";

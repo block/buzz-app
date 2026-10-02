@@ -23,12 +23,24 @@ test("Messages receives scoped typing through authenticated live traffic and exp
   app.activity({ age: 9 });
   await expect(indicator).toHaveCount(0);
   app.activity();
-  await expect(indicator).toContainText("is typing…");
+  await expect(indicator).toContainText("is typing");
   app.activity({ author: 1 });
-  await expect(indicator).toContainText("are typing…");
+  await expect(indicator).toContainText("are typing");
+  await expect(indicator).not.toContainText("…");
+  // Browser-only contracts: real geometry and the OS motion preference.
+  const composer = page.getByRole("form", { name: "Send a message to Alpha" });
+  const bounds = await indicator.boundingBox();
+  const composerBounds = await composer.boundingBox();
+  expect(bounds.y + bounds.height).toBeLessThan(composerBounds.y);
+  const dots = indicator.locator('[aria-hidden="true"] > span');
+  await expect(dots).toHaveCount(3);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect(dots.first()).not.toHaveCSS("animation-name", "none");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(dots.first()).toHaveCSS("animation-name", "none");
   await page.screenshot({ path: testInfo.outputPath("messages-typing.png") });
   app.activity({ kind: 9 });
-  await expect(indicator).toContainText("is typing…");
+  await expect(indicator).toContainText("is typing");
   app.activity({ kind: 9, author: 1 });
   await expect(indicator).toHaveCount(0);
   app.activity(); // same-second late pulse cannot resurrect completion
@@ -55,10 +67,32 @@ test("Messages receives scoped typing through authenticated live traffic and exp
   app.activity({ root: root.id });
   await expect(
     thread.getByRole("status", { name: "Typing activity" }),
-  ).toContainText("is typing…");
+  ).toContainText("is typing");
   await expect(indicator).toHaveCount(1);
   await page.screenshot({
     path: testInfo.outputPath("messages-thread-typing.png"),
+  });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.setViewportSize({ width: 800, height: 700 });
+  // Stress the real label's CSS with an unbroken name, without adding profile
+  // fixture/network machinery to a presentation-only regression.
+  const label = indicator.locator(":scope > span").last();
+  await label.evaluate((el) => {
+    el.textContent = `${"LongDisplayName".repeat(30)} is typing`;
+  });
+  await expect(label).toHaveCSS("text-overflow", "ellipsis");
+  expect(await label.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+    true,
+  );
+  const narrowBounds = await indicator.boundingBox();
+  const threadComposer = await thread.getByRole("form").boundingBox();
+  expect(narrowBounds.x).toBeGreaterThanOrEqual(threadComposer.x);
+  expect(narrowBounds.x + narrowBounds.width).toBeLessThanOrEqual(
+    threadComposer.x + threadComposer.width,
+  );
+  expect(narrowBounds.y + narrowBounds.height).toBeLessThan(threadComposer.y);
+  await page.screenshot({
+    path: testInfo.outputPath("messages-thread-typing-dark-narrow.png"),
   });
   // Real browser timer, signed timestamp TTL, no polling transport or fixture cleanup.
   await expect(indicator).toHaveCount(0, { timeout: 10000 });
@@ -105,7 +139,9 @@ for (const scope of ["channel", "thread"]) {
       name: scope === "thread" ? "Reply to thread" : "Send a message to Alpha",
       exact: true,
     });
-    const indicator = composer.getByRole("status", { name: "Typing activity" });
+    const indicator = composer
+      .locator("..")
+      .getByRole("status", { name: "Typing activity" });
     const gap = () =>
       history.evaluate(
         (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
@@ -141,14 +177,16 @@ for (const scope of ["channel", "thread"]) {
     await expect(indicator).toHaveCount(0);
     const target = scope === "thread" ? { root: root.id } : {};
     app.activity(target);
-    await expect(indicator).toContainText("is typing…");
+    await expect(indicator).toContainText("is typing");
+    const typingBounds = await indicator.boundingBox();
+    expect(typingBounds.y).toBeGreaterThanOrEqual(idle.y + idle.height);
     await stable();
     app.activity({ ...target, kind: 9 });
     await expect(indicator).toHaveCount(0);
     await stable();
     // A different signer is outside the first signer's quiet period.
     app.activity({ ...target, author: 1 });
-    await expect(indicator).toContainText("is typing…");
+    await expect(indicator).toContainText("is typing");
     await stable();
     await expect(indicator).toHaveCount(0, { timeout: 10000 });
     await stable();

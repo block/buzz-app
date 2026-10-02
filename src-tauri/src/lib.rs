@@ -11,6 +11,14 @@ mod agent_models;
 mod agents;
 mod deep_links;
 mod dock;
+#[cfg(test)]
+#[path = "enterprise_adapter_url.rs"]
+mod enterprise_adapter_url;
+#[cfg(test)]
+#[path = "enterprise_auth_build.rs"]
+mod enterprise_auth_build;
+mod enterprise_login_gate;
+mod enterprise_relay_url;
 mod host_command;
 mod host_request;
 mod identity;
@@ -51,6 +59,7 @@ use buzzodz_plugins::{
 };
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
+use enterprise_login_gate::enterprise_login_gate;
 use harness_setup::{pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
 use host_request::plugin_host_request;
@@ -385,6 +394,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         identity_create,
         identity_export,
         identity_prepare_remote_agent_authorization,
+        enterprise_login_gate,
         relay_sign,
         relay_decode_read_state,
         relay_sign_read_state,

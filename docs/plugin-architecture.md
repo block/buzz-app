@@ -53,7 +53,7 @@ bundled/agents/         local control UI and read-only current-Buzz library page
 features/agents/        app-owned control capability; separate session-owned library
 bundled/github/         builtin GitHub panel plugin
 bundled/bestie/         builtin Bestie page, companion panel and its snake launcher
-bundled/inbox/          builtin Inbox page, a placeholder until inbox content exists
+bundled/inbox/          builtin Inbox page for unread conversations and mentions
 ```
 
 The host composes one channel sidebar beside independently mounted pages. It reuses
@@ -103,7 +103,22 @@ render failures and remounts on target or revision changes. Unloading a plugin
 removes its contributions and closes its panel. Other pages can use these same
 contracts with their own layout and local navigation.
 
-The initial distribution contains Channels, Inbox, Projects, Agents, GitHub, Bestie, Emoji, Mentions, Profiles, Terminal and Links. Projects
+### Bundled defaults
+
+All 21 plugins remain bundled. **Channels is the only required plugin.** Bestie,
+Todos, and Templates & teams are off by default. Feedback, Diff viewer, Identity
+Naming, Agent Activity, Terminal, Profiles, Links, Mentions, Emoji, GitHub, Inbox,
+Projects, Agents, Workflows, Sessions, Hosted communities, and Community admin are
+on by default, but optional. Both browser and native catalogs declare that policy.
+
+Saved enabled/disabled flags win over defaults (except required Channels). There
+is no migration or forced reset: a browser profile that previously saved its full
+plugin snapshot can retain Bestie enabled. Native profiles store per-plugin
+overrides. Default-on does not promise platform support: Terminal contributes UI
+only on macOS/Linux desktop; Hosted communities still requires its development
+broker backend. Disabling Community admin removes its Invite to community shortcut.
+
+Projects
 is enabled by default and owns versioned, validated entity page routes. It resolves
 signed metadata through the session reader and reports navigation completion only
 after destination content is presented. Git browsing uses a narrow host-owned,
@@ -284,12 +299,34 @@ post-write different-head check remains conservative and also retains the draft.
 **Compatibility gate:** deploy with a relay supporting Canvas revision preconditions
 ([block/buzz#6780](https://github.com/block/buzz/pull/6780)) for atomic protection.
 An older relay may ignore the tag; strong reads and client head comparison alone
-cannot prevent concurrent overwrite. This client change does not upgrade the relay
-or add Canvas history/restore. Detected conflicts require reviewing the saved Canvas. Refresh confirms before discarding
+cannot prevent concurrent overwrite. The client does not upgrade the relay.
+Detected conflicts require reviewing the saved Canvas. Refresh confirms before discarding
 edits. Local recovery drafts are partitioned by community/viewer/channel; if browser
 storage is unavailable they survive only while the editor stays open. Save never
 promotes local recovery storage to shared state. Already accepted outbox operations
 remain session-owned if the drawer closes or plugin is disabled.
+
+**Canvas history:** Channel actions → View canvas → History lazily reads retained
+kind-40100 revisions in pages of 25, ordered by `created_at DESC, id ASC` with
+`until`/`before_id` keyset cursors. The first page is writer-backed so a just-restored
+revision is visible; older pages remain replica-eligible. The current marker uses
+the editor's strong-read head, not list position. Refresh history rechecks the
+head without replacing the editor draft. Author labels use the shared profile
+directory, with public-key fallbacks; previews are read-only Markdown source.
+
+Restore requires explicit confirmation and publishes the selected content as a
+new signed revision through the existing Canvas save/outbox owner. Its precondition
+is the displayed head, never the historical revision or a silently substituted
+newer head. Clean editors adopt the confirmed result. Edited or stale recovered
+drafts keep their content and original base until explicit reload; browsing and
+cancelling never replace drafts. Restore inherits Save's delivery confirmation,
+which may automatically replay the exact signed event with its original
+`expected-revision`. It never creates a fresh event or substitutes a newer
+precondition to retry. If confirmation ultimately fails or remains uncertain,
+the dialog retains drafts and shows the error without starting another restore.
+Empty revisions can be restored; revisions exceeding the existing 24 KiB save
+limit remain previewable but cannot be restored here. No diff viewer or new
+delivery owner is introduced.
 
 ### Top-bar launchers and the companion slot
 
@@ -317,8 +354,8 @@ are ordinary shared components, not another registry.
 Only open intent crosses pages: the panel component can remount under a new page,
 so this mechanism does not promise persistent agent sessions or drafts. Bestie
 currently supplies art and truthful not-connected copy, with no send control or
-agent API. Both browser and Rust native/CLI catalogs list it as independently
-enabled by the normal bundled policy; saved disabled flags still win.
+agent API. Both browser and Rust native/CLI catalogs keep it bundled but off by default;
+saved enabled or disabled flags still win. Enable it under Settings → Plugins.
 
 `main.tsx` creates the shared services once; `app/App.tsx` owns startup screens,
 navigation, and built-in Settings. `app/services.ts` composes the core services.

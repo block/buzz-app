@@ -64,10 +64,27 @@ launchTest(
       await page.clock.runFor(1900);
       await expect(page.locator("#buzz-launch")).toBeVisible();
       release();
-      await expect(page.locator("#buzz-launch")).toHaveCount(0);
       await expect(
-        selected(page).locator(`[data-message-id="${app.exact.target.id}"]`),
-      ).toBeVisible();
+        page.locator(`[data-message-id="${app.exact.target.id}"]`),
+      ).toBeAttached();
+      await expect(page.locator("#root")).toHaveAttribute("inert", "");
+      await page.clock.runFor(1700);
+      await expect(page.locator("#buzz-launch")).toHaveCount(0);
+      const row = selected(page).locator(
+        `[data-message-id="${app.exact.target.id}"]`,
+      );
+      await expect(row).toBeFocused();
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.fixtureNavigation.snapshot().status),
+        )
+        .toBe("opened");
+      await page.clock.runFor(15_100);
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.fixtureNavigation.snapshot().status),
+        )
+        .toBe("opened");
     } finally {
       release();
     }

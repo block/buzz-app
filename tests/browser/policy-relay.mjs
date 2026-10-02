@@ -24,7 +24,9 @@ const newest = (a, b) =>
 function buzzV1({ viewer, report, rows, events }) {
   // community -> channel -> { channel, cut, threads: Map<root, through> }
   const frontiers = new Map();
-  const unproved = new Set(); // Roots whose participation the relay cannot prove.
+  // `channel/parent` keys whose conversation membership the relay cannot decide.
+  const unproved = new Set();
+  const staffDeleted = new Set(); // Deletions the relay honours via `deleted_at`.
   report.readWrites = [];
   report.sidebarReads = [];
   report.sidebarHolds = [];
@@ -49,23 +51,67 @@ function buzzV1({ viewer, report, rows, events }) {
         all.set(event.id, event);
     return all;
   }
+  // NIP-10 as relay ingest and the app parse it: only a valid marked `reply`
+  // makes a reply; the last valid `root`/`reply` wins; reply-only roots at it.
+  function threadRef(event) {
+    let root, reply;
+    for (const [k, v, , marker] of event.tags) {
+      if (k !== "e" || !/^[0-9a-f]{64}$/i.test(v ?? "")) continue;
+      if (marker === "root") root = v.toLowerCase();
+      if (marker === "reply") reply = v.toLowerCase();
+    }
+    return reply ? { root: root ?? reply, parent: reply } : undefined;
+  }
   // Canonical root, or `undefined` for top-level; `null` marks unresolved ancestry.
   function rootOf(all, event) {
     let current = event;
     for (let depth = 0; depth < 32; depth++) {
-      const refs = current.tags.filter(([k]) => k === "e");
-      const ref =
-        refs.find((tag) => tag[3] === "root") ??
-        refs.find((tag) => tag[3] === "reply");
+      const ref = threadRef(current);
       if (!ref) return current === event ? undefined : current.id;
-      const parent = all.get(ref[1].toLowerCase());
+      const parent = all.get(ref.root);
       if (!parent) return null;
       current = parent;
     }
     return null;
   }
+  // Author-signed kind 5/9005, or a staff deletion the relay records.
+  const deletions = new WeakMap(); // One `author/id` set per history snapshot.
+  function deleted(all, event) {
+    if (staffDeleted.has(event.id)) return true;
+    if (!deletions.has(all)) {
+      const keys = new Set();
+      for (const row of all.values())
+        if (row.kind === 5 || row.kind === 9005)
+          for (const [k, v] of row.tags)
+            if (k === "e" && v) keys.add(`${row.pubkey}/${v.toLowerCase()}`);
+      deletions.set(all, keys);
+    }
+    return deletions.get(all).has(`${event.pubkey}/${event.id}`);
+  }
+  // Direct-parent membership in this channel: the viewer's live eligible
+  // message is the parent, or the viewer has a live reply to the same parent.
+  // `null` is undecided (the relay's lookup budget ran out).
+  function conversation(all, channel, parent) {
+    if (unproved.has(`${channel}/${parent}`)) return null;
+    const live = (row) =>
+      row.pubkey === viewer &&
+      ELIGIBLE.includes(row.kind) &&
+      !deleted(all, row);
+    const own = all.get(parent);
+    return (
+      (own !== undefined && live(own)) ||
+      [...all.values()].some(
+        (row) => live(row) && threadRef(row)?.parent === parent,
+      )
+    );
+  }
+  // Order (plan rev 3a): eligibility, then the read frontier, then relevance.
   function classify(community, channel, all, event) {
-    if (!ELIGIBLE.includes(event.kind) || event.pubkey === viewer)
+    if (
+      !ELIGIBLE.includes(event.kind) ||
+      event.pubkey === viewer ||
+      deleted(all, event)
+    )
       return { counted: false };
     const root = rootOf(all, event);
     const frontier = state(community, channel);
@@ -73,29 +119,23 @@ function buzzV1({ viewer, report, rows, events }) {
       root === undefined
         ? frontier.channel
         : max(frontier.threads.get(root) ?? null, frontier.cut);
-    const unread = through === null || event.created_at > through;
-    const direct =
-      member(community, channel)?.channel_type === "dm" ||
-      event.tags.some(
-        ([k, v]) =>
-          (k === "p" && v?.toLowerCase() === viewer) ||
-          (k === "broadcast" && v === "1"),
-      );
-    // Participation: the viewer authored a live eligible message in this thread.
-    const participated =
-      typeof root === "string" &&
-      [...all.values()].some(
-        (row) =>
-          row.pubkey === viewer &&
-          ELIGIBLE.includes(row.kind) &&
-          (row.id === root || rootOf(all, row) === root),
-      );
-    const attention = direct
-      ? true
-      : typeof root === "string" && unproved.has(root)
-        ? null
-        : participated;
-    return { counted: true, root, unread, attention };
+    if (through !== null && event.created_at <= through)
+      return { counted: true, root, unread: false };
+    const unread = { counted: true, root, unread: true };
+    const tag = (name, value) =>
+      event.tags.some(([k, v]) => k === name && v?.toLowerCase() === value);
+    if (member(community, channel)?.channel_type === "dm")
+      return { ...unread, reason: "direct" };
+    if (tag("p", viewer)) return { ...unread, reason: "mention" };
+    const broadcast = tag("broadcast", "1");
+    const parent = threadRef(event)?.parent;
+    if (!parent) return { ...unread, reason: broadcast ? "broadcast" : null };
+    const joined = conversation(all, channel, parent);
+    if (joined) return { ...unread, reason: "conversation" };
+    // Undecided broadcasts keep known counts: the named `broadcast` fallback.
+    if (broadcast) return { ...unread, reason: "broadcast" };
+    if (joined === null) return { ...unread, undecided: true };
+    return { counted: false }; // Proven outside the viewer's conversations.
   }
   const count = (known, uncertain) =>
     uncertain
@@ -116,23 +156,31 @@ function buzzV1({ viewer, report, rows, events }) {
     for (const event of sorted) {
       const result = classify(community, channel, all, event);
       if (!result.counted || !result.unread) continue;
-      unread++;
-      if (result.attention === null) uncertain = true;
-      else if (result.attention) attention++;
       if (result.root === null) unresolved = true;
-      if (typeof result.root !== "string") continue;
-      const item = threads.get(result.root) ?? {
-        root_id: result.root,
-        unread: 0,
-        attention: 0,
-        uncertain: false,
-        latest_reply_id: event.id,
-        latest_reply_at: event.created_at,
-      };
+      // An undecided reply stays out of every count and preview. Its group could
+      // be any thread once decided, so every count in the channel is a lower bound.
+      if (result.undecided) {
+        uncertain = true;
+        continue;
+      }
+      const item =
+        typeof result.root === "string" &&
+        (threads.get(result.root) ??
+          threads
+            .set(result.root, {
+              root_id: result.root,
+              unread: 0,
+              latest_reply_id: null,
+              latest_reply_at: null,
+            })
+            .get(result.root));
+      unread++;
+      if (result.reason !== null) attention++;
+      if (!item) continue;
       item.unread++;
-      if (result.attention === null) item.uncertain = true;
-      else if (result.attention) item.attention++;
-      threads.set(result.root, item);
+      // Newest relevant reply: the preview is chosen after the filter.
+      item.latest_reply_id ??= event.id;
+      item.latest_reply_at ??= event.created_at;
     }
     const items = [...threads.values()].toSorted(
       (a, b) =>
@@ -145,7 +193,7 @@ function buzzV1({ viewer, report, rows, events }) {
       channel_type: meta.channel_type,
       archived: meta.archived ?? false,
       hidden: meta.hidden ?? false,
-      unread: exact(unread),
+      unread: count(unread, uncertain),
       attention: count(attention, uncertain),
       latest_message_id: latest?.id ?? null,
       latest_message_at: latest?.created_at ?? null,
@@ -153,12 +201,11 @@ function buzzV1({ viewer, report, rows, events }) {
       threads: {
         items: items.slice(0, 5).map((item) => ({
           root_id: item.root_id,
-          unread: exact(item.unread),
-          attention: count(item.attention, item.uncertain),
+          unread: count(item.unread, uncertain),
           latest_reply_id: item.latest_reply_id,
           latest_reply_at: item.latest_reply_at,
         })),
-        complete: !unresolved && items.length <= 5,
+        complete: !unresolved && !uncertain && items.length <= 5,
       },
     };
   }
@@ -219,11 +266,8 @@ function buzzV1({ viewer, report, rows, events }) {
             const result = classify(community, channel, all, event);
             if (!result.counted) return { message_id, status: "not_counted" };
             if (!result.unread) return { message_id, status: "read" };
-            return {
-              message_id,
-              status: "unread",
-              attention: result.attention,
-            };
+            if (result.undecided) return { message_id, status: "unknown" };
+            return { message_id, status: "unread", reason: result.reason };
           }),
         };
       }),
@@ -269,9 +313,14 @@ function buzzV1({ viewer, report, rows, events }) {
       held = false;
       for (const release of waiters.splice(0)) release();
     },
-    /** Explicit participation-unknown case, like a relay budget exhaustion. */
-    unprove(root) {
-      unproved.add(root);
+    /** Membership of `parent` in `channel` is undecided, like an exhausted
+     * relay lookup budget. Mentions, DMs and broadcasts are unaffected. */
+    unprove(channel, parent) {
+      unproved.add(`${channel}/${parent.toLowerCase()}`);
+    },
+    /** A staff deletion: the relay honours it through `deleted_at`. */
+    deleteAsStaff(id) {
+      staffDeleted.add(id.toLowerCase());
     },
     /** Next API response fails with this HTTP status (429/503 carry Retry-After). */
     failNext(status) {

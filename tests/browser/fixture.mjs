@@ -86,6 +86,7 @@ export const test = base.extend({
   threadUnreadMentions: [false, { option: true }],
   threadUnreadJoined: [false, { option: true }],
   threadUnreadOwnedRoot: [true, { option: true }],
+  threadUnreadOrdinaryNested: [false, { option: true }],
   exactMessages: [false, { option: true }],
   openSearch: [false, { option: true }],
   sessionChannels: [[], { option: true }],
@@ -132,6 +133,7 @@ export const test = base.extend({
       threadUnreadMentions,
       threadUnreadJoined,
       threadUnreadOwnedRoot,
+      threadUnreadOrdinaryNested,
       exactMessages,
       openSearch,
       sessionChannels,
@@ -535,7 +537,7 @@ export const test = base.extend({
       ]);
     const threadSummaries = [];
     // Viewer replies older than the unread sample: the thread view and the
-    // conversation lookup return them, but channel unread evidence never does.
+    // relay's read model see them, but channel unread evidence never does.
     const displacedReplies = new Map();
     if (threadUnread) {
       const history = histories.get(`primary/${ids.alpha}`);
@@ -565,12 +567,28 @@ export const test = base.extend({
             root.created_at + 10,
           ),
         ];
+        // Newest reply in the peer thread, nested under a peer reply: outside
+        // the viewer's conversations, so it never counts or previews.
+        if (threadUnreadOrdinaryNested && index === 1)
+          replies.push(
+            sign(
+              9,
+              [
+                ["h", ids.alpha],
+                ["e", root.id, "", "root"],
+                ["e", replies[0].id, "", "reply"],
+              ],
+              "Ordinary nested reply",
+              peerKey,
+              root.created_at + 12,
+            ),
+          );
         if (threadUnreadJoined && index === 1)
           displacedReplies.set(root.id, [
             sign(
               9,
               [
-                ["h", "alpha"],
+                ["h", ids.alpha],
                 ["e", root.id.toUpperCase(), "", "reply"],
               ],
               "Viewer reply",
@@ -1209,39 +1227,6 @@ export const test = base.extend({
         }
         return [...rows, ...aux];
       }
-      // Unread conversation lookup: the viewer's replies to undecided parents.
-      if (
-        filter.kinds?.includes(9) &&
-        filter["#e"] &&
-        filter.authors?.length === 1 &&
-        filter.authors[0] === viewer
-      )
-        return (filter["#h"] ?? [])
-          .flatMap((channel) => histories.get(`${community}/${channel}`) ?? [])
-          .concat(
-            threadUnread && community === "primary"
-              ? [
-                  ...[...threadReplies.values()].flat(),
-                  ...[...displacedReplies.values()].flat(),
-                ]
-              : [],
-          )
-          .filter(
-            (event) =>
-              filter.kinds.includes(event.kind) &&
-              event.pubkey === viewer &&
-              event.tags.some(
-                ([key, value]) => key === "h" && filter["#h"]?.includes(value),
-              ) &&
-              event.tags.some(
-                ([key, value]) =>
-                  key === "e" && filter["#e"].includes(value?.toLowerCase()),
-              ),
-          )
-          .toSorted(
-            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
-          )
-          .slice(0, filter.limit);
       // Unread evidence is not a top-level window, even for a one-ID final batch.
       if (
         filter.kinds?.includes(9) &&
@@ -1448,7 +1433,11 @@ export const test = base.extend({
             events: (community, channel) => [
               ...(histories.get(`${community}/${channel}`) ?? []),
               ...(community === "primary"
-                ? [...[...threadReplies.values()].flat(), ...targetEvents]
+                ? [
+                    ...[...threadReplies.values()].flat(),
+                    ...[...displacedReplies.values()].flat(),
+                    ...targetEvents,
+                  ]
                 : []),
             ],
           },

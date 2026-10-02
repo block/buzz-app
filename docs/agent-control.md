@@ -1,8 +1,8 @@
 # Local agent controls
 
 The Agents page uses one app-owned native controller for creating, importing,
-editing and running local agents. Managed cards are keyed by exact identity and
-community. Browser-only access keeps the read-only old library; it cannot run
+editing and running local agents. Inventory cards join records by exact public key;
+managed actions remain keyed by native identity/community record. Browser-only access keeps the read-only old library; it cannot run
 agents. The only product entry point is ordinary desktop startup.
 
 ## Normal desktop workflow
@@ -16,16 +16,17 @@ configuration and persistent native settings. Coordinate the native rebuild/rela
 quit other Foundation copies first. Saved enabled agents can restore on startup.
 Keep imported agents disabled and old Buzz running until an attended handover.
 
-Open **Agents → My agents** for imported identities, their destination community,
-process evidence and visible **Start / Stop**. **Edit**, **Duplicate**, and
-**Delete** are in the card’s three-dot menu. Duplicate seeds Create with editable
-settings and a fresh identity; write-only environment values require re-entry.
-Delete stops the local process and removes this app's settings and Keychain key
-after confirmation. It does not archive the relay identity or erase messages.
-Deployed remote records are refused.
-Same-key identities at different destinations have separate
-cards; actions use native ID/revision, never the display name. Managed controls
-remain available when the old library is disconnected, unavailable or archived.
+Open **Agents** for discovered and imported identities grouped by known community
+associations. Each identity card keeps the configured destinations’ **Start / Stop**
+controls. **Edit**, **Duplicate**, and **Delete** are in the card’s three-dot menu.
+Duplicate seeds Create with editable settings and a fresh identity; write-only
+environment values require re-entry. Delete stops the local process and removes
+this app's settings and Keychain key after confirmation. The key remains while
+another setup of the same identity still uses it. Delete does not archive the
+relay identity or erase messages. Deployed remote records are refused. Actions
+use native ID/revision, never the display name. Older hosts without parked
+inventory retain the **My agents** and read-only library sections. Managed
+controls remain available when discovery is disconnected, unavailable or archived.
 
 **Add agent** shares the Edit fields and model browser. In the development desktop,
 Create generates a native key, obtains the captured viewer's owner authorization,
@@ -50,12 +51,52 @@ worker count. With **Each thread** conversation context, separate threads can
 use different workers while retaining separate histories. Existing saved agents
 keep their settings; add the variable and restart them to enable more workers.
 
-**Not imported from old Buzz** is a separate collapsible section. Expanding it
-loads installed identities for the connected community; already-managed exact
-identities are excluded. Each remaining row says **Not imported** and has its own
-**Import** action. Source/destination overrides and source warnings stay under
-Import options. Import focuses the imported card and says **Imported, not started**.
-It does not start a listener, invite an agent or change the old library.
+Pi and Goose apply permitted Environment overrides after saved fields and
+imported settings. For example, `BUZZ_ACP_MODEL`, `BUZZ_ACP_SYSTEM_PROMPT`, and
+`BUZZ_ACP_AGENTS` take precedence at launch; worker counts must be from 1 to 32.
+Removing an override restores the saved/default setting. Identity keys, the relay
+URL, executable commands, saved response policy, and team instructions remain
+protected, along with specific host controls: session policy, presence, inactivity
+exit, idle-pool sleep, setup payload, and replay floor. Pi and Goose still permit
+subscription, relay observer, deduplication, and event-handling overrides, as old
+Buzz did. Device-wide overrides are inherited only by harnesses that permit them;
+`BUZZ_ACP_MODEL` also requires the same default harness. Buzz Agent keeps its key
+restrictions; its worker override takes precedence over imported parallelism.
+Pi model browsing and connection tests use the
+Provider/Model fields; ACP overrides apply to the listener's sessions at launch.
+
+**Clone to this community** opens the existing creation dialog with only the old
+agent’s name and resolved instructions. Review that text for embedded secrets.
+Runtime settings and workspace use this app’s defaults and remain editable.
+Clone generates a new native identity; it does not copy identity keys, environment
+values, command arguments, paths, history or membership. Saving leaves the new
+agent stopped. The source is read-only and no legacy credential access occurs.
+
+**Import** preserves the selected old-installation identity and private key. It
+requires an explicit destination and a fresh source/destination-bound preview.
+Successful import saves a configured, stopped setup. It does not start a listener,
+invite an agent, or modify the source installation. An identity already held
+locally cannot be imported again into another community; use **Clone** instead.
+The native prepare and commit boundaries both enforce that exact-key rule.
+
+The unified inventory offers Import only under **Available to import**, once per
+exact public key. Multiple old installations require an explicit source choice.
+The selected row opens the import review. Without a selected community, such
+as in Personal space, the review asks for the destination before it loads a
+fresh preview. Each startup reads every old installation again: an identity
+deleted from all of them, or whose installation is removed, leaves the list. A
+damaged source keeps its previous entries. Source read failures remain visible.
+Older hosts retain the separate installation browser as a compatibility path.
+
+**Use here** is recovery for older incomplete local imports, not a normal next
+step after Import. It retains the identity/key, requires owner-authorized community
+confirmation, and leaves the recovered setup stopped with app-launch start off.
+The development broker and the packaged desktop app both provide that
+confirmation; the desktop app signs it natively (`relay_agent_resolve`). Native
+code refuses a new
+community when that identity already has a configured setup elsewhere. A retry
+for the already recovered destination is harmless. Existing historical setups
+remain visible and controllable; this rule does not move or delete them.
 
 Local team-linked imports snapshot the deployment team's instructions from the
 chosen library's `agents/teams.json`, alongside the resolved persona prompt.
@@ -74,7 +115,7 @@ perform the same attended old-Buzz handover as for a fresh import.
 
 To use an agent, open a channel and select it from **@ mentions**. Both mention
 menus include the selected community’s people directory alongside channel members
-and managed agents. Directory reads are bounded; narrow the search for more people.
+and configured managed agents. Directory reads are bounded; narrow the search for more people.
 A nonmember is labeled **Not in channel · Choose whether to add when you send**.
 Selection alone does nothing. Send asks, as block/buzz desktop does: **Invite**
 or **Do nothing**. Without add permission, the only action is **Send anyway**.
@@ -89,7 +130,7 @@ before a new add; unknown outcomes are never silently replaced. Channel, thread,
 and forum-channel composers share this behavior. DM participants and session
 admission rules are unchanged.
 
-A confirmed outgoing channel or thread mention now starts an exact imported local
+Once an identity is configured by Import or legacy **Use here** recovery, a confirmed outgoing channel or thread mention starts that exact local
 agent (public key + community), without a separate Start click. Import itself
 remains non-starting. Stop cancels earlier pending mention wakes and active work;
 a later deliberate mention can start the agent again. Plain name text without
@@ -203,8 +244,12 @@ The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
   Installation has a private log, re-detects the executables, and restarts only
   enabled Pi agents that previously failed because their executable was missing.
   User-global Pi installations remain untouched. Windows and unsupported
-  architectures retain manual setup. The copyable commands remain the manual
-  fallback (Node.js required):
+  architectures retain manual setup. Settings explains that **Install** supplies
+  Node.js, Pi, and the adapter automatically. Copyable terminal commands are
+  collapsed under **Manual setup** within the Pi row (Node.js 22.19 or newer required).
+  Failed installs show the failed step and a bounded npm error excerpt above
+  the expandable private install log; errors do not assume a registry problem.
+  The manual fallback commands are:
 
   ```sh
   npm install -g '@earendil-works/pi-coding-agent@>=0.99.0'
@@ -250,8 +295,10 @@ provider, model, effort and environment variables.
   leaves blank, only when the agent uses the default harness; per-agent values
   win. The editor shows a blank field as “Use agent defaults (…)”. Effort has no
   per-agent field: an imported agent's `effort_level` stays its override.
-- Environment variables apply to every agent and merge **per key**; the agent's
-  key wins. A saved Databricks workspace/filter also wins over the corresponding
+- Permitted environment variables merge **per key**; the agent's key wins.
+  `BUZZ_ACP_MODEL` inherits only within the default harness, while shared controls
+  such as worker count and system prompt can inherit across Pi and Goose.
+  A saved Databricks workspace/filter also wins over the corresponding
   global `DATABRICKS_HOST` / `DATABRICKS_MODEL_FILTER` pair. Agents without their
   own workspace/filter inherit the global pair.
 - Changing the default harness in the card clears the default model and effort;
@@ -544,8 +591,9 @@ Settings says **Shell setup not verified**; Buzz does not check it before Start.
   effective environment and existing Pi sign-in, create no saved Pi session,
   and stop on cancellation or timeout.
 
-- Environment values never arrive in snapshots. Inputs are masked write-only
-  patches: missing key preserves; string replaces (including empty); null removes.
+- Environment values never arrive in snapshots. Inputs are write-only patches:
+  missing key preserves; string replaces (including empty); null removes.
+  Draft `BUZZ_ACP_AGENTS` values are readable; other inputs stay masked.
   Undo omits a patch again. Successful save clears entered values from UI state.
   Browser strings cannot promise zeroization. Unknown native fields stay native.
   Saved `BUZZ_AGENT_MODEL`/`BUZZ_AGENT_PROVIDER` (buzz-agent) and
@@ -554,8 +602,10 @@ Settings says **Shell setup not verified**; Buzz does not check it before Start.
   Snapshots name the deciding key (`launchModelEnv`/`launchProviderEnv`,
   including `DATABRICKS_MODEL` or a hidden provider behind a blank buzz-agent
   model) and omit the resolved value.
-- Import previews only the chosen installed/development library and requires an
-  explicit secure **Destination community** origin. Old Buzz ignores saved relay
+- Local browsing reads only the chosen installed/development library without a
+  destination. Native keeps no pending import for that read and invalidates any
+  prior import token. An actionable import preview requires an explicit secure
+  **Destination community** origin. Old Buzz ignores saved relay
   pins at runtime; blank, stale or malformed saved pins do not route or hide
   identities here. Native validates the chosen destination, shows it beside each
   exact key, and retains it with the preview token through commit. Source or
@@ -818,3 +868,50 @@ configuration. The current internal release repository builds the old desktop;
 its generic build environment injection is not a Pi resource-bundling contract
 for this app. Signed bundling, automatic employee provisioning and release
 pipeline migration require separate release work; no release is published here.
+
+### Community setup confirmation
+
+Local installation import validates the source configuration, owner authorization
+and private key. It does not require relay inventory or a community confirmation.
+The imported agent stays stopped.
+
+For explicit setup in a community, the broker can sign the selected owner's
+intent for an identity/community pair. Native code verifies that signature against
+the retained source-owner authorization. This does not establish channel membership,
+key availability or exclusive community membership. It does not reserve a community
+before import. Setup recovery cannot add another community to an identity that
+already has a configured setup elsewhere; copying that agent requires Clone.
+
+Joined-community discovery reads each joined community's scoped inventory without
+selecting it or opening a relay session. Exact keys appear once with all known
+associations. Each failed community read has its own warning and Refresh retry;
+successful reads remain visible. Discovery does not provide credentials, an import
+source, or permission to extend an existing local identity into another community.
+
+### Local inventory actions
+
+Startup copies only identity names, public keys and source labels into a durable
+inventory. It does not read keys, configure a setup, or start an imported agent.
+Import copies the selected local key and settings, independent of relay inventory.
+New imports require a destination and are saved configured but stopped.
+**Use here** only recovers older incomplete imports. **Start** remains a separate
+action; a later deliberate mention can also start a configured agent. Existing
+saved setups without the configured flag keep their prior behavior.
+
+The unified card's **Import** opens the existing installation form with its exact
+identity and known local source selected. The source is fixed during review;
+if the preview fails or the identity is unavailable there, you can choose
+another source. **Clone**
+from a local source or imported identity opens a review of only its name and
+instructions; creation generates a fresh key. Clone never imports the old key.
+
+Community groups show known associations, not exclusive membership or admission.
+An inventory failure does not block local Import or setup confirmation. Every
+configured setup keeps Start, Stop and Edit, whichever community is selected.
+Cards for other communities also offer Clone to bring a new identity here,
+without changing the source.
+Archived discovery rows remain hidden after sources join, except where local
+controls must remain reachable. Linked profiles remain visible on identity cards.
+
+Before starting an imported identity, stop the old agent and disable its automatic
+startup in the old application. Do not run duplicate copies of the same identity.

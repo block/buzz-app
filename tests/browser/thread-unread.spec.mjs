@@ -6,12 +6,15 @@ test.use({
   productionBroker: true,
   readState: true,
   threadUnread: true,
+  // The viewer joined the peer's thread with a reply older than the loaded
+  // window; only the relay's read model sees it, so it alone makes that count.
+  threadUnreadJoined: true,
   historyCounts: { alpha: 20, beta: 1 },
   largeSidebar: true,
   pluginFixtures: true, // Observe the real navigation completion, not reply mount timing.
 });
 test.describe("mentioned reply priority", () => {
-  test.use({ threadUnreadMentions: true });
+  test.use({ threadUnreadMentions: true, threadUnreadOrdinaryNested: true });
 
   test("a mention and broadcast remain distinguishable in Activity", async ({
     page,
@@ -37,7 +40,9 @@ test.describe("mentioned reply priority", () => {
     expect(
       names.every((name) => name?.startsWith("Open unread thread from ")),
     ).toBe(true);
-    // Previews are the newest unread reply, not the newest attention reply.
+    // Each thread previews its newest relevant reply: the nested mention in
+    // the viewer's thread, and the direct mention in the peer thread, not the
+    // newer ordinary reply nested under a peer reply there.
     expect(new Set(names.map((name) => name?.split(": ").at(-1)))).toEqual(
       new Set(["Broadcast descendant", "Unread reply 1"]),
     );
@@ -133,9 +138,16 @@ test("thread buttons show observed unread independently, clear only after readin
   await popover.screenshot({
     path: testInfo.outputPath("activity-popover.png"),
   });
+  // The viewer's own thread and the peer thread the viewer joined.
   await expect(
     popover.getByRole("button", { name: /Open unread thread from/ }),
-  ).toHaveCount(1);
+  ).toHaveCount(2);
+  // The relay decides membership; the client never looks up its own replies.
+  expect(
+    app.report.queries.filter(
+      ({ filter }) => filter.authors?.includes(app.viewer) && filter["#e"],
+    ),
+  ).toEqual([]);
   const queries = () =>
     app.report.queries.filter(({ filter }) => filter.depth_limit);
   expect(queries()).toHaveLength(0); // Merely displaying buttons never fetches threads.
@@ -325,8 +337,8 @@ test("thread buttons show observed unread independently, clear only after readin
     .toEqual({ status: "opened", entry: savedEntry });
   await expect(first).toHaveAccessibleName("View thread: 23 replies");
   await expect(other).toHaveAccessibleName(/\d+ unread replies/);
-  // Restoring a joined conversation waits for initial membership discovery;
-  // it must not publish an early one-channel roster through exact resolution.
+  // Restoring the visit waits for initial channel-membership discovery; it
+  // must not publish an early one-channel roster through exact resolution.
   expect(
     app.report.queries
       .slice(beforeReload)
@@ -672,3 +684,58 @@ for (const legacy of [false, true]) {
     },
   );
 }
+
+test.describe("peer thread without the viewer", () => {
+  test.use({ threadUnreadJoined: false });
+
+  // Control for the joined-thread count above: the same peer thread is quiet
+  // when nothing the relay can see puts the viewer in its conversation.
+  test("a peer thread the viewer never joined stays out of Activity", async ({
+    page,
+    app,
+  }) => {
+    await holdReadingFocus(page);
+    await open(page, app);
+    const alpha = page.locator(`button[data-channel-id="${ids.alpha}"]`);
+    await expect(
+      alpha.getByRole("img", { name: /unread threads?/ }),
+    ).toBeVisible();
+    await alpha.hover();
+    const popover = page.getByRole("dialog", { name: "Activity in Alpha" });
+    await expect(popover).toBeVisible();
+    await expect(
+      popover.getByRole("button", { name: /Open unread thread from/ }),
+    ).toHaveCount(1);
+  });
+});
+
+test("channel catch-up never reads replies newer than the latest top-level message", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const root = app.histories
+    .get(`primary/${ids.alpha}`)
+    .find((row) => row.content === "Thread root 1");
+  const button = page
+    .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ });
+  await expect(button).toHaveAccessibleName(/\d+ unread replies/);
+  await page
+    .getByRole("textbox", { name: "Message #Alpha", exact: true })
+    .focus();
+  // Barrier: the channel bottom has been read through a top-level write.
+  await expect
+    .poll(() =>
+      app.report.readWrites.some(({ intents, outcomes }) =>
+        intents.some(
+          (intent, i) =>
+            (intent.target?.channel_id ?? intent.channel_id) === ids.alpha &&
+            intent.target?.root_id === undefined &&
+            outcomes[i].status === "applied",
+        ),
+      ),
+    )
+    .toBe(true);
+  await expect(button).toHaveAccessibleName(/\d+ unread replies/);
+});

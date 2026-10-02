@@ -8,6 +8,7 @@ export type EnterpriseAuthClient = {
   get(): Promise<EnterpriseAuth | null>;
   start(attemptId: string): Promise<EnterpriseAuth>;
   cancel(attemptId: string): Promise<void>;
+  clear(): Promise<void>;
 };
 
 function authInfo(value: unknown): EnterpriseAuth {
@@ -45,6 +46,9 @@ export function createEnterpriseAuthClient(): EnterpriseAuthClient {
     },
     async cancel(attemptId) {
       await invoke("cancel_enterprise_auth_login", { attemptId });
+    },
+    async clear() {
+      await invoke("clear_enterprise_auth");
     },
   };
 }

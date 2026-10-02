@@ -28,12 +28,19 @@ export type ClientSnapshot = Saved & {
 export type EnterpriseLoginSnapshot = {
   communityId: string;
   status: "required" | "opening" | "error";
+  errorKind?: "discovery" | "login";
   error?: string;
 };
 export class EnterpriseLoginRequired extends Error {
   constructor(readonly communityId: string) {
     super("Enterprise sign-in is required for this community");
     this.name = "EnterpriseLoginRequired";
+  }
+}
+export class EnterpriseDiscoveryError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "EnterpriseDiscoveryError";
   }
 }
 /** Read-only membership inventory; does not acquire or select relay sessions. */
@@ -81,8 +88,12 @@ export function createCommunities(
   const listeners = new Set<() => void>();
   const relayListeners = new Set<() => void>();
   const sessions = new Map<string, RelayData>();
-  let enterpriseAttempt: { communityId: string; attemptId: string } | undefined;
-  let enterpriseGateGeneration = 0;
+  let enterpriseAttempt:
+    | { communityId: string; attemptId: string; owner: string }
+    | undefined;
+  const enterpriseCheckVersions = new Map<string, number>();
+  const enterpriseChecksInFlight = new Set<string>();
+  const enterpriseCommunities = new Set<string>();
   // Each session owns a scope so leaving can dispose exactly that one.
   const sessionScopes = new Map<string, Context>();
   const scopes: Context[] = [];
@@ -138,21 +149,60 @@ export function createCommunities(
     for (const fn of listeners) fn();
     emitRelay();
   };
-  const setEnterprise = (
+  const nextEnterpriseCheck = (communityId: string) => {
+    const version = (enterpriseCheckVersions.get(communityId) ?? 0) + 1;
+    enterpriseCheckVersions.set(communityId, version);
+    return version;
+  };
+  const currentEnterpriseCheck = (communityId: string, version: number) =>
+    !disposed && enterpriseCheckVersions.get(communityId) === version;
+  const clearEnterprisePrompt = (communityId: string, version?: number) => {
+    if (
+      version !== undefined &&
+      enterpriseCheckVersions.get(communityId) !== version
+    )
+      return;
+    if (
+      state.enterprise?.communityId === communityId &&
+      enterpriseAttempt?.communityId !== communityId
+    )
+      update({ enterprise: undefined }, false);
+  };
+  const publishEnterprise = (
     communityId: string,
+    version: number,
     status: EnterpriseLoginSnapshot["status"],
     error?: string,
-  ) =>
+    errorKind?: EnterpriseLoginSnapshot["errorKind"],
+  ) => {
+    if (!currentEnterpriseCheck(communityId, version)) return;
+    // A gate check can finish while the browser attempt is open. Its result
+    // must not replace the attempt's owned opening/error state.
+    if (enterpriseAttempt?.communityId === communityId) return;
+    if (
+      state.enterprise &&
+      state.enterprise.communityId !== communityId &&
+      state.enterprise.status === "opening"
+    )
+      return;
     update(
       {
         enterprise: {
           communityId,
           status,
+          ...(errorKind ? { errorKind } : {}),
           ...(error ? { error } : {}),
         },
       },
       false,
     );
+  };
+  const retireEnterprisePrompt = (communityId: string) => {
+    nextEnterpriseCheck(communityId);
+    enterpriseChecksInFlight.delete(communityId);
+    if (state.enterprise?.communityId === communityId)
+      update({ enterprise: undefined }, false);
+  };
   const waitFor = <T>(operation: Promise<T>, signal: AbortSignal) => {
     signal.throwIfAborted();
     return new Promise<T>((resolve, reject) => {
@@ -166,34 +216,37 @@ export function createCommunities(
   };
   async function requireEnterpriseLogin(id: string, signal: AbortSignal) {
     if (!enterpriseAuth || live || !baseConnect) return;
-    const generation = ++enterpriseGateGeneration;
-    const current = () => !disposed && enterpriseGateGeneration === generation;
-    const superseded = () =>
-      new DOMException("Community connection was superseded", "AbortError");
+    const version = nextEnterpriseCheck(id);
+    enterpriseChecksInFlight.add(id);
+    let required = false;
     try {
       if (!(await waitFor(enterpriseAuth.gate(id), signal))) {
-        if (!current()) throw superseded();
+        enterpriseCommunities.delete(id);
+        clearEnterprisePrompt(id, version);
         return;
       }
-      if (!current()) throw superseded();
+      enterpriseCommunities.add(id);
       if (await waitFor(enterpriseAuth.get(), signal)) {
-        if (!current()) throw superseded();
-        if (state.enterprise?.communityId === id)
-          update({ enterprise: undefined }, false);
+        clearEnterprisePrompt(id, version);
         return;
       }
+      required = true;
     } catch (reason) {
-      if (!current()) throw superseded();
       if (signal.aborted) throw reason;
-      setEnterprise(
-        id,
-        "error",
-        reason instanceof Error ? reason.message : String(reason),
-      );
-      throw reason;
+      const error =
+        reason instanceof EnterpriseDiscoveryError
+          ? reason
+          : new EnterpriseDiscoveryError(
+              reason instanceof Error ? reason.message : String(reason),
+              { cause: reason },
+            );
+      publishEnterprise(id, version, "error", error.message, "discovery");
+      throw error;
+    } finally {
+      if (enterpriseCheckVersions.get(id) === version)
+        enterpriseChecksInFlight.delete(id);
     }
-    if (!current()) throw superseded();
-    setEnterprise(id, "required");
+    if (required) publishEnterprise(id, version, "required");
     throw new EnterpriseLoginRequired(id);
   }
   const connect = baseConnect
@@ -349,26 +402,64 @@ export function createCommunities(
   ctx.effect(() => () => {
     disposed = true;
     controller.abort();
+    const attempt = enterpriseAttempt;
+    enterpriseAttempt = undefined;
     presenceActivity.dispose();
     listeners.clear();
     relayListeners.clear();
-    return Promise.all(scopes.map((scope) => scope.fiber.dispose()));
+    const cancel =
+      attempt && enterpriseAuth
+        ? enterpriseAuth.cancel(attempt.attemptId).catch((error) => {
+            console.warn(
+              "Couldn't cancel enterprise login during cleanup",
+              error,
+            );
+          })
+        : Promise.resolve();
+    return Promise.all([
+      cancel,
+      ...scopes.map((scope) => scope.fiber.dispose()),
+    ]).then(() => {});
   });
-  async function startEnterpriseLogin() {
-    const pending = state.enterprise;
-    if (!enterpriseAuth || !pending || pending.status === "opening") return;
+  async function startEnterpriseLogin(communityId?: string, owner = "app") {
+    const pending =
+      state.enterprise &&
+      (!communityId || state.enterprise.communityId === communityId)
+        ? state.enterprise
+        : undefined;
+    if (
+      !enterpriseAuth ||
+      !pending ||
+      pending.status === "opening" ||
+      enterpriseAttempt
+    )
+      return;
+    if (pending.errorKind === "discovery") {
+      await retryEnterpriseGate(pending.communityId);
+      return;
+    }
     const attempt = {
       communityId: pending.communityId,
       attemptId: crypto.randomUUID(),
+      owner,
     };
     enterpriseAttempt = attempt;
-    setEnterprise(attempt.communityId, "opening");
+    nextEnterpriseCheck(attempt.communityId);
+    update(
+      {
+        enterprise: {
+          communityId: attempt.communityId,
+          status: "opening",
+        },
+      },
+      false,
+    );
     try {
       await enterpriseAuth.start(attempt.attemptId);
       if (disposed || enterpriseAttempt?.attemptId !== attempt.attemptId)
         return;
       enterpriseAttempt = undefined;
-      update({ enterprise: undefined }, false);
+      clearEnterprisePrompt(attempt.communityId);
       const session = sessions.get(attempt.communityId);
       if (session) {
         session.disconnect();
@@ -378,23 +469,84 @@ export function createCommunities(
       if (disposed || enterpriseAttempt?.attemptId !== attempt.attemptId)
         return;
       enterpriseAttempt = undefined;
-      setEnterprise(
+      publishEnterprise(
         attempt.communityId,
+        nextEnterpriseCheck(attempt.communityId),
         "error",
         reason instanceof Error ? reason.message : String(reason),
+        "login",
       );
     }
   }
-  function cancelEnterpriseLogin() {
-    enterpriseGateGeneration += 1;
-    const attempt = enterpriseAttempt;
-    enterpriseAttempt = undefined;
-    if (attempt && enterpriseAuth)
-      void enterpriseAuth.cancel(attempt.attemptId).catch(() => {});
-    if (attempt) setEnterprise(attempt.communityId, "required");
+  async function retryEnterpriseGate(communityId: string) {
+    if (!enterpriseAuth || disposed) return;
+    try {
+      await requireEnterpriseLogin(communityId, controller.signal);
+    } catch (reason) {
+      if (
+        !(reason instanceof EnterpriseLoginRequired) &&
+        !(reason instanceof EnterpriseDiscoveryError)
+      )
+        throw reason;
+      return;
+    }
+    const session = sessions.get(communityId);
+    if (session) {
+      session.disconnect();
+      session.retry();
+    }
   }
-  function dismissEnterpriseLogin() {
-    cancelEnterpriseLogin();
+  function cancelEnterpriseLogin(communityId?: string, owner = "app") {
+    const attempt = enterpriseAttempt;
+    const target =
+      communityId ?? attempt?.communityId ?? state.enterprise?.communityId;
+    if (
+      !target ||
+      (attempt &&
+        (attempt.communityId !== target ||
+          (owner !== "app" && attempt.owner !== owner)))
+    )
+      return Promise.resolve();
+    const version = nextEnterpriseCheck(target);
+    let cancellation = Promise.resolve();
+    if (attempt) {
+      enterpriseAttempt = undefined;
+      if (enterpriseAuth)
+        cancellation = enterpriseAuth
+          .cancel(attempt.attemptId)
+          .catch((error) => {
+            console.warn("Couldn't cancel enterprise login", error);
+          });
+      publishEnterprise(target, version, "required");
+    } else if (state.enterprise?.communityId === target) {
+      update({ enterprise: undefined }, false);
+    }
+    return cancellation;
+  }
+  function dismissEnterpriseLogin(communityId?: string, owner = "app") {
+    const target = communityId ?? state.enterprise?.communityId;
+    if (!target) return;
+    cancelEnterpriseLogin(target, owner);
+    if (
+      (!enterpriseAttempt || enterpriseAttempt.owner === owner) &&
+      state.enterprise?.communityId === target
+    )
+      update({ enterprise: undefined }, false);
+  }
+  async function clearEnterpriseAuth() {
+    if (!enterpriseAuth || disposed) return;
+    const attempt = enterpriseAttempt;
+    if (attempt)
+      await cancelEnterpriseLogin(attempt.communityId, attempt.owner);
+    await enterpriseAuth.clear();
+    for (const communityId of enterpriseCommunities) {
+      retireEnterprisePrompt(communityId);
+      const session = sessions.get(communityId);
+      if (session) {
+        session.disconnect();
+        session.retry();
+      }
+    }
     if (state.enterprise) update({ enterprise: undefined }, false);
   }
   return {
@@ -415,15 +567,31 @@ export function createCommunities(
     startEnterpriseLogin,
     cancelEnterpriseLogin,
     dismissEnterpriseLogin,
+    retryEnterpriseGate,
+    clearEnterpriseAuth,
     select(id: string | null) {
       if (id) id = communityDestination(id).id;
       if (id && !state.memberships.some((m) => m.id === id))
         throw new Error("Join this community first");
-      if (id !== state.selected) enterpriseGateGeneration += 1;
-      if (enterpriseAttempt && enterpriseAttempt.communityId !== id)
-        dismissEnterpriseLogin();
+      const previous = state.selected;
+      const previousNeedsRestart =
+        previous !== null &&
+        previous !== id &&
+        (enterpriseChecksInFlight.has(previous) ||
+          enterpriseAttempt?.communityId === previous ||
+          state.enterprise?.communityId === previous);
+      if (previous && previous !== id) retireEnterprisePrompt(previous);
+      if (enterpriseAttempt && enterpriseAttempt.communityId !== id) {
+        const attemptCommunity = enterpriseAttempt.communityId;
+        cancelEnterpriseLogin(attemptCommunity);
+        retireEnterprisePrompt(attemptCommunity);
+      }
+      if (previous && previousNeedsRestart)
+        sessions.get(previous)?.disconnect();
+      const existing = id ? sessions.get(id) : undefined;
       if (id) acquire(id);
       update({ selected: id });
+      if (existing?.snapshot().status === "disconnected") existing.retry();
     },
     saveProfile(profile: PersonalProfile) {
       update({ profile });
@@ -433,9 +601,26 @@ export function createCommunities(
         ...membership,
         id: communityDestination(membership.id).id,
       };
-      enterpriseGateGeneration += 1;
-      if (enterpriseAttempt && enterpriseAttempt.communityId !== membership.id)
-        dismissEnterpriseLogin();
+      const previous = state.selected;
+      const previousNeedsRestart =
+        previous !== null &&
+        previous !== membership.id &&
+        (enterpriseChecksInFlight.has(previous) ||
+          enterpriseAttempt?.communityId === previous ||
+          state.enterprise?.communityId === previous);
+      if (state.selected && state.selected !== membership.id) {
+        retireEnterprisePrompt(state.selected);
+      }
+      if (previous && previousNeedsRestart)
+        sessions.get(previous)?.disconnect();
+      if (
+        enterpriseAttempt &&
+        enterpriseAttempt.communityId !== membership.id
+      ) {
+        const attemptCommunity = enterpriseAttempt.communityId;
+        cancelEnterpriseLogin(attemptCommunity);
+        retireEnterprisePrompt(attemptCommunity);
+      }
       update(
         {
           memberships: [

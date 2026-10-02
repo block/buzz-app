@@ -25,6 +25,7 @@ import { useAvatarPreview } from "./use-avatar-preview";
 import { AvatarCustomColor } from "./AvatarCustomColor";
 import type { EmojiSearchSelection } from "../../bundled/emoji/emoji-mart";
 import type { ReadTransport } from "../relay/transport";
+import { EnterpriseLoginRequired } from "../communities/service";
 
 type Props = {
   value: string;
@@ -42,6 +43,7 @@ type Props = {
 
 type DraftPreview = {
   picture: string;
+  source: "image" | "emoji" | "background";
   emoji?: string;
   color?: string;
   pulse?: number;
@@ -77,6 +79,7 @@ const colors = [
 export function AvatarEditor(props: Props) {
   const [open, setOpen] = useState(false);
   const [draftPreview, setDraftPreview] = useState<DraftPreview | null>(null);
+  const retainDraftOnClose = useRef(false);
   const preview = useAvatarPreview(
     draftPreview?.picture ?? props.value,
     props.community,
@@ -90,7 +93,14 @@ export function AvatarEditor(props: Props) {
     return () => callback.current?.(false);
   }, [open]);
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
+    <Popover.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && !retainDraftOnClose.current) setDraftPreview(null);
+        retainDraftOnClose.current = false;
+        setOpen(next);
+      }}
+    >
       <div
         className={styles.avatarFrame}
         data-shape={props.shape ?? "circle"}
@@ -181,6 +191,12 @@ export function AvatarEditor(props: Props) {
                 onPreview={setDraftPreview}
                 done={(value) => {
                   props.onChange(value);
+                  setDraftPreview(null);
+                  setOpen(false);
+                }}
+                initialDraft={draftPreview}
+                onAuthRequired={() => {
+                  retainDraftOnClose.current = true;
                   setOpen(false);
                 }}
               />
@@ -217,9 +233,13 @@ function AvatarDraft({
   disabled = false,
   done,
   connect,
+  initialDraft,
+  onAuthRequired,
 }: Props & {
   done(value: string): void;
   onPreview(value: DraftPreview | null): void;
+  initialDraft?: DraftPreview | null;
+  onAuthRequired(): void;
 }) {
   const [customColorOpen, setCustomColorOpen] = useState(false);
   const customColorTrigger = useRef<HTMLButtonElement>(null);
@@ -241,11 +261,13 @@ function AvatarDraft({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  const [picture, setPicture] = useState(value);
-  const [mode, setMode] = useState<"image" | "emoji" | "background">("image");
-  const [emoji, setEmoji] = useState("😀");
-  const [color, setColor] = useState("#FFF4CC");
-  const [pulse, setPulse] = useState(0);
+  const [picture, setPicture] = useState(initialDraft?.picture ?? value);
+  const [mode, setMode] = useState<"image" | "emoji" | "background">(
+    initialDraft?.source ?? "image",
+  );
+  const [emoji, setEmoji] = useState(initialDraft?.emoji ?? "😀");
+  const [color, setColor] = useState(initialDraft?.color ?? "#FFF4CC");
+  const [pulse, setPulse] = useState(initialDraft?.pulse ?? 0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -253,10 +275,10 @@ function AvatarDraft({
   useEffect(() => {
     onPreview({
       picture,
+      source: mode,
       ...(mode !== "image" ? { emoji, color, pulse } : {}),
     });
   }, [picture, mode, emoji, color, pulse, onPreview]);
-  useEffect(() => () => onPreview(null), [onPreview]);
   const input = useRef<HTMLInputElement>(null);
   const pending = useRef<AbortController | null>(null);
   useEffect(
@@ -280,12 +302,19 @@ function AvatarDraft({
         else setPicture(url);
       }
     } catch (reason) {
-      if (!request.signal.aborted)
+      if (!request.signal.aborted) {
+        if (reason instanceof EnterpriseLoginRequired) {
+          // This child owns the popup. Retire it before the app-owned prompt
+          // takes focus, while AvatarEditor retains the local draft.
+          onAuthRequired();
+          return;
+        }
         setError(
           reason instanceof Error
             ? reason.message
             : "Image upload failed. Try again.",
         );
+      }
     } finally {
       if (!request.signal.aborted) {
         pending.current = null;

@@ -11,7 +11,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { CommunityDialog } from "./CommunityDialog";
 import { Context } from "@deepseek-ai/cordis";
-import { createCommunities, type Communities } from "./service";
+import {
+  createCommunities,
+  EnterpriseLoginRequired,
+  type Communities,
+} from "./service";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 
 stubAvatarBrowserApis();
@@ -56,12 +60,14 @@ it("publishes a description-only edit to an existing community profile", async (
       throw new Error(`Unexpected request: ${url}`);
     }),
   );
+  const snapshot = {
+    status: "ready",
+    relayAvailable: true,
+    profile: { name: "Local", picture: "" },
+  } as const;
   const communities = {
-    snapshot: () => ({
-      status: "ready",
-      relayAvailable: true,
-      profile: { name: "Local", picture: "" },
-    }),
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
     joined: vi.fn(),
   } as unknown as Communities;
   render(
@@ -107,12 +113,14 @@ it("opens with an unchanged over-limit profile and blocks publishing it", async 
       throw new Error(`Unexpected request: ${url}`);
     }),
   );
+  const snapshot = {
+    status: "ready",
+    relayAvailable: true,
+    profile: { name: "Local", picture: "" },
+  } as const;
   const communities = {
-    snapshot: () => ({
-      status: "ready",
-      relayAvailable: true,
-      profile: { name: "Local", picture: "" },
-    }),
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
     joined: vi.fn(),
   } as unknown as Communities;
   render(
@@ -149,12 +157,14 @@ it("names exact relay claim refusals and keeps other failures generic", async ()
       throw new Error(`Unexpected request: ${url}`);
     }),
   );
+  const snapshot = {
+    status: "ready",
+    relayAvailable: true,
+    profile: { name: "", picture: "" },
+  } as const;
   const communities = {
-    snapshot: () => ({
-      status: "ready",
-      relayAvailable: true,
-      profile: { name: "", picture: "" },
-    }),
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
   } as unknown as Communities;
   render(
     <CommunityDialog communities={communities} mode="join" close={() => {}} />,
@@ -204,12 +214,14 @@ it.each([
         throw new Error(`Unexpected request: ${url}`);
       }),
     );
+    const snapshot = {
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "", picture: "" },
+    } as const;
     const communities = {
-      snapshot: () => ({
-        status: "ready",
-        relayAvailable: true,
-        profile: { name: "", picture: "" },
-      }),
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
       joined: vi.fn(),
     } as unknown as Communities;
     render(
@@ -258,12 +270,14 @@ it("explains an inherited invalid avatar when editing at join and recovers on re
       throw new Error(`Unexpected request: ${url}`);
     }),
   );
+  const snapshot = {
+    status: "ready",
+    relayAvailable: true,
+    profile: { name: "", picture: "" },
+  } as const;
   const communities = {
-    snapshot: () => ({
-      status: "ready",
-      relayAvailable: true,
-      profile: { name: "", picture: "" },
-    }),
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
     joined: vi.fn(),
   } as unknown as Communities;
   render(
@@ -352,6 +366,46 @@ it("keeps join unavailable after native identity hydration, but still saves a lo
   }
 });
 
+it("cancels only its owned enterprise attempt when the join dialog unmounts", async () => {
+  const community = "https://enterprise.example";
+  api.inspectProfile.mockRejectedValueOnce(
+    new EnterpriseLoginRequired(community),
+  );
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/info"))
+        return Response.json({ name: "Enterprise", policy: null });
+      throw new Error(`Unexpected fixture request: ${url}`);
+    }),
+  );
+  const dismiss = vi.fn();
+  const snapshot = {
+    status: "ready",
+    relayAvailable: true,
+    selected: null,
+    profile: { name: "Local", picture: "" },
+    enterprise: {
+      communityId: community,
+      status: "required" as const,
+    },
+  } as const;
+  const communities = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    dismissEnterpriseLogin: dismiss,
+  } as unknown as Communities;
+  const view = render(
+    <CommunityDialog communities={communities} mode="join" close={() => {}} />,
+  );
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText("Relay URL"), community);
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await screen.findByText(/requires enterprise sign-in/);
+  view.unmount();
+  expect(dismiss).toHaveBeenCalledWith(community, expect.any(String));
+});
+
 it.each([
   "",
   "not-a-relay",
@@ -363,12 +417,14 @@ it.each([
     const user = userEvent.setup();
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
+    const snapshot = {
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "Local", picture: "" },
+    } as const;
     const communities = {
-      snapshot: () => ({
-        status: "ready",
-        relayAvailable: true,
-        profile: { name: "Local", picture: "" },
-      }),
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
     } as unknown as Communities;
     render(
       <CommunityDialog

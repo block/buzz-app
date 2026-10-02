@@ -327,15 +327,15 @@ function EnterpriseLoginDialog({
     <AlertDialog
       title="Sign in to this community"
       description="This trusted community requires enterprise sign-in before Buzz can connect."
-      onClose={communities.dismissEnterpriseLogin}
+      onClose={() => communities.dismissEnterpriseLogin(state.communityId)}
       actions={
         <>
           <Button
             type="button"
             onClick={
               state.status === "opening"
-                ? communities.cancelEnterpriseLogin
-                : communities.dismissEnterpriseLogin
+                ? () => communities.cancelEnterpriseLogin(state.communityId)
+                : () => communities.dismissEnterpriseLogin(state.communityId)
             }
           >
             {state.status === "opening" ? "Cancel" : "Not now"}
@@ -344,9 +344,17 @@ function EnterpriseLoginDialog({
             <Button
               type="button"
               variant="prominent"
-              onClick={() => void communities.startEnterpriseLogin()}
+              onClick={() =>
+                void (state.errorKind === "discovery"
+                  ? communities.retryEnterpriseGate(state.communityId)
+                  : communities.startEnterpriseLogin(state.communityId))
+              }
             >
-              {state.status === "error" ? "Retry sign-in" : "Sign in"}
+              {state.errorKind === "discovery"
+                ? "Retry connection check"
+                : state.status === "error"
+                  ? "Retry sign-in"
+                  : "Sign in"}
             </Button>
           )}
         </>

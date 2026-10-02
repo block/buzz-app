@@ -125,7 +125,13 @@ When a packaged build has enterprise login configured, selected native startup
 first checks the trusted community's NIP-11 advertisement. A required community
 pauses before relay connection and offers an explicit browser sign-in with
 cancel/retry actions; a saved, revalidated adapter session resumes the connection.
+Transport or advertisement-check failures remain retryable checks and do not
+open the browser until the native gate confirms that sign-in is required.
 Switching communities or retiring a join attempt fences late browser results.
+Profile settings can clear that shared native enterprise session locally for the
+current adapter, identity, and build. Clearing it does not remove the Buzz
+identity, memberships, or remote access; the next applicable connection must
+complete enterprise sign-in again.
 Public relay discovery and ordinary relays retain their existing behavior.
 App disposal closes all owned contexts and their subscriptions.
 

@@ -284,12 +284,30 @@ post-write different-head check remains conservative and also retains the draft.
 **Compatibility gate:** deploy with a relay supporting Canvas revision preconditions
 ([block/buzz#6780](https://github.com/block/buzz/pull/6780)) for atomic protection.
 An older relay may ignore the tag; strong reads and client head comparison alone
-cannot prevent concurrent overwrite. This client change does not upgrade the relay
-or add Canvas history/restore. Detected conflicts require reviewing the saved Canvas. Refresh confirms before discarding
+cannot prevent concurrent overwrite. The client does not upgrade the relay.
+Detected conflicts require reviewing the saved Canvas. Refresh confirms before discarding
 edits. Local recovery drafts are partitioned by community/viewer/channel; if browser
 storage is unavailable they survive only while the editor stays open. Save never
 promotes local recovery storage to shared state. Already accepted outbox operations
 remain session-owned if the drawer closes or plugin is disabled.
+
+**Canvas history:** Channel actions → View canvas → History lazily reads retained
+kind-40100 revisions in pages of 25, ordered by `created_at DESC, id ASC` with
+`until`/`before_id` keyset cursors. The first page is writer-backed so a just-restored
+revision is visible; older pages remain replica-eligible. The current marker uses
+the editor's strong-read head, not list position. Refresh history rechecks the
+head without replacing the editor draft. Author labels use the shared profile
+directory, with public-key fallbacks; previews are read-only Markdown source.
+
+Restore requires explicit confirmation and publishes the selected content as a
+new signed revision through the existing Canvas save/outbox owner. Its precondition
+is the displayed head, never the historical revision or a silently substituted
+newer head. Clean editors adopt the confirmed result. Edited or stale recovered
+drafts keep their content and original base until explicit reload; browsing and
+cancelling never replace drafts. Failed/uncertain restores retain drafts and show
+the actual error without automatically retrying. Empty revisions can be restored;
+revisions exceeding the existing 24 KiB save limit remain previewable but cannot
+be restored here. No diff viewer or new delivery owner is introduced.
 
 ### Top-bar launchers and the companion slot
 

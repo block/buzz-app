@@ -1428,6 +1428,7 @@ function ChannelWorkspace({
         <ChannelCanvasDialog
           key={`${scope}:${current.id}`}
           canvas={queries.canvas}
+          profiles={queries.profiles}
           scope={scope}
           channelId={current.id}
           open={canvasOpen}

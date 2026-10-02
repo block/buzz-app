@@ -16,6 +16,12 @@ import {
 const canvasConflict =
   "Canvas changed since you opened it. Your draft is kept; load the current document before replacing it.";
 
+export type CanvasHistoryCursor = { until: number; before_id: string };
+export type CanvasHistoryPage = {
+  revisions: readonly RelayEvent[];
+  next: CanvasHistoryCursor | undefined;
+};
+
 export const selectedHead = (events: readonly RelayEvent[]) =>
   [...events].sort(
     (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
@@ -265,6 +271,50 @@ export function createChannelKit({
           },
         ]),
       );
+    },
+    async history(
+      channel: string,
+      cursor?: CanvasHistoryCursor,
+    ): Promise<CanvasHistoryPage> {
+      signal.throwIfAborted();
+      if (!canWrite(channel))
+        throw new Error("Canvas is unavailable after channel access changed");
+      const rows = await fresh([
+        {
+          kinds: [40100],
+          "#h": [channel],
+          limit: 25,
+          ...(cursor ?? { consistency: "strong" as const }),
+        },
+      ]);
+      signal.throwIfAborted();
+      if (!canWrite(channel))
+        throw new Error("Canvas is unavailable after channel access changed");
+      if (
+        rows.some(
+          (event) =>
+            event.kind !== 40100 ||
+            !event.tags.some((tag) => tag[0] === "h" && tag[1] === channel) ||
+            (cursor &&
+              (event.created_at > cursor.until ||
+                (event.created_at === cursor.until &&
+                  event.id <= cursor.before_id))),
+        )
+      )
+        throw new Error(
+          "Canvas history returned an invalid or non-advancing page",
+        );
+      const revisions = [
+        ...new Map(rows.map((event) => [event.id, event])).values(),
+      ].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id));
+      const last = revisions.at(-1);
+      return {
+        revisions,
+        next:
+          rows.length >= 25 && last
+            ? { until: last.created_at, before_id: last.id }
+            : undefined,
+      };
     },
     async save(channel: string, content: string, expected: string | undefined) {
       signal.throwIfAborted();

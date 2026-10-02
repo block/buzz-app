@@ -236,8 +236,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
           />
           <UpdateNotice updates={services.updates} />
           {client.enterprise &&
-            (!client.selected ||
-              client.enterprise.communityId === client.selected) && (
+            client.enterprise.communityId === client.selected && (
               <EnterpriseLoginDialog
                 communities={services.communities}
                 state={client.enterprise}

@@ -1,5 +1,12 @@
 import { Collapsible } from "@base-ui/react/collapsible";
-import { useMemo, type ReactNode } from "react";
+import {
+  Children,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -8,6 +15,7 @@ import {
   useConversationSource,
   type CodeThread,
 } from "./conversation";
+import { MediaAttachment } from "../../features/messages/MediaAttachment";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   CaretDownIcon,
@@ -20,7 +28,7 @@ import {
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import { GitHubBody } from "./GitHubBody";
 import type { GitHubDetails } from "./data";
-import { bodyPreview } from "./preview";
+import { bodyPreview, isTextBody } from "./preview";
 import styles from "./GitHub.module.css";
 import inlineStyles from "../../shared/InlineReference.module.css";
 
@@ -62,6 +70,57 @@ function Author({ message }: { message: ConversationMessage }) {
   );
 }
 
+function Thumbnails({ images, label }: { images: string[]; label: string }) {
+  const row = useRef<HTMLDivElement>(null);
+  const [capacity, setCapacity] = useState(images.length);
+  useLayoutEffect(() => {
+    const element = row.current;
+    const tile = element?.firstElementChild;
+    if (
+      !element ||
+      !(tile instanceof HTMLElement) ||
+      typeof ResizeObserver === "undefined"
+    )
+      return;
+    const update = () => {
+      if (!element.clientWidth) return; // A hidden open-message row keeps its last capacity.
+      const gap = parseFloat(getComputedStyle(element).columnGap) || 0;
+      const width = tile.getBoundingClientRect().width;
+      if (width > 0)
+        setCapacity(
+          Math.max(1, Math.floor((element.clientWidth + gap) / (width + gap))),
+        );
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    observer.observe(tile);
+    update();
+    return () => observer.disconnect();
+  }, []);
+  const visible = images.slice(0, capacity);
+  const hidden = images.length - visible.length;
+  return (
+    <div className={styles.thumbnails} ref={row}>
+      {visible.map((src, index) => (
+        <div className={styles.thumbnail} key={src}>
+          <MediaAttachment
+            attachment={{
+              url: src,
+              kind: "image",
+              dimensions: { width: 1, height: 1 },
+            }}
+            media={(source) => source}
+            imageDescription={`Image ${index + 1} in ${label}`}
+          />
+          {index === visible.length - 1 && hidden > 0 && (
+            <span className={styles.thumbnailCount}>+{hidden}</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Message({
   message,
   url,
@@ -83,6 +142,63 @@ function Message({
     () => bodyPreview(message.body, message.bodyHtml, url),
     [message.body, message.bodyHtml, url],
   );
+  const header = useRef<HTMLDivElement>(null);
+  const measure = useRef<HTMLDivElement>(null);
+  const [fitsOnOneLine, setFitsOnOneLine] = useState(false);
+  const textBody = useMemo(
+    () => isTextBody(message.body, message.bodyHtml, url),
+    [message.body, message.bodyHtml, url],
+  );
+  const hasBody = !!message.body.trim() || !!fallback;
+  const canFitOnOneLine =
+    textBody && !preview.images.length && !Children.toArray(children).length;
+  useLayoutEffect(() => {
+    const content = header.current;
+    const probe = measure.current;
+    if (
+      !content ||
+      !probe ||
+      !canFitOnOneLine ||
+      !hasBody ||
+      typeof ResizeObserver === "undefined"
+    )
+      return;
+    const update = () => {
+      const lines: DOMRect[] = [];
+      const walker = document.createTreeWalker(
+        probe,
+        NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT,
+      );
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (node.nodeType === Node.TEXT_NODE && node.textContent?.trim()) {
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          lines.push(
+            ...Array.from(range.getClientRects()).filter(
+              (rect) => rect.width > 0,
+            ),
+          );
+        } else if (node instanceof HTMLBRElement) {
+          const range = document.createRange();
+          range.selectNode(node);
+          lines.push(...range.getClientRects());
+        }
+      }
+      // Inline formatting has different glyph boxes; boxes on one line still overlap vertically.
+      setFitsOnOneLine(
+        content.clientWidth > 0 &&
+          lines.length > 0 &&
+          Math.max(...lines.map((line) => line.top)) <
+            Math.min(...lines.map((line) => line.bottom)),
+      );
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(content);
+    observer.observe(probe);
+    update();
+    return () => observer.disconnect();
+  }, [canFitOnOneLine, hasBody]);
+  const expandable = !canFitOnOneLine || (hasBody && !fitsOnOneLine);
   const MarkerIcon =
     kind === "review"
       ? reviewState === "APPROVED"
@@ -95,6 +211,17 @@ function Message({
       : kind === "code"
         ? CodeIcon
         : ChatCircleIcon;
+  const marker =
+    kind === "description" ? (
+      <Avatar src={message.authorAvatar} alt="" fallback={message.author} />
+    ) : (
+      <span
+        className={styles.eventIcon}
+        data-review-state={kind === "review" ? reviewState : undefined}
+      >
+        <MarkerIcon size={20} aria-hidden="true" />
+      </span>
+    );
   return (
     <Collapsible.Root
       className={styles.conversationMessage}
@@ -103,94 +230,105 @@ function Message({
       aria-label={label}
     >
       <div className={styles.messageMarker}>
-        <Collapsible.Trigger
-          render={
-            <IconButton
-              variant="avatar"
-              size="sm"
-              aria-label={`Toggle ${label}`}
-              icon={
-                kind === "description" ? (
-                  <Avatar
-                    src={message.authorAvatar}
-                    alt=""
-                    fallback={message.author}
-                  />
-                ) : (
-                  <span
-                    className={styles.eventIcon}
-                    data-review-state={
-                      kind === "review" ? reviewState : undefined
-                    }
-                  >
-                    <MarkerIcon size={20} aria-hidden="true" />
-                  </span>
-                )
-              }
-            />
-          }
-        />
+        {expandable ? (
+          <Collapsible.Trigger
+            render={
+              <IconButton
+                variant="avatar"
+                size="sm"
+                aria-label={`Toggle ${label}`}
+                icon={marker}
+              />
+            }
+          />
+        ) : (
+          <span aria-hidden="true">{marker}</span>
+        )}
       </div>
       <div className={styles.messageContent}>
-        <div className={styles.messageMetadata}>
-          <Author message={message} />
-          <span
-            className={styles.messageLabel}
-            title={
-              kind === "review"
-                ? "Submitted review event, not the PR’s current approval status"
-                : undefined
-            }
-          >
-            {kind === "code" ? "Code comment" : label}
-          </span>
-          <span className={styles.messageTime}>
-            <PostedTime value={message.createdAt} />
-          </span>
-        </div>
-        <Collapsible.Trigger
-          className={`buzz-accordion-trigger text-body-sm ${styles.messageTrigger}`}
-          aria-label={`Expand ${label}`}
-        >
-          <span className={styles.messagePreview}>
-            <span className={styles.previewText}>
+        <div className={styles.messageHeader} ref={header}>
+          {canFitOnOneLine && hasBody && (
+            <div className={styles.messageMeasure} aria-hidden="true" inert>
+              <div
+                ref={measure}
+                className={`text-body-sm ${styles.messageMeasureText}`}
+              >
+                {message.body ? (
+                  <GitHubBody
+                    body={message.body}
+                    bodyHtml={message.bodyHtml}
+                    url={url}
+                  />
+                ) : (
+                  fallback
+                )}
+              </div>
+            </div>
+          )}
+          {expandable && (
+            <Collapsible.Trigger
+              className={`buzz-accordion-trigger text-body-sm ${styles.messageTrigger}`}
+              aria-label={`Expand ${label}`}
+              title={
+                message.createdAt
+                  ? new Date(message.createdAt).toLocaleString()
+                  : undefined
+              }
+            >
+              <CaretDownIcon size={14} aria-hidden="true" />
+            </Collapsible.Trigger>
+          )}
+          <div className={styles.messageMetadata}>
+            <Author message={message} />
+            <span
+              className={styles.messageLabel}
+              title={
+                kind === "review"
+                  ? "Submitted review event, not the PR’s current approval status"
+                  : undefined
+              }
+            >
+              {kind === "code" ? "Code comment" : label}
+            </span>
+            <span className={styles.messageTime}>
+              <PostedTime value={message.createdAt} />
+            </span>
+          </div>
+          {expandable ? (
+            <span className={`text-body-sm ${styles.previewText}`}>
               {preview.text || fallback}
             </span>
-            {!!preview.images.length && (
-              <span className={styles.thumbnails} aria-hidden="true">
-                {preview.images.slice(0, 3).map((src, index) => (
-                  <span className={styles.thumbnail} key={src}>
-                    <img
-                      src={src}
-                      alt=""
-                      loading="lazy"
-                      decoding="async"
-                      referrerPolicy="no-referrer"
-                    />
-                    {index === 2 && preview.images.length > 3 && (
-                      <span className={styles.thumbnailCount}>
-                        +{preview.images.length - 3}
-                      </span>
-                    )}
-                  </span>
-                ))}
-              </span>
+          ) : hasBody ? (
+            <div className={`text-body-sm ${styles.messageBody}`}>
+              {message.body ? (
+                <GitHubBody
+                  body={message.body}
+                  bodyHtml={message.bodyHtml}
+                  url={url}
+                />
+              ) : (
+                <p>{fallback}</p>
+              )}
+            </div>
+          ) : null}
+        </div>
+        {!!preview.images.length && (
+          <Thumbnails images={preview.images} label={label} />
+        )}
+        {expandable && (
+          <Collapsible.Panel className={`text-body-sm ${styles.messageBody}`}>
+            {message.body ? (
+              <GitHubBody
+                body={message.body}
+                bodyHtml={message.bodyHtml}
+                url={url}
+              />
+            ) : (
+              <p>{fallback}</p>
             )}
-          </span>
-          <CaretDownIcon size={14} aria-hidden="true" />
-        </Collapsible.Trigger>
-        <Collapsible.Panel className={styles.messageBody}>
-          {message.body ? (
-            <GitHubBody
-              body={message.body}
-              bodyHtml={message.bodyHtml}
-              url={url}
-            />
-          ) : (
-            <p>{fallback}</p>
-          )}
-          {children}
-        </Collapsible.Panel>
+            {children}
+          </Collapsible.Panel>
+        )}
       </div>
     </Collapsible.Root>
   );
@@ -333,7 +471,9 @@ function Conversation({
               reviewState={event.message.state}
               fallback={
                 event.kind === "review"
-                  ? `${reviewLabels[event.message.state ?? ""] ?? "Reviewed"} · ${event.threads.length} loaded code threads`
+                  ? event.threads.length
+                    ? `${event.threads.length} loaded code ${event.threads.length === 1 ? "thread" : "threads"}`
+                    : ""
                   : "No message provided"
               }
             >

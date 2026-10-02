@@ -87,3 +87,42 @@ export function bodyPreview(
     images: [...images],
   };
 }
+
+/** Safe to measure with the body renderer without mounting hidden attachments. */
+export function isTextBody(
+  body: string,
+  bodyHtml: string | undefined,
+  base: string,
+): boolean {
+  if (body.length > MAX_MARKDOWN_LENGTH) return false;
+  const scan = scanMarkdown(body);
+  if (scan.tooDeep) return false;
+  const metadata = attachmentMetadata(bodyHtml);
+  const media = (value: string) => {
+    const source = bodyUrl(value, base);
+    return !!source && !!attachmentFor(source, metadata);
+  };
+  const textOnly = (node: typeof scan.tree): boolean => {
+    if (node.type === "image" || node.type === "imageReference") return false;
+    if (node.type === "link" || node.type === "linkReference") {
+      const value =
+        node.url ??
+        scan.definitions.get(node.identifier?.toLowerCase() ?? "") ??
+        "";
+      if (media(value)) return false;
+    }
+    if (node.type === "html") {
+      for (const element of inertHtml(node.value ?? "").querySelectorAll(
+        "img, a, video, audio, source",
+      )) {
+        if (element.localName === "img") return false;
+        const value =
+          element.getAttribute(element.localName === "a" ? "href" : "src") ??
+          "";
+        if (media(value)) return false;
+      }
+    }
+    return (node.children ?? []).every(textOnly);
+  };
+  return textOnly(scan.tree);
+}

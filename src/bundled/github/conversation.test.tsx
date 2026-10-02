@@ -209,15 +209,27 @@ it("keeps source failures independent, retains pages during retry and fetches mo
   ).toBeVisible();
   failReviews = false;
   await user.click(screen.getByRole("button", { name: "Retry reviews" }));
-  await screen.findByRole("button", { name: "Expand Approved" });
+  const approval = await screen.findByRole("group", { name: "Approved" });
+  expect(within(approval).queryByRole("button")).not.toBeInTheDocument();
+  expect(approval).not.toHaveTextContent("loaded code threads");
   await user.click(
     screen.getByRole("button", { name: "Load more discussion" }),
   );
   await screen.findByRole("button", { name: "Retry discussion" });
-  expect(screen.getByText("First comment")).toBeVisible();
+  expect(
+    screen
+      .getAllByText("First comment")
+      .find((node) => !node.closest("[aria-hidden]")),
+  ).toBeVisible();
   failPageTwo = false;
   await user.click(screen.getByRole("button", { name: "Retry discussion" }));
-  await screen.findByText("Second comment");
+  await waitFor(() =>
+    expect(
+      screen
+        .getAllByText("Second comment")
+        .some((node) => !node.closest("[aria-hidden]")),
+    ).toBe(true),
+  );
   expect(
     screen.getAllByRole("button", { name: "Expand Comment" }),
   ).toHaveLength(2);
@@ -280,7 +292,7 @@ it("expands independently with linked authors outside triggers and empty reviews
   const review = await screen.findByRole("button", {
     name: "Expand Review dismissed",
   });
-  expect(review).toHaveTextContent("1 loaded code threads");
+  expect(review.parentElement).toHaveTextContent("1 loaded code thread");
   const description = screen.getByRole("button", {
     name: "Expand Description",
   });
@@ -310,7 +322,11 @@ it("expands independently with linked authors outside triggers and empty reviews
     "datetime",
     date(15),
   );
-  expect(screen.getAllByText("Root")).toHaveLength(1);
+  expect(
+    screen
+      .getAllByText("Root")
+      .filter((node) => !node.closest("[aria-hidden]")),
+  ).toHaveLength(1);
 });
 it("aborts all old sources, ignores late results and resets pages and expansion on PR changes", async () => {
   const pending: { resolve(response: Response): void; signal: AbortSignal }[] =
@@ -361,7 +377,11 @@ it("keeps description usable while held sources load and gives neutral empty cop
   render(<GitHubConversation details={{ ...details, body: "" }} url={url} />);
   await waitFor(() => expect(finish).toHaveLength(3));
   expect(screen.getAllByRole("status")).toHaveLength(3);
-  expect(screen.getByText("No description provided")).toBeVisible();
+  expect(
+    screen
+      .getAllByText("No description provided")
+      .find((node) => !node.closest("[aria-hidden]")),
+  ).toBeVisible();
   await act(async () => {
     for (const resolve of finish) resolve(response([]));
   });
@@ -411,7 +431,11 @@ it("keeps more-page loading explicit and ignores late page results after switchi
     "Loading discussion",
   );
   expect(within(source).queryByRole("button")).not.toBeInTheDocument();
-  expect(screen.getByText("First page")).toBeVisible();
+  expect(
+    screen
+      .getAllByText("First page")
+      .find((node) => !node.closest("[aria-hidden]")),
+  ).toBeVisible();
   view.rerender(
     <GitHubConversation details={details} url={url.replace("/1", "/2")} />,
   );

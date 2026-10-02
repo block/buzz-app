@@ -9,7 +9,7 @@ const picture =
   "https://raw.githubusercontent.com/sample/project/main/preview.png";
 
 // Browser-only: actual app wiring, event markers on an unboxed timeline, responsive geometry,
-// keyboard/touch activation and thumbnails as a below-excerpt disclosure target.
+// keyboard/touch activation, one-line disclosure measurement and thumbnail lightboxes.
 // Source recovery, paging and grouping matrices belong to colocated tests.
 test("PR conversation hierarchy and disclosures survive themes, narrow panes and enlarged text", async ({
   page,
@@ -35,7 +35,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
               submitted_at: "2026-10-01T20:00:00Z",
               state: "COMMENTED",
               user: { login: "reader" },
-              body: "The timeline is easier to scan now.",
+              body: "The **timeline** is easier to scan now, with all the context in place.",
             },
             {
               id: 12,
@@ -72,7 +72,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
                   in_reply_to_id: 30,
                   pull_request_review_id: 11,
                   user: { login: "author" },
-                  body: "Yes, the fallback stays visible.",
+                  body: "### Yes, the fallback stays visible.",
                 },
                 {
                   ...common,
@@ -80,7 +80,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
                   path: "src/standalone.ts",
                   line: 8,
                   user: { login: "other-reviewer" },
-                  body: "This code thread has no loaded review.",
+                  body: "<span>This code thread has no loaded review.</span>",
                 },
               ]
             : {
@@ -136,8 +136,41 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     exact: true,
   });
   await expect(description).toHaveAttribute("aria-expanded", "false");
-  await expect(description.locator("img")).toHaveCount(3);
-  await expect(description).toContainText("+2");
+  const descriptionEvent = conversation.getByRole("group", {
+    name: "Description",
+    exact: true,
+  });
+  const thumbnails = descriptionEvent
+    .locator('[class*="thumbnails"]')
+    .getByRole("button", { name: "Open image fullscreen" });
+  const expectLayoutBasedThumbnails = async () => {
+    const expectedCapacity = await descriptionEvent
+      .locator('[class*="thumbnails"]')
+      .evaluate((row) => {
+        const tile = row.firstElementChild.getBoundingClientRect().width;
+        const gap = parseFloat(getComputedStyle(row).columnGap);
+        return Math.max(1, Math.floor((row.clientWidth + gap) / (tile + gap)));
+      });
+    const shown = Math.min(5, expectedCapacity);
+    await expect(thumbnails).toHaveCount(shown);
+    const tops = await thumbnails.evaluateAll((tiles) =>
+      tiles.map((tile) => tile.getBoundingClientRect().top),
+    );
+    expect(new Set(tops).size).toBe(1);
+    const remaining = 5 - shown;
+    if (remaining)
+      await expect(descriptionEvent).toContainText(`+${remaining}`);
+    else
+      await expect(
+        descriptionEvent.locator('[class*="thumbnailCount"]'),
+      ).toHaveCount(0);
+  };
+  await expect(thumbnails).toHaveCount(5);
+  await expect(thumbnails.first().locator("img")).toHaveCSS(
+    "object-fit",
+    "cover",
+  );
+  await expect(descriptionEvent).not.toContainText("+2");
   await expect(
     panel.getByRole("heading", { name: "Description details" }),
   ).toHaveCount(0);
@@ -165,16 +198,16 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     "Approved",
     "Changes requested",
   ]) {
-    const marker = conversation.getByRole("button", {
-      name: `Toggle ${label}`,
-      exact: true,
-    });
+    const marker = conversation
+      .getByRole("group", { name: label, exact: true })
+      .locator(":scope > div")
+      .first();
     await expect(marker.locator("svg")).toHaveCSS("width", "20px");
   }
   const expectThumbnailsBelowExcerpt = async () => {
-    const excerpt = description.locator("span").first().locator("span").first();
+    const excerpt = description.locator("..").locator(":scope > span").last();
     const textBox = await excerpt.boundingBox();
-    const imageBox = await description
+    const imageBox = await descriptionEvent
       .locator("img")
       .first()
       .locator("..")
@@ -194,21 +227,66 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
             .getBoundingClientRect();
           return { x: caret.right - content.left, y: caret.top - content.top };
         });
+      const baseline = () =>
+        trigger.evaluate((node) => {
+          const event = node.closest('[role="group"]');
+          const content = event.lastElementChild;
+          const author = content.querySelector("a").getBoundingClientRect();
+          const time = content.querySelector("time").getBoundingClientRect();
+          const text = [
+            ...content.querySelectorAll(
+              '[class*="previewText"], [class*="messageBody"] [class*="paragraph"]',
+            ),
+          ].find((element) => element.getClientRects().length);
+          const range = document.createRange();
+          range.selectNodeContents(text);
+          const line = range.getClientRects()[0];
+          const top = content.getBoundingClientRect().top;
+          return {
+            author: author.top - top,
+            time: time.top - top,
+            text: line.top - top,
+          };
+        });
+      const collapsedBaseline = await baseline();
       const collapsed = await caretPosition();
       const headerBottom = await trigger.evaluate((node) => {
-        const header =
-          node.parentElement.firstElementChild.getBoundingClientRect();
+        const header = node.parentElement
+          .querySelector("time")
+          .getBoundingClientRect();
         return header.bottom - node.parentElement.getBoundingClientRect().top;
       });
       expect(collapsed.y).toBeLessThan(headerBottom);
       await trigger.locator(":scope > svg").click();
       await expect(trigger).toHaveAttribute("aria-expanded", "true");
       await expect.poll(caretPosition).toEqual(collapsed);
+      await expect.poll(baseline).toEqual(collapsedBaseline);
       await trigger.click();
       await expect(trigger).toHaveAttribute("aria-expanded", "false");
       await expect.poll(caretPosition).toEqual(collapsed);
     }
   };
+  const singleLine = conversation.getByRole("group", {
+    name: "Reviewed",
+    exact: true,
+  });
+  const singleLineTrigger = singleLine.getByRole("button", {
+    name: "Expand Reviewed",
+    exact: true,
+  });
+  const wideViewport = page.viewportSize();
+  await expect(singleLineTrigger).toHaveCount(0);
+  await page.setViewportSize({ width: 800, height: 950 });
+  await expect(singleLineTrigger).toBeAttached();
+  await singleLineTrigger.click();
+  await expect(singleLineTrigger).toHaveAttribute("aria-expanded", "true");
+  await page.setViewportSize(wideViewport);
+  await expect(singleLineTrigger).toHaveCount(0);
+  await page.setViewportSize({ width: 800, height: 950 });
+  await expect(singleLineTrigger).toHaveAttribute("aria-expanded", "true");
+  await singleLineTrigger.click();
+  await page.setViewportSize(wideViewport);
+  await expect(singleLineTrigger).toHaveCount(0);
   const standalone = panel.getByRole("button", {
     name: "src/standalone.ts:8 · 1 loaded comment",
     exact: true,
@@ -248,7 +326,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
       };
       const markerColor = (label) =>
         getComputedStyle(
-          node.querySelector(`[aria-label="Toggle ${label}"] svg`),
+          node.querySelector(`[role="group"][aria-label="${label}"] svg`),
         ).color;
       return {
         approved: markerColor("Approved"),
@@ -303,7 +381,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     });
     expect(Math.abs(geometry.railX - geometry.markerX)).toBeLessThan(1);
     expect(Math.abs(geometry.textX - geometry.authorX)).toBeLessThan(1);
-    expect(geometry.sameRow).toBe(false);
+    expect(geometry.sameRow).toBe(true);
     for (const label of [
       "Description",
       "Comment",
@@ -318,7 +396,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
             .parentElement.getBoundingClientRect();
           const time = node.querySelector("time").getBoundingClientRect();
           const excerpt = node
-            .querySelector('[aria-label^="Expand "]')
+            .querySelector('[class*="previewText"], [class*="messageBody"]')
             .getBoundingClientRect();
           return {
             authorX: author.left,
@@ -380,24 +458,66 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     name: "Toggle Comment",
     exact: true,
   });
-  await description.focus();
-  await page.keyboard.press("Tab");
-  await expect(commentMarker).toBeFocused();
+  await thumbnails.first().focus();
+  await expect(thumbnails.first()).toBeFocused();
   await commentMarker.tap();
   await expect(comment).toHaveAttribute("aria-expanded", "true");
   await commentMarker.focus();
   await page.keyboard.press("Space");
   await expect(comment).toHaveAttribute("aria-expanded", "false");
-  // Pointer/touch on a thumbnail expands the description, never a media viewer.
-  await description.locator("img").first().tap();
+  // Thumbnails open the shared lightbox without changing disclosure state.
+  await thumbnails.first().tap();
+  const lightbox = page.getByRole("dialog", { name: "Image attachment" });
+  await expect(lightbox).toBeVisible();
+  await expect(lightbox.locator("img")).toHaveAttribute(
+    "src",
+    `${picture}?image=0`,
+  );
+  await lightbox.screenshot({
+    path: testInfo.outputPath("thumbnail-lightbox.png"),
+  });
+  await page.keyboard.press("Escape");
+  await expect(lightbox).toHaveCount(0);
+  await expect(description).toHaveAttribute("aria-expanded", "false");
+  await thumbnails.first().focus();
+  await page.keyboard.press("Enter");
+  await expect(lightbox).toBeVisible();
+  await lightbox
+    .getByRole("button", { name: "Close fullscreen viewer" })
+    .click();
+  await expect(thumbnails.first()).toBeFocused();
+  const profile = descriptionEvent.getByRole("link", {
+    name: "author",
+    exact: true,
+  });
+  expect(
+    await profile.evaluate((link) => {
+      const box = link.getBoundingClientRect();
+      return (
+        document
+          .elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)
+          ?.closest("a") === link
+      );
+    }),
+  ).toBe(true);
+  // Label, timestamp, excerpt and whitespace belong to the same large target.
+  const header = description.locator("..");
+  for (const content of [
+    header.getByText("Description", { exact: true }),
+    header.locator("time"),
+    header.locator(":scope > span").last(),
+  ]) {
+    const box = await content.boundingBox();
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(description).toHaveAttribute("aria-expanded", "true");
+    await description.click();
+  }
+  await description.click();
   await expect(
     panel.getByRole("heading", { name: "Description details" }),
   ).toBeVisible();
-  await expect(description.locator("span").first()).toBeHidden();
+  await expect(thumbnails.first()).toBeHidden();
   expect(await timePositions()).toEqual(collapsedTimes);
-  await expect(
-    page.getByRole("dialog", { name: "Image attachment" }),
-  ).toHaveCount(0);
   await description.focus();
   await page.keyboard.press("Space");
   await expect(description).toHaveAttribute("aria-expanded", "false");
@@ -412,38 +532,54 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   ).toBeVisible();
   await expect(comment).toHaveAttribute("aria-expanded", "true");
   for (const expanded of [comment, review]) {
-    await expect(expanded.locator("span").first()).toBeHidden();
+    await expect(
+      expanded.locator("..").locator(":scope > span").last(),
+    ).toBeHidden();
   }
   expect(await timePositions()).toEqual(collapsedTimes);
-  const approval = panel.getByRole("button", {
-    name: "Expand Approved",
+  const approval = conversation.getByRole("group", {
+    name: "Approved",
     exact: true,
   });
-  await approval.click();
-  await expect(approval.locator("span").first()).toBeHidden();
+  await expect(approval.getByRole("button")).toHaveCount(0);
+  await expect(approval.getByText("No message provided")).toHaveCount(0);
+  await expect(approval).not.toContainText("loaded code threads");
   await expect(
-    conversation
-      .getByText("Approved · 0 loaded code threads", { exact: true })
-      .filter({ visible: true }),
-  ).toHaveCount(1);
-  await approval.click();
+    approval.locator('[class*="previewText"], [class*="messageBody"]'),
+  ).toHaveCount(0);
   const thread = panel.getByRole("button", {
     name: "src/preview.ts:12 · 2 loaded comments",
   });
   await thread.click();
   await expect(panel.locator("pre")).toContainText("newPreview");
-  await panel
-    .getByRole("button", { name: "Expand Code comment by author" })
-    .click();
-  await expect(panel.getByText("Yes, the fallback stays visible.")).toHaveCount(
-    2,
-  );
+  await expect(
+    panel
+      .getByText("Yes, the fallback stays visible.")
+      .filter({ visible: true }),
+  ).toHaveCount(1);
+  const reply = conversation.getByRole("group", {
+    name: "Code comment by author",
+    exact: true,
+  });
+  await expect(
+    reply.getByRole("heading", { name: "Yes, the fallback stays visible." }),
+  ).toBeVisible();
+  await expect(reply.getByRole("button")).toHaveCount(0);
   await standalone.click();
   const standaloneComment = panel.getByRole("button", {
     name: "Expand Code comment by other-reviewer",
     exact: true,
   });
-  await standaloneComment.click();
+  await expect(standaloneComment).toHaveCount(0);
+  await expect(
+    conversation
+      .getByRole("group", {
+        name: "Code comment by other-reviewer",
+        exact: true,
+      })
+      .getByText("This code thread has no loaded review.")
+      .filter({ visible: true }),
+  ).toBeVisible();
   await panel.screenshot({
     path: testInfo.outputPath("conversation-expanded-dark.png"),
   });
@@ -451,6 +587,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     await page.setViewportSize({ width, height: 950 });
     await description.scrollIntoViewIfNeeded();
     await expectThumbnailsBelowExcerpt();
+    await expectLayoutBasedThumbnails();
     await description.screenshot({
       path: testInfo.outputPath(`summary-${width}.png`),
     });
@@ -465,9 +602,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
       ),
     ).toBe(true);
     expect(
-      await standaloneComment.evaluate(
-        (node) => node.scrollWidth <= node.clientWidth,
-      ),
+      await standalone.evaluate((node) => node.scrollWidth <= node.clientWidth),
     ).toBe(true);
   }
   // Use the host's real text-scale preference; no substitute CSS scaling.
@@ -482,26 +617,26 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await settle(page);
   await page.locator(`a[href="${target}"]`).click();
   await expect(description).toHaveCSS("font-size", "28px");
+  await expectLayoutBasedThumbnails();
+  await expect(singleLineTrigger).toBeAttached();
   await expect(
     conversation.getByText("Conversation loaded · oldest first"),
   ).toBeVisible();
   await description.scrollIntoViewIfNeeded();
   await expectThumbnailsBelowExcerpt();
   await expectStationaryCarets();
-  const preview = description.locator("span").first().locator("span").first();
+  const preview = description.locator("..").locator(":scope > span").last();
   expect((await preview.boundingBox()).width).toBeGreaterThan(100);
   expect(
     await description.evaluate((node) => node.scrollWidth <= node.clientWidth),
   ).toBe(true);
   await standalone.click();
-  await standaloneComment.click();
+  if (await standaloneComment.count()) await standaloneComment.click();
   expect(
     await conversation.evaluate((node) => node.scrollWidth <= node.clientWidth),
   ).toBe(true);
   expect(
-    await standaloneComment.evaluate(
-      (node) => node.scrollWidth <= node.clientWidth,
-    ),
+    await standalone.evaluate((node) => node.scrollWidth <= node.clientWidth),
   ).toBe(true);
   await description
     .locator("xpath=../..")

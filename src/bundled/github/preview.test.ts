@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { expect, it } from "vitest";
-import { bodyPreview } from "./preview";
+import { bodyPreview, isTextBody } from "./preview";
 import { MAX_MARKDOWN_LENGTH } from "../../features/relay/message-content";
 const base = "https://github.com/sample/project/pull/1";
 const image =
@@ -62,4 +62,28 @@ it("previews supported image attachment links using renderer metadata, not their
     bodyPreview(`[Video](${asset})`, `<video src="${asset}"></video>`, base)
       .images,
   ).toEqual([]);
+});
+
+it("allows rendered line measurement for text in any format without mounting hidden media", () => {
+  for (const body of [
+    "",
+    "A **formatted** note",
+    "A [linked note](https://example.test)",
+    "`Code` and ~~edits~~",
+    "One\nTwo",
+    "First\n\nSecond",
+    "# Heading",
+    "- First\n- Second",
+    "<div>HTML body</div>",
+  ]) {
+    expect(isTextBody(body, undefined, base)).toBe(true);
+  }
+  for (const body of [
+    `![Image](${image})`,
+    `[Image](${image})`,
+    `<img src="${image}">`,
+    `<a href="${image}">Image</a>`,
+  ]) {
+    expect(isTextBody(body, undefined, base)).toBe(false);
+  }
 });

@@ -281,8 +281,11 @@ must never push out a quiet channel's mark. The last quarter, and any room the b
 marks leave, goes by persisted local interaction order across all marks, so the newest
 read is never dropped because old broad marks fill the budget. Interaction order also
 ranks marks within each group, which prioritizes newly read old history as well as
-current traffic. Each save first drops marks that a broader mark already covers, using
-retained evidence: a message mark under its channel mark, a thread mark under its
+current traffic. After the budget chooses what to keep, each save drops marks that a
+kept broader mark already covers, and gives the freed space to the next marks in line.
+A cover that did not fit replaces nothing. A dropped mark gives its interaction order to
+its cover, so the smaller wire budget protects the cover as it would have protected the
+dropped read. Coverage uses retained evidence: a message mark under its channel mark, a thread mark under its
 channel mark, and a catch-up mark under its channel or thread mark. A thread mark never
 replaces a message mark: a reply finds its channel from its own event, but finds its
 thread only while its root is loaded. Catch-up marks never make another mark redundant:

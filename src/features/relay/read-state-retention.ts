@@ -4,11 +4,12 @@ import {
   type ReadState,
 } from "./read-state-model";
 
-/** True when other frontiers already make this frontier's context read. */
+/** The mark that already reads all `key` reads, if any. `frontier` looks up
+ * marks that are being kept, plus `key` itself. */
 export type CoveredFrontier = (
   key: string,
-  frontiers: ReadonlyMap<string, number>,
-) => boolean;
+  frontier: (key: string) => number | undefined,
+) => string | undefined;
 /** Broader marks first: a channel or thread mark covers many messages, so
  * losing one makes old history unread again. Catch-up marks (`activity:`,
  * `thread-activity:`) come next: only this app reads them, so recent catch-up
@@ -29,16 +30,21 @@ const SCOPED_SHARE = 0.75;
  * Up to `SCOPED_SHARE` of the budget, channel marks outrank thread marks, then
  * catch-up marks, then message marks. The rest goes by local interaction order,
  * which wins over event time so reading old history still synchronizes.
- * Marks that `covered` proves redundant are dropped first.
  * Every override group and its direct frontier is protected; pressure can never lose a floor.
+ *
+ * Marks that `covered` proves redundant are dropped only after the budget has
+ * chosen what to keep, and only when their covering mark was kept. The freed
+ * space then goes to the next marks in line. A dropped mark gives its recency
+ * to its cover, so a smaller limit later (such as the synced one) protects the
+ * cover as it would have protected the dropped read.
  */
-export function retainReadState(
+export function retainRead(
   states: readonly ReadState[],
   recent: Readonly<Record<string, number>>,
   clientId: string,
   maxBytes = 96 * 1024,
   covered?: CoveredFrontier,
-): ReadState {
+): { state: ReadState; recent: Readonly<Record<string, number>> } {
   const frontiers = new Map<string, number>();
   let protectedState: ReadState = { frontiers: {}, overrides: {} };
   for (const state of states) {
@@ -50,31 +56,28 @@ export function retainReadState(
     });
   }
   // Overrides make inherited ancestry load-bearing (see below); keep everything then.
-  if (covered && !Object.keys(protectedState.overrides).length) {
-    const merged = new Map(frontiers);
-    for (const key of merged.keys())
-      if (covered(key, merged)) frontiers.delete(key);
-  }
+  const coveredBy = Object.keys(protectedState.overrides).length
+    ? undefined
+    : covered;
   const encoder = new TextEncoder();
   let used = encoder.encode(
     JSON.stringify({ v: 1, client_id: clientId, contexts: {} }),
   ).byteLength;
   let keys = 0;
   const retained = new Map<string, number>();
+  const frontierKey = (key: string) =>
+    /^(ov_|esc:)/.test(key) ? `esc:${key}` : key;
+  // Separators are counted per entry, so release can return exactly what take spent.
+  const cost = (key: string, value: number) =>
+    encoder.encode(JSON.stringify(key)).byteLength + 2 + String(value).length;
   const take = (key: string, value: number, share = 1) => {
-    const cost =
-      encoder.encode(JSON.stringify(key)).byteLength +
-      1 +
-      String(value).length +
-      (keys ? 1 : 0);
-    if (used + cost > maxBytes * share || keys >= READ_STATE_KEYS * share)
+    const size = cost(key, value);
+    if (used + size > maxBytes * share || keys >= READ_STATE_KEYS * share)
       return false;
-    used += cost;
+    used += size;
     keys++;
     return true;
   };
-  const frontierKey = (key: string) =>
-    /^(ov_|esc:)/.test(key) ? `esc:${key}` : key;
   for (const [key, value] of Object.entries(protectedState.overrides)) {
     for (const [prefix, timestamp] of [
       ["ov_s:", value.set],
@@ -107,36 +110,90 @@ export function retainReadState(
       retained.set(key, value);
     }
   }
+  const nextRecent: Record<string, number> = { ...recent };
   const byUse = ([a, av]: [string, number], [b, bv]: [string, number]) =>
-    (recent[b] ?? 0) - (recent[a] ?? 0) || bv - av || a.localeCompare(b);
-  for (const entry of [...frontiers].sort(
+    (nextRecent[b] ?? 0) - (nextRecent[a] ?? 0) ||
+    bv - av ||
+    a.localeCompare(b);
+  const scoped = [...frontiers].sort(
     (a, b) => scope(a[0]) - scope(b[0]) || byUse(a, b),
-  )) {
-    const [key, value] = entry;
-    if (retained.has(key)) continue;
-    // Stop at the first broad mark that does not fit, so a narrower mark
-    // never takes the share ahead of it.
-    if (!take(frontierKey(key), value, SCOPED_SHARE)) break;
-    retained.set(key, value);
-  }
-  for (const [key, value] of [...frontiers].sort(byUse)) {
-    if (!retained.has(key) && take(frontierKey(key), value))
+  );
+  const byRecent = [...frontiers].sort(byUse);
+  const dropped = new Set<string>();
+  const select = () => {
+    for (const [key, value] of scoped) {
+      if (retained.has(key) || dropped.has(key)) continue;
+      // Stop at the first broad mark that does not fit, so a narrower mark
+      // never takes the share ahead of it.
+      if (!take(frontierKey(key), value, SCOPED_SHARE)) break;
       retained.set(key, value);
+    }
+    for (const [key, value] of byRecent)
+      if (
+        !retained.has(key) &&
+        !dropped.has(key) &&
+        take(frontierKey(key), value)
+      )
+        retained.set(key, value);
+  };
+  select();
+  // Refilling can keep more covered marks, so repeat until nothing drops.
+  let pruned = true;
+  while (coveredBy && pruned) {
+    pruned = false;
+    // Prune against the kept marks only: a cover that did not fit cannot
+    // replace anything. Decide on one snapshot so a cover is never pruned
+    // after it has already replaced another mark.
+    const kept = new Map(retained);
+    const covers = new Map<string, string>();
+    for (const [key, value] of kept) {
+      const cover = coveredBy(key, (other) =>
+        other === key ? value : kept.get(other),
+      );
+      if (cover !== undefined && cover !== key && kept.has(cover))
+        covers.set(key, cover);
+    }
+    // A cover that is itself covered passes the recency on to what replaced it.
+    const final = (key: string) => {
+      let cover = covers.get(key) ?? key;
+      for (let hops = 0; covers.has(cover) && hops < covers.size; hops++)
+        cover = covers.get(cover) as string;
+      return cover;
+    };
+    for (const key of covers.keys()) {
+      const cover = final(key);
+      if (cover === key || covers.has(cover)) continue;
+      const value = retained.get(key) as number;
+      retained.delete(key);
+      dropped.add(key);
+      pruned = true;
+      used -= cost(frontierKey(key), value);
+      keys--;
+      if (nextRecent[key] !== undefined)
+        nextRecent[cover] = Math.max(nextRecent[cover] ?? 0, nextRecent[key]);
+    }
+    if (pruned) select();
   }
-  return Object.freeze({
+  const state = Object.freeze({
     frontiers: Object.freeze(Object.fromEntries(retained)),
     overrides: protectedState.overrides,
   });
-}
-export function retainReadOrder(
-  state: ReadState,
-  recent: Readonly<Record<string, number>>,
-) {
-  return Object.freeze(
-    Object.fromEntries(
-      Object.entries(recent).filter(([key]) =>
-        Object.hasOwn(state.frontiers, key),
+  return {
+    state,
+    recent: Object.freeze(
+      Object.fromEntries(
+        Object.entries(nextRecent).filter(([key]) => retained.has(key)),
       ),
     ),
-  );
+  };
+}
+/** `retainRead` when the caller keeps no recency, such as a publication. */
+export function retainReadState(
+  states: readonly ReadState[],
+  recent: Readonly<Record<string, number>>,
+  clientId: string,
+  maxBytes?: number,
+  covered?: CoveredFrontier,
+): ReadState {
+  return retainRead(states, recent, clientId, maxBytes, covered).state;
 }

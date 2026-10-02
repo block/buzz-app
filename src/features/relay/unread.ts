@@ -476,24 +476,24 @@ export function createUnread({
    * after a reload without the root, a thread mark no longer reads it.
    * Only retained evidence supplies a message's channel; marks without it are
    * kept. */
-  reads.setCoverage((key, frontiers) => {
-    const value = frontiers.get(key) ?? Number.POSITIVE_INFINITY;
+  reads.setCoverage((key, frontier) => {
+    const value = frontier(key) ?? Number.POSITIVE_INFINITY;
     const separator = key.indexOf(":");
-    if (separator < 0) return false;
+    if (separator < 0) return undefined;
     const kind = key.slice(0, separator);
     const id = key.slice(separator + 1);
-    const at = (other: string) => frontiers.get(other) ?? -1;
-    if (kind === "activity") return at(id) >= value;
-    if (closed) return false;
+    const by = (other: string, through: number) =>
+      (frontier(other) ?? -1) >= through ? other : undefined;
+    if (kind === "activity") return by(id, value);
+    if (closed) return undefined;
     indexEvidence();
     const entry = byId.get(id);
-    if (!entry) return false;
-    const channel = at(entry.channelId);
-    if (kind === "msg") return channel >= entry.event.created_at;
-    if (kind === "thread") return channel >= value;
+    if (!entry) return undefined;
+    if (kind === "msg") return by(entry.channelId, entry.event.created_at);
+    if (kind === "thread") return by(entry.channelId, value);
     if (kind === "thread-activity")
-      return Math.max(channel, at(`thread:${id}`)) >= value;
-    return false;
+      return by(entry.channelId, value) ?? by(`thread:${id}`, value);
+    return undefined;
   });
   function category(
     entry: Evidence,

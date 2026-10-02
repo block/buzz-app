@@ -1,7 +1,7 @@
 import { newer, type RelayEvent } from "./events";
 import {
+  retainRead,
   retainReadState,
-  retainReadOrder,
   type CoveredFrontier,
 } from "./read-state-retention";
 import type { ReadStateHost } from "./read-state-host";
@@ -263,18 +263,14 @@ export function createReadState({
           "Read-state observation cancelled",
           "AbortError",
         );
-      const state = retainReadState(
+      const { state, recent } = retainRead(
         [current.state, ...decoded.map(({ parsed }) => parsed.state)],
         current.recent ?? {},
         current.clientId,
         undefined,
         covered,
       );
-      return {
-        ...current,
-        state,
-        recent: retainReadOrder(state, current.recent ?? {}),
-      };
+      return { ...current, state, recent };
     });
     if (closed || generation !== epoch) return;
     for (const item of decoded) {
@@ -369,10 +365,10 @@ export function createReadState({
             timestamp === undefined
               ? (current.recent ?? {})
               : { ...current.recent, [key]: revision };
-          const nextState =
+          const kept =
             timestamp === undefined
-              ? current.state
-              : retainReadState(
+              ? { state: current.state, recent }
+              : retainRead(
                   [
                     current.state,
                     { frontiers: { [key]: timestamp }, overrides: {} },
@@ -390,8 +386,8 @@ export function createReadState({
           return {
             ...current,
             revision,
-            state: nextState,
-            recent: retainReadOrder(nextState, recent),
+            state: kept.state,
+            recent: kept.recent,
             localUnread,
             acceptedRevision:
               timestamp === undefined &&
@@ -652,20 +648,20 @@ export function createReadState({
               delete localUnread[key];
             }
             if (clearForce) delete localUnread[clearForce];
-            const nextState = Object.keys(frontiers).length
-              ? retainReadState(
+            const kept = Object.keys(frontiers).length
+              ? retainRead(
                   [current.state, { frontiers, overrides: {} }],
                   recent,
                   current.clientId,
                   undefined,
                   covered,
                 )
-              : current.state;
+              : { state: current.state, recent };
             return {
               ...current,
               revision,
-              state: nextState,
-              recent: retainReadOrder(nextState, recent),
+              state: kept.state,
+              recent: kept.recent,
               localUnread,
               acceptedRevision: Object.keys(frontiers).length
                 ? current.acceptedRevision

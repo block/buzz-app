@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { retainReadState } from "./read-state-retention";
+import { retainRead, retainReadState } from "./read-state-retention";
 import {
   effectiveFrontier,
   overrideActive,
@@ -164,13 +164,18 @@ it("old broad marks never crowd out the newest read", () => {
       expect(kept.frontiers[key]).toBe(state.frontiers[key]);
   }
 });
-it("drops covered marks before the budget, unless overrides need ancestry", () => {
+it("drops covered marks, unless overrides need ancestry", () => {
   const state = {
     frontiers: { room: 20, "msg:covered": 10, "msg:other": 30 },
     overrides: {},
   };
-  const covered = (key: string, frontiers: ReadonlyMap<string, number>) =>
-    key === "msg:covered" && (frontiers.get("room") ?? -1) >= 10;
+  const covered = (
+    key: string,
+    frontier: (key: string) => number | undefined,
+  ) =>
+    key === "msg:covered" && (frontier("room") ?? -1) >= 10
+      ? "room"
+      : undefined;
   expect(
     retainReadState([state], {}, "fixture", undefined, covered).frontiers,
   ).toEqual({ room: 20, "msg:other": 30 });
@@ -182,4 +187,66 @@ it("drops covered marks before the budget, unless overrides need ancestry", () =
     retainReadState([withOverride], {}, "fixture", undefined, covered)
       .frontiers,
   ).toEqual(state.frontiers);
+});
+// A thread mark with no local use, as merged from another device, and a fresh
+// catch-up read it covers. Twenty more recently used thread marks compete.
+function coveredRead() {
+  const thread = (n: number) => `thread:${n.toString(16).padStart(64, "0")}`;
+  const cover = thread(999);
+  const read = `thread-activity:${"9".repeat(61)}3e7`;
+  const others = Array.from({ length: 20 }, (_, n) => thread(n));
+  const covered = (
+    key: string,
+    frontier: (key: string) => number | undefined,
+  ) =>
+    key === read && (frontier(cover) ?? -1) >= (frontier(read) ?? 0)
+      ? cover
+      : undefined;
+  return {
+    cover,
+    read,
+    covered,
+    state: {
+      frontiers: {
+        ...Object.fromEntries(others.map((key, n) => [key, 100 + n])),
+        [cover]: 60,
+        [read]: 50,
+      },
+      overrides: {},
+    },
+    recent: {
+      ...Object.fromEntries(others.map((key, n) => [key, 10 + n])),
+      [read]: 1000,
+    },
+  };
+}
+/** The read stays read when it or its cover survives at its own value. */
+const stillRead = (
+  kept: { frontiers: Readonly<Record<string, number>> },
+  { cover, read }: { cover: string; read: string },
+) => (kept.frontiers[read] ?? 0) >= 50 || (kept.frontiers[cover] ?? 0) >= 50;
+it("a cover that does not fit never replaces a fresh read", () => {
+  const { state, recent, covered, ...marks } = coveredRead();
+  const kept = retainReadState([state], recent, "fixture", 600, covered);
+  // The budget is genuinely full.
+  expect(Object.keys(kept.frontiers).length).toBeLessThan(10);
+  expect(stillRead(kept, marks)).toBe(true);
+});
+it("a cover that replaces a fresh read keeps its recency at the synced limit", () => {
+  const { state, recent, covered, ...marks } = coveredRead();
+  const local = retainRead([state], recent, "fixture", undefined, covered);
+  // Locally there is room, so the cover replaces the read and takes its use.
+  expect(local.state.frontiers[marks.read]).toBeUndefined();
+  expect(local.state.frontiers[marks.cover]).toBe(60);
+  expect(local.recent[marks.cover]).toBe(1000);
+  // The smaller publication budget still protects it as a fresh read.
+  const published = retainReadState(
+    [local.state],
+    local.recent,
+    "fixture",
+    600,
+    covered,
+  );
+  expect(Object.keys(published.frontiers).length).toBeLessThan(10);
+  expect(stillRead(published, marks)).toBe(true);
 });

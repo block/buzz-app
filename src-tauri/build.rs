@@ -41,6 +41,7 @@ fn main() {
             "get_enterprise_auth",
             "start_enterprise_auth_login",
             "cancel_enterprise_auth_login",
+            "clear_enterprise_auth",
             "enterprise_login_gate",
             "relay_sign",
             "relay_decode_read_state",

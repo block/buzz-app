@@ -10,6 +10,7 @@
     "allow-get-enterprise-auth",
     "allow-start-enterprise-auth-login",
     "allow-cancel-enterprise-auth-login",
+    "allow-clear-enterprise-auth",
     "allow-enterprise-login-gate",
     "allow-relay-sign",
     "allow-identity-prepare-remote-agent-authorization",

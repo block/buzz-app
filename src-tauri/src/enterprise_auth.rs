@@ -1,6 +1,9 @@
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, OnceLock,
+    },
     time::Duration,
 };
 
@@ -194,6 +197,8 @@ pub(crate) struct EnterpriseAuthHost {
     session: Arc<Mutex<Option<(Scope, StoredSession)>>>,
     login: Arc<Mutex<LoginState>>,
     commit: Arc<tokio::sync::Mutex<()>>,
+    // A validation may finish after another operation has invalidated its input.
+    generation: Arc<AtomicU64>,
     store: Arc<dyn CredentialStore>,
 }
 
@@ -217,6 +222,7 @@ impl EnterpriseAuthHost {
             session: Arc::new(Mutex::new(None)),
             login: Arc::new(Mutex::new(LoginState::default())),
             commit: Arc::new(tokio::sync::Mutex::new(())),
+            generation: Arc::new(AtomicU64::new(0)),
             store,
         }
     }
@@ -227,11 +233,31 @@ impl EnterpriseAuthHost {
     }
 
     async fn get_scope(&self, scope: Scope) -> Result<Option<EnterpriseAuthInfo>> {
+        let http_client = client()?;
+        self.get_scope_with_client(scope, http_client).await
+    }
+
+    async fn get_scope_with_client(
+        &self,
+        scope: Scope,
+        http_client: &reqwest::Client,
+    ) -> Result<Option<EnterpriseAuthInfo>> {
+        let generation = self.generation.load(Ordering::Acquire);
         if let Some(session) = self.cached(&scope) {
             let raw = encode_session(&session)?;
-            return match check_session(&scope.adapter, &session, Some(&session.expires_at)).await {
+            return match check_session(
+                http_client,
+                &scope.adapter,
+                &session,
+                Some(&session.expires_at),
+            )
+            .await
+            {
                 SessionCheck::Valid(info) => {
                     let _commit = self.commit.lock().await;
+                    if self.generation.load(Ordering::Acquire) != generation {
+                        return Ok(self.cached_info(&scope));
+                    }
                     if let Some(current) = self.cached(&scope) {
                         if current.token.as_str() != session.token.as_str() {
                             return Ok(Some(EnterpriseAuthInfo {
@@ -242,18 +268,22 @@ impl EnterpriseAuthHost {
                     Ok(Some(info))
                 }
                 SessionCheck::Invalid | SessionCheck::Inconsistent => {
-                    self.delete_if_matches(&scope, raw).await?;
-                    self.clear_memory(&scope, Some(&session.token));
-                    Ok(None)
+                    self.invalidate_session(&scope, raw, &session.token, generation)
+                        .await
                 }
                 SessionCheck::Transient(error) => Err(error),
             };
         }
         let Some(persisted) = self.read(&scope).await? else {
+            let _commit = self.commit.lock().await;
+            if self.generation.load(Ordering::Acquire) != generation {
+                return Ok(self.cached_info(&scope));
+            }
             self.clear_memory(&scope, None);
             return Ok(None);
         };
         match check_session(
+            http_client,
             &scope.adapter,
             &persisted.session,
             Some(&persisted.session.expires_at),
@@ -262,6 +292,9 @@ impl EnterpriseAuthHost {
         {
             SessionCheck::Valid(info) => {
                 let _commit = self.commit.lock().await;
+                if self.generation.load(Ordering::Acquire) != generation {
+                    return Ok(self.cached_info(&scope));
+                }
                 if let Some(current) = self.cached(&scope) {
                     if current.token.as_str() != persisted.session.token.as_str() {
                         return Ok(Some(EnterpriseAuthInfo {
@@ -274,12 +307,34 @@ impl EnterpriseAuthHost {
                 Ok(Some(info))
             }
             SessionCheck::Invalid | SessionCheck::Inconsistent => {
-                self.delete_if_matches(&scope, persisted.raw).await?;
-                self.clear_memory(&scope, Some(&persisted.session.token));
-                Ok(None)
+                self.invalidate_session(&scope, persisted.raw, &persisted.session.token, generation)
+                    .await
             }
             SessionCheck::Transient(error) => Err(error),
         }
+    }
+
+    fn cached_info(&self, scope: &Scope) -> Option<EnterpriseAuthInfo> {
+        self.cached(scope).map(|session| EnterpriseAuthInfo {
+            expires_at: session.expires_at,
+        })
+    }
+
+    async fn invalidate_session(
+        &self,
+        scope: &Scope,
+        raw: Zeroizing<Vec<u8>>,
+        token: &Zeroizing<String>,
+        generation: u64,
+    ) -> Result<Option<EnterpriseAuthInfo>> {
+        let _commit = self.commit.lock().await;
+        if self.generation.load(Ordering::Acquire) != generation {
+            return Ok(self.cached_info(scope));
+        }
+        self.bump_generation();
+        self.delete_if_matches(scope, raw).await?;
+        self.clear_memory(scope, Some(token));
+        Ok(None)
     }
 
     pub(crate) async fn start<R: Runtime>(
@@ -303,7 +358,6 @@ impl EnterpriseAuthHost {
 
     pub(crate) async fn cancel(&self, id: &str) -> Result<()> {
         validate_attempt_id(id)?;
-        let _commit = self.commit.lock().await;
         let mut state = self
             .login
             .lock()
@@ -311,11 +365,34 @@ impl EnterpriseAuthHost {
         if state.active.as_ref().is_some_and(|active| active.id == id) {
             let active = state.active.take().expect("active login checked above");
             remember_canceled(&mut state.canceled, id);
+            drop(state);
             let _ = active.cancel.send(());
         } else {
             remember_canceled(&mut state.canceled, id);
         }
         Ok(())
+    }
+
+    pub(crate) async fn clear(&self, identity: &IdentityHost) -> Result<()> {
+        let scope = scope_for_identity(identity).await?;
+        self.clear_scope(scope).await
+    }
+
+    async fn clear_scope(&self, scope: Scope) -> Result<()> {
+        // Fence validations before waiting for storage, then recheck before cleanup.
+        self.bump_generation();
+        self.cancel_active();
+        let generation = self.generation.load(Ordering::Acquire);
+        let _commit = self.commit.lock().await;
+        if self.generation.load(Ordering::Acquire) != generation {
+            return Ok(());
+        }
+        self.bump_generation();
+        self.clear_memory(&scope, None);
+        let Some(persisted) = self.read(&scope).await? else {
+            return Ok(());
+        };
+        self.delete_if_matches(&scope, persisted.raw).await
     }
 
     async fn run_login<R: Runtime>(
@@ -380,8 +457,24 @@ impl EnterpriseAuthHost {
             remember_canceled(&mut state.canceled, &previous.id);
             let _ = previous.cancel.send(());
         }
+        self.bump_generation();
         state.active = Some(ActiveLogin { id, cancel });
         Ok(true)
+    }
+
+    fn cancel_active(&self) {
+        if let Ok(mut state) = self.login.lock() {
+            if let Some(active) = state.active.take() {
+                remember_canceled(&mut state.canceled, &active.id);
+                let _ = active.cancel.send(());
+            }
+        }
+    }
+
+    fn bump_generation(&self) -> u64 {
+        self.generation
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1)
     }
 
     fn finish(&self, id: &str) {
@@ -513,6 +606,14 @@ pub(crate) async fn cancel_enterprise_auth_login(
     attempt_id: String,
 ) -> Result<()> {
     host.cancel(&attempt_id).await
+}
+
+#[tauri::command]
+pub(crate) async fn clear_enterprise_auth(
+    host: State<'_, EnterpriseAuthHost>,
+    identity: State<'_, IdentityHost>,
+) -> Result<()> {
+    host.clear(identity.inner()).await
 }
 
 struct CallbackState {
@@ -715,12 +816,29 @@ enum SessionCheck {
     Transient(String),
 }
 
+enum ReadJsonError {
+    Transport,
+    TooLarge,
+    Invalid,
+}
+
+impl From<ReadJsonError> for String {
+    fn from(error: ReadJsonError) -> Self {
+        match error {
+            ReadJsonError::Transport => "Enterprise authentication response failed".into(),
+            ReadJsonError::TooLarge => "Enterprise authentication response was too large".into(),
+            ReadJsonError::Invalid => "Enterprise authentication response was invalid".into(),
+        }
+    }
+}
+
 async fn exchange(
     base: &str,
     code: &str,
     handoff_secret: &str,
 ) -> Result<(StoredSession, EnterpriseAuthInfo)> {
-    let response = client()?
+    let http_client = client()?;
+    let response = http_client
         .post(api_url(base, "/v1/login/exchange")?)
         .json(&serde_json::json!({
             "code": code,
@@ -734,7 +852,7 @@ async fn exchange(
     }
     let response: ExchangeResponse = read_json(response).await?;
     let session = session_from_exchange(response)?;
-    let info = match check_session(base, &session, Some(&session.expires_at)).await {
+    let info = match check_session(http_client, base, &session, Some(&session.expires_at)).await {
         SessionCheck::Valid(info) => info,
         SessionCheck::Invalid | SessionCheck::Inconsistent => {
             return Err("Enterprise authentication session was rejected".into())
@@ -761,6 +879,7 @@ fn session_from_exchange(response: ExchangeResponse) -> Result<StoredSession> {
 }
 
 async fn check_session(
+    http_client: &reqwest::Client,
     base: &str,
     session: &StoredSession,
     expected_expiry: Option<&str>,
@@ -771,16 +890,15 @@ async fn check_session(
     if !expiry_is_current(&session.expires_at) {
         return SessionCheck::Invalid;
     }
-    let response = match client().and_then(|client| Ok((client, api_url(base, "/v1/session")?))) {
-        Ok((client, url)) => {
-            client
-                .get(url)
-                .header(AUTHORIZATION, format!("Bearer {}", session.token.as_str()))
-                .send()
-                .await
-        }
+    let url = match api_url(base, "/v1/session") {
+        Ok(url) => url,
         Err(error) => return SessionCheck::Transient(error),
     };
+    let response = http_client
+        .get(url)
+        .header(AUTHORIZATION, format!("Bearer {}", session.token.as_str()))
+        .send()
+        .await;
     let response = match response {
         Ok(response) => response,
         Err(_) => return SessionCheck::Transient("Enterprise session check failed".into()),
@@ -798,7 +916,10 @@ async fn check_session(
     }
     let response: SessionResponse = match read_json(response).await {
         Ok(response) => response,
-        Err(_) => return SessionCheck::Inconsistent,
+        Err(ReadJsonError::Transport) => {
+            return SessionCheck::Transient("Enterprise session check failed".into())
+        }
+        Err(ReadJsonError::TooLarge | ReadJsonError::Invalid) => return SessionCheck::Inconsistent,
     };
     if response.expires_at.is_empty()
         || response.expires_at.len() > MAX_SESSION_EXPIRY
@@ -838,26 +959,27 @@ fn client() -> Result<&'static reqwest::Client> {
         .map_err(|_| "Enterprise network client is unavailable".into())
 }
 
-async fn read_json<T: DeserializeOwned>(mut response: reqwest::Response) -> Result<T> {
+async fn read_json<T: DeserializeOwned>(
+    mut response: reqwest::Response,
+) -> std::result::Result<T, ReadJsonError> {
     if response
         .content_length()
         .is_some_and(|length| length > MAX_SESSION_BODY as u64)
     {
-        return Err("Enterprise authentication response was too large".into());
+        return Err(ReadJsonError::TooLarge);
     }
-    let mut body = Vec::new();
+    let mut body = Zeroizing::new(Vec::new());
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|_| "Enterprise authentication response failed".to_owned())?
+        .map_err(|_| ReadJsonError::Transport)?
     {
         if chunk.len() > MAX_SESSION_BODY - body.len() {
-            return Err("Enterprise authentication response was too large".into());
+            return Err(ReadJsonError::TooLarge);
         }
         body.extend_from_slice(&chunk);
     }
-    serde_json::from_slice(&body)
-        .map_err(|_| "Enterprise authentication response was invalid".into())
+    serde_json::from_slice(&body).map_err(|_| ReadJsonError::Invalid)
 }
 
 #[cfg(test)]
@@ -920,7 +1042,15 @@ impl CredentialStore for FixtureStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc;
+    use std::{
+        io::{Read, Write},
+        net::{Shutdown, SocketAddr, TcpListener as StdTcpListener, TcpStream as StdTcpStream},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        },
+        thread::{self, JoinHandle},
+    };
 
     struct BlockingStore {
         values: Mutex<HashMap<(String, String), Vec<u8>>>,
@@ -1002,6 +1132,309 @@ mod tests {
                 values.remove(&key);
             }
             Ok(())
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum BodyFailure {
+        Interrupted,
+        Stalled,
+        Malformed,
+        Oversized,
+    }
+
+    struct BodyFixture {
+        address: SocketAddr,
+        base: String,
+        first_started: Arc<tokio::sync::Notify>,
+        release_first: Mutex<Option<mpsc::Sender<()>>>,
+        requests: Arc<AtomicUsize>,
+        join: Option<JoinHandle<()>>,
+    }
+
+    impl BodyFixture {
+        fn spawn(failure: BodyFailure) -> Self {
+            let listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let first_started = Arc::new(tokio::sync::Notify::new());
+            let requests = Arc::new(AtomicUsize::new(0));
+            let (release_sender, release_receiver) = mpsc::channel();
+            let started = first_started.clone();
+            let served = requests.clone();
+            let join = thread::spawn(move || {
+                let valid = br#"{"expires_at":"2030-01-01T00:00:00Z"}"#;
+                for index in 0..2 {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let Some(_request) = read_fixture_request(&mut stream).unwrap() else {
+                        break;
+                    };
+                    served.fetch_add(1, Ordering::SeqCst);
+                    if index == 0 {
+                        started.notify_one();
+                        match failure {
+                            BodyFailure::Interrupted => {
+                                let _ = stream.write_all(&raw_response(
+                                    "200 OK",
+                                    valid,
+                                    valid.len() + 1,
+                                ));
+                                let _ = stream.shutdown(Shutdown::Write);
+                            }
+                            BodyFailure::Stalled => {
+                                let headers = format!(
+                                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
+                                    valid.len()
+                                );
+                                let _ = stream.write_all(headers.as_bytes());
+                                let _ = release_receiver.recv();
+                                let _ = stream.write_all(valid);
+                                let _ = stream.shutdown(Shutdown::Write);
+                            }
+                            BodyFailure::Malformed => {
+                                let _ = stream.write_all(&raw_response(
+                                    "200 OK",
+                                    b"not json",
+                                    b"not json".len(),
+                                ));
+                            }
+                            BodyFailure::Oversized => {
+                                let _ = stream.write_all(&raw_response(
+                                    "200 OK",
+                                    &[],
+                                    MAX_SESSION_BODY + 1,
+                                ));
+                            }
+                        }
+                    } else {
+                        let _ = stream.write_all(&raw_response("200 OK", valid, valid.len()));
+                    }
+                }
+            });
+            Self {
+                address,
+                base: format!("http://{address}"),
+                first_started,
+                release_first: Mutex::new(Some(release_sender)),
+                requests,
+                join: Some(join),
+            }
+        }
+
+        fn release_first(&self) {
+            if let Some(sender) = self.release_first.lock().unwrap().take() {
+                let _ = sender.send(());
+            }
+        }
+
+        fn requests(&self) -> usize {
+            self.requests.load(Ordering::SeqCst)
+        }
+
+        fn finish(mut self) {
+            self.release_first();
+            self.wake();
+            if let Some(join) = self.join.take() {
+                join.join().unwrap();
+            }
+        }
+
+        fn wake(&self) {
+            if let Ok(mut stream) = StdTcpStream::connect(self.address) {
+                let _ = stream.write_all(b"BUZZ_FIXTURE_SHUTDOWN\n");
+                let _ = stream.shutdown(Shutdown::Write);
+            }
+        }
+    }
+
+    impl Drop for BodyFixture {
+        fn drop(&mut self) {
+            self.release_first();
+            self.wake();
+            if let Some(join) = self.join.take() {
+                let _ = join.join();
+            }
+        }
+    }
+
+    fn read_fixture_request(stream: &mut StdTcpStream) -> std::io::Result<Option<Vec<u8>>> {
+        let mut request = Vec::new();
+        let mut buffer = [0; 1024];
+        loop {
+            let read = stream.read(&mut buffer)?;
+            if read == 0 {
+                return Ok(None);
+            }
+            request.extend_from_slice(&buffer[..read]);
+            if request.starts_with(b"BUZZ_FIXTURE_SHUTDOWN\n") {
+                return Ok(None);
+            }
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                return Ok(Some(request));
+            }
+        }
+    }
+
+    fn raw_response(status: &str, body: &[u8], content_length: usize) -> Vec<u8> {
+        let mut response = format!(
+            "HTTP/1.1 {status}\r\nContent-Length: {content_length}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n"
+        )
+        .into_bytes();
+        response.extend_from_slice(body);
+        response
+    }
+
+    fn test_http_client(timeout: Duration) -> reqwest::Client {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(timeout)
+            .timeout(timeout)
+            .build()
+            .unwrap()
+    }
+
+    struct ReadGatedStore {
+        values: Mutex<HashMap<(String, String), Vec<u8>>>,
+        read_started: Mutex<Option<mpsc::Sender<()>>>,
+        release_read: Mutex<Option<mpsc::Receiver<()>>>,
+    }
+
+    impl ReadGatedStore {
+        fn new(read_started: mpsc::Sender<()>, release_read: mpsc::Receiver<()>) -> Self {
+            Self {
+                values: Mutex::new(HashMap::new()),
+                read_started: Mutex::new(Some(read_started)),
+                release_read: Mutex::new(Some(release_read)),
+            }
+        }
+
+        fn stored(&self, service: &str, account: &str) -> Zeroizing<Vec<u8>> {
+            Zeroizing::new(
+                self.values
+                    .lock()
+                    .unwrap()
+                    .get(&(service.to_owned(), account.to_owned()))
+                    .cloned()
+                    .unwrap(),
+            )
+        }
+    }
+
+    impl CredentialStore for ReadGatedStore {
+        fn read(
+            &self,
+            service: &str,
+            account: &str,
+        ) -> std::result::Result<Zeroizing<Vec<u8>>, StoreError> {
+            let value = self
+                .values
+                .lock()
+                .unwrap()
+                .get(&(service.to_owned(), account.to_owned()))
+                .cloned()
+                .ok_or(StoreError::Absent)?;
+            if let Some(started) = self.read_started.lock().unwrap().take() {
+                started.send(()).unwrap();
+                self.release_read
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .unwrap()
+                    .recv()
+                    .unwrap();
+            }
+            Ok(Zeroizing::new(value))
+        }
+
+        fn replace(
+            &self,
+            service: &str,
+            account: &str,
+            value: &[u8],
+        ) -> std::result::Result<(), StoreError> {
+            self.values
+                .lock()
+                .unwrap()
+                .insert((service.to_owned(), account.to_owned()), value.to_vec());
+            Ok(())
+        }
+
+        fn delete_if_matches(
+            &self,
+            service: &str,
+            account: &str,
+            expected: &[u8],
+        ) -> std::result::Result<(), StoreError> {
+            let mut values = self.values.lock().unwrap();
+            let key = (service.to_owned(), account.to_owned());
+            if values
+                .get(&key)
+                .is_some_and(|value| value.as_slice() == expected)
+            {
+                values.remove(&key);
+            }
+            Ok(())
+        }
+    }
+
+    struct HeldSessionServer {
+        base: String,
+        first_started: Arc<tokio::sync::Notify>,
+        release_first: Arc<tokio::sync::Notify>,
+        second_started: Arc<tokio::sync::Notify>,
+        server: tokio::task::JoinHandle<()>,
+    }
+
+    impl HeldSessionServer {
+        async fn spawn() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let first_started = Arc::new(tokio::sync::Notify::new());
+            let release_first = Arc::new(tokio::sync::Notify::new());
+            let second_started = Arc::new(tokio::sync::Notify::new());
+            let calls = Arc::new(AtomicUsize::new(0));
+            let first_started_for_route = first_started.clone();
+            let release_first_for_route = release_first.clone();
+            let second_started_for_route = second_started.clone();
+            let app = Router::new().route(
+                "/v1/session",
+                get(move || {
+                    let call = calls.fetch_add(1, Ordering::SeqCst);
+                    let first_started = first_started_for_route.clone();
+                    let release_first = release_first_for_route.clone();
+                    let second_started = second_started_for_route.clone();
+                    async move {
+                        if call == 0 {
+                            first_started.notify_one();
+                            release_first.notified().await;
+                            (
+                                StatusCode::OK,
+                                Json(serde_json::json!({
+                                    "expires_at": "2030-01-01T00:00:00Z"
+                                })),
+                            )
+                        } else {
+                            second_started.notify_one();
+                            (StatusCode::UNAUTHORIZED, Json(serde_json::json!({})))
+                        }
+                    }
+                }),
+            );
+            let server = tokio::spawn(async move {
+                let _ = axum::serve(listener, app).await;
+            });
+            Self {
+                base,
+                first_started,
+                release_first,
+                second_started,
+                server,
+            }
+        }
+    }
+
+    impl Drop for HeldSessionServer {
+        fn drop(&mut self) {
+            self.server.abort();
         }
     }
 
@@ -1398,6 +1831,108 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn overlapping_validation_is_fenced_by_invalidation_for_both_paths() {
+        let viewer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        for cached in [false, true] {
+            let server = HeldSessionServer::spawn().await;
+            let scope = scope_for_adapter(&server.base, viewer).unwrap();
+            let session = StoredSession {
+                token: Zeroizing::new("fixture-session".into()),
+                expires_at: "2030-01-01T00:00:00Z".into(),
+            };
+            let store = Arc::new(FixtureStore::default());
+            let raw = encode_session(&session).unwrap();
+            store.replace(scope.service, &scope.account, &raw).unwrap();
+            let host = EnterpriseAuthHost::with_store(store.clone());
+            if cached {
+                host.remember(scope.clone(), session);
+            }
+            let client = test_http_client(Duration::from_secs(1));
+
+            let first = tokio::spawn({
+                let host = host.clone();
+                let scope = scope.clone();
+                let client = client.clone();
+                async move { host.get_scope_with_client(scope, &client).await }
+            });
+            server.first_started.notified().await;
+            let second = tokio::spawn({
+                let host = host.clone();
+                let scope = scope.clone();
+                let client = client.clone();
+                async move { host.get_scope_with_client(scope, &client).await }
+            });
+            server.second_started.notified().await;
+            assert!(second.await.unwrap().unwrap().is_none());
+            server.release_first.notify_one();
+            assert!(first.await.unwrap().unwrap().is_none());
+            assert!(host.cached(&scope).is_none());
+            assert_eq!(
+                store.read(scope.service, &scope.account),
+                Err(StoreError::Absent)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn validation_is_fenced_by_a_new_login_and_clear() {
+        let viewer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+        let server = HeldSessionServer::spawn().await;
+        let scope = scope_for_adapter(&server.base, viewer).unwrap();
+        let session = StoredSession {
+            token: Zeroizing::new("fixture-session".into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        };
+        let store = Arc::new(FixtureStore::default());
+        let raw = encode_session(&session).unwrap();
+        store.replace(scope.service, &scope.account, &raw).unwrap();
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        let client = test_http_client(Duration::from_secs(1));
+        let validation = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            let client = client.clone();
+            async move { host.get_scope_with_client(scope, &client).await }
+        });
+        server.first_started.notified().await;
+        let (cancel, _canceled) = oneshot::channel();
+        assert!(host.begin("new-login".into(), cancel).unwrap());
+        server.release_first.notify_one();
+        assert!(validation.await.unwrap().unwrap().is_none());
+        assert_eq!(
+            store
+                .read(scope.service, &scope.account)
+                .unwrap()
+                .as_slice(),
+            raw.as_slice()
+        );
+        host.cancel("new-login").await.unwrap();
+
+        let server = HeldSessionServer::spawn().await;
+        let scope = scope_for_adapter(&server.base, viewer).unwrap();
+        let store = Arc::new(FixtureStore::default());
+        let raw = encode_session(&session).unwrap();
+        store.replace(scope.service, &scope.account, &raw).unwrap();
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        let validation = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            let client = client.clone();
+            async move { host.get_scope_with_client(scope, &client).await }
+        });
+        server.first_started.notified().await;
+        host.clear_scope(scope.clone()).await.unwrap();
+        server.release_first.notify_one();
+        assert!(validation.await.unwrap().unwrap().is_none());
+        assert!(host.cached(&scope).is_none());
+        assert_eq!(
+            store.read(scope.service, &scope.account),
+            Err(StoreError::Absent)
+        );
+    }
+
+    #[tokio::test]
     async fn local_adapter_expiry_mismatch_clears_only_the_checked_session() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -1480,8 +2015,9 @@ mod tests {
                 .as_slice(),
             raw.as_slice()
         );
-        server.abort();
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
         assert!(host.get_scope(scope.clone()).await.is_err());
+        assert_eq!(requests.load(Ordering::SeqCst), 2);
         assert_eq!(
             store
                 .read(scope.service, &scope.account)
@@ -1489,6 +2025,92 @@ mod tests {
                 .as_slice(),
             raw.as_slice()
         );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn body_transport_failures_are_transient_for_cached_and_restored_sessions() {
+        let viewer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        for cached in [false, true] {
+            for failure in [BodyFailure::Interrupted, BodyFailure::Stalled] {
+                let fixture = BodyFixture::spawn(failure);
+                let client = test_http_client(Duration::from_millis(100));
+                let scope = scope_for_adapter(&fixture.base, viewer).unwrap();
+                let session = StoredSession {
+                    token: Zeroizing::new("fixture-session".into()),
+                    expires_at: "2030-01-01T00:00:00Z".into(),
+                };
+                let store = Arc::new(FixtureStore::default());
+                let raw = encode_session(&session).unwrap();
+                store.replace(scope.service, &scope.account, &raw).unwrap();
+                let host = EnterpriseAuthHost::with_store(store.clone());
+                if cached {
+                    host.remember(scope.clone(), session.clone());
+                }
+
+                let first = tokio::spawn({
+                    let host = host.clone();
+                    let scope = scope.clone();
+                    let client = client.clone();
+                    async move { host.get_scope_with_client(scope, &client).await }
+                });
+                fixture.first_started.notified().await;
+                assert!(first.await.unwrap().is_err());
+                if matches!(failure, BodyFailure::Stalled) {
+                    fixture.release_first();
+                }
+
+                assert!(host
+                    .get_scope_with_client(scope.clone(), &client)
+                    .await
+                    .unwrap()
+                    .is_some());
+                assert_eq!(fixture.requests(), 2);
+                assert_eq!(
+                    store
+                        .read(scope.service, &scope.account)
+                        .unwrap()
+                        .as_slice(),
+                    raw.as_slice()
+                );
+                fixture.finish();
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_or_oversized_session_bodies_are_inconsistent() {
+        let viewer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        for cached in [false, true] {
+            for failure in [BodyFailure::Malformed, BodyFailure::Oversized] {
+                let fixture = BodyFixture::spawn(failure);
+                let client = test_http_client(Duration::from_secs(1));
+                let scope = scope_for_adapter(&fixture.base, viewer).unwrap();
+                let session = StoredSession {
+                    token: Zeroizing::new("fixture-session".into()),
+                    expires_at: "2030-01-01T00:00:00Z".into(),
+                };
+                let store = Arc::new(FixtureStore::default());
+                let raw = encode_session(&session).unwrap();
+                store.replace(scope.service, &scope.account, &raw).unwrap();
+                let host = EnterpriseAuthHost::with_store(store.clone());
+                if cached {
+                    host.remember(scope.clone(), session);
+                }
+
+                assert!(host
+                    .get_scope_with_client(scope.clone(), &client)
+                    .await
+                    .unwrap()
+                    .is_none());
+                assert_eq!(fixture.requests(), 1);
+                assert_eq!(
+                    store.read(scope.service, &scope.account),
+                    Err(StoreError::Absent)
+                );
+                fixture.finish();
+            }
+        }
     }
 
     #[tokio::test]
@@ -1569,6 +2191,7 @@ mod tests {
             let _ = axum::serve(redirect_listener, redirect).await;
         });
         let result = check_session(
+            client().unwrap(),
             &redirect_url,
             &StoredSession {
                 token: Zeroizing::new("fixture-session".into()),
@@ -1653,6 +2276,119 @@ mod tests {
                 .token
                 .as_str(),
             "new-session"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_marks_a_blocked_writer_inactive_before_waiting_for_commit() {
+        let (started_sender, started_receiver) = mpsc::channel();
+        let (release_sender, release_receiver) = mpsc::channel();
+        let store = Arc::new(BlockingStore::new(started_sender, release_receiver));
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        let scope = scope_for_adapter(
+            "https://adapter.example",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        let (cancel, _receiver) = oneshot::channel();
+        assert!(host.begin("cancel-me".into(), cancel).unwrap());
+        let commit = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            async move {
+                host.commit_session(
+                    &scope,
+                    "cancel-me",
+                    StoredSession {
+                        token: Zeroizing::new("fixture-session".into()),
+                        expires_at: "2030-01-01T00:00:00Z".into(),
+                    },
+                    EnterpriseAuthInfo {
+                        expires_at: "2030-01-01T00:00:00Z".into(),
+                    },
+                )
+                .await
+            }
+        });
+        tokio::task::spawn_blocking(move || started_receiver.recv().unwrap())
+            .await
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), host.cancel("cancel-me"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!host.is_active("cancel-me").unwrap());
+        release_sender.send(()).unwrap();
+        assert!(matches!(
+            commit.await.unwrap(),
+            Err(error) if error == "Enterprise authentication was canceled"
+        ));
+        assert_eq!(
+            store.read(scope.service, &scope.account),
+            Err(StoreError::Absent)
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_is_idempotent_and_preserves_a_concurrent_newer_session() {
+        let scope = scope_for_adapter(
+            "https://adapter.example",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        let session = StoredSession {
+            token: Zeroizing::new("old-session".into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        };
+        let raw = encode_session(&session).unwrap();
+        let store = Arc::new(FixtureStore::default());
+        store.replace(scope.service, &scope.account, &raw).unwrap();
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        host.remember(scope.clone(), session);
+        let (cancel, _receiver) = oneshot::channel();
+        assert!(host.begin("clear-me".into(), cancel).unwrap());
+        host.clear_scope(scope.clone()).await.unwrap();
+        assert!(!host.is_active("clear-me").unwrap());
+        assert!(host.cached(&scope).is_none());
+        assert_eq!(
+            store.read(scope.service, &scope.account),
+            Err(StoreError::Absent)
+        );
+        host.clear_scope(scope.clone()).await.unwrap();
+        assert!(host.get_scope(scope.clone()).await.unwrap().is_none());
+
+        let (started_sender, started_receiver) = mpsc::channel();
+        let (release_sender, release_receiver) = mpsc::channel();
+        let store = Arc::new(ReadGatedStore::new(started_sender, release_receiver));
+        let old = encode_session(&StoredSession {
+            token: Zeroizing::new("old-session".into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        })
+        .unwrap();
+        let newer = encode_session(&StoredSession {
+            token: Zeroizing::new("new-session".into()),
+            expires_at: "2031-01-01T00:00:00Z".into(),
+        })
+        .unwrap();
+        store.replace(scope.service, &scope.account, &old).unwrap();
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        let clear = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            async move { host.clear_scope(scope).await }
+        });
+        tokio::task::spawn_blocking(move || started_receiver.recv().unwrap())
+            .await
+            .unwrap();
+        store
+            .replace(scope.service, &scope.account, &newer)
+            .unwrap();
+        release_sender.send(()).unwrap();
+        clear.await.unwrap().unwrap();
+        assert_eq!(
+            store.stored(scope.service, &scope.account).as_slice(),
+            newer.as_slice()
         );
     }
 

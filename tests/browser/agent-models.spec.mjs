@@ -108,11 +108,11 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
     await expect(model).toHaveValue("catalog.schema.real-model");
     await expect(search).toHaveValue("Friendly Model");
     await editor.getByRole("button", { name: "Save changes" }).click();
-    await expect(editor.getByText("Saved.", { exact: true })).toBeVisible();
+    await expect(editor).toHaveCount(0);
+    await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
     expect(
       await page.evaluate(() => window.agentControlFixture.agent.harness.model),
     ).toBe("catalog.schema.real-model");
-    await editor.getByRole("button", { name: "Cancel", exact: true }).click();
     await page
       .getByRole("button", { name: "Toggle page", exact: true })
       .click();

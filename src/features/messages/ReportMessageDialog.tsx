@@ -1,4 +1,5 @@
-import { useId, useState, type RefObject } from "react";
+import { useEffect, useId, useState, type RefObject } from "react";
+import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { FlagIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -18,7 +19,7 @@ const CATEGORIES: readonly (readonly [ReportType, string])[] = [
   ["other", "Other"],
 ];
 
-/** Mount only while open so every report starts with an empty form. */
+/** Retain submitted work when its modal presentation is dismissed. */
 export function ReportMessageDialog({
   report,
   close,
@@ -29,12 +30,19 @@ export function ReportMessageDialog({
   finalFocus?: RefObject<HTMLElement | null>;
 }) {
   const formId = useId();
+  const active = useConversationPresentation();
+  const [present, setPresent] = useState(true);
+  if (!active && present) setPresent(false);
   const [category, setCategory] = useState<ReportType | null>(null);
   const [note, setNote] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  useEffect(() => {
+    // Only unsubmitted forms may be discarded; a dispatched report must settle.
+    if (!active && !pending && !error) close(false);
+  }, [active, pending, error, close]);
   const submit = async () => {
-    if (!category || pending) return;
+    if (!active || !present || !category || pending) return;
     setPending(true);
     setError("");
     try {
@@ -45,6 +53,16 @@ export function ReportMessageDialog({
       setPending(false);
     }
   };
+  if (!active) return null;
+  if (!present)
+    return pending ? (
+      <p role="status">Submitting report…</p>
+    ) : (
+      <div>
+        <p role="alert">{error}</p>
+        <Button onClick={() => setPresent(true)}>Review report</Button>
+      </div>
+    );
   return (
     <Dialog
       open

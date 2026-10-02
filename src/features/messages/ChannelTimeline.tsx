@@ -126,6 +126,10 @@ export type ChannelTimelineProps = {
   onOpenLink(url: string): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
+  /** One inline exact visit: focus the verified mounted row, without a page navigation. */
+  inlineTarget?:
+    | Readonly<{ messageId: string; signal: AbortSignal }>
+    | undefined;
   navigation?: PageNavigation | undefined;
   onOpenThread?(
     messageId: string,
@@ -164,6 +168,7 @@ function Timeline({
   onOpenLink,
   canOpenLink,
   revealMessageId,
+  inlineTarget,
   navigation,
   onOpenThread,
   onOpenMediaReview,
@@ -326,10 +331,12 @@ function Timeline({
       align: "end",
     });
   }, [rows.length]);
+  const inlineSignal = inlineTarget?.signal;
   const targetId =
-    navigation?.target.kind === "conversation"
+    inlineTarget?.messageId ??
+    (navigation?.target.kind === "conversation"
       ? navigation.target.messageId
-      : undefined;
+      : undefined);
   const targetIndex = rows.findIndex((row) => row.id === targetId);
   const prepareTarget = useCallback(() => {
     if (!handle.current) return;
@@ -351,7 +358,7 @@ function Timeline({
     ),
     settled,
     messageId: targetId,
-    signal: navigation?.signal,
+    signal: inlineSignal ?? navigation?.signal,
     ready: !!size.width && !!size.height && targetIndex >= 0,
     prepare: prepareTarget,
     complete: completeTarget,
@@ -457,12 +464,15 @@ function Timeline({
       arrivals > 0 &&
       previousIds.size > 0 &&
       !follow.current &&
-      (!targetId || exactRevealed.current === navigation?.signal)
+      (!targetId ||
+        exactRevealed.current === (inlineSignal ?? navigation?.signal))
     ) {
       setNewMessageCount((count) => count + arrivals);
     }
     if (
-      (targetId && navigation && exactRevealed.current !== navigation.signal) ||
+      (targetId &&
+        (inlineSignal || navigation) &&
+        exactRevealed.current !== (inlineSignal ?? navigation?.signal)) ||
       !size.width ||
       !size.height ||
       !rows.length ||
@@ -589,6 +599,7 @@ function Timeline({
     recordPosition,
     targetId,
     navigation,
+    inlineSignal,
     exactRevealed,
     updateJumpToLatest,
     revealMessageId,

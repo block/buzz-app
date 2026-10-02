@@ -47,6 +47,9 @@ export type ThreadPanelProps = {
   sessionConversation?: boolean | undefined;
   messageId: string;
   replyRequest?: number | undefined;
+  /** Inline Inbox visit retains and reveals its exact selected message. */
+  revealSelected?: boolean | undefined;
+  headerActions?: ReactNode | undefined;
   active?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
@@ -89,13 +92,23 @@ export function ThreadPanel(props: ThreadPanelProps) {
       }}
     >
       {!tabbed && close && (
-        <ThreadHeader key={`header:${viewKey}`} close={close} />
+        <ThreadHeader
+          key={`header:${viewKey}`}
+          close={close}
+          actions={props.headerActions}
+        />
       )}
       <OwnedThreadPanel key={viewKey} {...props} />
     </aside>
   );
 }
-function ThreadHeader({ close }: { close(): void }) {
+function ThreadHeader({
+  close,
+  actions,
+}: {
+  close(): void;
+  actions?: ReactNode;
+}) {
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     closeButton.current?.focus();
@@ -104,13 +117,16 @@ function ThreadHeader({ close }: { close(): void }) {
     <PanelHeader
       title="Thread"
       actions={
-        <IconButton
-          ref={closeButton}
-          size="toolbar"
-          aria-label="Close thread"
-          onClick={close}
-          icon={<XIcon size={18} aria-hidden="true" />}
-        />
+        <>
+          {actions}
+          <IconButton
+            ref={closeButton}
+            size="toolbar"
+            aria-label="Close thread"
+            onClick={close}
+            icon={<XIcon size={18} aria-hidden="true" />}
+          />
+        </>
       }
     />
   );
@@ -129,6 +145,7 @@ function OwnedThreadPanel({
   sessionConversation,
   replyRequest,
   active = true,
+  revealSelected,
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
@@ -139,8 +156,9 @@ function OwnedThreadPanel({
     try {
       if (navigation?.signal.aborted) return;
       const exact =
-        navigation?.target.kind === "conversation" &&
-        navigation.target.threadRootId !== messageId;
+        revealSelected ||
+        (navigation?.target.kind === "conversation" &&
+          navigation.target.threadRootId !== messageId);
       const owned = exact
         ? session.thread(channelId, messageId, { exact: true })
         : session.thread(channelId, messageId);
@@ -160,7 +178,7 @@ function OwnedThreadPanel({
       setError(String(error));
       navigation?.complete({ status: "failed", reason: "unavailable" });
     }
-  }, [session, channelId, messageId, attempt, navigation]);
+  }, [session, channelId, messageId, attempt, navigation, revealSelected]);
   return error ? (
     <div className={styles.empty} role="alert">
       <p>{error}</p>
@@ -181,6 +199,7 @@ function OwnedThreadPanel({
       messageId={messageId}
       replyRequest={replyRequest}
       active={active}
+      revealSelected={revealSelected}
       onOpenLink={onOpenLink}
       onOpenMediaReview={onOpenMediaReview}
       canOpenLink={canOpenLink}
@@ -206,6 +225,7 @@ function ThreadMessages({
   sessionConversation,
   replyRequest,
   active,
+  revealSelected,
 }: {
   sessionConversation?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -217,6 +237,7 @@ function ThreadMessages({
   view: ThreadView;
   replyRequest?: number | undefined;
   active?: boolean | undefined;
+  revealSelected?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   onOpenLink(url: string): boolean;
   onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"];
@@ -416,14 +437,24 @@ function ThreadMessages({
   // Ordinary opens follow the latest reply after bounded history finishes.
   // Keep that first positioning invisible; exact-message navigation reveals itself.
   const positioning =
+    !revealSelected &&
     !initialPositioned &&
     (!navigation || rootTarget) &&
     snapshot.status !== "error";
+  const [inlineReveal, setInlineReveal] = useState<AbortSignal>();
+  useEffect(() => {
+    if (!revealSelected) return;
+    const request = new AbortController();
+    setInlineReveal(request.signal);
+    return () => request.abort();
+  }, [revealSelected]);
+  const revealSignal =
+    inlineReveal ?? (rootTarget ? undefined : navigation?.signal);
   const revealed = useMessageReveal({
     scroller,
     settled: positioned,
     messageId,
-    signal: rootTarget || !active ? undefined : navigation?.signal,
+    signal: active ? revealSignal : undefined,
     ready:
       snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
     complete: completeTarget,
@@ -569,7 +600,8 @@ function ThreadMessages({
       navigation.complete({ status: "opened" });
     }
     if (
-      (navigation && !rootTarget && revealed.current !== navigation.signal) ||
+      (revealSelected && !inlineReveal) ||
+      (revealSignal && revealed.current !== revealSignal) ||
       (!positioned.current &&
         ((snapshot.status !== "ready" &&
           !(
@@ -623,6 +655,9 @@ function ThreadMessages({
     }
   }, [
     active,
+    revealSelected,
+    inlineReveal,
+    revealSignal,
     snapshot.status,
     snapshot.targetStatus,
     snapshot.target,

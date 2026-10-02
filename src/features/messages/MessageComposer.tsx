@@ -1,3 +1,4 @@
+import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { useMessageDeletion } from "./MessageManagement";
@@ -165,6 +166,7 @@ function Composer({
   inviteAgents = false,
   trailingTool,
 }: MessageComposerProps) {
+  const active = useConversationPresentation();
   const list = useSyncExternalStore(
     session.channels?.get || sessionConversation
       ? session.channels.subscribeList
@@ -190,8 +192,8 @@ function Composer({
   const sendAttempt = useRef<AbortController | null>(null);
   useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
   useLayoutEffect(() => {
-    if (disabled) sendAttempt.current?.abort();
-  }, [disabled]);
+    if (disabled || !active) sendAttempt.current?.abort();
+  }, [disabled, active]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retargeting invalidates an in-flight send, not the root-keyed draft.
   useLayoutEffect(() => () => sendAttempt.current?.abort(), [replyParentId]);
   const inputId = useId();
@@ -205,7 +207,7 @@ function Composer({
   const admission = useRef(false);
   const live = useRef(true);
   const permitted = useRef(!disabled);
-  permitted.current = !disabled;
+  permitted.current = !disabled && active;
   useEffect(() => {
     live.current = true;
     return () => {
@@ -275,9 +277,9 @@ function Composer({
     }
     focus();
   }, []);
-  const nonmembers = useNonmemberMentions(session, channelId, () =>
-    input.current?.focus(),
-  );
+  const nonmembers = useNonmemberMentions(session, channelId, () => {
+    if (permitted.current) input.current?.focus();
+  });
   useEffect(() => {
     if (focusRequest) input.current?.focus();
   }, [focusRequest]);
@@ -285,6 +287,7 @@ function Composer({
     undefined,
   );
   const [linkEdit, setLinkEdit] = useState<ComposerLinkEdit | null>(null);
+  if (!active && linkEdit) setLinkEdit(null);
   const [activeFormats, setActiveFormats] = useState<readonly ComposerFormat[]>(
     [],
   );
@@ -354,7 +357,7 @@ function Composer({
     attachFiles,
   );
   function attachFiles(files: readonly File[]) {
-    if (editingDisabled || !files.length) return;
+    if (!permitted.current || editingDisabled || !files.length) return;
     if (editing.target) {
       setAttachmentError("Finish editing before attaching new files.");
       return;
@@ -388,7 +391,7 @@ function Composer({
   );
   const completion = useCompletionEditor(
     input,
-    !editingDisabled && !!outbox?.supports(9),
+    active && !editingDisabled && !!outbox?.supports(9),
   );
   useEffect(() => {
     if (outbox?.supports(9)) void session.emoji.ensure();
@@ -414,7 +417,14 @@ function Composer({
   });
   const requestDeletion = useMessageDeletion();
   const startEdit = useEffectEvent((row: ChannelMessage) => {
-    if (editingDisabled || editDisabled || submission || !input.current) return;
+    if (
+      !permitted.current ||
+      editingDisabled ||
+      editDisabled ||
+      submission ||
+      !input.current
+    )
+      return;
     const current = editableRows().find((item) => item.id === row.id);
     if (!current || !lastEditableMessage(session, [current])) {
       setError("This message is no longer available to edit.");
@@ -456,6 +466,7 @@ function Composer({
     range?: CompletionQuery,
   ) {
     if (
+      !permitted.current ||
       editingDisabled ||
       !outbox?.supports(9) ||
       !input.current?.isConnected ||
@@ -507,7 +518,12 @@ function Composer({
     return insert(`@${recipient.name} `, recipient);
   }
   function insertResource(resource: ComposerResource): true | string {
-    if (editingDisabled || !outbox?.supports(9) || !input.current?.isConnected)
+    if (
+      !permitted.current ||
+      editingDisabled ||
+      !outbox?.supports(9) ||
+      !input.current?.isConnected
+    )
       return "The message can't be edited right now";
     completion.invalidate();
     return input.current.insertResource(resource);
@@ -579,11 +595,12 @@ function Composer({
     return recipients;
   }
   function selectAgent(key: string) {
-    if (disabled || admission.current) return;
+    if (!permitted.current || admission.current) return;
     setSelectedAgent(key);
     setError(undefined);
   }
   async function send() {
+    if (!permitted.current) return;
     if (editing.target) {
       if (editDisabled || editing.locked) return;
       if (!valueRef.current.text.trim()) {
@@ -811,7 +828,7 @@ function Composer({
   return (
     <SelectedMentionContext.Provider value={value.recipients}>
       {accessories}
-      {nonmembers.dialog}
+      {active && nonmembers.dialog}
       <form
         ref={form}
         className={styles.composer}
@@ -877,7 +894,7 @@ function Composer({
         <label className="sr-only" htmlFor={inputId}>
           {label}
         </label>
-        {extensions?.completions && (
+        {active && extensions?.completions && (
           <ComposerCompletions
             registry={extensions.completions}
             editor={completion}
@@ -1016,35 +1033,38 @@ function Composer({
             </div>
           )}
         <div className={styles.composerActions}>
-          <ComposerFormattingTools
-            disabled={editingDisabled}
-            activeFormats={activeFormats}
-            toggleFormat={(format) => input.current?.toggleFormat(format)}
-            editLink={() => {
-              const edit = input.current?.editLink();
-              if (edit) setLinkEdit(edit);
-            }}
-          >
-            {extensions ? (
-              <ComposerTools
-                registry={extensions.tools}
-                renderLeading={renderLeadingTools}
-                session={session}
-                scope={scope}
-                channelId={channelId}
-                threadRootId={threadRootId}
-                disabled={editingDisabled}
-                inviteAgents={agentChoices && !editing.target}
-                insertText={(text) => insert(text)}
-                insertMention={insertMention}
-                insertResource={insertResource}
-                focus={() => input.current?.focus()}
-              />
-            ) : (
-              renderLeadingTools(null)
-            )}
-          </ComposerFormattingTools>
-          {!editing.target &&
+          {active && (
+            <ComposerFormattingTools
+              disabled={editingDisabled}
+              activeFormats={activeFormats}
+              toggleFormat={(format) => input.current?.toggleFormat(format)}
+              editLink={() => {
+                const edit = input.current?.editLink();
+                if (edit) setLinkEdit(edit);
+              }}
+            >
+              {extensions ? (
+                <ComposerTools
+                  registry={extensions.tools}
+                  renderLeading={renderLeadingTools}
+                  session={session}
+                  scope={scope}
+                  channelId={channelId}
+                  threadRootId={threadRootId}
+                  disabled={editingDisabled}
+                  inviteAgents={agentChoices && !editing.target}
+                  insertText={(text) => insert(text)}
+                  insertMention={insertMention}
+                  insertResource={insertResource}
+                  focus={() => input.current?.focus()}
+                />
+              ) : (
+                renderLeadingTools(null)
+              )}
+            </ComposerFormattingTools>
+          )}
+          {active &&
+            !editing.target &&
             (trailingTool ??
               (sessionConversation ? (
                 <SessionAgentControl
@@ -1117,10 +1137,11 @@ function Composer({
           </Button>
         )}
       </form>
-      {linkEdit && (
+      {active && linkEdit && (
         <ComposerLinkDialog
           edit={linkEdit}
           input={input}
+          finalFocus={() => (permitted.current ? input.current : false)}
           disabled={editingDisabled}
           close={() => setLinkEdit(null)}
         />

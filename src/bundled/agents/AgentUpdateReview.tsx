@@ -45,6 +45,8 @@ export function AgentUpdateReview({
   const [refreshedRequestId, setRefreshedRequestId] = useState<string | null>(
     null,
   );
+  const [authorizedRequest, setAuthorizedRequest] =
+    useState<PendingManagementRequest | null>(null);
   const request = requests[0] ?? null;
   useEffect(() => {
     if (connection.status !== "ready") return;
@@ -62,34 +64,41 @@ export function AgentUpdateReview({
     };
   }, [connection]);
   useEffect(() => {
-    if (!request) return;
-    const authorized = managementRequesterAuthorized(request, channelList);
-    if (authorized === false) {
-      setRequests((pending) => pending.slice(1));
-      return;
-    }
-    if (
-      authorized !== null ||
-      channelList.status !== "ready" ||
-      channelList.coverage !== "partial" ||
-      !connection.session.channels.resolve
-    )
-      return;
+    setAuthorizedRequest(null);
+    if (!request || channelList.status !== "ready") return;
     let current = true;
+    const channels = connection.session.channels;
     const channelId = request.value.request.channelId;
-    void connection.session.channels
-      .resolve([channelId])
-      .catch(() => {})
-      .then(() => {
-        if (!current) return;
-        const refreshed = connection.session.channels.list();
-        if (managementRequesterAuthorized(request, refreshed) !== true)
-          setRequests((pending) => pending.slice(1));
-      });
+    void (async () => {
+      const listed = channels
+        .list()
+        .channels.some((channel) => channel.id === channelId);
+      const refresh = listed
+        ? channels.refreshRoster?.(channelId)
+        : channels.resolve?.([channelId]);
+      if (refresh) await refresh;
+      if (!current) return;
+      if (
+        refresh &&
+        managementRequesterAuthorized(request, channels.list()) === true
+      )
+        setAuthorizedRequest(request);
+      else setRequests((pending) => pending.slice(1));
+    })().catch(() => {
+      if (current) setRequests((pending) => pending.slice(1));
+    });
     return () => {
       current = false;
     };
-  }, [channelList, connection.session.channels, request]);
+  }, [channelList.status, connection.session.channels, request]);
+  useEffect(() => {
+    if (
+      request &&
+      authorizedRequest === request &&
+      managementRequesterAuthorized(request, channelList) === false
+    )
+      setRequests((pending) => pending.slice(1));
+  }, [authorizedRequest, channelList, request]);
   useEffect(() => {
     if (request?.value.action !== "update") {
       setRefreshedRequestId(null);
@@ -114,7 +123,12 @@ export function AgentUpdateReview({
       community,
     );
   }, [connection.scope, controlState.data?.agents, request]);
-  if (!request || channelList.status !== "ready") return null;
+  if (
+    !request ||
+    authorizedRequest !== request ||
+    managementRequesterAuthorized(request, channelList) !== true
+  )
+    return null;
   const dismiss = () => setRequests((pending) => pending.slice(1));
   if (request.value.action === "create") {
     return (
@@ -136,7 +150,11 @@ export function AgentUpdateReview({
       >
         <Button
           type="button"
-          onClick={() => void refreshManagementInventory(control)}
+          onClick={() => {
+            void refreshManagementInventory(control).then((ready) => {
+              if (ready) setRefreshedRequestId(request.value.requestId);
+            });
+          }}
         >
           Retry
         </Button>

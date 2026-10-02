@@ -325,40 +325,6 @@ fn isolated_agent_ipc_probe() {
     assert_eq!(event["pubkey"], public);
     verify(&event);
 
-    let registration = serde_json::json!({
-        "kind": 30177, "created_at": 123, "tags": [["d", "02".repeat(32)]],
-        "content": r#"{"name":"Remote agent","parallelism":1,"respond_to":"owner-only"}"#
-    });
-    let registered = invoke(
-        "relay_sign",
-        serde_json::json!({
-            "community": "https://relay.test", "event": registration
-        }),
-    )
-    .unwrap();
-    assert_eq!(registered["pubkey"], public);
-    for field in ["kind", "created_at", "tags", "content"] {
-        assert_eq!(registered[field], registration[field]);
-    }
-    verify(&registered);
-    let mut unsupported = registration.clone();
-    unsupported["kind"] = serde_json::json!(30175);
-    for rejected in [
-        unsupported,
-        serde_json::json!({
-            "kind": 5, "created_at": 123, "content": "",
-            "tags": [["a", format!("30177:{}:{}", public.as_str().unwrap(), "02".repeat(32))]]
-        }),
-    ] {
-        assert!(invoke(
-            "relay_sign",
-            serde_json::json!({
-                "community": "https://relay.test", "event": rejected
-            })
-        )
-        .is_err());
-    }
-
     // The old direct attestation IPC must be absent, not merely unused by the UI.
     assert!(invoke(
         "relay_agent_authorize",
@@ -472,6 +438,68 @@ fn isolated_agent_ipc_probe() {
     .unwrap_err()
     .to_string()
     .contains("Invalid workflow read"));
+}
+
+#[test]
+fn managed_agent_registration_signs_as_owner_through_existing_ipc() {
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+        .build()
+        .unwrap();
+    let invoke = |cmd: &str, body: serde_json::Value| {
+        get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: cmd.into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(body),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.into(),
+            },
+        )
+        .map(|body| body.deserialize::<serde_json::Value>().unwrap())
+    };
+    let public = invoke("identity_restore", serde_json::json!({})).unwrap();
+    let registration = serde_json::json!({
+        "kind": 30177, "created_at": 123, "tags": [["d", "02".repeat(32)]],
+        "content": r#"{"name":"Remote agent","parallelism":1,"respond_to":"owner-only"}"#
+    });
+    let registered = invoke(
+        "relay_sign",
+        serde_json::json!({
+            "community": "https://relay.test", "event": registration
+        }),
+    )
+    .unwrap();
+    assert_eq!(registered["pubkey"], public);
+    for field in ["kind", "created_at", "tags", "content"] {
+        assert_eq!(registered[field], registration[field]);
+    }
+    verify(&registered);
+    let mut unsupported = registration.clone();
+    unsupported["kind"] = serde_json::json!(30175);
+    for rejected in [
+        unsupported,
+        serde_json::json!({
+            "kind": 5, "created_at": 123, "content": "",
+            "tags": [["a", format!("30177:{}:{}", public.as_str().unwrap(), "02".repeat(32))]]
+        }),
+    ] {
+        assert!(invoke(
+            "relay_sign",
+            serde_json::json!({
+                "community": "https://relay.test", "event": rejected
+            })
+        )
+        .is_err());
+    }
 }
 
 #[tokio::test]

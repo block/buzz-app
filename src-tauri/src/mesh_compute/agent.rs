@@ -62,7 +62,7 @@ pub(crate) async fn prepare_agent(
         let community = community.as_str().trim_end_matches('/');
         let lease = host.lease.for_community(community)?;
         if host.lifecycle.phase() == Phase::Stopped {
-            super::start(&host, &identity, &lease).await?;
+            super::start(app, &host, &identity, &lease).await?;
         }
         let port = super::mesh_port("BUZZ_MESH_API_PORT", 19337)?;
         let client = reqwest::Client::builder()

@@ -56,7 +56,7 @@ async fn publish(
             selection.as_ref().map(|(_, current)| current.as_str()),
             &viewer,
         ) {
-            send(&identity, community, member, None).await?;
+            send(&identity, community, member, false, None).await?;
             *previous = None;
         }
     }
@@ -72,7 +72,8 @@ async fn publish(
     if identity.viewer().await? != viewer {
         return Err("Identity changed during Mesh publication".into());
     }
-    send(&identity, &community, &viewer, status.as_ref()).await?;
+    let serving = host.lifecycle.is_serving();
+    send(&identity, &community, &viewer, serving, status.as_ref()).await?;
     *previous = Some((community, viewer));
     Ok(())
 }
@@ -81,6 +82,7 @@ async fn send(
     identity: &crate::identity::IdentityHost,
     community: &str,
     member: &str,
+    serving: bool,
     status: Option<&buzz_mesh_compute::lifecycle::NodeStatus>,
 ) -> Result<(), String> {
     let path = super::mesh_owner_path()?;
@@ -89,10 +91,8 @@ async fn send(
     })
     .await
     .map_err(|_| "Mesh owner loading failed")??;
-    // Serving is not yet exposed by the native host. Until its role is wired,
-    // publish consumer bindings only; never infer hosting from peer model lists.
     let builder = match status {
-        Some(status) => publication::sdk_status_event(&owner, member, false, status),
+        Some(status) => publication::sdk_status_event(&owner, member, serving, status),
         None => publication::status_event(&owner, member, false, None, None),
     }
     .map_err(|e| e.to_string())?;

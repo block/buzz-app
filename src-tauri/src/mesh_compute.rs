@@ -1,11 +1,15 @@
 //! App-owned Mesh lifetime. Plugins cannot supply keystore paths or admission policy.
 
 mod agent;
+#[cfg(feature = "mesh")]
+pub(crate) mod sharing;
 pub(crate) use agent::prepare_agent;
 #[cfg(feature = "mesh")]
 mod discovery;
 #[cfg(feature = "mesh")]
 mod lease;
+#[cfg(feature = "mesh")]
+mod preferences;
 #[cfg(feature = "mesh")]
 mod publisher;
 
@@ -13,6 +17,10 @@ mod publisher;
 pub struct MeshHost {
     #[cfg(feature = "mesh")]
     preparing: tokio::sync::Mutex<()>,
+    #[cfg(feature = "mesh")]
+    sharing: std::sync::Mutex<Option<sharing::Share>>,
+    #[cfg(feature = "mesh")]
+    preferences: std::sync::Mutex<preferences::Preferences>,
     #[cfg(feature = "mesh")]
     lifecycle: buzz_mesh_compute::lifecycle::Lifecycle,
     #[cfg(feature = "mesh")]
@@ -22,6 +30,12 @@ pub struct MeshHost {
 }
 
 impl MeshHost {
+    #[cfg(feature = "mesh")]
+    pub fn initialize_preferences(&self, path: Result<std::path::PathBuf, String>) {
+        if let Ok(mut prefs) = self.preferences.lock() {
+            prefs.initialize(path);
+        }
+    }
     pub fn shutdown(&self) {
         #[cfg(feature = "mesh")]
         if let Ok(mut publisher) = self.publisher.lock() {
@@ -42,11 +56,20 @@ impl MeshHost {
 pub fn mesh_compute_status(host: tauri::State<'_, MeshHost>) -> serde_json::Value {
     #[cfg(feature = "mesh")]
     {
+        let (saved, settings_error) = host
+            .preferences
+            .lock()
+            .map(|prefs| (prefs.hint().cloned(), prefs.error().map(str::to_owned)))
+            .unwrap_or_default();
         serde_json::json!({
             "available": true,
+            "savedSharing": saved,
+            "settingsError": settings_error,
             "lifecycle": host.lifecycle.phase(),
+            "download": host.lifecycle.download_progress(),
             "startAvailable": true,
-            "reason": null
+            "reason": null,
+            "sharing": host.sharing.lock().ok().and_then(|share| share.as_ref().map(|share| share.model.clone()))
         })
     }
     #[cfg(not(feature = "mesh"))]
@@ -63,10 +86,20 @@ pub fn mesh_compute_status(host: tauri::State<'_, MeshHost>) -> serde_json::Valu
 pub async fn mesh_compute_stop(host: tauri::State<'_, MeshHost>) -> Result<(), String> {
     #[cfg(feature = "mesh")]
     {
+        let _guard = host.preparing.lock().await;
         {
-            host.lease.clear();
-            host.lifecycle.stop();
+            let mut sharing = host
+                .sharing
+                .lock()
+                .map_err(|_| "Mesh sharing unavailable")?;
+            host.preferences
+                .lock()
+                .map_err(|_| "Mesh settings unavailable")?
+                .disarm()?;
+            *sharing = None;
         }
+        host.lease.clear();
+        host.lifecycle.stop();
         host.lifecycle
             .stop_and_wait()
             .await
@@ -85,15 +118,17 @@ mod smoke;
 #[cfg(feature = "mesh")]
 #[tauri::command]
 pub async fn mesh_compute_start(
+    app: tauri::AppHandle,
     host: tauri::State<'_, MeshHost>,
     identity: tauri::State<'_, crate::identity::IdentityHost>,
     lease: String,
 ) -> Result<(), String> {
-    start(host.inner(), identity.inner(), &lease).await
+    start(&app, host.inner(), identity.inner(), &lease).await
 }
 
 #[cfg(feature = "mesh")]
 async fn start(
+    app: &tauri::AppHandle,
     host: &MeshHost,
     identity: &crate::identity::IdentityHost,
     lease: &str,
@@ -111,7 +146,13 @@ async fn start(
     }
     let community = host.lease.community(lease)?;
     let (mut owners, targets) = discovery::read(identity, &community).await?;
-    if targets.is_empty() {
+    let viewer = identity.viewer().await?;
+    let sharing = host
+        .sharing
+        .lock()
+        .map_err(|_| "Mesh sharing unavailable")?
+        .clone();
+    if targets.is_empty() && sharing.is_none() {
         return Err(
             "No live community member is sharing compute; start serving on a member first".into(),
         );
@@ -122,17 +163,30 @@ async fn start(
             .map_err(|error| error.to_string())?;
         owners.push(owner.clone());
         let mut targets = targets.into_iter();
-        host.lifecycle
-            .start(buzz_mesh_compute::config::ClientConfig {
-                api_port: mesh_port("BUZZ_MESH_API_PORT", 19337)?,
-                console_port: mesh_port("BUZZ_MESH_CONSOLE_PORT", 13131)?,
-                owner_key: path,
-                owner_id: owner,
-                trusted_owners: owners,
-                join_token: targets.next(),
-                mesh_name: Some(buzz_mesh_compute::config::mesh_name_for_relay(&community)),
-            })
-            .map_err(|error| error.to_string())?;
+        let node = buzz_mesh_compute::config::ClientConfig {
+            api_port: mesh_port("BUZZ_MESH_API_PORT", 19337)?,
+            console_port: mesh_port("BUZZ_MESH_CONSOLE_PORT", 13131)?,
+            owner_key: path,
+            owner_id: owner,
+            trusted_owners: owners,
+            join_token: targets.next(),
+            mesh_name: Some(buzz_mesh_compute::config::mesh_name_for_relay(&community)),
+        };
+        match sharing {
+            Some(share) => host.lifecycle.serve_observed(
+                buzz_mesh_compute::config::ServeConfig {
+                    node,
+                    model: share.model.clone(),
+                    max_vram_gb: share.max_vram_gb,
+                },
+                sharing::observer(
+                    app.clone(),
+                    preferences::Config::pending(viewer, community.clone(), &share),
+                ),
+            ),
+            None => host.lifecycle.start(node),
+        }
+        .map_err(|error| error.to_string())?;
         queue_targets(targets, |token| {
             host.lifecycle
                 .dial(token)
@@ -161,23 +215,90 @@ fn mesh_port(name: &str, fallback: u16) -> Result<u16, String> {
 
 #[cfg(feature = "mesh")]
 #[tauri::command]
-pub fn mesh_compute_select(
+pub async fn mesh_compute_select(
     app: tauri::AppHandle,
     host: tauri::State<'_, MeshHost>,
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
     community: String,
 ) -> Result<String, String> {
     crate::relay::mesh_origin(&community)?;
+    let viewer = identity.viewer().await?;
+    let _guard = host.preparing.lock().await;
+    let viewer_changed = host
+        .preferences
+        .lock()
+        .map_err(|_| "Mesh settings unavailable")?
+        .viewer_changed(&viewer);
     let lease = host
         .lease
-        .select_with(community, || host.lifecycle.stop())?;
-    publisher::ensure_started(app, &host)?;
+        .try_select_with(community.clone(), viewer_changed, || {
+            let mut sharing = host
+                .sharing
+                .lock()
+                .map_err(|_| "Mesh sharing unavailable")?;
+            host.preferences
+                .lock()
+                .map_err(|_| "Mesh settings unavailable")?
+                .disarm()?;
+            *sharing = None;
+            host.lifecycle.stop();
+            Ok(())
+        })?;
+    host.preferences
+        .lock()
+        .map_err(|_| "Mesh settings unavailable")?
+        .select(viewer, community);
+    let restore = host
+        .preferences
+        .lock()
+        .map_err(|_| "Mesh settings unavailable")?
+        .hint()
+        .filter(|config| config.enabled)
+        .cloned();
+    publisher::ensure_started(app.clone(), &host)?;
+    drop(_guard);
+    if let Some(config) = restore {
+        // Mesh owns cached/resumed/fresh acquisition; discovery re-verifies membership before start.
+        if host.lifecycle.phase() == buzz_mesh_compute::lifecycle::Phase::Stopped {
+            if let Err(error) = sharing::mesh_compute_share(
+                app,
+                lease.clone(),
+                Some(config.model),
+                config.max_vram_gb,
+            )
+            .await
+            {
+                host.preferences
+                    .lock()
+                    .map_err(|_| "Mesh settings unavailable")?
+                    .set_error(error);
+            }
+        }
+    }
     Ok(lease)
 }
 #[cfg(feature = "mesh")]
 #[tauri::command]
-pub fn mesh_compute_release(host: tauri::State<'_, MeshHost>, lease: String) -> Result<(), String> {
-    if host.lease.revoke(&lease)? {
-        host.lifecycle.stop();
+pub async fn mesh_compute_release(
+    host: tauri::State<'_, MeshHost>,
+    lease: String,
+) -> Result<(), String> {
+    let _guard = host.preparing.lock().await;
+    if host.lease.community(&lease).is_ok() {
+        host.lease.with_current(&lease, |_| {
+            let mut sharing = host
+                .sharing
+                .lock()
+                .map_err(|_| "Mesh sharing unavailable")?;
+            host.preferences
+                .lock()
+                .map_err(|_| "Mesh settings unavailable")?
+                .disarm()?;
+            *sharing = None;
+            host.lifecycle.stop();
+            Ok(())
+        })?;
+        host.lease.revoke(&lease)?;
     }
     Ok(())
 }
@@ -227,4 +348,13 @@ pub async fn mesh_compute_inventory(
         let _ = (identity, community);
         Err("Mesh native runtime is not included in this build".into())
     }
+}
+
+#[cfg(feature = "mesh")]
+#[tauri::command]
+pub async fn mesh_compute_catalog() -> Result<buzz_mesh_compute::catalog::Catalog, String> {
+    tokio::task::spawn_blocking(buzz_mesh_compute::catalog::catalog)
+        .await
+        .map_err(|error| format!("Mesh catalog task failed: {error}"))?
+        .map_err(|error| error.to_string())
 }

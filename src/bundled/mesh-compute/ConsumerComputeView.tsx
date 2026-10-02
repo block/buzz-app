@@ -39,9 +39,9 @@ export function ConsumerComputeView({
             </p>
           )}
           <p className="text-body text-secondary">
-            Use a model shared by another device in the selected community. This
-            app does not download or serve a local model. Your prompts run on
-            other members’ machines.
+            Use models shared within the selected community, or share a model
+            from this device. When using another member’s compute, your prompts
+            run on their machine.
           </p>
           {children}
           {active && (

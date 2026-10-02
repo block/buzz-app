@@ -53,3 +53,8 @@ pub mod roster;
 
 #[cfg(feature = "mesh")]
 pub mod publication;
+
+#[cfg(feature = "mesh")]
+pub mod catalog;
+#[cfg(feature = "mesh")]
+mod progress;

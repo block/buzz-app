@@ -24,16 +24,28 @@ impl Lease {
     pub fn select(&self, community: String) -> Result<String, String> {
         self.select_with(community, || {})
     }
+    #[cfg(test)]
     pub fn select_with(&self, community: String, changed: impl FnOnce()) -> Result<String, String> {
+        self.try_select_with(community, false, || {
+            changed();
+            Ok(())
+        })
+    }
+    pub fn try_select_with(
+        &self,
+        community: String,
+        force_change: bool,
+        changed: impl FnOnce() -> Result<(), String>,
+    ) -> Result<String, String> {
         let id = uuid::Uuid::new_v4().to_string();
         let mut current = self.0.lock().map_err(|_| "Mesh lease unavailable")?;
         let same = current
             .as_ref()
             .is_some_and(|(_, previous)| previous == &community);
-        *current = Some((id.clone(), community));
-        if !same {
-            changed();
+        if !same || force_change {
+            changed()?;
         }
+        *current = Some((id.clone(), community));
         Ok(id)
     }
     pub fn community(&self, id: &str) -> Result<String, String> {
@@ -109,6 +121,26 @@ mod tests {
         assert!(lease.community(&old).is_err());
         assert!(!lease.revoke(&old).unwrap());
         assert_eq!(lease.community(&new).unwrap(), "https://new.example");
+    }
+    #[test]
+    fn forced_identity_change_stops_same_community_and_failed_checkpoint_keeps_selection() {
+        let lease = Lease::default();
+        let old = lease.select("https://same.example".into()).unwrap();
+        let changed = AtomicBool::new(false);
+        let new = lease
+            .try_select_with("https://same.example".into(), true, || {
+                changed.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+            .unwrap();
+        assert!(changed.load(Ordering::SeqCst));
+        assert!(lease.community(&old).is_err());
+        assert!(lease
+            .try_select_with("https://other.example".into(), false, || Err(
+                "disk failed".into()
+            ))
+            .is_err());
+        assert_eq!(lease.community(&new).unwrap(), "https://same.example");
     }
     #[test]
     fn same_community_rotates_lease_without_stopping() {

@@ -459,6 +459,23 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Donor parity: model/download futures require upstream's 8 MiB worker stacks.
+    // Keep the runtime owned for the complete app lifetime, not a second Mesh node.
+    #[cfg(feature = "mesh")]
+    let _mesh_runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(8 * 1024 * 1024)
+        .build()
+    {
+        Ok(runtime) => {
+            tauri::async_runtime::set(runtime.handle().clone());
+            Some(runtime)
+        }
+        Err(error) => {
+            eprintln!("Mesh async runtime unavailable: {error}");
+            return;
+        }
+    };
     let builder = tauri::Builder::default();
     let builder = if !tauri::is_dev() {
         // Single instance comes first, as its documentation requires. Its deep-link
@@ -478,6 +495,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             deep_links::setup(app.handle());
+            #[cfg(feature = "mesh")]
+            app.state::<MeshHost>().initialize_preferences(
+                app.path()
+                    .app_data_dir()
+                    .map(|root| root.join("mesh-sharing.json"))
+                    .map_err(|error| error.to_string()),
+            );
             // Only app-owned storage is created. Preview uses the OS-resolved legacy
             // parent, never a browser-supplied path or a different environment source.
             let paths = (|| {
@@ -546,11 +570,11 @@ pub fn run() {
                 browser_status
             ];
             #[cfg(feature = "mesh")]
-            let mesh_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![mesh_compute::mesh_compute_start, mesh_compute::mesh_compute_select, mesh_compute::mesh_compute_release];
+            let mesh_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![mesh_compute::mesh_compute_catalog, mesh_compute::sharing::mesh_compute_share, mesh_compute::mesh_compute_start, mesh_compute::mesh_compute_select, mesh_compute::mesh_compute_release];
             // Browser embeds a real native view; existing commands also support MockRuntime.
             move |request: tauri::ipc::Invoke<tauri::Wry>| {
                 #[cfg(feature = "mesh")]
-                if matches!(request.message.command(), "mesh_compute_start" | "mesh_compute_select" | "mesh_compute_release") {
+                if matches!(request.message.command(), "mesh_compute_catalog" | "mesh_compute_share" | "mesh_compute_start" | "mesh_compute_select" | "mesh_compute_release") {
                     return mesh_commands(request);
                 }
                 if request.message.command().starts_with("browser_") {

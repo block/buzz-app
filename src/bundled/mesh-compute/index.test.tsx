@@ -12,7 +12,18 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { PluginModule } from "../../plugins/api";
 import { apply } from "./index";
 const native = vi.hoisted(() => ({ invoke: vi.fn(), isTauri: () => true }));
-vi.mock("@tauri-apps/api/core", () => native);
+vi.mock("@tauri-apps/api/core", () => ({
+  ...native,
+  invoke: (command: string, args?: unknown) =>
+    command === "mesh_compute_catalog"
+      ? Promise.resolve({
+          gpuName: null,
+          vramDisplay: "unknown",
+          recommended: null,
+          entries: [],
+        })
+      : native.invoke(command, args),
+}));
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -52,7 +63,7 @@ it("revokes a pending selection on disposal and never starts it", async () => {
       community: "https://fixture.example",
     }),
   );
-  await screen.findByText("Off");
+  await screen.findByText("Checking status…");
   expect(
     screen.queryByRole("button", { name: "Connect to community compute" }),
   ).not.toBeInTheDocument();
@@ -255,4 +266,210 @@ it("polls transient states serially, stops at Running, and cancels on unmount", 
     dispose();
     vi.useRealTimers();
   }
+});
+
+it("starts sharing the selected model through the existing community lease", async () => {
+  native.invoke.mockImplementation((command) =>
+    Promise.resolve(
+      command === "mesh_compute_select"
+        ? "share-lease"
+        : { available: true, lifecycle: { state: "stopped" }, sharing: null },
+    ),
+  );
+  const snapshot = {
+    status: "ready",
+    viewer: "viewer",
+    scope: "https://fixture.example:viewer",
+  };
+  let Component!: React.ComponentType;
+  const ctx = {
+    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+    effect: () => {},
+    settingsCards: {
+      register: (card: { component: React.ComponentType }) => {
+        Component = card.component;
+      },
+    },
+  } as unknown as Parameters<PluginModule["apply"]>[0];
+  apply(ctx);
+  render(<Component />);
+  const button = await screen.findByRole("button", { name: "Share compute" });
+  expect(button).toBeDisabled();
+  fireEvent.change(
+    screen.getByLabelText("Model reference or local GGUF path"),
+    { target: { value: "/models/local.gguf" } },
+  );
+  fireEvent.click(button);
+  await waitFor(() =>
+    expect(native.invoke).toHaveBeenCalledWith("mesh_compute_share", {
+      lease: "share-lease",
+      model: "/models/local.gguf",
+      maxVramGb: null,
+    }),
+  );
+});
+
+it.each([
+  ["starting", "Starting sharing /models/local.gguf…", true],
+  ["ready", "Sharing /models/local.gguf", false],
+  ["failed", "Sharing failed for /models/local.gguf", false],
+] as const)(
+  "shows serving intent truthfully in %s",
+  async (phase, label, disabled) => {
+    native.invoke.mockImplementation((command) =>
+      Promise.resolve(
+        command === "mesh_compute_select"
+          ? "share-lease"
+          : {
+              available: true,
+              lifecycle: {
+                state: phase,
+                reason: phase === "failed" ? "Load failed" : undefined,
+              },
+              sharing: "/models/local.gguf",
+            },
+      ),
+    );
+    const snapshot = {
+      status: "ready",
+      viewer: "viewer",
+      scope: "https://fixture.example:viewer",
+    };
+    let Component!: React.ComponentType;
+    const ctx = {
+      relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+      effect: () => {},
+      settingsCards: {
+        register: (card: { component: React.ComponentType }) => {
+          Component = card.component;
+        },
+      },
+    } as unknown as Parameters<PluginModule["apply"]>[0];
+    apply(ctx);
+    render(<Component />);
+    expect(
+      await screen.findByText((text) => text.startsWith(label)),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Model reference or local GGUF path"),
+    ).toBeDisabled();
+    const stop = screen.getByRole("button", { name: "Stop sharing" });
+    if (disabled) {
+      expect(stop).toBeDisabled();
+      fireEvent.click(stop);
+      expect(
+        native.invoke.mock.calls.filter(
+          ([command]) => command === "mesh_compute_share",
+        ),
+      ).toHaveLength(0);
+    } else {
+      expect(stop).toBeEnabled();
+      fireEvent.click(stop);
+      await waitFor(() =>
+        expect(native.invoke).toHaveBeenCalledWith("mesh_compute_share", {
+          lease: "share-lease",
+          model: null,
+          maxVramGb: null,
+        }),
+      );
+    }
+    if (phase !== "ready")
+      expect(
+        screen.queryByText("Sharing /models/local.gguf"),
+      ).not.toBeInTheDocument();
+  },
+);
+
+it("refreshes cleared intent even when stopping a failed worker reports an error", async () => {
+  let stopped = false;
+  native.invoke.mockImplementation((command) => {
+    if (command === "mesh_compute_select")
+      return Promise.resolve("share-lease");
+    if (command === "mesh_compute_share") {
+      stopped = true;
+      return Promise.reject("Shutdown not confirmed");
+    }
+    return Promise.resolve({
+      available: true,
+      lifecycle: { state: "failed", reason: "Load failed" },
+      sharing: stopped ? null : "/models/local.gguf",
+    });
+  });
+  const snapshot = {
+    status: "ready",
+    viewer: "viewer",
+    scope: "https://fixture.example:viewer",
+  };
+  let Component!: React.ComponentType;
+  const ctx = {
+    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+    effect: () => {},
+    settingsCards: {
+      register: (card: { component: React.ComponentType }) => {
+        Component = card.component;
+      },
+    },
+  } as unknown as Parameters<PluginModule["apply"]>[0];
+  apply(ctx);
+  render(<Component />);
+  fireEvent.click(await screen.findByRole("button", { name: "Stop sharing" }));
+  await screen.findByText("Shutdown not confirmed");
+  await waitFor(() =>
+    expect(
+      screen.getByLabelText("Model reference or local GGUF path"),
+    ).toBeEnabled(),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Stop sharing" }),
+  ).not.toBeInTheDocument();
+});
+
+it("restores a disarmed model hint and sends sharing only on explicit resume", async () => {
+  native.invoke.mockImplementation((command) =>
+    Promise.resolve(
+      command === "mesh_compute_select"
+        ? "share-lease"
+        : {
+            available: true,
+            lifecycle: { state: "stopped" },
+            sharing: null,
+            savedSharing: { model: "/models/local.gguf", enabled: false },
+          },
+    ),
+  );
+  const snapshot = {
+    status: "ready",
+    viewer: "viewer",
+    scope: "https://fixture.example:viewer",
+  };
+  let Component!: React.ComponentType;
+  const ctx = {
+    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+    effect: () => {},
+    settingsCards: {
+      register: (card: { component: React.ComponentType }) => {
+        Component = card.component;
+      },
+    },
+  } as unknown as Parameters<PluginModule["apply"]>[0];
+  apply(ctx);
+  render(<Component />);
+  const resume = await screen.findByRole("button", { name: "Resume sharing" });
+  expect(
+    screen.getByLabelText("Model reference or local GGUF path"),
+  ).toHaveValue("/models/local.gguf");
+  expect(
+    native.invoke.mock.calls.some(
+      ([command]) =>
+        command === "mesh_compute_start" || command === "mesh_compute_share",
+    ),
+  ).toBe(false);
+  fireEvent.click(resume);
+  await waitFor(() =>
+    expect(native.invoke).toHaveBeenCalledWith("mesh_compute_share", {
+      lease: "share-lease",
+      model: "/models/local.gguf",
+      maxVramGb: null,
+    }),
+  );
 });

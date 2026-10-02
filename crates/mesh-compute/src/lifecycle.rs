@@ -14,6 +14,8 @@ use crate::transport_policy::validate_advertised_endpoint;
 /// SDK status returned by the owned worker; payload remains untyped JSON.
 pub use mesh_llm_sdk::EmbeddedNodeStatus as NodeStatus;
 
+type Observer = Arc<dyn Fn(Phase) + Send + Sync>;
+
 type Operation<'a, T> = Pin<Box<dyn Future<Output = anyhow::Result<T>> + Send + 'a>>;
 
 trait Node: Send + 'static {
@@ -46,6 +48,7 @@ pub enum Phase {
 
 struct Slot {
     phase: Phase,
+    serving: bool,
     dial: Option<mpsc::Sender<String>>,
     stop: Option<watch::Sender<bool>>,
     status: Option<mpsc::Sender<oneshot::Sender<anyhow::Result<mesh_llm_sdk::EmbeddedNodeStatus>>>>,
@@ -54,12 +57,15 @@ struct Slot {
 /// The app owns this across plugin/page lifetimes. Dropping it requests shutdown.
 pub struct Lifecycle {
     slot: Arc<Mutex<Slot>>,
+    progress: crate::progress::Progress,
 }
 impl Default for Lifecycle {
     fn default() -> Self {
         Self {
+            progress: crate::progress::Progress::default(),
             slot: Arc::new(Mutex::new(Slot {
                 phase: Phase::Stopped,
+                serving: false,
                 dial: None,
                 stop: None,
                 status: None,
@@ -101,34 +107,90 @@ impl Lifecycle {
 
     /// Share a local model through the same exclusive SDK slot as consumers.
     pub fn serve(&self, request: ServeConfig) -> anyhow::Result<()> {
+        self.serve_observed(request, |_| {})
+    }
+
+    /// Notify the host of worker transitions for fenced persistence checkpoints.
+    /// Observers run outside the slot lock and must not block on async work.
+    pub fn serve_observed(
+        &self,
+        request: ServeConfig,
+        observe: impl Fn(Phase) + Send + Sync + 'static,
+    ) -> anyhow::Result<()> {
+        let model = request.model.clone();
         let config = request.build()?;
-        self.launch(async move { mesh_llm_sdk::serve::start(config).await })
+        let progress = self.progress.clone();
+        self.launch_observed(
+            async move {
+                progress.install();
+                mesh_llm_host_runtime::initialize_host_runtime().await?;
+                crate::catalog::prepare(&model).await?;
+                mesh_llm_sdk::serve::start(config).await
+            },
+            true,
+            Arc::new(observe),
+        )
+    }
+
+    /// Byte progress from the current worker, retained across UI remounts.
+    pub fn download_progress(&self) -> Option<crate::progress::DownloadProgress> {
+        self.progress.latest()
     }
 
     fn launch<N: Node>(
         &self,
         startup: impl Future<Output = anyhow::Result<N>> + Send + 'static,
     ) -> anyhow::Result<()> {
+        self.launch_role(startup, false)
+    }
+
+    /// True only for the installed, ready serving worker, never for startup intent.
+    pub fn is_serving(&self) -> bool {
+        self.slot
+            .lock()
+            .map(|slot| slot.phase == Phase::Ready && slot.serving)
+            .unwrap_or(false)
+    }
+
+    fn launch_role<N: Node>(
+        &self,
+        startup: impl Future<Output = anyhow::Result<N>> + Send + 'static,
+        serving: bool,
+    ) -> anyhow::Result<()> {
+        self.launch_observed(startup, serving, Arc::new(|_| {}))
+    }
+
+    fn launch_observed<N: Node>(
+        &self,
+        startup: impl Future<Output = anyhow::Result<N>> + Send + 'static,
+        serving: bool,
+        observe: Observer,
+    ) -> anyhow::Result<()> {
         let mut slot = self.slot.lock().expect("mesh slot poisoned");
         if slot.phase != Phase::Stopped {
             anyhow::bail!("Previous Mesh runtime shutdown is not confirmed");
         }
         let runtime = tokio::runtime::Handle::try_current()?;
+        self.progress.clear();
         let (dial, mut pending) = mpsc::channel::<String>(64);
         let (status, mut reads) =
             mpsc::channel::<oneshot::Sender<anyhow::Result<mesh_llm_sdk::EmbeddedNodeStatus>>>(1);
         let (stop, mut stopping) = watch::channel(false);
         slot.phase = Phase::Starting;
+        slot.serving = serving;
         slot.dial = Some(dial);
         slot.stop = Some(stop);
         slot.status = Some(status);
         let shared = self.slot.clone();
+        drop(slot);
         // Detached from the caller's request lifetime, intentionally not abortable by IPC.
         runtime.spawn(async move {
             let mut node = match startup.await {
                 Ok(node) => node,
                 Err(error) => {
-                    shared.lock().expect("mesh slot poisoned").phase = Phase::Failed(error.to_string());
+                    let phase = Phase::Failed(error.to_string());
+                    shared.lock().expect("mesh slot poisoned").phase = phase.clone();
+                    observe(phase);
                     return;
                 }
             };
@@ -136,6 +198,8 @@ impl Lifecycle {
                 let mut slot = shared.lock().expect("mesh slot poisoned");
                 if slot.phase == Phase::Starting { slot.phase = Phase::Ready; }
             }
+            let phase = shared.lock().expect("mesh slot poisoned").phase.clone();
+            observe(phase);
             loop {
                 if *stopping.borrow() { break; }
                 tokio::select! {
@@ -156,7 +220,9 @@ impl Lifecycle {
                     token = pending.recv() => {
                         let Some(token) = token else { break; };
                         if let Err(error) = node.join(token).await {
-                            shared.lock().expect("mesh slot poisoned").phase = Phase::Failed(error.to_string());
+                            let phase = Phase::Failed(error.to_string());
+                            shared.lock().expect("mesh slot poisoned").phase = phase.clone();
+                            observe(phase);
                             break;
                         }
                     }
@@ -175,6 +241,9 @@ impl Lifecycle {
             slot.dial = None;
             slot.stop = None;
             slot.status = None;
+            let phase = slot.phase.clone();
+            drop(slot);
+            observe(phase);
         });
         Ok(())
     }
@@ -283,6 +352,94 @@ mod tests {
             received,
         )
     }
+    #[tokio::test]
+    async fn serving_requires_ready_worker_and_clears_on_stop_or_failure() {
+        let owner = Lifecycle::default();
+        let (node, stopped, release, _) = fixture();
+        let (enter, gate) = oneshot::channel();
+        owner
+            .launch_role(
+                async move {
+                    gate.await?;
+                    Ok(node)
+                },
+                true,
+            )
+            .unwrap();
+        assert!(!owner.is_serving());
+        enter.send(()).unwrap();
+        while owner.phase() == Phase::Starting {
+            tokio::task::yield_now().await;
+        }
+        assert!(owner.is_serving());
+        owner.stop();
+        stopped.await.unwrap();
+        assert!(!owner.is_serving());
+        release.send(()).unwrap();
+        wait_stopped(&owner).await;
+        owner
+            .launch_role(
+                async { Err::<FakeNode, _>(anyhow::anyhow!("load failed")) },
+                true,
+            )
+            .unwrap();
+        while owner.phase() == Phase::Starting {
+            tokio::task::yield_now().await;
+        }
+        assert!(matches!(owner.phase(), Phase::Failed(_)));
+        assert!(!owner.is_serving());
+    }
+    #[tokio::test]
+    async fn observer_sees_ready_then_stop_outside_slot_lock_and_failure_before_replacement() {
+        let owner = Lifecycle::default();
+        let (node, stopped, release, _) = fixture();
+        let (events, mut observed) = mpsc::unbounded_channel();
+        let slot = owner.slot.clone();
+        owner
+            .launch_observed(
+                async { Ok(node) },
+                true,
+                Arc::new(move |phase| {
+                    assert!(
+                        slot.try_lock().is_ok(),
+                        "observer cannot run under the slot lock"
+                    );
+                    events.send(phase).unwrap();
+                }),
+            )
+            .unwrap();
+        assert_eq!(observed.recv().await, Some(Phase::Ready));
+        owner.stop();
+        stopped.await.unwrap();
+        release.send(()).unwrap();
+        assert_eq!(observed.recv().await, Some(Phase::Stopped));
+        let (events, mut observed) = mpsc::unbounded_channel();
+        owner
+            .launch_observed(
+                async { Err::<FakeNode, _>(anyhow::anyhow!("load failed")) },
+                true,
+                Arc::new(move |phase| {
+                    events.send(phase).unwrap();
+                }),
+            )
+            .unwrap();
+        assert_eq!(
+            observed.recv().await,
+            Some(Phase::Failed("load failed".into()))
+        );
+        assert!(owner
+            .start(ClientConfig {
+                api_port: 1,
+                console_port: 2,
+                owner_key: std::env::temp_dir().join("fixture"),
+                owner_id: "fixture".into(),
+                trusted_owners: vec!["fixture".into()],
+                join_token: None,
+                mesh_name: None,
+            })
+            .is_err());
+    }
+
     async fn wait_stopped(owner: &Lifecycle) {
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             while owner.phase() != Phase::Stopped {

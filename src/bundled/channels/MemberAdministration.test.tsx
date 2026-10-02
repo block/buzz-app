@@ -51,6 +51,7 @@ async function setup(
   messageNavigation = true,
   initialReads?: { names?: Promise<void>; roster?: Promise<void> },
   ownership?: "own" | "other" | "invalid",
+  visibility: "private" | "public" = "private",
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -92,7 +93,7 @@ async function setup(
       kind: 39000,
       created_at: tick,
       content: "",
-      tags: [["d", id], ["t", "stream"], ["private"], ["name", "Design"]],
+      tags: [["d", id], ["t", "stream"], [visibility], ["name", "Design"]],
     }),
     signed(relay, {
       kind: 39001,
@@ -762,9 +763,39 @@ it.each([false, true])(
     ).toBeVisible();
     expect(dialog).toHaveTextContent(
       agent
-        ? "This does not delete or stop the agent. It can be added back later."
+        ? "Removing the agent does not stop it from running, but it will no longer be able to read this private channel. It can be added back later."
         : "This does not stop their agents. They may need an invitation to rejoin.",
     );
+    expect(t.publish).not.toHaveBeenCalled();
+  },
+);
+it.each([false, true])(
+  "does not claim read access is lost when removing a public-channel member (Agent: %s)",
+  async (agent) => {
+    const t = await setup(
+      "owner",
+      "member",
+      true,
+      undefined,
+      agent,
+      undefined,
+      false,
+      true,
+      undefined,
+      undefined,
+      "public",
+    );
+    expect(t.session.channels.get?.(id)?.visibility).toBe("public");
+    const dialog = await t.choose("Remove from channel");
+    expect(
+      within(dialog).getByText(
+        agent
+          ? "Removing the agent does not stop it from running. It can be added back later."
+          : "This does not stop their agents. They may need an invitation to rejoin.",
+        { exact: true },
+      ),
+    ).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent("private channel");
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
@@ -1621,7 +1652,7 @@ it.each(["bot", "member"])(
       name: "Remove agent from channel",
     });
     expect(dialog).toHaveTextContent(
-      "This does not delete or stop the agent. It can be added back later.",
+      "Removing the agent does not stop it from running, but it will no longer be able to read this private channel. It can be added back later.",
     );
     expect(dialog).not.toHaveTextContent("their agents");
     expect(

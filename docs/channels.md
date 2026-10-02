@@ -886,7 +886,9 @@ Role change and removal replace the Members content with a deliberate confirmati
 step in the same dialog, using the shared scale/blur transition from channel privacy.
 Removal confirmation uses agent-specific title, action and explanation for an
 identity recognized as an agent by the member row; a Bot role alone does not
-identify an agent. This copy does not alter removal authority.
+identify an agent. For private channels only, the agent explanation combines the
+running-state distinction with the loss of channel read access. Public-channel
+copy does not claim read access is lost. This copy does not alter removal authority.
 Cancel, Close, Escape and backdrop dismissal return to the intact search/filter and
 focus Search; entering confirmation focuses Cancel. No second modal is stacked.
 Submitting returns to the list without a pending or success banner; the verified

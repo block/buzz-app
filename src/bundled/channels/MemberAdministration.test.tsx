@@ -628,7 +628,7 @@ it("confirms removal and removes only the confirmed roster entry", async () => {
   expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
   expect(
     within(dialog).getByText(
-      "This does not delete their identity or stop their agents. They may need an invitation to rejoin.",
+      "This does not stop their agents. They may need an invitation to rejoin.",
       { exact: true },
     ),
   ).toBeInTheDocument();
@@ -763,7 +763,7 @@ it.each([false, true])(
     expect(dialog).toHaveTextContent(
       agent
         ? "This does not delete or stop the agent. It can be added back later."
-        : "This does not delete their identity or stop their agents. They may need an invitation to rejoin.",
+        : "This does not stop their agents. They may need an invitation to rejoin.",
     );
     expect(t.publish).not.toHaveBeenCalled();
   },

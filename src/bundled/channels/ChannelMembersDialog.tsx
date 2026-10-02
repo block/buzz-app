@@ -988,7 +988,7 @@ export function ChannelMembersDialog({
           {selection.role === "remove"
             ? selectedAgent
               ? "This does not delete or stop the agent. It can be added back later."
-              : "This does not delete their identity or stop their agents. They may need an invitation to rejoin."
+              : "This does not stop their agents. They may need an invitation to rejoin."
             : `Change this member’s role from ${selection.expectedRole} to ${selection.role}. ${selection.role === "admin" ? "Admins can manage this channel and its members." : "This changes their authority in this channel."}`}
         </p>
       ) : (

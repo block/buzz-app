@@ -298,7 +298,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-standard",
         variable: "--text-standard",
-        pointsAt: "neutral-12 light / neutral-12 dark",
+        pointsAt: "neutral-standard-text light / neutral-12 dark",
         use: "Normal reading text.",
         status: "core",
       },
@@ -761,7 +761,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-primary",
         variable: "--text-primary",
-        pointsAt: "neutral 12",
+        pointsAt: "text-standard",
         use: "Normal reading text.",
         status: "core",
       },
@@ -806,6 +806,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--bg-media-glass",
         pointsAt: "black 35% + 24px blur + 150% saturation",
         use: "Floating video-preview controls in either app mode; static fill during hover and press.",
+        status: "core",
+      },
+      {
+        token: "border-image",
+        variable: "--border-image",
+        pointsAt: "black 10% in light; white 10% in dark",
+        use: "A 1px outer hairline that separates message images and videos from their surroundings.",
+        status: "core",
+      },
+      {
+        token: "media-canvas",
+        variable: "--bg-media-canvas",
+        pointsAt: "#000000 in both modes",
+        use: "Pure-black canvas behind fullscreen images and videos, separate from viewer chrome.",
         status: "core",
       },
       {

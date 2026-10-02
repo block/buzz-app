@@ -371,7 +371,7 @@ export function createUnread({
           messageId: first.message.id,
           latestMessageId: latest.message.id,
           messageIds: Object.freeze(group.map(({ message }) => message.id)),
-          ...(rootId ? { rootId } : {}),
+          ...(first.target?.root_id ? { rootId: first.target.root_id } : {}),
           authorId: first.message.pubkey,
           preview: first.preview,
           createdAt: latest.message.created_at,

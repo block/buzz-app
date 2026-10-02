@@ -15,6 +15,7 @@ import type { LiveCallbacks, LiveSnapshot } from "./live";
 import type { ReadFilter, RelayEvent } from "./events";
 const channel = "01234567-89ab-cdef-0123-456789abcdef";
 const other = "11234567-89ab-cdef-0123-456789abcdef";
+const third = "21234567-89ab-cdef-0123-456789abcdef";
 const target = { kind: "channel", channelId: channel } as const;
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -2225,7 +2226,7 @@ function provenZero(h: ReturnType<typeof setup>) {
   return { mention, noise };
 }
 it.each(["in-flight", "queued"] as const)(
-  "inbox: a sidebar refresh (%s) does not void a proven-zero channel or drop an answered row",
+  "inbox: a sidebar traversal (%s) does not void a proven-zero channel or drop an answered row",
   async (phase) => {
     const h = setup();
     const { mention, noise } = provenZero(h);
@@ -2234,29 +2235,42 @@ it.each(["in-flight", "queued"] as const)(
     expect(settledSnapshot.items.map((item) => item.messageId)).toEqual([
       mention.id,
     ]);
-    const held = deferredSidebar<void>(),
-      started = deferredSidebar<void>();
+    // One gate per sidebar call. Without a roster change a refresh makes
+    // exactly one call, so a second call is the queued traversal pass.
+    const gates = Array.from({ length: 4 }, () => ({
+      started: deferredSidebar<void>(),
+      held: deferredSidebar<void>(),
+    }));
+    let calls = 0;
     const sidebar = h.bff.api.sidebar.getMockImplementation();
     if (!sidebar) throw new Error("Missing sidebar fixture");
     h.bff.api.sidebar.mockImplementation(async (query, signal) => {
-      started.resolve();
-      await held.promise;
+      const gate = gates[calls++];
+      if (!gate) throw new Error("Unexpected sidebar call");
+      gate.started.resolve();
+      await gate.held.promise;
       return sidebar(query, signal);
     });
     h.bff.api.contexts.mockClear();
-    const first = h.unread.refresh();
-    const refreshing =
-      phase === "queued" ? Promise.all([first, h.unread.refresh()]) : first;
+    const refreshing = h.unread.refresh();
     try {
-      await started.promise;
+      await gates[0]?.started.promise;
+      if (phase === "queued") {
+        // A roster change mid-traversal marks it dirty: the next pass runs
+        // only after this one returns.
+        h.grant(third, [h.viewer.pubkey, h.peer.pubkey], 30);
+        gates[0]?.held.resolve();
+        await gates[1]?.started.promise;
+      }
       expect(h.unread.inbox().status).toBe("loading");
       expect(h.unread.inbox().items.map((item) => item.messageId)).toEqual([
         mention.id,
       ]);
     } finally {
-      held.resolve();
+      for (const gate of gates) gate.held.resolve();
       await refreshing;
     }
+    expect(calls).toBe(phase === "queued" ? 2 : 1);
     const demanded = demandedIds(h);
     for (const row of noise) expect(demanded).not.toContain(row.id);
   },
@@ -2548,4 +2562,101 @@ it("inbox: 101 candidates in a channel with attention do not settle, even when e
   // Control: the newest 100 were asked; the oldest was the one left out.
   expect(demanded).not.toContain(rows[0]?.id);
   for (const row of rows.slice(1)) expect(demanded).toContain(row.id);
+});
+
+// Eva 8a373655: a zero row proves absence only once it has also cleared any
+// unread live hint, the sidebar's own bar for "the row has caught up". An
+// incomplete row clears the watermark but not the hint, so the badge and the
+// Inbox keep agreeing.
+it("inbox: an incomplete zero row does not clear a live unread hint, so the mention keeps its row", async () => {
+  const h = setup();
+  h.grant(other, [h.viewer.pubkey, h.peer.pubkey]);
+  h.bff.rows.set(
+    other,
+    sidebarRow(other, {
+      attention: { status: "exact", value: 0 },
+      latest_message_complete: false,
+    }),
+  );
+  const noise = Array.from({ length: 101 }, (_, i) =>
+    message(h.peer, other, `quiet ${i}`, 100 + i),
+  );
+  h.emit(noise);
+  expect(settled(await inbox(h))).toBe(true);
+  const late = message(h.peer, other, "live mention", 500, [
+    ["p", h.viewer.pubkey],
+  ]);
+  verdicts(h, [[late, "unread:mention"]]);
+  const reads = h.bff.api.sidebar.mock.calls.length;
+  h.emit([late], "live", other);
+  // The automatic targeted read returns the same incomplete zero row.
+  await vi.waitFor(() =>
+    expect(h.bff.api.sidebar.mock.calls.length).toBeGreaterThan(reads),
+  );
+  await h.unread.refresh();
+  // Both surfaces still answer from the same hint.
+  expect(
+    h.unread.snapshot({ kind: "channel", channelId: other }).attentionVisible,
+  ).toBe(true);
+  expect(h.unread.inbox().items.map((item) => item.messageId)).toEqual([
+    late.id,
+  ]);
+});
+
+// Eva 02177317: the row's messageId and rootId describe ONE message, the oldest
+// in the group (the pair #499 opens). target and readThrough stay on the newest.
+it.each([
+  [
+    "a DM whose oldest unread is top-level and newest is a reply",
+    "dm-top-then-reply",
+  ],
+  [
+    "a DM whose oldest unread is a reply and newest is top-level",
+    "dm-reply-then-top",
+  ],
+  [
+    "a channel root mention with unread replies under it",
+    "channel-root-then-reply",
+  ],
+] as const)("inbox: %s opens at its oldest message", async (_, shape) => {
+  const h = setup();
+  const dm = shape !== "channel-root-then-reply";
+  const where = dm ? other : channel;
+  if (dm) {
+    h.grant(other, [h.viewer.pubkey, h.peer.pubkey]);
+    h.emit([metadata(h.relay, other, "DM", 11, [["t", "dm"]])]);
+  }
+  const root = message(h.peer, where, "root", 20, [["p", h.viewer.pubkey]]);
+  const reply = (at: number) =>
+    message(h.peer, where, `reply ${at}`, at, [
+      ["e", root.id, "", "root"],
+      ["e", root.id, "", "reply"],
+      ["p", h.viewer.pubkey],
+    ]);
+  const top = (at: number) =>
+    message(h.peer, where, `top ${at}`, at, [["p", h.viewer.pubkey]]);
+  const reason = dm ? "unread:direct" : "unread:mention";
+  const rows =
+    shape === "dm-top-then-reply"
+      ? [top(21), reply(22)]
+      : shape === "dm-reply-then-top"
+        ? [reply(21), top(22)]
+        : [root, reply(21)];
+  h.emit(shape === "channel-root-then-reply" ? rows : [root, ...rows]);
+  verdicts(
+    h,
+    rows.map((row) => [row, reason] as const),
+  );
+  const [first, latest] = rows;
+  if (!first || !latest) throw new Error("Missing rows");
+  const items = (await inbox(h)).items;
+  expect(items).toHaveLength(1);
+  const item = items[0];
+  expect(item?.messageId).toBe(first.id);
+  expect(item?.latestMessageId).toBe(latest.id);
+  // rootId belongs to messageId: present iff the oldest message is a reply.
+  expect(item?.rootId).toBe(
+    shape === "dm-reply-then-top" ? root.id : undefined,
+  );
+  expect(item && "rootId" in item).toBe(shape === "dm-reply-then-top");
 });

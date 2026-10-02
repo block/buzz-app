@@ -1,7 +1,20 @@
 import { settleShellToggle } from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
+
 import { open, wheel } from "./timeline.mjs";
+
+// These layout/navigation journeys exercise the opt-in Bestie surface.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    const key = "buzzodz.plugins.v1";
+    if (localStorage.getItem(key) === null)
+      localStorage.setItem(
+        key,
+        JSON.stringify({ version: 2, enabled: { "buzz.bestie": true } }),
+      );
+  });
+});
 
 test.use({ savedSidebar: true });
 

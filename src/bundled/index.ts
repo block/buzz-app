@@ -43,33 +43,109 @@ import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
-  { manifest: { ...feedbackManifest, apiVersion: 1 }, module: feedback },
+  {
+    manifest: { ...feedbackManifest, apiVersion: 1 },
+    module: feedback,
+    enabledByDefault: true,
+  },
   {
     manifest: { ...todosManifest, apiVersion: 1 },
     module: todos,
     enabledByDefault: false,
   },
-  { manifest: { ...diffsManifest, apiVersion: 1 }, module: diffs },
+  {
+    manifest: { ...diffsManifest, apiVersion: 1 },
+    module: diffs,
+    enabledByDefault: true,
+  },
   {
     manifest: { ...templatesManifest, apiVersion: 1 },
     module: templates,
     enabledByDefault: false,
   },
-  { manifest: { ...namingManifest, apiVersion: 1 }, module: naming },
-  { manifest: { ...activityManifest, apiVersion: 1 }, module: activity },
-  { manifest: { ...terminalManifest, apiVersion: 1 }, module: terminal },
-  { manifest: { ...profilesManifest, apiVersion: 1 }, module: profiles },
-  { manifest: { ...linksManifest, apiVersion: 1 }, module: links },
-  { manifest: { ...mentionsManifest, apiVersion: 1 }, module: mentions },
-  { manifest: { ...emojiManifest, apiVersion: 1 }, module: emoji },
-  { manifest: { ...channelsManifest, apiVersion: 1 }, module: channels },
-  { manifest: { ...githubManifest, apiVersion: 1 }, module: github },
-  { manifest: { ...bestieManifest, apiVersion: 1 }, module: bestie },
-  { manifest: { ...inboxManifest, apiVersion: 1 }, module: inbox },
-  { manifest: { ...projectsManifest, apiVersion: 1 }, module: projects },
-  { manifest: { ...agentsManifest, apiVersion: 1 }, module: agents },
-  { manifest: { ...workflowsManifest, apiVersion: 1 }, module: workflows },
-  { manifest: { ...sessionsManifest, apiVersion: 1 }, module: sessions },
-  { manifest: { ...hostedManifest, apiVersion: 1 }, module: hosted },
-  { manifest: { ...moderationManifest, apiVersion: 1 }, module: moderation },
+  {
+    manifest: { ...namingManifest, apiVersion: 1 },
+    module: naming,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...activityManifest, apiVersion: 1 },
+    module: activity,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...terminalManifest, apiVersion: 1 },
+    module: terminal,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...profilesManifest, apiVersion: 1 },
+    module: profiles,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...linksManifest, apiVersion: 1 },
+    module: links,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...mentionsManifest, apiVersion: 1 },
+    module: mentions,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...emojiManifest, apiVersion: 1 },
+    module: emoji,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...channelsManifest, apiVersion: 1 },
+    module: channels,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...githubManifest, apiVersion: 1 },
+    module: github,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...bestieManifest, apiVersion: 1 },
+    module: bestie,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...inboxManifest, apiVersion: 1 },
+    module: inbox,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...projectsManifest, apiVersion: 1 },
+    module: projects,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...agentsManifest, apiVersion: 1 },
+    module: agents,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...workflowsManifest, apiVersion: 1 },
+    module: workflows,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...sessionsManifest, apiVersion: 1 },
+    module: sessions,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...hostedManifest, apiVersion: 1 },
+    module: hosted,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...moderationManifest, apiVersion: 1 },
+    module: moderation,
+    enabledByDefault: true,
+  },
 ];

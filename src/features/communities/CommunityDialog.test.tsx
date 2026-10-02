@@ -12,6 +12,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import { CommunityDialog } from "./CommunityDialog";
 import { Context } from "@deepseek-ai/cordis";
 import { createCommunities, type Communities } from "./service";
+import { stubAvatarBrowserApis } from "../agents/avatar-testing";
+
+stubAvatarBrowserApis();
 
 const api = vi.hoisted(() => ({
   inspectProfile: vi.fn<typeof import("./api").inspectProfile>(),

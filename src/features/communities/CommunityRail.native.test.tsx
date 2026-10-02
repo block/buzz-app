@@ -23,6 +23,10 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 const render = (ui: ReactElement) => rtlRender(ui, { wrapper: ToastProvider });
+const settingsCards = {
+  subscribe: () => () => {},
+  has: () => true,
+};
 const viewer = "a".repeat(64);
 const primary = "https://primary.example";
 
@@ -86,7 +90,11 @@ it("offers native owners invites while keeping unsupported read sync disabled", 
   } as unknown as Communities;
   const onOpenTarget = vi.fn();
   render(
-    <CommunityRail communities={communities} onOpenTarget={onOpenTarget} />,
+    <CommunityRail
+      communities={communities}
+      onOpenTarget={onOpenTarget}
+      settingsCards={settingsCards}
+    />,
   );
   fireEvent.contextMenu(
     screen.getByRole("button", { name: "Switch to Primary" }),

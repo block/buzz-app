@@ -182,6 +182,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
           // A scoped Settings target selects its community on the way.
           onOpenTarget={(target) => void services.navigation.open(target)}
           communities={services.communities}
+          settingsCards={services.settingsCards}
           accountActions={services.accountActions}
           onProfile={
             ownProfile && launcher.canOpen(ownProfile)

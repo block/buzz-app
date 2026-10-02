@@ -7,6 +7,18 @@ import { npubEncode } from "nostr-tools/nip19";
 import { verifyEvent } from "nostr-tools";
 import { test, expect, ids } from "./fixture.mjs";
 
+// These layout/navigation journeys exercise the opt-in Bestie surface.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    const key = "buzzodz.plugins.v1";
+    if (localStorage.getItem(key) === null)
+      localStorage.setItem(
+        key,
+        JSON.stringify({ version: 2, enabled: { "buzz.bestie": true } }),
+      );
+  });
+});
+
 // Configure the modeled session at its HTTP owner instead of proxying it through
 // route.fetch(), so session setup needs only the browser's original request.
 test.use({ sessionWriteKinds: [9, 9007, 40100] });

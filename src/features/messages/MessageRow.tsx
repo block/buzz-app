@@ -12,14 +12,12 @@ import {
   useState,
   useEffect,
   useCallback,
-  useMemo,
   useSyncExternalStore,
   type FocusEvent,
   type ReactNode,
 } from "react";
 import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
-import { knownAgentPubkeys } from "../agents/known";
 import type { UnreadCapability } from "../relay/unread";
 import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
 import { parseMediaTimeReply } from "./media-timecode";
@@ -198,7 +196,7 @@ export const MessageRow = memo(function MessageRow({
           : undefined;
   const workingLabel = threadAgents.length
     ? `${threadAgents
-        .map(({ id, name }) => resolveName(id, name ?? id.slice(0, 10)))
+        .map(({ pubkey, name }) => resolveName(pubkey, name))
         .join(", ")} working`
     : undefined;
   const name = resolveName(
@@ -729,13 +727,11 @@ function useThreadUnread(
   return useSyncExternalStore(subscribe, get, get);
 }
 const noSubscribe = () => () => {};
-const emptyProfiles: ReadonlyMap<string, Profile> = new Map();
-const noProfiles = () => emptyProfiles;
 const noLibrary = () => undefined;
 // App-managed agents publish typing, not observer telemetry, while they work.
 // A joined-key snapshot keeps unrelated typing from re-rendering the row. Like
-// the sidebar, typers are classified against every cached profile and the
-// library: an agent may be working here before any loaded row names it.
+// the sidebar, only the viewer's own agents count: the library is read while
+// someone types here, so an agent no loaded row names yet is still recognized.
 function useThreadAgents(
   session: RelaySession | undefined,
   channelId: string,
@@ -755,24 +751,14 @@ function useThreadAgents(
     get,
     get,
   );
-  const live = keys ? session : undefined;
-  const getProfiles = live?.profiles.snapshot ?? noProfiles;
-  const profiles = useSyncExternalStore(
-    live?.profiles.subscribe ?? noSubscribe,
-    getProfiles,
-    getProfiles,
-  );
-  const getLibrary = live?.agentChoices.snapshot ?? noLibrary;
+  const getLibrary = (keys && session?.agentChoices.snapshot) || noLibrary;
   const library = useSyncExternalStore(
-    live?.agentChoices.subscribe ?? noSubscribe,
+    (keys && session?.agentChoices.subscribe) || noSubscribe,
     getLibrary,
     getLibrary,
   );
-  return useMemo(() => {
-    const known = knownAgentPubkeys(profiles, library);
-    return keys
-      .split(",")
-      .filter((id) => known.has(id))
-      .map((id) => ({ id, name: profiles.get(id)?.name }));
-  }, [keys, profiles, library]);
+  const typers = keys.split(",");
+  return (
+    library?.identities.filter(({ pubkey }) => typers.includes(pubkey)) ?? []
+  );
 }

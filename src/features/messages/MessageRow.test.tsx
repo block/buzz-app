@@ -1097,15 +1097,23 @@ it.each([undefined, "canonical-root"])(
 );
 
 it("shows working dots only while a known agent types in this thread", () => {
-  // Known from the profile cache and the library only: no loaded row names them.
+  // The viewer's own agents come from the library; no loaded row names them.
+  // Another person's agent only declares itself in its profile.
   const agent = "a".repeat(64);
   const other = "b".repeat(64);
-  const cached = new Map([[agent, { name: "Brain", isAgent: true }]]);
-  const library = { identities: [{ pubkey: other }] };
+  const foreign = "c".repeat(64);
+  const cached = new Map([[foreign, { name: "Stranger", isAgent: true }]]);
+  const library = {
+    identities: [
+      { pubkey: agent, name: "Brain" },
+      { pubkey: other, name: "Pinky" },
+    ],
+  };
   const listeners = new Set<() => void>();
   let entries: readonly TypingEntry[] = [
     { channelId: row.channelId, threadRootId: row.id, pubkey: agent },
     { channelId: row.channelId, threadRootId: row.id, pubkey: "human" },
+    { channelId: row.channelId, threadRootId: row.id, pubkey: foreign },
     { channelId: row.channelId, threadRootId: "elsewhere", pubkey: other },
     { channelId: row.channelId, pubkey: other },
   ];

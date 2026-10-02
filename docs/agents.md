@@ -366,15 +366,16 @@ the plugin's lifecycle. Observer records have no thread identity, so its details
 remain explicitly channel-wide.
 
 The display-only source is `session.typing`, not the plugin's typing evidence:
-typing by a known agent (profile hint or local library) anywhere in the channel,
-threads included. App-managed agents run without observer telemetry, so typing
-is their working signal. This store keeps working with the plugin off, rejects
+typing by one of the viewer's own agents (the local library) anywhere in the
+channel, threads included. App-managed agents run without observer telemetry, so
+typing is their working signal. Other people's agents, known only from a
+self-declared profile hint, are not shown. This store keeps working with the plugin off, rejects
 future timestamps instead of capping them, schedules its own expiry eight
 seconds after the signed timestamp and stays quiet for two seconds after the
 typer's message. It is display-only evidence, not ownership; while the plugin is
 off, the channel popover lists such an agent without a **View activity** action.
-A timeline thread summary shows the same dots from this source while a known
-agent types in that thread; a thread with no replies yet has no summary to mark.
+A timeline thread summary shows the same dots from this source while one of the
+viewer's agents types in that thread; a thread with no replies yet has no summary to mark.
 No harness change, new subscription, directory or timer is added.
 The development broker loads subscription filters at startup: restart the
 existing dev server once to receive typing; frontend HMR alone is insufficient.

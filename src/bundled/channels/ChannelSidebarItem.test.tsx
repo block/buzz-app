@@ -213,7 +213,7 @@ it.each([
   },
 );
 
-it("shows known agents typing in the channel or its threads as working", () => {
+it("shows the viewer's agents typing in the channel or its threads as working", () => {
   const agent = "b".repeat(64),
     human = "c".repeat(64),
     hinted = "e".repeat(64);
@@ -256,10 +256,9 @@ it("shows known agents typing in the channel or its threads as working", () => {
   expect(
     screen.getByRole("img", { name: "Pinky working in Alpha" }),
   ).toBeInTheDocument();
+  // Another person's agent only declares itself in its profile.
   set([{ channelId: "alpha", pubkey: hinted }]);
-  expect(
-    screen.getByRole("img", { name: "Brain working in Alpha" }),
-  ).toBeInTheDocument();
+  expect(document.querySelector("[data-channel-working]")).toBeNull();
   set([{ channelId: "beta", pubkey: agent }]);
   expect(document.querySelector("[data-channel-working]")).toBeNull();
   // A working agent in its DM keeps the avatar instead of also showing typing.

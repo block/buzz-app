@@ -1,3 +1,4 @@
+import { archiveHides } from "../../features/relay/identity-archives";
 import { InventoryView } from "./InventoryView";
 import type { ClientSnapshot } from "../../features/communities/service";
 import { useCommunityInventory } from "./use-community-inventory";
@@ -113,9 +114,13 @@ export function UnifiedInventory({
     data,
     (key, fallback) => sourceProfiles.get(key)?.name ?? fallback,
   );
-  // Apply archive evidence after all discovery sources join. Keep local controls.
+  // Apply the shared archive rule after all discovery sources join. The one
+  // Agents-only exception: an identity with local controls stays manageable.
   for (const row of rows.values()) {
-    if (archives.state(row.pubkey) === "archived" && !row.localIdentity)
+    if (
+      archiveHides(archives, row.pubkey, connection.viewer) &&
+      !row.localIdentity
+    )
       rows.delete(row.pubkey);
   }
   const candidates = [...rows.keys()];

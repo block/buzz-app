@@ -45,7 +45,8 @@ function fixture(managed = true) {
         reject = no;
       }),
   );
-  const identities = { identities: [{ pubkey, managed }] };
+  const agentRows = [{ pubkey, managed }];
+  const identities = { identities: agentRows, selectable: agentRows };
   let native = {
     status: "ready",
     data: { agents: [{ pubkey, relayUrl: "https://relay.example.test" }] },

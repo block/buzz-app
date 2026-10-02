@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { identityTiles, identityGroups } from "./identity-tiles";
+import { inheritDefinitionAvatars } from "../../features/agents/library";
 it("shows one tile per visible key and only truly identity-free profiles", () => {
   const library = {
     definitions: [
@@ -15,7 +16,10 @@ it("shows one tile per visible key and only truly identity-free profiles", () =>
       { pubkey: "e", name: "Custom" },
     ],
   };
-  const tiles = identityTiles(library, (key) => key === "c");
+  const tiles = identityTiles(
+    inheritDefinitionAvatars(library),
+    (key) => key === "c",
+  );
   expect(tiles.identities.map((row) => row.pubkey)).toEqual([
     "a",
     "b",

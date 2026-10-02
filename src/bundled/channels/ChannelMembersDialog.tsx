@@ -1,3 +1,4 @@
+import { archiveHides } from "../../features/relay/identity-archives";
 import { motion, useReducedMotion } from "motion/react";
 import { Button as BaseButton } from "@base-ui/react/button";
 import referenceStyles from "../../shared/InlineReference.module.css";
@@ -590,7 +591,9 @@ export function ChannelMembersDialog({
         });
     }
   const available = [...candidates.values()].filter(
-    (person) => !members.has(person.pubkey) && !archived.has(person.pubkey),
+    (person) =>
+      !members.has(person.pubkey) &&
+      !archiveHides(session.archives, person.pubkey, session.viewer),
   );
   // Known agents supplement the server page, not its rendering bound. Keep all
   // matches reachable through the existing More action without mounting them all.

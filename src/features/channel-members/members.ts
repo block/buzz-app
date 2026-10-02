@@ -1,3 +1,4 @@
+import { archiveHides } from "../relay/identity-archives";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import type { LocalEvents } from "../relay/outbox";
@@ -87,7 +88,7 @@ export async function addChannelMember(
       throw new Error(
         "This channel cannot add members right now. Refresh and try again.",
       );
-    if (session.archives.state(pubkey) === "archived")
+    if (archiveHides(session.archives, pubkey, session.viewer))
       throw new Error(
         "Archived identities cannot be added. Choose someone else.",
       );

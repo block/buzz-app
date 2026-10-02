@@ -18,12 +18,15 @@ const parent = {
   members: ["a".repeat(64)],
 };
 function setup(available = true) {
+  const rows = [
+    { pubkey: "a".repeat(64), name: "Member agent" },
+    { pubkey: "b".repeat(64), name: "Outside agent" },
+  ];
   const agents = {
     status: "ready",
-    identities: [
-      { pubkey: "a".repeat(64), name: "Member agent" },
-      { pubkey: "b".repeat(64), name: "Outside agent" },
-    ],
+    identities: rows,
+    selectable: rows,
+    archives: { status: "unavailable" as const, archived: [] },
   };
   const emoji = { status: "ready", entries: [] };
   const workSessions = {

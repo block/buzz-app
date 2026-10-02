@@ -38,10 +38,13 @@ function fixture() {
     participants: [a],
   };
   let list = { status: "ready" as const, channels: [channel] };
+  const rows = [{ pubkey: a, name: "Larry" }];
   const library = {
     status: "ready",
-    identities: [{ pubkey: a, name: "Larry" }],
+    identities: rows,
+    selectable: rows,
     definitions: [],
+    archives: { status: "unavailable" as const, archived: [] },
   };
   const message = {
     id: "m",

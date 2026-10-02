@@ -921,3 +921,66 @@ it("keeps an archived card until its record deletion succeeds", async () => {
   expect(relay.published.map((event) => event.kind)).toEqual([9035, 5]);
   expect(relay.deleted).toEqual(new Set([`30177:${viewer.pubkey}:${agent}`]));
 });
+
+it("keeps already archived agents hidden while Remove re-reads archives", async () => {
+  const viewer = keypair();
+  const agent = "cd".repeat(32);
+  const other = "a1".repeat(32);
+  const relay = archiveRelay(viewer, keypair(), [], {
+    [viewer.pubkey]: "admin",
+  });
+  relay.archived.add(other);
+  let release: (() => void) | undefined;
+  let reads = 0;
+  const query = relay.transport.query;
+  setup(
+    "connected",
+    (fixture) => {
+      fixture.data.parked = [];
+    },
+    [agent, other],
+    [],
+    undefined,
+    {
+      ...relay.transport,
+      readAgentLibrary: async () => ({
+        definitions: [],
+        identities: [
+          { pubkey: agent, name: "Not imported" },
+          { pubkey: other, name: "Archived earlier" },
+        ],
+      }),
+      async query(filters, signal) {
+        // Hold every archive read after the first, so the re-read is visible.
+        if (filters.some((filter) => filter.kinds?.includes(13535)) && reads++)
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        return query(filters, signal);
+      },
+    },
+    false,
+    viewer.pubkey,
+  );
+  const group = await screen.findByRole("region", {
+    name: "Relay-only agents",
+  });
+  await waitFor(() =>
+    expect(within(group).getAllByRole("article")).toHaveLength(1),
+  );
+  const card = within(group).getByRole("article", {
+    name: "Agent Not imported",
+  });
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  const dialog = await screen.findByRole("alertdialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Remove agent" }));
+  await waitFor(() => expect(release).toBeDefined());
+  expect(within(group).getAllByRole("article")).toEqual([card]);
+  release?.();
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("region", { name: "Relay-only agents" }),
+    ).toBeNull(),
+  );
+  expect(relay.deleted).toEqual(new Set([`30177:${viewer.pubkey}:${agent}`]));
+});

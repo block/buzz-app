@@ -2,7 +2,7 @@ import { archiveHides } from "../../features/relay/identity-archives";
 import { InventoryView } from "./InventoryView";
 import type { ClientSnapshot } from "../../features/communities/service";
 import { useCommunityInventory } from "./use-community-inventory";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type {
   AgentControl,
   AgentControlState,
@@ -56,11 +56,29 @@ export function UnifiedInventory({
     library.snapshot,
     library.snapshot,
   );
-  useSyncExternalStore(
+  const archive = useSyncExternalStore(
     archives.subscribe,
     archives.snapshot,
     archives.snapshot,
   );
+  // An archive re-read (Remove starts one) briefly reports every key as
+  // unknown. Keep hiding the last confirmed archived set until it answers,
+  // so archived agents do not flash back into the list.
+  const lastArchived = useRef<ReadonlySet<string>>(new Set());
+  if (archive.status === "ready")
+    lastArchived.current = new Set(archive.archived);
+  else if (archive.status !== "loading") lastArchived.current = new Set();
+  const archived = (pubkey: string) =>
+    archiveHides(
+      archive.status === "loading"
+        ? {
+            state: (key) =>
+              lastArchived.current.has(key) ? "archived" : "unknown",
+          }
+        : archives,
+      pubkey,
+      connection.viewer,
+    );
   const resolveName = useIdentityNames(connection.session.names);
   useEffect(() => {
     if (connection.status === "ready") {
@@ -126,9 +144,7 @@ export function UnifiedInventory({
   for (const row of rows.values()) {
     const key = `${destination} ${row.pubkey}`;
     if (
-      ((archiveHides(archives, row.pubkey, connection.viewer) &&
-        !held.has(key)) ||
-        removed.has(key)) &&
+      ((archived(row.pubkey) && !held.has(key)) || removed.has(key)) &&
       !row.localIdentity
     )
       rows.delete(row.pubkey);

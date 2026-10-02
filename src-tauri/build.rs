@@ -1,3 +1,5 @@
+#[path = "src/enterprise_adapter_url.rs"]
+mod enterprise_adapter_url;
 #[path = "src/enterprise_auth_build.rs"]
 mod enterprise_auth_build;
 #[path = "src/enterprise_relay_url.rs"]

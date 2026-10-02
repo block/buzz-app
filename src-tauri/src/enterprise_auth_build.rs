@@ -1,6 +1,5 @@
-use crate::enterprise_relay_url::{
-    parse_enterprise_relay_allowlist, validate_enterprise_adapter_url,
-};
+use crate::enterprise_adapter_url::validate_enterprise_adapter_url;
+use crate::enterprise_relay_url::parse_enterprise_relay_allowlist;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct EnterpriseAuthBuildConfig {

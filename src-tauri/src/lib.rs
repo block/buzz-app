@@ -10,6 +10,9 @@ mod agents;
 mod deep_links;
 mod dock;
 #[cfg(test)]
+#[path = "enterprise_adapter_url.rs"]
+mod enterprise_adapter_url;
+#[cfg(test)]
 #[path = "enterprise_auth_build.rs"]
 mod enterprise_auth_build;
 mod enterprise_login_gate;

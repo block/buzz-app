@@ -95,7 +95,13 @@ const channelList = {
   ],
 };
 const roomId = "00000000-0000-4000-8000-000000000002";
-const startedAt = Math.floor(Date.now() / 1000);
+const lifecycleReadError = new URLSearchParams(location.search).has(
+  "lifecycleReadError",
+);
+let lifecycleReadFailed = false;
+const startedAt =
+  Math.floor(Date.now() / 1000) -
+  (new URLSearchParams(location.search).has("expiredHuddle") ? 3601 : 0);
 const lifecycleListeners = new Set<() => void>();
 let endedAt: number | undefined;
 let lifecycleParent = destination.channelId;
@@ -146,7 +152,11 @@ const session = {
   relayAuthor: viewer,
   observe: () => ({
     snapshot: () => ({
-      status: "ready" as const,
+      status: lifecycleReadError
+        ? lifecycleReadFailed
+          ? ("error" as const)
+          : ("loading" as const)
+        : ("ready" as const),
       events: [
         lifecycleEvent(48100, startedAt),
         lifecycleEvent(48101, startedAt),
@@ -159,7 +169,12 @@ const session = {
         lifecycleListeners.delete(fn);
       };
     },
-    refresh: async () => {},
+    refresh: async () => {
+      if (lifecycleReadError) {
+        lifecycleReadFailed = true;
+        for (const listener of lifecycleListeners) listener();
+      }
+    },
     dispose: () => {},
   }),
   channels: {

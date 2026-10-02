@@ -78,7 +78,8 @@ export function HuddleCard({
           connection.session.relayAuthor,
         ),
       );
-      setLoaded(state.status === "ready");
+      // A failed read still leaves the verified start row and retained live evidence usable.
+      setLoaded(state.status === "ready" || state.status === "error");
     };
     const stop = view.subscribe(update);
     update();

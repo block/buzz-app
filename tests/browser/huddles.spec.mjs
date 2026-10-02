@@ -791,6 +791,39 @@ test("active chat has a split Huddle menu for members and a join-path link", asy
 
 // Browser boundary: the separate presentation expands without crowding the call,
 // retains its draft across tab switching, and shares the room with the saved panel.
+for (const expired of [false, true]) {
+  test(`lifecycle read errors preserve ${expired ? "View for expired calls" : "Join and later View for active calls"}`, async ({
+    page,
+  }) => {
+    await page.goto(
+      `${origin}/tests/fixtures/huddles.html?chrome&lifecycleReadError${expired ? "&expiredHuddle" : ""}`,
+    );
+    if (!expired) {
+      const card = page.getByRole("region", { name: "Huddle", exact: true });
+      await card.getByRole("button", { name: "Join", exact: true }).click();
+      const companion = page.getByRole("complementary", {
+        name: "Huddle window preview",
+        exact: true,
+      });
+      await expect(companion).toBeVisible();
+      await companion
+        .getByRole("button", { name: "Leave huddle", exact: true })
+        .click();
+    }
+    const ended = page.getByRole("region", {
+      name: "Huddle ended",
+      exact: true,
+    });
+    await expect(ended).toHaveCount(1);
+    await ended.getByRole("button", { name: "View", exact: true }).click();
+    await expect(
+      page
+        .getByRole("complementary", { name: "Saved Huddle conversation" })
+        .getByText("Let’s keep our notes here while we talk."),
+    ).toBeVisible();
+  });
+}
+
 test("Huddle chat expands beside the call and stays separate from Live transcript", async ({
   page,
 }) => {

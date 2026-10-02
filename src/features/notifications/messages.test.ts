@@ -47,6 +47,8 @@ async function setup(
     deferRoster?: boolean;
   },
   sidebar?: { decode: SidebarDecoder; write?: SidebarMuteMutator },
+  /** A signing host, so visible rows publish read intent as in production. */
+  readIntent = false,
 ) {
   const viewer = keypair(),
     peer = keypair(),
@@ -112,7 +114,17 @@ async function setup(
               ? { readStateSnapshot: markerQuery }
               : {}),
           }
-        : {}),
+        : readIntent
+          ? {
+              readState: {
+                decode: async () => [],
+                sign: async () => {
+                  throw new Error("Not publishing in this test");
+                },
+                publish: async () => {},
+              },
+            }
+          : {}),
       ...(sidebar
         ? {
             decodeSidebarPreferences: sidebar.decode,
@@ -134,6 +146,14 @@ async function setup(
             subscribe: () => () => {},
           }),
       },
+      ...(readIntent
+        ? {
+            readPublisherLock: async (
+              _signal: AbortSignal,
+              work: () => Promise<void>,
+            ) => work(),
+          }
+        : {}),
       readStateStorage: {
         async update(change) {
           await readBarrier;
@@ -379,6 +399,42 @@ it("viewing suppression uses the shared lease, and suppressed candidates never b
   visible.dispose();
   view.dispose();
 });
+it.each(["open", "closed"] as const)(
+  "Notify while viewing: a row read by its view before presentation alerts only while that view is %s",
+  async (state) => {
+    const h = await setup(undefined, undefined, undefined, undefined, true);
+    h.notifications.updatePreferences({ notifyWhileViewing: true });
+    const row = h.make("read before presentation");
+    const lease = h.owner.session.unread.reading("room");
+    const view = h.owner.session.observe([
+      { kinds: [9], "#h": ["room"], limit: 50 },
+    ]);
+    let visible = true;
+    view.subscribe(() => lease.view([row.id], () => visible));
+    // Hold delivery at its permission probe, as a slow presentation would.
+    let present!: () => void;
+    h.permission.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          present = () => resolve("granted");
+        }),
+    );
+    h.emit([row], "live");
+    await vi.waitFor(() => expect(present).toBeDefined());
+    // The view's reading dwell completes before the alert is presented.
+    await lease.observe([row.id]);
+    expect(h.owner.session.unread.attention("room", row.id)).toMatchObject({
+      unread: false,
+      viewing: true,
+    });
+    if (state === "closed") visible = false;
+    present();
+    await flush();
+    expect(h.show).toHaveBeenCalledTimes(state === "open" ? 1 : 0);
+    lease.dispose();
+    view.dispose();
+  },
+);
 it("community switching stops new production but keeps prior scoped click intent", async () => {
   const h = await setup();
   const row = h.make("fresh");

@@ -192,4 +192,11 @@ mod tests {
         assert!(!trusted_relay_matches("https://ordinary.example/", &trusted).unwrap());
         assert!(!trusted_relay_matches("https://ordinary.example/", &[]).unwrap());
     }
+
+    #[test]
+    fn trusted_matching_uses_secure_origin_canonicalization() {
+        let trusted = parse_enterprise_relay_allowlist("https://EXAMPLE.com.").unwrap();
+        assert!(trusted_relay_matches("https://example.com", &trusted).unwrap());
+        assert!(trusted_relay_matches("wss://EXAMPLE.com:443/", &trusted).unwrap());
+    }
 }

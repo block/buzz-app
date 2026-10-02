@@ -136,44 +136,13 @@ fn configure_enterprise_auth() {
         panic!("{ADAPTER} is required when {RELAYS} is configured");
     }
     if let Some(relays) = relays.as_deref() {
-        for value in relays.split(',') {
-            validate_enterprise_url(value, RELAYS, true);
-        }
+        enterprise_relay_url::parse_enterprise_relay_allowlist(relays)
+            .unwrap_or_else(|_| panic!("{RELAYS} contains an unsupported or unsafe URL"));
         println!("cargo:rustc-env={RELAYS}={relays}");
     }
     if let Some(adapter) = adapter.as_deref() {
         enterprise_relay_url::validate_enterprise_adapter_url(adapter)
             .unwrap_or_else(|_| panic!("{ADAPTER} contains an unsupported or unsafe URL"));
         println!("cargo:rustc-env={ADAPTER}={adapter}");
-    }
-}
-
-fn validate_enterprise_url(raw: &str, name: &str, relay: bool) {
-    let raw = raw.trim();
-    let url = url::Url::parse(raw).unwrap_or_else(|_| panic!("{name} contains an invalid URL"));
-    let scheme_allowed = if relay {
-        matches!(url.scheme(), "ws" | "wss" | "http" | "https")
-    } else {
-        matches!(url.scheme(), "http" | "https")
-    };
-    if url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || raw.is_empty()
-        || !scheme_allowed
-        || (matches!(url.scheme(), "http" | "ws") && !is_loopback(&url))
-    {
-        panic!("{name} contains an unsupported or unsafe URL");
-    }
-}
-
-fn is_loopback(url: &url::Url) -> bool {
-    match url.host() {
-        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
-        Some(url::Host::Ipv4(address)) => address.is_loopback(),
-        Some(url::Host::Ipv6(address)) => address.is_loopback(),
-        None => false,
     }
 }

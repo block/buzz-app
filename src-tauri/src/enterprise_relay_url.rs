@@ -46,12 +46,31 @@ pub(crate) fn validate_enterprise_adapter_url(raw: &str) -> Result<String, Strin
 }
 
 pub(crate) fn canonical_enterprise_relay_url(raw: &str) -> Result<String, String> {
-    let mut url = Url::parse(raw.trim()).map_err(|_| "Invalid enterprise relay URL")?;
-    let scheme = match url.scheme() {
-        "ws" | "http" => "ws",
-        "wss" | "https" => "wss",
-        _ => return Err("Enterprise relay URL has an unsupported scheme".into()),
+    let raw = raw.trim();
+    let Some((raw_scheme, authority_and_path)) = raw.split_once("://") else {
+        return Err("Enterprise relay URL must be a secure root origin".into());
     };
+    if !matches!(raw_scheme.to_ascii_lowercase().as_str(), "https" | "wss") {
+        return Err("Enterprise relay URL must use https or wss".into());
+    }
+    if raw.encode_utf16().count() > 2048
+        || raw
+            .chars()
+            .any(|character| character.is_whitespace() || character == '\\')
+    {
+        return Err("Enterprise relay URL must be a secure root origin".into());
+    }
+    let authority_end = authority_and_path
+        .find(['/', '?', '#'])
+        .unwrap_or(authority_and_path.len());
+    let authority = &authority_and_path[..authority_end];
+    let suffix = &authority_and_path[authority_end..];
+    if authority.is_empty() || authority.contains('@') || (!suffix.is_empty() && suffix != "/") {
+        return Err("Enterprise relay URL must be a secure root origin".into());
+    }
+
+    let mut url = Url::parse(raw).map_err(|_| "Invalid enterprise relay URL")?;
+    let scheme = "wss";
     url.set_scheme(scheme)
         .map_err(|_| "Could not normalize enterprise relay URL")?;
     if url.host_str().is_none()
@@ -62,12 +81,22 @@ pub(crate) fn canonical_enterprise_relay_url(raw: &str) -> Result<String, String
     {
         return Err("Enterprise relay URL must not contain credentials or query data".into());
     }
-    if matches!((scheme, url.port()), ("ws", Some(80)) | ("wss", Some(443))) {
+    let dotted_host = match url.host() {
+        Some(url::Host::Domain(host)) => host.strip_suffix('.').map(str::to_owned),
+        _ => None,
+    };
+    if let Some(host) = dotted_host {
+        if host.is_empty() {
+            return Err("Enterprise relay URL has an invalid host".into());
+        }
+        url.set_host(Some(&host))
+            .map_err(|_| "Could not normalize enterprise relay URL")?;
+    }
+    if url.port() == Some(443) {
         url.set_port(None)
             .map_err(|_| "Could not normalize enterprise relay URL")?;
     }
-    let path = url.path().trim_end_matches('/').to_owned();
-    url.set_path(&path);
+    url.set_path("/");
     Ok(url.to_string())
 }
 
@@ -90,23 +119,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn canonicalizes_relay_scheme_and_default_port() {
+    fn canonicalizes_secure_relay_origin() {
         assert_eq!(
             canonical_enterprise_relay_url(" https://relay.example:443/ ").unwrap(),
             "wss://relay.example/"
         );
         assert_eq!(
-            canonical_enterprise_relay_url("ws://localhost:80").unwrap(),
-            "ws://localhost/"
+            canonical_enterprise_relay_url("WSS://EXAMPLE.com.").unwrap(),
+            "wss://example.com/"
+        );
+        assert_eq!(
+            canonical_enterprise_relay_url("https://[2001:DB8::1]:443/").unwrap(),
+            "wss://[2001:db8::1]/"
+        );
+        assert_eq!(
+            canonical_enterprise_relay_url("https://bücher.example/").unwrap(),
+            "wss://xn--bcher-kva.example/"
         );
     }
 
     #[test]
-    fn rejects_credentials_query_fragment_and_unsupported_schemes() {
+    fn rejects_non_origin_relay_values() {
         for value in [
+            "ws://relay.example",
+            "http://relay.example",
             "wss://user@relay.example",
             "wss://relay.example?tenant=one",
             "wss://relay.example#tenant",
+            "wss://relay.example/path",
+            "wss://relay.example/../",
+            "wss://relay.example/%2e/",
+            "wss://relay.example//",
+            "wss://relay.example\\@evil.example",
+            "wss://relay.example\n.evil.example",
             "file://relay.example",
         ] {
             assert!(canonical_enterprise_relay_url(value).is_err(), "{value}");

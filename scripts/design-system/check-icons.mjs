@@ -9,6 +9,8 @@ const approved = new Set(["@tabler/icons-react", "@tabler/icons"]);
 // A closed policy needs an explicit non-icon side as well as approved icon catalogs.
 // Version changes remain ordinary; adding a package requires classifying it here.
 const nonIconDependencies = new Set([
+  "@ai-sdk/anthropic", // Model provider for examples/plugins/ai-sdk-agent.
+  "@ai-sdk/openai", // Model provider for examples/plugins/ai-sdk-agent.
   "@base-ui/react",
   "@biomejs/biome",
   "@buzz/author",
@@ -36,10 +38,12 @@ const nonIconDependencies = new Set([
   "@vitejs/plugin-react",
   "@xterm/addon-fit",
   "@xterm/xterm",
+  "ai", // Vercel AI SDK, used by examples/plugins/ai-sdk-agent.
   "blurhash",
   "consola", // Runtime logging, not an icon catalog.
   "dockview-react",
   "emoji-mart",
+  "esbuild", // Bundles examples/plugins/ai-sdk-agent into one plugin file.
   "flexlayout-react",
   "jsdom",
   "mdast", // Type-only module supplied by @types/mdast.
@@ -73,6 +77,7 @@ const nonIconDependencies = new Set([
   "vite",
   "vitest",
   "yaml",
+  "zod", // Tool input schemas in examples/plugins/ai-sdk-agent.
 ]);
 const allowedDependencies = new Set([...approved, ...nonIconDependencies]);
 const dependencyFields = [

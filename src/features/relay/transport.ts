@@ -33,8 +33,15 @@ import {
 import { createHostAdmission } from "./host-admission";
 import { relayOrigin } from "../communities/destination";
 import type { Signer } from "./signing-delegate";
-export { bindSigningDelegate } from "./signing-delegate";
-export type { Signer, SigningDelegateScope } from "./signing-delegate";
+export {
+  bindSigningDelegate,
+  selectSigningDelegate,
+} from "./signing-delegate";
+export type {
+  Signer,
+  SigningDelegateFactory,
+  SigningDelegateScope,
+} from "./signing-delegate";
 import {
   admittedApiRequest,
   ApiPaused,
@@ -1091,7 +1098,7 @@ export async function connectSignedTransport(
       try {
         traffic = subscribeRelayTraffic(
           httpOrigin.replace(/^http/, "ws"),
-          (event) => signer.signEvent(event),
+          (event, signal) => signer.signEvent(event, signal),
           viewer,
           measuredLive(httpOrigin, {
             ...callbacks,
@@ -1123,7 +1130,7 @@ export async function connectSignedTransport(
     media: (url, size) =>
       mediaUrl(url, signer.media?.bind(signer), httpOrigin, size),
     writer: {
-      sign: (event) => signer.signEvent(event),
+      sign: (event, signal) => signer.signEvent(event, signal),
       async publish(event, signal) {
         return acceptPublish(
           await signedPost(

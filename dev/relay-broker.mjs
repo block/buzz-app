@@ -79,7 +79,7 @@ import {
   createLocalSigningCapabilities,
   createLocalSigningDelegate,
 } from "./signing-delegate.mjs";
-import { bindSigningDelegate } from "../src/features/relay/signing-delegate.ts";
+import { selectSigningDelegate as selectBoundSigningDelegate } from "../src/features/relay/signing-delegate.ts";
 import {
   decodeSidebarPreferences,
   assertSidebarAssignmentIntent,
@@ -788,9 +788,8 @@ export function relayBrokerPlugin({
       };
       const localDelegate = createLocalSigningDelegate(key);
       const localCapabilities = createLocalSigningCapabilities(key);
-      const selectDelegate = selectSigningDelegate ?? (() => localDelegate);
       const delegateFor = (relay) =>
-        bindSigningDelegate(selectDelegate({ relay, identity: viewer }), {
+        selectBoundSigningDelegate(selectSigningDelegate, localDelegate, {
           relay,
           identity: viewer,
         });

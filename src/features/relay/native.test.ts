@@ -328,7 +328,58 @@ it.each([true, false])(
     ]);
   },
 );
+it("selects the production delegate by relay and identity and fences delayed signing", async () => {
+  const started = deferred<void>();
+  const release = deferred<void>();
+  const scopes: { relay: string; identity: string }[] = [];
+  let selectedSigns = 0;
+  const selected = {
+    getPublicKey: async () => viewer.pubkey,
+    async signEvent(event: EventTemplate) {
+      selectedSigns++;
+      started.resolve();
+      await release.promise;
+      return signed(viewer, event);
+    },
+    request: vi.fn(async () => Response.json({})),
+  };
+  const transport = await connectNativeTransport(
+    community,
+    undefined,
+    (scope) => {
+      scopes.push(scope);
+      return selected;
+    },
+  );
+  expect(scopes).toEqual([{ relay: community, identity: viewer.pubkey }]);
+  assert.exists(transport.writer);
 
+  const before = new AbortController();
+  before.abort();
+  await expect(
+    transport.writer.sign(
+      { kind: 9, content: "before", tags: [], created_at: 1700000001 },
+      before.signal,
+    ),
+  ).rejects.toMatchObject({ name: "AbortError" });
+  expect(selectedSigns).toBe(0);
+
+  const after = new AbortController();
+  const signing = transport.writer.sign(
+    { kind: 9, content: "after", tags: [], created_at: 1700000001 },
+    after.signal,
+  );
+  await started.promise;
+  after.abort();
+  release.resolve();
+  await expect(signing).rejects.toMatchObject({ name: "AbortError" });
+  expect(selectedSigns).toBe(1);
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "relay_sign"),
+  ).toHaveLength(0);
+});
 it("rejects tampered reads and keeps refusals distinct from uncertain receipts", async () => {
   const transport = await connectNativeTransport(community);
   const event = message(viewer, "channel", "original", 1700000000);

@@ -205,8 +205,7 @@ export function ChannelActivityPopover({
   // no activity panel is registered to open.
   const openAgentActivity = useSyncExternalStore(
     open && agentIds ? session.agentActivity.subscribe : noSubscribe,
-    () =>
-      !!agentIds && session.agentActivity.snapshot().status === "disabled",
+    () => !!agentIds && session.agentActivity.snapshot().status === "disabled",
   )
     ? undefined
     : onOpenAgentActivity;

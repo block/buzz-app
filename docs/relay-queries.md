@@ -96,9 +96,10 @@ just-added member does not fail the next operation.
 Template setup also confirms exact Canvas/member events and selected Canvas heads
 against the writer without replaying accepted commands. Agent deletion discovers
 member channels and confirms each removal with writer-backed rosters; unreadable
-rosters still fail closed. Standalone recipe save confirmation routing is unchanged
-by this policy. For writer-backed Canvas editor/Todos reads and replica-eligible
-template copies, see the [Canvas/outbox contract](plugin-architecture.md#optional-canvas-todos).
+rosters still fail closed. Standalone recipe saves use writer-backed exact-ID
+confirmation; recipe head and catalog reads remain replica-eligible. For
+writer-backed Canvas editor/Todos reads and replica-eligible template copies, see
+the [Canvas/outbox contract](plugin-architecture.md#optional-canvas-todos).
 
 ## Community emoji
 

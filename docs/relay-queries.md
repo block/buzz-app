@@ -828,9 +828,12 @@ bodies. Available slots start immediately; completion frees capacity without a t
 reserve relay quota: large startup bursts can still receive quota refusals.
 Explicit server cooldowns, reconnect backoff and operation deadlines remain;
 there is no proactive admission pacing or token bucket. Browser POST replacement does
-not reset learned pauses; signed
-requests enter HTTP admission after asynchronous authentication, at actual fetch
-dispatch. Read/write priority and cancellation cross the reader/transport boundary.
+not reset learned pauses. `admission;dur` measures the local wait from submitting a
+request to the admission lane starting its request callback, the same dispatch
+boundary used by the original main path; it excludes delegate signing and upstream
+network time. Current async authentication runs inside that admitted callback and is
+measured separately by `auth;dur`; `upstream;dur` starts immediately before the
+actual fetch. Read/write priority and cancellation cross the reader/transport boundary.
 Long pauses surface recoverable errors rather than occupying queued-read deadlines.
 Admission is local coordination, not a reservation of the relay's account-wide
 budget: other processes/clients can still cause a refusal. Ambiguous publication

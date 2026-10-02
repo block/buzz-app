@@ -1234,8 +1234,7 @@ export function createRelaySession(
               throw new Error("Setup is awaiting exact relay confirmation");
           },
           refresh: (id, member) => workSessions.refresh(id, { member }, false),
-          canvasHead: async (id) =>
-            (await channelKit.canvas.read(id, { consistency: "strong" }))?.id,
+          canvasHead: async (id) => (await channelKit.canvas.read(id))?.id,
           async preflight(input) {
             if (
               !canonicalDetailsName(input.name) ||

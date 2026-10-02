@@ -1359,11 +1359,23 @@ test.each([
 );
 
 test.each([
-  ["conflict: artifact head changed", "failed", "conflict: the relay state"],
-  ["error: internal server error", "unknown", "could not be confirmed"],
+  [
+    45010,
+    "conflict: artifact head changed",
+    "failed",
+    "conflict: the relay state",
+  ],
+  [45010, "error: internal server error", "unknown", "could not be confirmed"],
+  [
+    40100,
+    "conflict: canvas head changed",
+    "failed",
+    "conflict: the relay state",
+  ],
+  [40100, "error: internal server error", "unknown", "could not be confirmed"],
 ])(
-  "artifact refusal %s reaches broker/outbox as %s / %s",
-  async (reason, delivery, error) => {
+  "kind %s refusal %s reaches broker/outbox as %s / %s",
+  async (kind, reason, delivery, error) => {
     const h = await harness();
     let traffic, owner;
     try {
@@ -1376,9 +1388,12 @@ test.each([
         save() {},
       });
       const id = owner.outbox.send({
-        kind: 45010,
+        kind,
         content: "",
-        tags: [["h", "00000000-0000-4000-8000-000000000001"]],
+        tags: [
+          ["h", "00000000-0000-4000-8000-000000000001"],
+          ["expected-revision", "none"],
+        ],
       });
       await until(() => h.publications.length === 1);
       await h.sockets[0].receive(["OK", id, false, reason]);

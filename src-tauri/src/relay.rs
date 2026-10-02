@@ -215,6 +215,10 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         if !channel_writes::creation(event) {
             return Err("Agent enrollment or channel operation unavailable or invalid".into());
         }
+    } else if event.kind == 40100 {
+        if !valid_canvas(event) {
+            return Err("Malformed Canvas save".into());
+        }
     } else if event.kind == 28936 {
         // A NIP-43 leave request revokes the signer's own membership: empty
         // content and exactly the NIP-70 protected tag, nothing else.
@@ -223,23 +227,45 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         }
     } else if !matches!(
         event.kind,
-        0 | 7
-            | 9
-            | 1984
-            | 9000
-            | 9001
-            | 20001
-            | 30030
-            | 30177
-            | 30315
-            | 40003
-            | 40100
-            | 42000
-            | 45010
+        0 | 7 | 9 | 1984 | 9000 | 9001 | 20001 | 30030 | 30177 | 30315 | 40003 | 42000 | 45010
     ) {
         return Err("This event is not supported by the packaged relay connection".into());
     }
     Ok(())
+}
+
+// Match the broker's purpose-bound Canvas admission, including legacy untagged retries.
+fn valid_canvas(event: &EventTemplate) -> bool {
+    event.content.len() <= 24 * 1024
+        && event
+            .tags
+            .iter()
+            .filter(|tag| tag.first().map(String::as_str) == Some("h"))
+            .count()
+            == 1
+        && event
+            .tags
+            .iter()
+            .filter(|tag| tag.first().map(String::as_str) == Some("expected-revision"))
+            .count()
+            <= 1
+        && event.tags.iter().all(|tag| {
+            if tag.len() != 2 {
+                return false;
+            }
+            match tag[0].as_str() {
+                "h" => channel_writes::uuid(&tag[1]),
+                "client-id" => tag[1].encode_utf16().count() <= 128,
+                "expected-revision" => {
+                    tag[1] == "none"
+                        || (tag[1].len() == 64
+                            && tag[1]
+                                .bytes()
+                                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+                }
+                _ => false,
+            }
+        })
 }
 
 /** Keep the shared kind-5 writer aligned with the broker's channel-local deletion shape. */

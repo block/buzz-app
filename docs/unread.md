@@ -133,7 +133,9 @@ but do not borrow one participant's avatar. Previews reuse the sidebar's existin
 profile map and media routing; absent pictures use initials, humans use circles,
 and agents use squircles. Avatar artwork is decorative; the button's accessible
 name gives the conversation count and direction without implying a DM-first target.
-The controls retain the current prominent treatment. Thread-only rows participate.
+The controls use shared prominent buttons with an inverse surface, with
+interruptible tooltip-style transitions and reduced-motion support. Hidden cues
+remain inert during exit. Thread-only rows participate.
 The controls measure existing rendered badges/dots—no extra unread
 subscriptions or relay reads just to show them. Search-filtered rows do not
 participate. Collapsed sections use the summary's position and expand when revealed.

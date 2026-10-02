@@ -153,6 +153,98 @@
   overflow: auto;
 }
 
+.draftWorkspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+  min-height: 0;
+  flex: 1;
+}
+
+.draftWorkspace:not([data-selected]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.draftList {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.draftDetail {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-inline-start: 1px solid var(--border-subtle);
+  padding: 0 var(--space-panel-inset) var(--space-panel-inset);
+}
+
+.draftHeading {
+  display: flex;
+  flex: 0 0 3rem;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.draftHeading h3 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.draftEditor {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.draftEditor > :first-child {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Draft and conversation previews share the same framed treatment; the
+   shared ThreadPanel remains unframed for its canonical owner. */
+.draftEditor > :first-child[aria-label="Thread"],
+.detailBody > :last-child[aria-label="Thread"] {
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-panel);
+  background: var(--surface-panel);
+  box-shadow: var(--shadow-xs);
+}
+
+.draftActions {
+  padding-top: var(--space-2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+@container (max-width: 650px) {
+  .draftWorkspace {
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
+  }
+  .draftList {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+  .draftDetail {
+    flex: 0 0 auto;
+    height: max(28rem, 70vh);
+    padding-inline: var(--space-2);
+    border-inline-start: 0;
+    border-top: 1px solid var(--border-subtle);
+  }
+}
+
 .coverage,
 .notice {
   margin: 0;
@@ -179,6 +271,10 @@
 
 .row {
   min-width: 0;
+}
+
+.draftList .list {
+  padding-top: var(--space-2);
 }
 
 .rowSurface {

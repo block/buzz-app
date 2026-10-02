@@ -179,7 +179,6 @@ export function SidebarUnread({
       </nav>
       {(["above", "below"] as const).map((edge) => {
         const count = edges[edge].length;
-        if (!count) return null;
         const nearestFirst =
           edge === "above" ? [...edges[edge]].reverse() : edges[edge];
         const previews = nearestFirst
@@ -190,7 +189,14 @@ export function SidebarUnread({
           .slice(0, 3);
         const Icon = edge === "above" ? ArrowUpIcon : ArrowDownIcon;
         return (
-          <div className={styles.unreadEdge} data-edge={edge} key={edge}>
+          <div
+            className={styles.unreadEdge}
+            data-edge={edge}
+            key={edge}
+            data-visible={count > 0}
+            inert={count === 0}
+            aria-hidden={count === 0}
+          >
             <Button
               variant="prominent"
               aria-label={`${count} unread ${count === 1 ? "conversation" : "conversations"} ${edge}`}

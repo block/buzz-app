@@ -150,15 +150,61 @@ available Inbox width. Row descriptions use safe previews or incomplete
 placeholders; Show more follows the filtered result count. `NavigationItem`
 owns selected styling and `aria-current`.
 
+## Drafts
+
+Drafts is a quiet Inbox header action. It lists only meaningful saved composer
+text in this viewer/community scope, up to 500 with explicit truncation; an
+emptied selected editor stays open until send, close or confirmed delete. The
+list preserves the Inbox row hierarchy and supports channel, DM and exact-root
+thread coordinates. Only the selected draft loads history through the existing
+channel window or ThreadPanel; thread composition waits for a verified matching
+root, and a deleted/malformed root never rebinds its saved text. The shared
+composer and session outbox retain recipient, admission, signing and delivery
+rules. A selected channel/DM draft opens at the real returned tail without
+reading or overwriting the canonical saved scroll position. The origin action
+navigates separately and reports failure without dismissing the editor.
+
+The selected editor's lifetime does not depend on list-summary eligibility. Rich
+saved envelopes use an 8 MiB preview bound rather than the former 128 KiB text-sized
+cutoff; larger records receive an explicit notice instead of a false empty list.
+The shared composer reconciles an untouched editor with saved changes from another
+window. Locally edited documents remain in place with **Load saved draft** and
+**Keep my draft** choices; Send cannot silently use a conflicted document.
+Foreground revision checks also prevent an observed replacement being overwritten
+by stale send cleanup. These checks are not a cross-window storage transaction.
+
+Outbox acceptance and saved-draft replacement are separate outcomes. Drafts closes
+after replacement succeeds, not merely after acceptance. If no draft was ever saved
+and a fresh read still confirms absence, persistent write failure does not lock the
+composer after acceptance: no stale sent text needs cleanup. A nonempty unsaved
+agent follow-up stays editable with a save warning. Existing or unreadable saved
+revisions retain the accepted-message recovery state and offers **Retry draft cleanup**, never another
+Send of that accepted body. Recovery survives composer remounts within the same
+session; it is RAM evidence, not a new durable receipt or a guarantee across app
+restart. Existing outbox delivery/retry ownership is unchanged.
+
+Delete is consentful and device-local. Confirm moves keyboard focus to the
+actual destructive button; Cancel restores its trigger. After **successful**
+scoped saved-text cleanup, the existing attachment-draft owner clears only the
+same session/destination files and aborts its pending uploads. A failed text
+cleanup preserves files and text for retry; sibling channel/thread drafts and
+other viewers are untouched. Successful Close, Delete and saved Send restore focus
+to the invoking draft row, another remaining row, or Back to Inbox; callbacks from
+an earlier visit cannot retire a later selection. Failed Delete keeps its retryable
+confirmation focused. This is not a new persisted index or migration.
+
 ## Validation scope
 
 Colocated session tests cover verdict admission, local intent, bounded demand,
 thread-only actions, frozen retries and feed edit/deletion/lifecycle closure.
 They do not establish browser paint, real relay persistence, native acceptance
 or human approval. Browser/hosted checks remain with the integration owner.
-The incoming mounted `InboxPage.test.tsx` / `InboxDetail.test.tsx` and four
+The incoming mounted `InboxPage.test.tsx` / `InboxDetail.test.tsx` and five
 `tests/browser/inbox*` specs require validation against this relay-authoritative
 contract; their presence is not evidence that the merged tests pass. Browser
 fixture evidence also does not establish live relay or packaged acceptance.
+`DraftsView.test.tsx`, `view-state.test.ts`, `attachment-draft.test.tsx` and
+`tests/browser/inbox-drafts.spec.mjs` cover the separately owned draft lifecycle;
+newly merged coverage needs validation on this integration snapshot.
 Reminders, follow/mute policy and full backlog discovery remain out of scope;
 this is not a full original Inbox port.

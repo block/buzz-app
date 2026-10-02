@@ -49,7 +49,13 @@ import {
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
-import { readView, writeView } from "../../shared/view-state";
+import {
+  readView,
+  writeView,
+  viewRevision,
+  replaceView,
+  subscribeView,
+} from "../../shared/view-state";
 import styles from "./Messages.module.css";
 import { messageViewKey } from "./view-key";
 import { isEmojiOnly, usesLargeEmojiPresentation } from "./emoji-size";
@@ -88,6 +94,23 @@ const noChannels: ReturnType<RelaySession["channels"]["list"]> = {
 const noChannelSnapshot = () => noChannels;
 const noChannelSubscription = () => () => {};
 
+type AcceptedDraft = {
+  id: string;
+  next: MentionDraft;
+  revision: string | null | undefined;
+};
+// Failed post-acceptance cleanup survives composer remounts within this session.
+// This is recovery evidence only, not another persistent draft inventory.
+const acceptedDrafts = new WeakMap<RelaySession, Map<string, AcceptedDraft>>();
+function recoveryFor(session: RelaySession) {
+  let recovery = acceptedDrafts.get(session);
+  if (!recovery) {
+    recovery = new Map();
+    acceptedDrafts.set(session, recovery);
+  }
+  return recovery;
+}
+
 export type MessageComposerProps = {
   extensions?: ConversationExtensions | undefined;
   scope: string;
@@ -100,6 +123,8 @@ export type MessageComposerProps = {
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
   onSend?: (id: string) => void;
+  /** Inbox may retire only after saving the replacement or confirming no draft remains. */
+  onDraftSaved?: ((id: string) => void) | undefined;
   /** Threads supply their own retained rows; channels use the shared window. */
   editMessages?: readonly ChannelMessage[] | undefined;
   onOpenLink?: ((target: string) => boolean) | undefined;
@@ -149,6 +174,7 @@ function Composer({
   label: customLabel,
   placeholder,
   onSend,
+  onDraftSaved,
   editMessages,
   onOpenLink,
   canOpenLink,
@@ -219,9 +245,27 @@ function Composer({
   )?.parentChannelId;
   const mentionRoster = useContext(DraftMentionRoster);
   const agentChoices = inviteAgents || !!sessionConversation;
+  const recoveryKey = `${scope}:${draftKey}`;
+  const [accepted, setAccepted] = useState(() => {
+    if (submission) return;
+    const recovery = recoveryFor(session);
+    const pending = recovery.get(recoveryKey);
+    const current = viewRevision(scope, draftKey);
+    if (pending && current !== undefined && current !== pending.revision) {
+      recovery.delete(recoveryKey); // Deleted or replaced while unmounted.
+      return;
+    }
+    return pending;
+  });
+  const revision = useRef(viewRevision(scope, draftKey));
+  const dirty = useRef(false);
+  const writing = useRef(false);
+  const [conflict, setConflict] = useState(false);
+  const [storageFailed, setStorageFailed] = useState(false);
   const [value, updateDraft] = useState(() =>
     mentionDraft(
-      submission?.recoveredDraft ??
+      accepted?.next ??
+        submission?.recoveredDraft ??
         readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
     ),
   );
@@ -295,9 +339,24 @@ function Composer({
     if (JSON.stringify(next) === JSON.stringify(valueRef.current)) return false;
     valueRef.current = next;
     updateDraft(next);
-    if (!editing.target) writeView(scope, draftKey, next);
+    if (!editing.target) {
+      if (submission) writeView(scope, draftKey, next);
+      else {
+        dirty.current = true;
+        if (!conflict && !accepted) persist(next);
+      }
+    }
     return true;
   };
+  function persist(next: MentionDraft, expected = revision.current) {
+    writing.current = true;
+    const result = replaceView(scope, draftKey, expected, next);
+    writing.current = false;
+    if (result === "saved") revision.current = JSON.stringify(next);
+    setConflict(result === "changed");
+    setStorageFailed(result === "failed");
+    return result;
+  }
   const [error, setError] = useState<string>();
   const [attachmentError, setAttachmentError] = useState<string>();
   const focusRestoredDraft = useRef(false);
@@ -333,6 +392,7 @@ function Composer({
     disabled ||
     admitting ||
     sending ||
+    !!accepted ||
     !!submission?.locked ||
     (editing.target && (editing.locked || editDisabled)) ||
     false;
@@ -393,6 +453,73 @@ function Composer({
     input,
     active && !editingDisabled && !!outbox?.supports(9),
   );
+  function loadSaved(raw: string | null) {
+    let next: MentionDraft;
+    try {
+      next = mentionDraft(JSON.parse(raw ?? "null"));
+    } catch {
+      next = mentionDraft("");
+    }
+    revision.current = raw;
+    dirty.current = false;
+    valueRef.current = next;
+    updateDraft(next);
+    input.current?.reset(next);
+    completion.invalidate();
+    setLinkEdit(null);
+    restoreSelection.current = undefined;
+    caret.current = undefined;
+    setConflict(false);
+    setStorageFailed(false);
+  }
+  const reconcileDraft = useEffectEvent(() => {
+    if (submission || editing.target || writing.current || accepted) return;
+    const current = viewRevision(scope, draftKey);
+    if (current === undefined || current === revision.current) return;
+    if (dirty.current || sendAttempt.current) setConflict(true);
+    else loadSaved(current);
+  });
+  const editingDraft = !!editing.target;
+  useEffect(() => {
+    if (submission) return;
+    const stop = subscribeView(scope, () => reconcileDraft());
+    // Reconcile changes while message-edit mode or mounting paused this listener.
+    void editingDraft;
+    reconcileDraft();
+    return stop;
+  }, [scope, submission, editingDraft]);
+  function resolveDraft(keep: boolean) {
+    const current = viewRevision(scope, draftKey);
+    if (current === undefined) {
+      setStorageFailed(true);
+      return;
+    }
+    if (keep) {
+      dirty.current = true;
+      persist(valueRef.current, current);
+    } else loadSaved(current);
+  }
+  function finishDraft(pending: AcceptedDraft) {
+    const result = persist(pending.next, pending.revision);
+    // No stale sent text needs cleanup if nothing was saved and absence is
+    // still readable. Keep the normal save attempt for remembered-agent drafts.
+    if (
+      result === "failed" &&
+      (pending.revision !== null || viewRevision(scope, draftKey) !== null)
+    )
+      return;
+    recoveryFor(session).delete(recoveryKey);
+    setAccepted(undefined);
+    if (result === "changed") {
+      // Another editor owns this revision. Acceptance cannot erase its work.
+      const current = viewRevision(scope, draftKey);
+      if (current !== undefined) loadSaved(current);
+      return;
+    }
+    dirty.current = result === "failed" && !!pending.next.text.trim();
+    // An unsaved prefill stays editable here with the ordinary save warning.
+    if (!dirty.current) onDraftSaved?.(pending.id);
+  }
   useEffect(() => {
     if (outbox?.supports(9)) void session.emoji.ensure();
   }, [session, outbox]);
@@ -622,6 +749,8 @@ function Composer({
     }
     if (
       disabled ||
+      accepted ||
+      conflict ||
       admission.current ||
       submission?.disabled ||
       (!submission && (input.current?.readOnly || input.current?.disabled)) ||
@@ -631,6 +760,19 @@ function Composer({
       !outbox
     )
       return;
+    const recovering = !submission && recoveryFor(session).get(recoveryKey);
+    if (recovering) {
+      setAccepted(recovering);
+      valueRef.current = recovering.next;
+      updateDraft(recovering.next);
+      input.current?.reset(recovering.next);
+      return;
+    }
+    if (!submission && viewRevision(scope, draftKey) !== revision.current) {
+      setConflict(true);
+      return;
+    }
+    const savedRevision = revision.current;
     const attempt = new AbortController();
     sendAttempt.current = attempt;
     const captured = valueRef.current;
@@ -689,12 +831,34 @@ function Composer({
         attachments.store.snapshot() !== capturedAttachments
       )
         return;
+      if (viewRevision(scope, draftKey) !== savedRevision) {
+        setConflict(true);
+        return;
+      }
       const content =
         threadRootId && mediaTimeSeconds !== undefined
           ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
           : composerMarkdown(captured);
       const uploaded = capturedAttachments.flatMap((item) =>
         item.uploaded ? [item.uploaded] : [],
+      );
+      const agents = knownAgentPubkeys(
+        session.profiles.snapshot(),
+        session.agentChoices.snapshot(),
+      );
+      const next = followupDraft(
+        rememberAgentsPreference()
+          ? captured.recipients.filter(
+              (item) =>
+                agents.has(item.pubkey) &&
+                mentionCandidates(
+                  session,
+                  channelId,
+                  agentChoices,
+                  mentionRoster,
+                ).some((c) => c.recipient.pubkey === item.pubkey),
+            )
+          : [],
       );
       const id = threadRootId
         ? session.messages.reply(
@@ -716,29 +880,15 @@ function Composer({
               references,
             )
           : session.messages.send(channelId, content, recipients, uploaded);
+      const pending = { id, next, revision: savedRevision };
+      recoveryFor(session).set(recoveryKey, pending);
+      setAccepted(pending);
       attachments.store.clear();
-      onSend?.(id);
       completion.invalidate();
       clearMediaTime?.();
-      const agents = knownAgentPubkeys(
-        session.profiles.snapshot(),
-        session.agentChoices.snapshot(),
-      );
-      const next = followupDraft(
-        rememberAgentsPreference()
-          ? captured.recipients.filter(
-              (item) =>
-                agents.has(item.pubkey) &&
-                mentionCandidates(
-                  session,
-                  channelId,
-                  agentChoices,
-                  mentionRoster,
-                ).some((c) => c.recipient.pubkey === item.pubkey),
-            )
-          : [],
-      );
-      const changed = saveDraft(next);
+      const changed = JSON.stringify(next) !== JSON.stringify(valueRef.current);
+      valueRef.current = next;
+      updateDraft(next);
       // An unchanged prefill may not render. Do not leave a caret command for
       // the next keystroke to consume after inserting its first character.
       caret.current = changed ? next.text.length : undefined;
@@ -747,6 +897,8 @@ function Composer({
       if (!changed)
         input.current?.setSelectionRange(next.text.length, next.text.length);
       setError(undefined);
+      onSend?.(id);
+      finishDraft(pending);
     } catch (reason) {
       if (live.current && !attempt.signal.aborted)
         setError(reason instanceof Error ? reason.message : String(reason));
@@ -1086,6 +1238,7 @@ function Composer({
             title={editing.target ? "Save changes" : "Send message"}
             disabled={
               disabled ||
+              (!editing.target && (!!accepted || conflict)) ||
               (!!editing.target && (editing.locked || editDisabled)) ||
               admitting ||
               sending ||
@@ -1105,6 +1258,37 @@ function Composer({
         {(error || editing.error) && (
           <p role="alert">{error ?? editing.error}</p>
         )}
+        {!editing.target &&
+          !submission &&
+          (accepted || conflict || storageFailed) && (
+            <div>
+              <p role="alert">
+                {accepted
+                  ? "Message accepted. Could not update the saved draft. Retry cleanup before sending again."
+                  : conflict
+                    ? "This draft changed elsewhere. Your edits are kept here; choose which draft to keep."
+                    : "Could not save this draft on this device. Your edits are kept here."}
+              </p>
+              {accepted ? (
+                <Button type="button" onClick={() => finishDraft(accepted)}>
+                  Retry draft cleanup
+                </Button>
+              ) : conflict ? (
+                <>
+                  <Button type="button" onClick={() => resolveDraft(false)}>
+                    Load saved draft
+                  </Button>
+                  <Button type="button" onClick={() => resolveDraft(true)}>
+                    Keep my draft
+                  </Button>
+                </>
+              ) : (
+                <Button type="button" onClick={() => persist(valueRef.current)}>
+                  Retry draft save
+                </Button>
+              )}
+            </div>
+          )}
         {editing.retryable && (
           <>
             <p role="status">Your edit is still in the outbox.</p>

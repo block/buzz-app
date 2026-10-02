@@ -1360,6 +1360,7 @@ it("shows two accessible filters without removed options, bulk action or coverag
   expect(
     screen.queryByRole("option", { name: "Drafts" }),
   ).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Drafts" })).toBeInTheDocument();
 });
 
 it("waits for roster recovery before explicit evidence refresh", async () => {

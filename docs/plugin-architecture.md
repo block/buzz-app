@@ -266,10 +266,26 @@ Task actions pause while saving; the new-item input stays editable and retains
 its text when the save finishes. If the loaded Canvas was written in the current second,
 a single cancellable wait respects its timestamp ordering; there is no background
 retry loop. Failures and recovered drafts expose Retry rather than silently publishing
-on reopen. Save uses the existing session Canvas/outbox contract, including its 24 KiB limit, fresh membership check,
-optimistic head comparison and exact confirmation. This is **not atomic concurrency
-control**; simultaneous saves can overwrite edits. Detected conflicts retain the
-local draft and require reviewing the saved Canvas. Refresh confirms before discarding
+on reopen. Save uses the existing session Canvas/outbox contract, including its
+24 KiB limit, fresh membership check, writer-backed Canvas head/editor-confirmation
+reads and exact signed-event recovery. Canvas reads default to strong consistency
+for editor/Todos bases and setup preconditions. Setup delivery and its separate
+exact-ID confirmation both use writer-backed reads; unknown seed outcomes are
+checked without automatically replaying the seed. Template copies explicitly opt
+out and remain replica-eligible; Channel Settings no longer reads a Canvas preview.
+Editor/Todos saves carry `expected-revision=<loaded
+head id>` (or `none` when absent); template seeds carry `none`. On relays supporting
+Canvas compare-and-swap, stale preconditions are refused atomically before mutation.
+A proven conflict keeps the local draft and dismisses only that rejected outbox
+operation so a reviewed save can proceed. Unknown outcomes remain in Outbox and
+block replacement; exact signed retries keep their original precondition. The
+post-write different-head check remains conservative and also retains the draft.
+
+**Compatibility gate:** deploy with a relay supporting Canvas revision preconditions
+([block/buzz#6780](https://github.com/block/buzz/pull/6780)) for atomic protection.
+An older relay may ignore the tag; strong reads and client head comparison alone
+cannot prevent concurrent overwrite. This client change does not upgrade the relay
+or add Canvas history/restore. Detected conflicts require reviewing the saved Canvas. Refresh confirms before discarding
 edits. Local recovery drafts are partitioned by community/viewer/channel; if browser
 storage is unavailable they survive only while the editor stays open. Save never
 promotes local recovery storage to shared state. Already accepted outbox operations

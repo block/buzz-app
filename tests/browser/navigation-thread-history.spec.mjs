@@ -309,7 +309,17 @@ for (const mode of ["bottom", "reading", "jump"]) {
         await expect(
           region.locator(`[data-message-id="${live.id}"]`),
         ).toBeInViewport();
-        await expect(jumpToLatest).toHaveCount(0);
+        await expect(jumpToLatest).toHaveCount(1);
+        await expect(
+          jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
+        ).toHaveAttribute("inert", "");
+        await expect(
+          jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
+        ).toHaveAttribute("aria-hidden", "true");
+        await expect(region.getByRole("button").and(jumpToLatest)).toHaveCount(
+          0,
+        );
+        await expect(jumpToLatest).toBeHidden();
         await region.hover();
         await wheel(page, -500, region);
         await expect
@@ -327,7 +337,17 @@ for (const mode of ["bottom", "reading", "jump"]) {
         await expect(
           region.locator(`[data-message-id="${nextLive.id}"]`),
         ).toBeInViewport();
-        await expect(jumpToLatest).toHaveCount(0);
+        await expect(jumpToLatest).toHaveCount(1);
+        await expect(
+          jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
+        ).toHaveAttribute("inert", "");
+        await expect(
+          jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
+        ).toHaveAttribute("aria-hidden", "true");
+        await expect(region.getByRole("button").and(jumpToLatest)).toHaveCount(
+          0,
+        );
+        await expect(jumpToLatest).toBeHidden();
       } else {
         await expect(
           region.locator(`[data-message-id="${live.id}"]`),

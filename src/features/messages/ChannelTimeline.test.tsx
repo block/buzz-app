@@ -437,7 +437,8 @@ function setup({
           !!child &&
           typeof child === "object" &&
           "type" in child &&
-          child.type === JumpToLatestButton,
+          child.type === JumpToLatestButton &&
+          (child as ReactElement<{ visible: boolean }>).props.visible,
       ) as ReactElement<{ onClick(): void }> | undefined;
       button?.props.onClick();
     },
@@ -447,7 +448,8 @@ function setup({
           !!child &&
           typeof child === "object" &&
           "type" in child &&
-          child.type === JumpToLatestButton,
+          child.type === JumpToLatestButton &&
+          (child as ReactElement<{ visible: boolean }>).props.visible,
       );
     },
     unmount() {

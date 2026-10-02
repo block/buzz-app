@@ -1,7 +1,7 @@
 # Contribution workflow
 
 The repository pins just 1.58.0, Node.js 24.18.0, pnpm 11.8.0, Lefthook 2.1.12,
-and Rust 1.97.1
+and Rust 1.98.1
 (including Cargo, rustfmt, and Clippy) with [Hermit](https://cashapp.github.io/hermit/).
 No global tool installation is required: `bin/hermit` bootstraps Hermit and tools
 are downloaded on first use. Desktop development still requires the
@@ -349,7 +349,9 @@ across cached, parallel jobs rather than running the entire recipe several times
 [Three documented WebKit cases remain local-only](browser-testing.md#ci-coverage-and-local-only-webkit-checks);
 the complete suite still runs with `pnpm test` / `just scan`:
 
-- **JavaScript:** Biome, one TypeScript check, frontend build, all Vitest tests.
+- **JavaScript:** two runners, each with Biome, one TypeScript check and a frontend
+  build. Vitest splits all test files across the runners, with two workers each;
+  both shards must succeed. Timing artifacts include the shard number.
 - **Rust and tool integration:** workspace formatting, Clippy, all Rust tests and
   doctests (including Tauri), and every Node integration test. The CLI integration
   tests build Rust and install scaffold dependencies; they are intentionally CI-only

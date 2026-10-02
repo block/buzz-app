@@ -83,6 +83,7 @@ export function createDirectMessages(
         [
           {
             kinds: [39000, 39002],
+            consistency: "strong",
             authors: [transport.relayAuthor],
             "#d": [id],
             limit: 2,

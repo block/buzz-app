@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { openPage } from "./navigation.mjs";
@@ -30,6 +31,24 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
   await expect(
     workspace.getByRole("searchbox", { name: "Find a channel or person" }),
   ).toBeFocused();
+  // Browser-only: compact-button CSS must not shrink tab close artwork below header icons.
+  const tabClose = workspace.getByRole("button", {
+    name: "Close New tab tab",
+    exact: true,
+  });
+  await expect(tabClose.locator("svg")).toHaveCSS("width", "16px");
+  await expect(tabClose.locator("svg")).toHaveCSS("height", "16px");
+  await expect(tabClose).toHaveCSS("width", "20px");
+  await expect(tabClose).toHaveCSS("height", "20px");
+  await expect(
+    main
+      .getByRole("button", { name: "Channel actions", exact: true })
+      .locator("svg"),
+  ).toHaveClass(/tabler-icon-dots/);
+  await expect(split.locator("svg")).toHaveClass(
+    /tabler-icon-layout-sidebar-right/,
+  );
+  await expect(split.locator("svg")).toHaveCSS("width", "16px");
   await workspace
     .getByRole("searchbox", { name: "Find a channel or person" })
     .fill("Beta");
@@ -41,7 +60,11 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
     .poll(async () => (await main.boundingBox()).width)
     .toBeCloseTo(fullWidth, 0);
   await split.click();
-  await expect(workspace.getByRole("tab")).toHaveCount(1);
+  await expect(
+    workspace
+      .getByRole("tablist", { name: "Panel tabs", exact: true })
+      .getByRole("tab"),
+  ).toHaveCount(1);
   await expect(
     workspace.getByRole("searchbox", { name: "Find a channel or person" }),
   ).toHaveValue("Beta");
@@ -77,9 +100,7 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
   await main
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .fill("Alpha draft");
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await page.locator('button[data-channel-id="beta"]').click();
   await page.locator('button[data-channel-id="alpha"]').click();
   await expect(
@@ -98,9 +119,7 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
     });
     await expect(search).toBeFocused();
     if (name === "Alice Fixture")
-      await picker
-        .getByRole("button", { name: "Direct messages", exact: true })
-        .click();
+      await picker.getByRole("tab", { name: "DMs", exact: true }).click();
     await search.fill(name);
     await picker.getByRole("button", { name, exact: true }).click();
     await expect(
@@ -137,7 +156,11 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
     .toBeCloseTo(fullWidth, 0);
   await expect(workspace).toBeHidden();
   await split.click();
-  await expect(workspace.getByRole("tab")).toHaveCount(2);
+  await expect(
+    workspace
+      .getByRole("tablist", { name: "Panel tabs", exact: true })
+      .getByRole("tab"),
+  ).toHaveCount(2);
   await expect(
     workspace.getByRole("tab", { name: "Beta", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
@@ -267,7 +290,7 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
     .click();
   await expect(workspace).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Channel settings", exact: true }),
+    page.getByRole("button", { name: "Channel actions", exact: true }),
   ).toBeFocused();
 });
 
@@ -292,18 +315,18 @@ test("crowded tab strip scrolls only horizontally with Add tab fixed and a thin 
   });
   const initial = await add.boundingBox();
   const height = (await header.boundingBox()).height;
-  const tabBounds = await workspace.getByRole("tab").first().boundingBox();
+  const tabBounds = await list.getByRole("tab").first().boundingBox();
   const expectTabPosition = async () => {
-    const bounds = await workspace.getByRole("tab").last().boundingBox();
+    const bounds = await list.getByRole("tab").last().boundingBox();
     expect(bounds.y).toBeCloseTo(tabBounds.y, 1);
     expect(bounds.height).toBeCloseTo(tabBounds.height, 1);
   };
   for (let i = 0; i < 5; i++) {
     await add.click();
-    await expect(workspace.getByRole("tab")).toHaveCount(i + 2);
+    await expect(list.getByRole("tab")).toHaveCount(i + 2);
     await expect(workspace.getByRole("searchbox")).toBeFocused();
   }
-  const tabs = workspace.getByRole("tab");
+  const tabs = list.getByRole("tab");
   const closeButtons = workspace.getByRole("button", {
     name: "Close New tab tab",
     exact: true,
@@ -340,14 +363,14 @@ test("crowded tab strip scrolls only horizontally with Add tab fixed and a thin 
   expect(geometry.trackHeight).toBe("4px");
   expect((await add.boundingBox()).x).toBeCloseTo(initial.x, 1);
   expect((await header.boundingBox()).height).toBeCloseTo(height, 1);
-  await workspace.getByRole("tab").last().press("Home");
-  await expect(workspace.getByRole("tab").first()).toBeFocused();
+  await list.getByRole("tab").last().press("Home");
+  await expect(list.getByRole("tab").first()).toBeFocused();
   await expect(closeButtons.first()).toHaveCSS("opacity", "1");
   await expect(list).toHaveJSProperty("scrollTop", 0);
   await expectTabPosition();
   expect((await add.boundingBox()).x).toBeCloseTo(initial.x, 1);
-  await workspace.getByRole("tab").first().press("End");
-  await expect(workspace.getByRole("tab").last()).toBeFocused();
+  await list.getByRole("tab").first().press("End");
+  await expect(list.getByRole("tab").last()).toBeFocused();
   await expect(list).toHaveJSProperty("scrollTop", 0);
   await expectTabPosition();
   expect((await add.boundingBox()).x).toBeCloseTo(initial.x, 1);

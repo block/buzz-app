@@ -23,8 +23,20 @@ import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
 import { profileTarget } from "../features/profiles/target";
+import { setLaunchReady } from "./launch";
 
 export function App({ services }: { services: AppServices }) {
+  const identity = services.identity;
+  useEffect(() => {
+    if (!identity) return;
+    const update = () => {
+      const status = identity.snapshot().status;
+      if (status === "missing" || status === "error") setLaunchReady(true);
+      else if (status === "loading") setLaunchReady(false);
+    };
+    update();
+    return identity.subscribe(update);
+  }, [identity]);
   return services.identity ? (
     <IdentitySetup identity={services.identity}>
       <ConnectedApp services={services} />
@@ -49,6 +61,18 @@ function ConnectedApp({ services }: { services: AppServices }) {
   );
   const restoring = client.status === "loading" || !!connection.restoring;
   const settings = route.target.kind === "settings";
+  const terminal =
+    startup === "recovery" ||
+    route.state.status === "failed" ||
+    (!route.state.ingress && !!route.failure);
+  const launchReady =
+    settings ||
+    terminal ||
+    (!restoring && startup !== "loading" && !route.waiting);
+  useEffect(
+    () => setLaunchReady(launchReady, terminal),
+    [launchReady, terminal],
+  );
   const select = route.select;
   useEffect(
     () =>
@@ -86,13 +110,21 @@ function ConnectedApp({ services }: { services: AppServices }) {
   const pageOwnsCompanion = !!route.page?.companion;
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
-    return (
+    return document.getElementById("buzz-launch") ? null : (
       <div className="buzz-launch" role="status" aria-label="Opening Buzz">
-        <img src="/buzz-mark.svg" alt="Buzz" width="72" height="72" />
+        <picture>
+          <source
+            media="(prefers-reduced-motion: reduce)"
+            srcSet="/buzz-mark.svg"
+          />
+          <img src="/buzz-loading-mark.svg" alt="Buzz" width="72" height="72" />
+        </picture>
       </div>
     );
   return (
-    <ToastProvider>
+    <ToastProvider
+      portalContainer={document.getElementById("buzz-toast-root") ?? undefined}
+    >
       <ChannelNavigationProvider relay={services.relay}>
         <AppShell
           sidebar={(pageNavigation) =>

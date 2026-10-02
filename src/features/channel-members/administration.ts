@@ -70,6 +70,7 @@ export function createMemberAdministration({
     const events = await reader.read(
       [39000, 39001, 39002].map((kind) => ({
         kinds: [kind],
+        consistency: "strong" as const,
         authors: [relayAuthor],
         "#d": [id],
         limit: 1,

@@ -123,7 +123,7 @@ impl Secret {
     pub fn parse(text: &str, expected: &str) -> Result<Self> {
         let mut bytes = Zeroizing::new([0; 32]);
         if text.len() == 64 && text.bytes().all(|c| c.is_ascii_hexdigit()) {
-            for (i, pair) in text.as_bytes().chunks_exact(2).enumerate() {
+            for (i, pair) in text.as_bytes().as_chunks::<2>().0.iter().enumerate() {
                 let digit = |c: u8| {
                     if c <= b'9' {
                         c - b'0'

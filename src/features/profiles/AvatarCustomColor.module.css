@@ -1,0 +1,69 @@
+.panel {
+  display: grid;
+  /* Reserve the thumb radius outside the spectrum at its endpoints. */
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+/* Literal colors are the spectrum's artwork, matching the original Buzz picker. */
+.spectrum {
+  position: relative;
+  height: 14rem;
+  border-radius: var(--radius-control);
+  background-image:
+    linear-gradient(to bottom, transparent, #000),
+    linear-gradient(to right, #fff, transparent);
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+}
+.grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.thumb {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  width: 2rem;
+  height: 2rem;
+  border: 3px solid white;
+  box-shadow: var(--elevation-card);
+}
+.hue {
+  appearance: none;
+  width: 100%;
+  height: 2.5rem;
+  margin: 0;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-pill);
+  background: linear-gradient(
+    to right,
+    #f00,
+    #ff0,
+    #0f0,
+    #0ff,
+    #00f,
+    #f0f,
+    #f00
+  );
+  cursor: pointer;
+  touch-action: none;
+}
+.hue::-webkit-slider-thumb {
+  appearance: none;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: white;
+  box-shadow: var(--elevation-card);
+}
+.hue::-moz-range-thumb {
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 50%;
+  background: white;
+  box-shadow: var(--elevation-card);
+}

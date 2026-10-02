@@ -12,10 +12,14 @@ import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AvatarEditor } from "./AvatarEditor";
 import { uploadAvatar } from "./avatar-upload";
+import { stubAvatarBrowserApis } from "../agents/avatar-testing";
+
+stubAvatarBrowserApis();
 
 vi.mock("./avatar-upload", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./avatar-upload")>()),
   uploadAvatar: vi.fn(),
+  paintEmojiAvatar: vi.fn(),
 }));
 afterEach(() => {
   cleanup();
@@ -198,4 +202,69 @@ it("accepts equivalent HTTPS spellings without a misleading validation error", a
   });
   expect(screen.getByRole("button", { name: "Done" })).toBeEnabled();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("previews emoji colors without selecting a draft, and restores the image when dismissed", async () => {
+  render(<Form />);
+  await open();
+  fireEvent.click(screen.getByRole("tab", { name: "Emoji" }));
+  expect(
+    screen.queryByRole("group", { name: "Avatar background" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Background" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Use #476CFF background" }),
+  );
+  expect(screen.getByRole("img", { name: "Emoji avatar preview" })).toHaveStyle(
+    { backgroundColor: "#476CFF" },
+  );
+  expect(screen.getByLabelText("Draft picture")).toHaveTextContent(original);
+  fireEvent.click(screen.getByRole("tab", { name: "Emoji" }));
+  expect(screen.getByRole("img", { name: "Emoji avatar preview" })).toHaveStyle(
+    { backgroundColor: "#476CFF" },
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "Image" }));
+  expect(screen.getByLabelText("Picture URL (optional)")).toHaveValue(original);
+  close();
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("img", { name: "Emoji avatar preview" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(screen.getByLabelText("Draft picture")).toHaveTextContent(original);
+});
+
+it("accepts a file dropped over the emoji panel and returns to its image draft", async () => {
+  vi.mocked(uploadAvatar).mockResolvedValueOnce(next);
+  render(<Form />);
+  await open();
+  fireEvent.click(screen.getByRole("tab", { name: "Emoji" }));
+  fireEvent.drop(screen.getByRole("group", { name: "Avatar picker" }), {
+    dataTransfer: {
+      types: ["Files"],
+      files: [new File(["test"], "test.png", { type: "image/png" })],
+    },
+  });
+  await waitFor(() =>
+    expect(screen.getByLabelText("Picture URL (optional)")).toHaveValue(next),
+  );
+  expect(screen.getByRole("tab", { name: "Image" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByLabelText("Draft picture")).toHaveTextContent(original);
+});
+
+it("Enter selects a valid URL without submitting the enclosing form", async () => {
+  const save = vi.fn();
+  render(<Form save={save} />);
+  await open();
+  fireEvent.change(screen.getByLabelText("Picture URL (optional)"), {
+    target: { value: next },
+  });
+  fireEvent.keyDown(screen.getByLabelText("Picture URL (optional)"), {
+    key: "Enter",
+  });
+  expect(screen.getByLabelText("Draft picture")).toHaveTextContent(next);
+  expect(save).not.toHaveBeenCalled();
 });

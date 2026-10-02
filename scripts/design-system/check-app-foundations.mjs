@@ -47,6 +47,18 @@ function files(dir) {
 }
 
 const failures = [];
+// Color-selection artwork must retain literal hues in both themes. Keep the
+// exceptions limited to these two controls and their exact spectrum stops.
+const artworkColors = new Map([
+  [
+    "features/profiles/AvatarCustomColor.module.css",
+    new Set(["#000", "#fff", "#f00", "#ff0", "#0f0", "#0ff", "#00f", "#f0f"]),
+  ],
+  [
+    "features/profiles/AvatarEditor.module.css",
+    new Set(["#ff4d4d", "#ffe75c", "#73ef75", "#63c6f2", "#b141ff"]),
+  ],
+]);
 for (const path of files(root)) {
   // Ignore comments without changing reported line numbers. Plain TS is included
   // because Emoji Mart's shadow-root stylesheet lives in its adapter module.
@@ -56,6 +68,11 @@ for (const path of files(root)) {
   );
   for (const [rule, pattern] of rules) {
     for (const match of source.matchAll(pattern)) {
+      if (
+        rule === "literal color" &&
+        artworkColors.get(relative(root, path))?.has(match[0])
+      )
+        continue;
       // The host root applies the saved interface scale once to every rem role.
       if (
         rule === "custom text size" &&

@@ -15,6 +15,7 @@ import { profileTarget } from "../profiles/target";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
 import { keypair, message, signed, summary } from "../relay/testing";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { MessageRow } from "./MessageRow";
 import type { ChannelMessage } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
@@ -1322,3 +1323,86 @@ it("never mounts an audio player for a native lookalike", () => {
   expect(html).not.toContain("<audio");
   expect(html).toContain("File unavailable");
 });
+
+it("opens the exact source thread from a shared message", () => {
+  const open = vi.fn(() => true);
+  const rootId = "a".repeat(64);
+  try {
+    renderDom(
+      <MessageRow
+        row={{ ...row, sentFromThread: { rootId } }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={open}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    fireEvent.click(screen.getByRole("link", { name: "Thread" }));
+    expect(open).toHaveBeenCalledWith(
+      `buzz://message?channel=channel&id=${rootId}&thread=${rootId}`,
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+it.each(["own", "other", "root", "pending", "archived", "read-only"])(
+  "offers Send to channel only for a writable authored reply: %s",
+  async (scenario) => {
+    const snapshot = {
+      channels: [
+        {
+          id: row.channelId,
+          archived: scenario === "archived",
+          readOnly: scenario === "read-only",
+        },
+      ],
+      status: "ready",
+    };
+    const send = vi.fn();
+    const getThreadRoot = vi.fn(() => row);
+    const session = {
+      viewer: row.authorId,
+      channels: { list: () => snapshot, subscribeList: () => () => {} },
+      messages: { sendToChannel: send },
+      outbox: { supports: () => true },
+      unread: { subscribe: () => () => {}, snapshot: () => undefined },
+    } as unknown as RelaySession;
+    const reply: ChannelMessage = {
+      ...row,
+      threadRootId: scenario === "root" ? undefined : "a".repeat(64),
+      authorId: scenario === "other" ? "other" : row.authorId,
+      ...(scenario === "pending" ? { delivery: "sending" as const } : {}),
+    };
+    try {
+      renderDom(
+        <MessageRow
+          row={reply}
+          getThreadRoot={getThreadRoot}
+          session={session}
+          profile={undefined}
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />,
+        { wrapper: ToastProvider },
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: "More message actions" }),
+      );
+      await screen.findByRole("menu");
+      const item = screen.queryByRole("menuitem", { name: "Send to channel" });
+      expect(!!item).toBe(scenario === "own");
+      expect(getThreadRoot).not.toHaveBeenCalled();
+      if (item) {
+        fireEvent.click(item);
+        expect(getThreadRoot).toHaveBeenCalledOnce();
+        expect(send).toHaveBeenCalledWith(reply, row);
+      }
+    } finally {
+      cleanup();
+    }
+  },
+);

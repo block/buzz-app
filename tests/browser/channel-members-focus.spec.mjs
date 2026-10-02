@@ -1262,3 +1262,150 @@ test("member role dropdown fits beside search and preserves modal focus", async 
     await expect(action).toBeFocused();
   }
 });
+
+// The same live dialog node must retain its focus trap while visual steps exit;
+// jsdom cannot prove crossfade hit testing, geometry or error placement.
+for (const rejected of [false, true]) {
+  test(`member confirmation replaces one modal and reports only errors (rejected: ${rejected})`, async ({
+    page,
+  }, testInfo) => {
+    const { errors } = watchPageErrors(page);
+    await page.goto(
+      `${url}?administration${rejected ? "&reject-removal" : ""}`,
+    );
+    await page
+      .getByRole("button", { name: "Channel members", exact: true })
+      .click();
+    const members = page.getByRole("dialog", {
+      name: "Channel members",
+      exact: true,
+    });
+    const popupId = await members.getAttribute("id");
+    const search = members.getByRole("searchbox");
+    await search.fill("Morgan");
+    const choose = async () => {
+      await expect(members.locator(".buzz-dialog-step")).toHaveCount(1);
+      await members
+        .getByRole("button", { name: /Open profile for Morgan/ })
+        .hover();
+      await members
+        .getByRole("button", { name: "Actions for Morgan", exact: true })
+        .click();
+      await page
+        .getByRole("menuitem", { name: "Remove from channel", exact: true })
+        .click();
+      const confirmation = page.getByRole("dialog", {
+        name: "Remove member?",
+        exact: true,
+      });
+      await expect(confirmation).toHaveAttribute("id", popupId);
+      await expect(
+        page.locator('[role="dialog"][aria-modal="true"]'),
+      ).toHaveCount(1);
+      await expect(page.locator(".buzz-dialog-backdrop")).toHaveCount(1);
+      await expect(confirmation.getByRole("searchbox")).toHaveCount(0);
+      await expect(
+        confirmation.getByRole("button", { name: "Cancel", exact: true }),
+      ).toBeFocused();
+      // Exit completes without leaving invisible hit targets over the new step.
+      await expect(confirmation.locator(".buzz-dialog-step")).toHaveCount(1);
+      return confirmation;
+    };
+    for (const dismiss of [
+      "Cancel",
+      "Back to channel members",
+      "Escape",
+      "outside",
+    ]) {
+      const confirmation = await choose();
+      if (dismiss === "Escape") await page.keyboard.press("Escape");
+      else if (dismiss === "outside") await page.mouse.click(4, 4);
+      else
+        await confirmation
+          .getByRole("button", { name: dismiss, exact: true })
+          .click();
+      await expect(search).toHaveValue("Morgan");
+      await expect(search).toBeFocused();
+      await expect(members).toHaveAttribute("id", popupId);
+    }
+    const confirmation = await choose();
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((mode) => {
+        document.documentElement.classList.toggle("dark", mode === "dark");
+        document.documentElement.setAttribute("data-color-mode", mode);
+      }, mode);
+      for (const width of [390, 800, 1280]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect(confirmation).toBeInViewport({ ratio: 1 });
+        // WebKit rounds an inner scrollport's IntersectionObserver ratio below
+        // one for fractional button widths. Check the actual viewport bounds.
+        const actionBounds = await confirmation
+          .getByRole("button", { name: "Remove member", exact: true })
+          .boundingBox();
+        expect(actionBounds.x).toBeGreaterThanOrEqual(0);
+        expect(actionBounds.x + actionBounds.width).toBeLessThanOrEqual(width);
+        expect(actionBounds.y).toBeGreaterThanOrEqual(0);
+        expect(actionBounds.y + actionBounds.height).toBeLessThanOrEqual(900);
+        await confirmation.screenshot({
+          path: testInfo.outputPath(`confirmation-${mode}-${width}.png`),
+        });
+      }
+    }
+    await confirmation
+      .getByRole("button", { name: "Remove member", exact: true })
+      .click();
+    await page.evaluate(() => window.focusFixture.published);
+    await expect(search).toBeFocused();
+    await expect(
+      members.getByRole("button", { name: /Open profile for Morgan/ }),
+    ).toBeVisible();
+    await expect(
+      members.getByText(/Checking permissions and waiting/),
+    ).toHaveCount(0);
+    await expect(members.getByRole("alert")).toHaveCount(0);
+    await page.evaluate(() => window.focusFixture.confirm());
+    if (rejected) {
+      const error = members
+        .getByRole("alert")
+        .filter({ hasText: "Permission changed" });
+      await expect(error).toBeVisible();
+      await expect(
+        members
+          .getByRole("region", { name: "Member list" })
+          .getByText("Permission changed"),
+      ).toHaveCount(0);
+      await expect(page.locator(".buzz-toast")).toHaveCount(0);
+      await expect(
+        members.getByRole("button", { name: /Open profile for Morgan/ }),
+      ).toBeVisible();
+      const errorBox = await error.boundingBox();
+      const listBox = await members
+        .getByRole("region", { name: "Member list" })
+        .boundingBox();
+      expect(errorBox.y + errorBox.height).toBeLessThanOrEqual(listBox.y);
+      for (const mode of ["light", "dark"]) {
+        await page.evaluate((mode) => {
+          document.documentElement.classList.toggle("dark", mode === "dark");
+          document.documentElement.setAttribute("data-color-mode", mode);
+        }, mode);
+        for (const width of [390, 800, 1280]) {
+          await page.setViewportSize({ width, height: 900 });
+          await expect(error).toBeInViewport({ ratio: 1 });
+          await members.screenshot({
+            path: testInfo.outputPath(`error-${mode}-${width}.png`),
+          });
+        }
+      }
+    } else {
+      await expect(
+        members
+          .getByRole("region", { name: "Members", exact: true })
+          .getByRole("button", { name: /Open profile for Morgan/ }),
+      ).toHaveCount(0);
+      await expect(page.locator(".buzz-toast")).toHaveCount(0);
+      await expect(members.getByRole("alert")).toHaveCount(0);
+    }
+    await expect(members.getByText("Member change confirmed.")).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+}

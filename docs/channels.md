@@ -882,8 +882,15 @@ No ownership transfer, community-admin override or new invitation restriction is
 introduced. Personal Leave remains a separate lifecycle operation; removing a
 member neither deletes their identity nor stops their agents.
 
-Role change and removal use separate deliberate confirmations, initially focused
-on Cancel. The service checks fresh actor/target state before signing and again
+Role change and removal replace the Members content with a deliberate confirmation
+step in the same dialog, using the shared scale/blur transition from channel privacy.
+Cancel, Close, Escape and backdrop dismissal return to the intact search/filter and
+focus Search; entering confirmation focuses Cancel. No second modal is stacked.
+Submitting returns to the list without a pending or success banner; the verified
+roster/role change is the success feedback. Errors appear below the search/filter
+controls, outside the scrolling member list; loading and success add no messages.
+Uncertain outcomes retain readback through Refresh member data.
+The service checks fresh actor/target state before signing and again
 before publication, rejects altered signer payloads, and confirms the requested
 role or roster absence with a fresh read. Relay acceptance alone is not success.
 Pending intent survives dialog close/reopen and suppresses duplicate actions.

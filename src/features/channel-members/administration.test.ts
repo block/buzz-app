@@ -150,6 +150,23 @@ it.each(["admin", "member", "guest", "remove"] as const)(
     ]);
   },
 );
+it.each(["owner", "admin"])(
+  "allows %s to explicitly promote a bot to admin with fresh role confirmation",
+  async (actor) => {
+    const h = harness(actor, "bot");
+    await h.owner.capability.run(id, { ...change, expectedRole: "bot" });
+    expect(h.publish).toHaveBeenCalledOnce();
+    expect(h.publish.mock.calls[0]?.[0].tags).toEqual([
+      ["h", id],
+      ["p", target],
+      ["role", "admin"],
+    ]);
+    expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+    expect(h.owner.capability.snapshot(id).authority.roles[target]).toBe(
+      "admin",
+    );
+  },
+);
 it.each(["owner", "bot", "unknown"])(
   "never coerces %s target roles",
   async (role) => {
@@ -173,6 +190,15 @@ it("allows removing a bot without changing its role or invoking agent deletion",
     ],
   });
 });
+it.each(["member", "guest", "bot"])(
+  "rejects explicit bot promotion by a %s viewer",
+  async (actor) => {
+    const h = harness(actor, "bot");
+    await h.owner.capability.run(id, { ...change, expectedRole: "bot" });
+    expect(h.sign).not.toHaveBeenCalled();
+    expect(h.publish).not.toHaveBeenCalled();
+  },
+);
 it.each(["member", "guest", "bot"])(
   "never grants administration to %s viewers",
   async (role) => {

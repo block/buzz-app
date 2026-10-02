@@ -203,16 +203,15 @@ export function MemberRow({
       {permitted && !locked && (
         <>
           <MenuSeparator />
-          {role !== "bot" &&
-            editableMemberRoles
-              // Guest assignment is hidden until its permission contract is settled.
-              .filter((next) => next !== role && next !== "guest")
-              .map((next) => (
-                <MenuItem key={next} onClick={() => choose(next)}>
-                  Make {next}
-                </MenuItem>
-              ))}
-          {role !== "bot" && <MenuSeparator />}
+          {editableMemberRoles
+            // Guest assignment is hidden until its permission contract is settled.
+            .filter((next) => next !== role && next !== "guest")
+            .map((next) => (
+              <MenuItem key={next} onClick={() => choose(next)}>
+                Make {next}
+              </MenuItem>
+            ))}
+          <MenuSeparator />
           <MenuItem tone="danger" onClick={() => choose("remove")}>
             Remove from channel
           </MenuItem>

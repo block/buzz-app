@@ -26,6 +26,7 @@ export function JumpToLatestButton({
         <Button
           data-jump-to-latest=""
           size="sm"
+          shape="control"
           variant="ghost"
           onClick={onClick}
         >

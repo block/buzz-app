@@ -1235,7 +1235,6 @@ function Composer({
               draft.trim() || attachments.items.length ? "primary" : "ghost"
             }
             size="toolbar"
-            shape="round"
             type="submit"
             aria-label={editing.target ? "Save changes" : "Send message"}
             title={editing.target ? "Save changes" : "Send message"}

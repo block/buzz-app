@@ -195,9 +195,35 @@ conversation content and unmount when leaving Messages.
 
 Each sidebar section can independently select **A–Z** (the default) or **Recent**.
 The development broker and packaged native host save these choices in the desktop-compatible encrypted
-kind-30078 `channel-sort` record: `{ version: 1, groups: { ... } }`. A–Z removes
-that group's override. Saving preserves unrelated fields and choices present in
-the record read before publication.
+kind-30078 `channel-sort` record: `{ version: 1, groups: { ... }, meta: { v: 1, g: { ... } } }`.
+A–Z writes a null register and removes that group's legacy override. Sections use
+`meta: { v: 1, s: { ... }, a: { ... } }`: per-section name/icon/order/live registers
+and per-channel assignments. Upgraded readers project metadata as authoritative;
+writers regenerate the legacy fields and preserve unrelated registers, including
+section deletion (`live=false`) and assignment/sort reset (`null`) tombstones.
+Stars and mutes keep their existing `updatedAt` entries, not this register schema.
+
+A register is `[version, device, value]`, with a nonnegative safe-integer millisecond
+version and 16 lowercase hex device ID. Meta-less relay heads import at event
+seconds × 1,000 with the zero device ID. Edits exceed every observed register
+version and use a random in-memory device ID. Sections sort by canonical `(order,id)`
+and project dense display orders; new sections append after the canonical live
+maximum. Orphan assignments are omitted from the legacy projection, not deleted
+from metadata. Read projection accepts Desktop string values on retained section
+name/icon registers; only projected live text receives UI length limits. Already
+satisfied intents return without rewriting the head, including assignment removal
+when its register is absent, explicitly null, or points to a nonprojecting section.
+Actual rewrites still reject
+out-of-policy retained values rather than dropping or truncating them.
+Unsupported/malformed metadata fails closed, including unknown fields;
+this is not general forward-schema salvage. Live projection caps remain 100
+sections, 1,000 assignments and 104 sort overrides; retained tombstones are bounded
+by the existing 128 KiB plaintext budget, not live counts. Native signing/admission
+additionally requires legacy fields to equal the validated register projection.
+
+Saving preserves unrelated top-level fields and known register choices present in
+the strong head read before publication. This is wire-format compatibility, not
+the older Desktop's local-authoritative register cache or automatic reconciler.
 
 Persistence is **whole-record last-write-wins**, not conflict-safe per-section
 merging. Two devices can read the same record and save different sections; the
@@ -207,8 +233,8 @@ Read-back checks the requested section at that moment; it cannot detect an unsee
 choice overwritten in another section or guarantee preservation against later
 writes. “Independent” describes selecting a mode per section, not simultaneous
 cross-device save guarantees. Retaining the shared record preserves compatibility
-with existing desktop writers; per-section conflict resolution would require a
-coordinated persistence change.
+with existing desktop writers; convergence across unseen heads would require a
+separately designed reconciliation lifecycle or atomic relay support.
 
 `dev/sidebar-sort.test.mjs` deterministically exercises that accepted limitation
 through the real mutation helper: another section saves and confirms between a

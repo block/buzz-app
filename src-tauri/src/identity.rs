@@ -377,7 +377,141 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
         }
         _ => return Err(invalid()),
     }
+    if let Some(meta) = data.get("meta") {
+        if matches!(coordinate, "channel-sections" | "channel-sort") {
+            validate_sidebar_meta(coordinate, meta)?;
+            let projection = project_sidebar_meta(coordinate, meta);
+            let projected = projection.as_object().ok_or_else(invalid)?;
+            if projected
+                .iter()
+                .any(|(key, value)| data.get(key) != Some(value))
+            {
+                return Err("Sidebar projection disagrees with metadata".into());
+            }
+        }
+    }
     Ok(())
+}
+
+// The signer admits only the bounded Desktop register schema, not arbitrary
+// renderer-controlled trees. Retained tombstones share the plaintext byte budget.
+fn validate_sidebar_meta(coordinate: &str, value: &serde_json::Value) -> Result<()> {
+    use serde_json::Value;
+    const MAX_SAFE: u64 = 9_007_199_254_740_991;
+    fn text(value: &Value, max: usize) -> bool {
+        value
+            .as_str()
+            .is_some_and(|s| !s.trim().is_empty() && s.encode_utf16().count() <= max)
+    }
+    fn reg(value: &Value, valid: impl Fn(&Value) -> bool) -> bool {
+        value.as_array().is_some_and(|r| {
+            r.len() == 3
+                && r[0].as_u64().is_some_and(|v| v <= MAX_SAFE)
+                && r[1].as_str().is_some_and(|s| {
+                    s.len() == 16
+                        && s.bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                })
+                && valid(&r[2])
+        })
+    }
+    fn map(value: Option<&Value>, max: usize, valid: impl Fn(&Value) -> bool) -> bool {
+        value.map_or(true, |value| {
+            value.as_object().is_some_and(|entries| {
+                entries.iter().all(|(key, value)| {
+                    key != "__proto__"
+                        && !key.trim().is_empty()
+                        && key.encode_utf16().count() <= max
+                        && valid(value)
+                })
+            })
+        })
+    }
+    let invalid = || "Invalid sidebar metadata".to_owned();
+    let meta = value.as_object().ok_or_else(invalid)?;
+    let allowed: &[&str] = if coordinate == "channel-sections" {
+        &["v", "s", "a"]
+    } else {
+        &["v", "g"]
+    };
+    if meta.get("v").and_then(Value::as_u64) != Some(1)
+        || meta.keys().any(|key| !allowed.contains(&key.as_str()))
+    {
+        return Err(invalid());
+    }
+    let valid = if coordinate == "channel-sort" {
+        map(meta.get("g"), 264, |v| {
+            reg(v, |v| {
+                v.is_null() || matches!(v.as_str(), Some("alpha" | "recent"))
+            })
+        })
+    } else {
+        map(meta.get("a"), 256, |v| {
+            reg(v, |v| v.is_null() || text(v, 256))
+        }) && map(meta.get("s"), 256, |v| {
+            v.as_object().is_some_and(|fields| {
+                fields.iter().all(|(field, value)| {
+                    reg(value, |v| match field.as_str() {
+                        "name" => text(v, 256),
+                        "icon" => v.is_null() || text(v, 128),
+                        "live" => v.is_boolean(),
+                        "order" => v.as_i64().is_some_and(|n| n.unsigned_abs() <= MAX_SAFE),
+                        _ => false,
+                    })
+                })
+            })
+        })
+    };
+    if !valid {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+// Called only after shape validation. Requiring these exact fields also binds
+// metadata's live counts to the existing projection limits above.
+fn project_sidebar_meta(coordinate: &str, meta: &serde_json::Value) -> serde_json::Value {
+    use serde_json::{json, Value};
+    if coordinate == "channel-sort" {
+        let groups: serde_json::Map<_, _> = meta["g"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(_, reg)| !reg[2].is_null())
+            .map(|(key, reg)| (key.clone(), reg[2].clone()))
+            .collect();
+        return json!({"groups": groups});
+    }
+    let mut sections: Vec<_> = meta["s"].as_object().into_iter().flatten()
+        .filter(|(_, node)| node["live"][2] == true && node["name"][2].is_string())
+        .map(|(id, node)| {
+            let mut section = json!({"id": id, "name": node["name"][2], "order": node["order"][2].as_i64().unwrap_or(0)});
+            if node["icon"][2].is_string() { section["icon"] = node["icon"][2].clone(); }
+            section
+        }).collect();
+    sections.sort_by(|a, b| {
+        a["order"].as_i64().cmp(&b["order"].as_i64()).then_with(|| {
+            a["id"]
+                .as_str()
+                .unwrap_or("")
+                .encode_utf16()
+                .cmp(b["id"].as_str().unwrap_or("").encode_utf16())
+        })
+    });
+    for (order, section) in sections.iter_mut().enumerate() {
+        section["order"] = json!(order);
+    }
+    let ids: std::collections::HashSet<_> =
+        sections.iter().filter_map(|s| s["id"].as_str()).collect();
+    let assignments: serde_json::Map<_, _> = meta["a"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, reg)| reg[2].as_str().is_some_and(|id| ids.contains(id)))
+        .map(|(key, reg)| (key.clone(), reg[2].clone()))
+        .collect();
+    let result: Value = json!({"sections": sections, "assignments": assignments});
+    result
 }
 
 pub(crate) fn sidebar_coordinate(value: &str) -> bool {

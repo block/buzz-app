@@ -1,3 +1,7 @@
+import {
+  editSidebarRecord,
+  projectSidebarRecord,
+} from "../src/features/relay/sidebar-registers.ts";
 import { finalizeEvent, getPublicKey, nip44, verifyEvent } from "nostr-tools";
 import { projectSidebarPreferences } from "../src/features/relay/sidebar-preferences.ts";
 import { SIDEBAR_REQUEST_BYTES } from "./sidebar-preferences.mjs";
@@ -65,7 +69,10 @@ function parseSortEvent(events, secret, sectionIds) {
       blob,
       sectionIds,
     );
-    return { blob, createdAt: event.created_at };
+    return {
+      blob: projectSidebarRecord(SORT_COORDINATE, blob),
+      createdAt: event.created_at,
+    };
   } finally {
     key.fill(0);
   }
@@ -76,31 +83,28 @@ export function prepareSidebarSort(events, intent, secret, now = Date.now()) {
   assertSidebarSortIntent(intent);
   const viewer = getPublicKey(secret);
   const current = parseSortEvent(events, secret, intent.sectionIds);
-  const groups = { ...current.blob.groups };
-  if (intent.mode === "alpha") delete groups[intent.group];
-  else groups[intent.group] = intent.mode;
+  const blob = editSidebarRecord(
+    SORT_COORDINATE,
+    current.blob,
+    current.createdAt,
+    [[["g", intent.group], intent.mode === "alpha" ? null : intent.mode]],
+    now,
+  );
   const projected =
     projectSidebarPreferences(
       undefined,
       undefined,
       undefined,
-      { ...current.blob, groups },
+      blob,
       intent.sectionIds,
     ).sort ?? {};
-  if (
-    Object.keys(groups).length === Object.keys(current.blob.groups).length &&
-    Object.entries(groups).every(
-      ([group, mode]) => current.blob.groups[group] === mode,
-    )
-  )
-    return { groups: projected };
+  if (Buffer.byteLength(JSON.stringify(blob)) > 128 * 1024)
+    throw new Error("Sidebar plaintext budget exceeded");
+  if (blob === current.blob) return { groups: projected };
   const key = nip44.v2.utils.getConversationKey(secret, viewer);
   let content;
   try {
-    content = nip44.v2.encrypt(
-      JSON.stringify({ ...current.blob, groups }),
-      key,
-    );
+    content = nip44.v2.encrypt(JSON.stringify(blob), key);
   } finally {
     key.fill(0);
   }

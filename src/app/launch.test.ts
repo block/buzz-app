@@ -139,6 +139,30 @@ it("rearms the settling budget when the mark starts after observation", async ()
   expect(launch).toHaveClass("buzz-launch--leaving");
 });
 
+it("rearms after a mark load later than the original settling budget", async () => {
+  const root = document.getElementById("root");
+  const mark = launch.querySelector("img");
+  if (!root || !mark) throw new Error("Missing launch fixture");
+  Object.defineProperty(mark, "complete", { configurable: true, value: false });
+  const pending = document.createElement("div");
+  pending.dataset.buzzLaunchPending = "settling";
+  root.append(pending);
+  const { setLaunchReady } = await import("./launch");
+  setLaunchReady(true);
+  vi.advanceTimersByTime(4000);
+  await Promise.resolve();
+  expect(launch).not.toHaveClass("buzz-launch--leaving");
+  launch.dataset.startedAt = "4000";
+  Object.defineProperty(mark, "complete", { configurable: true, value: true });
+  mark.dispatchEvent(new Event("load"));
+  vi.advanceTimersByTime(3519);
+  expect(launch).not.toHaveClass("buzz-launch--leaving");
+  vi.advanceTimersByTime(1);
+  await Promise.resolve();
+  vi.advanceTimersByTime(0);
+  expect(launch).toHaveClass("buzz-launch--leaving");
+});
+
 it("reveals a terminal failure even while content is pending", async () => {
   const root = document.getElementById("root");
   if (!root) throw new Error("Missing root fixture");

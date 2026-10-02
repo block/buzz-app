@@ -94,6 +94,10 @@ function schedule() {
     }
     return;
   }
+  if (hasPendingContent()) {
+    syncContent();
+    return;
+  }
   if (
     window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
     launch.dataset.failed === "true" ||
@@ -120,6 +124,15 @@ function schedule() {
 
 function syncContent() {
   const next = ready && !hasPendingContent();
+  if (
+    !next &&
+    budgetTimer === undefined &&
+    document.querySelector('#root [data-buzz-launch-pending="settling"]')
+  ) {
+    const remaining = startedAt() + SETTLING_BUDGET_MS - performance.now();
+    if (remaining > 0)
+      budgetTimer = window.setTimeout(checkSettlingBudget, remaining);
+  }
   if (next === contentReady) return;
   contentReady = next;
   const current = ++revision;

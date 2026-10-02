@@ -141,12 +141,7 @@ function parseSectionsEvent(events, secret) {
     key.fill(0);
   }
 }
-function readSidebarAssignmentState(
-  events,
-  intent,
-  secret,
-  now = Date.now(),
-) {
+function readSidebarAssignmentState(events, intent, secret, now = Date.now()) {
   assertSidebarAssignmentIntent(intent);
   const current = parseSectionsEvent(events, secret);
   const sectionId = intent.createSection?.id ?? intent.sectionId;
@@ -249,7 +244,11 @@ export async function mutateSidebarAssignment(
   signal?.throwIfAborted();
   if (!draft.event) return draft.groups;
   await publish(draft.event);
-  const confirmation = readSidebarAssignmentState(await readHead(), intent, secret);
+  const confirmation = readSidebarAssignmentState(
+    await readHead(),
+    intent,
+    secret,
+  );
   signal?.throwIfAborted();
   if (confirmation.changed)
     throw new Error(

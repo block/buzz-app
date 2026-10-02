@@ -77,12 +77,7 @@ function parseSortEvent(events, secret, sectionIds) {
     key.fill(0);
   }
 }
-function readSidebarSortState(
-  events,
-  intent,
-  secret,
-  now = Date.now(),
-) {
+function readSidebarSortState(events, intent, secret, now = Date.now()) {
   assertSidebarSortIntent(intent);
   const current = parseSortEvent(events, secret, intent.sectionIds);
   const blob = editSidebarRecord(

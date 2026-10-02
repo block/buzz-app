@@ -1298,20 +1298,14 @@ test("both real sign and publish routes admit direct and nested replies but reje
 });
 
 test("sidebar maps an unsent API capacity error to its original 502 response", async () => {
-  const h = await harness(
-    success,
-    {},
-    fixtureRelayUrl,
-    {},
-    ({ identity }) => ({
-      async getPublicKey() {
-        return identity;
-      },
-      async signEvent() {
-        throw new ApiCapacity();
-      },
-    }),
-  );
+  const h = await harness(success, {}, fixtureRelayUrl, {}, ({ identity }) => ({
+    async getPublicKey() {
+      return identity;
+    },
+    async signEvent() {
+      throw new ApiCapacity();
+    },
+  }));
   try {
     const response = await h.post("sidebar-sort", {
       group: "channels",

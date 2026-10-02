@@ -34,7 +34,7 @@ function harness() {
   };
 }
 const intent = { group: "section:work", mode: "recent", sectionIds: ["work"] };
-it("mutates only the selected register, imports recognized legacy modes, and encodes alpha as a tombstone", () => {
+it("mutates only the selected register, imports recognized legacy modes, and encodes alpha as a tombstone", async () => {
   const h = harness();
   const blob = {
     version: 1,
@@ -305,6 +305,8 @@ it("edits the authoritative metadata, preserves tombstones and confirms projecte
   const result = await mutateSidebarSort(
     { group: "channels", mode: "recent", sectionIds: [] },
     h.secret,
+    createLocalSigningDelegate(h.secret),
+    undefined,
     async () => [head],
     async (event) => {
       head = event;
@@ -322,6 +324,8 @@ it("edits the authoritative metadata, preserves tombstones and confirms projecte
     mutateSidebarSort(
       intent,
       h.secret,
+      createLocalSigningDelegate(h.secret),
+      undefined,
       async () => [h.encrypt({ version: 1, groups: {}, meta: { v: 2 } })],
       publish,
     ),

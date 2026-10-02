@@ -954,15 +954,12 @@ export function relayBrokerPlugin({
               if (agentPubkey === viewer)
                 throw new Error("Owner and agent pubkeys must differ");
               cancel.signal.throwIfAborted();
-              const digest = createHash("sha256")
-                .update(`nostr:agent-auth:${agentPubkey}:`)
-                .digest();
-              return json(res, 200, [
-                "auth",
-                viewer,
-                "",
-                Buffer.from(schnorr.sign(digest, key)).toString("hex"),
-              ]);
+              const signature = await localCapabilities.authorizeAgent(
+                agentPubkey,
+                cancel.signal,
+              );
+              cancel.signal.throwIfAborted();
+              return json(res, 200, ["auth", viewer, "", signature]);
             } catch (error) {
               return json(res, 400, {
                 error:

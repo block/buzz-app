@@ -35,9 +35,14 @@ export function TypingIndicator({
     );
   const others = matching.length - names.length;
   return (
-    <div className={styles.typing}>
-      <span role="status" aria-label="Typing activity">
-        {names.join(", ")}
+    <div className={styles.typing} role="status" aria-label="Typing activity">
+      <span className={styles.dots} aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
+      <span className={styles.label}>
+        <span className={styles.names}>{names.join(", ")}</span>
         {others > 0 ? ` and ${others} others` : ""}
         {matching.length === 1 ? " is typing…" : " are typing…"}
       </span>

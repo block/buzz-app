@@ -1,12 +1,66 @@
 .typing {
-  height: 0;
-  margin-bottom: calc(-1 * var(--composer-gap, var(--space-1)));
-  flex-shrink: 0;
-  overflow: visible;
-  color: var(--text-muted);
+  /* Float above the composer without moving it or the message viewport. */
+  position: absolute;
+  inset-inline: var(--space-2);
+  bottom: calc(100% + var(--space-1));
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  width: fit-content;
+  max-width: calc(100% - 2 * var(--space-2));
+  box-sizing: border-box;
+  padding: var(--space-half) var(--space-1h);
+  border-radius: var(--radius-pill);
+  background: var(--surface-panel);
+  color: var(--text-subtle);
   font-size: var(--text-caption);
-  line-height: 1.5;
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: var(--text-caption--font-weight);
+}
+
+.label {
+  min-width: 0;
+  overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  transform: translateY(calc(-1lh - var(--space-2)));
+}
+
+.names {
+  color: var(--text-standard);
+  font-weight: var(--type-weight-medium);
+}
+
+.dots {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-half);
+}
+
+.dots > span {
+  width: var(--space-1);
+  height: var(--space-1);
+  border-radius: 50%;
+  background: currentColor;
+}
+
+@keyframes typing-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .dots > span {
+    animation: typing-pulse 1.4s ease-in-out infinite;
+  }
+
+  .dots > span:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+
+  .dots > span:nth-child(3) {
+    animation-delay: 0.4s;
+  }
 }

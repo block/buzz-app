@@ -411,6 +411,39 @@ test("launch waits for the initial sidebar and message history before revealing 
   }
 });
 
+test("cached workspace remains usable when live reconnect stalls", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await expect
+    .poll(async () =>
+      (await cached(page)).heads.some((head) => head.channelId === "alpha"),
+    )
+    .toBe(true);
+  const connection = held();
+  let requested = false;
+  await page.route("**/api/relay/*/session", async (route) => {
+    requested = true;
+    await connection.promise;
+    await route.fallback();
+  });
+  await page.clock.install();
+  try {
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect.poll(() => requested).toBe(true);
+    await expect(
+      page.getByRole("region", { name: "Channel message history" }),
+    ).toContainText("primary alpha message 0");
+    await page.clock.runFor(3600);
+    await expect(
+      page.getByRole("status", { name: "Opening Buzz" }),
+    ).toHaveCount(0);
+  } finally {
+    connection.release();
+  }
+});
+
 test.describe("personal sidebar startup", () => {
   test.use({ personalSidebar: true });
   test("keeps opted-in groups through cached launch and live promotion", async ({

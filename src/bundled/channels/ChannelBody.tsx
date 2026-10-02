@@ -95,7 +95,7 @@ export const ChannelBody = memo(function ChannelBody({
       <div
         className={styles.empty}
         role="status"
-        data-buzz-launch-pending={!cached ? "" : undefined}
+        data-buzz-launch-pending={!cached ? "required" : undefined}
       >
         Loading messages…
       </div>
@@ -111,6 +111,7 @@ export const ChannelBody = memo(function ChannelBody({
       window={window}
       launchPending={
         !cached &&
+        !window.error &&
         (window.status === "idle" ||
           window.status === "loading" ||
           (window.status === "ready" && window.freshness === "cached"))

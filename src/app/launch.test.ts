@@ -85,7 +85,7 @@ it("keeps looping until the initial visible data settles", async () => {
   const root = document.getElementById("root");
   if (!root) throw new Error("Missing root fixture");
   const pending = document.createElement("div");
-  pending.dataset.buzzLaunchPending = "";
+  pending.dataset.buzzLaunchPending = "required";
   root.append(pending);
   const { setLaunchReady } = await import("./launch");
   setLaunchReady(true);
@@ -98,5 +98,22 @@ it("keeps looping until the initial visible data settles", async () => {
   vi.advanceTimersByTime(1279);
   expect(launch).not.toHaveClass("buzz-launch--leaving");
   vi.advanceTimersByTime(1);
+  expect(launch).toHaveClass("buzz-launch--leaving");
+});
+
+it("reveals usable cached content after two cycles if refresh stalls", async () => {
+  const root = document.getElementById("root");
+  if (!root) throw new Error("Missing root fixture");
+  const pending = document.createElement("div");
+  pending.dataset.buzzLaunchPending = "settling";
+  root.append(pending);
+  const { setLaunchReady } = await import("./launch");
+  setLaunchReady(true);
+  await Promise.resolve();
+  vi.advanceTimersByTime(3519);
+  expect(launch).not.toHaveClass("buzz-launch--leaving");
+  vi.advanceTimersByTime(1);
+  await Promise.resolve();
+  vi.advanceTimersByTime(0);
   expect(launch).toHaveClass("buzz-launch--leaving");
 });

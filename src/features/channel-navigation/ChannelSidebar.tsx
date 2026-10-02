@@ -112,7 +112,7 @@ export function ChannelSidebar(props: Props) {
             as="aside"
             aria-label="Channel sidebar"
             data-buzz-launch-pending={
-              connection.status === "connecting" ? "" : undefined
+              connection.status === "connecting" ? "required" : undefined
             }
           >
             <div className={styles.sidebar}>
@@ -989,14 +989,15 @@ function ReadySidebar({
           as="aside"
           aria-label="Channel sidebar"
           data-buzz-launch-pending={
-            (cached ||
-              !startup.ready ||
-              startup.updating ||
-              list.status === "idle" ||
-              list.status === "loading") &&
-            !connectionError
-              ? ""
-              : undefined
+            connectionError
+              ? undefined
+              : !startup.ready ||
+                  (!cached &&
+                    (list.status === "idle" || list.status === "loading"))
+                ? "required"
+                : cached || startup.updating
+                  ? "settling"
+                  : undefined
           }
           aria-busy={
             preferences.status === "loading" || startup.updating || undefined

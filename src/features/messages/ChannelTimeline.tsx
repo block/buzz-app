@@ -661,7 +661,7 @@ function Timeline({
       data-message-scroller
       className={styles.feed}
       data-channel-timeline={channelId}
-      data-buzz-launch-pending={launchPending ? "" : undefined}
+      data-buzz-launch-pending={launchPending ? "settling" : undefined}
       onWheel={(event) => gesture(event.deltaY < 0 && !event.ctrlKey)}
       onTouchStart={(event) => {
         touchY.current = event.touches[0]?.clientY;

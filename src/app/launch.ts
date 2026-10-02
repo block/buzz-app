@@ -1,23 +1,43 @@
 // Matches the repeated SMIL tracks in public/buzz-loading-mark.svg.
 const CYCLE_MS = 1760;
 const FADE_MS = 220;
+// A saved workspace stays usable if its live refresh stalls.
+const SETTLING_BUDGET_MS = CYCLE_MS * 2;
 
 let ready = false;
 let leaving = false;
 let timer: number | undefined;
+let budgetTimer: number | undefined;
 let waitingForMark = false;
 let observer: MutationObserver | undefined;
 let contentReady = false;
 let revision = 0;
+const fallbackStartedAt = performance.now();
+
+function startedAt() {
+  const value = Number(
+    document.getElementById("buzz-launch")?.dataset.startedAt,
+  );
+  return Number.isFinite(value) ? value : fallbackStartedAt;
+}
 
 function hasPendingContent() {
-  return !!document.querySelector("#root [data-buzz-launch-pending]");
+  if (document.querySelector('#root [data-buzz-launch-pending="required"]'))
+    return true;
+  return (
+    !!document.querySelector('#root [data-buzz-launch-pending="settling"]') &&
+    performance.now() < startedAt() + SETTLING_BUDGET_MS
+  );
 }
 
 function watchContent() {
   if (observer || !document.getElementById("buzz-launch")) return;
   const root = document.getElementById("root");
   if (!root) return;
+  budgetTimer = window.setTimeout(
+    syncContent,
+    Math.max(0, startedAt() + SETTLING_BUDGET_MS - performance.now()),
+  );
   observer = new MutationObserver(syncContent);
   observer.observe(root, {
     childList: true,
@@ -34,6 +54,7 @@ function fade(launch: HTMLElement) {
     return;
   }
   leaving = true;
+  if (budgetTimer !== undefined) window.clearTimeout(budgetTimer);
   observer?.disconnect();
   observer = undefined;
   launch.classList.add("buzz-launch--leaving");

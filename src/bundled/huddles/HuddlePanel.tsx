@@ -1,4 +1,5 @@
 import type { ConversationExtensions } from "../../features/conversation/contracts";
+import { clearAttachmentDraft } from "../../features/messages/attachment-draft";
 import { MessageComposer } from "../../features/messages/MessageComposer";
 import { useEffect, useState } from "react";
 import type { PanelProps } from "../../features/panels/service";
@@ -42,8 +43,14 @@ export function HuddlePanel({
     );
     setOwner(next);
     setDiscussion(next.snapshot());
-    return () => next.dispose();
-  }, [valid, room, parent, connection.session]);
+    return () => {
+      next.dispose();
+      clearAttachmentDraft(
+        connection.session,
+        `${connection.scope ?? ""}:draft:${room}`,
+      );
+    };
+  }, [valid, room, parent, connection.session, connection.scope]);
   return valid && room && owner && discussion ? (
     <HuddleDiscussionView
       discussion={discussion}

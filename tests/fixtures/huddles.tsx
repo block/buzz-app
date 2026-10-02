@@ -99,9 +99,7 @@ const lifecycleReadError = new URLSearchParams(location.search).has(
   "lifecycleReadError",
 );
 let lifecycleReadFailed = false;
-const startedAt =
-  Math.floor(Date.now() / 1000) -
-  (new URLSearchParams(location.search).has("expiredHuddle") ? 3601 : 0);
+const startedAt = Math.floor(Date.now() / 1000);
 const lifecycleListeners = new Set<() => void>();
 let endedAt: number | undefined;
 let lifecycleParent = destination.channelId;

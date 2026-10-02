@@ -24,6 +24,11 @@ type AttachmentDraft = {
   clear(): void;
 };
 const drafts = new WeakMap<ComposerSession, Map<string, AttachmentDraft>>();
+/** Release a closed ephemeral composer's files without changing its text draft. */
+export function clearAttachmentDraft(session: ComposerSession, key: string) {
+  drafts.get(session)?.get(key)?.clear();
+}
+
 const MAX_FILES = 10;
 const MAX_RETAINED_BYTES = 2 * UPLOAD_MAX_BYTES;
 

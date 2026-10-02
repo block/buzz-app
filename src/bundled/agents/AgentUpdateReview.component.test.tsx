@@ -115,6 +115,7 @@ function setup(known: boolean, failInventory = false) {
       }),
     );
   return {
+    fixture,
     send,
     release,
     readRoster,
@@ -133,6 +134,43 @@ function setup(known: boolean, failInventory = false) {
     },
   };
 }
+
+it("waits for a busy operation before refreshing inventory for a request", async () => {
+  const f = setup(true);
+  await act(async () => {
+    await f.control.refresh();
+  });
+  const snapshot = vi.spyOn(f.fixture.host, "snapshot");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const action = f.fixture.host.action;
+  f.fixture.host.action = async (...args) => {
+    await gate;
+    return action(...args);
+  };
+  let pending!: Promise<unknown>;
+  act(() => {
+    pending = f.control.action(f.fixture.agent.id, "stop");
+  });
+  try {
+    expect(f.control.snapshot().busy).toBe(true);
+    f.send();
+    await act(async () => f.release());
+    expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
+    expect(snapshot).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      release();
+      await pending;
+    });
+  }
+  expect(
+    await screen.findByRole("dialog", { name: "Edit agent" }),
+  ).toBeVisible();
+  expect(snapshot).toHaveBeenCalledOnce();
+});
 
 for (const known of [false, true]) {
   it(`waits for confirmed membership with a ${known ? "cached" : "missing"} roster`, async () => {

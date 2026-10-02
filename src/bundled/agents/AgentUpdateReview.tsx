@@ -109,7 +109,7 @@ export function AgentUpdateReview({
       return;
     }
     const requestId = request.value.requestId;
-    setRefreshedRequestId(null);
+    if (controlState.busy || refreshedRequestId === requestId) return;
     let current = true;
     void refreshManagementInventory(control).then((ready) => {
       if (current && ready) setRefreshedRequestId(requestId);
@@ -117,7 +117,7 @@ export function AgentUpdateReview({
     return () => {
       current = false;
     };
-  }, [control, request]);
+  }, [control, controlState.busy, refreshedRequestId, request]);
   const matches = useMemo(() => {
     if (request?.value.action !== "update" || !connection.scope) return [];
     const community = connection.scope.split(":").slice(0, -1).join(":");
@@ -227,8 +227,10 @@ export function AgentUpdateReview({
 export async function refreshManagementInventory(
   control: AgentControl,
 ): Promise<boolean> {
+  if (control.snapshot().busy) return false;
   await control.refresh();
-  return control.snapshot().status === "ready";
+  const state = control.snapshot();
+  return state.status === "ready" && !state.busy;
 }
 
 export function matchingManagementAgents(

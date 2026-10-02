@@ -203,6 +203,7 @@ function ChannelWorkspace({
     navigation?.target.kind === "page" &&
     navigation.target.route?.params === "new-message";
   const list = useChannelList(queries.channels);
+  const initialList = useRef(list);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   const kitState = useSyncExternalStore(
     queries.channelKit.subscribe,
@@ -370,7 +371,8 @@ function ChannelWorkspace({
         channels.find((item) => item.channelType !== "session"));
   // Exact links and saved selections must respect the same Huddle-only entry point.
   const resolving =
-    resolvingMembership || !!requestedDestination?.metadataPending;
+    resolvingMembership ||
+    (list.status !== "error" && !!requestedDestination?.metadataPending);
   const current =
     requestedDestination?.huddle || requestedDestination?.metadataPending
       ? undefined
@@ -391,10 +393,15 @@ function ChannelWorkspace({
     }
     if (
       !cached &&
-      requestedChannel &&
       !resolving &&
-      list.status === "ready" &&
-      !current
+      !current &&
+      ((requestedChannel && list.status === "ready") ||
+        (list.status === "error" &&
+          // ensureList retries on mount, possibly after asynchronous cache restore.
+          // Do not settle a new navigation using the previous attempt's error.
+          list !== initialList.current &&
+          metadataPending &&
+          !emptyDestination))
     )
       navigation?.complete({ status: "failed", reason: "unavailable" });
     if (
@@ -424,7 +431,7 @@ function ChannelWorkspace({
     requestedChannel,
     resolving,
     current,
-    list.status,
+    list,
     navigation,
     viewer,
     scope,

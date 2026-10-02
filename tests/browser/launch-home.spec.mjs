@@ -131,7 +131,7 @@ test("launch opens Messages without exposing Home across responsive navigation, 
   expect(await page.evaluate(() => window.homeFrames)).toEqual([]);
 });
 
-test("default navigation completes when the metadata lookup returns no events", async ({
+test("default navigation retries failed metadata and accepts a completed empty lookup", async ({
   page,
   app,
 }) => {
@@ -140,6 +140,7 @@ test("default navigation completes when the metadata lookup returns no events", 
     releaseMetadata = resolve;
   });
   let held = false;
+  let failMetadata = true;
   await page.route("**/api/relay/**/query", async (route) => {
     if (
       route
@@ -149,7 +150,11 @@ test("default navigation completes when the metadata lookup returns no events", 
     ) {
       held = true;
       await gate;
-      await route.fulfill({ json: [] });
+      await route.fulfill(
+        failMetadata
+          ? { json: { error: "Invalid metadata response" } }
+          : { json: [] },
+      );
     } else await route.continue();
   });
   await page.goto(app.origin);
@@ -158,6 +163,13 @@ test("default navigation completes when the metadata lookup returns no events", 
     await page.evaluate(() => window.fixtureNavigation.snapshot().status),
   ).toBe("opening");
   releaseMetadata();
+  await expect(
+    page.getByRole("button", { name: "Retry navigation", exact: true }),
+  ).toBeVisible();
+  failMetadata = false;
+  await page
+    .getByRole("button", { name: "Retry navigation", exact: true })
+    .click();
   await expect
     .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
     .toBe("opened");
@@ -278,6 +290,7 @@ for (const huddle of [false, true]) {
       release = resolve;
     });
     let held = false;
+    let failMetadata = !huddle;
     const reads = [];
     await page.route("**/api/relay/**/query", async (route) => {
       const filters = route.request().postDataJSON();
@@ -292,6 +305,12 @@ for (const huddle of [false, true]) {
       if (filters.some((filter) => filter.kinds?.includes(39000))) {
         held = true;
         await gate;
+        if (failMetadata) {
+          await route.fulfill({
+            json: { error: "Invalid metadata response" },
+          });
+          return;
+        }
         const response = await route.fetch();
         const events = await response.json();
         await route.fulfill({
@@ -344,6 +363,20 @@ for (const huddle of [false, true]) {
       ).toHaveCount(0);
       expect(reads).toHaveLength(0);
     } else {
+      await expect(
+        page.getByRole("button", { name: "Retry navigation", exact: true }),
+      ).toBeVisible();
+      expect(
+        await page.evaluate(() => window.fixtureNavigation.snapshot().status),
+      ).toBe("failed");
+      await expect(
+        page.getByRole("textbox", { name: /^Message #/ }),
+      ).toHaveCount(0);
+      expect(reads).toHaveLength(0);
+      failMetadata = false;
+      await page
+        .getByRole("button", { name: "Retry navigation", exact: true })
+        .click();
       await expect(messages(page)).toBeVisible();
       await expect
         .poll(() =>

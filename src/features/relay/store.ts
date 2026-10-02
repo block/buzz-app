@@ -993,9 +993,14 @@ export function createChannelStore(
     // Hints/establishment during a read require a later read. During a quota
     // pause they retain an obligation, not another request with a deadline.
     if (force) listAgain = true;
+    if (!listBusy && performance.now() < listRetryAt) {
+      // A newly mounted reader still needs a settled result for its retry.
+      // Publish the existing error without bypassing the relay's cooldown.
+      if (list.status === "error") setList(list, true);
+      return;
+    }
     if (
       listBusy ||
-      performance.now() < listRetryAt ||
       (!listAgain &&
         list.status === "ready" &&
         rosterRefresh.state === "verified")

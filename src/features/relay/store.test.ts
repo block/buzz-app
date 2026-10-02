@@ -1,4 +1,5 @@
 import { assert, describe, expect, it, vi } from "vitest";
+import { ReadError } from "./errors";
 import { createRelaySession } from "./session";
 import type { HeadPersistence } from "./persistence";
 import {
@@ -687,3 +688,40 @@ it.each([
     }
   },
 );
+
+it("settles a metadata retry during quota cooldown without issuing another read", async () => {
+  const { store, queries, next, pending } = setup();
+  const clock = vi.spyOn(performance, "now").mockReturnValue(1000);
+  try {
+    queries.ensureList();
+    next().respond([roster(relay, "a", [viewer.pubkey])]);
+    await flush();
+    next().fail(new ReadError("unavailable", "Quota", 429, 5000));
+    await flush();
+    const failed = queries.list();
+    expect(failed.status).toBe("error");
+    expect(failed.channels[0]?.metadataPending).toBe(true);
+    const settled = vi.fn();
+    const stop = queries.subscribeList(settled);
+    queries.ensureList();
+    await flush();
+    expect(pending).toHaveLength(0);
+    expect(settled).toHaveBeenCalledOnce();
+    expect(queries.list()).not.toBe(failed);
+    expect(queries.list()).toEqual(failed);
+    stop();
+    clock.mockReturnValue(6001);
+    queries.ensureList();
+    next().respond([roster(relay, "a", [viewer.pubkey])]);
+    await flush();
+    next().respond([metadata(relay, "a", "Alpha")]);
+    await flush();
+    expect(queries.list()).toMatchObject({
+      status: "ready",
+      channels: [{ name: "Alpha", metadataPending: undefined }],
+    });
+  } finally {
+    store.dispose();
+    clock.mockRestore();
+  }
+});

@@ -17,6 +17,8 @@ import { loadGitHubDetails, type GitHubDetails } from "./data";
 import styles from "./GitHub.module.css";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import { GitHubBody } from "./GitHubBody";
+import { GitHubChecks } from "./GitHubChecks";
+import { relativeTimestamp } from "../../shared/relative-timestamp";
 
 export const inject = ["panels"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -205,7 +207,7 @@ function ObjectPanel({
             )}
           </div>
           {reference.kind !== "pull" && title}
-          {!!result.facts.length && (
+          {(!!result.facts.length || reference.kind === "pull") && (
             <dl className={styles.facts}>
               {result.facts.map(([label, value]) => (
                 <div key={label}>
@@ -259,6 +261,36 @@ function ObjectPanel({
                   </dd>
                 </div>
               ))}
+              {reference.kind === "pull" && (
+                <>
+                  <div>
+                    <dt>Checks</dt>
+                    <dd>
+                      <GitHubChecks
+                        repository={reference.repository}
+                        sha={result.headSha}
+                      />
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Last updated</dt>
+                    <dd>
+                      {result.updatedAt ? (
+                        <time
+                          dateTime={result.updatedAt}
+                          title={new Date(result.updatedAt).toLocaleString()}
+                        >
+                          {relativeTimestamp(
+                            Date.parse(result.updatedAt) / 1000,
+                          )}
+                        </time>
+                      ) : (
+                        "Unavailable"
+                      )}
+                    </dd>
+                  </div>
+                </>
+              )}
             </dl>
           )}
           {result.body && (

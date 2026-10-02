@@ -11,6 +11,9 @@
   --github-merged-bg: var(--surface-categorical-purple);
   --github-additions-text: var(--text-success);
   --github-deletions-text: var(--text-danger);
+  --github-checks-success: var(--text-success);
+  --github-checks-failure: var(--text-danger);
+  --github-checks-pending: var(--text-warning);
   padding: var(--space-5);
   overflow-y: auto;
   min-height: 0;
@@ -162,6 +165,24 @@
   min-width: 0;
   text-align: right;
   overflow-wrap: anywhere;
+}
+.checkSummary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-subtle);
+}
+.checkSummary svg {
+  flex-shrink: 0;
+}
+.checkSummary[data-check-state="success"] {
+  color: var(--github-checks-success);
+}
+.checkSummary[data-check-state="failure"] {
+  color: var(--github-checks-failure);
+}
+.checkSummary[data-check-state="pending"] {
+  color: var(--github-checks-pending);
 }
 .branch,
 .branchLabel {

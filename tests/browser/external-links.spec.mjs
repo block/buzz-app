@@ -527,3 +527,154 @@ test("GitHub owns status mappings while shared colors and accent stay independen
     contentType: "application/json",
   });
 });
+
+// Real tooltip portals, keyboard dismissal and semantic paint require a browser;
+// aggregation/error/pagination matrices remain in colocated unit tests.
+test("PR check summaries expose counts and relative update time in the built pane", async ({
+  page,
+  app,
+}, testInfo) => {
+  const samples = [
+    {
+      id: 6,
+      label: "Some not successful",
+      state: "failure",
+      token: "--text-danger",
+      conclusions: [
+        "failure",
+        "failure",
+        "cancelled",
+        "skipped",
+        ...Array(17).fill("success"),
+      ],
+      counts: "2 failing, 1 cancelled, 1 skipped, 17 successful checks",
+    },
+    {
+      id: 7,
+      label: "Pending",
+      state: "pending",
+      token: "--text-warning",
+      conclusions: [null, "success"],
+      counts: "1 pending, 1 successful checks",
+    },
+    {
+      id: 8,
+      label: "Successful",
+      state: "success",
+      token: "--text-success",
+      conclusions: ["skipped", "success", "success"],
+      counts: "1 skipped, 2 successful checks",
+    },
+  ];
+  const now = new Date("2026-10-02T00:00:00Z");
+  await page.clock.setFixedTime(now);
+  const updatedAt = new Date(now.getTime() - 180_000).toISOString();
+  await page.route("https://api.github.com/repos/block/buzz/**", (route) => {
+    const url = new URL(route.request().url());
+    const id = Number(
+      url.pathname.match(/(?:pulls\/|commits\/head-)(\d+)/)?.[1],
+    );
+    const sample = samples.find((item) => item.id === id);
+    if (!sample) throw new Error(`Unknown fixture ${url}`);
+    if (url.pathname.includes("/pulls/"))
+      return route.fulfill({
+        json: {
+          title: "A small improvement",
+          state: "open",
+          updated_at: updatedAt,
+          head: { sha: `head-${id}` },
+          additions: 174,
+          deletions: 28,
+          changed_files: 6,
+        },
+      });
+    if (url.pathname.endsWith("/status"))
+      return route.fulfill({
+        json: { state: "pending", total_count: 0, statuses: [] },
+      });
+    return route.fulfill({
+      json: {
+        total_count: sample.conclusions.length,
+        check_runs: sample.conclusions.map((conclusion) => ({
+          status: conclusion === null ? "in_progress" : "completed",
+          conclusion,
+        })),
+      },
+    });
+  });
+  await page.goto(app.origin);
+  await openMessages(page);
+  app.append(
+    "primary",
+    "alpha",
+    samples
+      .map(({ id }) => `https://github.com/block/buzz/pull/${id}`)
+      .join(" "),
+  );
+  const panel = page.getByRole("complementary", {
+    name: "GitHub",
+    exact: true,
+  });
+  for (const sample of samples) {
+    await link(page, `https://github.com/block/buzz/pull/${sample.id}`).click();
+    const summary = panel.getByText(sample.label, { exact: true });
+    await expect(summary).toBeVisible();
+    await expect(summary).toHaveAttribute("data-check-state", sample.state);
+    await expect(summary.locator("svg")).toHaveAttribute("aria-hidden", "true");
+    await expect(panel.locator("time")).toHaveText("3 minutes ago");
+    await expect(panel.locator("time")).toHaveAttribute("datetime", updatedAt);
+    for (const mode of ["light", "dark"]) {
+      await page.emulateMedia({ colorScheme: mode });
+      await expect(page.locator("html")).toHaveAttribute(
+        "data-color-mode",
+        mode,
+      );
+      const color = await panel.evaluate((node, token) => {
+        const probe = document.createElement("span");
+        node.append(probe);
+        probe.style.color = `var(${token})`;
+        const result = getComputedStyle(probe).color;
+        probe.remove();
+        return result;
+      }, sample.token);
+      await expect(summary).toHaveCSS("color", color);
+      await summary.hover();
+      const tooltip = page.getByRole("tooltip");
+      await expect(tooltip).toContainText(sample.counts);
+      await expect(tooltip).toContainText("PR head commit");
+      await expect(summary).toHaveAttribute(
+        "aria-describedby",
+        await tooltip.getAttribute("id"),
+      );
+      await expect(tooltip).not.toHaveAttribute("data-starting-style");
+      await page.screenshot({
+        path: testInfo.outputPath(`github-checks-${sample.state}-${mode}.png`),
+      });
+      // Pointer exit dismisses a hover hint. Escape is exercised below with
+      // focus on its trigger; outside focus retains the host's close-pane action.
+      await panel.getByRole("heading").hover();
+      await expect(tooltip).toHaveCount(0);
+    }
+    await panel
+      .getByRole("link", { name: `A small improvement #${sample.id}` })
+      .focus();
+    await page.keyboard.press("Tab");
+    await expect(summary).toBeFocused();
+    await expect(page.getByRole("tooltip")).toContainText(sample.counts);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+    await expect(panel).toBeVisible();
+  }
+  await page.setViewportSize({ width: 900, height: 950 });
+  await page
+    .locator("html")
+    .evaluate((node) => node.style.setProperty("--buzz-text-scale", "2"));
+  await expect(panel.getByText("Successful", { exact: true })).toBeVisible();
+  const facts = panel.locator("dl");
+  await expect
+    .poll(() => facts.evaluate((node) => node.scrollWidth <= node.clientWidth))
+    .toBe(true);
+  await page.screenshot({
+    path: testInfo.outputPath("github-checks-enlarged.png"),
+  });
+});

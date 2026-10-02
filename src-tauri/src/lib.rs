@@ -15,6 +15,7 @@ mod agent_models;
 mod agents;
 mod deep_links;
 mod dock;
+mod enterprise_auth;
 #[cfg(test)]
 #[path = "enterprise_adapter_url.rs"]
 mod enterprise_adapter_url;
@@ -63,6 +64,10 @@ use buzzodz_plugins::{
 };
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
+use enterprise_auth::{
+    cancel_enterprise_auth_login, get_enterprise_auth, start_enterprise_auth_login,
+    EnterpriseAuthHost,
+};
 use enterprise_login_gate::enterprise_login_gate;
 use harness_setup::{pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
@@ -398,6 +403,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         identity_create,
         identity_export,
         identity_prepare_remote_agent_authorization,
+        get_enterprise_auth,
+        start_enterprise_auth_login,
+        cancel_enterprise_auth_login,
         enterprise_login_gate,
         relay_sign,
         relay_decode_read_state,
@@ -542,6 +550,7 @@ pub fn run() {
     builder
         .manage(IdentityHost::default())
         .manage(archive::ArchiveHost::default())
+        .manage(EnterpriseAuthHost::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())

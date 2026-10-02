@@ -1,8 +1,10 @@
-//! Windows/Linux credential primitives shared by human and agent identity owners.
-//! Password encoding matches keyring's native Windows UTF-16 / Linux UTF-8 format.
-//! Create-only writes are serialized across cooperating app processes, not profiles.
+//! Native credential primitives shared by human and agent identity owners.
+//! Password encoding matches keyring's native platform format.
+//! Create-only and replacement writes are serialized across cooperating app
+//! processes, not profiles. macOS support is used by the enterprise session
+//! owner without changing existing human-key storage.
 //! Locks contain no secrets; missing/locked/broken secure storage never falls back.
-#![cfg(any(target_os = "windows", target_os = "linux", test))]
+#![cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
@@ -99,6 +101,30 @@ pub fn delete(service: &str, account: &str) -> Result<()> {
     delete_entry(&entry(service, account)?, &lock_root()?, service, account)
 }
 
+/// Replace one exact credential under the same lock used by create/delete.
+#[cfg(not(test))]
+pub fn replace(service: &str, account: &str, value: &[u8]) -> Result<()> {
+    replace_entry(
+        &entry(service, account)?,
+        &lock_root()?,
+        service,
+        account,
+        value,
+    )
+}
+
+/// Delete only when the stored bytes still equal the checked credential.
+#[cfg(not(test))]
+pub fn delete_if_matches(service: &str, account: &str, expected: &[u8]) -> Result<()> {
+    delete_if_matches_entry(
+        &entry(service, account)?,
+        &lock_root()?,
+        service,
+        account,
+        expected,
+    )
+}
+
 fn add_entry(
     entry: &impl Backend,
     root: &Path,
@@ -119,6 +145,36 @@ fn add_entry(
 fn delete_entry(entry: &impl Backend, root: &Path, service: &str, account: &str) -> Result<()> {
     let _lock = acquire(root, service, account)?;
     entry.delete()
+}
+
+fn replace_entry(
+    entry: &impl Backend,
+    root: &Path,
+    service: &str,
+    account: &str,
+    value: &[u8],
+) -> Result<()> {
+    let value = std::str::from_utf8(value).map_err(|_| Error::Corrupt)?;
+    let _lock = acquire(root, service, account)?;
+    match entry.read() {
+        Ok(_) | Err(Error::Absent) => entry.write(value),
+        Err(error) => Err(error),
+    }
+}
+
+fn delete_if_matches_entry(
+    entry: &impl Backend,
+    root: &Path,
+    service: &str,
+    account: &str,
+    expected: &[u8],
+) -> Result<()> {
+    let _lock = acquire(root, service, account)?;
+    match entry.read() {
+        Ok(value) if value.as_slice() == expected => entry.delete(),
+        Ok(_) | Err(Error::Absent) => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 struct Lock(File);

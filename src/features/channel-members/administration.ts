@@ -1,11 +1,14 @@
 import { getEventHash } from "nostr-tools";
 import type { RelayReader } from "../relay/reader";
 import type { RelayWriter } from "../relay/transport";
-import type { RelayEvent } from "../relay/events";
+import { newer, type RelayEvent } from "../relay/events";
+import { attestedOwner } from "../agents/owner-attestation";
 import { PublishRejected } from "../relay/outbox";
 import { lifecycleChannelId } from "../relay/channel-lifecycle-protocol";
 import {
   authorizeMemberChange,
+  canManageMember,
+  canRemoveMember,
   memberAdministrationTemplate,
   memberAuthority,
   memberChangeConfirmed,
@@ -25,7 +28,11 @@ export type MemberAdministrationState = Readonly<{
 }>;
 const empty: MemberAdministrationState = Object.freeze({
   status: "idle",
-  authority: Object.freeze({ roles: Object.freeze({}), canManage: false }),
+  authority: Object.freeze({
+    roles: Object.freeze({}),
+    canManage: false,
+    canRemoveOwnedAgent: false,
+  }),
 });
 const uncertain =
   "This request may have taken effect. Refresh members and roles to check its result; it will not be sent again.";
@@ -177,9 +184,52 @@ export function createMemberAdministration({
           error: undefined,
         });
         try {
+          let previousProfile: RelayEvent | undefined;
           const authorize = async () => {
             const { authority } = await read(id, signal);
-            authorizeMemberChange(authority, viewer, change);
+            let owner: string | undefined;
+            if (
+              change.role === "remove" &&
+              !canManageMember(authority, viewer, change.pubkey) &&
+              canRemoveMember(authority, viewer, change.pubkey, viewer)
+            ) {
+              // Verify current profile provenance, not display/local-inventory hints.
+              // The relay still authorizes against its persisted ownership mapping.
+              const profiles = await reader.read(
+                [
+                  {
+                    kinds: [0],
+                    authors: [change.pubkey],
+                    limit: 1,
+                    consistency: "strong",
+                  },
+                ],
+                { signal, fresh: true, priority: "foreground" },
+              );
+              signal.throwIfAborted();
+              assertAccess(id);
+              if (
+                profiles.some(
+                  (event) => event.kind !== 0 || event.pubkey !== change.pubkey,
+                )
+              )
+                throw new Error("Unexpected agent ownership response");
+              const profile = profiles.reduce<RelayEvent | undefined>(
+                newer,
+                undefined,
+              );
+              if (
+                profile &&
+                (!previousProfile ||
+                  newer(previousProfile, profile).id === profile.id)
+              ) {
+                owner = await attestedOwner(profile);
+                previousProfile = profile;
+              }
+              signal.throwIfAborted();
+              assertAccess(id);
+            }
+            authorizeMemberChange(authority, viewer, change, owner);
           };
           await authorize();
           const template = memberAdministrationTemplate(id, change);

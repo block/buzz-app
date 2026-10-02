@@ -1,3 +1,7 @@
+import contract from "./administration-contract.json";
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import type { ReadFilter, RelayEvent } from "../relay/events";
@@ -290,7 +294,7 @@ it.each(["ack", "lost", "read"])(
     });
     h.owner.clear();
     expect(h.owner.capability.snapshot(id)).toMatchObject({
-      authority: { roles: {}, canManage: false },
+      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
       operation: { change, status: "uncertain" },
     });
     await expect(h.owner.capability.run(id, change)).rejects.toThrow(
@@ -325,7 +329,7 @@ it.each(["access", "invalid ID"])(
     await h.owner.capability.refresh(channelId);
     expect(h.owner.capability.snapshot(channelId)).toMatchObject({
       status: "error",
-      authority: { roles: {}, canManage: false },
+      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
       error:
         failure === "access"
           ? "Channel access unavailable; refresh membership."
@@ -346,7 +350,7 @@ it.each(["clear", "dispose"] as const)(
     await pending;
     expect(h.owner.capability.snapshot(id)).toMatchObject({
       status: "idle",
-      authority: { roles: {}, canManage: false },
+      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
     });
   },
 );
@@ -528,7 +532,7 @@ it.each(["cache", "access"] as const)(
       await clear();
       expect(admin.snapshot(id)).toMatchObject({
         status: "idle",
-        authority: { roles: {}, canManage: false },
+        authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
         operation: { change, status: "uncertain" },
       });
       await recoverAccess();
@@ -540,6 +544,7 @@ it.each(["cache", "access"] as const)(
       expect(admin.snapshot(id).authority).toEqual({
         roles: {},
         canManage: false,
+        canRemoveOwnedAgent: false,
       });
       await recoverAccess();
       await expect(admin.run(id, change)).rejects.toThrow(/not be sent again/);
@@ -623,3 +628,198 @@ function required<T>(value: T | null | undefined): T {
   if (value == null) throw new Error("Missing fixture value");
   return value;
 }
+
+function agentProfile(ownerKey = key, created_at = 200, valid = true) {
+  const digest = new Uint8Array(
+    createHash("sha256").update(`nostr:agent-auth:${target}:`).digest(),
+  );
+  return finalizeEvent(
+    {
+      kind: 0,
+      created_at,
+      content: JSON.stringify({ is_agent: true }),
+      tags: valid
+        ? [
+            [
+              "auth",
+              getPublicKey(ownerKey),
+              "",
+              bytesToHex(schnorr.sign(digest, ownerKey)),
+            ],
+          ]
+        : [],
+    },
+    new Uint8Array(32).fill(4),
+  );
+}
+function ownedAgent(actor = "member", role = "bot") {
+  const h = harness(actor, role);
+  let profiles = [agentProfile()];
+  h.read.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.kinds?.includes(0)) ? profiles : h.events(),
+  );
+  return {
+    ...h,
+    setProfiles: (next: RelayEvent[]) => {
+      profiles = next;
+    },
+  };
+}
+const removeAgent: MemberChange = {
+  pubkey: target,
+  expectedRole: "bot",
+  role: "remove",
+};
+it.each(["member", "guest", "bot", "admin", "owner"])(
+  "allows an active %s to remove their verified agent without granting role edits",
+  async (actor) => {
+    const h = ownedAgent(actor);
+    await h.owner.capability.run(id, removeAgent);
+    expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+    expect(h.publish).toHaveBeenCalledOnce();
+    expect(h.sign.mock.calls[0]?.[0]).toMatchObject({
+      kind: 9001,
+      tags: [
+        ["h", id],
+        ["p", target],
+      ],
+    });
+    const ownershipReads = h.read.mock.calls.filter(([filters]) =>
+      filters.some((filter) => filter.kinds?.includes(0)),
+    );
+    expect(ownershipReads).toHaveLength(
+      actor === "owner" || actor === "admin" ? 0 : 2,
+    );
+    for (const [filters, options] of ownershipReads) {
+      expect(filters).toEqual([
+        { kinds: [0], authors: [target], limit: 1, consistency: "strong" },
+      ]);
+      expect(options).toMatchObject({ fresh: true, priority: "foreground" });
+    }
+  },
+);
+it.each([
+  "missing",
+  "foreign owner",
+  "invalid",
+  "newer invalid",
+  "wrong author",
+  "wrong kind",
+  "read failure",
+])("rejects %s ownership without signing", async (failure) => {
+  const h = ownedAgent();
+  if (failure === "missing") h.setProfiles([]);
+  if (failure === "foreign owner") h.setProfiles([agentProfile(relayKey)]);
+  if (failure === "invalid") h.setProfiles([agentProfile(key, 200, false)]);
+  if (failure === "newer invalid")
+    h.setProfiles([agentProfile(), agentProfile(key, 201, false)]);
+  if (failure === "wrong author")
+    h.setProfiles([{ ...agentProfile(), pubkey: viewer }]);
+  if (failure === "wrong kind") h.setProfiles([{ ...agentProfile(), kind: 9 }]);
+  if (failure === "read failure")
+    h.read.mockImplementation(async (filters) => {
+      if (filters.some((filter) => filter.kinds?.includes(0)))
+        throw new Error("unavailable");
+      return h.events();
+    });
+  await h.owner.capability.run(id, removeAgent);
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("failed");
+  expect(h.sign).not.toHaveBeenCalled();
+});
+it.each([
+  "nonmember",
+  "unknown actor",
+  "owner target",
+  "unknown target",
+  "dm",
+  "archived",
+  "session",
+  "role edit",
+])("owned-agent evidence does not bypass %s restrictions", async (failure) => {
+  const h = ownedAgent();
+  if (failure === "nonmember")
+    h.setEvents(
+      h.events().map((e) =>
+        e.kind === 39002
+          ? h.record(39002, [
+              ["d", id],
+              ["p", target, "", "bot"],
+            ])
+          : e,
+      ),
+    );
+  if (failure === "unknown actor") h.setRoles("unknown", "bot");
+  if (failure === "owner target") h.setRoles("member", "owner");
+  if (failure === "unknown target") h.setRoles("member", "unknown");
+  if (["dm", "archived", "session"].includes(failure))
+    h.setEvents([
+      h.record(39000, [
+        ["d", id],
+        ["t", failure === "dm" ? "dm" : "stream"],
+        ...(failure === "archived" ? [["archived", "true"]] : []),
+        ...(failure === "session" ? [["about", sessionDescription()]] : []),
+      ]),
+      ...h.events().slice(1),
+    ]);
+  if (failure === "role edit") h.setRoles("member", "member");
+  await h.owner.capability.run(
+    id,
+    failure === "role edit" ? change : removeAgent,
+  );
+  expect(h.sign).not.toHaveBeenCalled();
+});
+it.each([
+  "changed owner",
+  "missing",
+  "older",
+  "actor left",
+  "target promoted",
+  "access lost",
+])("rechecks %s before publishing an owned-agent removal", async (failure) => {
+  const h = ownedAgent();
+  h.sign.mockImplementationOnce(async (template) => {
+    if (failure === "changed owner")
+      h.setProfiles([agentProfile(relayKey, 201)]);
+    if (failure === "missing") h.setProfiles([]);
+    if (failure === "older") h.setProfiles([agentProfile(key, 199)]);
+    if (failure === "actor left")
+      h.setEvents(
+        h.events().map((e) =>
+          e.kind === 39002
+            ? h.record(39002, [
+                ["d", id],
+                ["p", target, "", "bot"],
+              ])
+            : e,
+        ),
+      );
+    if (failure === "target promoted") h.setRoles("member", "owner");
+    if (failure === "access lost") h.deny();
+    return finalizeEvent(template, key);
+  });
+  await h.owner.capability.run(id, removeAgent);
+  expect(h.sign).toHaveBeenCalledOnce();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+it("retains uncertain owned-agent removal for explicit readback, never replay", async () => {
+  const h = ownedAgent();
+  h.publish.mockRejectedValueOnce(new Error("connection lost"));
+  await h.owner.capability.run(id, removeAgent);
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("uncertain");
+  await expect(h.owner.capability.run(id, removeAgent)).rejects.toThrow(
+    /not be sent again/,
+  );
+  h.setRoles("member");
+  await h.owner.capability.refresh(id);
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+  expect(h.publish).toHaveBeenCalledOnce();
+});
+
+it("shares exact native/broker command admission fixtures", () => {
+  for (const { event } of contract.accepted)
+    expect(() =>
+      validateMemberAdministrationTemplate(event, viewer),
+    ).not.toThrow();
+  for (const { event } of contract.rejected)
+    expect(() => validateMemberAdministrationTemplate(event, viewer)).toThrow();
+});

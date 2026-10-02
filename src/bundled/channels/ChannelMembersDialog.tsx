@@ -93,6 +93,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   roleLabel,
   archived,
   ownerName,
+  verifiedOwner,
   target,
   clickable,
   ownerTarget,
@@ -120,6 +121,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   roleLabel: string | undefined;
   archived: boolean;
   ownerName: string;
+  verifiedOwner: string | undefined;
   target: string | undefined;
   clickable: boolean;
   ownerTarget: string | undefined;
@@ -231,6 +233,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
       channelId={channelId}
       pubkey={pubkey}
       name={name}
+      verifiedOwner={verifiedOwner}
       returnFocus={input}
       scrollport={scrollport}
       onViewProfile={clickable ? viewProfile : undefined}
@@ -788,6 +791,7 @@ export function ChannelMembersDialog({
                 ? undefined
                 : "Role unverified"))
         }
+        verifiedOwner={owner}
         ownerName={
           owner
             ? `${label(owner)}${owner === session.viewer ? " (you)" : ""}`

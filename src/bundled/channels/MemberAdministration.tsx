@@ -10,6 +10,7 @@ import {
 import type { RelaySession } from "../../features/relay/session";
 import {
   canManageMember,
+  canRemoveMember,
   editableMemberRoles,
   type MemberChange,
 } from "../../features/channel-members/administration-protocol";
@@ -113,6 +114,7 @@ export function MemberRow({
   channelId,
   pubkey,
   name,
+  verifiedOwner,
   returnFocus,
   scrollport,
   onViewProfile,
@@ -126,6 +128,7 @@ export function MemberRow({
   channelId: string;
   pubkey: string;
   name: string;
+  verifiedOwner?: string | undefined;
   returnFocus: React.RefObject<HTMLElement | null>;
   scrollport: React.RefObject<HTMLElement | null>;
   onViewProfile?: (() => boolean) | undefined;
@@ -157,10 +160,18 @@ export function MemberRow({
   const openingProfile = useRef(false);
   const role = state.authority.roles[pubkey] ?? "unknown";
   const permitted =
-    !invitationAction &&
-    capability.available &&
-    state.status === "ready" &&
-    canManageMember(state.authority, session.viewer ?? "", pubkey);
+    !invitationAction && capability.available && state.status === "ready";
+  const canEdit =
+    permitted && canManageMember(state.authority, session.viewer ?? "", pubkey);
+  const canRemove =
+    permitted &&
+    canRemoveMember(
+      state.authority,
+      session.viewer ?? "",
+      pubkey,
+      verifiedOwner,
+    );
+  const selectionPermitted = selection?.role === "remove" ? canRemove : canEdit;
   const locked =
     state.operation?.status === "pending" ||
     state.operation?.status === "uncertain";
@@ -200,10 +211,11 @@ export function MemberRow({
           Send message
         </MenuItem>
       )}
-      {permitted && !locked && (
+      {(canEdit || canRemove) && !locked && (
         <>
           <MenuSeparator />
-          {role !== "bot" &&
+          {canEdit &&
+            role !== "bot" &&
             editableMemberRoles
               // Guest assignment is hidden until its permission contract is settled.
               .filter((next) => next !== role && next !== "guest")
@@ -212,10 +224,12 @@ export function MemberRow({
                   Make {next}
                 </MenuItem>
               ))}
-          {role !== "bot" && <MenuSeparator />}
-          <MenuItem tone="danger" onClick={() => choose("remove")}>
-            Remove from channel
-          </MenuItem>
+          {canEdit && role !== "bot" && <MenuSeparator />}
+          {canRemove && (
+            <MenuItem tone="danger" onClick={() => choose("remove")}>
+              Remove from channel
+            </MenuItem>
+          )}
         </>
       )}
     </>
@@ -320,7 +334,7 @@ export function MemberRow({
           {menuItems}
         </MenuPopup>
       </ContextMenuRoot>
-      {selection && permitted && !locked && (
+      {selection && selectionPermitted && !locked && (
         <Dialog
           open
           title={

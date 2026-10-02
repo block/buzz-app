@@ -1,0 +1,400 @@
+{
+  "accepted": [
+    {
+      "name": "remove",
+      "event": {
+        "kind": 9001,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "admin",
+      "event": {
+        "kind": 9000,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ],
+          ["role", "admin"]
+        ]
+      }
+    },
+    {
+      "name": "member",
+      "event": {
+        "kind": 9000,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ],
+          ["role", "member"]
+        ]
+      }
+    },
+    {
+      "name": "guest",
+      "event": {
+        "kind": 9000,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ],
+          ["role", "guest"]
+        ]
+      }
+    }
+  ],
+  "rejected": [
+    {
+      "name": "wrong kind",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "content",
+      "event": {
+        "kind": 9001,
+        "created_at": 1700000010,
+        "content": "injected",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "negative timestamp",
+      "event": {
+        "kind": 9001,
+        "created_at": -1,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "fractional timestamp",
+      "event": {
+        "kind": 9001,
+        "created_at": 1.5,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "unsafe timestamp",
+      "event": {
+        "kind": 9001,
+        "created_at": 9007199254740992,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "extra tag",
+      "event": {
+        "kind": 9001,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ],
+          ["x", "y"]
+        ]
+      }
+    },
+    {
+      "name": "duplicate target",
+      "event": {
+        "kind": 9001,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "wrong order",
+      "event": {
+        "kind": 9001,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ],
+          ["h", "11111111-1111-4111-8111-111111111111"]
+        ]
+      }
+    },
+    {
+      "name": "bad channel",
+      "event": {
+        "kind": 9001,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "wrong"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "uppercase channel",
+      "event": {
+        "kind": 9001,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "uppercase target",
+      "event": {
+        "kind": 9001,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "bad target",
+      "event": {
+        "kind": 9001,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [["h", "11111111-1111-4111-8111-111111111111"], ["p", "oops"]]
+      }
+    },
+    {
+      "name": "long target tag",
+      "event": {
+        "kind": 9001,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "member"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "missing target",
+      "event": {
+        "kind": 9001,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [["h", "11111111-1111-4111-8111-111111111111"]]
+      }
+    },
+    {
+      "name": "long channel tag",
+      "event": {
+        "kind": 9001,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111", "extra"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "role missing",
+      "event": {
+        "kind": 9000,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "owner elevation",
+      "event": {
+        "kind": 9000,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ],
+          ["role", "owner"]
+        ]
+      }
+    },
+    {
+      "name": "bot conversion",
+      "event": {
+        "kind": 9000,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ],
+          ["role", "bot"]
+        ]
+      }
+    },
+    {
+      "name": "blank role",
+      "event": {
+        "kind": 9000,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ],
+          ["role", ""]
+        ]
+      }
+    },
+    {
+      "name": "duplicate role",
+      "event": {
+        "kind": 9000,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ],
+          ["role", "admin"],
+          ["role", "member"]
+        ]
+      }
+    },
+    {
+      "name": "removal with role",
+      "event": {
+        "kind": 9001,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ],
+          ["role", "member"]
+        ]
+      }
+    },
+    {
+      "name": "auth injection",
+      "event": {
+        "kind": 9001,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "11111111-1111-4111-8111-111111111111"],
+          [
+            "p",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ],
+          ["auth", "x", "y", "z"]
+        ]
+      }
+    }
+  ]
+}

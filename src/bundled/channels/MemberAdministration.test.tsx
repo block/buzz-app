@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import "@testing-library/jest-dom/vitest";
 import {
   act,
@@ -47,11 +50,35 @@ async function setup(
   messageSupport = false,
   messageNavigation = true,
   initialReads?: { names?: Promise<void>; roster?: Promise<void> },
+  ownership?: "own" | "other" | "invalid",
 ) {
   const viewer = keypair(),
     relay = keypair(),
     target = keypair(),
     owner = keypair();
+  const manager = ownership === "other" ? owner : viewer;
+  const digest = new Uint8Array(
+    createHash("sha256").update(`nostr:agent-auth:${target.pubkey}:`).digest(),
+  );
+  const targetProfile = ownership
+    ? signed(target, {
+        kind: 0,
+        content: JSON.stringify({ name: "Morgan", is_agent: targetAgent }),
+        tags: [
+          [
+            "auth",
+            manager.pubkey,
+            "",
+            bytesToHex(
+              schnorr.sign(
+                digest,
+                ownership === "invalid" ? target.secret : manager.secret,
+              ),
+            ),
+          ],
+        ],
+      })
+    : profile(target, { name: "Morgan", is_agent: targetAgent });
   let role: string | undefined = targetRole;
   let tick = 1700000000;
   let lag = false;
@@ -88,7 +115,7 @@ async function setup(
       ],
     }),
     profile(viewer, { name: "Carl" }),
-    profile(target, { name: "Morgan", is_agent: targetAgent }),
+    targetProfile,
     profile(owner, { name: "Owner" }),
   ];
   const publish = vi.fn(async (event: RelayEvent) => {
@@ -1377,3 +1404,89 @@ it("returns to All when a refreshed role group disappears and resets on reopen",
   await screen.findByText("Morgan");
   expect(filter()).toHaveTextContent("All");
 });
+
+it.each(["bot", "member"])(
+  "lets a regular member confirm/cancel removal of their own %s agent, without role controls",
+  async (role) => {
+    const t = await setup(
+      "member",
+      role,
+      true,
+      undefined,
+      true,
+      undefined,
+      false,
+      true,
+      undefined,
+      "own",
+    );
+    await screen.findByRole("button", {
+      name: "Open owner profile: Carl (you)",
+    });
+    await t.user.click(
+      screen.getByRole("button", { name: "Actions for Morgan" }),
+    );
+    const remove = await screen.findByRole("menuitem", {
+      name: "Remove from channel",
+    });
+    expect(
+      screen.queryByRole("menuitem", { name: /^Make / }),
+    ).not.toBeInTheDocument();
+    await t.user.click(remove);
+    const dialog = await screen.findByRole("dialog", {
+      name: "Remove member?",
+    });
+    await vi.waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", { name: "Cancel" }),
+      ).toHaveFocus(),
+    );
+    await t.user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(t.publish).not.toHaveBeenCalled();
+    const confirm = await t.choose("Remove from channel");
+    await t.user.click(
+      within(confirm).getByRole("button", { name: "Remove member" }),
+    );
+    await screen.findByText("Member change confirmed.");
+    expect(t.publish).toHaveBeenCalledOnce();
+    expect(t.publish.mock.calls[0]?.[0]).toMatchObject({
+      kind: 9001,
+      tags: [
+        ["h", id],
+        ["p", t.target.pubkey],
+      ],
+    });
+  },
+);
+it.each(["other", "invalid"] as const)(
+  "does not expose removal for %s ownership to a regular member",
+  async (ownership) => {
+    const t = await setup(
+      "member",
+      "bot",
+      true,
+      undefined,
+      true,
+      undefined,
+      false,
+      true,
+      undefined,
+      ownership,
+    );
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Refresh member data" }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+    await t.user.click(
+      screen.getByRole("button", { name: "Actions for Morgan" }),
+    );
+    await screen.findByRole("menuitem", { name: "View profile" });
+    expect(
+      screen.queryByRole("menuitem", { name: "Remove from channel" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /^Make / }),
+    ).not.toBeInTheDocument();
+  },
+);

@@ -23,6 +23,23 @@ pub enum Error {
 }
 type Result<T> = std::result::Result<T, Error>;
 
+#[cfg(target_os = "macos")]
+fn platform_failure(error: &(dyn std::error::Error + 'static)) -> Error {
+    if error
+        .downcast_ref::<security_framework::base::Error>()
+        .is_some_and(|error| matches!(error.code(), -128 | -25293 | -25308))
+    {
+        Error::Denied
+    } else {
+        Error::Unavailable
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn platform_failure(_: &(dyn std::error::Error + 'static)) -> Error {
+    Error::Unavailable
+}
+
 fn error(value: keyring::Error) -> Error {
     match value {
         keyring::Error::NoEntry => Error::Absent,
@@ -32,6 +49,7 @@ fn error(value: keyring::Error) -> Error {
             Error::Corrupt
         }
         keyring::Error::Ambiguous(_) => Error::Corrupt,
+        keyring::Error::PlatformFailure(error) => platform_failure(error.as_ref()),
         _ => Error::Unavailable,
     }
 }

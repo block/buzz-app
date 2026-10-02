@@ -153,18 +153,33 @@ struct PersistedSession {
     session: StoredSession,
 }
 
-#[derive(Serialize, Deserialize)]
+// Zeroizing covers buffers and fields owned here; HTTP, serde, and OS storage
+// implementations may retain internal copies outside this module's boundary.
+#[derive(Serialize)]
+struct StoredRecordRef<'a> {
+    version: u8,
+    session_token: &'a str,
+    expires_at: &'a str,
+}
+
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredRecord {
     version: u8,
-    session_token: String,
+    session_token: Zeroizing<String>,
     expires_at: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct ExchangeResponse {
-    session_token: String,
+    session_token: Zeroizing<String>,
     expires_at: String,
+}
+
+#[derive(Serialize)]
+struct ExchangeRequest<'a> {
+    code: &'a str,
+    handoff_secret: &'a str,
 }
 
 #[derive(Debug, Deserialize)]
@@ -335,24 +350,29 @@ impl EnterpriseAuthHost {
         generation: u64,
     ) -> Result<Option<EnterpriseAuthInfo>> {
         let _commit = self.commit.lock().await;
-        let should_invalidate = {
+        let invalidation_generation = {
             let mut state = self
                 .login
                 .lock()
                 .map_err(|_| "Enterprise authentication state is unavailable".to_owned())?;
             if state.generation != generation {
-                false
+                None
             } else {
-                Self::bump_generation(&mut state);
-                true
+                Some(Self::bump_generation(&mut state))
             }
         };
-        if !should_invalidate {
+        let Some(invalidation_generation) = invalidation_generation else {
             return Ok(self.cached_info(scope));
+        };
+        let deletion = self.delete_if_matches(scope, raw).await;
+        if deletion.is_ok() {
+            self.clear_memory(scope, Some(token));
         }
-        self.delete_if_matches(scope, raw).await?;
-        self.clear_memory(scope, Some(token));
-        Ok(None)
+        match (deletion, self.fence_generation(invalidation_generation)) {
+            (Err(error), _) => Err(error),
+            (Ok(()), Ok(())) => Ok(None),
+            (Ok(()), Err(error)) => Err(error),
+        }
     }
 
     pub(crate) async fn start<R: Runtime>(
@@ -412,26 +432,32 @@ impl EnterpriseAuthHost {
             state.generation
         };
         let _commit = self.commit.lock().await;
-        let should_clear = {
+        let clear_generation = {
             let mut state = self
                 .login
                 .lock()
                 .map_err(|_| "Enterprise authentication state is unavailable".to_owned())?;
             if state.generation != generation {
-                false
+                None
             } else {
-                Self::bump_generation(&mut state);
+                let clear_generation = Self::bump_generation(&mut state);
                 self.clear_memory(&scope, None);
-                true
+                Some(clear_generation)
             }
         };
-        if !should_clear {
-            return Ok(());
-        }
-        let Some(persisted) = self.read(&scope).await? else {
+        let Some(clear_generation) = clear_generation else {
             return Ok(());
         };
-        self.delete_if_matches(&scope, persisted.raw).await
+        let storage = match self.read(&scope).await {
+            Ok(Some(persisted)) => self.delete_if_matches(&scope, persisted.raw).await,
+            Ok(None) => Ok(()),
+            Err(error) => Err(error),
+        };
+        match (storage, self.fence_generation(clear_generation)) {
+            (Err(error), _) => Err(error),
+            (Ok(()), Ok(())) => Ok(()),
+            (Ok(()), Err(error)) => Err(error),
+        }
     }
 
     async fn run_login<R: Runtime>(
@@ -512,6 +538,19 @@ impl EnterpriseAuthHost {
     fn bump_generation(state: &mut LoginState) -> u64 {
         state.generation = state.generation.wrapping_add(1);
         state.generation
+    }
+
+    fn fence_generation(&self, expected: u64) -> Result<()> {
+        // The commit owner remains held by both invalidation callers while this
+        // final fence closes the window around their storage operation.
+        let mut state = self
+            .login
+            .lock()
+            .map_err(|_| "Enterprise authentication state is unavailable".to_owned())?;
+        if state.generation == expected {
+            Self::bump_generation(&mut state);
+        }
+        Ok(())
     }
 
     fn finish(&self, id: &str) {
@@ -806,10 +845,10 @@ fn remember_canceled(canceled: &mut VecDeque<String>, id: &str) {
 }
 
 fn encode_session(session: &StoredSession) -> Result<Zeroizing<Vec<u8>>> {
-    let value = serde_json::to_vec(&StoredRecord {
+    let value = serde_json::to_vec(&StoredRecordRef {
         version: 1,
-        session_token: session.token.to_string(),
-        expires_at: session.expires_at.clone(),
+        session_token: session.token.as_str(),
+        expires_at: &session.expires_at,
     })
     .map_err(|_| "Enterprise authentication session could not be saved".to_owned())?;
     Ok(Zeroizing::new(value))
@@ -829,7 +868,7 @@ fn decode_session(raw: Zeroizing<Vec<u8>>) -> Result<StoredSession> {
         return Err("Saved enterprise authentication is corrupt".into());
     }
     Ok(StoredSession {
-        token: Zeroizing::new(record.session_token),
+        token: record.session_token,
         expires_at: record.expires_at,
     })
 }
@@ -892,10 +931,10 @@ async fn exchange(
     let http_client = client()?;
     let response = http_client
         .post(api_url(base, "/v1/login/exchange")?)
-        .json(&serde_json::json!({
-            "code": code,
-            "handoff_secret": handoff_secret,
-        }))
+        .json(&ExchangeRequest {
+            code,
+            handoff_secret,
+        })
         .send()
         .await
         .map_err(|_| "Enterprise authentication exchange failed".to_owned())?;
@@ -925,7 +964,7 @@ fn session_from_exchange(response: ExchangeResponse) -> Result<StoredSession> {
         return Err("Enterprise authentication exchange was invalid".into());
     }
     Ok(StoredSession {
-        token: Zeroizing::new(response.session_token),
+        token: response.session_token,
         expires_at: response.expires_at,
     })
 }
@@ -946,9 +985,10 @@ async fn check_session(
         Ok(url) => url,
         Err(error) => return SessionCheck::Transient(error),
     };
+    let authorization = Zeroizing::new(format!("Bearer {}", session.token.as_str()));
     let response = http_client
         .get(url)
-        .header(AUTHORIZATION, format!("Bearer {}", session.token.as_str()))
+        .header(AUTHORIZATION, authorization.as_str())
         .send()
         .await;
     let response = match response {
@@ -1039,6 +1079,10 @@ async fn read_json<T: DeserializeOwned>(
 struct FixtureStore {
     values: Mutex<HashMap<(String, String), Vec<u8>>>,
     error: Mutex<Option<StoreError>>,
+    replace_error: Mutex<Option<StoreError>>,
+    delete_error: Mutex<Option<StoreError>>,
+    delete_started: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    release_delete: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
 }
 
 #[cfg(test)]
@@ -1066,6 +1110,9 @@ impl CredentialStore for FixtureStore {
         account: &str,
         value: &[u8],
     ) -> std::result::Result<(), StoreError> {
+        if let Some(error) = *self.replace_error.lock().unwrap() {
+            return Err(error);
+        }
         self.values
             .lock()
             .unwrap()
@@ -1079,6 +1126,19 @@ impl CredentialStore for FixtureStore {
         account: &str,
         expected: &[u8],
     ) -> std::result::Result<(), StoreError> {
+        if let Some(error) = *self.delete_error.lock().unwrap() {
+            return Err(error);
+        }
+        if let Some(started) = self.delete_started.lock().unwrap().take() {
+            started.send(()).unwrap();
+            self.release_delete
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap()
+                .recv()
+                .unwrap();
+        }
         let mut values = self.values.lock().unwrap();
         let key = (service.to_owned(), account.to_owned());
         if values
@@ -1500,7 +1560,16 @@ mod tests {
                             if hold_second {
                                 release_second.notified().await;
                             }
-                            (second_status, Json(serde_json::json!({})))
+                            (
+                                second_status,
+                                Json(if second_status.is_success() {
+                                    serde_json::json!({
+                                        "expires_at": "2030-01-01T00:00:00Z"
+                                    })
+                                } else {
+                                    serde_json::json!({})
+                                }),
+                            )
                         }
                     }
                 }),
@@ -1760,6 +1829,93 @@ mod tests {
                 raw.as_slice()
             );
         }
+    }
+
+    #[tokio::test]
+    async fn storage_write_and_cleanup_failures_are_recoverable() {
+        let scope = scope_for_adapter(
+            "https://adapter.example",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        let old = StoredSession {
+            token: Zeroizing::new("old-session".into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        };
+        let newer = StoredSession {
+            token: Zeroizing::new("new-session".into()),
+            expires_at: "2031-01-01T00:00:00Z".into(),
+        };
+        let store = Arc::new(FixtureStore::default());
+        let old_raw = encode_session(&old).unwrap();
+        store
+            .replace(scope.service, &scope.account, &old_raw)
+            .unwrap();
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        let (cancel, _receiver) = oneshot::channel();
+        assert!(host.begin("write-retry".into(), cancel).unwrap());
+        *store.replace_error.lock().unwrap() = Some(StoreError::Denied);
+        assert_eq!(
+            host.commit_session(
+                &scope,
+                "write-retry",
+                newer.clone(),
+                EnterpriseAuthInfo {
+                    expires_at: "2031-01-01T00:00:00Z".into(),
+                },
+            )
+            .await
+            .unwrap_err(),
+            "Enterprise secure storage access was denied; unlock it and retry"
+        );
+        assert!(host.cached(&scope).is_none());
+        assert_eq!(store.read(scope.service, &scope.account).unwrap(), old_raw);
+
+        *store.replace_error.lock().unwrap() = None;
+        assert!(host
+            .commit_session(
+                &scope,
+                "write-retry",
+                newer,
+                EnterpriseAuthInfo {
+                    expires_at: "2031-01-01T00:00:00Z".into(),
+                },
+            )
+            .await
+            .is_ok());
+        assert_eq!(host.cached(&scope).unwrap().token.as_str(), "new-session");
+
+        let expired = StoredSession {
+            token: Zeroizing::new("expired-session".into()),
+            expires_at: "2020-01-01T00:00:00Z".into(),
+        };
+        let expired_raw = encode_session(&expired).unwrap();
+        let cleanup_store = Arc::new(FixtureStore::default());
+        cleanup_store
+            .replace(scope.service, &scope.account, &expired_raw)
+            .unwrap();
+        let cleanup_host = EnterpriseAuthHost::with_store(cleanup_store.clone());
+        *cleanup_store.delete_error.lock().unwrap() = Some(StoreError::Denied);
+        assert_eq!(
+            cleanup_host.get_scope(scope.clone()).await.unwrap_err(),
+            "Enterprise secure storage access was denied; unlock it and retry"
+        );
+        assert!(cleanup_host.cached(&scope).is_none());
+        assert_eq!(
+            cleanup_store.read(scope.service, &scope.account).unwrap(),
+            expired_raw
+        );
+
+        *cleanup_store.delete_error.lock().unwrap() = None;
+        assert!(cleanup_host
+            .get_scope(scope.clone())
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            cleanup_store.read(scope.service, &scope.account),
+            Err(StoreError::Absent)
+        );
     }
 
     #[tokio::test]
@@ -2104,6 +2260,99 @@ mod tests {
         server.release_first.notify_one();
         drop(commit_guard);
         clear.await.unwrap().unwrap();
+        assert!(restore.await.unwrap().unwrap().is_none());
+        assert!(host.cached(&scope).is_none());
+        assert_eq!(
+            store.read(scope.service, &scope.account),
+            Err(StoreError::Absent)
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_fences_a_restore_started_during_delete() {
+        let server = HeldSessionServer::spawn().await;
+        let viewer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let scope = scope_for_adapter(&server.base, viewer).unwrap();
+        let session = StoredSession {
+            token: Zeroizing::new("old-session".into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        };
+        let store = Arc::new(FixtureStore::default());
+        let raw = encode_session(&session).unwrap();
+        store.replace(scope.service, &scope.account, &raw).unwrap();
+        let (delete_started, delete_started_receiver) = mpsc::channel();
+        let (release_delete, release_delete_receiver) = mpsc::channel();
+        *store.delete_started.lock().unwrap() = Some(delete_started);
+        *store.release_delete.lock().unwrap() = Some(release_delete_receiver);
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        let clear = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            async move { host.clear_scope(scope).await }
+        });
+        tokio::task::spawn_blocking(move || delete_started_receiver.recv().unwrap())
+            .await
+            .unwrap();
+
+        let restore = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            async move { host.get_scope(scope).await }
+        });
+        server.first_started.notified().await;
+        server.release_first.notify_one();
+        release_delete.send(()).unwrap();
+
+        assert!(clear.await.unwrap().is_ok());
+        assert!(restore.await.unwrap().unwrap().is_none());
+        assert!(host.cached(&scope).is_none());
+        assert_eq!(
+            store.read(scope.service, &scope.account),
+            Err(StoreError::Absent)
+        );
+    }
+
+    #[tokio::test]
+    async fn invalidation_fences_a_restore_started_during_delete() {
+        let server =
+            HeldSessionServer::spawn_with_statuses(StatusCode::UNAUTHORIZED, StatusCode::OK).await;
+        let viewer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let scope = scope_for_adapter(&server.base, viewer).unwrap();
+        let session = StoredSession {
+            token: Zeroizing::new("old-session".into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        };
+        let store = Arc::new(FixtureStore::default());
+        let raw = encode_session(&session).unwrap();
+        store.replace(scope.service, &scope.account, &raw).unwrap();
+        let (delete_started, delete_started_receiver) = mpsc::channel();
+        let (release_delete, release_delete_receiver) = mpsc::channel();
+        *store.delete_started.lock().unwrap() = Some(delete_started);
+        *store.release_delete.lock().unwrap() = Some(release_delete_receiver);
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        let client = test_http_client(Duration::from_secs(1));
+        let invalidation = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            let client = client.clone();
+            async move { host.get_scope_with_client(scope, &client).await }
+        });
+        server.first_started.notified().await;
+        server.release_first.notify_one();
+        tokio::task::spawn_blocking(move || delete_started_receiver.recv().unwrap())
+            .await
+            .unwrap();
+
+        let restore = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            let client = client.clone();
+            async move { host.get_scope_with_client(scope, &client).await }
+        });
+        server.second_started.notified().await;
+        release_delete.send(()).unwrap();
+
+        assert!(invalidation.await.unwrap().unwrap().is_none());
         assert!(restore.await.unwrap().unwrap().is_none());
         assert!(host.cached(&scope).is_none());
         assert_eq!(

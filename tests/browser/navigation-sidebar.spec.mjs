@@ -549,6 +549,38 @@ test("navigation reveals the current sidebar entry without moving a visible one"
   await expect(group.locator("summary")).toBeInViewport({ ratio: 1 });
 });
 
+// The closed narrow drawer is display: none, and opening it does not
+// rerender the sidebar, so a reveal that waited for layout must retry then.
+test("a reveal while the narrow drawer is closed runs when the drawer opens", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await page.setViewportSize({ width: 600, height: 700 });
+  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
+  // Role queries skip the hidden drawer; this locator does not.
+  const alpha = page.locator(
+    'nav[aria-label="Subscribed channels"] [data-channel-id="alpha"]',
+  );
+  await openPage(page, "Projects");
+  await button(page, "Show navigation").click();
+  await expect(sidebar).toBeVisible();
+  const bottom = await sidebar.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    return element.scrollTop;
+  });
+  expect(bottom).toBeGreaterThan(100);
+  await button(page, "Hide navigation").click();
+  await expect(sidebar).toBeHidden();
+  await button(page, "Go back").click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+  await expect(alpha).toHaveAttribute("aria-current", "page");
+  await button(page, "Show navigation").click();
+  await expect(alpha).toBeInViewport({ ratio: 1 });
+});
+
 for (const destination of [
   "Projects",
   "Agents",

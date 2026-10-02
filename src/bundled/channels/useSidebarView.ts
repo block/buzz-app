@@ -157,14 +157,27 @@ export function useSidebarView(
   }, [location]);
   // The entry can render after navigation (roster startup, a new DM), so
   // retry after each commit until it exists. Runs after the restore above.
+  const attempt = useRef(() => {});
   useLayoutEffect(() => {
-    if (!ready || !reveal.current || !list.current) return;
-    const top = revealCurrent(list.current);
-    if (top === false) return;
-    moved.current = scroll(list.current, top) ?? moved.current;
-    intent.current = { ...intent.current, location: reveal.current };
-    reveal.current = restored.current = undefined;
+    attempt.current = () => {
+      if (!ready || !reveal.current || !list.current) return;
+      const top = revealCurrent(list.current);
+      if (top === false) return;
+      moved.current = scroll(list.current, top) ?? moved.current;
+      intent.current = { ...intent.current, location: reveal.current };
+      reveal.current = restored.current = undefined;
+    };
+    attempt.current();
   });
+  // A hidden sidebar (the closed narrow drawer) has no layout, and showing it
+  // does not rerender this list, so also retry when the viewport gets a size.
+  useLayoutEffect(() => {
+    const viewport = list.current;
+    if (!viewport) return;
+    const observer = new ResizeObserver(() => attempt.current());
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
   useLayoutEffect(() => {
     const save = () => {
       if (!pending.current && list.current)

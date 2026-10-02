@@ -525,7 +525,10 @@ async fn wait_for_callback(
     canceled: &mut oneshot::Receiver<()>,
 ) -> Result<String> {
     tokio::select! {
-        result = callback => result.map_err(|_| "Enterprise login callback was interrupted".to_owned()),
+        result = callback => match result {
+            Ok(result) => result,
+            Err(_) => Err("Enterprise login callback was interrupted".to_owned()),
+        },
         _ = &mut *canceled => Err("Enterprise authentication was canceled".to_owned()),
         _ = tokio::time::sleep(LOGIN_TIMEOUT) => Err("Enterprise authentication timed out".to_owned()),
     }
@@ -1164,6 +1167,21 @@ mod tests {
                 .await
                 .unwrap_err(),
             "Enterprise login callback was interrupted"
+        );
+    }
+
+    #[tokio::test]
+    async fn callback_error_is_returned_for_listener_cleanup() {
+        let (sender, callback) = oneshot::channel();
+        sender
+            .send(Err("Enterprise authentication was denied".into()))
+            .unwrap();
+        let (_cancel_sender, mut canceled) = oneshot::channel();
+        assert_eq!(
+            wait_for_callback(callback, &mut canceled)
+                .await
+                .unwrap_err(),
+            "Enterprise authentication was denied"
         );
     }
 

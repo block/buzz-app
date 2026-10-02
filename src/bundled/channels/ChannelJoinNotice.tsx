@@ -3,17 +3,19 @@ import type { ChannelLifecycleCapability } from "../../features/relay/channel-li
 import { ChannelLifecycleUnconfirmed } from "../../features/relay/channel-lifecycle";
 import { Button } from "../../shared/design-system/ui/Button";
 
-/** A public preview offers Join; the membership roster, not this notice, enables the composer. */
+/** A public preview offers Join; the membership roster, not this notice, enables the composer.
+ * Confirmed membership can unmount this notice before its run settles, so the
+ * page records the join intent when the run starts, not when it resolves. */
 export function ChannelJoinNotice({
   channelId,
   lifecycle,
   joinable,
-  onJoined,
+  onJoin,
 }: {
   channelId: string;
   lifecycle?: ChannelLifecycleCapability | undefined;
   joinable: boolean;
-  onJoined(): void;
+  onJoin(): void;
 }) {
   const [state, setState] = useState<{ channelId: string; error?: string }>();
   const controller = useRef<AbortController | undefined>(undefined);
@@ -26,11 +28,9 @@ export function ChannelJoinNotice({
     const current = new AbortController();
     controller.current = current;
     setState({ channelId });
+    onJoin();
     lifecycle.run("join", channelId, current.signal).then(
       () => {
-        // Confirmed membership unmounts this notice and aborts its controller
-        // before the run settles. The completed join still belongs to the page.
-        onJoined();
         if (!current.signal.aborted) setState(undefined);
       },
       (reason: unknown) => {

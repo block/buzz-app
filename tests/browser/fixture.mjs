@@ -1230,6 +1230,23 @@ export const test = base.extend({
           ]
         : events;
     };
+    let heldJoin;
+    // Live roster replacement, as the relay republishes after a join. It
+    // reaches the app through its open channel REQ, not a join response.
+    const deliverRoster = (id, community) =>
+      relay.publish(
+        community,
+        sign(
+          39002,
+          [
+            ["d", id],
+            ["p", viewer, "", "member"],
+          ],
+          "",
+          relayKey,
+          Math.floor(Date.now() / 1000),
+        ),
+      );
     const acceptReadPublication = (community, event) => {
       expect(verifyEvent(event)).toBe(true);
       expect(event.pubkey).toBe(viewer);
@@ -1239,7 +1256,10 @@ export const test = base.extend({
         if (!rosterIds.includes(OPEN_CHANNEL)) rosterIds.push(OPEN_CHANNEL);
         report.lifecyclePublications ??= [];
         report.lifecyclePublications.push(event);
-        return;
+        if (!heldJoin) return;
+        // The relay republishes the roster live before the requester's OK.
+        deliverRoster(OPEN_CHANNEL, community);
+        return heldJoin.promise;
       }
       if (channelLifecycle && [9002, 9008, 9022, 41012].includes(event.kind)) {
         const id = event.tags.find(([key]) => key === "h")?.[1];
@@ -1876,6 +1896,18 @@ export const test = base.extend({
         omitChannel(id) {
           expect(rosterIds).toContain(id);
           rosterIds.splice(rosterIds.indexOf(id), 1);
+        },
+        // Hold the join's OK; its live roster still arrives first.
+        holdJoin() {
+          let release;
+          const promise = new Promise((resolve) => {
+            release = resolve;
+          });
+          heldJoin = { promise };
+          return () => {
+            heldJoin = undefined;
+            release();
+          };
         },
         // Signed upstream-only simulations: never a browser publication or live relay.
         activity({

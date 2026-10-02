@@ -636,3 +636,80 @@ it("finds active public channels the viewer has not joined without adding them t
     owner.dispose();
   }
 });
+
+it("returns keyboard focus to search when channel lookup retries, through repeated failure and recovery", async () => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  const relay = keypair();
+  const viewer = keypair();
+  const other = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const open = [
+    ["public", ""],
+    ["t", "stream"],
+  ];
+  const discovery = [
+    metadata(relay, "joined", "other-chat", 1700000000, open),
+    roster(relay, "joined", [viewer.pubkey]),
+    metadata(relay, "lobby", "crew-lobby", 1700000000, open),
+    roster(relay, "lobby", [other.pubkey]),
+  ];
+  let failures = 2;
+  const owner = createRelaySession({
+    ...wire.transport,
+    query(filters) {
+      // Only the public-channel page read fails; exact lookups still succeed.
+      if (
+        failures > 0 &&
+        filters.some(
+          (filter) => filter.kinds?.includes(39000) && !filter["#d"],
+        ) &&
+        !filters.some((filter) => filter.kinds?.includes(39002))
+      ) {
+        failures--;
+        return Promise.reject(new Error("Relay read timed out"));
+      }
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        ),
+      );
+    },
+  });
+  const openConversation = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="crew"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={openConversation}
+      />,
+    );
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const retry = await screen.findByRole("button", {
+        name: "Retry channels",
+      });
+      retry.focus();
+      fireEvent.click(retry);
+      expect(
+        screen.queryByRole("button", { name: "Retry channels" }),
+      ).toBeNull();
+      expect(input).toHaveFocus();
+    }
+    const lobby = await screen.findByRole("option", { name: /crew-lobby/ });
+    expect(input).toHaveFocus();
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(lobby).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(openConversation).toHaveBeenCalledExactlyOnceWith("lobby");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});

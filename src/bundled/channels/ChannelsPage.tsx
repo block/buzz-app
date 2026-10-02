@@ -230,8 +230,9 @@ function ChannelWorkspace({
     navigation: PageNavigation | undefined;
   }>();
   const [composerFocus, setComposerFocus] = useState(0);
-  // Join confirmation and the enabled composer arrive in separate commits.
-  const [joinedChannel, setJoinedChannel] = useState<string>();
+  // A started join focuses the composer when membership makes it writable,
+  // however that membership arrives. Opening another channel drops the intent.
+  const [joiningChannel, setJoiningChannel] = useState<string>();
   const canvasTrigger = useRef<HTMLButtonElement>(null);
   const [membersChannel, setMembersChannel] = useState<string>();
   const membersTrigger = useRef<HTMLButtonElement>(null);
@@ -373,11 +374,13 @@ function ChannelWorkspace({
     writeView(scope, "selected-channel", current.id);
   }, [navigation?.target, current, scope]);
   useEffect(() => {
-    if (!joinedChannel || current?.id !== joinedChannel || current.readOnly)
-      return;
-    setJoinedChannel(undefined);
-    setComposerFocus((value) => value + 1);
-  }, [joinedChannel, current]);
+    if (!joiningChannel || !current) return;
+    if (current.id !== joiningChannel) setJoiningChannel(undefined);
+    else if (!current.readOnly) {
+      setJoiningChannel(undefined);
+      setComposerFocus((value) => value + 1);
+    }
+  }, [joiningChannel, current]);
   const CurrentChannelIcon = channelIcon(current);
   useEffect(() => {
     if (navigation?.signal.aborted) return;
@@ -1657,7 +1660,7 @@ function ChannelWorkspace({
                       (current.channelType === "stream" ||
                         current.channelType === "forum")
                     }
-                    onJoined={() => setJoinedChannel(current.id)}
+                    onJoin={() => setJoiningChannel(current.id)}
                   />
                 )}
                 {current && (

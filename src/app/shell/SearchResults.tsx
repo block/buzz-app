@@ -167,6 +167,12 @@ export function SearchResults({
         : scopedChannelId
           ? "Type to search messages in this conversation."
           : "Type to search messages in this community.";
+  // A retry removes its own focused button. Return focus to the combobox,
+  // which owns keyboard navigation, before the retry starts.
+  const retryFromInput = (retry: () => unknown) => () => {
+    input.current?.focus();
+    retry();
+  };
   return (
     <SearchChoices
       query={query}
@@ -256,11 +262,11 @@ export function SearchResults({
             <Button
               size="sm"
               variant="ghost"
-              onClick={() =>
+              onClick={retryFromInput(() =>
                 session.channels.refreshList
                   ? session.channels.refreshList()
-                  : session.channels.ensureList()
-              }
+                  : session.channels.ensureList(),
+              )}
             >
               Retry conversations
             </Button>
@@ -275,7 +281,11 @@ export function SearchResults({
         {!scopedChannelId && publicChannels.error && (
           <div>
             <p>{publicChannels.error}</p>
-            <Button size="sm" variant="ghost" onClick={publicChannels.retry}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={retryFromInput(publicChannels.retry)}
+            >
               Retry channels
             </Button>
           </div>
@@ -283,7 +293,11 @@ export function SearchResults({
         {search.error && (
           <div>
             <p>{search.error}</p>
-            <Button size="sm" variant="ghost" onClick={search.retry}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={retryFromInput(search.retry)}
+            >
               Retry messages
             </Button>
           </div>

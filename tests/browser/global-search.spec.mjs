@@ -211,6 +211,33 @@ test.describe("public search destination", () => {
       )
       .toContainEqual([9, "Hello from a new member", app.openChannelId]);
   });
+
+  test("focuses the composer when live membership arrives before the join request settles", async ({
+    page,
+    app,
+  }) => {
+    const release = app.holdJoin();
+    await page.goto(app.origin);
+    await button(page, "Search Buzz").click();
+    await page.getByRole("combobox", { name: "Search Buzz" }).fill("ope");
+    await page
+      .getByRole("group", { name: "Channels" })
+      .getByRole("option", { name: /^open/ })
+      .click();
+    const composer = page.getByRole("textbox", {
+      name: "Message #open",
+      exact: true,
+    });
+    await expect(composer).toHaveAttribute("aria-disabled", "true");
+    await button(page, "Join channel").click();
+    await expect(page.getByText(/Read-only preview/)).toHaveCount(0);
+    expect(app.report.lifecyclePublications).toHaveLength(1);
+    await expect(composer).not.toHaveAttribute("aria-disabled", "true");
+    await expect(composer).toBeFocused();
+    release();
+    await composer.pressSequentially("Joined");
+    await expect(composer).toHaveText("Joined");
+  });
 });
 
 test("keyboard selection follows its action while recent conversations arrive above it", async ({

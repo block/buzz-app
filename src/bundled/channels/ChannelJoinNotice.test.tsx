@@ -30,7 +30,7 @@ it("offers Join only for a joinable channel on a connection that can send it", (
       channelId="open"
       lifecycle={lifecycle(run, false)}
       joinable
-      onJoined={() => {}}
+      onJoin={() => {}}
     />,
   );
   expect(screen.getByText(/Read-only preview/)).toBeVisible();
@@ -40,14 +40,14 @@ it("offers Join only for a joinable channel on a connection that can send it", (
       channelId="open"
       lifecycle={lifecycle(run)}
       joinable={false}
-      onJoined={() => {}}
+      onJoin={() => {}}
     />,
   );
   expect(screen.queryByRole("button", { name: "Join channel" })).toBeNull();
   expect(run).not.toHaveBeenCalled();
 });
 
-it("joins once, reports confirmation, and keeps a failed join retryable", async () => {
+it("joins once, reports its start, and keeps a failed join retryable", async () => {
   let settle: { resolve(): void; reject(error: unknown): void } | undefined;
   const run = vi.fn(
     () =>
@@ -55,19 +55,21 @@ it("joins once, reports confirmation, and keeps a failed join retryable", async 
         settle = { resolve, reject };
       }),
   );
-  const joined = vi.fn();
+  const started = vi.fn();
   render(
     <ChannelJoinNotice
       channelId="open"
       lifecycle={lifecycle(run)}
       joinable
-      onJoined={joined}
+      onJoin={started}
     />,
   );
   const button = screen.getByRole("button", { name: "Join channel" });
   fireEvent.click(button);
   fireEvent.click(button);
   expect(run).toHaveBeenCalledOnce();
+  // The page owns focus handoff; membership may arrive before the run settles.
+  expect(started).toHaveBeenCalledOnce();
   expect(run).toHaveBeenCalledWith("join", "open", expect.any(AbortSignal));
   expect(button).toHaveAttribute("aria-disabled", "true");
   await act(async () =>
@@ -76,34 +78,12 @@ it("joins once, reports confirmation, and keeps a failed join retryable", async 
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Join may have taken effect, but it is not confirmed yet. Try again to check.",
   );
-  expect(joined).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Join channel" }));
   expect(run).toHaveBeenCalledTimes(2);
+  expect(started).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole("alert")).toBeNull();
   await act(async () => settle?.resolve());
-  expect(joined).toHaveBeenCalledOnce();
-});
-
-it("reports a join that completes after confirmed membership removes the notice", async () => {
-  let resolve: (() => void) | undefined;
-  const run = vi.fn(
-    () =>
-      new Promise<void>((done) => {
-        resolve = done;
-      }),
-  );
-  const joined = vi.fn();
-  const view = render(
-    <ChannelJoinNotice
-      channelId="open"
-      lifecycle={lifecycle(run)}
-      joinable
-      onJoined={joined}
-    />,
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Join channel" }));
-  // The roster update renders the member view before the run settles.
-  view.unmount();
-  await act(async () => resolve?.());
-  expect(joined).toHaveBeenCalledOnce();
+  expect(
+    screen.getByRole("button", { name: "Join channel" }),
+  ).not.toHaveAttribute("aria-disabled", "true");
 });

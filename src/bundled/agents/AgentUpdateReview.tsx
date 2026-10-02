@@ -47,6 +47,8 @@ export function AgentUpdateReview({
   );
   const [authorizedRequest, setAuthorizedRequest] =
     useState<PendingManagementRequest | null>(null);
+  const [rosterError, setRosterError] =
+    useState<PendingManagementRequest | null>(null);
   const request = requests[0] ?? null;
   useEffect(() => {
     if (connection.status !== "ready") return;
@@ -65,6 +67,7 @@ export function AgentUpdateReview({
   }, [connection]);
   useEffect(() => {
     setAuthorizedRequest(null);
+    setRosterError(null);
     if (!request || channelList.status !== "ready") return;
     let current = true;
     const channels = connection.session.channels;
@@ -73,19 +76,20 @@ export function AgentUpdateReview({
       const listed = channels
         .list()
         .channels.some((channel) => channel.id === channelId);
-      const refresh = listed
-        ? channels.refreshRoster?.(channelId)
-        : channels.resolve?.([channelId]);
-      if (refresh) await refresh;
+      const fresh = listed
+        ? await channels.refreshRoster?.(channelId)
+        : channels.resolve
+          ? await channels.resolve([channelId]).then(() => true)
+          : false;
       if (!current) return;
       if (
-        refresh &&
+        fresh === true &&
         managementRequesterAuthorized(request, channels.list()) === true
       )
         setAuthorizedRequest(request);
       else setRequests((pending) => pending.slice(1));
     })().catch(() => {
-      if (current) setRequests((pending) => pending.slice(1));
+      if (current) setRosterError(request);
     });
     return () => {
       current = false;
@@ -123,13 +127,35 @@ export function AgentUpdateReview({
       community,
     );
   }, [connection.scope, controlState.data?.agents, request]);
+  if (!request) return null;
+  const dismiss = () => setRequests((pending) => pending.slice(1));
+  if (rosterError === request) {
+    return (
+      <ToastNotice
+        title="Could not verify request membership"
+        description="Retry the channel roster read before reviewing this request."
+        onDismiss={dismiss}
+      >
+        <Button
+          type="button"
+          onClick={() =>
+            setRequests((pending) =>
+              pending[0] === request
+                ? [{ ...request }, ...pending.slice(1)]
+                : pending,
+            )
+          }
+        >
+          Retry
+        </Button>
+      </ToastNotice>
+    );
+  }
   if (
-    !request ||
     authorizedRequest !== request ||
     managementRequesterAuthorized(request, channelList) !== true
   )
     return null;
-  const dismiss = () => setRequests((pending) => pending.slice(1));
   if (request.value.action === "create") {
     return (
       <ToastNotice

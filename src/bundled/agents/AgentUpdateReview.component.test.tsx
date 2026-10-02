@@ -36,10 +36,15 @@ function setup(known: boolean, failInventory = false) {
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
+  let omitRoster = false;
+  let failRoster = false;
   const readRoster = vi.fn(async () => {
     await gate;
+    if (failRoster) throw Error("Relay unavailable");
+    if (omitRoster) return false;
     list = { ...list, channels: [channel] };
     for (const listener of listeners) listener();
+    return true;
   });
   const owner = createRelaySession({
     viewer: "de".repeat(32),
@@ -59,7 +64,9 @@ function setup(known: boolean, failInventory = false) {
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
-      resolve: readRoster,
+      resolve: async () => {
+        await readRoster();
+      },
       refreshRoster: readRoster,
     },
     agentManagement: {
@@ -112,6 +119,12 @@ function setup(known: boolean, failInventory = false) {
     release,
     readRoster,
     control,
+    omit: () => {
+      omitRoster = true;
+    },
+    failRoster: (failed: boolean) => {
+      failRoster = failed;
+    },
     revoke: () => {
       channel.members = [];
     },
@@ -164,4 +177,30 @@ it("rejects a request whose refreshed roster no longer includes its sender", asy
     await act(async () => fixture.release());
   }
   expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
+});
+
+it("does not authorize stale membership after an empty roster read", async () => {
+  const fixture = setup(true);
+  fixture.omit();
+  fixture.send();
+  await act(async () => fixture.release());
+  await act(async () => {
+    await fixture.control.refresh();
+  });
+  expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
+});
+
+it("retains a request through a failed roster read and retries it", async () => {
+  const fixture = setup(true);
+  fixture.failRoster(true);
+  fixture.send();
+  await act(async () => fixture.release());
+  const retry = await screen.findByRole("button", { name: "Retry" });
+  expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
+  fixture.failRoster(false);
+  await userEvent.click(retry);
+  expect(
+    await screen.findByRole("dialog", { name: "Edit agent" }),
+  ).toBeVisible();
+  expect(fixture.readRoster).toHaveBeenCalledTimes(2);
 });

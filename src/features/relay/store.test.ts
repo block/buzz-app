@@ -442,7 +442,7 @@ it("refreshes one channel's roster with an exact read and merges it without drop
     request.respond([
       roster(relay, "a", [viewer.pubkey, agent], 1_700_000_001),
     ]);
-    await expect(refreshing).resolves.toBeUndefined();
+    await expect(refreshing).resolves.toBe(true);
     expect(queries.list()).toMatchObject({
       status: "ready",
       channels: [
@@ -455,6 +455,19 @@ it("refreshes one channel's roster with an exact read and merges it without drop
     // One exact read; no viewer-wide roster page followed it.
     expect(pending).toHaveLength(0);
     unsubscribe();
+  } finally {
+    test.store.dispose();
+  }
+});
+it("reports no fresh roster evidence when an exact read omits the cached channel", async () => {
+  const test = setup();
+  try {
+    await discovered(test);
+    const before = test.queries.list();
+    const refreshing = test.queries.refreshRoster?.("a");
+    test.next().respond([]);
+    await expect(refreshing).resolves.toBe(false);
+    expect(test.queries.list()).toBe(before);
   } finally {
     test.store.dispose();
   }
@@ -517,14 +530,14 @@ it("keeps a cached denial and never reads for a channel it does not authorize", 
     );
     // A denied id is not this method's to re-read: no request leaves, and the
     // denial stands. Fresh admission belongs to `resolve` and the full pass.
-    await expect(queries.refreshRoster?.("alpha")).resolves.toBeUndefined();
+    await expect(queries.refreshRoster?.("alpha")).resolves.toBe(false);
     expect(scripted.pending).toHaveLength(0);
     const refreshing = queries.refreshRoster?.("beta");
     expect(scripted.pending).toHaveLength(1);
     scripted
       .next()
       .respond([roster(relay, "beta", [viewer.pubkey, agent], 1_700_000_001)]);
-    await expect(refreshing).resolves.toBeUndefined();
+    await expect(refreshing).resolves.toBe(true);
     expect(queries.list()).toMatchObject({
       status: "ready",
       channels: [{ id: "beta", members: [agent, viewer.pubkey].sort() }],

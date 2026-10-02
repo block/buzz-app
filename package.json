@@ -1,0 +1,26 @@
+{
+  "name": "art4-ai-sdk-agent",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "types": "node ../buzz-app-worktrees/art3-client-triggers/scripts/build-author.mjs ./.author",
+    "check": "tsc --noEmit",
+    "build": "node build.mjs",
+    "test": "node build.mjs && node --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@ai-sdk/anthropic": "^4.0.58",
+    "@ai-sdk/openai": "^4.0.78",
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@types/node": "^24.19.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.3.0",
+    "ai": "^7.0.122",
+    "esbuild": "^0.28.2",
+    "nostr-tools": "^2.25.2",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "typescript": "^7.0.2",
+    "zod": "^4.6.5"
+  }
+}

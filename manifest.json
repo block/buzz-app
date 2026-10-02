@@ -1,0 +1,8 @@
+{
+  "id": "art4.ai-sdk-agent",
+  "name": "AI SDK agent",
+  "apiVersion": 1,
+  "host": {
+    "networkOrigins": ["https://api.anthropic.com", "https://api.openai.com"]
+  }
+}

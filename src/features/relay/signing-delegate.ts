@@ -16,6 +16,17 @@ export interface SigningDelegateScope {
   identity: string;
 }
 
+export type SigningDelegateFactory = (scope: SigningDelegateScope) => Signer;
+
+/** Select and bind one delegate for a captured relay and public identity. */
+export function selectSigningDelegate(
+  factory: SigningDelegateFactory | undefined,
+  fallback: Signer,
+  scope: SigningDelegateScope,
+): Signer {
+  return bindSigningDelegate(factory?.(scope) ?? fallback, scope);
+}
+
 /** Bind event signing to the relay and public identity selected by the caller. */
 export function bindSigningDelegate(
   delegate: Signer,
@@ -26,7 +37,9 @@ export function bindSigningDelegate(
   const bound: Signer = {
     getPublicKey: async () => identity,
     async signEvent(event, signal) {
+      signal?.throwIfAborted();
       const signed = await delegate.signEvent(event, signal);
+      signal?.throwIfAborted();
       if (signed.pubkey !== identity)
         throw new Error("Signing delegate identity mismatch");
       return signed;

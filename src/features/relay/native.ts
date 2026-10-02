@@ -49,11 +49,12 @@ import { observerFrame } from "../agents/observer";
 import {
   acceptPublish,
   admitSignedRequest,
-  bindSigningDelegate,
   connectSignedTransport,
   admittedSignedWorkflowRead,
   type ReadTransport,
   type Signer,
+  selectSigningDelegate,
+  type SigningDelegateFactory,
 } from "./transport";
 import { nativeSidebar } from "./native-sidebar";
 import { readApiFailure } from "./http-admission";
@@ -275,6 +276,7 @@ export async function nativeRelayInfo(community: string, signal?: AbortSignal) {
 export async function connectNativeTransport(
   community: string,
   signal?: AbortSignal,
+  signingDelegateFactory?: SigningDelegateFactory,
 ): Promise<ReadTransport> {
   const origin = communityDestination(community).url;
   const info = await nativeRelayInfo(origin, signal);
@@ -285,8 +287,12 @@ export async function connectNativeTransport(
     Array.isArray(info.supported_nips) && info.supported_nips.includes(29);
   const nativeSigner = nativeRelaySigner(origin);
   const identity = await nativeSigner.getPublicKey();
+  signal?.throwIfAborted();
   const transport = await connectSignedTransport(
-    bindSigningDelegate(nativeSigner, { relay: origin, identity }),
+    selectSigningDelegate(signingDelegateFactory, nativeSigner, {
+      relay: origin,
+      identity,
+    }),
     origin,
     author,
   );

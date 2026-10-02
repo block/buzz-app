@@ -150,6 +150,7 @@ let discussionRows: ChannelMessage[] = [
 const discussionListeners = new Set<() => void>();
 const session = {
   ...store.session,
+  scope: destination.scope,
   viewer,
   relayAuthor: viewer,
   observe: () => ({

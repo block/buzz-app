@@ -11,10 +11,10 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi, assert } from "vitest";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
-import { createRelaySession } from "../relay/session";
 import { DiscoveryState } from "../relay/discovery";
 import { keypair, metadata, roster } from "../relay/testing";
 import { huddleDescription } from "../huddle/lifecycle";
+import { createRelaySession } from "../relay/session";
 import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
 import type { SidebarPreferences } from "../relay/sidebar-preferences";
 import type { RelayData, RelaySnapshot } from "../relay/service";
@@ -94,7 +94,7 @@ function fixture(
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
-  const list: ChannelList = {
+  let list: ChannelList = {
     status: "ready",
     channels: ["alpha", "beta", "gamma"].map((id) => ({
       id,
@@ -102,6 +102,7 @@ function fixture(
       channelType: "stream",
     })),
   };
+  const listeners = new Set<() => void>();
   const live = {
     ...owner.session.live.snapshot(),
     roster: { state: "verified" as const },
@@ -110,8 +111,30 @@ function fixture(
     ...owner.session,
     ...(sidebarPreferences ? { sidebarPreferences } : {}),
     live: { ...owner.session.live, snapshot: () => live },
-    channels: { ...owner.session.channels, list: () => list, ensureList() {} },
+    channels: {
+      ...owner.session.channels,
+      list: () => list,
+      ensureList() {},
+      subscribeList(listener: () => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
   };
+  // Like the store: changed summaries are replaced, the rest keep identity.
+  const publish = (
+    id: string,
+    change: Partial<ChannelList["channels"][number]>,
+  ) =>
+    act(() => {
+      list = {
+        ...list,
+        channels: list.channels.map((channel) =>
+          channel.id === id ? { ...channel, ...change } : channel,
+        ),
+      };
+      for (const listener of listeners) listener();
+    });
   const snapshot: RelaySnapshot = {
     status,
     ...(status === "ready"
@@ -154,7 +177,7 @@ function fixture(
       </ChannelSidebar>
     </ChannelNavigationProvider>
   );
-  return { view, navigator, snapshot, list, session };
+  return { view, navigator, snapshot, list, session, publish };
 }
 
 it("does not rebuild unchanged rows on channel switches and refreshes session action eligibility", async () => {
@@ -200,6 +223,31 @@ it("does not rebuild unchanged rows on channel switches and refreshes session ac
   fireEvent.click(screen.getByRole("button", { name: "gamma" }));
   expect(h.navigator.open).toHaveBeenCalledWith(
     expect.objectContaining({ kind: "conversation", channelId: "gamma" }),
+  );
+});
+
+it("rebuilds only the changed row on a list publish and keeps session actions current", async () => {
+  const h = fixture();
+  render(h.view("alpha"));
+  await screen.findByRole("button", { name: "gamma" });
+  const alpha = rowRender.mock.calls
+    .filter(([props]) => props.channel.id === "alpha")
+    .pop()?.[0];
+  rowRender.mockClear();
+  h.publish("beta", { preview: "hello" });
+  expect(rowRender.mock.calls.map(([props]) => props.channel.id)).toEqual([
+    "beta",
+  ]);
+  // The callbacks alpha kept must still see the published list.
+  h.publish("gamma", { readOnly: true });
+  alpha.onNewSession("gamma");
+  expect(h.navigator.open).not.toHaveBeenCalled();
+  alpha.onNewSession("beta");
+  expect(h.navigator.open).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: "page",
+      route: { version: 1, params: { kind: "new-session", parentId: "beta" } },
+    }),
   );
 });
 
@@ -307,73 +355,93 @@ it.each(["ready", "connecting", "error"] as const)(
   },
 );
 
-it("opens creation from a legacy subgroup + with that destination selected and retained in the create input", async () => {
-  const preferences = createSidebarPreferencesStore(
-    async () => ({
-      sections: [{ id: "laptop", name: "Laptop", order: 0 }],
-      assignments: { beta: "laptop" },
-      starred: [],
-      muted: [],
-    }),
-    true,
-    async () => ({
-      sections: [{ id: "laptop", name: "Laptop", order: 0 }],
-      assignments: {},
-    }),
-    async () => [],
-  );
-  await preferences.queries.ensure();
-  const h = fixture(preferences.queries);
-  const create = vi.fn(async () => "new-channel");
-  h.session.channelKit = {
-    ...h.session.channelKit,
-    available: true,
-    ensure() {},
-  };
-  h.session.channelCreation = {
-    ...h.session.channelCreation,
-    available: true,
-    create,
-  };
-  try {
-    render(h.view("alpha"));
-    await screen.findByRole("button", { name: /Laptop/ });
-    // Scope to the section header rather than the Channels +.
-    const header = screen.getByRole("button", { name: /Laptop/ }).parentElement;
-    assert.exists(header);
-    fireEvent.click(
-      within(header).getByRole("button", { name: "Create channel" }),
-    );
-    expect(
-      screen.getByRole("combobox", { name: "Destination group" }),
-    ).toHaveTextContent("Laptop");
-    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
-      target: { value: "New laptop channel" },
-    });
-    fireEvent.click(
-      within(
-        screen.getByRole("dialog", { name: "Create a channel" }),
-      ).getByRole("button", {
-        name: "Create channel",
+it.each([true, false])(
+  "uses only the invoking section for placement (group: %s)",
+  async (fromGroup) => {
+    const preferences = createSidebarPreferencesStore(
+      async () => ({
+        sections: [{ id: "laptop", name: "Laptop", icon: "💻", order: 0 }],
+        assignments: { beta: "laptop" },
+        starred: [],
+        muted: [],
       }),
-    );
-    await waitFor(() =>
-      expect(create).toHaveBeenCalledWith({
-        name: "New laptop channel",
-        visibility: "open",
-        setup: {
-          agents: [],
-          canvas: "",
-          templateId: "",
-          groupId: "laptop",
-          groupSource: "legacy",
-        },
+      true,
+      async () => ({
+        sections: [{ id: "laptop", name: "Laptop", icon: "💻", order: 0 }],
+        assignments: {},
       }),
+      async () => [],
     );
-  } finally {
-    preferences.dispose();
-  }
-});
+    await preferences.queries.ensure();
+    const h = fixture(preferences.queries);
+    const create = vi.fn(async () => "new-channel");
+    h.session.channelKit = {
+      ...h.session.channelKit,
+      available: true,
+      ensure() {},
+    };
+    h.session.channelCreation = {
+      ...h.session.channelCreation,
+      available: true,
+      create,
+    };
+    try {
+      render(h.view("beta"));
+      await screen.findByRole("button", { name: /Laptop/ });
+      // An active grouped channel must not make the general Channels + inherit it.
+      const header = screen.getByRole("button", {
+        name: fromGroup ? /Laptop/ : "More actions for Channels",
+      }).parentElement;
+      assert.exists(header);
+      fireEvent.click(
+        within(header).getByRole("button", { name: "Create channel" }),
+      );
+      expect(
+        screen.queryByRole("combobox", { name: "Destination group" }),
+      ).not.toBeInTheDocument();
+      const title = fromGroup
+        ? "Create a channel in Laptop"
+        : "Create a channel";
+      expect(screen.getByRole("dialog")).toHaveAccessibleName(title);
+      if (fromGroup)
+        expect(
+          screen
+            .getByRole("dialog")
+            .querySelector(".buzz-dialog-step [data-sidebar-group-icon]"),
+        ).toHaveTextContent("💻");
+      fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+        target: { value: "New laptop channel" },
+      });
+      fireEvent.click(
+        within(screen.getByRole("dialog", { name: title })).getByRole(
+          "button",
+          {
+            name: "Create channel",
+          },
+        ),
+      );
+      await waitFor(() =>
+        expect(create).toHaveBeenCalledWith({
+          name: "New laptop channel",
+          visibility: "open",
+          ...(fromGroup
+            ? {
+                setup: {
+                  agents: [],
+                  canvas: "",
+                  templateId: "",
+                  groupId: "laptop",
+                  groupSource: "legacy",
+                },
+              }
+            : {}),
+        }),
+      );
+    } finally {
+      preferences.dispose();
+    }
+  },
+);
 
 it("keeps Huddle rooms out of the sidebar before and after metadata arrives", async () => {
   const h = fixture();
@@ -389,7 +457,11 @@ it("keeps Huddle rooms out of the sidebar before and after metadata arrives", as
     ...h.list,
     channels: [
       ...h.list.channels,
-      ...discovery.channels(),
+      ...discovery
+        .channels()
+        .map((channel) =>
+          channel.id === room ? { ...channel, metadataPending: true } : channel,
+        ),
       {
         id: "private",
         name: "Private project",

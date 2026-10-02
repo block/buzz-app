@@ -1,4 +1,4 @@
-import { selectSettingsSection } from "./navigation.mjs";
+import { selectSettingsSection, settleShellToggle } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, anchor, expectAnchor } from "./timeline.mjs";
 
@@ -27,6 +27,7 @@ async function expectMode(page, mode, inSettings = false) {
     "background-image",
     /linear-gradient/,
   );
+  await settleShellToggle(page);
   const disclosure = button(page, "Show navigation");
   const collapsed = await disclosure.isVisible();
   if (collapsed) await disclosure.click();
@@ -351,7 +352,7 @@ test("compiled host preserves compatibility utility meanings", async ({
     await page.getByRole("radio", { name: mode, exact: true }).check();
     await expect(page.locator("#primary-text")).toHaveCSS(
       "color",
-      mode === "Light" ? "rgb(0, 0, 0)" : "rgb(255, 255, 255)",
+      mode === "Light" ? "rgb(15, 15, 15)" : "rgb(255, 255, 255)",
     );
     await expect(page.locator("#primary-border")).toHaveCSS(
       "border-top-color",

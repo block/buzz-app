@@ -57,9 +57,7 @@ import {
   type ReactNode,
 } from "react";
 import {
-  SlidersHorizontalIcon,
-  ArrowSquareLeftIcon,
-  ArrowSquareRightIcon,
+  SidebarRightIcon,
   PlugIcon,
   ChatCircleIcon,
   GearIcon,
@@ -282,19 +280,13 @@ function ChannelWorkspace({
     list.channels.filter(
       (channel) =>
         // Wait for metadata so temporary rooms never flash as unnamed channels.
-        !channel.huddle &&
-        (channel.visibility !== undefined ||
-          channel.channelType !== undefined ||
-          channel.description !== undefined),
+        !channel.huddle && !channel.metadataPending,
     ),
     queries.profiles,
     queries.names,
   );
   const metadataPending = list.channels.some(
-    (channel) =>
-      channel.visibility === undefined &&
-      channel.channelType === undefined &&
-      channel.description === undefined,
+    (channel) => channel.metadataPending,
   );
   const requestedChannel =
     draftParent ??
@@ -305,7 +297,7 @@ function ChannelWorkspace({
     request: PageNavigation;
     available: boolean;
   }>();
-  const joinedRequest = channels.some(
+  const joinedRequest = list.channels.some(
     (channel) => channel.id === requestedChannel,
   );
   useEffect(() => {
@@ -361,6 +353,8 @@ function ChannelWorkspace({
     ? undefined
     : requestedChannel
       ? (channels.find((channel) => channel.id === requestedChannel) ??
+        // Sidebar visibility is not access: retain a joined archived selection.
+        list.channels.find((channel) => channel.id === requestedChannel) ??
         (resolved?.request === navigation && resolved?.available
           ? queries.channels.get?.(requestedChannel)
           : undefined))
@@ -1275,6 +1269,7 @@ function ChannelWorkspace({
   }, [settingsFocus, split.ref]);
   const settingsContent = (
     <ChannelSettingsPanel
+      scope={scope}
       canvas={queries.canvas}
       canvasOpen={canvasOpen}
       openCanvas={(trigger) => {
@@ -1342,7 +1337,7 @@ function ChannelWorkspace({
               current.channelType !== "dm" &&
               current.channelType !== "session" && (
                 <ChannelLifecycleActions
-                  key={current.id}
+                  key={`${current.id}:${!!current.archived}`}
                   channelId={current.id}
                   lifecycle={queries.channelLifecycle}
                   choose={(action, trigger) =>
@@ -1535,12 +1530,7 @@ function ChannelWorkspace({
                             });
                           }
                         }}
-                        icon={
-                          <SlidersHorizontalIcon
-                            size="1rem"
-                            aria-hidden="true"
-                          />
-                        }
+                        icon={<GearIcon size="1rem" aria-hidden="true" />}
                       />
                       {current && (
                         <IconButton
@@ -1560,17 +1550,7 @@ function ChannelWorkspace({
                               addTab();
                           }}
                           icon={
-                            showingChannelPanel ? (
-                              <ArrowSquareRightIcon
-                                size="1rem"
-                                aria-hidden="true"
-                              />
-                            ) : (
-                              <ArrowSquareLeftIcon
-                                size="1rem"
-                                aria-hidden="true"
-                              />
-                            )
+                            <SidebarRightIcon size="1rem" aria-hidden="true" />
                           }
                         />
                       )}

@@ -154,7 +154,7 @@ export function createHuddleComposerOwner(
         );
         // Admission owns the persisted draft too: closing the child before its
         // acknowledgement must not restore a message already in the main outbox.
-        const scope = `${session.scope}:${session.viewer}`;
+        const scope = session.scope;
         const key = `draft:${room}`;
         if (JSON.stringify(readView(scope, key, null)) === draft)
           writeView(scope, key, "");

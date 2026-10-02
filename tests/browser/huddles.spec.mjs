@@ -942,6 +942,14 @@ test("incoming Huddles appear without joining and follow the viewed conversation
 test("detached regular composer keeps failed drafts, uploads real file bytes and preserves duplicate attachments", async ({
   page,
 }) => {
+  await page.addInitScript(() => {
+    const scope = `https://fixture.example:${"ab".repeat(32)}`;
+    const key = `buzz-view.v1:${JSON.stringify([scope, "draft:00000000-0000-4000-8000-000000000002"])}`;
+    localStorage.setItem(
+      key,
+      JSON.stringify({ text: "Draft from the main panel", recipients: [] }),
+    );
+  });
   await page.goto(`${origin}/tests/fixtures/huddles.html?chrome`);
   await page
     .getByRole("button", { name: /Start or join a huddle|Join active huddle/ })
@@ -956,6 +964,7 @@ test("detached regular composer keeps failed drafts, uploads real file bytes and
   const editor = companion.getByRole("textbox", {
     name: "Message this Huddle",
   });
+  await expect(editor).toHaveText("Draft from the main panel");
   await editor.fill("reject this message");
   await editor.press("Enter");
   await expect(
@@ -982,6 +991,18 @@ test("detached regular composer keeps failed drafts, uploads real file bytes and
     .first()
     .click();
   await editor.press("Enter");
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const scope = `https://fixture.example:${"ab".repeat(32)}`;
+        return JSON.parse(
+          localStorage.getItem(
+            `buzz-view.v1:${JSON.stringify([scope, "draft:00000000-0000-4000-8000-000000000002"])}`,
+          ),
+        );
+      }),
+    )
+    .toEqual({ text: "", recipients: [] });
   await expect(editor).toHaveText("");
   await expect(editor).toBeFocused();
   const sent = await page.evaluate(() => window.huddleFixture.stats.sent);

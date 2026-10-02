@@ -101,6 +101,21 @@ fn snapshot_withholds_model_and_provider_environment_values() {
                     ("DATABRICKS_MODEL", "synthetic-combined-model"),
                 ],
             ),
+            agent(
+                "f6",
+                "/opt/tools/buzz-pi-acp",
+                "custom",
+                &[("BUZZ_ACP_MODEL", "synthetic-acp-pi-model")],
+            ),
+            agent(
+                "a7",
+                "goose-acp",
+                "custom",
+                &[
+                    ("BUZZ_ACP_MODEL", "synthetic-acp-goose-model"),
+                    ("GOOSE_MODEL", "synthetic-worker-goose-model"),
+                ],
+            ),
         ])
         .unwrap();
     let snapshot = store.snapshot().unwrap();
@@ -113,6 +128,9 @@ fn snapshot_withholds_model_and_provider_environment_values() {
         "synthetic-databricks-model",
         "synthetic-combined-provider",
         "synthetic-combined-model",
+        "synthetic-acp-pi-model",
+        "synthetic-acp-goose-model",
+        "synthetic-worker-goose-model",
     ] {
         assert!(!wire.contains(value), "projected {value}");
     }
@@ -130,6 +148,8 @@ fn snapshot_withholds_model_and_provider_environment_values() {
             Some("BUZZ_AGENT_PROVIDER"),
             Some("BUZZ_AGENT_PROVIDER"),
         ),
+        ("f6", Some("BUZZ_ACP_MODEL"), None),
+        ("a7", Some("BUZZ_ACP_MODEL"), None),
     ] {
         let view = snapshot
             .agents
@@ -287,21 +307,141 @@ fn environment_patch_preserves_deletes_and_rejects_host_overrides_without_writin
     for key in [
         "BUZZ_PRIVATE_KEY",
         "buzz_auth_tag",
-        "BUZZ_ACP_LAZY_POOL",
+        "BUZZ_ACP_AGENT_COMMAND",
+        "BUZZ_ACP_AGENT_ARGS",
+        "BUZZ_ACP_MCP_COMMAND",
+        "buzz_acp_launch_prefix",
+        "BUZZ_ACP_RESPOND_TO",
+        "BUZZ_ACP_RESPOND_TO_ALLOWLIST",
+        "BUZZ_ACP_ALLOWED_RESPOND_TO",
+        "BUZZ_ACP_AGENT_OWNER",
+        "BUZZ_ACP_DISPLAY_NAME",
+        "BUZZ_ACP_TEAM_INSTRUCTIONS",
+        "BUZZ_ACP_PRIVATE_KEY",
+        "BUZZ_ACP_API_TOKEN",
+        "BUZZ_RELAY_URL",
+        "BUZZ_ACP_SESSION_POLICY",
+        "BUZZ_ACP_IDLE_POOL_SLEEP",
+        "BUZZ_ACP_EXIT_AFTER_INACTIVITY",
+        "BUZZ_ACP_NO_PRESENCE",
+        "BUZZ_ACP_SETUP_PAYLOAD",
+        "BUZZ_ACP_REPLAY_FLOOR",
+        "buzz_acp_agents",
+        "PI_ACP_PI_COMMAND",
+        "BUZZ_AGENT_CONFIG_DIR",
         "BUZZ_MANAGED_AGENT",
+        "buzz_managed_agent_start_nonce",
+        "BUZZ_APP_PROFILE",
         "GIT_CONFIG_COUNT",
         "NOSTR_PRIVATE_KEY",
         "bad=key",
+    ] {
+        for command in ["buzz-agent", "goose-acp", "/opt/tools/buzz-pi-acp"] {
+            let mut update = edit();
+            update.harness.command = command.into();
+            update
+                .environment
+                .insert(key.into(), Some("do-not-echo".into()));
+            let error = store.save(&a.id, 2, update).unwrap_err();
+            assert!(!error.contains("do-not-echo"));
+            assert_eq!(fs::read(store.path()).unwrap(), before);
+        }
+    }
+    // The broader policy is scoped to Pi/Goose; Buzz Agent is unchanged.
+    for key in [
+        "BUZZ_ACP_MODEL",
+        "BUZZ_ACP_SYSTEM_PROMPT",
+        "BUZZ_ACP_LAZY_POOL",
+        "BUZZ_MANAGED_CUSTOM",
     ] {
         let mut update = edit();
         update
             .environment
             .insert(key.into(), Some("do-not-echo".into()));
-        let error = store.save(&a.id, 2, update).unwrap_err();
-        assert!(!error.contains("do-not-echo"));
+        assert!(store.save(&a.id, 2, update).is_err());
         assert_eq!(fs::read(store.path()).unwrap(), before);
     }
 }
+#[test]
+fn environment_override_removal_allows_a_harness_switch_without_weakening_validation() {
+    for command in ["goose-acp", "/opt/tools/buzz-pi-acp"] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().to_owned()).unwrap();
+        let mut a = fixture();
+        a.harness.command = command.into();
+        a.environment
+            .insert("BUZZ_ACP_MODEL".into(), "private-model".into());
+        store.insert(vec![a.clone()]).unwrap();
+        let before = fs::read(store.path()).unwrap();
+
+        // Keeping or replacing the override is invalid for Buzz Agent.
+        for value in [None, Some("replacement")] {
+            let mut update = edit();
+            if let Some(value) = value {
+                update
+                    .environment
+                    .insert("BUZZ_ACP_MODEL".into(), Some(value.into()));
+            }
+            assert!(store.save(&a.id, a.revision, update).is_err());
+            assert_eq!(fs::read(store.path()).unwrap(), before);
+        }
+        let mut update = edit();
+        update.environment.insert("BUZZ_ACP_MODEL".into(), None);
+        store.save(&a.id, a.revision, update).unwrap();
+        drop(store);
+        let saved = Store::open(dir.path().to_owned())
+            .unwrap()
+            .agents()
+            .unwrap()
+            .remove(0);
+        assert_eq!(saved.harness.command, "buzz-agent");
+        assert!(!saved.environment.contains_key("BUZZ_ACP_MODEL"));
+        assert_eq!(saved.environment["TEST_TOKEN"], "secret-env-value");
+    }
+}
+
+#[test]
+fn worker_count_override_persists_only_within_runtime_limits() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let a = fixture();
+    store.insert(vec![a.clone()]).unwrap();
+    for count in ["1", "10", "32"] {
+        let revision = store.agents().unwrap()[0].revision;
+        let mut update = edit();
+        update
+            .environment
+            .insert("BUZZ_ACP_AGENTS".into(), Some(count.into()));
+        store.save(&a.id, revision, update).unwrap();
+        assert_eq!(
+            store.agents().unwrap()[0].environment["BUZZ_ACP_AGENTS"],
+            count
+        );
+    }
+    let revision = store.agents().unwrap()[0].revision;
+    let before = fs::read(store.path()).unwrap();
+    for count in ["", "0", "33", "-1", "1.5", "invalid", "4294967296"] {
+        let mut update = edit();
+        update
+            .environment
+            .insert("BUZZ_ACP_AGENTS".into(), Some(count.into()));
+        assert!(store.save(&a.id, revision, update).is_err());
+        assert_eq!(fs::read(store.path()).unwrap(), before);
+    }
+    drop(store);
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    assert_eq!(
+        store.agents().unwrap()[0].environment["BUZZ_ACP_AGENTS"],
+        "32"
+    );
+    let mut update = edit();
+    update.environment.insert("BUZZ_ACP_AGENTS".into(), None);
+    store.save(&a.id, revision, update).unwrap();
+    assert!(!store.agents().unwrap()[0]
+        .environment
+        .contains_key("BUZZ_ACP_AGENTS"));
+}
+
 #[test]
 fn malformed_store_never_becomes_empty_or_overwritten() {
     let dir = tempfile::tempdir().unwrap();
@@ -513,4 +653,162 @@ fn oversized_defaults_are_rejected_before_replacing_the_usable_record() {
         original
     );
     assert_eq!(store.defaults().unwrap().model, "working-model");
+}
+
+#[test]
+fn protection_defaults_preserve_explicit_bindings_and_persist_copies() {
+    let root = tempfile::tempdir().unwrap();
+    let mut store = Store::open(root.path().into()).unwrap();
+    let defaults = Binding {
+        provider: "default.provider".into(),
+        policy: json!({"network":"selected"}),
+    };
+    store
+        .set_launch_protection_defaults(0, Some(defaults.clone()))
+        .unwrap();
+    let mut agents: Vec<_> = ["a1", "b2", "c3"]
+        .into_iter()
+        .map(|key| {
+            let mut agent = fixture();
+            agent.pubkey = key.repeat(32);
+            agent.id = agent_id(&agent.pubkey, &agent.relay_url);
+            agent
+        })
+        .collect();
+    agents[1].extra.insert(PROTECTION_KEY.into(), Value::Null);
+    let override_binding = json!({"provider":"agent.provider","policy":{"network":"deny_all"}});
+    agents[2]
+        .extra
+        .insert(PROTECTION_KEY.into(), override_binding.clone());
+    store.insert(agents.clone()).unwrap();
+    let before = fs::read(store.path()).unwrap();
+    assert_eq!(
+        store.set_launch_protection_defaults(0, None).unwrap_err(),
+        "Protection defaults changed; reload before saving"
+    );
+    assert_eq!(fs::read(store.path()).unwrap(), before);
+    store.set_launch_protection_defaults(1, None).unwrap();
+    drop(store);
+    let store = Store::open(root.path().into()).unwrap();
+    let saved = store.agents().unwrap();
+    agents[0].extra.insert(
+        PROTECTION_KEY.into(),
+        serde_json::to_value(defaults).unwrap(),
+    );
+    assert_eq!(
+        serde_json::to_value(saved).unwrap(),
+        serde_json::to_value(agents).unwrap()
+    );
+    let snapshot = store.launch_protection_snapshot().unwrap();
+    assert_eq!(snapshot["revision"], 2);
+    assert!(snapshot["defaults"].is_null());
+}
+
+#[test]
+fn protection_defaults_and_team_repair_commit_as_one_batch() {
+    let root = tempfile::tempdir().unwrap();
+    let mut store = Store::open(root.path().into()).unwrap();
+    let mut repaired = fixture();
+    repaired.imported["record"] = json!({"team_id":"fixture-team"});
+    store.insert(vec![repaired.clone()]).unwrap();
+    let defaults = Binding {
+        provider: "default.provider".into(),
+        policy: json!({"network":"selected"}),
+    };
+    store
+        .set_launch_protection_defaults(0, Some(defaults.clone()))
+        .unwrap();
+    let mut incoming = fixture();
+    incoming.pubkey = "cd".repeat(32);
+    incoming.id = agent_id(&incoming.pubkey, &incoming.relay_url);
+    let before = fs::read(store.path()).unwrap();
+    assert_eq!(
+        store
+            .import(
+                vec![incoming.clone()],
+                vec![(
+                    repaired.id.clone(),
+                    repaired.revision + 1,
+                    "Team instructions".into()
+                )]
+            )
+            .unwrap_err(),
+        "Agent settings changed; preview the team import again"
+    );
+    assert_eq!(fs::read(store.path()).unwrap(), before);
+    store
+        .import(
+            vec![incoming.clone()],
+            vec![(
+                repaired.id.clone(),
+                repaired.revision,
+                "Team instructions".into(),
+            )],
+        )
+        .unwrap();
+    repaired.imported["teamInstructions"] = json!("Team instructions");
+    repaired.revision += 1;
+    incoming.extra.insert(
+        PROTECTION_KEY.into(),
+        serde_json::to_value(defaults).unwrap(),
+    );
+    drop(store);
+    let store = Store::open(root.path().into()).unwrap();
+    assert_eq!(
+        serde_json::to_value(store.agents().unwrap()).unwrap(),
+        serde_json::to_value(vec![repaired, incoming]).unwrap()
+    );
+}
+
+#[test]
+fn protection_defaults_reject_malformed_values_without_inserting_agents() {
+    let root = tempfile::tempdir().unwrap();
+    let mut store = Store::open(root.path().into()).unwrap();
+    let mut doc = store.read().unwrap();
+    doc.extra
+        .insert(PROTECTION_KEY.into(), json!("malformed binding"));
+    store.write(&doc).unwrap();
+    let before = fs::read(store.path()).unwrap();
+    assert_eq!(
+        store.insert(vec![fixture()]).unwrap_err(),
+        "Saved protection is malformed"
+    );
+    assert_eq!(fs::read(store.path()).unwrap(), before);
+}
+
+#[test]
+fn protection_defaults_revision_limit_preserves_saved_bytes() {
+    let root = tempfile::tempdir().unwrap();
+    let mut store = Store::open(root.path().into()).unwrap();
+    let mut doc = store.read().unwrap();
+    doc.extra.insert(
+        "launchProtectionRevision".into(),
+        json!(9_007_199_254_740_990u64),
+    );
+    store.write(&doc).unwrap();
+    store
+        .set_launch_protection_defaults(9_007_199_254_740_990, None)
+        .unwrap();
+    assert_eq!(
+        store.launch_protection_snapshot().unwrap()["revision"],
+        9_007_199_254_740_991u64
+    );
+    let before = fs::read(store.path()).unwrap();
+    assert_eq!(
+        store
+            .set_launch_protection_defaults(9_007_199_254_740_991, None)
+            .unwrap_err(),
+        "Protection defaults revision exhausted"
+    );
+    assert_eq!(fs::read(store.path()).unwrap(), before);
+    let mut doc = store.read().unwrap();
+    doc.extra.insert(
+        "launchProtectionRevision".into(),
+        json!(9_007_199_254_740_992u64),
+    );
+    store.write(&doc).unwrap();
+    assert_eq!(
+        store.launch_protection_snapshot().unwrap_err(),
+        "Invalid protection revision"
+    );
 }

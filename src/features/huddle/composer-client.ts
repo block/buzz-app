@@ -235,11 +235,7 @@ export function createHuddleComposerClient(token: string) {
             attachments,
             references,
             draft: JSON.stringify(
-              readView(
-                `${initial.scope}:${initial.viewer}`,
-                `draft:${initial.room}`,
-                null,
-              ),
+              readView(initial.scope, `draft:${initial.room}`, null),
             ),
           });
         },

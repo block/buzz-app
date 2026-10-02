@@ -29,7 +29,7 @@ export function PanelLaunchers({
         <IconButton
           type="button"
           key={`${panel.key}:${panel.revision}`}
-          variant="ghost"
+          variant="chrome"
           shape="round"
           aria-label={panel.title}
           title={panel.title}

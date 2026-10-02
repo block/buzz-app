@@ -17,6 +17,8 @@ export type ChannelSummary = Readonly<{
   name: string;
   /** Ordinary channel prose; session machine metadata is not a description. */
   description?: string | undefined;
+  /** Initial classification is unresolved until the metadata read completes. */
+  metadataPending?: boolean | undefined;
   /** Explicit signed visibility; absent means unknown, not public. */
   visibility?: "public" | "private" | undefined;
   preview?: string | undefined;

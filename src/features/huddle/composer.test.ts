@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
+import { communityFromScope } from "../relay/gifs";
 import { createRelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import { createHuddleComposerOwner } from "./composer-owner";
@@ -16,7 +17,7 @@ function harness(legacy = false) {
   const viewer = "ab".repeat(32),
     room = "room",
     parent = "parent",
-    scope = "https://example.test";
+    scope = `https://example.test:${viewer}`;
   let allowed = true;
   const metadata = {
     id: room,
@@ -64,7 +65,7 @@ function harness(legacy = false) {
     },
     send,
     refresh,
-    scope: `${scope}:${viewer}`,
+    scope,
     connect,
     revoke: () => {
       allowed = false;
@@ -73,7 +74,9 @@ function harness(legacy = false) {
 }
 it("keeps drafts on rejection, clears persisted accepted intent in main, and refreshes mention evidence", async () => {
   const h = harness();
-  const { remote } = await h.connect();
+  const { remote, client } = await h.connect();
+  expect(client.snapshot().data?.scope).toBe(h.scope);
+  expect(communityFromScope(remote.scope)).toBe("https://example.test");
   const draft = { text: "Hello", recipients: [] };
   writeView(h.scope, "draft:room", draft);
   h.send.mockImplementationOnce(() => {

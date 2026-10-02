@@ -39,21 +39,6 @@ it("opens with a conversation action and recent channels in activity order", asy
     roster(relay, "older", [viewer.pubkey]),
     metadata(relay, "latest", "latest", 1700000100),
     roster(relay, "latest", [viewer.pubkey]),
-    signed(relay, {
-      kind: 39000,
-      content: "",
-      created_at: 1700000200,
-      tags: [
-        ["d", "hidden-huddle"],
-        ["name", "Hidden Huddle"],
-        ["private"],
-        [
-          "about",
-          "Buzz Huddle (buzz.huddles/v1)\nparent:00000000-0000-4000-8000-000000000001",
-        ],
-      ],
-    }),
-    roster(relay, "hidden-huddle", [viewer.pubkey]),
   ];
   const owner = createRelaySession({
     ...wire.transport,
@@ -85,7 +70,6 @@ it("opens with a conversation action and recent channels in activity order", asy
     const recent = within(
       screen.getByRole("group", { name: "Recent activity" }),
     );
-    expect(screen.queryByRole("option", { name: /Hidden Huddle/ })).toBeNull();
     const [first, second] = recent.getAllByRole("option");
     expect(first).toHaveTextContent("latest");
     expect(second).toHaveTextContent("older");
@@ -460,6 +444,106 @@ it("does not announce conversation enrichment over retained search choices", () 
     owner.dispose();
   }
 });
+
+it("finds joined archived channels by name without putting them in Recent activity", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    signed(relay, {
+      kind: 39000,
+      created_at: 1700000000,
+      content: "",
+      tags: [
+        ["d", "archive"],
+        ["t", "stream"],
+        ["name", "Past project"],
+        ["archived", "true"],
+      ],
+    }),
+    roster(relay, "archive", [viewer.pubkey]),
+    metadata(relay, "active", "Current project"),
+    roster(relay, "active", [viewer.pubkey]),
+  ];
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters) {
+      return discovery.filter((event) =>
+        filters.some((filter) => filter.kinds?.includes(event.kind)),
+      );
+    },
+  });
+  const open = vi.fn();
+  const props = {
+    session: owner.session,
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openConversation: open,
+  };
+  try {
+    const mounted = render(<SearchResults {...props} query="" />);
+    await screen.findByRole("option", { name: /Current project/ });
+    expect(screen.queryByRole("option", { name: /Past project/ })).toBeNull();
+    mounted.rerender(<SearchResults {...props} query="Past" />);
+    fireEvent.click(
+      await screen.findByRole("option", {
+        name: /Past project/,
+      }),
+    );
+    expect(screen.getByText("Archived channel")).toBeTruthy();
+    expect(open).toHaveBeenCalledExactlyOnceWith("archive");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it.each([
+  { channelType: "stream", readOnly: true },
+  { channelType: "session" },
+  { channelType: "dm" },
+] as const)(
+  "does not surface archived nonmember or non-channel destinations: %j",
+  (state) => {
+    const owner = createRelaySession(null);
+    const snapshot = {
+      status: "ready" as const,
+      channels: [
+        {
+          id: "excluded",
+          name: "Past project",
+          archived: true as const,
+          ...state,
+        },
+      ],
+    };
+    const session = {
+      ...owner.session,
+      channels: {
+        ...owner.session.channels,
+        list: () => snapshot,
+        ensureList() {},
+      },
+    };
+    try {
+      render(
+        <SearchResults
+          session={session}
+          query="Past"
+          onQueryChange={() => {}}
+          input={createRef()}
+          pages={[]}
+          openConversation={() => {}}
+        />,
+      );
+      expect(screen.queryByRole("option", { name: /Past project/ })).toBeNull();
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
 
 it("excludes marked Huddle message hits on receipt and when metadata changes", async () => {
   vi.useFakeTimers();

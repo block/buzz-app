@@ -41,6 +41,9 @@ import {
   BellIcon,
   BellSlashIcon,
   FolderSimpleIcon,
+  GitBranchIcon,
+  MinusIcon,
+  PlusIcon,
 } from "../../shared/design-system/icons";
 import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
 import { useOptimisticMute } from "../../bundled/channels/useOptimisticMute";
@@ -278,10 +281,7 @@ function ReadySidebar({
     .filter(
       (channel) =>
         // Wait for metadata so temporary rooms never flash as unnamed channels.
-        !channel.huddle &&
-        (channel.visibility !== undefined ||
-          channel.channelType !== undefined ||
-          channel.description !== undefined),
+        !channel.huddle && !channel.metadataPending,
     )
     .filter(
       (channel) =>
@@ -408,7 +408,9 @@ function ReadySidebar({
   );
   const startSession = useCallback(
     (parentId: string) => {
-      const parent = channels.find((channel) => channel.id === parentId);
+      const parent = queries.channels
+        .list()
+        .channels.find((channel) => channel.id === parentId);
       if (
         !viewer ||
         relay.snapshot().session !== queries ||
@@ -437,7 +439,6 @@ function ReadySidebar({
       });
     },
     [
-      channels,
       viewer,
       relay,
       queries,
@@ -504,14 +505,16 @@ function ReadySidebar({
     (channelId: string, _agent: string, messageId: string | undefined) => {
       const root =
         messageId &&
-        channels.find((channel) => channel.id === channelId)?.channelType !==
+        queries.channels
+          .list()
+          .channels.find((channel) => channel.id === channelId)?.channelType !==
           "session" &&
         queries.channels
           .window(channelId)
           .rows.some((row) => row.id === messageId && !row.threadRootId);
       openActivityMessage(channelId, messageId, root ? messageId : undefined);
     },
-    [queries, channels, openActivityMessage],
+    [queries, openActivityMessage],
   );
   const openAgentActivity = useCallback(
     (channelId: string, agent: string) => {
@@ -634,6 +637,9 @@ function ReadySidebar({
             startSession(channel.id);
           }}
         >
+          <MenuIcon>
+            <GitBranchIcon size={14} />
+          </MenuIcon>
           New session
         </MenuItem>,
       );
@@ -695,11 +701,13 @@ function ReadySidebar({
                   value={`group:${group.id}`}
                   closeOnClick={false}
                 >
-                  {group.icon && (
-                    <MenuIcon>
+                  <MenuIcon>
+                    {group.icon ? (
                       <SidebarGroupIcon icon={group.icon} session={queries} />
-                    </MenuIcon>
-                  )}
+                    ) : (
+                      <FolderSimpleIcon size={14} />
+                    )}
+                  </MenuIcon>
                   {group.name}
                 </MenuRadioItem>
               ))}
@@ -710,7 +718,10 @@ function ReadySidebar({
                 pendingCreate.current = channel;
               }}
             >
-              <MenuIcon>＋</MenuIcon>Create new…
+              <MenuIcon>
+                <PlusIcon size={14} />
+              </MenuIcon>
+              Create new…
             </MenuItem>
             {(starred || currentSectionId) && (
               <MenuItem
@@ -720,6 +731,9 @@ function ReadySidebar({
                   else void assignGroup(channel.id);
                 }}
               >
+                <MenuIcon>
+                  <MinusIcon size={14} />
+                </MenuIcon>
                 Remove from{" "}
                 {sections.find((section) => section.key === sectionKey)?.title}
               </MenuItem>
@@ -802,6 +816,9 @@ function ReadySidebar({
             hiddenDms.hide(channel.id);
           }}
         >
+          <MenuIcon>
+            <MinusIcon size={14} />
+          </MenuIcon>
           Remove from Messages
         </MenuItem>,
       );
@@ -901,13 +918,25 @@ function ReadySidebar({
           lifecycle={lifecycle}
           close={() => {
             lifecycleFocus.current = lifecycleDialog.channel.id;
-            lifecycleTrigger.current = lifecycleDialog.trigger;
+            lifecycleTrigger.current = lifecycleDialog.trigger?.isConnected
+              ? lifecycleDialog.trigger
+              : lifecycleDialog.focusFallback;
             handoff?.closeLifecycle();
           }}
           completed={() => {
             const id = lifecycleDialog.channel.id;
             lifecycleFocus.current = id;
             handoff?.closeLifecycle();
+            // Archive changes visibility, not access or the current destination.
+            if (
+              lifecycleDialog.action === "archive" ||
+              lifecycleDialog.action === "unarchive"
+            ) {
+              lifecycleTrigger.current = lifecycleDialog.trigger?.isConnected
+                ? lifecycleDialog.trigger
+                : lifecycleDialog.focusFallback;
+              return;
+            }
             // Confirmed access loss can already have removed current from the roster.
             if (
               (target.kind === "conversation"

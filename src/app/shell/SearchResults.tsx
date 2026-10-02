@@ -58,7 +58,10 @@ export function SearchResults({
       list.channels.filter(
         (channel) =>
           !channel.huddle &&
-          !channel.archived &&
+          (!channel.archived ||
+            (!channel.readOnly &&
+              (channel.channelType === "stream" ||
+                channel.channelType === "forum"))) &&
           (!channel.hidden || channel.channelType === "dm") &&
           (!scopedChannelId || channel.id === scopedChannelId),
       ),
@@ -97,8 +100,9 @@ export function SearchResults({
   ): SearchDestination => ({
     key: `channel:${channel.id}`,
     label: names.get(channel.id) ?? channel.name,
-    detail:
-      channel.channelType === "dm"
+    detail: channel.archived
+      ? "Archived channel"
+      : channel.channelType === "dm"
         ? "Direct message"
         : channel.channelType === "session"
           ? "Session"
@@ -107,7 +111,7 @@ export function SearchResults({
     run: () => openConversation(channel.id),
   });
   const recent: SearchDestination[] = channels
-    .filter((channel) => !channel.readOnly)
+    .filter((channel) => !channel.readOnly && !channel.archived)
     .sort(
       (a, b) =>
         (b.lastActivityAt ?? b.updatedAt ?? 0) -

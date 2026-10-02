@@ -34,7 +34,7 @@ function ConnectedComposer({
     <MessageComposer
       session={session}
       extensions={extensions}
-      scope={`${data.scope}:${data.viewer}`}
+      scope={data.scope}
       channelId={data.room}
       channelName="Huddle"
       label="Message this Huddle"

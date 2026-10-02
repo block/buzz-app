@@ -131,6 +131,58 @@ test("launch opens Messages without exposing Home across responsive navigation, 
   expect(await page.evaluate(() => window.homeFrames)).toEqual([]);
 });
 
+test("default navigation completes when the metadata lookup returns no events", async ({
+  page,
+  app,
+}) => {
+  let releaseMetadata;
+  const gate = new Promise((resolve) => {
+    releaseMetadata = resolve;
+  });
+  let held = false;
+  await page.route("**/api/relay/**/query", async (route) => {
+    if (
+      route
+        .request()
+        .postDataJSON()
+        .some((filter) => filter.kinds?.includes(39000))
+    ) {
+      held = true;
+      await gate;
+      await route.fulfill({ json: [] });
+    } else await route.continue();
+  });
+  await page.goto(app.origin);
+  await expect.poll(() => held).toBe(true);
+  expect(
+    await page.evaluate(() => window.fixtureNavigation.snapshot().status),
+  ).toBe("opening");
+  releaseMetadata();
+  await expect
+    .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
+    .toBe("opened");
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.fixtureNavigation.snapshot().entry.target),
+    )
+    .toMatchObject({ kind: "conversation" });
+  await expect(page.getByRole("textbox", { name: /^Message #/ })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "alpha", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Channel members", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Channel members", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Search Buzz" }).click();
+  await expect(
+    page.getByRole("group", { name: "This conversation" }),
+  ).toBeVisible();
+});
+
 test("Channels stays enabled despite saved disabled settings and has no switch", async ({
   page,
   app,

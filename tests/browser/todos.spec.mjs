@@ -1,4 +1,8 @@
-import { openPage, selectSettingsSection } from "./navigation.mjs";
+import {
+  openPage,
+  selectSettingsSection,
+  settleShellToggle,
+} from "./navigation.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 import { verifyEvent } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
@@ -53,6 +57,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     await selectSettingsSection(page, "Plugins");
   };
   const messages = async () => {
+    await settleShellToggle(page);
     const disclosure = button("Show navigation");
     if (await disclosure.isVisible()) await disclosure.click();
     await openPage(page, "Messages");
@@ -215,9 +220,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     .click();
   const workspace = page.locator("[data-panel-workspace]");
   const picker = workspace.getByRole("region", { name: "Choose a tab" });
-  await picker
-    .getByRole("button", { name: "Channel tools", exact: true })
-    .click();
+  await picker.getByRole("tab", { name: "Tools", exact: true }).click();
   await expect(
     picker.getByRole("button", { name: "Terminal", exact: true }),
   ).toHaveCount(0);

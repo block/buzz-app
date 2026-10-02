@@ -1,6 +1,10 @@
 import { prepareReviewEntrance } from "./use-review-entrance";
 import { useMediaCorners } from "./use-media-corners";
 import { VideoPlayer, VideoControls } from "./VideoPlayer";
+import {
+  PanelHeader,
+  PanelHeaderLabel,
+} from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   useEffect,
@@ -125,18 +129,27 @@ export function MediaAttachment({
             else setViewerOpen(true);
           }}
         >
-          <img
-            src={source}
-            alt={imageDescription}
-            loading="lazy"
-            onLoad={(event) =>
-              setMeasuredDimensions({
-                width: event.currentTarget.naturalWidth,
-                height: event.currentTarget.naturalHeight,
-              })
-            }
-            onError={() => setFailed(true)}
-          />
+          <span className={styles.mediaPreviewPixels}>
+            <img
+              src={source}
+              alt={imageDescription}
+              loading="lazy"
+              onLoad={(event) =>
+                setMeasuredDimensions({
+                  width: event.currentTarget.naturalWidth,
+                  height: event.currentTarget.naturalHeight,
+                })
+              }
+              onError={() => setFailed(true)}
+            />
+          </span>
+          <svg
+            className={styles.imageOutline}
+            data-image-outline=""
+            aria-hidden="true"
+          >
+            <path />
+          </svg>
         </button>
         {viewerOpen &&
           createPortal(
@@ -224,40 +237,51 @@ export function MediaAttachment({
     <>
       <div
         ref={corners}
-        className={`${styles.mediaPreview} dark ${mode === "thread" ? styles.mediaPreviewThread : ""}`}
-        data-color-mode="dark"
+        className={`${styles.mediaPreview} ${mode === "thread" ? styles.mediaPreviewThread : ""}`}
         data-video-preview=""
         data-media-preview=""
         data-started={started || undefined}
         data-playing={playing ? "true" : undefined}
         style={previewStyle}
       >
-        {visiblePreview && !started && (
-          <img
-            className={styles.mediaPoster}
-            src={visiblePreview}
-            alt=""
-            aria-hidden="true"
-          />
-        )}
-        {videoElement}
-        <VideoControls videoRef={video} inline />
-        <span className={styles.mediaExpand}>
-          <IconButton
-            size="compact"
-            variant="media"
-            shape="round"
-            type="button"
-            aria-label="Open video fullscreen"
-            onClick={(event) => {
-              prepareReviewEntrance(event);
-              video.current?.pause();
-              if (onOpenReview) onOpenReview(attachment, currentTime);
-              else setViewerOpen(true);
-            }}
-            icon={<ArrowsOutIcon size={16} aria-hidden="true" />}
-          />
-        </span>
+        <div
+          className={`${styles.mediaPreviewPixels} dark`}
+          data-color-mode="dark"
+        >
+          {visiblePreview && !started && (
+            <img
+              className={styles.mediaPoster}
+              src={visiblePreview}
+              alt=""
+              aria-hidden="true"
+            />
+          )}
+          {videoElement}
+          <VideoControls videoRef={video} inline />
+          <span className={styles.mediaExpand}>
+            <IconButton
+              size="compact"
+              variant="media"
+              shape="round"
+              type="button"
+              aria-label="Open video fullscreen"
+              onClick={(event) => {
+                prepareReviewEntrance(event);
+                video.current?.pause();
+                if (onOpenReview) onOpenReview(attachment, currentTime);
+                else setViewerOpen(true);
+              }}
+              icon={<ArrowsOutIcon size={16} aria-hidden="true" />}
+            />
+          </span>
+        </div>
+        <svg
+          className={styles.imageOutline}
+          data-image-outline=""
+          aria-hidden="true"
+        >
+          <path />
+        </svg>
       </div>
       {viewerOpen &&
         createPortal(
@@ -307,24 +331,27 @@ function MediaViewer({
       }}
     >
       <section
-        className={styles.mediaViewer}
+        className={`${styles.mediaViewer} dark`}
+        data-color-mode="dark"
         role="dialog"
         aria-modal="true"
         aria-label={title}
       >
-        <div className={styles.mediaViewerDragRegion} data-tauri-drag-region />
-        <span className={styles.mediaViewerClose}>
-          <IconButton
-            size="compact"
-            variant="solid"
-            shape="round"
-            ref={closeButton}
-            type="button"
-            aria-label="Close fullscreen viewer"
-            onClick={close}
-            icon={<XIcon size={20} aria-hidden="true" />}
+        <div className={styles.mediaViewerHeading} data-tauri-drag-region>
+          <PanelHeader
+            title={<PanelHeaderLabel title={title} />}
+            actions={
+              <IconButton
+                size="compact"
+                ref={closeButton}
+                type="button"
+                aria-label="Close fullscreen viewer"
+                onClick={close}
+                icon={<XIcon size={20} aria-hidden="true" />}
+              />
+            }
           />
-        </span>
+        </div>
         {children}
       </section>
     </div>

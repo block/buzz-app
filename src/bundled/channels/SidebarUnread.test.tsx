@@ -215,9 +215,12 @@ it("removes both counts and previews when unread markers disappear", async () =>
     <SidebarUnread dmPreviews={previews}>{row("dm", 340)}</SidebarUnread>,
   );
   await measure();
-  expect(
-    screen.getByRole("button", { name: "1 unread conversation below" }),
-  ).toBeInTheDocument();
+  const cue = screen.getByRole("button", {
+    name: "1 unread conversation below",
+  });
+  const surface = cue.closest("[data-visible]");
+  expect(surface).toHaveAttribute("data-visible", "true");
+  expect(surface).not.toHaveAttribute("inert");
   view.rerender(
     <SidebarUnread dmPreviews={previews}>
       <button type="button" data-channel-id="dm" data-top="340">
@@ -230,4 +233,21 @@ it("removes both counts and previews when unread markers disappear", async () =>
   expect(
     screen.queryByRole("button", { name: /unread conversation/ }),
   ).not.toBeInTheDocument();
+  // Keep the surface for its exit transition, but exclude hidden controls.
+  expect(surface).toBeInTheDocument();
+  expect(surface).toHaveAttribute("inert");
+  expect(surface).toHaveAttribute("aria-hidden", "true");
+  expect(surface).toHaveAttribute("data-visible", "false");
+  view.rerender(
+    <SidebarUnread dmPreviews={previews}>{row("dm", 340)}</SidebarUnread>,
+  );
+  fireEvent.scroll(screen.getByRole("navigation"));
+  await measure();
+  expect(
+    screen.getByRole("button", {
+      name: "1 unread conversation below",
+    }),
+  ).toBe(cue);
+  expect(surface).not.toHaveAttribute("inert");
+  expect(surface).toHaveAttribute("data-visible", "true");
 });

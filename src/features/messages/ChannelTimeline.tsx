@@ -744,12 +744,11 @@ function Timeline({
           </Button>
         ) : null}
       </div>
-      {showJumpToLatest && (
-        <JumpToLatestButton
-          newMessageCount={newMessageCount}
-          onClick={jumpToLatest}
-        />
-      )}
+      <JumpToLatestButton
+        visible={showJumpToLatest}
+        newMessageCount={newMessageCount}
+        onClick={jumpToLatest}
+      />
       {width > 0 && (
         <Virtualizer
           ref={handle}

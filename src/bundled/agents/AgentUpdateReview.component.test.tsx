@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
@@ -36,10 +43,11 @@ function setup(known: boolean, failInventory = false) {
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
+  let rosterGate = gate;
   let omitRoster = false;
   let failRoster = false;
   const readRoster = vi.fn(async () => {
-    await gate;
+    await rosterGate;
     if (failRoster) throw Error("Relay unavailable");
     if (omitRoster) return false;
     list = { ...list, channels: [channel] };
@@ -131,6 +139,13 @@ function setup(known: boolean, failInventory = false) {
       list = { ...list, status };
       for (const listener of listeners) listener();
     },
+    holdRoster: () => {
+      let resume!: () => void;
+      rosterGate = new Promise<void>((resolve) => {
+        resume = resolve;
+      });
+      return resume;
+    },
     revoke: () => {
       channel.members = [];
     },
@@ -139,6 +154,47 @@ function setup(known: boolean, failInventory = false) {
     },
   };
 }
+
+it("preserves owner edits while blocking writes during membership revalidation", async () => {
+  const f = setup(true);
+  f.send();
+  await act(async () => f.release());
+  const editor = await screen.findByRole("dialog", { name: "Edit agent" });
+  const model = screen.getByRole("combobox", { name: "Model" });
+  await userEvent.clear(model);
+  await userEvent.type(model, "owner-model");
+  await userEvent.click(
+    screen.getByRole("option", { name: /owner-model.*Custom ID/ }),
+  );
+  const resume = f.holdRoster();
+  try {
+    await act(async () => f.setListStatus("error"));
+    expect(editor).toBeVisible();
+    expect(model).toHaveValue("owner-model");
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    const form = editor.querySelector("form");
+    if (!form) throw Error("Missing review form");
+    fireEvent.submit(form);
+    expect(f.fixture.calls.filter(({ action }) => action === "save")).toEqual(
+      [],
+    );
+    await act(async () => f.setListStatus("ready"));
+    await waitFor(() => expect(f.readRoster).toHaveBeenCalledTimes(2));
+    expect(editor).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  } finally {
+    await act(async () => resume());
+  }
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled(),
+  );
+  expect(model).toHaveValue("owner-model");
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull(),
+  );
+  expect(f.fixture.agent.harness.model).toBe("owner-model");
+});
 
 it("keeps the selected agent editor after a rename reports restart failure", async () => {
   const f = setup(true);
@@ -166,26 +222,75 @@ it("keeps the selected agent editor after a rename reports restart failure", asy
   ).toBeEnabled();
   expect(screen.queryByText(/No personal agent named/)).toBeNull();
   f.failRoster(true);
-  await act(async () => f.setListStatus("loading"));
+  await act(async () => f.setListStatus("error"));
+  expect(editor).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "1 agent couldn’t restart with the new settings; check Agents.",
+  );
+  expect(
+    screen.getByRole("button", { name: "Restart to apply" }),
+  ).toBeDisabled();
   await act(async () => f.setListStatus("ready"));
   const retry = await screen.findByRole("button", { name: "Retry" });
   f.failRoster(false);
   await userEvent.click(retry);
-  expect(
-    await screen.findByRole("dialog", { name: "Edit agent" }),
-  ).toBeVisible();
+  expect(editor).toBeVisible();
   expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
     "Renamed fixture agent",
   );
-  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
-  await waitFor(() => expect(f.control.snapshot().busy).toBe(false));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Restart to apply" }),
+    ).toBeEnabled(),
+  );
   expect(screen.getByRole("status")).toHaveTextContent(
     "1 agent couldn’t restart with the new settings; check Agents.",
   );
-  await userEvent.click(screen.getByRole("button", { name: "Runtime" }));
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+});
+
+it("completes an in-flight Save while membership is temporarily unknown", async () => {
+  const f = setup(true);
+  const save = f.fixture.host.save;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.fixture.host.save = async (...args) => {
+    await gate;
+    return save(...args);
+  };
+  f.send();
+  await act(async () => f.release());
+  const editor = await screen.findByRole("dialog", { name: "Edit agent" });
+  try {
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(f.control.snapshot().busy).toBe(true));
+    await act(async () => f.setListStatus("error"));
+    expect(editor).toBeVisible();
+  } finally {
+    await act(async () => release());
+  }
+  await waitFor(() => expect(f.control.snapshot().busy).toBe(false));
+  expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
+  await act(async () => f.setListStatus("ready"));
+  expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
   expect(
-    screen.getByRole("button", { name: "Restart to apply" }),
-  ).toBeEnabled();
+    f.fixture.calls.filter(({ action }) => action === "save"),
+  ).toHaveLength(1);
+});
+
+it("dismisses an active review when membership is definitely revoked", async () => {
+  const f = setup(true);
+  f.send();
+  await act(async () => f.release());
+  await screen.findByRole("dialog", { name: "Edit agent" });
+  await act(async () => {
+    f.revoke();
+    f.setListStatus("ready");
+  });
+  expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
+  expect(f.fixture.calls.filter(({ action }) => action === "save")).toEqual([]);
 });
 
 it("waits for a busy operation before refreshing inventory for a request", async () => {

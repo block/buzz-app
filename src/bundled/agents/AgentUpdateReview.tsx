@@ -72,7 +72,12 @@ export function AgentUpdateReview({
   useEffect(() => {
     setAuthorizedRequest(null);
     setRosterError(null);
-    if (!request || channelList.status !== "ready") return;
+    if (
+      !request ||
+      connection.status !== "ready" ||
+      channelList.status !== "ready"
+    )
+      return;
     let current = true;
     const channels = connection.session.channels;
     const channelId = request.value.request.channelId;
@@ -86,19 +91,25 @@ export function AgentUpdateReview({
           ? await channels.resolve([channelId]).then(() => true)
           : false;
       if (!current) return;
-      if (
-        fresh === true &&
-        managementRequesterAuthorized(request, channels.list()) === true
-      )
-        setAuthorizedRequest(request);
-      else setRequests((pending) => pending.slice(1));
+      const membership = managementRequesterAuthorized(
+        request,
+        channels.list(),
+      );
+      if (fresh === true && membership === true) setAuthorizedRequest(request);
+      else if (membership === false) setRequests((pending) => pending.slice(1));
+      else setRosterError(request);
     })().catch(() => {
       if (current) setRosterError(request);
     });
     return () => {
       current = false;
     };
-  }, [channelList.status, connection.session.channels, request]);
+  }, [
+    channelList.status,
+    connection.session.channels,
+    connection.status,
+    request,
+  ]);
   useEffect(() => {
     if (
       request &&
@@ -124,6 +135,13 @@ export function AgentUpdateReview({
   }, [control, controlState.busy, refreshedRequestId, request]);
   const selectedId =
     selection?.value === request?.value ? selection?.id : undefined;
+  const membership = request
+    ? managementRequesterAuthorized(request, channelList)
+    : null;
+  const confirmed =
+    connection.status === "ready" &&
+    authorizedRequest === request &&
+    membership === true;
   const matches = useMemo(() => {
     if (request?.value.action !== "update" || !connection.scope) return [];
     const community = connection.scope.split(":").slice(0, -1).join(":");
@@ -138,42 +156,33 @@ export function AgentUpdateReview({
     const match = matches.length === 1 ? matches[0] : undefined;
     if (
       request &&
-      authorizedRequest === request &&
+      confirmed &&
       refreshedRequestId === request.value.requestId &&
       !selectedId &&
       match
     )
       setSelection({ value: request.value, id: match.id });
-  }, [authorizedRequest, matches, refreshedRequestId, request, selectedId]);
+  }, [confirmed, matches, refreshedRequestId, request, selectedId]);
   if (!request) return null;
   const dismiss = () => setRequests((pending) => pending.slice(1));
-  if (rosterError === request) {
+  const retryMembership = () =>
+    setRequests((pending) =>
+      pending[0] === request ? [{ ...request }, ...pending.slice(1)] : pending,
+    );
+  if (rosterError === request && !selectedId) {
     return (
       <ToastNotice
         title="Could not verify request membership"
         description="Retry the channel roster read before reviewing this request."
         onDismiss={dismiss}
       >
-        <Button
-          type="button"
-          onClick={() =>
-            setRequests((pending) =>
-              pending[0] === request
-                ? [{ ...request }, ...pending.slice(1)]
-                : pending,
-            )
-          }
-        >
+        <Button type="button" onClick={retryMembership}>
           Retry
         </Button>
       </ToastNotice>
     );
   }
-  if (
-    authorizedRequest !== request ||
-    managementRequesterAuthorized(request, channelList) !== true
-  )
-    return null;
+  if ((!confirmed && !selectedId) || membership === false) return null;
   if (request.value.action === "create") {
     return (
       <ToastNotice
@@ -237,9 +246,24 @@ export function AgentUpdateReview({
       control={control}
       state={controlState}
       initialDraft={initial}
+      disabled={!confirmed}
       notice="Requested by an agent. Review every field before saving."
       onClose={dismiss}
-    />
+    >
+      {!confirmed && (
+        <div>
+          <p role="alert" className="text-body-sm text-subtle">
+            Request membership is unconfirmed. Your edits are retained; writes
+            are paused until it is verified.
+          </p>
+          {rosterError === request && (
+            <Button type="button" onClick={retryMembership}>
+              Retry
+            </Button>
+          )}
+        </div>
+      )}
+    </AgentEditor>
   );
 }
 

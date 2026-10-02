@@ -44,7 +44,7 @@ export function TypingIndicator({
       <span className={styles.label}>
         <span className={styles.names}>{names.join(", ")}</span>
         {others > 0 ? ` and ${others} others` : ""}
-        {matching.length === 1 ? " is typing…" : " are typing…"}
+        {matching.length === 1 ? " is typing" : " are typing"}
       </span>
     </div>
   );

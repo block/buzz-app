@@ -2,6 +2,7 @@ import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
 import {
   memo,
   useLayoutEffect,
+  useMemo,
   useRef,
   useSyncExternalStore,
   type ComponentType,
@@ -23,6 +24,7 @@ import { DmTypingBadge } from "./DmTypingBadge";
 import { usePresenceStatus } from "../../features/presence/react";
 import { UnreadBadge } from "./UnreadBadge";
 import { workingAgents } from "./working-agents";
+import { knownAgentPubkeys } from "../../features/agents/known";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import styles from "./Channels.module.css";
 
@@ -88,11 +90,37 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem(
         ? workingAgents(session.agentActivity.snapshot(), channel.id).join(",")
         : "",
   );
-  const agents = agentKeys ? agentKeys.split(",") : noAgents;
-  const agentProfiles = useSyncExternalStore(
-    agents.length ? session.profiles.subscribe : noSubscribe,
-    agents.length ? session.profiles.snapshot : () => noProfiles,
+  // App-managed agents publish no observer telemetry, so their typing in this
+  // channel or any of its threads is their working signal.
+  const typingKeys = useSyncExternalStore(session.typing.subscribe, () =>
+    [
+      ...new Set(
+        session.typing
+          .snapshot()
+          .filter((entry) => entry.channelId === channel.id)
+          .map((entry) => entry.pubkey),
+      ),
+    ].join(","),
   );
+  const observed = agentKeys ? agentKeys.split(",") : noAgents;
+  const typers = typingKeys ? typingKeys.split(",") : noAgents;
+  const active = observed.length > 0 || typers.length > 0;
+  const agentProfiles = useSyncExternalStore(
+    active ? session.profiles.subscribe : noSubscribe,
+    active ? session.profiles.snapshot : () => noProfiles,
+  );
+  const library = useSyncExternalStore(
+    typers.length ? session.agentChoices.subscribe : noSubscribe,
+    typers.length ? session.agentChoices.snapshot : () => undefined,
+  );
+  const known = useMemo(
+    () => knownAgentPubkeys(agentProfiles, library),
+    [agentProfiles, library],
+  );
+  const typingAgents = typers.filter((key) => known.has(key));
+  const agents = typingAgents.length
+    ? [...new Set([...observed, ...typingAgents])].sort()
+    : observed;
   return (
     <ChannelSidebarItemCore
       {...props}

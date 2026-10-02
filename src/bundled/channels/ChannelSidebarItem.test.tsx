@@ -213,6 +213,47 @@ it.each([
   },
 );
 
+it("shows known agents typing in the channel or its threads as working", () => {
+  const agent = "b".repeat(64),
+    human = "c".repeat(64);
+  const listeners = new Set<() => void>();
+  let typing: readonly {
+    channelId: string;
+    threadRootId?: string;
+    pubkey: string;
+  }[] = [];
+  const library = { identities: [{ pubkey: agent }] };
+  const state = owner(new Map([[agent, { name: "Pinky" }]]));
+  const session = {
+    ...state.session,
+    typing: {
+      snapshot: () => typing,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+    agentChoices: {
+      snapshot: () => library,
+      subscribe: () => () => {},
+    },
+  } as unknown as RelaySession;
+  const set = (next: typeof typing) =>
+    act(() => {
+      typing = next;
+      for (const listener of listeners) listener();
+    });
+  render(<ChannelSidebarItem {...itemProps(session, false)} />);
+  set([{ channelId: "alpha", pubkey: human }]);
+  expect(document.querySelector("[data-channel-working]")).toBeNull();
+  set([{ channelId: "alpha", threadRootId: "d".repeat(64), pubkey: agent }]);
+  expect(
+    screen.getByRole("img", { name: "Pinky working in Alpha" }),
+  ).toBeInTheDocument();
+  set([{ channelId: "beta", pubkey: agent }]);
+  expect(document.querySelector("[data-channel-working]")).toBeNull();
+});
+
 it("layers the working indicator above unread at the same position", () => {
   const state = owner();
   render(<ChannelSidebarItem {...itemProps(state.session, true)} />);

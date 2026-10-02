@@ -8,7 +8,6 @@ import { DraftMentionRoster } from "./draft-mention-roster";
 import {
   archivedMention,
   mentionCandidates,
-  allowsOutsideMentions,
   rememberMention,
 } from "./mention-candidates";
 import {
@@ -642,7 +641,7 @@ function Composer({
         const channel = session.channels
           .list()
           .channels.find((item) => item.id === channelId);
-        if (allowsOutsideMentions(channel) && channel?.members) {
+        if (channel?.members) {
           const missing = captured.recipients.filter(
             (person) => !channel.members?.includes(person.pubkey),
           );

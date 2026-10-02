@@ -2196,7 +2196,7 @@ it("keeps inline recipient identity and source stable through directory collisio
 });
 
 it.each([false, true])(
-  "leaves removed-person rejection to the real session without enrolling anyone (mixed native=%s)",
+  "asks before mentioning a removed person in an untyped channel without enrolling anyone (mixed native=%s)",
   async (mixed) => {
     const viewer = keypair(),
       relay = keypair();
@@ -2252,12 +2252,17 @@ it.each([false, true])(
       members = [viewer.pubkey];
       time++;
       await act(refresh);
-      // An ordinary removed recipient must reject synchronously. Awaiting an
-      // async act here would hide a transient enrollment lock on the composer.
+      // An untyped channel is an ordinary channel: a removed recipient is now
+      // outside it, so the sender chooses. Nothing enrolls or sends meanwhile.
       h.submit();
-      expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "no longer a channel member",
+      expect(screen.getByRole("dialog")).toHaveTextContent(
+        mixed
+          ? "Honey, Honey are not in this channel."
+          : "Honey is not in this channel.",
+      );
+      await userEvent.setup().keyboard("{Escape}");
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
       );
       expect(h.input()).toHaveValue(draft);
       expect(sign).not.toHaveBeenCalled();

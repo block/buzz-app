@@ -50,8 +50,8 @@ not authorization.
 
 ## 1. Choice set
 
-For a stream, forum or DM that is not archived and not read-only, the choice
-set is:
+For any known channel (stream, untyped channel, forum or DM) that is not
+archived and not read-only, the choice set is:
 
 1. the channel's members;
 2. the agents that the client offers for mention in this channel; and

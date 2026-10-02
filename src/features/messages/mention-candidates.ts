@@ -15,22 +15,6 @@ export function archivedMention(session: RelaySession, pubkey: string) {
   );
 }
 
-/**
- * Streams, forums and DMs can name people outside the destination. Selection
- * grants nothing: an outside key becomes a reference unless the sender adds
- * that person. Streams and forums ask on send; DMs cannot add anyone, so they
- * do not ask.
- */
-export function allowsOutsideMentions(
-  channel: Pick<ChannelSummary, "channelType"> | undefined,
-) {
-  return (
-    channel?.channelType === "stream" ||
-    channel?.channelType === "forum" ||
-    channel?.channelType === "dm"
-  );
-}
-
 /** Row detail for an outside choice. Nobody can be added to a DM. */
 export function outsideMentionDetail(
   channel: Pick<ChannelSummary, "channelType"> | undefined,
@@ -71,7 +55,9 @@ export function mentionCandidates(
             session.outbox?.supports(9000),
           )))
       choices.set(person.pubkey, { pubkey: person.pubkey, name: person.name });
-    if (!roster && !inviteAgents && allowsOutsideMentions(channel))
+    // Every known destination can name outside people. Sessions pass
+    // inviteAgents: their mentions admit agents, so they use the agent list.
+    if (channel && !roster && !inviteAgents)
       for (const person of directory) choices.set(person.pubkey, person);
     for (const pubkey of members)
       choices.set(pubkey, {

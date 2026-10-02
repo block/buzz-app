@@ -1748,7 +1748,9 @@ it("explains a same-owner envelope saved for another origin without asking to sw
       "This identity has a deletion request from another Builderlab server pending on this device. It can't be checked here, so contact support before starting another deletion.",
     ),
   ).toBeVisible();
-  expect(screen.queryByText(/Switch to that Buzz identity/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByText(/Switch to that Buzz identity/),
+  ).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
   expect(deletionPosts()).toHaveLength(0);

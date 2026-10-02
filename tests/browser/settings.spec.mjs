@@ -695,7 +695,9 @@ test("hosted deletion keeps a foreign owner's full npub inside the dialog and no
   expect(await contained(alert.locator("span"))).toBe(true);
   expect(await contained(dialog)).toBe(true);
   await dialog.getByRole("button", { name: "Cancel" }).click();
-  const notice = page.getByRole("status").filter({ hasText: "is still pending" });
+  const notice = page
+    .getByRole("status")
+    .filter({ hasText: "is still pending" });
   await expect(notice).toBeVisible();
   expect(await contained(notice)).toBe(true);
   expect(deletes).toHaveLength(0);

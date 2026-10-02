@@ -346,7 +346,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
         aria-hidden="true"
         className="mt-0.5 shrink-0"
       />
-      <span>{error}</span>
+      <span className="min-w-0 wrap-anywhere">{error}</span>
     </p>
   );
   const bound = boundKey(identity);
@@ -665,10 +665,20 @@ export function HostedCommunities({ active }: { active(): boolean }) {
           )}
           {deletionEnabled && blockedOwner && (
             <p role="status" className={`${card} text-body-sm`}>
-              A deletion request from {npub(blockedOwner)} is still pending on
-              this device. Switch to that Buzz identity and use Check deletion
-              status before starting another deletion here. If you no longer
-              have that identity, contact support.
+              {blockedOwner === bound ? (
+                <>
+                  This identity has a deletion request saved from a different
+                  app address on this device. It can't be checked here, so
+                  contact support before starting another deletion.
+                </>
+              ) : (
+                <>
+                  A deletion request from {npub(blockedOwner)} is still pending
+                  on this device. Switch to that Buzz identity and use Check
+                  deletion status before starting another deletion here. If you
+                  no longer have that identity, contact support.
+                </>
+              )}
             </p>
           )}
           {communities.length === 0 ? (
@@ -856,7 +866,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
             const occupied = readPendingDeletion();
             if (blockedOwner && !occupied) {
               setBlockedOwner(null);
-              setError("Refresh and try again.");
+              setError("Try again.");
               return;
             }
             if (blockedOwner || occupied) {
@@ -871,7 +881,9 @@ export function HostedCommunities({ active }: { active(): boolean }) {
               } else if (occupied) {
                 setBlockedOwner(occupied.owner_pubkey);
                 setError(
-                  `Deletion was not sent. A deletion request from ${npub(occupied.owner_pubkey)} is already pending on this device.`,
+                  occupied.owner_pubkey === bound
+                    ? "Deletion was not sent. This identity has a deletion request saved from a different app address on this device. Contact support before starting another deletion."
+                    : `Deletion was not sent. A deletion request from ${npub(occupied.owner_pubkey)} is already pending on this device.`,
                 );
               }
               return;

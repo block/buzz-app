@@ -1800,3 +1800,56 @@ async fn preference_batches_reject_invalid_ciphertext_after_signature_verificati
         }
     }
 }
+
+#[test]
+fn canvas_signing_bounds_revision_preconditions_and_allows_exact_legacy_retries() {
+    let channel = vec![
+        "h".to_string(),
+        "11111111-1111-4111-8111-111111111111".to_string(),
+    ];
+    let event = |tags| EventTemplate {
+        kind: 40100,
+        content: "# Plan".into(),
+        created_at: 100,
+        tags,
+    };
+    assert!(validate_event("https://relay.test", &event(vec![channel.clone()])).is_ok());
+    for revision in ["none".to_string(), "a".repeat(64)] {
+        assert!(validate_event(
+            "https://relay.test",
+            &event(vec![
+                channel.clone(),
+                vec!["expected-revision".into(), revision]
+            ])
+        )
+        .is_ok());
+    }
+    for tags in [
+        vec![],
+        vec![channel.clone(), channel.clone()],
+        vec![channel.clone(), vec!["p".into(), "a".repeat(64)]],
+        vec![
+            channel.clone(),
+            vec!["expected-revision".into(), "bad".into()],
+        ],
+        vec![
+            channel.clone(),
+            vec!["expected-revision".into(), "A".repeat(64)],
+        ],
+        vec![
+            channel.clone(),
+            vec!["expected-revision".into(), "none".into(), "extra".into()],
+        ],
+        vec![
+            channel.clone(),
+            vec!["expected-revision".into(), "none".into()],
+            vec!["expected-revision".into(), "none".into()],
+        ],
+        vec![channel.clone(), vec![]],
+    ] {
+        assert!(validate_event("https://relay.test", &event(tags)).is_err());
+    }
+    let mut too_large = event(vec![channel]);
+    too_large.content = "é".repeat(13 * 1024);
+    assert!(validate_event("https://relay.test", &too_large).is_err());
+}

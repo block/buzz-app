@@ -20,6 +20,8 @@ export function ChannelPreview({
   actions,
   exactActions,
   anchor,
+  draft = false,
+  onDraftSaved,
   onClose,
 }: {
   session: RelaySession;
@@ -29,6 +31,8 @@ export function ChannelPreview({
   actions: ReactNode;
   exactActions?: ReactNode;
   anchor?: string | undefined;
+  draft?: boolean;
+  onDraftSaved?: (id: string) => void;
   onClose?: () => void;
 }) {
   const window = useChannelWindow(session.channels, channelId);
@@ -63,6 +67,10 @@ export function ChannelPreview({
     });
   }, [anchor, opening, window]);
   const channel = session.channels.get?.(channelId);
+  // Saved drafts open the current head without mutating canonical scroll intent.
+  useEffect(() => {
+    if (draft) session.channels.refresh?.(channelId);
+  }, [session, channelId, draft]);
   // Cache clear can leave the selected window idle without remounting it.
   useEffect(() => {
     if (window.status === "idle") session.channels.ensure(channelId);
@@ -98,6 +106,7 @@ export function ChannelPreview({
               scope={session.scope}
               channelId={channelId}
               window={window}
+              {...(draft ? { transient: true } : {})}
               revealMessageId={sentId}
               inlineTarget={
                 anchor && inlineSignal && !inlineSignal.aborted
@@ -150,9 +159,8 @@ export function ChannelPreview({
               : `Message #${channelName}`
           }
           sessionConversation={channel?.channelType === "session"}
-          onSend={(id) => {
-            setSentId(id);
-          }}
+          onSend={setSentId}
+          onDraftSaved={onDraftSaved}
         />
       </section>
     </MessageEditScope>

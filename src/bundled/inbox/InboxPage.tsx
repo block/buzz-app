@@ -12,6 +12,7 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { InboxItem } from "../../features/relay/inbox";
 import { InboxDetail } from "./InboxDetail";
+import { DraftsView } from "./DraftsView";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type { Navigation } from "../../features/navigation/controller";
 import type { NavigationScope } from "../../features/navigation/targets";
@@ -163,6 +164,8 @@ export function InboxView({
   const [activity, setActivity] = useState<ActivityFilter>("all");
   const [senderFilter, setSenderFilter] = useState<SenderFilter>("everyone");
   const [unreadOnly, setUnreadOnly] = useState(false);
+  const [drafts, setDrafts] = useState(false);
+  const draftsControl = useRef<HTMLButtonElement>(null);
   const [selectedTarget, setSelectedTarget] = useState<{
     channelId: string;
     messageId: string;
@@ -488,8 +491,23 @@ export function InboxView({
         title={
           <PanelHeaderLabel title="Inbox" icon={<BellIcon size="1rem" />} />
         }
+        actions={
+          <Button
+            size="sm"
+            variant="ghost"
+            ref={draftsControl}
+            onClick={() => {
+              cancelRetry();
+              setDrafts((current) => !current);
+            }}
+          >
+            <span className="text-body">
+              {drafts ? "Back to Inbox" : "Drafts"}
+            </span>
+          </Button>
+        }
       />
-      {failure && (
+      {!drafts && failure && (
         <div className={styles.notice} role="alert">
           <p className="text-body">{failure}</p>
           <Button ref={retryButton} size="sm" loading={pending} onClick={retry}>
@@ -497,66 +515,58 @@ export function InboxView({
           </Button>
         </div>
       )}
-      <div
-        ref={workspace}
-        className={styles.workspace}
-        data-selected={!!selected || undefined}
-      >
-        <div className={styles.listPane}>
-          <div ref={fallbackControl} className={styles.toolbar}>
-            <div className={styles.filterPair}>
-              <Select
-                label="Activity type"
-                variant="compact"
-                value={activity}
-                groups={[{ label: "", options: activities }]}
-                onValueChange={(value) => {
-                  setActivity(value as ActivityFilter);
-                  setLimit(50);
-                }}
-              />
-              <Select
-                label="Sender"
-                variant="compact"
-                value={senderFilter}
-                groups={[{ label: "", options: senders }]}
-                onValueChange={(value) => {
-                  setSenderFilter(value as SenderFilter);
+      {drafts ? (
+        <DraftsView
+          onEmptyRetire={() => draftsControl.current?.focus()}
+          session={session}
+          scope={scope}
+          navigator={navigator}
+          extensions={extensions}
+        />
+      ) : (
+        <div
+          ref={workspace}
+          className={styles.workspace}
+          data-selected={!!selected || undefined}
+        >
+          <div className={styles.listPane}>
+            <div ref={fallbackControl} className={styles.toolbar}>
+              <div className={styles.filterPair}>
+                <Select
+                  label="Activity type"
+                  variant="compact"
+                  value={activity}
+                  groups={[{ label: "", options: activities }]}
+                  onValueChange={(value) => {
+                    setActivity(value as ActivityFilter);
+                    setLimit(50);
+                  }}
+                />
+                <Select
+                  label="Sender"
+                  variant="compact"
+                  value={senderFilter}
+                  groups={[{ label: "", options: senders }]}
+                  onValueChange={(value) => {
+                    setSenderFilter(value as SenderFilter);
+                    setLimit(50);
+                  }}
+                />
+              </div>
+              <Checkbox
+                label="Unread only"
+                checked={unreadOnly}
+                onCheckedChange={(checked) => {
+                  setUnreadOnly(checked);
                   setLimit(50);
                 }}
               />
             </div>
-            <Checkbox
-              label="Unread only"
-              checked={unreadOnly}
-              onCheckedChange={(checked) => {
-                setUnreadOnly(checked);
-                setLimit(50);
-              }}
-            />
-          </div>
-          <div className={styles.scroll}>
-            {inbox.freshness === "stale" && !failure && (
-              <div className={styles.notice} role="status">
-                <span className="text-body text-subtle">
-                  Showing retained activity.
-                </span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  loading={pending}
-                  onClick={() => refresh()}
-                >
-                  Refresh
-                </Button>
-              </div>
-            )}
-            {(inbox.status === "idle" || feed.status === "idle") &&
-              !loading &&
-              !failure && (
+            <div className={styles.scroll}>
+              {inbox.freshness === "stale" && !failure && (
                 <div className={styles.notice} role="status">
                   <span className="text-body text-subtle">
-                    Check recent activity.
+                    Showing retained activity.
                   </span>
                   <Button
                     size="sm"
@@ -568,230 +578,254 @@ export function InboxView({
                   </Button>
                 </div>
               )}
-            {loading && (
-              <p className={styles.notice} role="status">
-                Checking recent activity…
-              </p>
-            )}
-            {!visible.length &&
-              (inbox.status === "ready" || feed.status === "ready") &&
-              !loading &&
-              !failure && (
-                <div className={styles.empty} role="status">
-                  <h3 className="text-label">
-                    {unreadOnly
-                      ? "No unread activity in this view"
-                      : "No recent activity in this view"}
-                  </h3>
-                  <p className="text-body text-subtle">
-                    Mentions, direct messages, and replies in threads you
-                    participate in appear here.
-                  </p>
-                </div>
-              )}
-            <ul
-              className={styles.list}
-              aria-label="Inbox conversations"
-              aria-busy={pending}
-            >
-              {visible.map((item) => {
-                const channel = list.channels.find(
-                  (candidate) => candidate.id === item.channelId,
-                );
-                const profile = profiles.get(item.authorId);
-                const sender = name(
-                  item.authorId,
-                  profile?.name ??
-                    formatPublicKey(item.authorId) ??
-                    "Unknown sender",
-                  channel?.members,
-                );
-                const dmName = dmLabel(
-                  channel?.participants,
-                  profiles,
-                  name,
-                  channel?.name ?? "Direct message",
-                );
-                const context =
-                  channel?.channelType === "dm"
-                    ? `DM · ${dmName}`
-                    : channel
-                      ? `#${channel.name}`
-                      : "Conversation";
-                const unread = hasUnread(item);
-                return (
-                  <li
-                    key={item.id}
-                    className={styles.row}
-                    data-unread={unread || undefined}
-                    data-selected={selectedId === item.id || undefined}
-                  >
-                    <ContextMenuRoot
-                      open={menu?.id === item.id}
-                      onOpenChange={(open) =>
-                        setMenu(open ? { id: item.id } : undefined)
-                      }
+              {(inbox.status === "idle" || feed.status === "idle") &&
+                !loading &&
+                !failure && (
+                  <div className={styles.notice} role="status">
+                    <span className="text-body text-subtle">
+                      Check recent activity.
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      loading={pending}
+                      onClick={() => refresh()}
                     >
-                      <ContextMenuTrigger
-                        render={<div className={styles.rowSurface} />}
-                        onKeyDown={(event) => {
-                          if (
-                            event.key === "ContextMenu" ||
-                            (event.shiftKey && event.key === "F10")
-                          ) {
-                            event.preventDefault();
-                            setMenu({
-                              id: item.id,
-                              anchor: event.target as HTMLElement,
-                            });
-                          }
-                        }}
+                      Refresh
+                    </Button>
+                  </div>
+                )}
+              {loading && (
+                <p className={styles.notice} role="status">
+                  Checking recent activity…
+                </p>
+              )}
+              {!visible.length &&
+                (inbox.status === "ready" || feed.status === "ready") &&
+                !loading &&
+                !failure && (
+                  <div className={styles.empty} role="status">
+                    <h3 className="text-label">
+                      {unreadOnly
+                        ? "No unread activity in this view"
+                        : "No recent activity in this view"}
+                    </h3>
+                    <p className="text-body text-subtle">
+                      Mentions, direct messages, and replies in threads you
+                      participate in appear here.
+                    </p>
+                  </div>
+                )}
+              <ul
+                className={styles.list}
+                aria-label="Inbox conversations"
+                aria-busy={pending}
+              >
+                {visible.map((item) => {
+                  const channel = list.channels.find(
+                    (candidate) => candidate.id === item.channelId,
+                  );
+                  const profile = profiles.get(item.authorId);
+                  const sender = name(
+                    item.authorId,
+                    profile?.name ??
+                      formatPublicKey(item.authorId) ??
+                      "Unknown sender",
+                    channel?.members,
+                  );
+                  const dmName = dmLabel(
+                    channel?.participants,
+                    profiles,
+                    name,
+                    channel?.name ?? "Direct message",
+                  );
+                  const context =
+                    channel?.channelType === "dm"
+                      ? `DM · ${dmName}`
+                      : channel
+                        ? `#${channel.name}`
+                        : "Conversation";
+                  const unread = hasUnread(item);
+                  return (
+                    <li
+                      key={item.id}
+                      className={styles.row}
+                      data-unread={unread || undefined}
+                      data-selected={selectedId === item.id || undefined}
+                    >
+                      <ContextMenuRoot
+                        open={menu?.id === item.id}
+                        onOpenChange={(open) =>
+                          setMenu(open ? { id: item.id } : undefined)
+                        }
                       >
-                        <NavigationItem
-                          aria-label={`Open ${sender} in ${context}`}
-                          aria-describedby={`${previewId}-${item.id}`}
-                          disabled={pending}
-                          selected={selectedId === item.id}
-                          ref={
-                            item.id === visible[0]?.id ? fallbackRow : undefined
-                          }
-                          icon={
-                            <Avatar
-                              size="default"
-                              alt=""
-                              fallback={sender}
-                              src={
-                                profile?.picture
-                                  ? session.media(profile.picture)
-                                  : undefined
-                              }
-                              shape={profile?.isAgent ? "squircle" : "circle"}
-                            />
-                          }
-                          label={
-                            <span className={styles.content}>
-                              <span className={styles.heading}>
-                                <strong
-                                  className={`text-label-sm text-standard ${styles.sender}`}
-                                >
-                                  {sender}
-                                </strong>
-                                <time
-                                  className="text-caption text-subtle"
-                                  dateTime={new Date(
-                                    item.createdAt * 1000,
-                                  ).toISOString()}
-                                >
-                                  {relativeTimestamp(item.createdAt)}
-                                </time>
-                              </span>
-                              <span className={styles.sourceLine}>
-                                <span
-                                  className={`text-caption ${styles.source}`}
-                                  data-inbox-source=""
-                                >
-                                  <span className={styles.sourceName}>
-                                    {context}
+                        <ContextMenuTrigger
+                          render={<div className={styles.rowSurface} />}
+                          onKeyDown={(event) => {
+                            if (
+                              event.key === "ContextMenu" ||
+                              (event.shiftKey && event.key === "F10")
+                            ) {
+                              event.preventDefault();
+                              setMenu({
+                                id: item.id,
+                                anchor: event.target as HTMLElement,
+                              });
+                            }
+                          }}
+                        >
+                          <NavigationItem
+                            aria-label={`Open ${sender} in ${context}`}
+                            aria-describedby={`${previewId}-${item.id}`}
+                            disabled={pending}
+                            selected={selectedId === item.id}
+                            ref={
+                              item.id === visible[0]?.id
+                                ? fallbackRow
+                                : undefined
+                            }
+                            icon={
+                              <Avatar
+                                size="default"
+                                alt=""
+                                fallback={sender}
+                                src={
+                                  profile?.picture
+                                    ? session.media(profile.picture)
+                                    : undefined
+                                }
+                                shape={profile?.isAgent ? "squircle" : "circle"}
+                              />
+                            }
+                            label={
+                              <span className={styles.content}>
+                                <span className={styles.heading}>
+                                  <strong
+                                    className={`text-label-sm text-standard ${styles.sender}`}
+                                  >
+                                    {sender}
+                                  </strong>
+                                  <time
+                                    className="text-caption text-subtle"
+                                    dateTime={new Date(
+                                      item.createdAt * 1000,
+                                    ).toISOString()}
+                                  >
+                                    {relativeTimestamp(item.createdAt)}
+                                  </time>
+                                </span>
+                                <span className={styles.sourceLine}>
+                                  <span
+                                    className={`text-caption ${styles.source}`}
+                                    data-inbox-source=""
+                                  >
+                                    <span className={styles.sourceName}>
+                                      {context}
+                                    </span>
                                   </span>
                                 </span>
+                                <span
+                                  id={`${previewId}-${item.id}`}
+                                  className={`text-body ${unread ? "text-standard" : "text-subtle"} ${styles.preview}`}
+                                >
+                                  {item.messageIds.some((id) =>
+                                    feed.incomplete.includes(id),
+                                  )
+                                    ? feed.status === "error"
+                                      ? "Preview unavailable. Retry inbox."
+                                      : "Preview updating…"
+                                    : messagePreview(item.preview)}
+                                </span>
                               </span>
-                              <span
-                                id={`${previewId}-${item.id}`}
-                                className={`text-body ${unread ? "text-standard" : "text-subtle"} ${styles.preview}`}
-                              >
-                                {item.messageIds.some((id) =>
-                                  feed.incomplete.includes(id),
-                                )
-                                  ? feed.status === "error"
-                                    ? "Preview unavailable. Retry inbox."
-                                    : "Preview updating…"
-                                  : messagePreview(item.preview)}
-                              </span>
-                            </span>
-                          }
-                          onClick={(event) => {
-                            // The selected row is the same visit, even when its
-                            // current representative changed after reading.
-                            if (busy.current || selectedId === item.id) return;
-                            cancelRetry();
-                            invokingRow.current = event.currentTarget;
-                            setSelectedTarget({
-                              channelId: item.channelId,
-                              messageId: item.messageId,
-                              ...(item.rootId ? { rootId: item.rootId } : {}),
-                            });
-                            if (unread && canRead) mutate(item, false);
-                          }}
-                        />
-                        {unread ? (
-                          <span
-                            className={styles.unreadSlot}
-                            role="img"
-                            aria-label="Unread"
-                          >
-                            <span className={styles.unreadDot} />
-                          </span>
-                        ) : (
-                          <span
-                            className={styles.unreadSlot}
-                            aria-hidden="true"
+                            }
+                            onClick={(event) => {
+                              // The selected row is the same visit, even when its
+                              // current representative changed after reading.
+                              if (busy.current || selectedId === item.id)
+                                return;
+                              cancelRetry();
+                              invokingRow.current = event.currentTarget;
+                              setSelectedTarget({
+                                channelId: item.channelId,
+                                messageId: item.messageId,
+                                ...(item.rootId ? { rootId: item.rootId } : {}),
+                              });
+                              if (unread && canRead) mutate(item, false);
+                            }}
                           />
-                        )}
-                      </ContextMenuTrigger>
-                      <MenuPopup
-                        size="compact"
-                        aria-label={`Actions for ${sender} in ${context}`}
-                        anchor={menu?.id === item.id ? menu.anchor : undefined}
-                      >
-                        <MenuItem
-                          disabled={pending || unread || !canRead}
-                          onClick={() => mutate(item, true)}
+                          {unread ? (
+                            <span
+                              className={styles.unreadSlot}
+                              role="img"
+                              aria-label="Unread"
+                            >
+                              <span className={styles.unreadDot} />
+                            </span>
+                          ) : (
+                            <span
+                              className={styles.unreadSlot}
+                              aria-hidden="true"
+                            />
+                          )}
+                        </ContextMenuTrigger>
+                        <MenuPopup
+                          size="compact"
+                          aria-label={`Actions for ${sender} in ${context}`}
+                          anchor={
+                            menu?.id === item.id ? menu.anchor : undefined
+                          }
                         >
-                          Mark unread
-                        </MenuItem>
-                      </MenuPopup>
-                    </ContextMenuRoot>
-                  </li>
-                );
-              })}
-            </ul>
-            {matching.length > limit && (
-              <div className={styles.notice}>
-                <Button onClick={() => setLimit((value) => value + 50)}>
-                  Show more
-                </Button>
-              </div>
-            )}
+                          <MenuItem
+                            disabled={pending || unread || !canRead}
+                            onClick={() => mutate(item, true)}
+                          >
+                            Mark unread
+                          </MenuItem>
+                        </MenuPopup>
+                      </ContextMenuRoot>
+                    </li>
+                  );
+                })}
+              </ul>
+              {matching.length > limit && (
+                <div className={styles.notice}>
+                  <Button onClick={() => setLimit((value) => value + 50)}>
+                    Show more
+                  </Button>
+                </div>
+              )}
+            </div>
           </div>
+          {selected && selectedTarget && (
+            <InboxDetail
+              key={`${selectedTarget.channelId}:${selectedTarget.messageId}`}
+              item={selected}
+              target={selectedTarget}
+              session={session}
+              scope={scope}
+              navigator={navigator}
+              extensions={extensions}
+              channelName={
+                list.channels.find(
+                  (channel) => channel.id === selected.channelId,
+                )?.name ?? "Conversation"
+              }
+              previewIncomplete={
+                selected.messageIds.some((id) => feed.incomplete.includes(id))
+                  ? feed.status === "error"
+                    ? "error"
+                    : "loading"
+                  : undefined
+              }
+              onBack={() => {
+                setRestoringFocus(true);
+                cancelRetry();
+                setSelectedTarget(undefined);
+              }}
+            />
+          )}
         </div>
-        {selected && selectedTarget && (
-          <InboxDetail
-            key={`${selectedTarget.channelId}:${selectedTarget.messageId}`}
-            item={selected}
-            target={selectedTarget}
-            session={session}
-            scope={scope}
-            navigator={navigator}
-            extensions={extensions}
-            channelName={
-              list.channels.find((channel) => channel.id === selected.channelId)
-                ?.name ?? "Conversation"
-            }
-            previewIncomplete={
-              selected.messageIds.some((id) => feed.incomplete.includes(id))
-                ? feed.status === "error"
-                  ? "error"
-                  : "loading"
-                : undefined
-            }
-            onBack={() => {
-              setRestoringFocus(true);
-              cancelRetry();
-              setSelectedTarget(undefined);
-            }}
-          />
-        )}
-      </div>
+      )}
     </div>
   );
 }

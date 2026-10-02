@@ -64,7 +64,8 @@ const messages: Record<string, string> = {
   invalid_name: "Use lowercase letters, numbers, and hyphens.",
   taken: "That Buzz address is already taken.",
   limit_reached: "You've reached your community limit.",
-  unauthorized: "Your Builderlab session ended. Sign out, then sign in again.",
+  unauthorized:
+    "This Builderlab account can't manage Buzz identities right now. Try signing in again.",
   relay_unavailable: "Community provisioning is temporarily unavailable.",
   identity_already_bound:
     "This Builderlab account is connected to another Buzz identity.",

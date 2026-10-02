@@ -17,8 +17,9 @@ export function archivedMention(session: RelaySession, pubkey: string) {
 
 /**
  * Streams, forums and DMs can name people outside the destination. Selection
- * grants nothing: sending asks first, and an outside key becomes a reference
- * unless the sender adds that person (DMs cannot add anyone).
+ * grants nothing: an outside key becomes a reference unless the sender adds
+ * that person. Streams and forums ask on send; DMs cannot add anyone, so they
+ * do not ask.
  */
 export function allowsOutsideMentions(
   channel: Pick<ChannelSummary, "channelType"> | undefined,

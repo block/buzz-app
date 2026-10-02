@@ -646,7 +646,12 @@ function Composer({
           const missing = captured.recipients.filter(
             (person) => !channel.members?.includes(person.pubkey),
           );
-          if (missing.length) {
+          if (missing.length && channel?.channelType === "dm") {
+            // Nobody can be added to a DM, so there is no choice to offer:
+            // outside people become references without a prompt.
+            references = missing.map((person) => person.pubkey);
+            recipients = recipients.filter((key) => !references.includes(key));
+          } else if (missing.length) {
             setSending(true);
             setError(undefined);
             const decision = await nonmembers.prepare(

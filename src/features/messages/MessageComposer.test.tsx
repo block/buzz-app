@@ -2941,7 +2941,7 @@ it("uses the full channel choice set for one selected chip and follows membershi
   names.dispose();
 });
 
-it("asks before naming someone outside a DM and sends them as a reference", async () => {
+it("sends someone outside a DM as a reference without asking", async () => {
   const h = mount();
   const add = vi.fn();
   const list = {
@@ -2966,14 +2966,8 @@ it("asks before naming someone outside a DM and sends them as a reference", asyn
     h.commands().insertMention(second);
   });
   fireEvent.submit(screen.getByRole("form"));
-  expect(
-    screen.getByRole("dialog", { name: "Mention people outside this DM?" }),
-  ).toHaveTextContent(
-    "Honey is not in this DM. People cannot be added to a DM. You can still send. They will not be notified.",
-  );
-  expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Send anyway" }));
   await act(async () => {});
+  expect(screen.queryByRole("dialog")).toBeNull();
   expect(h.messages.send).toHaveBeenCalledOnce();
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
   expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);

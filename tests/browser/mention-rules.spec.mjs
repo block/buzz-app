@@ -78,62 +78,73 @@ test("an open list preserves keys and highlight when membership is revoked", asy
 });
 
 // The real editor, dialog focus contract, directory and signed writer must agree.
-for (const place of ["channel", "DM"])
-  test(`outside people survive Close and send reference-only with Send anyway in a ${place}`, async ({
-    page,
-  }) => {
-    await page.goto(
-      `/tests/fixtures/mentions.html?nonmember-admission${place === "DM" ? "&dm" : ""}`,
-    );
-    // Fixture-only label: the &dm fixture keeps the "General" name, so the
-    // textbox label is not what a real DM composer shows.
-    const input = page.getByRole("textbox", { name: "Message #General" });
-    await input.fill("@Outside");
-    await expect(
-      page.getByRole("option", { name: /^Outside Person / }),
-    ).toContainText(
-      place === "DM"
-        ? "Not in DM · Will not be notified"
-        : "Not in channel · Choose whether to add when you send",
-    );
-    await page.getByRole("option", { name: /^Outside Person / }).click();
-    await expect(input.locator(".inline-chip")).toHaveText("@Outside Person");
-    await input.pressSequentially("hello");
-    await page
-      .getByRole("button", { name: "Send message", exact: true })
-      .click();
-    const dialog = page.getByRole("dialog", {
-      name: `Mention people outside this ${place}?`,
-    });
-    await expect(dialog).toBeVisible();
-    // block/buzz parity: this fixture cannot add members, so no Invite or Cancel.
-    await expect(dialog.getByRole("button", { name: "Invite" })).toHaveCount(0);
-    await expect(dialog.getByRole("button", { name: "Cancel" })).toHaveCount(0);
-    await dialog.getByRole("button", { name: "Close", exact: true }).click();
-    await expect(dialog).not.toBeVisible();
-    await expect(input).toBeFocused();
-    await expect(input).toHaveJSProperty("value", "@Outside Person hello");
-    expect(
-      await page.evaluate(() => window.mentionFixture.publications),
-    ).toEqual([]);
-    await page
-      .getByRole("button", { name: "Send message", exact: true })
-      .click();
-    await dialog
-      .getByRole("button", { name: "Send anyway", exact: true })
-      .click();
-    await expect
-      .poll(() =>
-        page.evaluate(() => window.mentionFixture.publications.length),
-      )
-      .toBe(1);
-    const { event, key } = await page.evaluate(() => ({
-      event: window.mentionFixture.publications[0],
-      key: window.mentionFixture.outsider,
-    }));
-    expect(event.kind).toBe(9);
-    expect(event.tags).toContainEqual(["mention", key]);
-    expect(event.tags.filter((tag) => tag[0] === "p")).toEqual([]);
-    expect(event.content).toBe("@Outside Person hello");
-    await expect(input).toHaveJSProperty("value", "");
+test("outside people survive Close and send reference-only with Send anyway", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/mentions.html?nonmember-admission");
+  const input = page.getByRole("textbox", { name: "Message #General" });
+  await input.fill("@Outside");
+  await page.getByRole("option", { name: /^Outside Person / }).click();
+  await expect(input.locator(".inline-chip")).toHaveText("@Outside Person");
+  await input.pressSequentially("hello");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "Mention people outside this channel?",
   });
+  await expect(dialog).toBeVisible();
+  // block/buzz parity: this fixture cannot add members, so no Invite or Cancel.
+  await expect(dialog.getByRole("button", { name: "Invite" })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(input).toBeFocused();
+  await expect(input).toHaveJSProperty("value", "@Outside Person hello");
+  expect(await page.evaluate(() => window.mentionFixture.publications)).toEqual(
+    [],
+  );
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await dialog
+    .getByRole("button", { name: "Send anyway", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
+    .toBe(1);
+  const { event, key } = await page.evaluate(() => ({
+    event: window.mentionFixture.publications[0],
+    key: window.mentionFixture.outsider,
+  }));
+  expect(event.kind).toBe(9);
+  expect(event.tags).toContainEqual(["mention", key]);
+  expect(event.tags.filter((tag) => tag[0] === "p")).toEqual([]);
+  expect(event.content).toBe("@Outside Person hello");
+  await expect(input).toHaveJSProperty("value", "");
+});
+
+// Nobody can be added to a DM, so there is no choice to ask about.
+test("a DM sends outside people as references without asking", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/mentions.html?nonmember-admission&dm");
+  // Fixture-only label: the &dm fixture keeps the "General" name, so the
+  // textbox label is not what a real DM composer shows.
+  const input = page.getByRole("textbox", { name: "Message #General" });
+  await input.fill("@Outside");
+  const option = page.getByRole("option", { name: /^Outside Person / });
+  await expect(option).toContainText("Not in DM · Will not be notified");
+  await option.click();
+  await expect(input.locator(".inline-chip")).toHaveText("@Outside Person");
+  await input.pressSequentially("hello");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
+    .toBe(1);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const { event, key } = await page.evaluate(() => ({
+    event: window.mentionFixture.publications[0],
+    key: window.mentionFixture.outsider,
+  }));
+  expect(event.tags).toContainEqual(["mention", key]);
+  expect(event.tags.filter((tag) => tag[0] === "p")).toEqual([]);
+  expect(event.content).toBe("@Outside Person hello");
+  await expect(input).toHaveJSProperty("value", "");
+});

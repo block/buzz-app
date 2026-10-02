@@ -182,8 +182,8 @@ These rules keep a row from moving under the user's pointer or keyboard.
 
 ## 7. Sending to people outside the channel
 
-When a draft addresses an outside key in a stream, forum or DM, the client MUST
-ask before it sends. The prompt names the outside people. It offers these actions,
+When a draft addresses an outside key in a stream or forum, the client MUST ask
+before it sends. The prompt names the outside people. It offers these actions,
 like block/buzz desktop:
 
 | Action | Shown | Result |
@@ -193,8 +193,9 @@ like block/buzz desktop:
 | Send anyway | Without add-member permission | The same as Do nothing. |
 | Close or Escape | Always | Do not send. Keep the draft. |
 
-A DM has fixed participants, so it never offers Invite. Its prompt offers only
-Send anyway.
+A DM has fixed participants, so there is no choice to make. The client MUST NOT
+ask. It sends outside keys in a DM as references, which do not notify them. The
+chooser row says so before the user picks the person.
 
 Adding a member from this prompt MUST NOT start an agent. The sent message is
 what notifies it. If the draft or its attachments change while adding runs, the

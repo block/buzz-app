@@ -234,6 +234,25 @@ fn error_mapping_is_typed_and_contains_no_backend_detail() {
     assert_eq!(error(keyring::Error::Ambiguous(vec![])), Error::Corrupt);
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_keychain_denials_are_sanitized() {
+    for code in [-128, -25293, -25308] {
+        assert_eq!(
+            error(keyring::Error::PlatformFailure(Box::new(
+                security_framework::base::Error::from_status(code),
+            ))),
+            Error::Denied
+        );
+    }
+    assert_eq!(
+        error(keyring::Error::PlatformFailure(Box::new(
+            security_framework::base::Error::from_status(-1),
+        ))),
+        Error::Unavailable
+    );
+}
+
 #[test]
 fn another_process_observes_the_same_lock_and_can_retry_after_release() {
     let root = tempfile::tempdir().unwrap();

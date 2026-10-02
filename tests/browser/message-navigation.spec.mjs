@@ -589,6 +589,12 @@ test("post-success membership loss removes the thread and live updates do not sn
     exact: true,
   });
   await channelButton.focus();
+  // Find-in-page and assistive technology scroll without wheel, touch, key or
+  // pointer input. The reader's new place must survive the next row update.
+  await region.evaluate((element) => {
+    element.scrollTop -= 600;
+  });
+  await settle(page, region);
   const before = await region.evaluate((element) => element.scrollTop);
   app.edit(
     "primary",
@@ -598,6 +604,7 @@ test("post-success membership loss removes the thread and live updates do not sn
   );
   await expect(region).toContainText("Live edited exact reply");
   await expect(channelButton).toBeFocused();
+  await settle(page, region);
   expect(await region.evaluate((element) => element.scrollTop)).toBe(before);
   app.omitChannel("alpha");
   await openChannelDetails(page);

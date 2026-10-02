@@ -1237,7 +1237,7 @@ preview is removed entirely (including behind transparency) only after the lazy
 original decodes; failure retains the preview. Missing/invalid hashes or canvas
 failures keep the existing background. Syntax validation bounds hashes to 166
 base83 characters / 9×9 components; folding does no pixel work. Preview work is
-per-mounted-image and uncached, visibility-gated even in nonvirtualized threads.
+per-mounted-image and uncached, visibility-gated even for rows mounted offscreen.
 Without IntersectionObserver, only the ordinary placeholder/original is used.
 This favors bounded visible work over instant offscreen previews on scrolling.
 `tests/browser/image-scroll.spec.mjs` covers delayed/failed loads, actual remounts,

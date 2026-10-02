@@ -21,7 +21,8 @@ buzz-agent-controller = { path = "../crates/agent-controller" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 buzz-agent = { git = "https://github.com/block/buzz.git", rev = "4f51b9e1010e086a16c099cd8d8218ca974a5e18" }
-tokio = { version = "1", features = ["sync", "time", "macros", "process", "io-util"] }
+tokio = { version = "1", features = ["sync", "time", "macros", "process", "io-util", "net"] }
+axum = "0.8"
 sha2 = "0.10"
 hmac = "0.12"
 base64 = "0.22"
@@ -73,7 +74,7 @@ futures-lite = "=2.6.1"
 gtk = "0.18"
 webkit2gtk = "=2.0.2"
 
-[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 buzz-credential-store = { path = "../crates/credential-store" }
 
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]

@@ -30,6 +30,7 @@ export const historySize = 640;
 // broker/subscriber and model only the upstream relay policy with ephemeral keys.
 export const test = base.extend({
   productionBroker: [false, { option: true }],
+  archiveOnDisk: [false, { option: true }],
   actionProfile: [false, { option: true }],
   profilePicture: ["", { option: true }],
   readState: [false, { option: true }],
@@ -80,6 +81,7 @@ export const test = base.extend({
       browserName,
       browser,
       productionBroker,
+      archiveOnDisk,
       actionProfile,
       profilePicture,
       readState,
@@ -1793,6 +1795,9 @@ export const test = base.extend({
                   next();
                 });
                 const broker = relayBrokerPlugin({
+                  archiveFile: archiveOnDisk
+                    ? testInfo.outputPath("archive.sqlite3")
+                    : ":memory:",
                   relayUrl: fixtureRelayUrl,
                   communityAliases: fixtureAliases,
                   identity: () => userKey.slice(),
@@ -1900,6 +1905,9 @@ export const test = base.extend({
         { viewer, profilePicture, iconCongestion },
       );
       await use({
+        archiveFile: archiveOnDisk
+          ? testInfo.outputPath("archive.sqlite3")
+          : undefined,
         sign: (template) => finalizeEvent(template, userKey),
         membershipSnapshot(role) {
           expect(["owner", "admin", "member"]).toContain(role);

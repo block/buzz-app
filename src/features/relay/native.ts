@@ -46,6 +46,7 @@ import {
 } from "../agents/memory";
 import type { AgentLibrary } from "../agents/library";
 import { observerFrame } from "../agents/observer";
+import { archiveClient } from "../archive/client";
 import {
   acceptPublish,
   admitSignedRequest,
@@ -332,6 +333,16 @@ export async function connectNativeTransport(
     },
   });
   // Capabilities describe implemented host operations, not everything this key can sign.
+  const archive = archiveClient("device", async (request, signal) => {
+    signal?.throwIfAborted();
+    const value = await invoke("relay_archive", {
+      community: origin,
+      viewer: transport.viewer,
+      request,
+    });
+    signal?.throwIfAborted();
+    return value;
+  });
   return {
     ...transport,
     workflows: workflowHost(async (route, body, signal) => {
@@ -437,20 +448,20 @@ export async function connectNativeTransport(
     },
 
     agentActivity: true,
-    async decodeActivityHistory(events, signal) {
-      signal.throwIfAborted();
-      const value = await invoke<unknown>("relay_agent_history_decode", {
-        community: origin,
-        viewer: transport.viewer,
-        events,
-      });
-      signal.throwIfAborted();
-      if (!Array.isArray(value) || value.length > events.length)
-        throw new Error("Invalid activity history");
-      return value.map(observerFrame);
-    },
+    activityArchive: archive.host,
     subscribe(callbacks) {
       let active = true;
+      let archiveRefresh: Promise<unknown> | undefined;
+      let failedRevision: number | undefined;
+      const refreshArchive = () =>
+        (archiveRefresh ??= archive.host
+          .settings(new AbortController().signal)
+          .catch(() => {
+            if (active) callbacks.captureState?.("error");
+          })
+          .finally(() => {
+            archiveRefresh = undefined;
+          }));
       let observerGeneration: number | null = null;
       let observerEpoch = 0;
       let listening = false;
@@ -463,6 +474,37 @@ export async function connectNativeTransport(
           if (listening && !next) observerEpoch++;
           listening = next;
           callbacks.state(snapshot);
+        },
+        capture(event) {
+          const settings = archive.current();
+          if (!settings || !active) return;
+          void invoke("relay_archive", {
+            community: origin,
+            viewer: transport.viewer,
+            request: { action: "ingest", event, revision: settings.revision },
+          })
+            .then(() => {
+              if (
+                active &&
+                event.kind === 24200 &&
+                archive.current()?.revision === settings.revision
+              ) {
+                failedRevision = undefined;
+                callbacks.captureState?.(settings.observer ? "saving" : "off");
+              }
+            })
+            .catch(() => {
+              if (active) {
+                if (
+                  event.kind === 24200 &&
+                  archive.current()?.revision === settings.revision
+                ) {
+                  failedRevision = settings.revision;
+                  callbacks.captureState?.("error");
+                }
+                void refreshArchive();
+              }
+            });
         },
         telemetry(event, generation) {
           if (generation !== observerGeneration || !listening) return;
@@ -483,6 +525,20 @@ export async function connectNativeTransport(
         },
       });
       if (!traffic) throw new Error("Native relay stream is unavailable");
+      const stopArchive = archive.subscribe((settings) => {
+        if (!active) return;
+        // Readable preferences are not proof a failed write recovered. Only a
+        // changed revision supersedes that failure (toggle/clear/other window).
+        if (failedRevision !== settings.revision) {
+          failedRevision = undefined;
+          callbacks.captureState?.(settings.observer ? "saving" : "off");
+        }
+        traffic.archive?.([
+          ...(settings.observer ? [24200] : []),
+          ...(settings.metrics ? [44200] : []),
+        ]);
+      });
+      void refreshArchive();
       return {
         ...traffic,
         observe(generation) {
@@ -492,6 +548,7 @@ export async function connectNativeTransport(
         },
         dispose() {
           active = false;
+          stopArchive();
           observerEpoch++;
           traffic.dispose();
         },

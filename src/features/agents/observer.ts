@@ -1,11 +1,6 @@
 import { eventDto, type RelayEvent } from "../relay/events.ts";
 
-export const ACTIVITY_HISTORY_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-export type ActivityHistoryDecoder = (
-  events: readonly RelayEvent[],
-  signal: AbortSignal,
-) => Promise<readonly ObserverFrame[]>;
-
+export const ACTIVITY_HISTORY_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 /** Host-projected telemetry. Never a signed RelayEvent or a general decrypt API. */
 export const OBSERVER_KIND = 24200;
 export const OBSERVER_PLAINTEXT_BYTES = 65535;

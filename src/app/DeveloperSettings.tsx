@@ -173,7 +173,7 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
         <div className="space-y-2">
           <PreferenceRow
             title="Caches"
-            subtitle="Clear cached channels, messages, and media. Buzz keeps your account, relay, and sidebar settings."
+            subtitle="Clear cached channels, messages, media, and this account’s saved activity in the current community. Turn metrics and your account, relay, and sidebar settings are kept."
             trailing={
               <Button
                 type="button"

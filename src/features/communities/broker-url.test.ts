@@ -23,6 +23,7 @@ it("gates arbitrary destinations before discovery/signing and keeps every reques
   let handler: RequestListener | undefined;
   const server = createServer((req, res) => handler?.(req, res));
   const plugin = relayBrokerPlugin({
+    archiveFile: ":memory:",
     identity: () => identity.secret,
     socketFactory: (url) => {
       sockets.push(url);

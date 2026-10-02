@@ -1,4 +1,5 @@
-import { observerFrame, type ActivityHistoryDecoder } from "../agents/observer";
+import { archiveClient } from "../archive/client";
+import type { ArchiveHost } from "../archive/types";
 import {
   memoryResponseText,
   type MemoryReader,
@@ -92,7 +93,7 @@ export interface ReadTransport {
   readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
-  readonly decodeActivityHistory?: ActivityHistoryDecoder;
+  readonly activityArchive?: ArchiveHost;
   /** Explicit relay-advertised session command support. */
   /** Host-projected local library; display only, never relay authority. */
   readonly readAgentLibrary?: AgentLibraryReader;
@@ -492,23 +493,22 @@ export async function connectBrokerTransport(
     agentActivity: session.agentActivity === true && session.live === true,
     ...(session.agentActivity === true && session.live === true
       ? {
-          async decodeActivityHistory(
-            events: readonly RelayEvent[],
-            signal: AbortSignal,
-          ) {
-            const response = await fetch(`${endpoint}/agent-history-decode`, {
+          activityArchive: archiveClient("broker", async (input, signal) => {
+            const response = await fetch(`${endpoint}/archive`, {
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ viewer: session.viewer, events }),
-              signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+              body: JSON.stringify({ viewer: session.viewer, ...input }),
+              signal: signal
+                ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
+                : AbortSignal.timeout(10000),
             });
-            if (!response.ok) throw new Error("Activity history unavailable");
-            const value: unknown = await response.json();
-            if (!Array.isArray(value) || value.length > events.length)
-              throw new Error("Invalid activity history");
-            return value.map(observerFrame);
-          },
+            if (!response.ok)
+              throw new Error(
+                "Archive operation failed; retry without deleting stored data",
+              );
+            return response.json();
+          }).host,
         }
       : {}),
     ...(session.live

@@ -29,10 +29,6 @@ import {
   type ReadOptions,
   type RelayReader,
 } from "./reader";
-import {
-  browserActivityHistory,
-  type ActivityHistory,
-} from "../agents/activity-history";
 import { createAgentActivity } from "../agents/activity";
 import { OBSERVER_KIND } from "../agents/observer";
 import { createDirectMessages } from "./direct-messages";
@@ -199,7 +195,6 @@ export function createRelaySession(
     presenceActivity?: PresenceActivity;
     outboxStorage?: OutboxStorage;
     readStateStorage?: ReadStateStorage;
-    activityHistoryStorage?: ActivityHistory;
     readPublisherLock?: ReadPublisherLock;
     deliveryTimeoutMs?: number;
   } = {},
@@ -661,13 +656,9 @@ export function createRelaySession(
     (generation) => traffic?.observe?.(generation),
     (channel) => canAccess(channel),
     notify,
-    transport?.scope &&
-      (options.activityHistoryStorage || typeof indexedDB !== "undefined")
+    transport?.activityArchive
       ? {
-          storage:
-            options.activityHistoryStorage ??
-            browserActivityHistory(transport.scope, transport.viewer),
-          decode: transport.decodeActivityHistory,
+          host: transport.activityArchive,
           canRestore: (id) => canAccess(id) && !!channels.queries.get?.(id),
         }
       : undefined,
@@ -2202,6 +2193,7 @@ export function createRelaySession(
   }
   traffic = transport?.subscribe?.({
     observer: (frame, generation) => activity.receive(frame, generation),
+    captureState: (state) => activity.captureState(state),
     receive(events, provenance) {
       if (closed) return;
       const candidates = new Set(
@@ -2436,18 +2428,9 @@ export function createRelaySession(
       if (activityRosterKey === key) activityRosterKey = undefined;
     });
   };
-  let historyChannels = "";
   const stopActivityRoster = channels.queries.subscribeList(() => {
     refreshChannelActivity();
-    const key = channels.queries
-      .list()
-      .channels.map((channel) => channel.id)
-      .sort()
-      .join(":");
-    if (key !== historyChannels) {
-      historyChannels = key;
-      activity.restoreHistory();
-    }
+    activity.restoreHistory();
   });
   const stopActivityPreferences = sidebarPreferences.queries.subscribe(
     refreshChannelActivity,
@@ -2469,7 +2452,7 @@ export function createRelaySession(
         cancelUploads();
         cacheClearEpoch++;
         dropHintConfirmations();
-        const activityCleared = activity.clear().catch(() => {});
+        const activityCleared = activity.queries.clearHistory();
         memories.clear();
         presence.clear();
         channelActivity.clear();
@@ -2494,8 +2477,13 @@ export function createRelaySession(
         agentLibrary.clear();
         archives.clear();
         workflows.clear();
-        await Promise.all([channels.clearCache(), activityCleared]);
+        const results = await Promise.allSettled([
+          channels.clearCache(),
+          activityCleared,
+        ]);
         updateInterests();
+        const failed = results.find((result) => result.status === "rejected");
+        if (failed?.status === "rejected") throw failed.reason;
       } finally {
         cacheClearing--;
       }

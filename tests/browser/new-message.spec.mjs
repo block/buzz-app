@@ -73,6 +73,7 @@ const test = base.extend({
     };
     const socket = brokerSocket(publish);
     const broker = relayBrokerPlugin({
+      archiveFile: ":memory:",
       relayUrl: fixtureRelayUrl,
       communityAliases: fixtureAliases,
       identity: () => key,

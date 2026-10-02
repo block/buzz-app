@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
@@ -277,9 +279,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     exact: true,
   });
   await toggle.click();
-  await expect
-    .poll(() => app.relay.hasRoute("primary", "observer"))
-    .toBe(false);
+  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true); // Archive capture is independent of the plugin.
   expect(app.relay.sockets).toHaveLength(sockets);
   await page
     .getByRole("complementary", { name: "Settings sidebar" })
@@ -914,97 +914,123 @@ test.describe("thread activity", () => {
   });
 });
 
-// Browser-only: real IndexedDB durability across a document reload, through the
-// production broker/host decoder and actual plugin. Lower layers test race matrices.
-test("encrypted local history survives reload without working evidence and can be cleared", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
-  const key = generateSecretKey();
-  const agent = getPublicKey(key);
-  app.serveProfile(key, { name: "History agent", is_agent: true });
-  const record = app.observer(
-    activity("turn_liveness", "alpha", "saved", {
-      text: "secret-history-marker",
-    }),
-    key,
-  );
-  await agentEntry(page, agent).click();
-  const panel = activityPanel(page);
-  await expect(
-    panel.getByText("Local history loaded.", { exact: true }),
-  ).toBeVisible();
-  const disk = () =>
-    page.evaluate(async () => {
-      const db = await new Promise((resolve, reject) => {
-        const request = indexedDB.open("buzz-agent-activity-v1");
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-      try {
-        return await new Promise((resolve, reject) => {
-          const request = db
-            .transaction("partitions")
-            .objectStore("partitions")
-            .getAll();
-          request.onsuccess = () => resolve(request.result);
-          request.onerror = () => reject(request.error);
-        });
-      } finally {
-        db.close();
-      }
+// Browser-only: production broker SQLite survives document reload and the real
+// Settings confirmation clears the mounted plugin. Native process restart is tested in Rust.
+test.describe("host archive durability", () => {
+  test.use({ archiveOnDisk: true });
+  test("encrypted host history survives reload without working evidence and can be cleared", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    await expect
+      .poll(() => app.relay.hasRoute("primary", "observer"))
+      .toBe(true);
+    const key = generateSecretKey();
+    const agent = getPublicKey(key);
+    app.serveProfile(key, { name: "History agent", is_agent: true });
+    const record = app.observer(
+      activity("turn_liveness", "alpha", "saved", {
+        text: "secret-history-marker",
+      }),
+      key,
+    );
+    await agentEntry(page, agent).click();
+    const panel = activityPanel(page);
+    await expect(
+      panel.getByText("Saved history loaded.", { exact: true }),
+    ).toBeVisible();
+    const disk = async () =>
+      Buffer.concat(
+        await Promise.all(
+          [app.archiveFile, `${app.archiveFile}-wal`].map(async (path) => {
+            try {
+              return await readFile(path);
+            } catch (error) {
+              if (error.code === "ENOENT") return Buffer.alloc(0);
+              throw error;
+            }
+          }),
+        ),
+      ).toString("utf8");
+    await expect.poll(disk).toContain(record.event.id);
+    expect(await disk()).not.toContain("secret-history-marker");
+    await open(page, app); // new document and session, same device/account/community
+    await expect
+      .poll(() => app.relay.hasRoute("primary", "observer"))
+      .toBe(true);
+    // Open through a profile: restored history must not create a working launcher.
+    const message = finalizeEvent(
+      {
+        kind: 9,
+        tags: [["h", "alpha"]],
+        content: "History profile entry",
+        created_at: Math.floor(Date.now() / 1000),
+      },
+      key,
+    );
+    app.relay.publish("primary", message);
+    await page
+      .locator(`[data-message-id="${message.id}"]`)
+      .getByRole("button", { name: /profile/ })
+      .click();
+    await page
+      .getByRole("button", { name: "View activity", exact: true })
+      .click();
+    await expect(
+      panel.getByText("Saved history loaded.", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      panel.getByText("No fresh working evidence.", { exact: true }),
+    ).toBeVisible();
+    await expect(agentEntry(page, agent)).toHaveCount(0);
+    await panel.getByRole("button", { name: /turn_liveness/ }).click();
+    await expect(panel.locator("pre code")).toContainText(
+      "secret-history-marker",
+    );
+    await page
+      .getByRole("button", { name: "Your profile", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Agents", exact: true }).click();
+    const archive = page.getByRole("region", { name: /Saved agent activity/ });
+    await expect(archive.getByText(/not in this browser/)).toBeVisible();
+    await archive
+      .getByRole("button", { name: "Clear activity history", exact: true })
+      .click();
+    const confirmation = page.getByRole("alertdialog", {
+      name: "Clear activity history?",
     });
-  await expect
-    .poll(async () => JSON.stringify(await disk()))
-    .toContain(record.event.id);
-  expect(JSON.stringify(await disk())).not.toContain("secret-history-marker");
-  await open(page, app); // new document and session, same device/account/community
-  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
-  // Open through a profile: restored history must not create a working launcher.
-  const message = finalizeEvent(
-    {
-      kind: 9,
-      tags: [["h", "alpha"]],
-      content: "History profile entry",
-      created_at: Math.floor(Date.now() / 1000),
-    },
-    key,
-  );
-  app.relay.publish("primary", message);
-  await page
-    .locator(`[data-message-id="${message.id}"]`)
-    .getByRole("button", { name: /profile/ })
-    .click();
-  await page
-    .getByRole("button", { name: "View activity", exact: true })
-    .click();
-  await expect(
-    panel.getByText("Local history loaded.", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    panel.getByText("No fresh working evidence.", { exact: true }),
-  ).toBeVisible();
-  await expect(agentEntry(page, agent)).toHaveCount(0);
-  await panel.getByRole("button", { name: /turn_liveness/ }).click();
-  await expect(panel.locator("pre code")).toContainText(
-    "secret-history-marker",
-  );
-  await panel
-    .getByRole("button", { name: "Clear this community’s activity history" })
-    .click();
-  await expect(
-    panel.getByText("Local history loaded.", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    panel.getByRole("button", { name: /turn_liveness/ }),
-  ).toHaveCount(0);
-  await expect
-    .poll(
-      async () =>
-        (await disk()).flatMap((partition) => partition.records).length,
-    )
-    .toBe(0);
-  await page.screenshot({ path: "test-results/activity-history-cleared.png" });
+    await expect(confirmation).toBeVisible();
+    await page.screenshot({
+      path: test.info().outputPath("archive-clear-confirmation.png"),
+    });
+    await confirmation
+      .getByRole("button", { name: "Clear saved records" })
+      .click();
+    await expect(confirmation).toHaveCount(0);
+    const count = () => {
+      const database = new DatabaseSync(app.archiveFile, { readOnly: true });
+      try {
+        return database
+          .prepare(
+            "SELECT COUNT(*) AS count FROM archive_events WHERE kind=24200",
+          )
+          .get().count;
+      } finally {
+        database.close();
+      }
+    };
+    expect(count()).toBe(0);
+    await page
+      .getByRole("complementary", { name: "Settings sidebar" })
+      .getByRole("button", { name: "Back", exact: true })
+      .click();
+    await expect(
+      panel.getByRole("button", { name: /turn_liveness/ }),
+    ).toHaveCount(0);
+    await page.screenshot({
+      path: test.info().outputPath("archive-cleared.png"),
+    });
+  });
 });

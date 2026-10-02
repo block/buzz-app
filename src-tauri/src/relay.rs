@@ -1,9 +1,9 @@
 //! Packaged human relay access. Credentials stay with IdentityHost; redirects never carry auth.
-mod agent;
+pub(crate) mod agent;
 use crate::identity::{EventTemplate, IdentityHost};
 pub(crate) use agent::{
-    relay_agent_history_decode, relay_agent_library, relay_agent_log_proof,
-    relay_agent_memories_read, relay_agent_observer, relay_agent_resolve,
+    relay_agent_library, relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer,
+    relay_agent_resolve,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Serialize;
@@ -43,7 +43,7 @@ fn template(event: &serde_json::Value, error: &str) -> Result<EventTemplate> {
     .map_err(|_| error.into())
 }
 
-fn origin(value: &str) -> Result<Url> {
+pub(crate) fn origin(value: &str) -> Result<Url> {
     let url = Url::parse(value).map_err(|_| "Invalid relay origin")?;
     if value.len() > 2048
         || url.scheme() != "https"

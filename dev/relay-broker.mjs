@@ -54,6 +54,7 @@ import {
   workflowReadText,
 } from "../src/features/workflows/http.ts";
 import { decodeAgentObserver } from "./agent-observer.mjs";
+import { openArchive } from "./archive.mjs";
 import { observerGeneration } from "../src/features/agents/observer.ts";
 import {
   decodeReadState,
@@ -664,6 +665,7 @@ export function relayBrokerPlugin({
   socketFactory,
   agentLibrary = readAgentLibrary,
   builderlab: builderlabOptions = {},
+  archiveFile,
 } = {}) {
   const aliases = parseCommunityAliases(communityAliases);
   const defaultRelay = relayUrl?.trim() ? relayOrigin(relayUrl) : undefined;
@@ -673,6 +675,23 @@ export function relayBrokerPlugin({
       const log = getLogger("relay-broker");
       const key = identity();
       const viewer = getPublicKey(key);
+      let archive;
+      const localArchive = () => (archive ??= openArchive(archiveFile));
+      const archiveSettings = (relay) =>
+        localArchive().request(viewer, relay, { action: "settings" }, key);
+      const updateArchiveCapture = (stream) => {
+        const settings = archiveSettings(stream.relay);
+        stream.archiveRevision = settings.revision;
+        stream.archiveObserver = settings.observer;
+        if (stream.archiveFailureRevision !== settings.revision) {
+          stream.archiveFailureRevision = undefined;
+          stream.archiveState(settings.observer ? "saving" : "off");
+        }
+        stream.traffic.archive([
+          ...(settings.observer ? [24200] : []),
+          ...(settings.metrics ? [44200] : []),
+        ]);
+      };
       const upstream = createUpstream();
       // Injected fixtures bypass the pool; the live relay always uses the warm agent.
       const fetchUpstream = upstreamFetch ?? upstream.fetch;
@@ -752,6 +771,7 @@ export function relayBrokerPlugin({
       });
       server.httpServer?.once("close", () => {
         for (const { close } of streams.values()) close();
+        archive?.close();
         key.fill(0);
 
         void upstream.close();
@@ -1439,35 +1459,43 @@ export function relayBrokerPlugin({
                 sidebarMutations.delete(relay);
             }
           }
-          if (
-            route === "/api/relay/agent-history-decode" &&
-            req.method === "POST"
-          ) {
+          if (route === "/api/relay/archive" && req.method === "POST") {
             let raw = "";
             for await (const part of req) {
               raw += part;
-              if (Buffer.byteLength(raw) > 2 * 1024 * 1024 + 1024)
-                return json(res, 413, { error: "Activity history too large" });
+              if (Buffer.byteLength(raw) > 4096)
+                return json(res, 413, { error: "Archive request too large" });
             }
             const body = JSON.parse(raw);
             if (
               body.viewer !== viewer ||
-              !Array.isArray(body.events) ||
-              body.events.length > 200
+              !["settings", "configure", "clear", "read"].includes(
+                body.action,
+              ) ||
+              body.events ||
+              body.event
             )
-              return json(res, 400, { error: "Invalid activity history" });
-            return json(
-              res,
-              200,
-              body.events.flatMap((event) => {
-                try {
-                  return [decodeAgentObserver(event, key, viewer, true)];
-                } catch {
-                  return [];
-                }
-              }),
-            );
+              return json(res, 400, { error: "Invalid archive request" });
+            try {
+              const result = localArchive().request(viewer, relay, body, key);
+              if (["configure", "clear"].includes(body.action))
+                for (const stream of streams.values())
+                  if (stream.relay === relay) {
+                    try {
+                      updateArchiveCapture(stream);
+                    } catch {
+                      stream.archiveState("error");
+                    }
+                  }
+              return json(res, 200, result);
+            } catch {
+              return json(res, 500, {
+                error:
+                  "Archive operation failed; stored data was not discarded",
+              });
+            }
           }
+
           if (route === "/api/relay/agent-library" && req.method === "GET") {
             try {
               // Share concurrent reads, never retain the local snapshot after completion.
@@ -1770,6 +1798,7 @@ export function relayBrokerPlugin({
               joined,
               interestRevision,
               traffic: undefined,
+              archiveState: (state) => write("archive-state", { state }),
               close: undefined,
             };
             const traffic = subscribeRelayTraffic(
@@ -1786,6 +1815,33 @@ export function relayBrokerPlugin({
                     });
                 },
                 presence: (event) => write("presence", event),
+                capture: (event) => {
+                  try {
+                    localArchive().ingest(
+                      viewer,
+                      relay,
+                      event,
+                      stream.archiveRevision,
+                      key,
+                    );
+                    if (event.kind === 24200) {
+                      stream.archiveFailureRevision = undefined;
+                      stream.archiveState(
+                        stream.archiveObserver ? "saving" : "off",
+                      );
+                    }
+                  } catch {
+                    if (event.kind === 24200) {
+                      stream.archiveFailureRevision = stream.archiveRevision;
+                      write("archive-error", {});
+                    }
+                    try {
+                      updateArchiveCapture(stream);
+                    } catch {
+                      /* Live decode stays independent of disk failure. */
+                    }
+                  }
+                },
                 telemetry: (event, generation) => {
                   if (res.destroyed) return;
                   try {
@@ -1842,6 +1898,11 @@ export function relayBrokerPlugin({
               res.destroy();
             };
             Object.assign(stream, { traffic, close });
+            try {
+              updateArchiveCapture(stream);
+            } catch {
+              write("archive-error", {});
+            }
             streams.set(streamId, stream);
             res.once("close", close);
             if (res.destroyed) close();

@@ -56,8 +56,13 @@ export function ActivityDetails({
     activity.snapshot,
   );
   const agents = useMemo(
-    () => [...new Set(snapshot.records.map((row) => row.agent))],
-    [snapshot.records],
+    () => [
+      ...new Set([
+        ...snapshot.historyAgents,
+        ...snapshot.records.map((row) => row.agent),
+      ]),
+    ],
+    [snapshot.records, snapshot.historyAgents],
   );
   const [selected, select] = useState(selection?.agent ?? "");
   const [channelId, selectChannel] = useState(selection?.channelId ?? "");
@@ -86,9 +91,10 @@ export function ActivityDetails({
     profiles.snapshot,
   );
   const agent = selected || agents[0] || "";
+  useEffect(() => {
+    activity.selectHistory(agent);
+  }, [activity, agent]);
   const [expanded, expand] = useState<string[]>([]);
-  const [clearError, setClearError] = useState("");
-  const [clearing, setClearing] = useState(false);
   const agentRecords = snapshot.records.filter((row) => row.agent === agent);
   const records = useMemo(
     () => activityRecords(snapshot.records, agent, channelId),
@@ -129,9 +135,10 @@ export function ActivityDetails({
     >
       <h2 className="text-heading">Agent activity</h2>
       <p className="text-body-sm text-secondary">
-        Owner-only activity captured on this device while the plugin is enabled.
-        Saved records are history, not current working status. This is not a
-        complete ACP recording; the agent must publish telemetry.
+        Owner-only activity. Capture is controlled in Settings → Agents,
+        independently of this plugin. Saved records are history, not current
+        working status. This is not a complete ACP recording; the agent must
+        publish telemetry.
       </p>
       {snapshot.status === "unavailable" ? (
         <p>
@@ -149,42 +156,66 @@ export function ActivityDetails({
               Retry live feed
             </Button>
           )}
+          {snapshot.capture === "off" && (
+            <p role="status">
+              Saving activity is off. Live records are not being saved; existing
+              history is kept.
+            </p>
+          )}
+          {activity.archive && snapshot.capture === "unknown" && (
+            <p role="status">Activity saving status is unknown.</p>
+          )}
+          {snapshot.capture === "error" && (
+            <p role="alert">
+              Some new archive records could not be saved. Check archive
+              settings and retry the connection.
+            </p>
+          )}
           <p role="status">
             {snapshot.history === "loading"
-              ? "Loading local history…"
+              ? "Loading saved history…"
               : snapshot.history === "error"
-                ? "Local history is unavailable or could not be saved. Live activity may still appear."
+                ? "Saved history could not be read. Live activity may still appear."
                 : snapshot.history === "unavailable"
-                  ? "Local history is unavailable on this host."
-                  : "Local history loaded."}
+                  ? "Saved history is unavailable on this host."
+                  : "Saved history loaded."}
           </p>
-          <Button
-            size="compact"
-            disabled={clearing}
-            onClick={async () => {
-              setClearing(true);
-              setClearError("");
-              try {
-                await activity.clearHistory();
-              } catch {
-                setClearError("Could not clear local history. Try again.");
-              } finally {
-                setClearing(false);
-              }
-            }}
-          >
-            Clear this community’s activity history
-          </Button>
-          <p className="text-body-sm text-secondary">
-            Clears all agents’ saved activity for this account in this
-            community. New activity can still be captured.
-          </p>
-          {clearError && <p role="alert">{clearError}</p>}
+          {snapshot.history !== "unavailable" && (
+            <Button
+              size="compact"
+              disabled={snapshot.history === "loading"}
+              onClick={() => void activity.latestHistory()}
+            >
+              Show latest saved activity
+            </Button>
+          )}
+          {!!snapshot.historySkipped && (
+            <p role="alert">
+              {snapshot.historySkipped} saved records could not be decoded on
+              this page.
+            </p>
+          )}
+          {snapshot.historyOlder && (
+            <p role="status">
+              Showing an older saved page. Newer saved pages are not shown; live
+              records may still appear. Use Show latest saved activity to
+              return.
+            </p>
+          )}
+          {snapshot.hasOlder && (
+            <Button
+              size="compact"
+              disabled={snapshot.history === "loading"}
+              onClick={() => void activity.loadOlder()}
+            >
+              Load older activity
+            </Button>
+          )}
           {!agents.length && !selected ? (
             <p>
               No captured activity yet. New activity appears when an agent
-              publishes telemetry while this plugin is enabled. There is no
-              relay backfill.
+              publishes telemetry while capture is enabled. There is no relay
+              backfill.
             </p>
           ) : (
             <>
@@ -260,6 +291,12 @@ export function ActivityDetails({
                   off cannot be recovered.
                 </p>
               )}
+              {snapshot.historyOlder && (
+                <p className="text-body-sm text-secondary">
+                  Gap: this saved page is not continuous with the live display.
+                  Loading another page replaces this saved page.
+                </p>
+              )}
               <Accordion
                 value={expanded}
                 onValueChange={expand}
@@ -282,14 +319,16 @@ export function ActivityDetails({
           )}
           {snapshot.trimmed > 0 && (
             <p role="status">
-              Retention limited: {snapshot.trimmed} older records or turn states
-              discarded.
+              Live display limited: {snapshot.trimmed} records or turn states
+              left the RAM window. Saved history is paged separately.
             </p>
           )}
           <p className="text-body-sm text-secondary">
-            Local history: up to seven days, 200 encrypted envelopes / 2 MiB per
-            account and community. Older entries are discarded. Disabling the
-            plugin stops capture but keeps saved history.
+            The live display keeps up to 200 records / 2 MiB plus one saved
+            page. Use Load older activity to browse earlier pages, even when a
+            page contains no entries for this channel. Retention and capture are
+            controlled in Settings → Agents; disabling this plugin only clears
+            its live display.
           </p>
         </>
       )}

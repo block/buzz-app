@@ -1,3 +1,5 @@
+mod archive;
+use archive::relay_archive;
 mod browser;
 #[cfg(test)]
 mod browser_permissions_tests;
@@ -21,11 +23,11 @@ use identity::{
     identity_restore, IdentityHost,
 };
 use relay::{
-    media_download, relay_agent_history_decode, relay_agent_library, relay_agent_log_proof,
-    relay_agent_memories_read, relay_agent_observer, relay_agent_resolve, relay_channel_publish,
-    relay_channel_sign, relay_decode_read_state, relay_decode_sidebar, relay_direct_message,
-    relay_http, relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_publish_read_state,
-    relay_sign, relay_sign_read_state, relay_sign_sidebar, relay_upload, relay_upload_cancel,
+    media_download, relay_agent_library, relay_agent_log_proof, relay_agent_memories_read,
+    relay_agent_observer, relay_agent_resolve, relay_channel_publish, relay_channel_sign,
+    relay_decode_read_state, relay_decode_sidebar, relay_direct_message, relay_http,
+    relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_publish_read_state, relay_sign,
+    relay_sign_read_state, relay_sign_sidebar, relay_upload, relay_upload_cancel,
     relay_workflow_runs,
 };
 mod terminal;
@@ -399,7 +401,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_sign_sidebar,
         relay_agent_resolve,
         relay_agent_log_proof,
-        relay_agent_history_decode,
+        relay_archive,
         relay_agent_observer,
         relay_agent_memories_read,
         relay_agent_library,
@@ -522,6 +524,7 @@ pub fn run() {
     };
     builder
         .manage(IdentityHost::default())
+        .manage(archive::ArchiveHost::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())

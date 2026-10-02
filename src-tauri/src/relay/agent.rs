@@ -113,13 +113,13 @@ pub(crate) async fn relay_agent_log_proof(
 
 #[derive(Deserialize, serde::Serialize, Clone)]
 pub(crate) struct AgentEvent {
-    id: String,
-    pubkey: String,
-    sig: String,
-    created_at: u64,
-    kind: u16,
-    tags: Vec<Vec<String>>,
-    content: String,
+    pub(crate) id: String,
+    pub(crate) pubkey: String,
+    pub(crate) sig: String,
+    pub(crate) created_at: u64,
+    pub(crate) kind: u16,
+    pub(crate) tags: Vec<Vec<String>>,
+    pub(crate) content: String,
 }
 fn verified(event: &AgentEvent) -> Result<()> {
     if !key(&event.id)
@@ -194,39 +194,13 @@ pub(crate) async fn relay_agent_observer(
     host.with_key(move |secret, viewer| decode_observer_with_key(secret, viewer, &event))
         .await
 }
-#[tauri::command]
-pub(crate) async fn relay_agent_history_decode(
-    host: tauri::State<'_, IdentityHost>,
-    community: String,
-    viewer: String,
-    events: Vec<AgentEvent>,
-) -> Result<Value> {
-    origin(&community)?;
-    if events.len() > 200
-        || serde_json::to_vec(&events)
-            .map_err(|_| "Invalid history")?
-            .len()
-            > 2 * 1024 * 1024
-    {
-        return Err("Activity history too large".into());
-    }
-    host.with_key(move |secret, current| {
-        if current != viewer {
-            return Err("Activity viewer changed".into());
-        }
-        Ok(Value::Array(
-            events
-                .iter()
-                .filter_map(|event| decode_observer(secret, current, event, true).ok())
-                .collect(),
-        ))
-    })
-    .await
-}
 fn decode_observer_with_key(secret: &[u8; 32], viewer: &str, event: &AgentEvent) -> Result<Value> {
-    decode_observer(secret, viewer, event, false)
+    if event.kind != 24200 {
+        return Err("Invalid observer envelope".into());
+    }
+    decode_archive(secret, viewer, event, false)
 }
-fn decode_observer(
+pub(crate) fn decode_archive(
     secret: &[u8; 32],
     viewer: &str,
     event: &AgentEvent,
@@ -237,12 +211,12 @@ fn decode_observer(
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| "Invalid clock")?
         .as_secs();
-    if event.kind != 24200
+    if !matches!(event.kind, 24200 | 44200)
         || !exact(event, "p", viewer)
         || !exact(event, "agent", &event.pubkey)
-        || !exact(event, "frame", "telemetry")
+        || (event.kind == 24200 && !exact(event, "frame", "telemetry"))
         || event.created_at > now + 300
-        || now.saturating_sub(event.created_at) > if history { 7 * 24 * 60 * 60 } else { 300 }
+        || now.saturating_sub(event.created_at) > if history { 90 * 24 * 60 * 60 } else { 300 }
         || event.content.len() < 132
         || event.content.len() > 87472
     {
@@ -254,7 +228,7 @@ fn decode_observer(
     }
     serde_json::from_str::<Value>(&text).map_err(|_| "Invalid observer frame")?;
     Ok(
-        json!({"id": event.id, "agent": event.pubkey, "createdAt": event.created_at, "plaintext": text, "envelope": event}),
+        json!({"id": event.id, "agent": event.pubkey, "createdAt": event.created_at, "plaintext": text}),
     )
 }
 
@@ -952,17 +926,17 @@ mod tests {
         resign(&mut historical, &agent_secret);
         assert!(decode_observer_with_key(&viewer_secret, &viewer, &historical).is_err());
         assert_eq!(
-            decode_observer(&viewer_secret, &viewer, &historical, true).unwrap()["plaintext"],
+            decode_archive(&viewer_secret, &viewer, &historical, true).unwrap()["plaintext"],
             r#"{"type":"status","message":"active"}"#
         );
-        assert!(decode_observer(&viewer_secret, &agent, &historical, true).is_err());
-        historical.created_at -= 7 * 24 * 60 * 60;
+        assert!(decode_archive(&viewer_secret, &agent, &historical, true).is_err());
+        historical.created_at -= 90 * 24 * 60 * 60;
         resign(&mut historical, &agent_secret);
-        assert!(decode_observer(&viewer_secret, &viewer, &historical, true).is_err());
+        assert!(decode_archive(&viewer_secret, &viewer, &historical, true).is_err());
         observer.tags.push(vec!["p".into(), viewer.clone()]);
         resign(&mut observer, &agent_secret);
         assert!(decode_observer_with_key(&viewer_secret, &viewer, &observer).is_err());
-        assert!(decode_observer(&viewer_secret, &viewer, &observer, true).is_err());
+        assert!(decode_archive(&viewer_secret, &viewer, &observer, true).is_err());
     }
 
     #[test]

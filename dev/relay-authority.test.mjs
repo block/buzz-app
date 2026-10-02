@@ -16,6 +16,7 @@ async function harness(info, identity = generateSecretKey()) {
     handler(req, res);
   });
   await relayBrokerPlugin({
+    archiveFile: ":memory:",
     relayUrl: fixtureRelayUrl,
     identity: () => identity,
     // Exercise real NIP-11 parsing, broker /session and browser transport.

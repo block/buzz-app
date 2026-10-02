@@ -88,7 +88,7 @@ async fn execute(
         store.prune(now)?;
         match request {
             Request::Settings => store.settings(current, &community),
-            Request::Configure {observer, metrics, observer_days, revision} => store.configure(current, &community, observer, metrics, observer_days, revision, now),
+            Request::Configure {observer, metrics, observer_days, revision} => store.configure(current, &community, store::CaptureSettings { observer, metrics, days: observer_days, revision }, now),
             Request::Clear {kind} => { store.clear(current, &community, kind)?; Ok(json!({"cleared":true})) },
             Request::Ingest {event, revision} => {
                 // Re-validate fresh envelopes in the key owner; never persist unverified IPC input.

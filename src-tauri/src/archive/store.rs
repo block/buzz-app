@@ -5,6 +5,13 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 
 pub(super) struct Store(Connection, i64, PathBuf);
+pub(super) struct CaptureSettings {
+    pub observer: bool,
+    pub metrics: bool,
+    pub days: u32,
+    pub revision: i64,
+}
+type StoredRow = (i64, i64, String);
 fn database<T>(result: rusqlite::Result<T>) -> Result<T> {
     result.map_err(|_| "Local archive storage failed; retry without deleting the archive".into())
 }
@@ -79,12 +86,15 @@ impl Store {
         &mut self,
         viewer: &str,
         community: &str,
-        observer: bool,
-        metrics: bool,
-        days: u32,
-        revision: i64,
+        settings: CaptureSettings,
         now: i64,
     ) -> Result<Value> {
+        let CaptureSettings {
+            observer,
+            metrics,
+            days,
+            revision,
+        } = settings;
         if !(1..=90).contains(&days) {
             return Err("Observer retention must be 1 to 90 days".into());
         }
@@ -198,7 +208,7 @@ impl Store {
         kind: u16,
         agent: Option<&str>,
         before: Option<i64>,
-    ) -> Result<(Vec<(i64, i64, String)>, i64)> {
+    ) -> Result<(Vec<StoredRow>, i64)> {
         valid_kind(kind)?;
         if agent.is_some_and(|s| s.len() != 64 || !s.bytes().all(|b| b.is_ascii_hexdigit()))
             || before.is_some_and(|v| v <= 0)

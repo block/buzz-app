@@ -126,7 +126,17 @@ fn storage_partition_dedup_policy_paging_and_shrinking() {
         .read(&viewer, "https://a.test", 24200, Some("bad"), None)
         .is_err());
     let settings = store
-        .configure(&viewer, "https://a.test", false, true, 1, 0, now)
+        .configure(
+            &viewer,
+            "https://a.test",
+            store::CaptureSettings {
+                observer: false,
+                metrics: true,
+                days: 1,
+                revision: 0,
+            },
+            now,
+        )
         .unwrap();
     assert_eq!(settings["revision"], 1);
     assert!(store
@@ -159,7 +169,17 @@ fn storage_partition_dedup_policy_paging_and_shrinking() {
     );
     drop(count);
     assert!(store
-        .configure(&viewer, "https://a.test", true, true, 30, 0, now)
+        .configure(
+            &viewer,
+            "https://a.test",
+            store::CaptureSettings {
+                observer: true,
+                metrics: true,
+                days: 30,
+                revision: 0
+            },
+            now
+        )
         .is_err());
     store.prune(now + 86401).unwrap();
     assert!(store

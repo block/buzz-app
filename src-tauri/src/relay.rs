@@ -161,7 +161,7 @@ pub(crate) async fn relay_sign(
     if event.kind == 30078 {
         return Err("Channel recipe or Canvas rejected".into());
     }
-    let workflow_delete = if event.kind == 5 {
+    let coordinate_delete = if event.kind == 5 {
         event
             .tags
             .iter()
@@ -171,10 +171,10 @@ pub(crate) async fn relay_sign(
         None
     };
     let signed = host.sign(event).await?;
-    if workflow_delete
+    if coordinate_delete
         .is_some_and(|coordinate| coordinate.split(':').nth(1) != signed["pubkey"].as_str())
     {
-        return Err("Only the workflow author can manage it".into());
+        return Err("Only the author can delete this event".into());
     }
     Ok(signed)
 }
@@ -206,7 +206,7 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
             return Err("Relay authentication does not match this community".into());
         }
     } else if event.kind == 5 {
-        if !valid_message_deletion(event) {
+        if !valid_message_deletion(event) && !valid_managed_agent_deletion(event) {
             validate_workflow_template(event)?;
         }
     } else if matches!(event.kind, 30620 | 46020) {
@@ -266,6 +266,38 @@ fn valid_canvas(event: &EventTemplate) -> bool {
                 _ => false,
             }
         })
+}
+
+/** Only the owner's managed-agent coordinate may use this global kind-5 shape. */
+fn valid_managed_agent_deletion(event: &EventTemplate) -> bool {
+    if !event.content.is_empty()
+        || event.created_at > 9_007_199_254_740_991
+        || event.tags.len() > 3
+        || event.tags.iter().any(|tag| {
+            tag.len() != 2
+                || tag[1].len() > 256
+                || !matches!(tag[0].as_str(), "a" | "k" | "client-id")
+        })
+        || event
+            .tags
+            .iter()
+            .enumerate()
+            .any(|(i, tag)| event.tags[..i].iter().any(|prior| prior[0] == tag[0]))
+        || event
+            .tags
+            .iter()
+            .any(|tag| tag[0] == "k" && tag[1] != "30177")
+    {
+        return false;
+    }
+    let Some(coordinate) = event.tags.iter().find(|tag| tag[0] == "a") else {
+        return false;
+    };
+    let mut parts = coordinate[1].split(':');
+    parts.next() == Some("30177")
+        && parts.next().is_some_and(hex_key)
+        && parts.next().is_some_and(hex_key)
+        && parts.next().is_none()
 }
 
 /** Keep the shared kind-5 writer aligned with the broker's channel-local deletion shape. */

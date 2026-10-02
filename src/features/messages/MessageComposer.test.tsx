@@ -3311,6 +3311,58 @@ it("inserts mention links without new notification recipients during edits", () 
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
+const pasteText = (input: ComposerInputElement, text: string) =>
+  act(() => {
+    input.focus();
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [],
+        getData: (type: string) => (type === "text/plain" ? text : ""),
+      },
+    });
+  });
+
+it("notifies a pasted identity link only for a person the picker offers, under their current name", () => {
+  const h = mount();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey Bee" }]]));
+  const eve = `[@Eve](${profileTarget("e".repeat(64))})`;
+  pasteText(
+    h.input(),
+    `Ask [@Honey](${profileTarget(first.pubkey)}) and ${eve} `,
+  );
+  expect(h.input()).toHaveValue(`Ask @Honey Bee and ${eve} `);
+  expect(
+    within(
+      screen.getByRole("region", { name: "Explicit mentions" }),
+    ).getAllByRole("button"),
+  ).toHaveLength(1);
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    `Ask @Honey Bee and ${eve} `,
+    [first.pubkey],
+    [],
+  );
+});
+
+it("keeps pasted identity links display-only during edits", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  const link = `[@Honey](${profileTarget(second.pubkey)})`;
+  pasteText(h.input(), ` ${link} `);
+  expect(h.input()).toHaveValue(`Original message ${link} `);
+  expect(
+    screen.queryByRole("region", { name: "Explicit mentions" }),
+  ).not.toBeInTheDocument();
+  h.submit();
+  expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
+    "c".repeat(64),
+    `Original message ${link} `,
+    "c".repeat(64),
+  );
+});
+
 it.each([
   { authorId: second.pubkey },
   { agentEnvelope: true as const },

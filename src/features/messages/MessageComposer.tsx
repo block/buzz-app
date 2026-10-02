@@ -1218,6 +1218,19 @@ function Composer({
               }}
               onFormatsChange={setActiveFormats}
               onEditLink={setLinkEdit}
+              // Pasted identity links notify only people the picker would offer,
+              // under their current names; edits never add recipients.
+              acceptRecipient={(pubkey) =>
+                editing.target
+                  ? null
+                  : (mentionCandidates(
+                      session,
+                      channelId,
+                      agentChoices,
+                      mentionRoster,
+                    ).find((c) => c.recipient.pubkey === pubkey)?.recipient ??
+                    null)
+              }
               data-single-emoji={largeEmojiDraft || undefined}
               maxLength={16000}
               aria-label={label}

@@ -219,7 +219,8 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(input.locator(".inline-chip")).toHaveText(labels);
     // The complete choice set already qualifies the agent before selection.
     await expect(input.locator("[data-reveal]")).toHaveCount(0);
-    // Copy serializes authored source, not the visible namesake qualifiers.
+    // Copy serializes authored source, not the visible namesake qualifiers;
+    // the HTML flavor carries each identity.
     await input.focus();
     await input.press("ControlOrMeta+a");
     await expect(input.locator("[data-editor-selected]")).toHaveCount(2);
@@ -232,9 +233,15 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
           clipboardData,
         }),
       );
-      return clipboardData.getData("text/plain");
+      return {
+        text: clipboardData.getData("text/plain"),
+        html: clipboardData.getData("text/html"),
+      };
     });
-    expect(copied).toBe("@Honey @Honey ");
+    expect(copied).toEqual({
+      text: "@Honey @Honey ",
+      html: `<div data-buzz-copy="composer"><p><a href="nostr:${npubEncode(keys.first)}">@Honey</a> <a href="nostr:${npubEncode(keys.second)}">@Honey</a> </p></div>`,
+    });
     await input.press("ArrowRight");
     // Typing can rebuild editor portals; it must not replay the reveal.
     await input.press("x");

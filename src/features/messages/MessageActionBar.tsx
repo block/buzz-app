@@ -8,6 +8,7 @@ import {
   type RefObject,
 } from "react";
 import {
+  HashArrowInIcon,
   ChatCircleIcon,
   CopyIcon,
   DotsThreeIcon,
@@ -31,6 +32,7 @@ const AfterMenuClose = createContext<
 export const useAfterMessageMenuClose = () => useContext(AfterMenuClose);
 
 export function MessageActionBar({
+  onSendToChannel,
   onReply,
   replyDisabled,
   link,
@@ -44,6 +46,7 @@ export function MessageActionBar({
   rowRef?: RefObject<HTMLDivElement | null>;
   messageId?: string;
   menuTriggerRef?: Ref<HTMLButtonElement>;
+  onSendToChannel?: (() => void) | undefined;
   onReply?: (() => void) | undefined;
   replyDisabled?: boolean | undefined;
   link?: string | undefined;
@@ -181,6 +184,29 @@ export function MessageActionBar({
                   </MenuIcon>
                   Copy message
                 </MenuItem>
+                {onSendToChannel && (
+                  <MenuItem
+                    onClick={() => {
+                      try {
+                        onSendToChannel();
+                        setNotice({ text: "Sending to channel", error: false });
+                      } catch (error) {
+                        setNotice({
+                          text:
+                            error instanceof Error
+                              ? error.message
+                              : "Couldn’t send to channel",
+                          error: true,
+                        });
+                      }
+                    }}
+                  >
+                    <MenuIcon>
+                      <HashArrowInIcon />
+                    </MenuIcon>
+                    Send to channel
+                  </MenuItem>
+                )}
                 {overflowItems}
               </AfterMenuClose.Provider>
             </MenuPopup>

@@ -1,6 +1,7 @@
 import type { ChannelQueries, ChannelSummary } from "./contracts";
 import type { RelayEvent } from "./events";
 import type { RelayReader } from "./reader";
+import type { InboxItem, InboxSnapshot } from "./inbox";
 import { foldMessages } from "./fold";
 import { threadReference } from "./thread-reference";
 import { createSidebarState, contextKey } from "./sidebar-state";
@@ -63,6 +64,11 @@ export type ReadingHandle = Readonly<{
   dispose(): void;
 }>;
 export interface UnreadCapability {
+  inbox(): InboxSnapshot;
+  subscribeInbox(listener: () => void): () => void;
+  revision(): number;
+  generation(): number;
+  prepareChannelRead(channelId: string): () => Promise<ReadMutationResult>;
   snapshot(target: UnreadTarget): UnreadSnapshot;
   attention(channelId: string, messageId: string): MessageAttention;
   subscribe(target: UnreadTarget, listener: () => void): () => void;
@@ -120,6 +126,7 @@ export function createUnread({
   reader,
   viewer,
   find,
+  evidence = () => [],
   notify = (listener) => listener(),
 }: {
   api: SidebarApi | undefined;
@@ -129,6 +136,7 @@ export function createUnread({
   reader: RelayReader;
   viewer: string;
   find: (id: string) => RelayEvent | undefined;
+  evidence?: () => readonly RelayEvent[];
   notify?: (listener: () => void) => void;
 }) {
   let closed = false,
@@ -177,6 +185,7 @@ export function createUnread({
       const key = target && contextKey(target);
       return key !== demand.key ? [{ demand, target, key }] : [];
     });
+    if (changed.length) releaseInbox();
     // Release the whole changed set first: shared selectors must not temporarily
     // occupy both their old and new contexts at the retained-demand bound.
     for (const { demand } of changed) releaseDemand(demand);
@@ -188,6 +197,7 @@ export function createUnread({
         });
       demand.key = key;
     }
+    reconcileInbox();
   }
   const views = new Map<
     () => void,
@@ -220,6 +230,210 @@ export function createUnread({
       current = next;
     }
   }
+  // The session owns evidence; Inbox retains only bounded selector leases, never events.
+  const inboxListeners = new Set<() => void>();
+  const inboxDemand = new Map<string, ReturnType<typeof state.retain>>();
+  let inboxDirty = true;
+  let inboxSnapshot: InboxSnapshot | undefined;
+  const inboxKinds = [9, 40002, 45001, 45003];
+  function candidates() {
+    if (closed) return [];
+    const all = evidence();
+    // Jobs share the text/edit/delete presentation fold, not timeline admission.
+    const folded = all.map((item) =>
+      [45001, 45003].includes(item.kind) ? { ...item, kind: 9 } : item,
+    );
+    return channels
+      .list()
+      .channels.filter(admitted)
+      .flatMap((channel) => {
+        const content = new Map(
+          foldMessages(channel.id, "", folded, { includeReplies: true }).map(
+            (row) => [row.id, row.content],
+          ),
+        );
+        return all.flatMap((message) => {
+          if (
+            channelOf(message) !== channel.id ||
+            message.pubkey === viewer ||
+            !inboxKinds.includes(message.kind) ||
+            !content.has(message.id)
+          )
+            return [];
+          const target = context(message);
+          return [
+            {
+              message,
+              target,
+              preview: content.get(message.id) ?? "",
+              dm: channel.channelType === "dm",
+            },
+          ];
+        });
+      })
+      .sort(
+        (a, b) =>
+          b.message.created_at - a.message.created_at ||
+          a.message.id.localeCompare(b.message.id),
+      );
+  }
+  const inboxKey = (id: string, target: ReadTarget) =>
+    `${contextKey(target)}:${id}`;
+  function releaseInbox() {
+    for (const lease of inboxDemand.values()) lease.dispose();
+    inboxDemand.clear();
+    inboxDirty = true;
+  }
+  function reconcileInbox() {
+    if (!inboxListeners.size || closed) return;
+    const wanted = candidates()
+      .slice(0, 100)
+      .flatMap(({ message, target }) =>
+        target ? [{ key: inboxKey(message.id, target), message, target }] : [],
+      );
+    const keys = new Set(wanted.map(({ key }) => key));
+    for (const [key, lease] of inboxDemand)
+      if (!keys.has(key)) {
+        lease.dispose();
+        inboxDemand.delete(key);
+      }
+    for (const { key, message, target } of wanted) {
+      if (inboxDemand.has(key)) continue;
+      try {
+        inboxDemand.set(
+          key,
+          state.retain({ target, message_ids: [message.id] }),
+        );
+      } catch {
+        // Notification demand goes first. Omitted selectors remain unresolved.
+        break;
+      }
+    }
+    inboxDirty = true;
+  }
+  function inbox(): InboxSnapshot {
+    if (!inboxDirty && inboxSnapshot) return inboxSnapshot;
+    inboxDirty = false;
+    const current = state.sync();
+    const groups = new Map<string, ReturnType<typeof candidates>>();
+    let unresolved = false;
+    for (const entry of candidates()) {
+      const { message, target } = entry;
+      if (!target) {
+        unresolved = true;
+        continue;
+      }
+      const result = state.context(target);
+      const verdict =
+        result?.status === "available"
+          ? result.messages.find((m) => m.message_id === message.id)
+          : undefined;
+      if (
+        !verdict ||
+        verdict.status === "unknown" ||
+        verdict.status === "unavailable"
+      ) {
+        unresolved = true;
+        continue;
+      }
+      if (
+        verdict.status !== "unread" ||
+        !["direct", "mention", "conversation"].includes(verdict.reason ?? "")
+      )
+        continue;
+      if (state.covered(target, message.created_at, false, message.id))
+        continue;
+      const key = `${target.channel_id}:${entry.dm ? target.channel_id : (target.root_id ?? message.id)}`;
+      const group = groups.get(key) ?? [];
+      group.push(entry);
+      groups.set(key, group);
+    }
+    const items: InboxItem[] = [];
+    for (const [id, group] of groups) {
+      group.sort(
+        (a, b) =>
+          a.message.created_at - b.message.created_at ||
+          a.message.id.localeCompare(b.message.id),
+      );
+      const first = group[0],
+        latest = group.at(-1);
+      if (!first || !latest?.target) continue;
+      const channelId = latest.target.channel_id;
+      const rootId = latest.target.root_id;
+      const target: UnreadTarget = latest.dm
+        ? { kind: "channel", channelId }
+        : rootId
+          ? { kind: "thread", channelId, rootId }
+          : { kind: "message", channelId, messageId: latest.message.id };
+      items.push(
+        Object.freeze({
+          id,
+          channelId,
+          target,
+          messageId: first.message.id,
+          latestMessageId: latest.message.id,
+          messageIds: Object.freeze(group.map(({ message }) => message.id)),
+          ...(rootId ? { rootId } : {}),
+          authorId: first.message.pubkey,
+          preview: first.preview,
+          createdAt: latest.message.created_at,
+          mentioned: group.some(({ message }) =>
+            message.tags.some(
+              ([name, value]) =>
+                name === "p" && value?.toLowerCase() === viewer,
+            ),
+          ),
+          thread: group.some(({ target }) => !!target?.root_id),
+          unreadCount: group.length,
+          manual:
+            state.journal.manual(target) ||
+            group.some(({ message }) =>
+              state.journal.manual({
+                kind: "message",
+                channelId,
+                messageId: message.id,
+              }),
+            ),
+          readThrough: Object.freeze(
+            !latest.dm && rootId
+              ? [
+                  {
+                    target: { kind: "thread" as const, channelId, rootId },
+                    messageId: latest.message.id,
+                  },
+                ]
+              : [],
+          ),
+        }),
+      );
+    }
+    items.sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+    const next: InboxSnapshot = Object.freeze({
+      status:
+        closed || current.status === "idle" || current.status === "unsupported"
+          ? "idle"
+          : current.status === "error"
+            ? "error"
+            : current.status === "loading"
+              ? "loading"
+              : "ready",
+      items: Object.freeze(items),
+      freshness: closed
+        ? "unknown"
+        : unresolved && freshness() === "observed"
+          ? "stale"
+          : freshness(),
+      error:
+        current.error ??
+        (unresolved ? "Inbox contexts unresolved or at capacity" : undefined),
+    });
+    if (
+      !inboxSnapshot ||
+      JSON.stringify(inboxSnapshot) !== JSON.stringify(next)
+    )
+      inboxSnapshot = next;
+    return inboxSnapshot;
+  }
   function sync(): ReadSyncSnapshot {
     const value = state.sync();
     return Object.freeze({
@@ -242,9 +456,11 @@ export function createUnread({
   let syncSnapshot = sync();
   function publish() {
     reconcileDemand();
+    inboxDirty = true;
     activities.clear();
     syncSnapshot = sync();
     for (const listener of listeners) notify(listener);
+    for (const listener of inboxListeners) notify(listener);
   }
   const stop = state.subscribe(publish);
   let ensureRequested = false;
@@ -477,7 +693,47 @@ export function createUnread({
     activities.set(channelId, result);
     return result;
   }
+  function prepareChannelRead(channelId: string) {
+    const generation = epoch,
+      row = state.row(channelId);
+    if (!allowed(channelId) || !row) throw new Error("Read target unavailable");
+    const valid = () => !closed && epoch === generation && allowed(channelId);
+    if (row.latest_message_id && row.latest_message_at === null)
+      throw new Error("Latest message timestamp unavailable");
+    if (!row.latest_message_id && !row.latest_message_complete)
+      throw new Error("Latest message unknown; refresh before marking read");
+    const keys = state.journal.manualKeys(channelId);
+    const intents: AnchoredRead[] = row.latest_message_id
+      ? [
+          {
+            intent: {
+              type: "mark_channel_read",
+              channel_id: channelId,
+              message_id: row.latest_message_id,
+            },
+            createdAt: row.latest_message_at ?? 0,
+          },
+        ]
+      : [];
+    return () =>
+      state.enqueue(intents, (t) => keys.has(unreadTargetKey(t)), valid);
+  }
+
   const capability: UnreadCapability = Object.freeze<UnreadCapability>({
+    inbox,
+    subscribeInbox(listener) {
+      inboxListeners.add(listener);
+      reconcileInbox();
+      inboxDirty = true;
+      void capability.ensure();
+      return () => {
+        inboxListeners.delete(listener);
+        if (!inboxListeners.size) releaseInbox();
+        inboxDirty = true;
+      };
+    },
+    revision: state.journal.revision,
+    generation: () => epoch,
     snapshot,
     attention,
     activity,
@@ -502,6 +758,7 @@ export function createUnread({
         if (demand) {
           demands.delete(demand);
           releaseDemand(demand);
+          publish();
         }
       };
     },
@@ -631,32 +888,9 @@ export function createUnread({
         () => !closed && epoch === generation && allowed(target.channelId),
       );
     },
+    prepareChannelRead,
     async markChannelRead(channelId) {
-      const generation = epoch,
-        row = state.row(channelId);
-      if (!allowed(channelId) || !row)
-        throw new Error("Read target unavailable");
-      const valid = () => !closed && epoch === generation && allowed(channelId);
-      if (row.latest_message_id && row.latest_message_at === null)
-        throw new Error("Latest message timestamp unavailable");
-      if (!row.latest_message_id && !row.latest_message_complete)
-        throw new Error("Latest message unknown; refresh before marking read");
-      return state.enqueue(
-        row.latest_message_id
-          ? [
-              {
-                intent: {
-                  type: "mark_channel_read",
-                  channel_id: channelId,
-                  message_id: row.latest_message_id,
-                },
-                createdAt: row.latest_message_at ?? 0,
-              },
-            ]
-          : [],
-        (t) => t.channelId === channelId,
-        valid,
-      );
+      return prepareChannelRead(channelId)();
     },
     async markAllChannelsRead() {
       if (closed) throw new Error("Read target unavailable");
@@ -710,6 +944,36 @@ export function createUnread({
   return {
     capability,
     state,
+    event,
+    retainedEditIds(ids: readonly string[]) {
+      if (closed) return [];
+      const all = evidence(),
+        targets = new Set(ids);
+      const deleted = (message: RelayEvent) =>
+        all.some(
+          (item) =>
+            [5, 9005].includes(item.kind) &&
+            item.pubkey === message.pubkey &&
+            item.tags.some(([name, id]) => name === "e" && id === message.id),
+        );
+      return all
+        .filter(
+          (edit) =>
+            edit.kind === 40003 &&
+            !deleted(edit) &&
+            edit.tags.some(([name, id]) => {
+              const original = id && targets.has(id) ? event(id) : undefined;
+              return (
+                name === "e" &&
+                original &&
+                inboxKinds.includes(original.kind) &&
+                original.pubkey === edit.pubkey &&
+                !deleted(original)
+              );
+            }),
+        )
+        .map((edit) => edit.id);
+    },
     live(events: readonly RelayEvent[]) {
       for (const message of events) {
         const channelId = channelOf(message);
@@ -742,6 +1006,8 @@ export function createUnread({
     },
     accept(events: readonly RelayEvent[]) {
       reconcileDemand();
+      inboxDirty = true;
+      for (const listener of inboxListeners) notify(listener);
       for (const message of events) {
         const id = channelOf(message);
         if (id) state.invalidate(id);
@@ -751,6 +1017,7 @@ export function createUnread({
       epoch++;
       for (const stop of [...handles]) stop();
       previews.clear();
+      releaseInbox();
       state.purge();
     },
     stale() {
@@ -763,6 +1030,7 @@ export function createUnread({
       for (const stop of [...handles]) stop();
       previews.clear();
       for (const demand of demands) releaseDemand(demand);
+      releaseInbox();
       state.clear();
     },
     dispose() {
@@ -774,6 +1042,9 @@ export function createUnread({
       stopRoster();
       for (const demand of demands) releaseDemand(demand);
       demands.clear();
+      releaseInbox();
+      inboxListeners.clear();
+      inboxDirty = true;
       state.dispose();
       listeners.clear();
       snapshots.clear();

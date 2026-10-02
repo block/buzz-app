@@ -66,7 +66,7 @@ too. Oversized rows that never fit fully are not auto-read.
 - `markChannelRead(channelId)` anchors on the relay row's `latest_message_id`
   when invoked and sends `mark_channel_read`: a fixed whole-channel cut covering
   the timeline and every thread through that timestamp. Later arrivals remain
-  unread. It clears the channel's local manual-unread marks. With no latest
+  unread. It clears the channel's local manual-unread keys captured at invocation. With no latest
   message and a complete row it clears only local marks; an incomplete row is an
   error rather than an invented cut. It does not fetch history or select the row.
 - `markAllChannelsRead()` sweeps accessible listed channels with visible unread
@@ -186,8 +186,8 @@ responses as well as exact responses.
 | --- | --- | --- |
 | Automatic visible dwell | `mark_through` newest dwelled message, per context | None |
 | `markThrough(target, messageId)` | `mark_through` that target through the message | That target |
-| `markChannelRead(channelId)` | `mark_channel_read` through the row's latest message | Channel |
-| Channel read with no messages | None | Channel |
+| `markChannelRead(channelId)` | `mark_channel_read` through the row's latest message | Captured channel keys |
+| Channel read with no messages | None | Captured channel keys |
 | Selected row read through here | `mark_through` in the row's context | Selected message mark |
 | Selected row unread | None | None (adds selected message mark) |
 | Mute/Unmute | None | None |
@@ -279,3 +279,27 @@ compatible relay before enabling this client contract. The write body cap is
   delivery and explicit local-unread clearing with network content held.
   The browser relay is a model (`tests/browser/policy-relay.mjs`); the relay's own
   suites and the live driver prove the contract, not these journeys.
+
+## Relay-authoritative Inbox surface
+
+See [Inbox](inbox.md) for the narrowed exported contract; no Inbox UI ships here.
+Candidates reuse the verified session cache plus finite addressed feed, not the
+former dedicated unread history/participation repair. Only current context
+`unread` verdicts with direct/mention/conversation reason admit rows; manual
+marks overlay them without inventing relevance or erasing omitted marks.
+Kinds 9/40002/45001/45003 follow the relay's 30-day window; 40008 is not counted.
+Read rows disappear. Counts and resume anchors describe the observed subset.
+
+Inbox subscriptions retain at most 100 selectors, yielding to notifications
+under the existing 1,000 shared bound. Unknown/unavailable/over-capacity stays
+visibly unresolved, never read/zero. Context failure is error/stale. The shared
+fold and feed's pre-admission incomplete metadata preserve preview closure.
+
+Inbox `readThrough` is thread-prefix-only, anchored on its newest admitted
+reply, never its root. An empty non-DM `readThrough` means no Inbox read action:
+a top-level mention does not silently become a channel-prefix write.
+`prepareChannelRead` freezes the relay latest ID/time, epoch, and current manual
+keys. Retries keep those operands: new keys survive, re-marks on frozen keys
+are cleared. `markChannelRead(id)` calls `prepareChannelRead(id)()`.
+`revision()` counts successful local intent saves, not sync publications;
+`generation()` is the lifecycle epoch. No extra read executor is exported.

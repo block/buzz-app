@@ -219,6 +219,14 @@ export function ChannelActivityPopover({
       getTargets,
     ),
   ) as ({ startedAt: number; messageId?: string } | null)[];
+  // Typing alone lists an agent while the Agent Activity plugin is off, when
+  // no activity panel is registered to open.
+  const openAgentActivity = useSyncExternalStore(
+    open && agentIds ? session.agentActivity.subscribe : noSubscribe,
+    () => !!agentIds && session.agentActivity.snapshot().status === "disabled",
+  )
+    ? undefined
+    : onOpenAgentActivity;
   const keyLabels = publicKeyLabels(activeAgents);
   const hasActivity = items.length > 0 || activeAgents.length > 0;
   useEffect(() => {
@@ -292,7 +300,7 @@ export function ChannelActivityPopover({
                   return (
                     <div
                       key={agent}
-                      className={`${styles.activityItem} ${onOpenAgentActivity ? styles.activityItemWithAction : ""}`}
+                      className={`${styles.activityItem} ${openAgentActivity ? styles.activityItemWithAction : ""}`}
                     >
                       <NavigationItem
                         type="button"
@@ -329,7 +337,7 @@ export function ChannelActivityPopover({
                           </span>
                         }
                       />
-                      {onOpenAgentActivity && (
+                      {openAgentActivity && (
                         <span className={styles.activityItemAction}>
                           <IconButton
                             size="toolbar"
@@ -338,7 +346,7 @@ export function ChannelActivityPopover({
                             title="View activity"
                             onClick={() => {
                               setOpen(false);
-                              onOpenAgentActivity(channelId, agent);
+                              openAgentActivity(channelId, agent);
                             }}
                           />
                         </span>

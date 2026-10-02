@@ -4,6 +4,7 @@ import { open, edge, settle } from "./timeline.mjs";
 // These journeys cover real document boot, IndexedDB reload, React session
 // replacement and DOM continuity. Failure/corruption matrices live in Vitest.
 test.use({
+  launchAnimation: true,
   productionBroker: true,
   pluginFixtures: true,
   savedSidebar: true,
@@ -332,9 +333,18 @@ for (const theme of ["light", "dark"]) {
         "filter",
         theme === "dark" ? "invert(1)" : "none",
       );
-      const mark = await launch
-        .getByRole("img", { name: "Buzz" })
-        .boundingBox();
+      const image = launch.getByRole("img", { name: "Buzz" });
+      const displayedAsset = () =>
+        image.evaluate((element) =>
+          element.currentSrc ? new URL(element.currentSrc).pathname : "",
+        );
+      await expect(image).toHaveAttribute("src", "/buzz-loading-mark.svg");
+      await expect.poll(displayedAsset).toBe("/buzz-loading-mark.svg");
+      await expect(launch).toHaveAttribute("data-started-at", /^\d+(\.\d+)?$/);
+      await expect(
+        launch.locator('source[media="(prefers-reduced-motion: reduce)"]'),
+      ).toHaveAttribute("srcset", "/buzz-mark.svg");
+      const mark = await image.boundingBox();
       const viewport = page.viewportSize();
       expect(
         Math.abs(mark.x + mark.width / 2 - viewport.width / 2),
@@ -342,6 +352,8 @@ for (const theme of ["light", "dark"]) {
       expect(
         Math.abs(mark.y + mark.height / 2 - viewport.height / 2),
       ).toBeLessThan(1);
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await expect.poll(displayedAsset).toBe("/buzz-mark.svg");
     } finally {
       gate.release();
     }
@@ -350,6 +362,109 @@ for (const theme of ["light", "dark"]) {
     ).toHaveCount(0);
   });
 }
+
+test("launch waits for the initial sidebar and message history before revealing the workspace", async ({
+  page,
+  app,
+}) => {
+  await page.clock.install();
+  app.relay.holdUnread();
+  const head = held();
+  let requested = false;
+  await page.route("**/api/relay/**/query", async (route) => {
+    if (
+      route
+        .request()
+        .postDataJSON()
+        .some((filter) => filter.top_level && filter["#h"]?.includes("alpha"))
+    ) {
+      requested = true;
+      await head.promise;
+    }
+    await route.continue().catch(() => {});
+  });
+  try {
+    await page.goto(app.origin, { waitUntil: "domcontentloaded" });
+    const launch = page.getByRole("status", { name: "Opening Buzz" });
+    await expect(launch).toBeVisible();
+    await expect(page.locator("#root")).toHaveAttribute("inert", "");
+    await expect(page.locator("#root")).toHaveAttribute("aria-hidden", "true");
+    await expect(page.locator("#buzz-toast-root")).toHaveAttribute("inert", "");
+    await expect(page.locator("#buzz-toast-root")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    await expect(
+      page.locator('[aria-label="Channel sidebar"][data-buzz-launch-pending]'),
+    ).toBeAttached();
+    await page.clock.runFor(1900);
+    await expect(launch).toBeVisible();
+
+    app.relay.releaseUnread();
+    await expect.poll(() => requested).toBe(true);
+    await expect(
+      page.locator('[aria-label="Channel sidebar"][data-buzz-launch-pending]'),
+    ).toHaveCount(0);
+    const composer = page.locator(
+      '#root [role="textbox"][contenteditable="true"]',
+    );
+    await expect(composer).toBeAttached();
+    await expect(composer).not.toBeFocused();
+    await expect(page.locator("[data-buzz-launch-pending]")).toBeAttached();
+    await page.clock.runFor(1900);
+    await expect(launch).toBeVisible();
+
+    head.release();
+    await expect(
+      page.getByRole("region", { name: "Channel message history" }),
+    ).toContainText("primary alpha message 0");
+    await expect(page.locator("[data-buzz-launch-pending]")).toHaveCount(0);
+    await expect(launch).toHaveCount(0);
+    await expect(composer).toBeFocused();
+    await expect(page.locator("#root")).not.toHaveAttribute("inert");
+    await expect(page.locator("#root")).not.toHaveAttribute("aria-hidden");
+    await expect(page.locator("#buzz-toast-root")).not.toHaveAttribute("inert");
+    await expect(page.locator("#buzz-toast-root")).not.toHaveAttribute(
+      "aria-hidden",
+    );
+  } finally {
+    app.relay.releaseUnread();
+    head.release();
+  }
+});
+
+test("cached workspace remains usable when live reconnect stalls", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await expect
+    .poll(async () =>
+      (await cached(page)).heads.some((head) => head.channelId === "alpha"),
+    )
+    .toBe(true);
+  const connection = held();
+  let requested = false;
+  await page.route("**/api/relay/*/session", async (route) => {
+    requested = true;
+    await connection.promise;
+    await route.fallback();
+  });
+  await page.clock.install();
+  try {
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect.poll(() => requested).toBe(true);
+    await expect(
+      page.getByRole("region", { name: "Channel message history" }),
+    ).toContainText("primary alpha message 0");
+    await page.clock.runFor(3600);
+    await expect(
+      page.getByRole("status", { name: "Opening Buzz" }),
+    ).toHaveCount(0);
+  } finally {
+    connection.release();
+  }
+});
 
 test.describe("personal sidebar startup", () => {
   test.use({ personalSidebar: true });
@@ -546,6 +661,63 @@ test.describe("saved DM labels", () => {
 });
 
 test.describe("pending startup navigation", () => {
+  test("cold conversation access stays behind launch until resolution fails", async ({
+    page,
+    app,
+  }) => {
+    const gate = held();
+    let requested = false;
+    await page.route("**/api/relay/**/query", async (route) => {
+      if (
+        route
+          .request()
+          .postDataJSON()
+          .some(
+            (filter) =>
+              filter.kinds?.includes(39002) &&
+              filter["#d"]?.includes("outside-roster"),
+          )
+      ) {
+        requested = true;
+        await gate.promise;
+      }
+      await route.continue().catch(() => {});
+    });
+    try {
+      await page.clock.install();
+      const target = {
+        version: 1,
+        kind: "conversation",
+        channelId: "outside-roster",
+        scope: {
+          viewer: app.viewer,
+          communityOrigin: "https://primary.example",
+        },
+      };
+      await page.goto(
+        `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify(target))}`,
+      );
+      await expect.poll(() => requested).toBe(true);
+      const checking = page.getByText("Checking conversation access…", {
+        exact: true,
+      });
+      await expect(checking).toBeVisible();
+      await expect(checking).toHaveAttribute(
+        "data-buzz-launch-pending",
+        "required",
+      );
+      await page.clock.runFor(3700);
+      await expect(page.locator("#buzz-launch")).toBeVisible();
+      gate.release();
+      await expect(page.locator("#buzz-launch")).toHaveCount(0);
+      await expect(
+        page.getByRole("heading", { name: "This destination couldn’t open" }),
+      ).toBeVisible();
+    } finally {
+      gate.release();
+    }
+  });
+
   test("waits for a conversation absent from the saved roster, then opens it live", async ({
     page,
     app,

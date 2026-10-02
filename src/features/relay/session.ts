@@ -43,6 +43,7 @@ import { createIdentityArchives } from "./identity-archives";
 import type { SidebarStorage } from "./sidebar-journal";
 import { createTyping } from "./typing";
 import { createUnread } from "./unread";
+import { createInboxFeed } from "./inbox-feed";
 import type { IncomingListener, IncomingMessage } from "./incoming";
 import { objectBody } from "./body";
 import type { ChannelList, ChannelSummary } from "./contracts";
@@ -373,6 +374,7 @@ export function createRelaySession(
       for (const purge of views.values()) purge();
       commit();
       unread.purge();
+      inboxFeed.purge();
     } finally {
       if (--revoking === 0) {
         const pending = [...notifications];
@@ -385,6 +387,10 @@ export function createRelaySession(
     filters: readonly ReadFilter[],
     settings?: ReadOptions,
     channelTraffic = true,
+    beforeInbox?: (
+      events: readonly RelayEvent[],
+      raw: readonly RelayEvent[],
+    ) => void,
   ) {
     if (
       options.cachedOnly ||
@@ -458,7 +464,12 @@ export function createRelaySession(
       if (closed || epoch !== accessEpoch)
         throw new DOMException("Stale relay search", "AbortError");
     }
-    const visible = accept(events, channelTraffic);
+    const visible = accept(
+      events,
+      channelTraffic,
+      beforeInbox,
+      settings?.signal,
+    );
     // Discovery must see signed grants/removals even when their channel is
     // currently denied; only the store interprets roster completeness.
     return channelTraffic
@@ -472,6 +483,11 @@ export function createRelaySession(
   function accept(
     events: readonly RelayEvent[],
     channelTraffic = true,
+    beforeInbox?: (
+      events: readonly RelayEvent[],
+      raw: readonly RelayEvent[],
+    ) => void,
+    signal?: AbortSignal,
   ): readonly RelayEvent[] {
     if (closed) return [];
     // Authority precedes every projection, even in a batch containing both a
@@ -492,6 +508,12 @@ export function createRelaySession(
       )
       .filter(visibility(events, true));
     const epoch = accessEpoch;
+    beforeInbox?.(visible, events);
+    if (
+      beforeInbox &&
+      (closed || epoch !== accessEpoch || signal?.aborted || cacheClearing)
+    )
+      throw new DOMException("Stale Inbox read", "AbortError");
     typing.accept(visible);
     if (closed || epoch !== accessEpoch) return [];
     profiling.measure(
@@ -706,6 +728,7 @@ export function createRelaySession(
     reader: requests.reader,
     viewer: transport?.viewer ?? "",
     find: (id) => recent.peek(id)?.event ?? retainedEvent(id),
+    evidence: () => recent.entries().map(([, item]) => item.event),
     notify,
   });
   const activityStatus = (): NonNullable<ChannelList["activityStatus"]> => {
@@ -772,6 +795,33 @@ export function createRelaySession(
         offActivity?.();
       };
     },
+  });
+  const inboxFeed = createInboxFeed({
+    // A withheld auxiliary event is not proof of an exhausted history page.
+    // Fail closed at raw/admitted admission; do not relax reference visibility.
+    reader: {
+      read: (filters, settings) =>
+        readVerified(filters, settings, true, (visible, raw) => {
+          const admitted = new Set(visible.map((event) => event.id));
+          if (
+            raw.some(
+              (event) =>
+                [40003, 5, 9005].includes(event.kind) &&
+                !admitted.has(event.id),
+            )
+          )
+            throw new Error(
+              "Inbox message updates could not be verified for current access. Retry inbox.",
+            );
+        }),
+    },
+    retainedEvent: unread.event,
+    retainedEditIds: unread.retainedEditIds,
+    addressedRead: (filter, signal, prepare) =>
+      readVerified([filter], { signal }, true, prepare),
+    channels: channels.queries,
+    viewer: transport?.viewer ?? "",
+    notify,
   });
   let traffic: LiveSubscription | undefined;
   const liveListeners = new Set<() => void>();
@@ -1658,6 +1708,7 @@ export function createRelaySession(
     statuses: statuses.queries,
     agentLibrary: agentLibrary.queries,
     agentChoices,
+    inboxFeed,
     workflows: workflows.capability,
     projects,
     projectGit: transport?.projectGit
@@ -2232,6 +2283,7 @@ export function createRelaySession(
         workflows.interrupt();
         channels.staleHeads();
         unread.stale();
+        inboxFeed.stale();
       }
       // Access-revoked CLOSED is a refresh hint, not signed archive/membership
       // authority. Aggregate snapshots repeat failures; only react to a new one.
@@ -2277,6 +2329,7 @@ export function createRelaySession(
               emoji.reconnect();
               statuses.reconnect();
               unread.reconnect();
+              inboxFeed.reconnect();
               for (const refresh of refreshers) void refresh();
             }
           }, 0);
@@ -2343,6 +2396,7 @@ export function createRelaySession(
         for (const clear of views.values()) clear(true);
         recent.clear();
         unread.clear();
+        inboxFeed.clear();
         requests.invalidate();
         profiles.clear();
         emoji.clear();
@@ -2378,6 +2432,7 @@ export function createRelaySession(
       for (const timer of timers) clearTimeout(timer);
       for (const dispose of [...views.keys()]) dispose();
       unread.dispose();
+      inboxFeed.dispose();
       writes?.dispose();
       requests.dispose();
       channels.dispose();

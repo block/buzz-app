@@ -1597,7 +1597,14 @@ function ChannelWorkspace({
                     }
                   />
                 ) : (
-                  <div className={styles.empty}>
+                  <div
+                    className={styles.empty}
+                    data-buzz-launch-pending={
+                      resolving && !navigation?.signal.aborted
+                        ? "required"
+                        : undefined
+                    }
+                  >
                     {resolving
                       ? "Checking conversation access…"
                       : "Select a channel to read it."}

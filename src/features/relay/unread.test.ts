@@ -1,7 +1,14 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import { createUnread } from "./unread";
-import { deferredSidebar, sidebarFixture, sidebarRow } from "./sidebar-testing";
+import {
+  deferredSidebar,
+  sidebarAccount,
+  sidebarFixture,
+  sidebarRow,
+} from "./sidebar-testing";
+import type { MessageReadState, UnreadReason } from "./sidebar-api";
+import type { InboxSnapshot } from "./inbox";
 import { keypair, message, metadata, roster, signed } from "./testing";
 import { matchesEvent } from "./projection";
 import type { LiveCallbacks } from "./live";
@@ -1468,5 +1475,492 @@ it.each([
       unread: { status: "exact", value: 1 },
       attention: { status: "exact", value: attention },
     });
+  },
+);
+
+// Inbox reads the relay's per-message verdict (Eva 3b4a22d3): a row exists only
+// for a verified candidate the relay calls unread with a direct, mention or
+// conversation reason. Tests drive only the public session surface.
+type Verdict = MessageReadState["status"] | `unread:${string}`;
+function verdicts(
+  h: ReturnType<typeof setup>,
+  entries: readonly (readonly [RelayEvent, Verdict])[],
+) {
+  for (const [event, verdict] of entries)
+    h.bff.messages.set(
+      event.id,
+      verdict.startsWith("unread:")
+        ? ({
+            message_id: event.id,
+            status: "unread",
+            reason: (verdict.slice(7) === "null"
+              ? null
+              : verdict.slice(7)) as UnreadReason | null,
+          } as MessageReadState)
+        : ({ message_id: event.id, status: verdict } as MessageReadState),
+    );
+}
+const inboxOpen = new WeakSet<object>();
+async function inbox(h: ReturnType<typeof setup>) {
+  if (!inboxOpen.has(h.unread)) {
+    cleanups.push(h.unread.subscribeInbox(() => {}));
+    inboxOpen.add(h.unread);
+  }
+  await h.unread.refresh();
+  await vi.waitFor(() => expect(h.unread.inbox().status).not.toBe("loading"));
+  return h.unread.inbox();
+}
+const settled = (snapshot: InboxSnapshot) =>
+  snapshot.status === "ready" && snapshot.freshness === "observed";
+const threadOf = (rootId: string) =>
+  ({ kind: "thread", channelId: channel, rootId }) as const;
+const writes = (h: ReturnType<typeof setup>) =>
+  h.bff.api.write.mock.calls.flatMap(([intents]) => intents);
+
+it("inbox: a peer's direct reply beside the viewer's reply is one thread item; own, parent and nested replies do not count", async () => {
+  const h = setup();
+  const parent = message(h.peer, channel, "parent", 10);
+  const mine = message(h.viewer, channel, "my reply", 11, [
+    ["e", parent.id, "", "root"],
+    ["e", parent.id, "", "reply"],
+  ]);
+  const sibling = message(h.peer, channel, "sibling reply", 12, [
+    ["e", parent.id, "", "root"],
+    ["e", parent.id, "", "reply"],
+  ]);
+  const nested = message(h.peer, channel, "nested reply", 13, [
+    ["e", parent.id, "", "root"],
+    ["e", sibling.id, "", "reply"],
+  ]);
+  h.emit([parent, mine, sibling, nested]);
+  verdicts(h, [
+    [parent, "read"],
+    [mine, "not_counted"],
+    [sibling, "unread:conversation"],
+    [nested, "unread:broadcast"],
+  ]);
+  const snapshot = await inbox(h);
+  expect(settled(snapshot)).toBe(true);
+  expect(snapshot.items).toHaveLength(1);
+  const [item] = snapshot.items;
+  expect(item).toMatchObject({
+    channelId: channel,
+    target: threadOf(parent.id),
+    messageId: sibling.id,
+    messageIds: [sibling.id],
+    rootId: parent.id,
+    thread: true,
+    unreadCount: 1,
+    manual: false,
+    readThrough: [{ target: threadOf(parent.id), messageId: sibling.id }],
+  });
+});
+
+it("inbox: a manual mark overlays an admitted row; reading it removes the row; a reasonless mark gets no row and stays journaled", async () => {
+  const h = setup();
+  const parent = message(h.peer, channel, "parent", 10);
+  const reply = message(h.peer, channel, "reply", 11, [
+    ["e", parent.id, "", "root"],
+    ["e", parent.id, "", "reply"],
+  ]);
+  h.emit([parent, reply]);
+  verdicts(h, [
+    [parent, "read"],
+    [reply, "unread:conversation"],
+  ]);
+  const item = (await inbox(h)).items[0];
+  if (!item) throw new Error("Missing admitted thread row");
+  await h.unread.markUnreadLocal(item.target);
+  expect((await inbox(h)).items[0]).toMatchObject({
+    id: item.id,
+    manual: true,
+    unreadCount: 1,
+  });
+  for (const step of item.readThrough)
+    await h.unread.markThrough(step.target, step.messageId);
+  verdicts(h, [[reply, "read"]]);
+  const after = await inbox(h);
+  expect(after.items).toEqual([]);
+  expect(h.bff.journal().manual).toEqual([]);
+  // Manual intent with no remaining relay reason: no Inbox row, never erased.
+  await h.unread.markUnreadLocal(item.target);
+  expect((await inbox(h)).items).toEqual([]);
+  expect(h.bff.journal().manual).toEqual([item.target]);
+  expect(h.unread.snapshot(item.target).manual).toBe("local-only");
+});
+
+it("inbox: a reply whose root is not loaded is still a thread item from its signed ancestry", async () => {
+  const h = setup();
+  const root = "c".repeat(64);
+  const mine = message(h.viewer, channel, "my reply", 11, [
+    ["e", root, "", "root"],
+    ["e", root, "", "reply"],
+  ]);
+  const reply = message(h.peer, channel, "reply to me", 12, [
+    ["e", root, "", "root"],
+    ["e", mine.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([mine, reply]);
+  verdicts(h, [
+    [mine, "not_counted"],
+    [reply, "unread:conversation"],
+  ]);
+  const snapshot = await inbox(h);
+  expect(snapshot.items).toHaveLength(1);
+  expect(snapshot.items[0]).toMatchObject({
+    target: threadOf(root),
+    rootId: root,
+    messageId: reply.id,
+    thread: true,
+    readThrough: [{ target: threadOf(root), messageId: reply.id }],
+  });
+});
+
+it.each([
+  { verdict: "unread:direct", admitted: true },
+  { verdict: "unread:mention", admitted: true },
+  { verdict: "unread:conversation", admitted: true },
+  { verdict: "unread:broadcast", admitted: false },
+  { verdict: "unread:null", admitted: false },
+  { verdict: "read", admitted: false },
+  { verdict: "not_counted", admitted: false },
+] as const)(
+  "inbox admits a top-level row only for a relay reason: $verdict",
+  async ({ verdict, admitted }) => {
+    const h = setup();
+    const row = message(h.peer, channel, "top level", 12, [
+      ["p", h.viewer.pubkey],
+    ]);
+    h.emit([row]);
+    verdicts(h, [[row, verdict]]);
+    const snapshot = await inbox(h);
+    expect(settled(snapshot)).toBe(true);
+    expect(snapshot.items.map((item) => item.messageId)).toEqual(
+      admitted ? [row.id] : [],
+    );
+    // A top-level row has no Inbox read action: never a timeline prefix.
+    if (admitted) expect(snapshot.items[0]?.readThrough).toEqual([]);
+    expect(h.bff.api.write).not.toHaveBeenCalled();
+  },
+);
+
+it("inbox groups a direct-message channel into one channel-target row with no prefix steps", async () => {
+  const h = setup();
+  const dm = other;
+  h.grant(dm, [h.viewer.pubkey, h.peer.pubkey]);
+  h.emit([metadata(h.relay, dm, "DM", 11, [["t", "dm"]])]);
+  const first = message(h.peer, dm, "hello", 20);
+  const second = message(h.peer, dm, "again", 21);
+  h.emit([first, second]);
+  verdicts(h, [
+    [first, "unread:direct"],
+    [second, "unread:direct"],
+  ]);
+  const snapshot = await inbox(h);
+  expect(snapshot.items).toHaveLength(1);
+  expect(snapshot.items[0]).toMatchObject({
+    channelId: dm,
+    target: { kind: "channel", channelId: dm },
+    messageId: first.id,
+    latestMessageId: second.id,
+    unreadCount: 2,
+    readThrough: [],
+  });
+});
+
+it.each(["unknown", "unavailable", "context-unavailable"] as const)(
+  "inbox keeps an %s verdict visibly unresolved, never read or zero",
+  async (kind) => {
+    const h = setup();
+    const row = message(h.peer, channel, "mention", 12, [
+      ["p", h.viewer.pubkey],
+    ]);
+    h.emit([row]);
+    if (kind === "context-unavailable")
+      h.bff.api.contexts.mockImplementation(async (queries) => ({
+        account: sidebarAccount,
+        contexts: queries.map(() => ({ status: "unavailable" as const })),
+      }));
+    else verdicts(h, [[row, kind]]);
+    const snapshot = await inbox(h);
+    expect(h.bff.api.contexts).toHaveBeenCalled();
+    expect(snapshot.items).toEqual([]);
+    expect(settled(snapshot)).toBe(false);
+    // Positive control: the same candidate settles once the relay answers.
+    h.bff.api.contexts.mockImplementation(async (queries) => ({
+      account: sidebarAccount,
+      contexts: queries.map((q) => ({
+        status: "available" as const,
+        through_timestamp: null,
+        messages: q.message_ids.map((id) => ({
+          message_id: id,
+          status: "unread" as const,
+          reason: "mention" as const,
+        })),
+      })),
+    }));
+    const answered = await inbox(h);
+    expect(settled(answered)).toBe(true);
+    expect(answered.items.map((item) => item.messageId)).toEqual([row.id]);
+  },
+);
+
+it("inbox thread prefix writes one thread intent and never acknowledges the root or an unrelated mention", async () => {
+  const h = setup();
+  const root = message(h.peer, channel, "mentioned root", 10, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const reply = message(h.peer, channel, "mentioned reply", 11, [
+    ["e", root.id, "", "root"],
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  const unrelated = message(h.peer, channel, "other mention", 12, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([root, reply, unrelated]);
+  verdicts(h, [
+    [root, "unread:mention"],
+    [reply, "unread:mention"],
+    [unrelated, "unread:mention"],
+  ]);
+  const snapshot = await inbox(h);
+  const item = snapshot.items.find((row) => row.messageIds.includes(reply.id));
+  if (!item) throw new Error("Missing thread row");
+  expect(item.readThrough).toEqual([
+    { target: threadOf(root.id), messageId: reply.id },
+  ]);
+  for (const step of item.readThrough)
+    await h.unread.markThrough(step.target, step.messageId);
+  await vi.waitFor(() => expect(h.bff.api.write).toHaveBeenCalled());
+  expect(writes(h)).toEqual([
+    {
+      type: "mark_through",
+      target: { channel_id: channel, root_id: root.id },
+      message_id: reply.id,
+    },
+  ]);
+  expect(h.unread.attention(channel, root.id).unread).toBe(true);
+  expect(h.unread.attention(channel, unrelated.id).unread).toBe(true);
+});
+
+it("inbox: a prepared channel read retries its captured anchor and leaves a newer manual mark alone", async () => {
+  const h = setup();
+  const anchor = "a".repeat(64),
+    later = "b".repeat(64);
+  h.bff.rows.set(
+    channel,
+    sidebarRow(channel, { latest_message_id: anchor, latest_message_at: 42 }),
+  );
+  await h.unread.ensure();
+  await h.unread.markUnreadLocal(target);
+  const read = h.unread.prepareChannelRead(channel);
+  const update = vi.spyOn(h.bff.storage, "update");
+  update.mockRejectedValueOnce(new Error("disk full"));
+  await expect(read()).rejects.toThrow("disk full");
+  expect(h.snapshot().manual).toBe("local-only");
+  h.bff.rows.set(
+    channel,
+    sidebarRow(channel, { latest_message_id: later, latest_message_at: 50 }),
+  );
+  await h.unread.refresh();
+  const newer = threadOf("d".repeat(64));
+  await h.unread.markUnreadLocal(newer);
+  await read();
+  await vi.waitFor(() => expect(h.bff.api.write).toHaveBeenCalled());
+  expect(writes(h)).toEqual([
+    { type: "mark_channel_read", channel_id: channel, message_id: anchor },
+  ]);
+  expect(h.snapshot().manual).toBe("none");
+  expect(h.bff.journal().manual).toEqual([newer]);
+});
+
+it("inbox demand stops at 100 candidates and leaves the 101st visibly unresolved", async () => {
+  const h = setup();
+  const rows = Array.from({ length: 101 }, (_, i) =>
+    message(h.peer, channel, `mention ${i}`, 100 + i, [["p", h.viewer.pubkey]]),
+  );
+  h.emit(rows);
+  verdicts(
+    h,
+    rows.map((row) => [row, "unread:mention"] as const),
+  );
+  const snapshot = await inbox(h);
+  const demanded = new Set(
+    h.bff.api.contexts.mock.calls.flatMap(([queries]) =>
+      queries.flatMap((q) => q.message_ids),
+    ),
+  );
+  expect(demanded.size).toBeLessThanOrEqual(100);
+  expect(snapshot.items.length).toBeLessThanOrEqual(100);
+  expect(settled(snapshot)).toBe(false);
+});
+
+it("inbox folds edits and deletions and revokes all evidence before a reentrant subscriber", async () => {
+  const h = setup();
+  const row = message(h.peer, channel, "original", 20, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([row]);
+  verdicts(h, [[row, "unread:mention"]]);
+  expect((await inbox(h)).items[0]?.preview).toBe("original");
+  h.emit([
+    signed(h.peer, {
+      kind: 40003,
+      created_at: 21,
+      content: "edited",
+      tags: [
+        ["h", channel],
+        ["e", row.id],
+      ],
+    }),
+  ]);
+  expect((await inbox(h)).items[0]?.preview).toBe("edited");
+  const noticed: number[] = [];
+  h.unread.subscribe(target, () => noticed.push(h.unread.inbox().items.length));
+  h.emit([roster(h.relay, channel, [], 30)]);
+  expect(noticed.at(-1)).toBe(0);
+  expect(h.unread.inbox().items).toHaveLength(0);
+  h.grant(channel, [h.viewer.pubkey], 31);
+  expect(h.unread.inbox().items).toHaveLength(0);
+  h.emit([row]);
+  h.emit([
+    signed(h.peer, {
+      kind: 5,
+      created_at: 32,
+      content: "",
+      tags: [["e", row.id]],
+    }),
+  ]);
+  expect((await inbox(h)).items).toHaveLength(0);
+  h.dispose();
+  expect(h.unread.inbox().items).toHaveLength(0);
+});
+
+it("inbox: a reply surviving root deletion keeps its thread row and clears through its prefix", async () => {
+  const h = setup();
+  const root = message(h.peer, channel, "root", 20);
+  const reply = message(h.peer, channel, "surviving mention", 21, [
+    ["e", root.id, "", "root"],
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([
+    root,
+    reply,
+    signed(h.peer, {
+      kind: 5,
+      content: "",
+      created_at: 22,
+      tags: [["e", root.id]],
+    }),
+  ]);
+  verdicts(h, [[reply, "unread:mention"]]);
+  const item = (await inbox(h)).items[0];
+  if (!item) throw new Error("Missing surviving reply row");
+  expect(item).toMatchObject({ rootId: root.id, messageId: reply.id });
+  await h.unread.markUnreadLocal(item.target);
+  expect((await inbox(h)).items[0]?.manual).toBe(true);
+  for (const step of item.readThrough)
+    await h.unread.markThrough(step.target, step.messageId);
+  expect(h.bff.journal().manual).toEqual([]);
+});
+
+it("inbox observation: empty, context failure and cache clear never become a settled zero", async () => {
+  const h = setup();
+  expect(h.unread.inbox().status).toBe("idle");
+  const row = message(h.peer, channel, "fresh", 20, [["p", h.viewer.pubkey]]);
+  h.emit([row]);
+  verdicts(h, [[row, "unread:mention"]]);
+  // Contexts stay offline until the explicit recovery phase. The owner's own
+  // retries are not suppressed; they simply cannot succeed before then.
+  const answer = h.bff.api.contexts.getMockImplementation();
+  if (!answer) throw new Error("Missing contexts fixture");
+  let offline = true;
+  h.bff.api.contexts.mockImplementation(async (queries, signal) => {
+    if (offline) throw new Error("offline");
+    return answer(queries, signal);
+  });
+  const failed = await inbox(h);
+  expect(failed).toMatchObject({
+    status: "error",
+    freshness: "stale",
+    items: [],
+  });
+  offline = false;
+  const recovered = await inbox(h);
+  expect(settled(recovered)).toBe(true);
+  expect(recovered.items).toHaveLength(1);
+  await h.clearCache();
+  expect(h.unread.inbox().items).toHaveLength(0);
+});
+
+// A frozen key (present at prepare) is cleared by any later invocation, even if
+// re-marked; a key first marked after prepare survives every invocation.
+it("inbox: prepared channel reads serialize with marks made while the first attempt commits", async () => {
+  const h = setup();
+  const anchor = "a".repeat(64);
+  h.bff.rows.set(
+    channel,
+    sidebarRow(channel, { latest_message_id: anchor, latest_message_at: 42 }),
+  );
+  await h.unread.ensure();
+  await h.unread.markUnreadLocal(target);
+  const read = h.unread.prepareChannelRead(channel);
+  const held = deferredSidebar<void>(),
+    started = deferredSidebar<void>();
+  const update = h.bff.storage.update;
+  vi.spyOn(h.bff.storage, "update").mockImplementationOnce(async (change) => {
+    const result = await update(change);
+    started.resolve();
+    await held.promise;
+    return result;
+  });
+  const first = read();
+  const newer = threadOf("d".repeat(64));
+  try {
+    await started.promise;
+    const mark = h.unread.markUnreadLocal(newer);
+    const remark = h.unread.markUnreadLocal(target);
+    const last = read();
+    held.resolve();
+    await Promise.all([first, mark, remark, last]);
+  } finally {
+    held.resolve();
+  }
+  await vi.waitFor(() => expect(h.bff.api.write).toHaveBeenCalled());
+  expect(
+    writes(h).every(
+      (intent) =>
+        intent.type === "mark_channel_read" && intent.message_id === anchor,
+    ),
+  ).toBe(true);
+  expect(h.snapshot().manual).toBe("none");
+  expect(h.bff.journal().manual).toEqual([newer]);
+});
+
+it.each(["clearCache", "dispose", "revoke-regrant"] as const)(
+  "inbox: a prepared channel read cannot retry past %s",
+  async (change) => {
+    const h = setup();
+    h.bff.rows.set(
+      channel,
+      sidebarRow(channel, {
+        latest_message_id: "a".repeat(64),
+        latest_message_at: 42,
+      }),
+    );
+    await h.unread.ensure();
+    await h.unread.markUnreadLocal(target);
+    const before = structuredClone(h.bff.journal());
+    const read = h.unread.prepareChannelRead(channel);
+    if (change === "revoke-regrant") {
+      h.grant(channel, [], 20);
+      h.grant(channel, [h.viewer.pubkey], 21);
+    } else await h[change]();
+    await expect(read()).rejects.toThrow();
+    expect(h.bff.journal()).toEqual(before);
+    expect(h.bff.api.write).not.toHaveBeenCalled();
   },
 );

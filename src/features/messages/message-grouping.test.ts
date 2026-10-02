@@ -57,3 +57,9 @@ it("keeps membership events separate on either side", () => {
   expect(continuesMessageGroup(first, membership)).toBe(false);
   expect(continuesMessageGroup(membership, first)).toBe(false);
 });
+
+it("keeps thread shares separate from adjacent authored messages", () => {
+  const shared = { ...first, sentFromThread: { rootId: "a".repeat(64) } };
+  expect(continuesMessageGroup(first, shared)).toBe(false);
+  expect(continuesMessageGroup(shared, first)).toBe(false);
+});

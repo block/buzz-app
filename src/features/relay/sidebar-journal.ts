@@ -182,6 +182,7 @@ export function createSidebarJournal(
   changed: () => void,
 ) {
   let current = empty();
+  let intentRevision = 0;
   // Only uncommitted manual edits live here. The durable journal remains the
   // sole stored set; queued edits paint in invocation order before IndexedDB.
   const manualEdits = new Map<
@@ -209,7 +210,10 @@ export function createSidebarJournal(
   }
   let closed = false;
   let serial: Promise<unknown> = Promise.resolve();
-  function update(change: (journal: SidebarJournal) => SidebarJournal) {
+  function update(
+    change: (journal: SidebarJournal) => SidebarJournal,
+    intent = false,
+  ) {
     const work = serial.then(async () => {
       if (closed) throw new Error("Read journal closed");
       const result = await storage.update((journal) => {
@@ -218,6 +222,7 @@ export function createSidebarJournal(
       });
       if (!closed) {
         current = result;
+        if (intent) intentRevision++;
         changed();
       }
       return result;
@@ -233,6 +238,13 @@ export function createSidebarJournal(
   }
   return {
     snapshot: () => current,
+    revision: () => intentRevision,
+    manualKeys: (channelId: string) =>
+      new Set(
+        manualTargets()
+          .filter((target) => target.channelId === channelId)
+          .map(unreadTargetKey),
+      ),
     reload: () => update((j) => j),
     hasManualInChannel: (channelId: string) =>
       manualTargets().some((target) => target.channelId === channelId),
@@ -256,7 +268,7 @@ export function createSidebarJournal(
         update((j) => {
           if (!valid()) throw new Error("Reading context changed");
           return { ...j, manual: apply(j.manual) };
-        }),
+        }, true),
       );
       return { operationId, durability: "saved", sync: "local-only" };
     },
@@ -283,7 +295,7 @@ export function createSidebarJournal(
               }, j.pending),
               manual: j.manual.filter((t) => !clear(t)),
             };
-          }),
+          }, true),
       );
       return {
         operationId,

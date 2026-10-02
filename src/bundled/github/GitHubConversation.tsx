@@ -319,7 +319,7 @@ function Message({
 const reviewLabels: Record<string, string> = {
   APPROVED: "Approved",
   CHANGES_REQUESTED: "Changes requested",
-  COMMENTED: "Reviewed",
+  COMMENTED: "Review comment",
   DISMISSED: "Review dismissed",
 };
 
@@ -401,7 +401,7 @@ function Conversation({
       </div>
       {!events.length && !incomplete && (
         <p className={styles.conversationNotice}>
-          No comments or submitted reviews yet.
+          No discussion comments or review summaries to show.
         </p>
       )}
       {incomplete ? (

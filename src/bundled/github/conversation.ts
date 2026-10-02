@@ -176,13 +176,21 @@ export function conversationEvents(
         kind: "discussion",
       }),
     ),
-    ...reviews.map(
-      (message): ConversationEvent => ({
-        key: `review-${message.id}`,
-        message,
-        kind: "review",
-      }),
-    ),
+    // This conversation-level pane deliberately omits inline code threads:
+    // loading and grouping them adds an API request and code-level UI. Leave
+    // that fuller flow on GitHub; empty comment-only reviews have no summary
+    // to show here. Keep the source entries intact so paging still works.
+    ...reviews
+      .filter(
+        (message) => message.state !== "COMMENTED" || !!message.body.trim(),
+      )
+      .map(
+        (message): ConversationEvent => ({
+          key: `review-${message.id}`,
+          message,
+          kind: "review",
+        }),
+      ),
   ].sort(
     (a, b) => chronological(a.message, b.message) || a.key.localeCompare(b.key),
   );

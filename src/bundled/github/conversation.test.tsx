@@ -144,6 +144,98 @@ it("orders discussion and submitted reviews chronologically with deterministic t
     "review-22",
   ]);
 });
+it("omits only empty comment-only reviews while preserving summaries and bodyless decisions", () => {
+  const reviews = [
+    entry(10, { state: "COMMENTED", body: "" }),
+    entry(11, { state: "COMMENTED", body: " \n\t " }),
+    entry(12, { state: "COMMENTED", body: "Review summary" }),
+    entry(13, {
+      state: "COMMENTED",
+      body: "![Evidence](https://raw.githubusercontent.com/sample/project/main/preview.png)",
+    }),
+    entry(14, { state: "APPROVED" }),
+    entry(15, { state: "CHANGES_REQUESTED" }),
+    entry(16, { state: "DISMISSED" }),
+    entry(17, { state: "UNKNOWN" }),
+  ];
+  const events = conversationEvents([entry(20)], reviews);
+  expect(events.map((event) => event.key)).toEqual([
+    "review-12",
+    "review-13",
+    "review-14",
+    "review-15",
+    "review-16",
+    "review-17",
+    "discussion-20",
+  ]);
+  expect(reviews).toHaveLength(8);
+});
+it("keeps paging available when a page contains only omitted reviews", async () => {
+  const fetch = vi.fn(async (target: string) => {
+    if (!target.includes("/reviews?")) return response([]);
+    return target.includes("page=2")
+      ? response([
+          {
+            id: 11,
+            state: "COMMENTED",
+            submitted_at: date(14),
+            user: { login: "summary-reviewer" },
+            body: "Summary\n\n## Review details",
+          },
+        ])
+      : response(
+          [
+            {
+              id: 10,
+              state: "COMMENTED",
+              submitted_at: date(13),
+              user: { login: "inline-only" },
+              body: " \n ",
+            },
+          ],
+          {
+            link: '<https://api.github.com/repos/sample/project/pulls/1/reviews?per_page=30&page=2>; rel="next"',
+          },
+        );
+  });
+  vi.stubGlobal("fetch", fetch);
+  render(<GitHubConversation details={details} url={url} />);
+  const more = await screen.findByRole("button", { name: "Load more reviews" });
+  expect(screen.queryByText("inline-only")).not.toBeInTheDocument();
+  expect(fetch).toHaveBeenCalledTimes(2);
+  await userEvent.setup().click(more);
+  await screen.findByText("Conversation loaded · oldest first");
+  const review = screen.getByRole("group", { name: "Review comment" });
+  expect(within(review).getByText("summary-reviewer")).toBeVisible();
+  await userEvent
+    .setup()
+    .click(
+      within(review).getByRole("button", { name: "Expand Review comment" }),
+    );
+  expect(screen.getByRole("heading", { name: "Review details" })).toBeVisible();
+  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(
+    fetch.mock.calls.some(([target]) => target.includes("/pulls/1/comments")),
+  ).toBe(false);
+});
+it("shows honest empty copy when all submitted reviews are omitted", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (target: string) =>
+      response(
+        target.includes("/reviews?")
+          ? [{ id: 10, state: "COMMENTED", submitted_at: date(13), body: "" }]
+          : [],
+      ),
+    ),
+  );
+  render(<GitHubConversation details={details} url={url} />);
+  await screen.findByText("Conversation loaded · oldest first");
+  expect(screen.getAllByRole("group")).toHaveLength(1);
+  expect(
+    screen.getByText("No discussion comments or review summaries to show."),
+  ).toBeVisible();
+});
 it("keeps source failures independent, retains pages during retry and fetches more only on request", async () => {
   let failReviews = true,
     failPageTwo = true;
@@ -339,7 +431,7 @@ it("keeps description usable while held sources load and gives neutral empty cop
     for (const resolve of finish) resolve(response([]));
   });
   expect(
-    screen.getByText("No comments or submitted reviews yet."),
+    screen.getByText("No discussion comments or review summaries to show."),
   ).toBeVisible();
   expect(
     screen.queryByRole("region", { name: "Discussion" }),
@@ -414,7 +506,7 @@ it("uses the opening avatar only, then verdict icons and shared feedback bubbles
   const labels = [
     "Approved",
     "Changes requested",
-    "Reviewed",
+    "Review comment",
     "Review dismissed",
     "Reviewed",
   ];

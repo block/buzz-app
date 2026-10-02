@@ -50,6 +50,20 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
               user: { login: "maintainer" },
               body: "",
             },
+            {
+              id: 13,
+              submitted_at: "2026-10-01T20:10:00Z",
+              state: "COMMENTED",
+              user: { login: "inline-only" },
+              body: "",
+            },
+            {
+              id: 14,
+              submitted_at: "2026-10-01T20:10:02Z",
+              state: "COMMENTED",
+              user: { login: "inline-only" },
+              body: " \n ",
+            },
           ]
         : url.pathname.endsWith("/issues/1/comments")
           ? [
@@ -109,6 +123,10 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     conversation.getByText("Conversation loaded · oldest first"),
   ).toBeVisible();
   await expect(panel.getByText("No checks", { exact: true })).toBeVisible();
+  await expect(
+    conversation.getByText("inline-only", { exact: true }),
+  ).toHaveCount(0);
+  await expect(conversation.getByRole("group")).toHaveCount(5);
   expect(requests.sort()).toEqual([
     "/repos/sample/project/commits/head-sha/check-runs",
     "/repos/sample/project/commits/head-sha/status",
@@ -182,7 +200,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await expect(conversation.locator(".buzz-avatar")).toHaveCount(1);
   for (const label of [
     "Comment",
-    "Reviewed",
+    "Review comment",
     "Approved",
     "Changes requested",
   ]) {
@@ -255,7 +273,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     }
   };
   const singleLine = conversation.getByRole("group", {
-    name: "Reviewed",
+    name: "Review comment",
     exact: true,
   });
   const singleLineTrigger = singleLine.getByRole("button", {
@@ -286,7 +304,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     await expect(conversation).toHaveCSS("border-radius", "0px");
     for (const label of [
       "Description",
-      "Reviewed",
+      "Review comment",
       "Approved",
       "Changes requested",
     ]) {
@@ -315,7 +333,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
       return {
         approved: markerColor("Approved"),
         requested: markerColor("Changes requested"),
-        reviewed: markerColor("Reviewed"),
+        reviewed: markerColor("Review comment"),
         comment: markerColor("Comment"),
         success: resolved("--text-success"),
         danger: resolved("--text-danger"),
@@ -369,7 +387,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     for (const label of [
       "Description",
       "Comment",
-      "Reviewed",
+      "Review comment",
       "Changes requested",
     ]) {
       const layout = await conversation

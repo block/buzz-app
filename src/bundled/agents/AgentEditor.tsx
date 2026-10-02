@@ -3,6 +3,7 @@ import { AvatarEditor } from "../../features/profiles/AvatarEditor";
 import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import { avatarPictureError } from "../../features/profiles/avatar-upload";
 import { XIcon } from "../../shared/design-system/icons";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useEffect, useRef, useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
@@ -32,7 +33,6 @@ export function AgentEditor({
   state,
   avatar,
   onClose,
-  onSaved,
   onOpenHarnesses,
   initialDraft,
   notice: initialNotice,
@@ -44,10 +44,10 @@ export function AgentEditor({
   state: AgentControlState;
   avatar?: string | undefined;
   onClose(): void;
-  onSaved?: () => void;
   initialDraft?: AgentDraft;
   notice?: string;
 }) {
+  const notify = useToastNotification();
   const [uploading, setUploading] = useState(false);
   const mounted = useRef(true);
   useEffect(() => {
@@ -153,10 +153,16 @@ export function AgentEditor({
                     }
                   }
                   if (!mounted.current) return;
-                  setNotice(
-                    savedMessage(saved.restarted, saved.restartFailures),
+                  const message = savedMessage(
+                    saved.restarted,
+                    saved.restartFailures,
                   );
-                  if (!saved.restartFailures) onSaved?.();
+                  if (saved.restartFailures) {
+                    setNotice(message);
+                    return;
+                  }
+                  notify(message, "success");
+                  onClose();
                 })
                 .catch((problem: Error) => setError(problem.message));
             }}

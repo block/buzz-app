@@ -1,4 +1,5 @@
 fn main() {
+    configure_enterprise_auth();
     // Release builds enable the updater only when both values are supplied; its
     // `plugins.updater` config comes from the same values via `tauri build --config`.
     println!("cargo:rerun-if-env-changed=BUZZ_UPDATER_PUBLIC_KEY");
@@ -30,6 +31,7 @@ fn main() {
             "identity_create",
             "identity_export",
             "identity_prepare_remote_agent_authorization",
+            "enterprise_login_gate",
             "relay_sign",
             "relay_decode_read_state",
             "relay_sign_read_state",
@@ -110,4 +112,64 @@ fn main() {
         ])),
     )
     .expect("Could not build Tauri resources")
+}
+
+fn configure_enterprise_auth() {
+    const RELAYS: &str = "BUZZ_BUILD_ENTERPRISE_AUTH_RELAYS";
+    const ADAPTER: &str = "BUZZ_BUILD_ENTERPRISE_AUTH_ADAPTER_BASE_URL";
+    println!("cargo:rerun-if-env-changed={RELAYS}");
+    println!("cargo:rerun-if-env-changed={ADAPTER}");
+
+    let relays = std::env::var(RELAYS)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    let adapter = std::env::var(ADAPTER)
+        .ok()
+        .map(|value| value.trim().trim_end_matches('/').to_owned())
+        .filter(|value| !value.is_empty());
+
+    if relays.is_some() && adapter.is_none() {
+        panic!("{ADAPTER} is required when {RELAYS} is configured");
+    }
+    if let Some(relays) = relays.as_deref() {
+        for value in relays.split(',') {
+            validate_enterprise_url(value, RELAYS, true);
+        }
+        println!("cargo:rustc-env={RELAYS}={relays}");
+    }
+    if let Some(adapter) = adapter.as_deref() {
+        validate_enterprise_url(adapter, ADAPTER, false);
+        println!("cargo:rustc-env={ADAPTER}={adapter}");
+    }
+}
+
+fn validate_enterprise_url(raw: &str, name: &str, relay: bool) {
+    let raw = raw.trim();
+    let url = url::Url::parse(raw).unwrap_or_else(|_| panic!("{name} contains an invalid URL"));
+    let scheme_allowed = if relay {
+        matches!(url.scheme(), "ws" | "wss" | "http" | "https")
+    } else {
+        matches!(url.scheme(), "http" | "https")
+    };
+    if url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || raw.is_empty()
+        || !scheme_allowed
+        || (matches!(url.scheme(), "http" | "ws") && (!relay || !is_loopback(&url)))
+    {
+        panic!("{name} contains an unsupported or unsafe URL");
+    }
+}
+
+fn is_loopback(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    }
 }

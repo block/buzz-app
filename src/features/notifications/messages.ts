@@ -105,6 +105,7 @@ export function bindMessageNotifications(
         // Category is authoritative context data. Only fresh live arrivals own
         // this demand; history and periodic refresh never create candidates.
         const reconsider = () => {
+          if (!waiting.has(message.messageId)) return;
           if (!valid()) return dispose();
           const attention = owned.unread.attention(
             message.channelId,
@@ -134,6 +135,9 @@ export function bindMessageNotifications(
           // A broadcast may later acquire conversation membership. Keep its
           // context while fresh, without treating broadcast as a notification.
           if (attention.status === "unknown" || !category) return;
+          // Admission can synchronously publish errors. Stop reconsideration now,
+          // but retain context until admit installs its own observation below.
+          waiting.delete(message.messageId);
           void notifications.admit(
             category,
             labels[category],

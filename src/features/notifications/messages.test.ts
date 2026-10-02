@@ -1295,3 +1295,61 @@ it.each(["expiry", "session", "access", "disabled"] as const)(
     expect(h.show).not.toHaveBeenCalled();
   },
 );
+
+it.each(["capacity", "observation"] as const)(
+  "rejects a live candidate once on %s failure and releases its context",
+  async (failure) => {
+    const h = await setup();
+    vi.useFakeTimers();
+    vi.setSystemTime(1_780_000_000_000);
+    for (let i = 0; i < (failure === "capacity" ? 128 : 0); i++) {
+      expect(
+        await h.notifications.admit(
+          "mention",
+          "Mentions",
+          {
+            sourceKey: `pending-${i}`,
+            target: { version: 1, kind: "settings", section: "notifications" },
+          },
+          () => true,
+          () => "wait",
+        ),
+      ).toBe(true);
+    }
+    const reportError = h.notifications.reportError;
+    const errors = vi.spyOn(h.notifications, "reportError");
+    errors.mockImplementation((error) => {
+      // Publish the first real error synchronously. Bound a broken implementation
+      // at its second report rather than overflowing the runner's stack.
+      if (errors.mock.calls.length === 1) reportError(error);
+    });
+    const originalAdmit = h.notifications.admit.bind(h.notifications);
+    const admit = vi.spyOn(h.notifications, "admit");
+    if (failure === "observation") {
+      admit.mockImplementation((...args) => {
+        args[6] = () => {
+          throw new Error("Observation failed");
+        };
+        return originalAdmit(...args);
+      });
+    }
+    const error =
+      failure === "capacity"
+        ? "Too many pending notifications"
+        : "Observation failed";
+    const row = h.make("failed admission");
+    h.emit([row], "live");
+    await h.owner.session.unread.refresh();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(errors).toHaveBeenCalledWith(new Error(error));
+    expect(h.notifications.snapshot().error).toBe(error);
+    expect(admit).toHaveBeenCalledTimes(1);
+    await expect(admit.mock.results[0]?.value).resolves.toBe(false);
+    h.contextQuery.mockClear();
+    await h.owner.session.unread.refresh();
+    expect(h.contextQuery).not.toHaveBeenCalled();
+    expect(h.show).not.toHaveBeenCalled();
+    expect(errors).toHaveBeenCalledTimes(1);
+  },
+);

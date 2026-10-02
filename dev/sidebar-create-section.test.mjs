@@ -167,7 +167,7 @@ it("a failed initial read never seeds or publishes", async () => {
   expect(publications).toBe(0);
 });
 
-it("decodes all encrypted preferences despite oversized deleted text without rewriting it", () => {
+it("decodes all encrypted preferences despite oversized deleted text without rewriting it", async () => {
   const reg = (value) => [100, "1111111111111111", value];
   const blob = {
     version: 1,
@@ -210,14 +210,14 @@ it("decodes all encrypted preferences despite oversized deleted text without rew
     muted: ["beta"],
     sort: { channels: "recent" },
   });
-  expect(() => prepareSidebarAssignment([head], intent, secret)).toThrow(
-    "Invalid sidebar register",
-  );
+  await expect(
+    prepareSidebarAssignment([head], intent, secret, signer),
+  ).rejects.toThrow("Invalid sidebar register");
   expect(decode(head)).toEqual(blob);
 });
 
-it("appends after the rounded order imported from a fractional legacy head", () => {
-  const created = prepareSidebarAssignment(
+it("appends after the rounded order imported from a fractional legacy head", async () => {
+  const created = await prepareSidebarAssignment(
     [
       event({
         version: 1,
@@ -227,6 +227,7 @@ it("appends after the rounded order imported from a fractional legacy head", () 
     ],
     intent,
     secret,
+    signer,
   );
   const saved = decode(created.event);
   expect(saved.sections).toEqual([
@@ -272,6 +273,8 @@ it.each([
     const groups = await mutateSidebarAssignment(
       { channelId: "alpha" },
       secret,
+      signer,
+      undefined,
       async () => [head],
       async (value) => {
         publications.push(value);

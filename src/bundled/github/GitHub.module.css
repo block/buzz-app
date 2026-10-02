@@ -362,11 +362,12 @@
 }
 .messageTrigger {
   align-items: start;
-  padding: var(--space-1) 0;
+  padding: var(--space-1) var(--space-6) var(--space-1) 0;
 }
 .messageTrigger > svg {
-  flex-shrink: 0;
-  margin-top: var(--space-1);
+  position: absolute;
+  top: var(--space-1);
+  right: 0;
   color: var(--text-subtle);
 }
 .messageTrigger[data-panel-open] {
@@ -375,6 +376,7 @@
   top: 0;
   right: 0;
   width: var(--space-6);
+  min-height: var(--space-6);
   padding: 0;
 }
 .messageLabel {

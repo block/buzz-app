@@ -184,6 +184,31 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     expect(Math.abs(imageBox.x - textBox.x)).toBeLessThan(1);
     expect(caretBox.y).toBeLessThan(textBox.y + textBox.height);
   };
+  const expectStationaryCarets = async () => {
+    for (const trigger of [description, comment, review]) {
+      const caretPosition = () =>
+        trigger.evaluate((node) => {
+          const content = node.parentElement.getBoundingClientRect();
+          const caret = node
+            .querySelector(":scope > svg")
+            .getBoundingClientRect();
+          return { x: caret.right - content.left, y: caret.top - content.top };
+        });
+      const collapsed = await caretPosition();
+      const headerBottom = await trigger.evaluate((node) => {
+        const header =
+          node.parentElement.firstElementChild.getBoundingClientRect();
+        return header.bottom - node.parentElement.getBoundingClientRect().top;
+      });
+      expect(collapsed.y).toBeLessThan(headerBottom);
+      await trigger.locator(":scope > svg").click();
+      await expect(trigger).toHaveAttribute("aria-expanded", "true");
+      await expect.poll(caretPosition).toEqual(collapsed);
+      await trigger.click();
+      await expect(trigger).toHaveAttribute("aria-expanded", "false");
+      await expect.poll(caretPosition).toEqual(collapsed);
+    }
+  };
   const standalone = panel.getByRole("button", {
     name: "src/standalone.ts:8 · 1 loaded comment",
     exact: true,
@@ -334,6 +359,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     );
     await expect(conversation.getByText("All pages loaded")).toHaveCount(0);
     await expectThumbnailsBelowExcerpt();
+    await expectStationaryCarets();
     await panel.getByRole("heading").first().hover();
     await panel.screenshot({
       path: testInfo.outputPath(`conversation-${mode}.png`),
@@ -461,6 +487,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   ).toBeVisible();
   await description.scrollIntoViewIfNeeded();
   await expectThumbnailsBelowExcerpt();
+  await expectStationaryCarets();
   const preview = description.locator("span").first().locator("span").first();
   expect((await preview.boundingBox()).width).toBeGreaterThan(100);
   expect(

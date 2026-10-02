@@ -92,10 +92,6 @@ pub async fn mesh_compute_stop(host: tauri::State<'_, MeshHost>) -> Result<(), S
                 .sharing
                 .lock()
                 .map_err(|_| "Mesh sharing unavailable")?;
-            host.preferences
-                .lock()
-                .map_err(|_| "Mesh settings unavailable")?
-                .disarm()?;
             *sharing = None;
         }
         host.lease.clear();
@@ -220,6 +216,7 @@ pub async fn mesh_compute_select(
     host: tauri::State<'_, MeshHost>,
     identity: tauri::State<'_, crate::identity::IdentityHost>,
     community: String,
+    restore_sharing: Option<bool>,
 ) -> Result<String, String> {
     crate::relay::mesh_origin(&community)?;
     let viewer = identity.viewer().await?;
@@ -236,10 +233,6 @@ pub async fn mesh_compute_select(
                 .sharing
                 .lock()
                 .map_err(|_| "Mesh sharing unavailable")?;
-            host.preferences
-                .lock()
-                .map_err(|_| "Mesh settings unavailable")?
-                .disarm()?;
             *sharing = None;
             host.lifecycle.stop();
             Ok(())
@@ -253,26 +246,41 @@ pub async fn mesh_compute_select(
         .lock()
         .map_err(|_| "Mesh settings unavailable")?
         .hint()
-        .filter(|config| config.enabled)
+        .filter(|config| config.enabled && restore_sharing.unwrap_or(true))
         .cloned();
     publisher::ensure_started(app.clone(), &host)?;
+    let restore = if host
+        .sharing
+        .lock()
+        .map_err(|_| "Mesh sharing unavailable")?
+        .is_none()
+    {
+        restore
+    } else {
+        None
+    };
+    if restore.is_some() {
+        // Selection may follow release while the old worker is still stopping.
+        // Confirm shutdown before restoring; never hold a synchronous lock across await.
+        if let Err(error) = host.lifecycle.stop_and_wait().await {
+            host.preferences
+                .lock()
+                .map_err(|_| "Mesh settings unavailable")?
+                .set_error(error.to_string());
+            return Ok(lease);
+        }
+    }
     drop(_guard);
     if let Some(config) = restore {
-        // Mesh owns cached/resumed/fresh acquisition; discovery re-verifies membership before start.
-        if host.lifecycle.phase() == buzz_mesh_compute::lifecycle::Phase::Stopped {
-            if let Err(error) = sharing::mesh_compute_share(
-                app,
-                lease.clone(),
-                Some(config.model),
-                config.max_vram_gb,
-            )
-            .await
-            {
-                host.preferences
-                    .lock()
-                    .map_err(|_| "Mesh settings unavailable")?
-                    .set_error(error);
-            }
+        // Mesh owns acquisition; discovery re-verifies membership before start.
+        if let Err(error) =
+            sharing::mesh_compute_share(app, lease.clone(), Some(config.model), config.max_vram_gb)
+                .await
+        {
+            host.preferences
+                .lock()
+                .map_err(|_| "Mesh settings unavailable")?
+                .set_error(error);
         }
     }
     Ok(lease)
@@ -290,10 +298,6 @@ pub async fn mesh_compute_release(
                 .sharing
                 .lock()
                 .map_err(|_| "Mesh sharing unavailable")?;
-            host.preferences
-                .lock()
-                .map_err(|_| "Mesh settings unavailable")?
-                .disarm()?;
             *sharing = None;
             host.lifecycle.stop();
             Ok(())
@@ -357,4 +361,54 @@ pub async fn mesh_compute_catalog() -> Result<buzz_mesh_compute::catalog::Catalo
         .await
         .map_err(|error| format!("Mesh catalog task failed: {error}"))?
         .map_err(|error| error.to_string())
+}
+
+#[cfg(all(test, feature = "mesh"))]
+mod persistence_tests {
+    use super::*;
+    use tauri::Manager;
+
+    #[tokio::test]
+    async fn release_and_reopen_preserve_saved_sharing_but_expire_the_lease() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mesh-sharing.json");
+        let host = MeshHost::default();
+        host.initialize_preferences(Ok(path.clone()));
+        let community = "https://fixture.example";
+        let lease = host.lease.select(community.into()).unwrap();
+        let share = sharing::Share {
+            model: "fixture".into(),
+            max_vram_gb: None,
+        };
+        {
+            let mut prefs = host.preferences.lock().unwrap();
+            prefs.select("viewer".into(), community.into());
+            let mut config =
+                preferences::Config::pending("viewer".into(), community.into(), &share);
+            config.enabled = true;
+            prefs.checkpoint(config).unwrap();
+        }
+        *host.sharing.lock().unwrap() = Some(share);
+        let app = tauri::test::mock_builder()
+            .manage(host)
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        mesh_compute_release(app.state(), lease.clone())
+            .await
+            .unwrap();
+        let host = app.state::<MeshHost>();
+        assert!(host.lease.community(&lease).is_err());
+        assert!(host.sharing.lock().unwrap().is_none());
+        let mut reopened = preferences::Preferences::default();
+        reopened.initialize(Ok(path));
+        reopened.select("viewer".into(), "https://other.example".into());
+        assert!(reopened.hint().is_none());
+        reopened.select("viewer".into(), community.into());
+        assert!(reopened.hint().unwrap().enabled);
+        assert_eq!(reopened.hint().unwrap().model, "fixture");
+        // A late disposal of the old lease cannot release a new selection.
+        let next = host.lease.select(community.into()).unwrap();
+        mesh_compute_release(app.state(), lease).await.unwrap();
+        assert!(host.lease.community(&next).is_ok());
+    }
 }

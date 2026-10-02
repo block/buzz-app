@@ -61,6 +61,7 @@ it("revokes a pending selection on disposal and never starts it", async () => {
   await waitFor(() =>
     expect(native.invoke).toHaveBeenCalledWith("mesh_compute_select", {
       community: "https://fixture.example",
+      restoreSharing: true,
     }),
   );
   await screen.findByText("Checking status…");
@@ -184,6 +185,14 @@ it("renders Running without claiming connectivity, stops by lease, and separates
   await screen.findByText("Off");
   expect(native.invoke).toHaveBeenCalledWith("mesh_compute_release", {
     lease: "lease",
+  });
+  expect(native.invoke).toHaveBeenLastCalledWith(
+    "mesh_compute_status",
+    undefined,
+  );
+  expect(native.invoke).toHaveBeenCalledWith("mesh_compute_select", {
+    community: "https://fixture.example",
+    restoreSharing: false,
   });
   native.invoke.mockRejectedValueOnce(new Error("Status unavailable"));
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));

@@ -42,10 +42,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
   let viewer: string | undefined;
   let disposed = false;
   let selectionQueue: Promise<unknown> = Promise.resolve();
-  const select = (community: string) => {
+  const select = (community: string, restoreSharing = true) => {
     const selected = selectionQueue
       .catch(() => {})
-      .then(() => invoke<string>("mesh_compute_select", { community }));
+      .then(() =>
+        invoke<string>("mesh_compute_select", { community, restoreSharing }),
+      );
     selectionQueue = selected;
     return selected;
   };
@@ -176,10 +178,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
           if (disposed || selected !== lease)
             throw new Error("Community changed");
           await invoke("mesh_compute_release", { lease: id });
-          // Stop revokes the old lease; reacquire only on the same still-active selection.
+          // Disconnect preserves the saved preference without immediately restoring it.
           if (!disposed && selected === lease && scope) {
-            lease = select(scope);
-            void lease.catch(() => {});
+            lease = select(scope, false);
+            await lease;
           }
         }
         const result = await invoke<MeshStatus>("mesh_compute_status");
@@ -259,7 +261,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
               Community members’ prompts run on your hardware. Your selected
               model is visible to this community. Stop sharing stops this node,
               including agents using it; start an agent again to reconnect to
-              another member’s compute.
+              another member’s compute. Buzz remembers one sharing configuration
+              for its selected identity and community; sharing elsewhere
+              replaces it.
             </p>
             <ShareModelPicker
               model={model}

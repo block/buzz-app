@@ -165,11 +165,13 @@ export function MessageLink({
     ) : (
       (children ?? label ?? url)
     );
+    // Selection copy reads the authored label; empty marks a raw destination.
     const element = interactive ? (
       <a
         ref={trigger}
         href={url}
         aria-label={label}
+        data-link-label={label ?? ""}
         title={!preview ? url : undefined}
         className={entry?.className}
         data-link-renderer={entry?.key}

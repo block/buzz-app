@@ -510,11 +510,14 @@ function PreparedMessageMarkdown({
       const label = key ? resolveName(key, text.slice(1)) : text.slice(1);
       const Icon = agent ? RobotIcon : AtIcon;
       const Mention = clickable ? "button" : "span";
+      // Selection copy reads the identity and the whole label (selection-copy.ts).
       return (
         <Mention
           type={clickable ? "button" : undefined}
           className={referenceStyles.link}
           data-mention-kind={agent ? "agent" : "person"}
+          data-profile-target={target}
+          data-mention-name={label}
           aria-label={clickable ? `View ${label} profile` : undefined}
           onClick={
             clickable

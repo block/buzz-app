@@ -272,6 +272,7 @@ export function createUnread({
   };
   let indexed = false;
   const byChannel = new Map<string, Evidence[]>();
+  const byId = new Map<string, Evidence>();
   const tombstones = new Set<string>();
   // Conversation membership: the viewer's own messages, and the parents the
   // viewer has replied to, each keyed by channel. A conversation is the set of
@@ -337,6 +338,7 @@ export function createUnread({
     if (indexed) return;
     indexed = true;
     byChannel.clear();
+    byId.clear();
     tombstones.clear();
     own.clear();
     joined.clear();
@@ -362,7 +364,7 @@ export function createUnread({
         }
       }
       const rows = byChannel.get(channel) ?? [];
-      rows.push({
+      const entry: Evidence = {
         event,
         channelId: channel,
         rootId: parentId ? rootId : undefined,
@@ -373,8 +375,10 @@ export function createUnread({
         broadcast: event.tags.some(
           ([name, value]) => name === "broadcast" && value === "1",
         ),
-      });
+      };
+      rows.push(entry);
       byChannel.set(channel, rows);
+      byId.set(event.id, entry);
     }
   }
   function deleted(event: RelayEvent): boolean {
@@ -463,6 +467,37 @@ export function createUnread({
     const caughtUp = Math.max(frontier ?? -1, ordinary ?? -1, thread ?? -1);
     return event.created_at > caughtUp || !!forced;
   }
+  /** A mark is redundant when a channel or thread mark already reads all it
+   * reads. Catch-up marks (`activity:`, `thread-activity:`) never make another
+   * mark redundant: older clients ignore them, so the message, thread and
+   * channel marks they would replace are the read state those clients see.
+   * Only retained evidence supplies a message's channel and thread; marks
+   * without it are kept. */
+  reads.setCoverage((key, frontiers) => {
+    const value = frontiers.get(key) ?? Number.POSITIVE_INFINITY;
+    const separator = key.indexOf(":");
+    if (separator < 0) return false;
+    const kind = key.slice(0, separator);
+    const id = key.slice(separator + 1);
+    const at = (other: string) => frontiers.get(other) ?? -1;
+    if (kind === "activity") return at(id) >= value;
+    if (closed) return false;
+    indexEvidence();
+    const entry = byId.get(id);
+    if (!entry) return false;
+    const channel = at(entry.channelId);
+    if (kind === "msg")
+      return (
+        Math.max(
+          channel,
+          entry.rootId === undefined ? -1 : at(`thread:${entry.rootId}`),
+        ) >= entry.event.created_at
+      );
+    if (kind === "thread") return channel >= value;
+    if (kind === "thread-activity")
+      return Math.max(channel, at(`thread:${id}`)) >= value;
+    return false;
+  });
   function category(
     entry: Evidence,
     dm: boolean,
@@ -1583,7 +1618,16 @@ export function createUnread({
                 (latest, row) => Math.max(latest, row.event.created_at),
                 event.created_at,
               );
-          if ((reads.state().frontiers[key] ?? -1) >= cut) return;
+          const frontiers = reads.state().frontiers;
+          // A broader mark already covering the cut makes this one redundant.
+          if (
+            Math.max(
+              frontiers[key] ?? -1,
+              frontiers[channelId] ?? -1,
+              rootId ? (frontiers[`thread:${rootId}`] ?? -1) : -1,
+            ) >= cut
+          )
+            return;
           await reads.read(
             key,
             cut,

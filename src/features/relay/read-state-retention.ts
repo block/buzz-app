@@ -4,8 +4,27 @@ import {
   type ReadState,
 } from "./read-state-model";
 
+/** True when other frontiers already make this frontier's context read. */
+export type CoveredFrontier = (
+  key: string,
+  frontiers: ReadonlyMap<string, number>,
+) => boolean;
+/** Broader marks first: a channel or thread mark covers many messages, so
+ * losing one makes old history unread again. Catch-up marks (`activity:`,
+ * `thread-activity:`) come next: only this app reads them, so recent catch-up
+ * must never push out a quiet channel's mark. Message marks only cover one. */
+const scope = (key: string) =>
+  !key.includes(":")
+    ? 0
+    : key.startsWith("thread:")
+      ? 1
+      : key.startsWith("activity:") || key.startsWith("thread-activity:")
+        ? 2
+        : 3;
 /** Frontier hints are bounded recent activity, not an everlasting receipt log (NIP-RS).
- * Local interaction order wins over event time so reading old history still synchronizes.
+ * Channel marks outrank thread marks, then catch-up marks, then message marks; within each,
+ * local interaction order wins over event time so reading old history still
+ * synchronizes. Marks that `covered` proves redundant are dropped first.
  * Every override group and its direct frontier is protected; pressure can never lose a floor.
  */
 export function retainReadState(
@@ -13,6 +32,7 @@ export function retainReadState(
   recent: Readonly<Record<string, number>>,
   clientId: string,
   maxBytes = 96 * 1024,
+  covered?: CoveredFrontier,
 ): ReadState {
   const frontiers = new Map<string, number>();
   let protectedState: ReadState = { frontiers: {}, overrides: {} };
@@ -23,6 +43,12 @@ export function retainReadState(
       frontiers: {},
       overrides: state.overrides,
     });
+  }
+  // Overrides make inherited ancestry load-bearing (see below); keep everything then.
+  if (covered && !Object.keys(protectedState.overrides).length) {
+    const merged = new Map(frontiers);
+    for (const key of merged.keys())
+      if (covered(key, merged)) frontiers.delete(key);
   }
   const encoder = new TextEncoder();
   let used = encoder.encode(
@@ -77,7 +103,10 @@ export function retainReadState(
   }
   for (const [key, value] of [...frontiers].sort(
     ([a, av], [b, bv]) =>
-      (recent[b] ?? 0) - (recent[a] ?? 0) || bv - av || a.localeCompare(b),
+      scope(a) - scope(b) ||
+      (recent[b] ?? 0) - (recent[a] ?? 0) ||
+      bv - av ||
+      a.localeCompare(b),
   )) {
     if (!retained.has(key) && take(frontierKey(key), value))
       retained.set(key, value);

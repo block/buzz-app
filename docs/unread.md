@@ -273,9 +273,20 @@ bounded lead rather than running indefinitely into the future.
 
 Ordinary frontiers are **bounded recent hints, not everlasting read receipts**.
 The local state has a 96 KiB serialized-blob budget and wire publication a 40 KiB
-plaintext budget. Persisted local interaction order prioritizes newly read old
-history as well as current traffic. Only frontier-only hints can be pruned; older
-messages may look unread again. No synthetic channel prefix is introduced to fit.
+plaintext budget. Under pressure, channel marks (`<channel>`) are kept first, then
+thread marks (`thread:`), then catch-up marks (`activity:`, `thread-activity:`), then
+message marks: a channel or thread mark covers many messages, so losing it makes much
+more old history unread, and recent catch-up must never push out a quiet channel's
+mark. Within each group, persisted local interaction order prioritizes newly read old
+history as well as current traffic. Each save first drops marks that a channel or
+thread mark already covers, using retained evidence for ancestry: a message mark under
+its channel or thread mark, a thread mark under its channel mark, and a catch-up mark
+under its channel or thread mark. Catch-up marks never make another mark redundant:
+older clients ignore them and read through the message, thread and channel marks.
+Marks without retained evidence are kept, and nothing is dropped while any override
+exists. Reading an already covered message saves nothing. Only frontier-only hints can
+be pruned; older messages may look unread again. No synthetic channel prefix is
+introduced to fit.
 The automatic activity keys share these bounded-hint limits. Older clients can
 preserve/republish them but do not interpret their catch-up meaning; mixed-version
 sidebar behavior is not identical. No storage migration is required.

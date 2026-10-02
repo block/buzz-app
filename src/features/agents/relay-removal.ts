@@ -116,42 +116,55 @@ export async function removeAgentFromChannels(
   signal.throwIfAborted();
   // Nothing new is signed or published for a cancelled Delete.
   const active = () => !signal.aborted;
-  const operations = [...pending].map((id) => {
-    const previous = outbox
-      .snapshot()
-      .find(
-        ({ event, delivery }) =>
-          delivery !== "accepted" &&
-          delivery !== "seen" &&
-          event.kind === 9001 &&
-          event.tags.some(([name, value]) => name === "h" && value === id) &&
-          event.tags.some(([name, value]) => name === "p" && value === pubkey),
-      );
-    // Retry reuses the outbox's own operation, including an unknown result.
-    if (previous) outbox.retry(previous.event.id, active);
-    const operation =
-      previous?.event.id ??
-      outbox.send(
-        {
-          kind: 9001,
-          content: "",
-          tags: [
-            ["h", id],
-            ["p", pubkey],
-          ],
-        },
-        undefined,
-        active,
-      );
-    return operation;
-  });
-  // Settle every operation before reporting a failure, so no channel removal
-  // is still sending when the caller cleans up or its view goes away.
+  // Keep each operation as it is enqueued: a later enqueue can still throw,
+  // for example when the outbox is full.
+  const operations: string[] = [];
+  let enqueueFailure: unknown;
+  try {
+    for (const id of pending) {
+      const previous = outbox
+        .snapshot()
+        .find(
+          ({ event, delivery }) =>
+            delivery !== "accepted" &&
+            delivery !== "seen" &&
+            event.kind === 9001 &&
+            event.tags.some(([name, value]) => name === "h" && value === id) &&
+            event.tags.some(
+              ([name, value]) => name === "p" && value === pubkey,
+            ),
+        );
+      // Retry reuses the outbox's own operation, including an unknown result.
+      if (previous) {
+        outbox.retry(previous.event.id, active);
+        operations.push(previous.event.id);
+      } else
+        operations.push(
+          outbox.send(
+            {
+              kind: 9001,
+              content: "",
+              tags: [
+                ["h", id],
+                ["p", pubkey],
+              ],
+            },
+            undefined,
+            active,
+          ),
+        );
+    }
+  } catch (error) {
+    enqueueFailure = error;
+  }
+  // Settle every enqueued operation before reporting a failure, so no channel
+  // removal is still sending when the caller cleans up or its view goes away.
   const outcomes = await Promise.allSettled(
     operations.map((id) =>
       delivered(outbox, id, signal, "Channel removal is not confirmed. Retry."),
     ),
   );
+  if (enqueueFailure !== undefined) throw enqueueFailure;
   const failure = outcomes.find((outcome) => outcome.status === "rejected");
   if (failure) throw failure.reason;
   // Confirm each channel against its own fresh roster: a cached loaded roster

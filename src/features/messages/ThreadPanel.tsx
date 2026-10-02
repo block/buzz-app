@@ -227,6 +227,11 @@ function ThreadMessages({
     view.snapshot,
     view.snapshot,
   );
+  // Read the current root only when sharing; paging must not invalidate every reply row.
+  const getThreadRoot = useCallback(() => {
+    const current = view.snapshot();
+    return current.status === "ready" ? current.root : undefined;
+  }, [view]);
   const tree = useMemo(
     () => replyTree(snapshot.replies, snapshot.root?.id),
     [snapshot.replies, snapshot.root?.id],
@@ -729,6 +734,7 @@ function ThreadMessages({
           scope={scope}
           onReply={snapshot.root ? targetReply : undefined}
           row={row}
+          getThreadRoot={getThreadRoot}
           profile={profiles.get(row.authorId)}
           participantProfiles={profiles}
           agentPubkeys={agentPubkeys}

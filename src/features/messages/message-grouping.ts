@@ -8,6 +8,8 @@ export function continuesMessageGroup(
     !!previous &&
     !previous.membership &&
     !current.membership &&
+    !current.sentFromThread &&
+    !previous.sentFromThread &&
     previous.channelId === current.channelId &&
     previous.authorId === current.authorId &&
     current.createdAt >= previous.createdAt &&

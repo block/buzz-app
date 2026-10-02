@@ -62,6 +62,7 @@ export const test = base.extend({
   agentPeers: [false, { option: true }],
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
+  launchAnimation: [false, { option: true }],
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
@@ -107,6 +108,7 @@ export const test = base.extend({
       agentPeers,
       tallMessages,
       membershipActivity,
+      launchAnimation,
       historyCounts,
       channelIds: channels,
       pluginFixtures,
@@ -1678,6 +1680,25 @@ export const test = base.extend({
           });
         }
       });
+      // General feature journeys can hold startup data indefinitely. Keep the
+      // launch view in dedicated startup journeys so those fixtures can still
+      // exercise the feature under test.
+      if (!launchAnimation)
+        await page.addInitScript(() => {
+          const observer = new MutationObserver(() => {
+            const launch = document.getElementById("buzz-launch");
+            if (!launch) return;
+            launch.remove();
+            const root = document.getElementById("root");
+            root?.removeAttribute("inert");
+            root?.removeAttribute("aria-hidden");
+            const toastRoot = document.getElementById("buzz-toast-root");
+            toastRoot?.removeAttribute("inert");
+            toastRoot?.removeAttribute("aria-hidden");
+            observer.disconnect();
+          });
+          observer.observe(document, { childList: true, subtree: true });
+        });
       await page.addInitScript(
         ({ viewer, profilePicture, iconCongestion }) => {
           const key = `buzz-client.v1:${viewer}`;

@@ -2212,3 +2212,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 button[data-jump-to-latest] {
   pointer-events: auto;
 }
+
+.sentFromThread {
+  font-size: var(--text-caption);
+  color: var(--text-secondary);
+  margin-block: var(--space-1);
+}

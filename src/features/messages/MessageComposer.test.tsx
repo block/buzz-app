@@ -487,6 +487,34 @@ it("autofocuses each selected conversation once without stealing focus on update
   }
 });
 
+it("defers initial focus until an inert startup ancestor is revealed", async () => {
+  document.body.setAttribute("inert", "");
+  try {
+    const h = mount({ autoFocus: true });
+    expect(h.input()).not.toHaveFocus();
+    document.body.removeAttribute("inert");
+    await waitFor(() => expect(h.input()).toHaveFocus());
+  } finally {
+    document.body.removeAttribute("inert");
+  }
+});
+
+it("does not reclaim startup focus after another control takes it", async () => {
+  document.body.setAttribute("inert", "");
+  const other = document.createElement("button");
+  document.body.append(other);
+  try {
+    const h = mount({ autoFocus: true });
+    other.focus();
+    document.body.removeAttribute("inert");
+    await waitFor(() => expect(other).toHaveFocus());
+    expect(h.input()).not.toHaveFocus();
+  } finally {
+    document.body.removeAttribute("inert");
+    other.remove();
+  }
+});
+
 it("does not take focus from a modal when the conversation mounts behind it", () => {
   const dialog = document.createElement("div");
   dialog.setAttribute("role", "dialog");

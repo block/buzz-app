@@ -4,6 +4,7 @@ import { ChannelSidebar } from "../features/channel-navigation/ChannelSidebar";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Button } from "../shared/design-system/ui/Button";
+import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
 import { AgentWakeNotice } from "../features/agents/AgentWakeNotice";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
 import { useEffect, useSyncExternalStore } from "react";
@@ -22,6 +23,7 @@ import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
+import type { EnterpriseLoginSnapshot } from "../features/communities/service";
 import { profileTarget } from "../features/profiles/target";
 import { setLaunchReady } from "./launch";
 
@@ -207,6 +209,14 @@ function ConnectedApp({ services }: { services: AppServices }) {
         >
           <AgentWakeNotice control={services.agentControl} />
           <UpdateNotice updates={services.updates} />
+          {client.enterprise &&
+            (!client.selected ||
+              client.enterprise.communityId === client.selected) && (
+              <EnterpriseLoginDialog
+                communities={services.communities}
+                state={client.enterprise}
+              />
+            )}
           {startup === "recovery" && !settings ? (
             <RecoveryScreen plugins={plugins} />
           ) : (!route.state.ingress && route.failure) ||
@@ -275,5 +285,52 @@ function ConnectedApp({ services }: { services: AppServices }) {
         </AppShell>
       </ChannelNavigationProvider>
     </ToastProvider>
+  );
+}
+
+function EnterpriseLoginDialog({
+  communities,
+  state,
+}: {
+  communities: AppServices["communities"];
+  state: EnterpriseLoginSnapshot;
+}) {
+  return (
+    <AlertDialog
+      title="Sign in to this community"
+      description="This trusted community requires enterprise sign-in before Buzz can connect."
+      onClose={communities.dismissEnterpriseLogin}
+      actions={
+        <>
+          <Button
+            type="button"
+            onClick={
+              state.status === "opening"
+                ? communities.cancelEnterpriseLogin
+                : communities.dismissEnterpriseLogin
+            }
+          >
+            {state.status === "opening" ? "Cancel" : "Not now"}
+          </Button>
+          {state.status !== "opening" && (
+            <Button
+              type="button"
+              variant="prominent"
+              onClick={() => void communities.startEnterpriseLogin()}
+            >
+              {state.status === "error" ? "Retry sign-in" : "Sign in"}
+            </Button>
+          )}
+        </>
+      }
+    >
+      {state.status === "opening" ? (
+        <p role="status">A browser window is open for sign-in.</p>
+      ) : state.error ? (
+        <p role="alert">{state.error}</p>
+      ) : (
+        <p>Buzz will return here after the browser sign-in is complete.</p>
+      )}
+    </AlertDialog>
   );
 }

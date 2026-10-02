@@ -7,6 +7,7 @@ import { Button } from "../shared/design-system/ui/Button";
 import { Input } from "../shared/design-system/ui/Input";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { npubEncode } from "nostr-tools/nip19";
+import { nativeIdentityEnabled } from "../features/identity/service";
 import {
   useCallback,
   useEffect,
@@ -96,6 +97,19 @@ export function ProfileSettings({
     failed: boolean;
   } | null>(null);
   const copyAttempt = useRef(0);
+  const inspectCommunity = useCallback(
+    async (id: string) => {
+      if (nativeIdentityEnabled()) {
+        const transport = await communities.connect(
+          id,
+          AbortSignal.timeout(12000),
+        );
+        return communityApi.inspectProfile(id, transport);
+      }
+      return communityApi.inspectProfile(id);
+    },
+    [communities],
+  );
   // loadAttempt is an explicit recovery trigger.
   useEffect(() => {
     void loadAttempt;
@@ -111,7 +125,7 @@ export function ProfileSettings({
     if (!client.relayAvailable) return;
     let current = true;
     setLoadStatus("loading");
-    void communityApi.inspectProfile(community.id).then(
+    void inspectCommunity(community.id).then(
       (result) => {
         if (!current) return;
         setLoaded(result);
@@ -126,7 +140,7 @@ export function ProfileSettings({
     return () => {
       current = false;
     };
-  }, [community, loadAttempt, client.relayAvailable]);
+  }, [community, inspectCommunity, loadAttempt, client.relayAvailable]);
   const persisted =
     community && loaded?.exists ? loaded.profile : client.profile;
   const profile = draft ?? persisted;
@@ -195,6 +209,9 @@ export function ProfileSettings({
                 value={profile.picture}
                 name={profile.name}
                 community={community?.id}
+                connect={
+                  nativeIdentityEnabled() ? communities.connect : undefined
+                }
                 disabled={saving}
                 onBusyChange={setUploading}
                 onChange={(picture) => {
@@ -240,7 +257,7 @@ export function ProfileSettings({
                 const inspect = (id: string) =>
                   session
                     ? communityApi.inspectProfile(id, session)
-                    : communityApi.inspectProfile(id);
+                    : inspectCommunity(id);
                 const saveGeneration = beginProfileSave(communities);
                 setSaving(true);
                 setSaved(false);

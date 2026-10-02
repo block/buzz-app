@@ -386,6 +386,7 @@ it("restores the selected native community and recovers discovery failure withou
     if (command === "identity_restore") return viewer;
     if (command === "deep_link_take") return [];
     if (command === "deep_link_watch") return null;
+    if (command === "enterprise_login_gate") return { status: "notRequired" };
     if (command === "relay_http") {
       const request = args as { community: string; path: string };
       destinations.push(request.community);

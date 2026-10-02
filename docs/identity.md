@@ -72,6 +72,19 @@ transport acceptance remains unverified. Only the selected saved community opens
 space stays disconnected. Discovery failure leaves the community retryable.
 Native sessions do **not** fall through to the dev broker signer.
 
+An enterprise-enabled build can bind a configured trusted relay allowlist to a
+separately configured identity adapter. Native NIP-11 discovery, not the
+adapter URL, decides whether a matching relay requires enterprise sign-in.
+Ordinary relays continue without this gate. Required sign-in opens the
+adapter in the external browser, returns through a nonce-bound loopback
+callback, and exchanges the code with a SHA-256 handoff verifier. The native
+host validates the returned session and exact expiry, then stores the session
+in OS secure storage scoped to the adapter, active human identity, and
+debug/release build. Restore checks the adapter session again; transient
+network failures preserve the saved credential, while failed or inconsistent
+checks clear only the matching session when secure storage permits. JavaScript
+receives status and expiry only, never the session secret.
+
 The native identity owner signs event templates and authenticates HTTP with
 NIP-98, including the exact request URL, method, a body hash on POST and a fresh nonce
 for each attempt. Native networking permits only discovery, join-policy, invite

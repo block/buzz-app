@@ -24,6 +24,7 @@ import { createShortcutBindings } from "../features/shortcuts/preferences";
 import { ConversationService } from "../features/conversation/service";
 import { createAppearance } from "../shared/theme/service";
 import { createCommunities } from "../features/communities/service";
+import { createEnterpriseAuthClient } from "../features/communities/enterpriseAuthApi";
 import { connectNativeTransport } from "../features/relay/native";
 import { createUpdates } from "../features/updates/updates";
 import { PanelsService } from "../features/panels/service";
@@ -57,6 +58,7 @@ export function createServices() {
   const channelTemplates = new TemplateProvidersService(ctx);
   const identityNames = new IdentityNamesService(ctx, agentControl);
   const identity = nativeIdentityEnabled() ? createIdentity() : undefined;
+  const enterpriseAuth = identity ? createEnterpriseAuthClient() : undefined;
   const communities = createCommunities(
     ctx,
     import.meta.env.VITE_BUZZ_LIVE === "1",
@@ -65,6 +67,7 @@ export function createServices() {
     agentControl,
     identity?.ready,
     identity ? connectNativeTransport : undefined,
+    enterpriseAuth,
   );
   ctx.provide("communityReader", {
     snapshot: communities.snapshot,

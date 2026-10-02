@@ -18,6 +18,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Runtime, State};
 use tauri_plugin_opener::OpenerExt;
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::{net::TcpListener, sync::oneshot};
 use url::Url;
 use zeroize::Zeroizing;
@@ -192,6 +193,7 @@ struct ActiveLogin {
 pub(crate) struct EnterpriseAuthHost {
     session: Arc<Mutex<Option<(Scope, StoredSession)>>>,
     login: Arc<Mutex<LoginState>>,
+    commit: Arc<tokio::sync::Mutex<()>>,
     store: Arc<dyn CredentialStore>,
 }
 
@@ -214,6 +216,7 @@ impl EnterpriseAuthHost {
         Self {
             session: Arc::new(Mutex::new(None)),
             login: Arc::new(Mutex::new(LoginState::default())),
+            commit: Arc::new(tokio::sync::Mutex::new(())),
             store,
         }
     }
@@ -227,7 +230,17 @@ impl EnterpriseAuthHost {
         if let Some(session) = self.cached(&scope) {
             let raw = encode_session(&session)?;
             return match check_session(&scope.adapter, &session, Some(&session.expires_at)).await {
-                SessionCheck::Valid(info) => Ok(Some(info)),
+                SessionCheck::Valid(info) => {
+                    let _commit = self.commit.lock().await;
+                    if let Some(current) = self.cached(&scope) {
+                        if current.token.as_str() != session.token.as_str() {
+                            return Ok(Some(EnterpriseAuthInfo {
+                                expires_at: current.expires_at,
+                            }));
+                        }
+                    }
+                    Ok(Some(info))
+                }
                 SessionCheck::Invalid | SessionCheck::Inconsistent => {
                     self.delete_if_matches(&scope, raw).await?;
                     self.clear_memory(&scope, Some(&session.token));
@@ -248,7 +261,16 @@ impl EnterpriseAuthHost {
         .await
         {
             SessionCheck::Valid(info) => {
-                self.remember(scope, persisted.session);
+                let _commit = self.commit.lock().await;
+                if let Some(current) = self.cached(&scope) {
+                    if current.token.as_str() != persisted.session.token.as_str() {
+                        return Ok(Some(EnterpriseAuthInfo {
+                            expires_at: current.expires_at,
+                        }));
+                    }
+                } else {
+                    self.remember(scope, persisted.session);
+                }
                 Ok(Some(info))
             }
             SessionCheck::Invalid | SessionCheck::Inconsistent => {
@@ -279,13 +301,15 @@ impl EnterpriseAuthHost {
         result
     }
 
-    pub(crate) fn cancel(&self, id: &str) -> Result<()> {
+    pub(crate) async fn cancel(&self, id: &str) -> Result<()> {
         validate_attempt_id(id)?;
+        let _commit = self.commit.lock().await;
         let mut state = self
             .login
             .lock()
             .map_err(|_| "Enterprise authentication state is unavailable".to_owned())?;
-        if let Some(active) = state.active.take().filter(|active| active.id == id) {
+        if state.active.as_ref().is_some_and(|active| active.id == id) {
+            let active = state.active.take().expect("active login checked above");
             remember_canceled(&mut state.canceled, id);
             let _ = active.cancel.send(());
         } else {
@@ -333,11 +357,7 @@ impl EnterpriseAuthHost {
             return Err("Could not open the enterprise sign-in browser".to_owned());
         }
 
-        let callback_result = tokio::select! {
-            result = callback => result.map_err(|_| "Enterprise login callback was interrupted".to_owned())?,
-            _ = &mut *canceled => Err("Enterprise authentication was canceled".to_owned()),
-            _ = tokio::time::sleep(LOGIN_TIMEOUT) => Err("Enterprise authentication timed out".to_owned()),
-        };
+        let callback_result = wait_for_callback(callback, canceled).await;
         server.abort();
         let code = callback_result?;
 
@@ -345,18 +365,7 @@ impl EnterpriseAuthHost {
             result = exchange(&scope.adapter, &code, &handoff_secret) => result?,
             _ = &mut *canceled => return Err("Enterprise authentication was canceled".into()),
         };
-        let raw = encode_session(&session)?;
-        if !self.is_active(id)? {
-            self.delete_if_matches(scope, raw).await?;
-            return Err("Enterprise authentication was canceled".into());
-        }
-        self.replace(scope, raw.clone()).await?;
-        if !self.is_active(id)? {
-            self.delete_if_matches(scope, raw).await?;
-            return Err("Enterprise authentication was canceled".into());
-        }
-        self.remember(scope.clone(), session);
-        Ok(info)
+        self.commit_session(scope, id, session, info).await
     }
 
     fn begin(&self, id: String, cancel: oneshot::Sender<()>) -> Result<bool> {
@@ -391,6 +400,28 @@ impl EnterpriseAuthHost {
             .active
             .as_ref()
             .is_some_and(|active| active.id == id))
+    }
+
+    async fn commit_session(
+        &self,
+        scope: &Scope,
+        id: &str,
+        session: StoredSession,
+        info: EnterpriseAuthInfo,
+    ) -> Result<EnterpriseAuthInfo> {
+        let raw = encode_session(&session)?;
+        let _commit = self.commit.lock().await;
+        if !self.is_active(id)? {
+            self.delete_if_matches(scope, raw).await?;
+            return Err("Enterprise authentication was canceled".into());
+        }
+        self.replace(scope, raw.clone()).await?;
+        if !self.is_active(id)? {
+            self.delete_if_matches(scope, raw).await?;
+            return Err("Enterprise authentication was canceled".into());
+        }
+        self.remember(scope.clone(), session);
+        Ok(info)
     }
 
     fn remember(&self, scope: Scope, session: StoredSession) {
@@ -477,16 +508,27 @@ pub(crate) async fn start_enterprise_auth_login<R: Runtime>(
 }
 
 #[tauri::command]
-pub(crate) fn cancel_enterprise_auth_login(
+pub(crate) async fn cancel_enterprise_auth_login(
     host: State<'_, EnterpriseAuthHost>,
     attempt_id: String,
 ) -> Result<()> {
-    host.cancel(&attempt_id)
+    host.cancel(&attempt_id).await
 }
 
 struct CallbackState {
     nonce: String,
     sender: Mutex<Option<oneshot::Sender<Result<String>>>>,
+}
+
+async fn wait_for_callback(
+    callback: oneshot::Receiver<Result<String>>,
+    canceled: &mut oneshot::Receiver<()>,
+) -> Result<String> {
+    tokio::select! {
+        result = callback => result.map_err(|_| "Enterprise login callback was interrupted".to_owned()),
+        _ = &mut *canceled => Err("Enterprise authentication was canceled".to_owned()),
+        _ = tokio::time::sleep(LOGIN_TIMEOUT) => Err("Enterprise authentication timed out".to_owned()),
+    }
 }
 
 async fn login_callback(
@@ -645,6 +687,7 @@ fn decode_session(raw: Zeroizing<Vec<u8>>) -> Result<StoredSession> {
         || record.session_token.chars().any(char::is_whitespace)
         || record.expires_at.is_empty()
         || record.expires_at.len() > MAX_SESSION_EXPIRY
+        || !expiry_is_well_formed(&record.expires_at)
     {
         return Err("Saved enterprise authentication is corrupt".into());
     }
@@ -723,6 +766,7 @@ fn session_from_exchange(response: ExchangeResponse) -> Result<StoredSession> {
         || response.session_token.chars().any(char::is_whitespace)
         || response.expires_at.is_empty()
         || response.expires_at.len() > MAX_SESSION_EXPIRY
+        || !expiry_is_current(&response.expires_at)
     {
         return Err("Enterprise authentication exchange was invalid".into());
     }
@@ -737,6 +781,12 @@ async fn check_session(
     session: &StoredSession,
     expected_expiry: Option<&str>,
 ) -> SessionCheck {
+    if !expiry_is_well_formed(&session.expires_at) {
+        return SessionCheck::Inconsistent;
+    }
+    if !expiry_is_current(&session.expires_at) {
+        return SessionCheck::Invalid;
+    }
     let response = match client().and_then(|client| Ok((client, api_url(base, "/v1/session")?))) {
         Ok((client, url)) => {
             client
@@ -768,13 +818,26 @@ async fn check_session(
     };
     if response.expires_at.is_empty()
         || response.expires_at.len() > MAX_SESSION_EXPIRY
+        || !expiry_is_well_formed(&response.expires_at)
         || expected_expiry.is_some_and(|expected| expected != response.expires_at)
     {
         return SessionCheck::Inconsistent;
     }
+    if !expiry_is_current(&response.expires_at) {
+        return SessionCheck::Invalid;
+    }
     SessionCheck::Valid(EnterpriseAuthInfo {
         expires_at: response.expires_at,
     })
+}
+
+fn expiry_is_well_formed(value: &str) -> bool {
+    OffsetDateTime::parse(value, &Rfc3339).is_ok()
+}
+
+fn expiry_is_current(value: &str) -> bool {
+    OffsetDateTime::parse(value, &Rfc3339)
+        .is_ok_and(|expires_at| expires_at > OffsetDateTime::now_utc())
 }
 
 fn client() -> Result<&'static reqwest::Client> {
@@ -873,6 +936,90 @@ impl CredentialStore for FixtureStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc;
+
+    struct BlockingStore {
+        values: Mutex<HashMap<(String, String), Vec<u8>>>,
+        replace_started: Mutex<Option<mpsc::Sender<()>>>,
+        release_replace: Mutex<Option<mpsc::Receiver<()>>>,
+    }
+
+    impl BlockingStore {
+        fn new(replace_started: mpsc::Sender<()>, release_replace: mpsc::Receiver<()>) -> Self {
+            Self {
+                values: Mutex::new(HashMap::new()),
+                replace_started: Mutex::new(Some(replace_started)),
+                release_replace: Mutex::new(Some(release_replace)),
+            }
+        }
+
+        fn stored(&self, service: &str, account: &str) -> Zeroizing<Vec<u8>> {
+            Zeroizing::new(
+                self.values
+                    .lock()
+                    .unwrap()
+                    .get(&(service.to_owned(), account.to_owned()))
+                    .cloned()
+                    .unwrap(),
+            )
+        }
+    }
+
+    impl CredentialStore for BlockingStore {
+        fn read(
+            &self,
+            service: &str,
+            account: &str,
+        ) -> std::result::Result<Zeroizing<Vec<u8>>, StoreError> {
+            self.values
+                .lock()
+                .unwrap()
+                .get(&(service.to_owned(), account.to_owned()))
+                .cloned()
+                .map(Zeroizing::new)
+                .ok_or(StoreError::Absent)
+        }
+
+        fn replace(
+            &self,
+            service: &str,
+            account: &str,
+            value: &[u8],
+        ) -> std::result::Result<(), StoreError> {
+            if let Some(started) = self.replace_started.lock().unwrap().take() {
+                started.send(()).unwrap();
+                self.release_replace
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .unwrap()
+                    .recv()
+                    .unwrap();
+            }
+            self.values
+                .lock()
+                .unwrap()
+                .insert((service.to_owned(), account.to_owned()), value.to_vec());
+            Ok(())
+        }
+
+        fn delete_if_matches(
+            &self,
+            service: &str,
+            account: &str,
+            expected: &[u8],
+        ) -> std::result::Result<(), StoreError> {
+            let mut values = self.values.lock().unwrap();
+            let key = (service.to_owned(), account.to_owned());
+            if values
+                .get(&key)
+                .is_some_and(|value| value.as_slice() == expected)
+            {
+                values.remove(&key);
+            }
+            Ok(())
+        }
+    }
 
     #[test]
     fn scope_isolated_by_adapter_and_identity() {
@@ -946,6 +1093,19 @@ mod tests {
     }
 
     #[test]
+    fn exchange_rejects_malformed_or_expired_session_expiry() {
+        for expires_at in ["not-a-timestamp", "2020-01-01T00:00:00Z"] {
+            assert!(session_from_exchange(ExchangeResponse {
+                session_token: "fixture-session".into(),
+                expires_at: expires_at.into(),
+            })
+            .is_err());
+        }
+        assert!(expiry_is_current("2030-01-01T00:00:00Z"));
+        assert!(!expiry_is_well_formed("2030-01-01 00:00:00 UTC"));
+    }
+
+    #[test]
     fn callback_rejects_wrong_nonce_without_consuming_code() {
         let (sender, _receiver) = oneshot::channel();
         let state = Arc::new(CallbackState {
@@ -991,6 +1151,19 @@ mod tests {
         assert_eq!(
             runtime.block_on(receiver).unwrap().unwrap_err(),
             "The account was canceled"
+        );
+    }
+
+    #[tokio::test]
+    async fn callback_receiver_failure_is_returned_for_listener_cleanup() {
+        let (sender, callback) = oneshot::channel();
+        drop(sender);
+        let (_cancel_sender, mut canceled) = oneshot::channel();
+        assert_eq!(
+            wait_for_callback(callback, &mut canceled)
+                .await
+                .unwrap_err(),
+            "Enterprise login callback was interrupted"
         );
     }
 
@@ -1049,6 +1222,114 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn expired_saved_session_is_cleared_without_network_access() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let route_hits = hits.clone();
+        let app = Router::new().route(
+            "/v1/session",
+            get(move || {
+                route_hits.fetch_add(1, Ordering::SeqCst);
+                async { (StatusCode::OK, Json(serde_json::json!({}))) }
+            }),
+        );
+        let server = tokio::spawn(axum::serve(listener, app));
+        let scope = scope_for_adapter(
+            &base,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        let store = Arc::new(FixtureStore::default());
+        let raw = encode_session(&StoredSession {
+            token: Zeroizing::new("expired-session".into()),
+            expires_at: "2020-01-01T00:00:00Z".into(),
+        })
+        .unwrap();
+        store.replace(scope.service, &scope.account, &raw).unwrap();
+
+        assert!(EnterpriseAuthHost::with_store(store.clone())
+            .get_scope(scope.clone())
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            store.read(scope.service, &scope.account),
+            Err(StoreError::Absent)
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn restore_does_not_adopt_a_checked_session_over_a_newer_cached_login() {
+        let request_started = Arc::new(tokio::sync::Notify::new());
+        let release_request = Arc::new(tokio::sync::Notify::new());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let started = request_started.clone();
+        let release = release_request.clone();
+        let app = Router::new().route(
+            "/v1/session",
+            get(move || {
+                started.notify_one();
+                let release = release.clone();
+                async move {
+                    release.notified().await;
+                    (
+                        StatusCode::OK,
+                        Json(serde_json::json!({
+                            "expires_at": "2030-01-01T00:00:00Z"
+                        })),
+                    )
+                }
+            }),
+        );
+        let server = tokio::spawn(axum::serve(listener, app));
+        let scope = scope_for_adapter(
+            &base,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        let store = Arc::new(FixtureStore::default());
+        let old = StoredSession {
+            token: Zeroizing::new("old-session".into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        };
+        let newer = StoredSession {
+            token: Zeroizing::new("new-session".into()),
+            expires_at: "2031-01-01T00:00:00Z".into(),
+        };
+        let old_raw = encode_session(&old).unwrap();
+        store
+            .replace(scope.service, &scope.account, &old_raw)
+            .unwrap();
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        let restore = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            async move { host.get_scope(scope).await }
+        });
+        request_started.notified().await;
+
+        let newer_raw = encode_session(&newer).unwrap();
+        store
+            .replace(scope.service, &scope.account, &newer_raw)
+            .unwrap();
+        host.remember(scope.clone(), newer);
+        release_request.notify_one();
+
+        assert_eq!(
+            restore.await.unwrap().unwrap().unwrap().expires_at,
+            "2031-01-01T00:00:00Z"
+        );
+        assert_eq!(host.cached(&scope).unwrap().token.as_str(), "new-session");
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn local_adapter_expiry_mismatch_clears_only_the_checked_session() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -1088,11 +1369,22 @@ mod tests {
 
     #[tokio::test]
     async fn local_adapter_server_failure_preserves_the_saved_session() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
+        let requests = Arc::new(AtomicUsize::new(0));
+        let route_requests = requests.clone();
         let app = Router::new().route(
             "/v1/session",
-            get(|| async { (StatusCode::BAD_GATEWAY, "retry") }),
+            get(move || {
+                let status = if route_requests.fetch_add(1, Ordering::SeqCst) == 0 {
+                    StatusCode::BAD_GATEWAY
+                } else {
+                    StatusCode::TOO_MANY_REQUESTS
+                };
+                async move { (status, "retry") }
+            }),
         );
         let server = tokio::spawn(axum::serve(listener, app));
         let scope = scope_for_adapter(
@@ -1107,10 +1399,8 @@ mod tests {
         })
         .unwrap();
         store.replace(scope.service, &scope.account, &raw).unwrap();
-        assert!(EnterpriseAuthHost::with_store(store.clone())
-            .get_scope(scope.clone())
-            .await
-            .is_err());
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        assert!(host.get_scope(scope.clone()).await.is_err());
         assert_eq!(
             store
                 .read(scope.service, &scope.account)
@@ -1119,6 +1409,14 @@ mod tests {
             raw.as_slice()
         );
         server.abort();
+        assert!(host.get_scope(scope.clone()).await.is_err());
+        assert_eq!(
+            store
+                .read(scope.service, &scope.account)
+                .unwrap()
+                .as_slice(),
+            raw.as_slice()
+        );
     }
 
     #[tokio::test]
@@ -1207,13 +1505,90 @@ mod tests {
         redirect_server.abort();
     }
 
-    #[test]
-    fn canceled_attempts_cannot_be_reused_or_remain_active() {
+    #[tokio::test]
+    async fn canceled_writer_cannot_overwrite_a_newer_login() {
+        let (started_sender, started_receiver) = mpsc::channel();
+        let (release_sender, release_receiver) = mpsc::channel();
+        let store = Arc::new(BlockingStore::new(started_sender, release_receiver));
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        let scope = scope_for_adapter(
+            "https://adapter.example",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        let old = StoredSession {
+            token: Zeroizing::new("old-session".into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        };
+        let newer = StoredSession {
+            token: Zeroizing::new("new-session".into()),
+            expires_at: "2031-01-01T00:00:00Z".into(),
+        };
+        let (old_cancel, _old_receiver) = oneshot::channel();
+        assert!(host.begin("old".into(), old_cancel).unwrap());
+        let old_task = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            async move {
+                host.commit_session(
+                    &scope,
+                    "old",
+                    old,
+                    EnterpriseAuthInfo {
+                        expires_at: "2030-01-01T00:00:00Z".into(),
+                    },
+                )
+                .await
+            }
+        });
+        tokio::task::spawn_blocking(move || started_receiver.recv().unwrap())
+            .await
+            .unwrap();
+
+        let (new_cancel, _new_receiver) = oneshot::channel();
+        assert!(host.begin("new".into(), new_cancel).unwrap());
+        let new_task = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            async move {
+                host.commit_session(
+                    &scope,
+                    "new",
+                    newer,
+                    EnterpriseAuthInfo {
+                        expires_at: "2031-01-01T00:00:00Z".into(),
+                    },
+                )
+                .await
+            }
+        });
+        release_sender.send(()).unwrap();
+
+        assert!(matches!(
+            old_task.await.unwrap(),
+            Err(error) if error == "Enterprise authentication was canceled"
+        ));
+        assert!(new_task.await.unwrap().is_ok());
+        assert_eq!(
+            decode_session(store.stored(scope.service, &scope.account))
+                .unwrap()
+                .token
+                .as_str(),
+            "new-session"
+        );
+    }
+
+    #[tokio::test]
+    async fn canceled_attempts_cannot_be_reused_or_cancel_a_newer_attempt() {
         let host = EnterpriseAuthHost::default();
         let (cancel, _receiver) = oneshot::channel();
         assert!(host.begin("first".into(), cancel).unwrap());
-        host.cancel("first").unwrap();
+        let (next_cancel, _next_receiver) = oneshot::channel();
+        assert!(host.begin("second".into(), next_cancel).unwrap());
+        host.cancel("first").await.unwrap();
         assert!(!host.is_active("first").unwrap());
+        assert!(host.is_active("second").unwrap());
+        host.cancel("second").await.unwrap();
         let (cancel, _receiver) = oneshot::channel();
         assert!(!host.begin("first".into(), cancel).unwrap());
     }

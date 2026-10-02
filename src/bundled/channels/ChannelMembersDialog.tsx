@@ -904,7 +904,7 @@ export function ChannelMembersDialog({
       title={
         selection
           ? selection.role === "remove"
-            ? "Remove member?"
+            ? "Remove member from channel"
             : "Change member role?"
           : "Channel members"
       }
@@ -982,7 +982,7 @@ export function ChannelMembersDialog({
       {selection ? (
         <p className="text-body-sm">
           {selection.role === "remove"
-            ? "Remove this member from this channel. This does not delete their identity or stop their agents. They may need an invitation to rejoin."
+            ? "This does not delete their identity or stop their agents. They may need an invitation to rejoin."
             : `Change this member’s role from ${selection.expectedRole} to ${selection.role}. ${selection.role === "admin" ? "Admins can manage this channel and its members." : "This changes their authority in this channel."}`}
         </p>
       ) : (

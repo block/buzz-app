@@ -1295,7 +1295,7 @@ for (const rejected of [false, true]) {
         .getByRole("menuitem", { name: "Remove from channel", exact: true })
         .click();
       const confirmation = page.getByRole("dialog", {
-        name: "Remove member?",
+        name: "Remove member from channel",
         exact: true,
       });
       await expect(confirmation).toHaveAttribute("id", popupId);

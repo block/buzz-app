@@ -224,7 +224,7 @@ async function setup(
       return screen.findByRole("dialog", {
         name:
           name === "Remove from channel"
-            ? "Remove member?"
+            ? "Remove member from channel"
             : "Change member role?",
       });
     },
@@ -626,9 +626,12 @@ it("confirms removal and removes only the confirmed roster entry", async () => {
   expect(dialog).toBe(membersDialog);
   expect(screen.getAllByRole("dialog")).toHaveLength(1);
   expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
-  expect(dialog).toHaveTextContent(
-    "does not delete their identity or stop their agents",
-  );
+  expect(
+    within(dialog).getByText(
+      "This does not delete their identity or stop their agents. They may need an invitation to rejoin.",
+      { exact: true },
+    ),
+  ).toBeInTheDocument();
   expect(
     within(dialog).getByRole("button", { name: "Remove member" }),
   ).toHaveAttribute("data-variant", "destructive");
@@ -1598,7 +1601,7 @@ it.each(["bot", "member"])(
     ).not.toBeInTheDocument();
     await t.user.click(remove);
     const dialog = await screen.findByRole("dialog", {
-      name: "Remove member?",
+      name: "Remove member from channel",
     });
     await vi.waitFor(() =>
       expect(

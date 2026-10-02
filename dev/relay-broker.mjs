@@ -37,7 +37,7 @@ import {
   leaveRequestTemplate,
 } from "../src/features/communities/leave-protocol.ts";
 import {
-  directMessageEvent,
+  directMessageTemplate,
   directMessageReceipt,
 } from "./direct-messages.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
@@ -74,7 +74,11 @@ import {
   builderlabResponseStatus,
   createBuilderlab,
 } from "./builderlab.mjs";
-import { createLocalSigningDelegate } from "./signing-delegate.mjs";
+import {
+  createLocalSigningCapabilities,
+  createLocalSigningDelegate,
+} from "./signing-delegate.mjs";
+import { bindSigningDelegate } from "../src/features/relay/signing-delegate.ts";
 import {
   decodeSidebarPreferences,
   assertSidebarAssignmentIntent,
@@ -658,6 +662,59 @@ const json = (res, code, body) => {
   res.end(JSON.stringify(body));
 };
 
+/** Sign and dispatch one broker HTTP request only after its admission slot opens. */
+function signedBrokerRequest({
+  lane,
+  delegate,
+  relay,
+  path,
+  body,
+  signal,
+  fetchUpstream,
+  priority = "foreground",
+  refusal,
+}) {
+  return admittedApiRequest(
+    lane,
+    async () => {
+      signal.throwIfAborted();
+      const value = body === undefined ? undefined : JSON.stringify(body);
+      const auth = await delegate.signEvent(
+        {
+          kind: 27235,
+          created_at: Math.floor(Date.now() / 1000),
+          content: "",
+          tags: [
+            ["u", `${relay}${path}`],
+            ["method", "POST"],
+            ...(value === undefined
+              ? []
+              : [
+                  ["payload", createHash("sha256").update(value).digest("hex")],
+                ]),
+            ["nonce", randomBytes(16).toString("hex")],
+          ],
+        },
+        signal,
+      );
+      signal.throwIfAborted();
+      return fetchUpstream(`${relay}${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Nostr ${Buffer.from(JSON.stringify(auth)).toString("base64")}`,
+        },
+        body: value,
+        redirect: "error",
+        signal,
+      });
+    },
+    signal,
+    priority,
+    refusal,
+  );
+}
+
 /** @returns {import('vite').Plugin} */
 export function relayBrokerPlugin({
   authorizedViewer,
@@ -680,9 +737,13 @@ export function relayBrokerPlugin({
       const key = identity();
       const viewer = getPublicKey(key);
       const localDelegate = createLocalSigningDelegate(key);
+      const localCapabilities = createLocalSigningCapabilities(key);
       const selectDelegate = selectSigningDelegate ?? (() => localDelegate);
       const delegateFor = (relay) =>
-        selectDelegate({ relay, identity: viewer });
+        bindSigningDelegate(selectDelegate({ relay, identity: viewer }), {
+          relay,
+          identity: viewer,
+        });
       const upstream = createUpstream();
       // Injected fixtures bypass the pool; the live relay always uses the warm agent.
       const fetchUpstream = upstreamFetch ?? upstream.fetch;
@@ -1088,56 +1149,14 @@ export function relayBrokerPlugin({
                   AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
                 ]);
                 const dispatch = (path, body) =>
-                  lane.prepare(async () => {
-                    requestSignal.throwIfAborted();
-                    const value = JSON.stringify(body);
-                    const auth = await delegate.signEvent(
-                      {
-                        kind: 27235,
-                        created_at: Math.floor(Date.now() / 1000),
-                        content: "",
-                        tags: [
-                          ["u", `${relay}${path}`],
-                          ["method", "POST"],
-                          [
-                            "payload",
-                            createHash("sha256").update(value).digest("hex"),
-                          ],
-                          ["nonce", randomBytes(16).toString("hex")],
-                        ],
-                      },
-                      requestSignal,
-                    );
-                    requestSignal.throwIfAborted();
-                    return admittedApiRequest(
-                      lane,
-                      () => {
-                        requestSignal.throwIfAborted();
-                        if (
-                          Math.abs(
-                            Math.floor(Date.now() / 1000) - auth.created_at,
-                          ) > 45
-                        )
-                          throw new ApiNotSent(
-                            "Request authentication expired before dispatch",
-                          );
-                        return fetchUpstream(`${relay}${path}`, {
-                          method: "POST",
-                          headers: {
-                            "Content-Type": "application/json",
-                            Authorization:
-                              "Nostr " +
-                              Buffer.from(JSON.stringify(auth)).toString(
-                                "base64",
-                              ),
-                          },
-                          body: value,
-                          redirect: "error",
-                          signal: requestSignal,
-                        });
-                      },
-                      requestSignal,
-                    );
+                  signedBrokerRequest({
+                    lane,
+                    delegate,
+                    relay,
+                    path,
+                    body,
+                    signal: requestSignal,
+                    fetchUpstream,
                   });
                 const readHead = async () => {
                   const response = await dispatch("/query", filter);
@@ -1148,11 +1167,7 @@ export function relayBrokerPlugin({
                   return readSidebarHead(response);
                 };
                 const publishEvent = async (event) => {
-                  const response = await delegate.publishEvent(
-                    event,
-                    () => dispatch("/events", event),
-                    requestSignal,
-                  );
+                  const response = await dispatch("/events", event);
                   if (!response.ok)
                     throw new Error(
                       `Sidebar preference publish failed (${response.status})`,
@@ -1251,56 +1266,14 @@ export function relayBrokerPlugin({
                   AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
                 ]);
                 const dispatch = (path, body) =>
-                  lane.prepare(async () => {
-                    requestSignal.throwIfAborted();
-                    const value = JSON.stringify(body);
-                    const auth = await delegate.signEvent(
-                      {
-                        kind: 27235,
-                        created_at: Math.floor(Date.now() / 1000),
-                        content: "",
-                        tags: [
-                          ["u", `${relay}${path}`],
-                          ["method", "POST"],
-                          [
-                            "payload",
-                            createHash("sha256").update(value).digest("hex"),
-                          ],
-                          ["nonce", randomBytes(16).toString("hex")],
-                        ],
-                      },
-                      requestSignal,
-                    );
-                    requestSignal.throwIfAborted();
-                    return admittedApiRequest(
-                      lane,
-                      () => {
-                        requestSignal.throwIfAborted();
-                        if (
-                          Math.abs(
-                            Math.floor(Date.now() / 1000) - auth.created_at,
-                          ) > 45
-                        )
-                          throw new ApiNotSent(
-                            "Request authentication expired before dispatch",
-                          );
-                        return fetchUpstream(`${relay}${path}`, {
-                          method: "POST",
-                          headers: {
-                            "Content-Type": "application/json",
-                            Authorization:
-                              "Nostr " +
-                              Buffer.from(JSON.stringify(auth)).toString(
-                                "base64",
-                              ),
-                          },
-                          body: value,
-                          redirect: "error",
-                          signal: requestSignal,
-                        });
-                      },
-                      requestSignal,
-                    );
+                  signedBrokerRequest({
+                    lane,
+                    delegate,
+                    relay,
+                    path,
+                    body,
+                    signal: requestSignal,
+                    fetchUpstream,
                   });
                 const readHead = async () => {
                   const response = await dispatch("/query", filter);
@@ -1311,11 +1284,7 @@ export function relayBrokerPlugin({
                   return readSidebarHead(response);
                 };
                 const publishEvent = (event) =>
-                  delegate.publishEvent(
-                    event,
-                    () => stream.traffic.publish(event, requestSignal),
-                    requestSignal,
-                  );
+                  stream.traffic.publish(event, requestSignal);
                 return mutateSidebarMute(
                   intent,
                   key,
@@ -1400,56 +1369,14 @@ export function relayBrokerPlugin({
                   AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
                 ]);
                 const dispatch = (path, body) =>
-                  lane.prepare(async () => {
-                    requestSignal.throwIfAborted();
-                    const value = JSON.stringify(body);
-                    const auth = await delegate.signEvent(
-                      {
-                        kind: 27235,
-                        created_at: Math.floor(Date.now() / 1000),
-                        content: "",
-                        tags: [
-                          ["u", `${relay}${path}`],
-                          ["method", "POST"],
-                          [
-                            "payload",
-                            createHash("sha256").update(value).digest("hex"),
-                          ],
-                          ["nonce", randomBytes(16).toString("hex")],
-                        ],
-                      },
-                      requestSignal,
-                    );
-                    requestSignal.throwIfAborted();
-                    return admittedApiRequest(
-                      lane,
-                      () => {
-                        requestSignal.throwIfAborted();
-                        if (
-                          Math.abs(
-                            Math.floor(Date.now() / 1000) - auth.created_at,
-                          ) > 45
-                        )
-                          throw new ApiNotSent(
-                            "Request authentication expired before dispatch",
-                          );
-                        return fetchUpstream(`${relay}${path}`, {
-                          method: "POST",
-                          headers: {
-                            "Content-Type": "application/json",
-                            Authorization:
-                              "Nostr " +
-                              Buffer.from(JSON.stringify(auth)).toString(
-                                "base64",
-                              ),
-                          },
-                          body: value,
-                          redirect: "error",
-                          signal: requestSignal,
-                        });
-                      },
-                      requestSignal,
-                    );
+                  signedBrokerRequest({
+                    lane,
+                    delegate,
+                    relay,
+                    path,
+                    body,
+                    signal: requestSignal,
+                    fetchUpstream,
                   });
                 const readHead = async () => {
                   const response = await dispatch("/query", filter);
@@ -1460,11 +1387,7 @@ export function relayBrokerPlugin({
                   return readSidebarHead(response);
                 };
                 const publishEvent = async (event) => {
-                  const response = await delegate.publishEvent(
-                    event,
-                    () => dispatch("/events", event),
-                    requestSignal,
-                  );
+                  const response = await dispatch("/events", event);
                   if (!response.ok)
                     throw new Error(
                       `Sidebar preference publish failed (${response.status})`,
@@ -2208,7 +2131,7 @@ export function relayBrokerPlugin({
                 error: "Invalid harness log authorization",
               });
             cancel.signal.throwIfAborted();
-            const signature = await delegate.signHarnessLogProof(
+            const signature = await localCapabilities.signHarnessLogProof(
               filters.id,
               filters.pubkey,
               wssRelay,
@@ -2248,7 +2171,7 @@ export function relayBrokerPlugin({
             if (!inspecting) {
               cancel.signal.throwIfAborted();
               const relayUrl = relay.replace(/^https:/, "wss:");
-              const signature = await delegate.authorizeAgentCommunity(
+              const signature = await localCapabilities.authorizeAgentCommunity(
                 filters.pubkey,
                 relayUrl,
                 cancel.signal,
@@ -2332,7 +2255,7 @@ export function relayBrokerPlugin({
                 error: "Invalid agent owner authorization",
               });
             cancel.signal.throwIfAborted();
-            const signature = await delegate.authorizeAgent(
+            const signature = await localCapabilities.authorizeAgent(
               filters.pubkey,
               cancel.signal,
             );
@@ -2359,19 +2282,15 @@ export function relayBrokerPlugin({
           const directMessage = route === "/api/relay/direct-message";
           if (directMessage) {
             try {
-              filters = await directMessageEvent(
-                filters,
-                viewer,
-                delegate,
-                cancel.signal,
-              );
-              cancel.signal.throwIfAborted();
+              filters = directMessageTemplate(filters, viewer);
             } catch {
               return json(res, 400, {
                 error: "Choose between one and eight other people.",
                 sent: false,
               });
             }
+            filters = await delegate.signEvent(filters, cancel.signal);
+            cancel.signal.throwIfAborted();
           }
           const claim = route === "/api/relay/claim";
           const policy = route === "/api/relay/accept-policy";
@@ -2392,18 +2311,21 @@ export function relayBrokerPlugin({
             // Community-bound only; the relay remains the authority for roles.
             if (!scoped)
               return json(res, 400, { error: "Select a community first" });
+            let command;
             try {
               // The viewer's own leave request has one shape; the body carries nothing.
-              filters = invite
+              command = invite
                 ? inviteRequest(filters)
-                : await delegate.signEvent(
-                    leave ? leaveRequestTemplate() : memberCommand(filters),
-                    cancel.signal,
-                  );
-              cancel.signal.throwIfAborted();
+                : leave
+                  ? leaveRequestTemplate()
+                  : memberCommand(filters);
             } catch (error) {
               return json(res, 400, { error: error.message, sent: false });
             }
+            filters = invite
+              ? command
+              : await delegate.signEvent(command, cancel.signal);
+            cancel.signal.throwIfAborted();
           }
           if (gifs) {
             if (
@@ -2699,26 +2621,22 @@ export function relayBrokerPlugin({
           )
             return json(res, 400, { error: "Read filter rejected" });
           if (publishing || readPublishing) {
+            const stream = streams.get(req.headers["x-buzz-live-id"]);
             // This route has already validated the signed event. Do not log its
             // content, tags, signature, or the browser's private stream handle.
             const publication = `publication id=${filters.id} kind=${filters.kind}`;
-            const unavailable = new SocketRequestError(
-              "Publication socket unavailable",
-              false,
-            );
+            if (!stream || stream.relay !== relay) {
+              log.warn(
+                `${publication} stage=${stream ? "owner-mismatch" : "owner-missing"} sent=false`,
+              );
+              return json(res, 503, {
+                error: "Publication socket unavailable",
+                sent: false,
+              });
+            }
             try {
-              const message = await delegate.publishEvent(
+              const message = await stream.traffic.publish(
                 filters,
-                () => {
-                  const stream = streams.get(req.headers["x-buzz-live-id"]);
-                  if (!stream || stream.relay !== relay) {
-                    log.warn(
-                      `${publication} stage=${stream ? "owner-mismatch" : "owner-missing"} sent=false`,
-                    );
-                    throw unavailable;
-                  }
-                  return stream.traffic.publish(filters, cancel.signal);
-                },
                 cancel.signal,
               );
               return json(res, 200, {
@@ -2731,22 +2649,19 @@ export function relayBrokerPlugin({
               // and remote refusal text must never escape into terminal output.
               const failure =
                 error instanceof SocketRequestError ? error : undefined;
-              if (error !== unavailable)
-                log.warn(
-                  `${publication} stage=socket sent=${failure ? failure.sent : "unknown"} reason=${failure?.message ?? "unclassified failure"}${failure?.refusal ? ` refusal=${failure.refusal}` : ""}`,
-                );
+              log.warn(
+                `${publication} stage=socket sent=${failure ? failure.sent : "unknown"} reason=${failure?.message ?? "unclassified failure"}${failure?.refusal ? ` refusal=${failure.refusal}` : ""}`,
+              );
               // Match the relay's HTTP status for a proven CAS refusal.
               const conflict =
                 failure?.sent === false &&
                 failure.refusal?.startsWith("conflict:");
               return json(res, conflict ? 409 : 503, {
                 error:
-                  error === unavailable
-                    ? unavailable.message
-                    : failure?.sent === false &&
-                        failure.refusal?.startsWith("rate-limited:")
-                      ? failure.refusal
-                      : "Socket publication could not be confirmed",
+                  failure?.sent === false &&
+                  failure.refusal?.startsWith("rate-limited:")
+                    ? failure.refusal
+                    : "Socket publication could not be confirmed",
                 ...(error instanceof SocketRequestError && !error.sent
                   ? { sent: false }
                   : {}),
@@ -2803,8 +2718,10 @@ export function relayBrokerPlugin({
               ),
             ]);
             const request = async () => {
-              // Signing can yield; final dispatch rechecks cancellation and admission.
               requestSignal.throwIfAborted();
+              timings.push(
+                `admission;dur=${(performance.now() - admissionStart).toFixed(2)}`,
+              );
               const authStart = performance.now();
               const auth = await delegate.signEvent(
                 {
@@ -2831,56 +2748,39 @@ export function relayBrokerPlugin({
               timings.push(
                 `auth;dur=${(performance.now() - authStart).toFixed(2)}`,
               );
-              const dispatch = () => {
+              connectsBefore = upstream.connects();
+              upstreamStart = performance.now();
+              return fetchUpstream(`${relay}${upstreamPath}`, {
+                method,
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization:
+                    "Nostr " +
+                    Buffer.from(JSON.stringify(auth)).toString("base64"),
+                },
+                body,
+                redirect: "error",
+                signal: requestSignal,
+              }).then((response) => {
                 timings.push(
-                  `admission;dur=${(performance.now() - admissionStart).toFixed(2)}`,
+                  `ttfb;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
                 );
-                requestSignal.throwIfAborted();
-                if (
-                  Math.abs(Math.floor(Date.now() / 1000) - auth.created_at) > 45
-                )
-                  throw new ApiNotSent(
-                    "Request authentication expired before dispatch",
-                  );
-                connectsBefore = upstream.connects();
-                upstreamStart = performance.now();
-                return fetchUpstream(`${relay}${upstreamPath}`, {
-                  method,
-                  headers: {
-                    "Content-Type": "application/json",
-                    Authorization:
-                      "Nostr " +
-                      Buffer.from(JSON.stringify(auth)).toString("base64"),
-                  },
-                  body,
-                  redirect: "error",
-                  signal: requestSignal,
-                }).then((response) => {
-                  timings.push(
-                    `ttfb;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
-                  );
-                  return response;
-                });
-              };
-              return presence
-                ? dispatch()
-                : admittedApiRequest(
-                    lane,
-                    dispatch,
-                    requestSignal,
-                    channelActivity ||
-                      (route === "/api/relay/query" &&
-                        req.headers["x-buzz-read-priority"] === "background")
-                      ? "background"
-                      : "foreground",
-                    refusal,
-                  );
+                return response;
+              });
             };
-            const send = () => (presence ? request() : lane.prepare(request));
-            response =
-              profile || directMessage || member || leave
-                ? await delegate.publishEvent(filters, send, requestSignal)
-                : await send();
+            response = presence
+              ? await request()
+              : await admittedApiRequest(
+                  lane,
+                  request,
+                  requestSignal,
+                  channelActivity ||
+                    (route === "/api/relay/query" &&
+                      req.headers["x-buzz-read-priority"] === "background")
+                    ? "background"
+                    : "foreground",
+                  refusal,
+                );
             const text = memory
               ? await memoryResponseText(response)
               : presence
@@ -2895,18 +2795,12 @@ export function relayBrokerPlugin({
               response.headers.get("x-envoy-upstream-service-time"),
             );
             timings.push(
-              ...(connectsBefore === undefined
-                ? []
-                : upstream.connectTiming(connectsBefore)),
+              ...upstream.connectTiming(connectsBefore),
               ...(Number.isFinite(relayMs) &&
               response.headers.has("x-envoy-upstream-service-time")
                 ? [`relay;dur=${relayMs}`]
                 : []),
-              ...(upstreamStart === undefined
-                ? []
-                : [
-                    `upstream;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
-                  ]),
+              `upstream;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
             );
             res.setHeader("Server-Timing", timings.join(", "));
             stats.queries++;

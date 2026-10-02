@@ -77,18 +77,13 @@ function parseSortEvent(events, secret, sectionIds) {
     key.fill(0);
   }
 }
-// Desktop compatibility uses one encrypted whole-blob LWW record, not per-group
-// conflict resolution. Only choices present in this read can be preserved.
-export async function prepareSidebarSort(
+function readSidebarSortState(
   events,
   intent,
   secret,
-  signer,
-  signal,
   now = Date.now(),
 ) {
   assertSidebarSortIntent(intent);
-  const viewer = getPublicKey(secret);
   const current = parseSortEvent(events, secret, intent.sectionIds);
   const blob = editSidebarRecord(
     SORT_COORDINATE,
@@ -107,29 +102,44 @@ export async function prepareSidebarSort(
     ).sort ?? {};
   if (Buffer.byteLength(JSON.stringify(blob)) > 128 * 1024)
     throw new Error("Sidebar plaintext budget exceeded");
-  if (blob === current.blob) return { groups: projected };
+  if (blob === current.blob) return { groups: projected, changed: false };
+  return { groups: projected, changed: true, current, blob };
+}
+
+// Desktop compatibility uses one encrypted whole-blob LWW record, not per-group
+// conflict resolution. Only choices present in this read can be preserved.
+export async function prepareSidebarSort(
+  events,
+  intent,
+  secret,
+  signer,
+  signal,
+  now = Date.now(),
+) {
+  const state = readSidebarSortState(events, intent, secret, now);
+  if (!state.changed) return state;
+  const viewer = getPublicKey(secret);
   const key = nip44.v2.utils.getConversationKey(secret, viewer);
   let content;
   try {
-    content = nip44.v2.encrypt(JSON.stringify(blob), key);
+    content = nip44.v2.encrypt(JSON.stringify(state.blob), key);
   } finally {
     key.fill(0);
   }
-  return {
-    groups: projected,
-    event: await signer.signEvent(
-      {
-        kind: 30078,
-        content,
-        created_at: Math.max(Math.floor(now / 1000), current.createdAt + 1),
-        tags: [
-          ["d", SORT_COORDINATE],
-          ["t", SORT_COORDINATE],
-        ],
-      },
-      signal,
-    ),
-  };
+  const event = await signer.signEvent(
+    {
+      kind: 30078,
+      content,
+      created_at: Math.max(Math.floor(now / 1000), state.current.createdAt + 1),
+      tags: [
+        ["d", SORT_COORDINATE],
+        ["t", SORT_COORDINATE],
+      ],
+    },
+    signal,
+  );
+  signal?.throwIfAborted();
+  return { groups: state.groups, event };
 }
 export async function mutateSidebarSort(
   intent,
@@ -152,15 +162,9 @@ export async function mutateSidebarSort(
   await publish(draft.event);
   // This checks only the requested group now, not whether the whole-blob write
   // lost another device's intervening change to an unrelated group.
-  const confirmation = await prepareSidebarSort(
-    await readHead(),
-    intent,
-    secret,
-    signer,
-    signal,
-  );
+  const confirmation = readSidebarSortState(await readHead(), intent, secret);
   signal?.throwIfAborted();
-  if (confirmation.event)
+  if (confirmation.changed)
     throw new Error(
       "Sidebar sort changed on another device; reload and try again",
     );

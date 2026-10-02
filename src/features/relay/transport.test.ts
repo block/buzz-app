@@ -1,9 +1,42 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
-import { connectBrokerTransport, connectSignedTransport } from "./transport";
+import {
+  bindSigningDelegate,
+  connectBrokerTransport,
+  connectSignedTransport,
+} from "./transport";
 import { PublishRejected } from "./outbox";
 import { keypair, signed } from "./testing";
 const key = keypair();
 afterEach(() => vi.unstubAllGlobals());
+it("binds a selected signer to its relay and captured identity", async () => {
+  const other = keypair();
+  const delegate = bindSigningDelegate(
+    {
+      getPublicKey: async () => other.pubkey,
+      signEvent: async (template) => signed(other, template),
+    },
+    { relay: "https://relay.test", identity: key.pubkey },
+  );
+  expect(await delegate.getPublicKey()).toBe(key.pubkey);
+  await expect(
+    delegate.signEvent({ kind: 9, content: "", created_at: 0, tags: [] }),
+  ).rejects.toThrow("identity mismatch");
+});
+it("fences optional native requests to the bound relay", async () => {
+  const request = vi.fn(async () => Response.json({}));
+  const delegate = bindSigningDelegate(
+    {
+      getPublicKey: async () => key.pubkey,
+      signEvent: async (template) => signed(key, template),
+      request,
+    },
+    { relay: "https://relay.test", identity: key.pubkey },
+  );
+  expect(() => delegate.request?.("https://other.test/query", "{}")).toThrow(
+    "relay mismatch",
+  );
+  expect(request).not.toHaveBeenCalled();
+});
 it("publishes the unchanged signed event to /events with request-bound NIP-98 auth", async () => {
   const event = signed(key, { kind: 9, content: "hello", tags: [["h", "c"]] });
   const fetcher = vi.fn(async () =>

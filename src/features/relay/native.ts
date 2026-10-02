@@ -49,6 +49,7 @@ import { observerFrame } from "../agents/observer";
 import {
   acceptPublish,
   admitSignedRequest,
+  bindSigningDelegate,
   connectSignedTransport,
   admittedSignedWorkflowRead,
   type ReadTransport,
@@ -237,7 +238,7 @@ export function nativeRelaySigner(community: string): Signer {
         throw new Error("Set up your identity first");
       return viewer;
     },
-    async signEvent(event: EventTemplate) {
+    async signEvent(event: EventTemplate, _signal?: AbortSignal) {
       const { kind, created_at, tags, content } = event;
       return eventDto(
         await invoke(kind === 30078 ? "relay_kit_sign" : "relay_sign", {
@@ -282,8 +283,10 @@ export async function connectNativeTransport(
     throw new Error("Relay did not advertise its identity");
   const creation =
     Array.isArray(info.supported_nips) && info.supported_nips.includes(29);
+  const nativeSigner = nativeRelaySigner(origin);
+  const identity = await nativeSigner.getPublicKey();
   const transport = await connectSignedTransport(
-    nativeRelaySigner(origin),
+    bindSigningDelegate(nativeSigner, { relay: origin, identity }),
     origin,
     author,
   );

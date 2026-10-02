@@ -141,17 +141,13 @@ function parseSectionsEvent(events, secret) {
     key.fill(0);
   }
 }
-/** Narrow host command: mutate one assignment against the latest encrypted head. */
-export async function prepareSidebarAssignment(
+function readSidebarAssignmentState(
   events,
   intent,
   secret,
-  signer,
-  signal,
   now = Date.now(),
 ) {
   assertSidebarAssignmentIntent(intent);
-  const viewer = getPublicKey(secret);
   const current = parseSectionsEvent(events, secret);
   const sectionId = intent.createSection?.id ?? intent.sectionId;
   let sections = current.blob.sections;
@@ -194,29 +190,43 @@ export async function prepareSidebarAssignment(
   const groups = projectSidebarPreferences(blob, undefined);
   if (Buffer.byteLength(JSON.stringify(blob)) > 128 * 1024)
     throw new Error("Sidebar plaintext budget exceeded");
-  if (blob === current.blob) return { groups };
+  if (blob === current.blob) return { groups, changed: false };
+  return { groups, changed: true, current, blob };
+}
+
+/** Narrow host command: mutate one assignment against the latest encrypted head. */
+export async function prepareSidebarAssignment(
+  events,
+  intent,
+  secret,
+  signer,
+  signal,
+  now = Date.now(),
+) {
+  const state = readSidebarAssignmentState(events, intent, secret, now);
+  if (!state.changed) return state;
+  const viewer = getPublicKey(secret);
   const key = nip44.v2.utils.getConversationKey(secret, viewer);
   let content;
   try {
-    content = nip44.v2.encrypt(JSON.stringify(blob), key);
+    content = nip44.v2.encrypt(JSON.stringify(state.blob), key);
   } finally {
     key.fill(0);
   }
-  return {
-    groups,
-    event: await signer.signEvent(
-      {
-        kind: 30078,
-        content,
-        created_at: Math.max(Math.floor(now / 1000), current.createdAt + 1),
-        tags: [
-          ["d", SECTION_COORDINATE],
-          ["t", SECTION_COORDINATE],
-        ],
-      },
-      signal,
-    ),
-  };
+  const event = await signer.signEvent(
+    {
+      kind: 30078,
+      content,
+      created_at: Math.max(Math.floor(now / 1000), state.current.createdAt + 1),
+      tags: [
+        ["d", SECTION_COORDINATE],
+        ["t", SECTION_COORDINATE],
+      ],
+    },
+    signal,
+  );
+  signal?.throwIfAborted();
+  return { groups: state.groups, event };
 }
 
 /** Publish one assignment, then re-read the coordinate before reporting saved state. */
@@ -239,15 +249,9 @@ export async function mutateSidebarAssignment(
   signal?.throwIfAborted();
   if (!draft.event) return draft.groups;
   await publish(draft.event);
-  const confirmation = await prepareSidebarAssignment(
-    await readHead(),
-    intent,
-    secret,
-    signer,
-    signal,
-  );
+  const confirmation = readSidebarAssignmentState(await readHead(), intent, secret);
   signal?.throwIfAborted();
-  if (confirmation.event)
+  if (confirmation.changed)
     throw new Error(
       "Sidebar groups changed on another device; reload and try again",
     );

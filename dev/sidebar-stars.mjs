@@ -16,15 +16,7 @@ export function assertSidebarStarIntent(intent) {
     throw new Error("Invalid sidebar star intent");
 }
 
-/** One explicit star intent against a fresh signed head; keep unstar tombstones. */
-export async function prepareSidebarStar(
-  events,
-  intent,
-  secret,
-  signer,
-  signal,
-  now = Date.now(),
-) {
+function readSidebarStarState(events, intent, secret, now = Date.now()) {
   assertSidebarStarIntent(intent);
   // The shared bounded decoder verifies signature, own author, schema and budgets.
   decodeSidebarPreferences(events, secret);
@@ -49,7 +41,7 @@ export async function prepareSidebarStar(
       ? current.channels[intent.channelId]
       : undefined;
     if (previous?.starred === intent.starred || (!previous && !intent.starred))
-      return { stars: current };
+      return { stars: current, changed: false };
     const stars = {
       ...current,
       channels: {
@@ -61,27 +53,50 @@ export async function prepareSidebarStar(
         },
       },
     };
-    const event = await signer.signEvent(
-      {
-        kind: 30078,
-        content: nip44.v2.encrypt(JSON.stringify(stars), key),
-        created_at: Math.max(
-          Math.floor(now / 1000),
-          (head?.created_at ?? 0) + 1,
-        ),
-        tags: [
-          ["d", COORDINATE],
-          ["t", COORDINATE],
-        ],
-      },
-      signal,
-    );
-    // Refuse over-budget changes rather than silently trimming other channels.
-    decodeSidebarPreferences([event], secret);
-    return { stars, event };
+    return { stars, changed: true, head };
   } finally {
     key.fill(0);
   }
+}
+
+/** One explicit star intent against a fresh signed head; keep unstar tombstones. */
+export async function prepareSidebarStar(
+  events,
+  intent,
+  secret,
+  signer,
+  signal,
+  now = Date.now(),
+) {
+  const state = readSidebarStarState(events, intent, secret, now);
+  if (!state.changed) return state;
+  const viewer = getPublicKey(secret);
+  const key = nip44.v2.utils.getConversationKey(secret, viewer);
+  let content;
+  try {
+    content = nip44.v2.encrypt(JSON.stringify(state.stars), key);
+  } finally {
+    key.fill(0);
+  }
+  const event = await signer.signEvent(
+    {
+      kind: 30078,
+      content,
+      created_at: Math.max(
+        Math.floor(now / 1000),
+        (state.head?.created_at ?? 0) + 1,
+      ),
+      tags: [
+        ["d", COORDINATE],
+        ["t", COORDINATE],
+      ],
+    },
+    signal,
+  );
+  signal?.throwIfAborted();
+  // Refuse over-budget changes rather than silently trimming other channels.
+  decodeSidebarPreferences([event], secret);
+  return { stars: state.stars, event };
 }
 
 export async function mutateSidebarStar(
@@ -103,15 +118,9 @@ export async function mutateSidebarStar(
   signal?.throwIfAborted();
   if (!draft.event) return draft.stars;
   await publish(draft.event);
-  const confirmation = await prepareSidebarStar(
-    await readHead(),
-    intent,
-    secret,
-    signer,
-    signal,
-  );
+  const confirmation = readSidebarStarState(await readHead(), intent, secret);
   signal?.throwIfAborted();
-  if (confirmation.event)
+  if (confirmation.changed)
     throw new Error(
       "Sidebar stars changed on another device; reload and try again",
     );

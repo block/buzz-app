@@ -291,6 +291,37 @@ function exactFilters(h: ReturnType<typeof setup>, ids: string[]) {
   ];
 }
 
+// A retired hint must survive to deliberate recovery, without making ordinary
+// refreshes writer-backed once that obligation has been fulfilled.
+async function recoverRetiredHint(h: ReturnType<typeof setup>) {
+  expect(h.wire.pending).toHaveLength(1);
+  const recovery = h.wire.next();
+  expect(recovery.filters[0]?.kinds).toEqual([39002]);
+  expect(recovery.filters[0]?.["#d"]).toBeUndefined();
+  expect(recovery.filters[0]?.consistency).toBe("strong");
+  recovery.respond(
+    recovery.filters[0]?.consistency === "strong"
+      ? [
+          metadata(h.relay, "a", "Alpha"),
+          roster(h.relay, "a", [h.viewer.pubkey]),
+        ]
+      : [],
+  );
+  await flush();
+  expect(h.owner.session.channels.list()).toMatchObject({
+    status: "ready",
+    channels: [{ id: "a", name: "Alpha" }],
+  });
+  expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+  expect(h.wire.pending).toHaveLength(0);
+  h.owner.session.channels.refreshList?.();
+  const ordinary = h.wire.next();
+  expect(ordinary.filters[0]).not.toHaveProperty("consistency");
+  ordinary.respond([]);
+  await flush();
+  expect(h.wire.pending).toHaveLength(0);
+}
+
 it("a named member-added hint confirms only that channel and preserves verified roster state", async () => {
   const h = setup();
   try {
@@ -590,97 +621,82 @@ it("membership hints from another signer or for another viewer do not read disco
   }
 });
 
-it("cache-clear retires an exact membership confirmation without automatic recovery", async () => {
-  const h = setup();
-  try {
-    await readyRoster(h);
-    h.live.receive([membershipHint(h, "a")]);
-    await flush();
-    const exact = h.wire.next();
-    expect(exact.filters).toEqual(exactFilters(h, ["a"]));
-    await h.owner.clearCache();
-    exact.respond([
-      metadata(h.relay, "a", "Alpha"),
-      roster(h.relay, "a", [h.viewer.pubkey]),
-    ]);
-    await flush();
-    await flush();
-    expect(exact.signal?.aborted).toBe(true);
-    expect(h.owner.session.channels.get?.("a")).toBeUndefined();
-    expect(h.wire.pending).toHaveLength(0);
-    expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
-  } finally {
-    h.owner.dispose();
-  }
-});
-
-it("disconnect retires an exact membership confirmation until new establishment", async () => {
-  const h = setup();
-  try {
-    await readyRoster(h);
-    h.live.receive([membershipHint(h, "a")]);
-    await flush();
-    const exact = h.wire.next();
-    h.live.state({ status: "retrying", routes: [] });
-    exact.respond([
-      metadata(h.relay, "a", "Alpha"),
-      roster(h.relay, "a", [h.viewer.pubkey]),
-    ]);
-    await flush();
-    await flush();
-    expect(exact.signal?.aborted).toBe(true);
-    expect(h.owner.session.channels.get?.("a")).toBeUndefined();
-    expect(h.wire.pending).toHaveLength(0);
-    h.connected();
-    h.live.established();
-    await flush();
-    const full = h.wire.next();
-    expect(full.filters[0]?.["#d"]).toBeUndefined();
-    full.respond([]);
-    await flush();
-    expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
-    expect(h.wire.pending).toHaveLength(0);
-  } finally {
-    h.owner.dispose();
-  }
-});
+it.each([
+  { reset: "cache-clear", inFlight: false },
+  { reset: "cache-clear", inFlight: true },
+  { reset: "disconnect", inFlight: false },
+  { reset: "disconnect", inFlight: true },
+])(
+  "$reset retires a hint (in flight: $inFlight) but preserves writer routing for deliberate recovery",
+  async ({ reset, inFlight }) => {
+    const h = setup();
+    try {
+      await readyRoster(h);
+      h.live.receive([membershipHint(h, "a")]);
+      if (inFlight) await flush();
+      const exact = inFlight ? h.wire.next() : undefined;
+      if (exact) expect(exact.filters).toEqual(exactFilters(h, ["a"]));
+      if (reset === "cache-clear") await h.owner.clearCache();
+      else h.live.state({ status: "retrying", routes: [] });
+      if (exact) {
+        expect(exact.signal?.aborted).toBe(true);
+        exact.respond([
+          metadata(h.relay, "a", "Alpha"),
+          roster(h.relay, "a", [h.viewer.pubkey]),
+        ]);
+      }
+      await flush();
+      await flush();
+      // Retirement must neither admit a delayed grant nor start a recovery pass.
+      expect(h.wire.pending).toHaveLength(0);
+      expect(h.owner.session.channels.get?.("a")).toBeUndefined();
+      expect(h.owner.session.channels.list().status).toBe("ready");
+      expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+      if (reset === "disconnect") {
+        h.connected();
+        h.live.established();
+      } else h.owner.session.channels.refreshList?.();
+      await flush();
+      await recoverRetiredHint(h);
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
 
 it.each(["cache-clear", "disconnect"])(
-  "a %s before a queued hint dispatches retires it without an exact or fallback read",
+  "%s during a replica pass retains a later hint without automatically rerunning the interrupted pass",
   async (reset) => {
     const h = setup();
     try {
       await readyRoster(h);
-      // The broker drains traffic before connection state in one loop, so the
-      // hint is still queued behind its timer when the reset arrives. The reset
-      // leaves the list ready; only the queue itself can stop the dispatch.
+      h.owner.session.channels.refreshList?.();
+      const full = h.wire.next();
+      expect(full.filters[0]).not.toHaveProperty("consistency");
       h.live.receive([membershipHint(h, "a")]);
+      await flush();
+      const exact = h.wire.next();
+      expect(exact.filters).toEqual(exactFilters(h, ["a"]));
       if (reset === "cache-clear") await h.owner.clearCache();
       else h.live.state({ status: "retrying", routes: [] });
+      expect(exact.signal?.aborted).toBe(true);
+      expect(full.signal?.aborted).toBe(true);
+      exact.respond([
+        metadata(h.relay, "a", "Alpha"),
+        roster(h.relay, "a", [h.viewer.pubkey]),
+      ]);
+      full.respond([]);
       await flush();
       await flush();
-      expect(h.wire.pending).toHaveLength(0);
+      expect(h.owner.session.live.snapshot().roster.state).toBe("deferred");
       expect(h.owner.session.channels.get?.("a")).toBeUndefined();
-      expect(h.owner.session.channels.list().status).toBe("ready");
+      expect(h.wire.pending).toHaveLength(0);
       if (reset === "disconnect") {
         h.connected();
         h.live.established();
-        await flush();
-        const full = h.wire.next();
-        expect(full.filters[0]?.kinds).toEqual([39002]);
-        expect(full.filters[0]?.["#d"]).toBeUndefined();
-        full.respond([
-          metadata(h.relay, "a", "Alpha"),
-          roster(h.relay, "a", [h.viewer.pubkey]),
-        ]);
-        await flush();
-        expect(h.owner.session.channels.list()).toMatchObject({
-          status: "ready",
-          channels: [{ id: "a", name: "Alpha" }],
-        });
-      }
-      expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
-      expect(h.wire.pending).toHaveLength(0);
+      } else h.owner.session.live.retry();
+      await flush();
+      await recoverRetiredHint(h);
     } finally {
       h.owner.dispose();
     }
@@ -714,22 +730,14 @@ it("an exact membership confirmation cannot overwrite a concurrent roster error"
     });
     expect(h.owner.session.live.snapshot().roster.state).toBe("error");
     expect(h.wire.pending).toHaveLength(0);
+    h.owner.session.live.retry();
+    await flush();
+    expect(h.wire.pending).toHaveLength(0);
+    expect(h.owner.session.channels.list().status).toBe("error");
     vi.spyOn(performance, "now").mockReturnValue(performance.now() + 61000);
     h.owner.session.live.retry();
     await flush();
-    h.wire
-      .next()
-      .respond([
-        metadata(h.relay, "a", "Alpha"),
-        roster(h.relay, "a", [h.viewer.pubkey]),
-      ]);
-    await flush();
-    expect(h.owner.session.channels.list()).toMatchObject({
-      status: "ready",
-      channels: [{ id: "a", name: "Alpha" }],
-    });
-    expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
-    expect(h.wire.pending).toHaveLength(0);
+    await recoverRetiredHint(h);
   } finally {
     h.owner.dispose();
   }
@@ -769,21 +777,7 @@ it("a concurrent roster failure without a cooldown retires the exact confirmatio
     expect(h.wire.pending).toHaveLength(0);
     h.owner.session.live.retry();
     await flush();
-    expect(h.wire.pending).toHaveLength(1);
-    const recovery = h.wire.next();
-    expect(recovery.filters[0]?.kinds).toEqual([39002]);
-    expect(recovery.filters[0]?.["#d"]).toBeUndefined();
-    recovery.respond([
-      metadata(h.relay, "a", "Alpha"),
-      roster(h.relay, "a", [h.viewer.pubkey]),
-    ]);
-    await flush();
-    expect(h.owner.session.channels.list()).toMatchObject({
-      status: "ready",
-      channels: [{ id: "a", name: "Alpha" }],
-    });
-    expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
-    expect(h.wire.pending).toHaveLength(0);
+    await recoverRetiredHint(h);
   } finally {
     h.owner.dispose();
   }

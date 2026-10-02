@@ -1905,10 +1905,12 @@ export function createRelaySession(
   }
   /** A cache clear, a disconnect or a list that leaves ready drops hints with
    * the rest of the session's reader work, before a queued batch's timer can
-   * dispatch it into the new epoch, and releases any inherited grants: a ready
-   * commit must not hide a failed discovery, and the next establishment's full
-   * pass or Retry owns recovery. */
+   * dispatch it into the new epoch. Transfer their writer requirement to the
+   * store without scheduling work: a ready commit must not hide a failed
+   * discovery, and the next establishment's full pass or Retry owns recovery. */
   function dropHintConfirmations() {
+    if (hintQueue.size > 0 || hintReads.size > 0)
+      channels.requireStrongListRead();
     rosterOwesGrants = false;
     retireHintConfirmations();
   }

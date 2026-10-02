@@ -2017,6 +2017,11 @@ export function createChannelStore(
   return {
     queries,
     roster: () => rosterRefresh,
+    /** Preserve a retired exact confirmation's routing without scheduling work.
+     * The next refresh/Retry owns dispatch and the existing cooldown. */
+    requireStrongListRead() {
+      if (!disposed) strongListAgain = true;
+    },
     retryList() {
       if (rosterRefresh.state === "error" || rosterRefresh.state === "deferred")
         void discover(true);

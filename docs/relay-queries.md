@@ -83,7 +83,10 @@ is interrupted, including its metadata phase, its next pass retains writer routi
 existing cooldown; a successful pass returns later refreshes to ordinary routing.
 Signed membership hints use writer-backed exact reads or the existing full-roster
 fallback, including metadata. A replica pass superseding pending exact hint
-confirmations queues a writer-backed pass to settle those grants.
+confirmations queues a writer-backed pass to settle those grants. If list failure,
+disconnect or cache clear retires queued or in-flight hint confirmations, the store
+retains their writer requirement for the next deliberate refresh, Retry or
+establishment, without starting an automatic recovery pass or bypassing cooldown.
 Ordinary startup, browsing, reconnect, and DM visibility refresh stay replica-
 eligible. The details editor and member-administration capability use writer-backed
 state for their shared load/preflight/confirmation reads; the member dialog's

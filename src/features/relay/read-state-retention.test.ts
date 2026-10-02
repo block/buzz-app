@@ -115,6 +115,55 @@ it("at the synced limit, recent catch-up never pushes out a quiet channel's mark
   for (const key of [...channels, ...threads])
     expect(kept.frontiers[key]).toBe(state.frontiers[key]);
 });
+it("old broad marks never crowd out the newest read", () => {
+  const hex = (n: number) => n.toString(16).padStart(64, "0");
+  const uuid = (n: number) =>
+    `${n.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`;
+  const fresh = `msg:${"f".repeat(64)}`;
+  const cases = [
+    // Stale thread catch-up marks alone exceed the local budget.
+    {
+      budget: undefined,
+      old: Array.from({ length: 1300 }, (_, n) => `thread-activity:${hex(n)}`),
+      kept: [] as string[],
+    },
+    // Stale channel catch-up marks fill the synced budget.
+    {
+      budget: READ_STATE_PLAINTEXT_BYTES,
+      old: Array.from({ length: 900 }, (_, n) => `activity:${uuid(n)}`),
+      kept: [] as string[],
+    },
+    // The Sep 28 state: 295 channel marks and 459 thread marks.
+    {
+      budget: READ_STATE_PLAINTEXT_BYTES,
+      old: [
+        ...Array.from({ length: 295 }, (_, n) => uuid(n)),
+        ...Array.from({ length: 459 }, (_, n) => `thread:${hex(n)}`),
+      ],
+      kept: Array.from({ length: 295 }, (_, n) => uuid(n)),
+    },
+  ];
+  for (const { budget, old, kept: quiet } of cases) {
+    const state = {
+      frontiers: {
+        ...Object.fromEntries(old.map((key, n) => [key, 100 + n])),
+        [fresh]: 50,
+      },
+      overrides: {},
+    };
+    const recent = {
+      ...Object.fromEntries(old.map((key, n) => [key, 10 + n])),
+      [fresh]: 100_000,
+    };
+    const kept = retainReadState([state], recent, "fixture", budget);
+    // The budget is genuinely full.
+    expect(Object.keys(kept.frontiers).length).toBeLessThan(old.length + 1);
+    expect(kept.frontiers[fresh]).toBe(50);
+    // Quiet channel marks still fit in the broad share.
+    for (const key of quiet)
+      expect(kept.frontiers[key]).toBe(state.frontiers[key]);
+  }
+});
 it("drops covered marks before the budget, unless overrides need ancestry", () => {
   const state = {
     frontiers: { room: 20, "msg:covered": 10, "msg:other": 30 },

@@ -21,10 +21,15 @@ const scope = (key: string) =>
       : key.startsWith("activity:") || key.startsWith("thread-activity:")
         ? 2
         : 3;
+/** Share of the budget that broad marks may fill before recent use decides.
+ * The rest always goes to the most recently used marks, so a new read is never
+ * dropped just because old channel or thread marks fill the budget. */
+const SCOPED_SHARE = 0.75;
 /** Frontier hints are bounded recent activity, not an everlasting receipt log (NIP-RS).
- * Channel marks outrank thread marks, then catch-up marks, then message marks; within each,
- * local interaction order wins over event time so reading old history still
- * synchronizes. Marks that `covered` proves redundant are dropped first.
+ * Up to `SCOPED_SHARE` of the budget, channel marks outrank thread marks, then
+ * catch-up marks, then message marks. The rest goes by local interaction order,
+ * which wins over event time so reading old history still synchronizes.
+ * Marks that `covered` proves redundant are dropped first.
  * Every override group and its direct frontier is protected; pressure can never lose a floor.
  */
 export function retainReadState(
@@ -56,13 +61,14 @@ export function retainReadState(
   ).byteLength;
   let keys = 0;
   const retained = new Map<string, number>();
-  const take = (key: string, value: number) => {
+  const take = (key: string, value: number, share = 1) => {
     const cost =
       encoder.encode(JSON.stringify(key)).byteLength +
       1 +
       String(value).length +
       (keys ? 1 : 0);
-    if (used + cost > maxBytes || keys >= READ_STATE_KEYS) return false;
+    if (used + cost > maxBytes * share || keys >= READ_STATE_KEYS * share)
+      return false;
     used += cost;
     keys++;
     return true;
@@ -101,13 +107,19 @@ export function retainReadState(
       retained.set(key, value);
     }
   }
-  for (const [key, value] of [...frontiers].sort(
-    ([a, av], [b, bv]) =>
-      scope(a) - scope(b) ||
-      (recent[b] ?? 0) - (recent[a] ?? 0) ||
-      bv - av ||
-      a.localeCompare(b),
+  const byUse = ([a, av]: [string, number], [b, bv]: [string, number]) =>
+    (recent[b] ?? 0) - (recent[a] ?? 0) || bv - av || a.localeCompare(b);
+  for (const entry of [...frontiers].sort(
+    (a, b) => scope(a[0]) - scope(b[0]) || byUse(a, b),
   )) {
+    const [key, value] = entry;
+    if (retained.has(key)) continue;
+    // Stop at the first broad mark that does not fit, so a narrower mark
+    // never takes the share ahead of it.
+    if (!take(frontierKey(key), value, SCOPED_SHARE)) break;
+    retained.set(key, value);
+  }
+  for (const [key, value] of [...frontiers].sort(byUse)) {
     if (!retained.has(key) && take(frontierKey(key), value))
       retained.set(key, value);
   }

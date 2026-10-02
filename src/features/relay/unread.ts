@@ -467,12 +467,15 @@ export function createUnread({
     const caughtUp = Math.max(frontier ?? -1, ordinary ?? -1, thread ?? -1);
     return event.created_at > caughtUp || !!forced;
   }
-  /** A mark is redundant when a channel or thread mark already reads all it
-   * reads. Catch-up marks (`activity:`, `thread-activity:`) never make another
-   * mark redundant: older clients ignore them, so the message, thread and
-   * channel marks they would replace are the read state those clients see.
-   * Only retained evidence supplies a message's channel and thread; marks
-   * without it are kept. */
+  /** A mark is redundant when a broader mark already reads all it reads.
+   * Catch-up marks (`activity:`, `thread-activity:`) never make another mark
+   * redundant: older clients ignore them, so the message, thread and channel
+   * marks they would replace are the read state those clients see.
+   * Only the channel mark covers a message mark. A reply finds its channel
+   * from its own event, but finds its thread only while the root is loaded;
+   * after a reload without the root, a thread mark no longer reads it.
+   * Only retained evidence supplies a message's channel; marks without it are
+   * kept. */
   reads.setCoverage((key, frontiers) => {
     const value = frontiers.get(key) ?? Number.POSITIVE_INFINITY;
     const separator = key.indexOf(":");
@@ -486,13 +489,7 @@ export function createUnread({
     const entry = byId.get(id);
     if (!entry) return false;
     const channel = at(entry.channelId);
-    if (kind === "msg")
-      return (
-        Math.max(
-          channel,
-          entry.rootId === undefined ? -1 : at(`thread:${entry.rootId}`),
-        ) >= entry.event.created_at
-      );
+    if (kind === "msg") return channel >= entry.event.created_at;
     if (kind === "thread") return channel >= value;
     if (kind === "thread-activity")
       return Math.max(channel, at(`thread:${id}`)) >= value;

@@ -2552,7 +2552,7 @@ it.each(["clearCache", "dispose", "revoke-regrant"] as const)(
   },
 );
 
-it("catch-up keeps the message marks older clients read; only a channel or thread mark replaces them", async () => {
+it("catch-up keeps the message marks older clients read; only a channel mark replaces them", async () => {
   const h = setup();
   h.grant("room");
   const first = message(h.alice, "room", "first", 11);
@@ -2618,7 +2618,8 @@ it("pruning keeps every mark that still reads something, and unread does not cha
   side.dispose();
   const seen = [early, mention, top, elsewhere];
   expect(unread(seen)).toEqual([false, false, false, false]);
-  // A thread mark replaces the reply marks it covers, not a later reply's.
+  // A thread mark keeps reply marks: a reply finds its thread only while
+  // its root is loaded, so only the channel mark may replace them.
   const thread = {
     kind: "thread" as const,
     channelId: "room",
@@ -2627,6 +2628,7 @@ it("pruning keeps every mark that still reads something, and unread does not cha
   await h.session.unread.markThrough(thread, early.id);
   expect(h.journal()?.state.frontiers).toEqual({
     [`thread:${root.id}`]: 11,
+    [`msg:${early.id}`]: 11,
     [`msg:${mention.id}`]: 12,
     [`msg:${top.id}`]: 13,
     [`msg:${elsewhere.id}`]: 5,
@@ -2689,4 +2691,37 @@ it("a channel mark merged from another device drops the local marks it covers", 
   );
   expect(h.session.unread.attention("room", first.id).unread).toBe(false);
   expect(h.session.unread.attention("room", later.id).unread).toBe(false);
+});
+
+it("a read reply stays read after a reload that does not load its root", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "root", 10);
+  const reply = message(h.alice, "room", "mention", 12, [
+    ["e", root.id, "", "root"],
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([root, reply]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([reply.id]);
+  lease.dispose();
+  await h.session.unread.markThrough(
+    { kind: "thread", channelId: "room", rootId: root.id },
+    reply.id,
+  );
+  expect(h.journal()?.state.frontiers).toMatchObject({
+    [`thread:${root.id}`]: 12,
+    [`msg:${reply.id}`]: 12,
+  });
+  // Without its root, the reply cannot find its thread mark.
+  await h.clearCache();
+  h.grant("room");
+  h.emit([reply]);
+  await vi.waitFor(() =>
+    expect(h.session.unread.attention("room", reply.id)).toMatchObject({
+      status: "eligible",
+      unread: false,
+    }),
+  );
 });

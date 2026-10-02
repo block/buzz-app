@@ -273,15 +273,19 @@ bounded lead rather than running indefinitely into the future.
 
 Ordinary frontiers are **bounded recent hints, not everlasting read receipts**.
 The local state has a 96 KiB serialized-blob budget and wire publication a 40 KiB
-plaintext budget. Under pressure, channel marks (`<channel>`) are kept first, then
-thread marks (`thread:`), then catch-up marks (`activity:`, `thread-activity:`), then
-message marks: a channel or thread mark covers many messages, so losing it makes much
-more old history unread, and recent catch-up must never push out a quiet channel's
-mark. Within each group, persisted local interaction order prioritizes newly read old
-history as well as current traffic. Each save first drops marks that a channel or
-thread mark already covers, using retained evidence for ancestry: a message mark under
-its channel or thread mark, a thread mark under its channel mark, and a catch-up mark
-under its channel or thread mark. Catch-up marks never make another mark redundant:
+plaintext budget. Under pressure, up to three quarters of each budget keeps channel
+marks (`<channel>`) first, then thread marks (`thread:`), then catch-up marks
+(`activity:`, `thread-activity:`), then message marks: a channel or thread mark covers
+many messages, so losing it makes much more old history unread, and recent catch-up
+must never push out a quiet channel's mark. The last quarter, and any room the broad
+marks leave, goes by persisted local interaction order across all marks, so the newest
+read is never dropped because old broad marks fill the budget. Interaction order also
+ranks marks within each group, which prioritizes newly read old history as well as
+current traffic. Each save first drops marks that a broader mark already covers, using
+retained evidence: a message mark under its channel mark, a thread mark under its
+channel mark, and a catch-up mark under its channel or thread mark. A thread mark never
+replaces a message mark: a reply finds its channel from its own event, but finds its
+thread only while its root is loaded. Catch-up marks never make another mark redundant:
 older clients ignore them and read through the message, thread and channel marks.
 Marks without retained evidence are kept, and nothing is dropped while any override
 exists. Reading an already covered message saves nothing. Only frontier-only hints can

@@ -118,7 +118,7 @@ fn default_test_host_cannot_access_real_credentials() {
 }
 
 #[tokio::test]
-async fn remote_agent_authorization_binds_owner_and_agent_without_local_creation() {
+async fn authorize_agent_signs_for_agent_and_rejects_invalid_requests() {
     use secp256k1::{schnorr::Signature, Secp256k1, XOnlyPublicKey};
     let host = IdentityHost::fixture();
     let owner = host.viewer().await.unwrap();

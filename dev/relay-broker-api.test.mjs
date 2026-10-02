@@ -128,7 +128,15 @@ async function harness(respond, capabilities = {}, relayUrl = fixtureRelayUrl) {
   };
 }
 const filters = [{ kinds: [0], limit: 1 }];
+const success = (call) =>
+  Response.json(
+    call.url.endsWith("/events")
+      ? { accepted: true, event_id: call.body.id }
+      : [],
+  );
+
 test("remote agent authorization is owner-bound and works without a community", async () => {
+  // No default community is selected, and any upstream request fails.
   const h = await harness(
     () => {
       throw new Error("Authorization must not contact upstream");
@@ -145,8 +153,10 @@ test("remote agent authorization is owner-bound and works without a community", 
     const context = new Context();
     const host = new HostService(context);
     const tag = await host.prepareRemoteAgentAuthorization(agentPubkey);
+    // The host returns an unconditional proof for the requested agent and owner.
     expect(await authTagOwner(agentPubkey, tag)).toBe(owner);
     expect(tag.slice(0, 3)).toEqual(["auth", h.event.pubkey, ""]);
+    // The signature binds the exact agent key to the NIP-OA domain.
     expect(
       schnorr.verify(
         Buffer.from(tag[3], "hex"),
@@ -158,25 +168,30 @@ test("remote agent authorization is owner-bound and works without a community", 
     ).toBe(true);
     const route = "prepare-remote-agent-authorization";
     for (const rejected of [
-      "invalid",
-      "A".repeat(64),
-      h.event.pubkey,
-      null,
-      42,
+      "invalid", // Malformed key.
+      "A".repeat(64), // Uppercase hex.
+      h.event.pubkey, // Self-attestation.
+      null, // Null agent key.
+      42, // Non-string agent key.
     ]) {
       expect(
         (await h.post(route, { owner: h.event.pubkey, agentPubkey: rejected }))
           .status,
       ).toBe(400);
     }
+    // A different owner cannot use the broker's identity to sign.
     expect(
       (await h.post(route, { owner: "f".repeat(64), agentPubkey })).status,
     ).toBe(403);
+    // The request must explicitly bind the current owner.
     expect((await h.post(route, { agentPubkey })).status).toBe(403);
+    // A non-object request body is rejected.
     expect((await h.post(route, null)).status).toBe(400);
+    // Oversized requests are rejected before signing.
     expect(
       (await h.post(route, { owner, agentPubkey: "a".repeat(4096) })).status,
     ).toBe(413);
+    // Successful and rejected authorization requests stay local.
     expect(h.calls).toEqual([]);
   } finally {
     vi.unstubAllGlobals();
@@ -184,12 +199,6 @@ test("remote agent authorization is owner-bound and works without a community", 
     await h.close();
   }
 });
-const success = (call) =>
-  Response.json(
-    call.url.endsWith("/events")
-      ? { accepted: true, event_id: call.body.id }
-      : [],
-  );
 
 test("production transport obtains scoped broker harness log proofs for aliases and canonical origins", async () => {
   const h = await harness(success);

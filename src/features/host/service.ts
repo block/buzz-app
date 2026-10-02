@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type {} from "../../plugins/api";
+import { nativeIdentityEnabled } from "../identity/service";
 
 export type HostRequest = Readonly<{
   url: string;
@@ -47,7 +48,7 @@ export class HostService extends Service implements Host {
     signal?.throwIfAborted();
     if (!/^[0-9a-f]{64}$/.test(agentPubkey))
       throw new Error("Agent pubkey must be 64 lowercase hex characters");
-    const native = isTauri() && import.meta.env.VITE_BUZZ_LIVE !== "1";
+    const native = nativeIdentityEnabled();
     const owner = native
       ? await invoke<string | null>("identity_restore")
       : (

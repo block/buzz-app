@@ -63,6 +63,8 @@ fn main() {
             "plugin_recover",
             "plugin_host_run_command",
             "plugin_host_request",
+            "plugin_host_fetch",
+            "plugin_host_fetch_cancel",
             "agent_control_create_prepare",
             "agent_control_create_authorize",
             "agent_control_create_commit",

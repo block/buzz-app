@@ -48,7 +48,7 @@ use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use harness_setup::{pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
-use host_request::plugin_host_request;
+use host_request::{plugin_host_fetch, plugin_host_fetch_cancel, plugin_host_request, HostStreams};
 use notifications::{notification_show, Notifications};
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
@@ -413,6 +413,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_recover,
         plugin_host_run_command,
         plugin_host_request,
+        plugin_host_fetch,
+        plugin_host_fetch_cancel,
         agent_control_create_prepare,
         agent_control_create_authorize,
         agent_control_create_commit,
@@ -525,6 +527,7 @@ pub fn run() {
         .manage(Notifications::default())
         .manage(DeepLinks::default())
         .manage(PluginManager(Manager::from_env()))
+        .manage(HostStreams::default())
         .invoke_handler({
             let application_commands = commands::<tauri::Wry>();
             let browser_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![

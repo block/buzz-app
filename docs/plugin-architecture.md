@@ -334,8 +334,9 @@ External plugins can declare host access in `manifest.json`:
 }
 ```
 
-Plugins declaring `host` in `inject` use `ctx.host.runCommand(id)` and
-`ctx.host.request({ url, method, headers, body })`. Command calls name a declared
+Plugins declaring `host` in `inject` use `ctx.host.runCommand(id)`,
+`ctx.host.request({ url, method, headers, body })` and
+`ctx.host.fetch(input, init)`. Command calls name a declared
 ID; the program and arguments come only from the installed manifest. Native
 execution uses no shell or stdin, discards stderr, and returns at most 4 KiB of
 UTF-8 stdout. The direct command invocation has a five-second deadline;
@@ -354,6 +355,17 @@ body and 8 KiB of headers; responses return status, up to 64 headers totaling
 has a 30-second deadline. Browser calls cannot use these native operations.
 Existing bundled GitHub requests retain their first-party renderer fetch and CSP
 entry.
+
+`ctx.host.fetch` is the same request with the platform `fetch` signature and a
+streamed response body, for a library that takes a custom `fetch` and reads
+server-sent events. The same origin, method, header and size rules apply, and
+bodies are text in both directions. It resolves with a `Response` once the
+response headers arrive, which must happen within 30 seconds; the body may then
+pause up to 60 seconds between chunks and run for 10 minutes. Aborting
+`init.signal` or cancelling the body stops the native request. At most 16
+streams are open at once across all plugins. Because the calling plugin is read
+from `ctx`, pass a library `(input, init) => ctx.host.fetch(input, init)` rather
+than the detached method.
 
 The import preview lists declarations and marks added or changed access on updates.
 The install/update action accepts that displayed version; an enabled update may run

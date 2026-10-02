@@ -644,6 +644,63 @@ test.describe("saved DM labels", () => {
 });
 
 test.describe("pending startup navigation", () => {
+  test("cold conversation access stays behind launch until resolution fails", async ({
+    page,
+    app,
+  }) => {
+    const gate = held();
+    let requested = false;
+    await page.route("**/api/relay/**/query", async (route) => {
+      if (
+        route
+          .request()
+          .postDataJSON()
+          .some(
+            (filter) =>
+              filter.kinds?.includes(39002) &&
+              filter["#d"]?.includes("outside-roster"),
+          )
+      ) {
+        requested = true;
+        await gate.promise;
+      }
+      await route.continue().catch(() => {});
+    });
+    try {
+      await page.clock.install();
+      const target = {
+        version: 1,
+        kind: "conversation",
+        channelId: "outside-roster",
+        scope: {
+          viewer: app.viewer,
+          communityOrigin: "https://primary.example",
+        },
+      };
+      await page.goto(
+        `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify(target))}`,
+      );
+      await expect.poll(() => requested).toBe(true);
+      const checking = page.getByText("Checking conversation access…", {
+        exact: true,
+      });
+      await expect(checking).toBeVisible();
+      await expect(checking).toHaveAttribute(
+        "data-buzz-launch-pending",
+        "required",
+      );
+      await page.clock.runFor(3700);
+      await expect(page.locator("#buzz-launch")).toBeVisible();
+      gate.release();
+      await expect(page.locator("#buzz-launch")).toHaveCount(0);
+      await expect(
+        page.getByRole("heading", { name: "This destination couldn’t open" }),
+      ).toBeVisible();
+    } finally {
+      gate.release();
+    }
+  });
+
   test("waits for a conversation absent from the saved roster, then opens it live", async ({
     page,
     app,

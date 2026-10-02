@@ -10,6 +10,10 @@ import type { ContributionReader, LinkRenderer } from "./contracts";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
 import type { RelaySession } from "../relay/session";
+import {
+  fullSession,
+  type ComposerSession,
+} from "../messages/composer-session";
 import { parseBuzzLink, isBuzzLink } from "../navigation/buzz-links";
 import {
   LinkChannelPrivateContext,
@@ -55,7 +59,7 @@ export function MessageLink({
   registry: ContributionReader<LinkRenderer> | undefined;
   onOpenLink(url: string): boolean;
   label?: string | undefined;
-  session?: RelaySession | undefined;
+  session?: RelaySession | ComposerSession | undefined;
   scope?: string | undefined;
   interactive?: boolean;
   channelPrivate?: boolean;
@@ -72,8 +76,9 @@ export function MessageLink({
   const internal = isBuzzLink(url);
   const parsed = internal ? parseBuzzLink(url) : null;
   const destination = parsed?.format === "legacy" ? parsed : undefined;
+  const host = fullSession(session);
   const preview =
-    session && destination?.messageId
+    host && destination?.messageId
       ? { channelId: destination.channelId, messageId: destination.messageId }
       : undefined;
   const navigation = {
@@ -135,7 +140,7 @@ export function MessageLink({
         {content}
       </span>
     );
-    return interactive && preview && session ? (
+    return interactive && preview && host ? (
       <PreviewCard
         trigger={element}
         link={<a href={url} {...navigation} />}
@@ -147,8 +152,8 @@ export function MessageLink({
       >
         {previewOpen && (
           <BuzzLinkPreview
-            key={messageViewKey(session, scope, url)}
-            session={session}
+            key={messageViewKey(host, scope, url)}
+            session={host}
             channelId={preview.channelId}
             messageId={preview.messageId}
           />

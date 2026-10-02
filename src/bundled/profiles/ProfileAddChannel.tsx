@@ -62,6 +62,8 @@ export function ProfileAddChannel({
         !!list.channels.find(
           (channel) =>
             channel.id === id &&
+            !channel.huddle &&
+            !channel.metadataPending &&
             !channel.archived &&
             !channel.hidden &&
             !channel.readOnly &&

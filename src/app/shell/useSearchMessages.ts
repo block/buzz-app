@@ -21,6 +21,17 @@ export function useSearchMessages(
   query: string,
   scopedChannelId?: string,
 ) {
+  const ordinaryChannel = useCallback(
+    (id: string, includePending = false) => {
+      const channel = session.channels.get?.(id);
+      return (
+        !!channel &&
+        !channel.huddle &&
+        (includePending || !channel.metadataPending)
+      );
+    },
+    [session],
+  );
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<Result>();
   const owner = useMemo(
@@ -38,13 +49,16 @@ export function useSearchMessages(
       session.channels.subscribeList(() => {
         const previous = copied.current;
         if (!previous) return;
-        const messages = previous.messages.filter(
-          (message) => !!session.channels.get?.(message.channelId),
-        );
-        if (messages.length !== previous.messages.length)
-          replace({ ...previous, messages });
+        // Keep bounded search evidence so completed classification can reveal
+        // ordinary results, while render always checks the current destination.
+        replace({
+          ...previous,
+          messages: previous.messages.filter((message) =>
+            ordinaryChannel(message.channelId, true),
+          ),
+        });
       }),
-    [session, replace],
+    [session, replace, ordinaryChannel],
   );
   useEffect(() => {
     if (!query) return;
@@ -74,7 +88,7 @@ export function useSearchMessages(
               destinations.length !== 1 ||
               !channelId ||
               (scopedChannelId && channelId !== scopedChannelId) ||
-              !session.channels.get?.(channelId)
+              !ordinaryChannel(channelId, true)
             )
               return [];
             // Search returns original indexed events, not an auxiliary edit fold.
@@ -114,11 +128,11 @@ export function useSearchMessages(
       clearTimeout(timer);
       controller.abort();
     };
-  }, [session, query, scopedChannelId, owner, replace]);
+  }, [session, query, scopedChannelId, owner, replace, ordinaryChannel]);
   const current = result?.owner === owner ? result : undefined;
   return {
-    messages: (current?.messages ?? []).filter(
-      (message) => !!session.channels.get?.(message.channelId),
+    messages: (current?.messages ?? []).filter((message) =>
+      ordinaryChannel(message.channelId),
     ),
     loading: !!query && !current,
     error: current?.error,

@@ -249,6 +249,7 @@ export const MessageRow = memo(function MessageRow({
   }, [reportActive, keepMounted, row.id]);
   const report =
     !row.membership &&
+    !row.huddle &&
     (!row.delivery || ["accepted", "seen"].includes(row.delivery))
       ? session?.messages.report
       : undefined;
@@ -412,7 +413,7 @@ export const MessageRow = memo(function MessageRow({
             />
           )}
           <div className={styles.messageHeader}>
-            {!row.membership && (
+            {!row.membership && !row.huddle && (
               <MessageActionBar
                 rowRef={rowRef}
                 menuTriggerRef={menuTrigger}
@@ -525,7 +526,11 @@ export const MessageRow = memo(function MessageRow({
             </span>
           )}
           {extensions?.messages ? (
-            <MessageBody registry={extensions.messages} message={row}>
+            <MessageBody
+              registry={extensions.messages}
+              message={row}
+              open={onOpenLink}
+            >
               {body}
             </MessageBody>
           ) : (

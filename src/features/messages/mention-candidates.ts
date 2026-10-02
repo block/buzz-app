@@ -1,4 +1,4 @@
-import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import type { MentionRecipient } from "./mention-draft";
 import { availableMentionAgents } from "../agents/mention-choices";
 import { knownAgentPubkeys } from "../agents/known";
@@ -8,7 +8,7 @@ import { knownAgentPubkeys } from "../agents/known";
  * choices, fail-open while archive state is unknown, and never hide the viewer
  * from themself (NIP-IA archival stays visible to its subject).
  */
-export function archivedMention(session: RelaySession, pubkey: string) {
+export function archivedMention(session: ComposerSession, pubkey: string) {
   return (
     pubkey !== session.viewer && session.archives?.state(pubkey) === "archived"
   );
@@ -16,7 +16,7 @@ export function archivedMention(session: RelaySession, pubkey: string) {
 
 /** Recipient eligibility, shared by menus, draft naming and insertion. No reads or writes. */
 export function mentionCandidates(
-  session: RelaySession,
+  session: ComposerSession,
   channelId: string,
   inviteAgents = false,
   roster?: readonly MentionRecipient[],
@@ -93,12 +93,15 @@ export function mentionCandidates(
 }
 
 /** Session lifetime isolates community/viewer; bounded per-destination explicit choices. */
-const histories = new WeakMap<RelaySession, Map<string, Map<string, number>>>();
-export function mentionHistory(session: RelaySession, channelId: string) {
+const histories = new WeakMap<
+  ComposerSession,
+  Map<string, Map<string, number>>
+>();
+export function mentionHistory(session: ComposerSession, channelId: string) {
   return histories.get(session)?.get(channelId);
 }
 export function rememberMention(
-  session: RelaySession,
+  session: ComposerSession,
   channelId: string,
   pubkey: string,
 ) {

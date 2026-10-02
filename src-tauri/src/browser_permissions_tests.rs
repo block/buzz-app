@@ -31,7 +31,7 @@ fn invoke(
 }
 
 #[test]
-fn native_command_permissions_allow_only_main_webview() {
+fn native_command_permissions_isolate_webviews() {
     let app = mock_builder()
         // A marker handler proves which requests pass the real generated ACL,
         // without starting terminals, importing plugins or showing notifications.
@@ -57,6 +57,10 @@ fn native_command_permissions_allow_only_main_webview() {
             tauri::LogicalPosition::new(500, 80),
             tauri::LogicalSize::new(300, 500),
         )
+        .unwrap();
+
+    let huddle = tauri::WebviewWindowBuilder::new(&app, "huddle", WebviewUrl::default())
+        .build()
         .unwrap();
 
     let application_commands = [
@@ -149,6 +153,12 @@ fn native_command_permissions_allow_only_main_webview() {
     assert!(invoke(&main, "relay_agent_authorize", local_origin).is_err());
     for command in application_commands {
         assert!(invoke(&main, command, local_origin).is_ok(), "{command}");
+        assert_eq!(
+            invoke(huddle.as_ref(), command, local_origin).is_ok(),
+            command == "media_download",
+            "huddle must only acquire the bounded download command: {command}"
+        );
+        assert!(invoke(huddle.as_ref(), command, "https://example.org").is_err());
         for origin in [local_origin, "https://example.org", "http://localhost:1430"] {
             assert!(
                 invoke(&guest, command, origin).is_err(),

@@ -1,6 +1,6 @@
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useSyncExternalStore } from "react";
-import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import styles from "./TypingIndicator.module.css";
 
 /** Shared presentation only. Mounting more consumers creates no relay work. */
@@ -9,7 +9,7 @@ export function TypingIndicator({
   channelId,
   threadRootId,
 }: {
-  session: RelaySession;
+  session: ComposerSession;
   channelId: string;
   threadRootId?: string | undefined;
 }) {

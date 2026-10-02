@@ -78,7 +78,11 @@ source imports are not a versioned external SDK. See
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.pages.register({ id, title, layout?, companion?, primary?, component })`. Panels register with
-`ctx.panels.register({ id, title, matches, launcher?, component })`. IDs are local to the
+`ctx.panels.register({ id, title, matches, launcher?, toolbar?, component })`.
+An optional `toolbar` component supplies live controls beside shell search in place
+of the static launcher. Its lifetime stays with its plugin; shell render failures
+are isolated and controls unmount when the contribution retires. Huddles is the
+first caller. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` gives a page a row in the
 shell's page navigation. Pages without it are still listed in search and reachable

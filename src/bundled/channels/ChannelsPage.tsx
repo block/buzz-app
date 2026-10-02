@@ -285,9 +285,16 @@ function ChannelWorkspace({
   const panelTrigger = useRef<HTMLElement | null>(null);
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
   const { channels, profiles } = useChannelLabels(
-    list.channels,
+    list.channels.filter(
+      (channel) =>
+        // Wait for metadata so temporary rooms never flash as unnamed channels.
+        !channel.huddle && !channel.metadataPending,
+    ),
     queries.profiles,
     queries.names,
+  );
+  const metadataPending = list.channels.some(
+    (channel) => channel.metadataPending,
   );
   const requestedChannel =
     draftParent ??
@@ -340,7 +347,7 @@ function ChannelWorkspace({
     queries,
     list.status,
   ]);
-  const resolving =
+  const resolvingMembership =
     !!requestedChannel &&
     !joinedRequest &&
     !!queries.channels.resolve &&
@@ -350,7 +357,7 @@ function ChannelWorkspace({
   const emptyDestination =
     navigation?.target.kind === "page" &&
     navigation.target.route?.params === "empty";
-  const current = emptyDestination
+  const requestedDestination = emptyDestination
     ? undefined
     : requestedChannel
       ? (channels.find((channel) => channel.id === requestedChannel) ??
@@ -361,6 +368,13 @@ function ChannelWorkspace({
           : undefined))
       : (channels.find((channel) => channel.id === selected) ??
         channels.find((item) => item.channelType !== "session"));
+  // Exact links and saved selections must respect the same Huddle-only entry point.
+  const resolving =
+    resolvingMembership || !!requestedDestination?.metadataPending;
+  const current =
+    requestedDestination?.huddle || requestedDestination?.metadataPending
+      ? undefined
+      : requestedDestination;
   // Sidebar routing can update the same mounted page. Keep its saved default
   // aligned with the resolved conversation, not only page-local clicks.
   useEffect(() => {
@@ -383,7 +397,12 @@ function ChannelWorkspace({
       !current
     )
       navigation?.complete({ status: "failed", reason: "unavailable" });
-    if (!requestedChannel && !current && list.status === "ready")
+    if (
+      !requestedChannel &&
+      !current &&
+      list.status === "ready" &&
+      (!metadataPending || emptyDestination)
+    )
       navigation?.complete({ status: "opened" });
     if (!requestedChannel && current && navigation && viewer) {
       // Resolve the saved default within this attempt, keeping its caller and deadline.
@@ -400,6 +419,8 @@ function ChannelWorkspace({
   }, [
     cached,
     composingMessage,
+    metadataPending,
+    emptyDestination,
     requestedChannel,
     resolving,
     current,
@@ -1101,6 +1122,7 @@ function ChannelWorkspace({
       else selectOpening(entry);
       return true;
     },
+    () => setMembersOpen(true),
   );
   const tabTools =
     drawerContext && !current?.archived

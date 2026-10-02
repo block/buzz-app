@@ -3,11 +3,12 @@ import type { ComponentType } from "react";
 import type { Contribution } from "../../plugins/contributions";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "../messages/composer-session";
 
 /** Editor-independent reference to plugin content. Not an access grant or recipient. */
 export type ComposerResource = Readonly<{ uri: string; label: string }>;
 export type ComposerToolProps = Readonly<{
-  session: RelaySession;
+  session: ComposerSession;
   scope: string;
   channelId: string;
   threadRootId?: string | undefined;
@@ -92,7 +93,11 @@ export type MessageRenderer = Readonly<{
   id: string;
   title: string;
   matches(message: ChannelMessage): boolean;
-  component: ComponentType<{ message: ChannelMessage }>;
+  component: ComponentType<{
+    message: ChannelMessage;
+    /** Host-owned panel/link activation; unavailable outside a conversation host. */
+    open?: ((target: string) => boolean) | undefined;
+  }>;
 }>;
 export type ConversationExtensions = Readonly<{
   messages?: ContributionReader<MessageRenderer>;

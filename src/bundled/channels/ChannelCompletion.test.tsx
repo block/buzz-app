@@ -103,6 +103,7 @@ it("offers only freshly confirmed joined streams/forums, including private chann
     channel("stream"),
     channel("forum", { channelType: "forum" }),
     channel("private", { private: true }),
+    channel("huddle", { huddle: true }),
     channel("archived", { archived: true }),
     channel("cached", { cached: true }),
     channel("readOnly", { readOnly: true }),
@@ -175,6 +176,7 @@ it("inserts an escaped ID-backed Markdown link, not notification intent", () => 
 it.each<Partial<ChannelSummary>>([
   {},
   { members: [] },
+  { huddle: true },
   { archived: true },
   { cached: true },
   { readOnly: true },

@@ -350,6 +350,30 @@ export const PlayFilledIcon = defineIcon("tabler", TablerPlayFilledIcon);
 import TablerPauseFilledIcon from "@tabler/icons-react/dist/esm/icons/IconPlayerPauseFilled.mjs";
 export const PauseFilledIcon = defineIcon("tabler", TablerPauseFilledIcon);
 
+import TablerArrowsInSimpleIcon from "@tabler/icons-react/dist/esm/icons/IconArrowsMinimize.mjs";
+export const ArrowsInSimpleIcon = defineIcon(
+  "tabler",
+  TablerArrowsInSimpleIcon,
+);
+
+import TablerHeadphonesIcon from "@tabler/icons-react/dist/esm/icons/IconHeadphones.mjs";
+export const HeadphonesIcon = defineIcon("tabler", TablerHeadphonesIcon);
+
+import TablerMicrophoneIcon from "@tabler/icons-react/dist/esm/icons/IconMicrophone.mjs";
+export const MicrophoneIcon = defineIcon("tabler", TablerMicrophoneIcon);
+
+import TablerMicrophoneSlashIcon from "@tabler/icons-react/dist/esm/icons/IconMicrophoneOff.mjs";
+export const MicrophoneSlashIcon = defineIcon(
+  "tabler",
+  TablerMicrophoneSlashIcon,
+);
+
+import TablerPhoneDisconnectIcon from "@tabler/icons-react/dist/esm/icons/IconPhoneOff.mjs";
+export const PhoneDisconnectIcon = defineIcon(
+  "tabler",
+  TablerPhoneDisconnectIcon,
+);
+
 import { HashArrowInArtwork } from "./HashArrowIn";
 export const HashArrowInIcon = defineIcon("custom", HashArrowInArtwork, {
   meaning: "Send to channel",

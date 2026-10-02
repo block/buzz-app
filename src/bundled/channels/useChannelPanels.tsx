@@ -20,6 +20,7 @@ export function useChannelPanels(
   context?: ChannelPanelContext,
   onOpen?: () => void,
   activateTab?: (panel: RegisteredPanel) => boolean,
+  openMembers?: () => void,
 ) {
   const available = useSyncExternalStore(
     panels.subscribe,
@@ -63,6 +64,12 @@ export function useChannelPanels(
       <div className={styles.channelLaunchers}>
         {available
           .filter((panel) => panel.channelLauncher)
+          // Keep the call control next to members, including after plugin re-enable.
+          .sort(
+            (a, b) =>
+              Number(b.key === "buzz.huddles/huddles") -
+              Number(a.key === "buzz.huddles/huddles"),
+          )
           .map((panel) => {
             const Launcher = panel.channelLauncher;
             if (!Launcher) return null;
@@ -71,6 +78,17 @@ export function useChannelPanels(
                 key={`${panel.key}:${panel.revision}`}
                 context={context}
                 pressed={selected?.panel === panel}
+                openMembers={
+                  openMembers
+                    ? () => {
+                        if (
+                          mounted.current === context &&
+                          panels.snapshot().includes(panel)
+                        )
+                          openMembers();
+                      }
+                    : undefined
+                }
                 available={() =>
                   mounted.current === context &&
                   panels.snapshot().includes(panel)

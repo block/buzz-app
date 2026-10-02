@@ -10,6 +10,11 @@ import {
   screen,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
+vi.mock("@tauri-apps/api/core", async (original) => ({
+  ...(await original<typeof import("@tauri-apps/api/core")>()),
+  invoke: vi.fn(async () => {}),
+}));
 import { ImageReviewStage } from "./ImageReviewStage";
 
 afterEach(() => {
@@ -457,4 +462,23 @@ it("changes gallery photos immediately when reduced motion is requested", () => 
     vi.unstubAllGlobals();
     Reflect.deleteProperty(HTMLElement.prototype, "animate");
   }
+});
+
+it("sends the selected image filename with its authenticated native download source", () => {
+  const url = `https://relay.example/media/${"a".repeat(64)}.png`;
+  const source = `http://buzz-media.localhost/${encodeURIComponent(url)}`;
+  render(
+    <ImageReviewStage
+      attachments={[{ url, kind: "image", name: "photo.png" }]}
+      selectedUrl={url}
+      media={() => source}
+      select={() => {}}
+      onOpenLink={() => false}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Download image" }));
+  expect(invoke).toHaveBeenCalledWith("media_download", {
+    source,
+    name: "photo.png",
+  });
 });

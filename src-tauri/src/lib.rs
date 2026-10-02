@@ -9,6 +9,11 @@ mod agent_models;
 mod agents;
 mod deep_links;
 mod dock;
+mod huddle_window;
+use huddle_window::{
+    huddle_window_action, huddle_window_open, huddle_window_reset_incoming, huddle_window_update,
+    huddle_window_watch, HuddleWindow,
+};
 mod host_command;
 mod host_request;
 mod identity;
@@ -17,6 +22,7 @@ mod os_idle;
 use os_idle::get_os_idle_seconds;
 mod relay;
 use identity::{identity_create, identity_export, identity_import, identity_restore, IdentityHost};
+use relay::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
 use relay::{
     media_download, relay_agent_library, relay_agent_log_proof, relay_agent_memories_read,
     relay_agent_observer, relay_agent_resolve, relay_channel_publish, relay_channel_sign,
@@ -375,6 +381,15 @@ async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
 }
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
+        huddle_window_reset_incoming,
+        huddle_window_open,
+        huddle_window_update,
+        huddle_window_watch,
+        huddle_window_action,
+        huddle_open,
+        huddle_close,
+        huddle_pcm,
+        huddle_touch,
         identity_restore,
         identity_import,
         identity_create,
@@ -517,6 +532,8 @@ pub fn run() {
     };
     builder
         .manage(IdentityHost::default())
+        .manage(Huddles::default())
+        .manage(HuddleWindow::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())

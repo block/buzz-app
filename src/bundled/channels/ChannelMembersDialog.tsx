@@ -339,6 +339,8 @@ export function ChannelMembersDialog({
   control,
   close,
   trigger,
+  title = "Channel members",
+  description,
   canOpenLink,
   onOpenLink,
   onOpenConversation,
@@ -348,6 +350,8 @@ export function ChannelMembersDialog({
   control?: AgentControl | undefined;
   close(): void;
   trigger: React.RefObject<HTMLButtonElement | null>;
+  title?: string;
+  description?: string;
 } & MemberNavigation) {
   const reducedMotion = useReducedMotion();
   const presenceId = useId();
@@ -829,10 +833,10 @@ export function ChannelMembersDialog({
       onOpenChange={(open) => {
         if (!open) close();
       }}
-      title="Channel members"
+      title={title}
       height="stable"
       bodyLayout="flex"
-      description={channel?.name}
+      description={description ?? channel?.name}
       closeLabel="Close channel members"
       headerActions={
         <IconButton

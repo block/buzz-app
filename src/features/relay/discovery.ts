@@ -1,5 +1,6 @@
 import { channelVisibility } from "./channel-details-protocol";
 import { sessionMetadata } from "../sessions/metadata";
+import { huddleParent } from "../huddle/lifecycle";
 import { objectBody } from "./body";
 import { newer, hasTag, tag, type RelayEvent } from "./events";
 import type { ChannelSummary } from "./contracts";
@@ -203,8 +204,23 @@ export class DiscoveryState {
         : undefined;
     const roster = this.rosters.get(id);
     const parentId = event && sessionMetadata(tag(event, "about"))?.parentId;
+    const huddle =
+      event && this.isPrivate(id) && huddleParent(tag(event, "about"));
+    // Early desktop trials and legacy clients omitted the parent marker. Match
+    // their generated name plus signed ephemeral metadata, never a name alone.
+    const ttl = event && Number(tag(event, "ttl"));
+    const legacyHuddle =
+      event &&
+      this.isPrivate(id) &&
+      channelType === "stream" &&
+      Number.isSafeInteger(ttl) &&
+      Number(ttl) > 0 &&
+      (this.name(id) === "Huddle" ||
+        this.name(id) === `huddle-${id.slice(0, 8)}`);
     return {
       id,
+      ...(huddle || legacyHuddle ? { huddle: true as const } : {}),
+      ...(huddle ? { parentChannelId: huddle } : {}),
       ...(!this.authorized(id) || this.cached.has(id)
         ? { readOnly: true as const }
         : {}),

@@ -47,6 +47,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { fullSession, type ComposerSession } from "./composer-session";
 import type { RelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
@@ -80,7 +81,7 @@ import type {
   ComposerFormat,
 } from "./composer-dom";
 
-const noChannels: ReturnType<RelaySession["channels"]["list"]> = {
+const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
   status: "idle",
   channels: [],
 };
@@ -90,7 +91,7 @@ const noChannelSubscription = () => () => {};
 export type MessageComposerProps = {
   extensions?: ConversationExtensions | undefined;
   scope: string;
-  session: RelaySession;
+  session: ComposerSession | RelaySession;
   channelId: string;
   channelName: string;
   label?: string | undefined;
@@ -679,7 +680,7 @@ function Composer({
       const uploaded = capturedAttachments.flatMap((item) =>
         item.uploaded ? [item.uploaded] : [],
       );
-      const id = threadRootId
+      const admissionResult = threadRootId
         ? session.messages.reply(
             channelId,
             threadRootId,
@@ -699,6 +700,11 @@ function Composer({
               references,
             )
           : session.messages.send(channelId, content, recipients, uploaded);
+      if (typeof admissionResult !== "string") setSending(true);
+      const id =
+        typeof admissionResult === "string"
+          ? admissionResult
+          : await admissionResult;
       attachments.store.clear();
       onSend?.(id);
       completion.invalidate();
@@ -744,10 +750,11 @@ function Composer({
       }
     }
   }
-  const accessories = extensions?.accessories && (
+  const host = fullSession(session);
+  const accessories = host && extensions?.accessories && (
     <ComposerAccessories
       registry={extensions.accessories}
-      session={session}
+      session={host}
       scope={scope}
       channelId={channelId}
       threadRootId={threadRootId}
@@ -1046,9 +1053,9 @@ function Composer({
           </ComposerFormattingTools>
           {!editing.target &&
             (trailingTool ??
-              (sessionConversation ? (
+              (sessionConversation && host ? (
                 <SessionAgentControl
-                  session={session}
+                  session={host}
                   channelId={channelId}
                   value={selectedAgent}
                   onChange={selectAgent}
@@ -1136,7 +1143,7 @@ function RecipientAvatars({
   disabled,
   remove,
 }: {
-  session: RelaySession;
+  session: ComposerSession | RelaySession;
   recipients: readonly MentionRecipient[];
   disabled: boolean;
   remove(pubkey: string): void;

@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { useMentionChoices } from "./use-mention-choices";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
-import type { RelaySession } from "../../features/relay/session";
+import type { ComposerSession } from "../../features/messages/composer-session";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { matchesMentionQuery } from "./mention-query";
 
 // Demand bookkeeping only, not another profile cache. Missing names do not issue
 // the same network request on every query keystroke; explicit retry remains available.
-const demands = new WeakMap<RelaySession, Set<string>>();
+const demands = new WeakMap<ComposerSession, Set<string>>();
 export function MentionCompletion({
   session,
   scope,

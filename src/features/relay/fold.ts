@@ -3,6 +3,7 @@ import { validatedBlurhash } from "./blurhash";
 import { threadReference } from "./thread-reference";
 import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
+import { huddleRoom } from "../huddle/lifecycle";
 import { newer } from "./events";
 import type { EventData } from "./events";
 import {
@@ -228,6 +229,32 @@ export function foldMessages(
       continue;
     const aux = overlays.get(event.id) ?? [];
     if (deleted(event)) continue;
+    if (event.kind === 48100 || event.kind === 48103) {
+      const room = huddleRoom(event);
+      if (!room || room === channelId) continue;
+      // End cards are authoritative; creator-authored ends still update the start card.
+      if (event.kind === 48103 && event.pubkey !== relayAuthor) continue;
+      rows.push(
+        Object.freeze({
+          id: event.id,
+          channelId,
+          authorId: event.pubkey,
+          createdAt: event.created_at,
+          content: event.kind === 48100 ? "Huddle started" : "Huddle ended",
+          huddle: {
+            room,
+            state:
+              event.kind === 48100 ? ("started" as const) : ("ended" as const),
+          },
+          mentions: [],
+          attachments: [],
+          reactions: [],
+          replyCount: 0,
+          participants: [],
+        }),
+      );
+      continue;
+    }
     if (event.kind === 40099) {
       const membership = membershipChange(event, relayAuthor);
       if (membership)
@@ -359,7 +386,7 @@ export function foldMessages(
       }),
     );
   }
-  return rows.sort(compareMessages);
+  return collapseHuddleCards(rows).sort(compareMessages);
 }
 
 /** Count people, but retain event IDs for author-only removal and duplicate cleanup. */
@@ -416,5 +443,19 @@ export function groupReactions(
           events: Object.freeze(events),
         }),
       ),
+  );
+}
+
+/** Keep a start card stable while it observes its end; preserve a lone end fallback. */
+export function collapseHuddleCards(rows: ChannelMessage[]): ChannelMessage[] {
+  const startedRooms = new Set(
+    rows
+      .filter((row) => row.huddle?.state === "started")
+      .map((row) => row.huddle?.room),
+  );
+  if (!startedRooms.size) return rows;
+  return rows.filter(
+    (row) =>
+      row.huddle?.state !== "ended" || !startedRooms.has(row.huddle.room),
   );
 }

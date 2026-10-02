@@ -31,6 +31,8 @@ export function ProfileChannels({
     list.status === "ready" || list.status === "error" ? list.channels : []
   ).filter(
     (channel) =>
+      !channel.huddle &&
+      !channel.metadataPending &&
       !channel.archived &&
       !channel.hidden &&
       (channel.channelType === "stream" || channel.channelType === "forum") &&
@@ -40,6 +42,7 @@ export function ProfileChannels({
     (list.status === "ready" || list.status === "error") &&
     list.channels.some(
       (channel) =>
+        !channel.huddle &&
         !channel.archived &&
         !channel.hidden &&
         !channel.channelType &&

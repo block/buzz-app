@@ -1,0 +1,41 @@
+.discussion {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.discussion > :last-child {
+  flex: 1;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+}
+.discussion [role="tabpanel"] {
+  min-height: 0;
+  overflow: hidden;
+}
+.thread {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.messages {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-4);
+}
+.empty {
+  padding: var(--space-5);
+  color: var(--text-secondary);
+}
+.notice {
+  padding: var(--space-3);
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+}
+.composer {
+  flex-shrink: 0;
+  padding: var(--space-3);
+}

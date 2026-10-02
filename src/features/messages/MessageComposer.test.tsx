@@ -183,6 +183,8 @@ function mount(
     channels: [{ id: "channel", members: [first.pubkey, second.pubkey] }],
   };
   const rawSession = {
+    // Full-session fixture; the detached editor intentionally omits this capability.
+    unread: undefined,
     viewer,
     messages,
     typing: { snapshot: () => typing, subscribe: () => () => {} },
@@ -266,25 +268,26 @@ function mount(
       },
     },
   ];
-  let props: MessageComposerProps = {
-    session,
-    onSend,
-    scope: "scope",
-    channelId: "channel",
-    channelName: "General",
-    extensions: {
-      tools: { snapshot: () => tools, subscribe: () => () => {} },
-      inline: { snapshot: () => inline, subscribe: () => () => {} },
-      completions: {
-        snapshot: () => completions,
-        subscribe(listener) {
-          completionListeners.add(listener);
-          return () => completionListeners.delete(listener);
+  let props: Omit<MessageComposerProps, "session"> & { session: RelaySession } =
+    {
+      session,
+      onSend,
+      scope: "scope",
+      channelId: "channel",
+      channelName: "General",
+      extensions: {
+        tools: { snapshot: () => tools, subscribe: () => () => {} },
+        inline: { snapshot: () => inline, subscribe: () => () => {} },
+        completions: {
+          snapshot: () => completions,
+          subscribe(listener) {
+            completionListeners.add(listener);
+            return () => completionListeners.delete(listener);
+          },
         },
       },
-    },
-    ...options,
-  };
+      ...options,
+    } as Omit<MessageComposerProps, "session"> & { session: RelaySession };
   const bindChoices = () => {
     const library = props.session.agentLibrary;
     props = {
@@ -351,7 +354,11 @@ function mount(
         for (const listener of completionListeners) listener();
       });
     },
-    retarget(next: Partial<MessageComposerProps>) {
+    retarget(
+      next: Partial<
+        Omit<MessageComposerProps, "session"> & { session: RelaySession }
+      >,
+    ) {
       const changedSession =
         (next.session !== undefined && next.session !== props.session) ||
         (next.scope !== undefined && next.scope !== props.scope);

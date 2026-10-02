@@ -1,9 +1,12 @@
 import { useEffect, useSyncExternalStore } from "react";
-import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "../messages/composer-session";
 
 /** Shared candidates only. Ordinary mentions observe legacy hints without loading
  * them; native inventory is still ensured through the app-owned controller. */
-export function useAgentChoices(session: RelaySession, includeLegacy = true) {
+export function useAgentChoices(
+  session: ComposerSession,
+  includeLegacy = true,
+) {
   const source = session.agentChoices;
   const choices = useSyncExternalStore(
     source.subscribe,

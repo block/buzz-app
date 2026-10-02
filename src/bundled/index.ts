@@ -1,4 +1,6 @@
 import todosManifest from "./todos/manifest.json";
+import huddlesManifest from "./huddles/manifest.json";
+import * as huddles from "./huddles";
 import * as todos from "./todos";
 import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
@@ -43,6 +45,10 @@ import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...huddlesManifest, apiVersion: 1 },
+    module: huddles,
+  },
   { manifest: { ...feedbackManifest, apiVersion: 1 }, module: feedback },
   {
     manifest: { ...todosManifest, apiVersion: 1 },

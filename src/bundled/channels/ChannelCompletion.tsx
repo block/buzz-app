@@ -8,6 +8,8 @@ function eligible(channel: ChannelSummary, viewer: string | undefined) {
     !!viewer &&
     !!channel.name.trim() &&
     !/[\r\n]/.test(channel.name) &&
+    !channel.huddle &&
+    !channel.metadataPending &&
     !channel.archived &&
     !channel.cached &&
     !channel.readOnly &&

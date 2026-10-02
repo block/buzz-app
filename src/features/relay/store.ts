@@ -157,6 +157,7 @@ export function createChannelStore(
     : null;
   // Restored metadata needs confirmation independently of roster progress/retries.
   const pendingMetadata = new Set<string>();
+  const checkedMetadata = new Set<string>();
   const heads = new ByteLru<Head>(maxHeads, maxHeadBytes);
   const windows = new Map<string, WindowState>();
   const tails = new ByteLru<{
@@ -193,11 +194,22 @@ export function createChannelStore(
       listeners.delete(callback);
     };
   }
+  function metadataPending(id: string) {
+    return discovery &&
+      !discovery.metadataVersion(id) &&
+      !checkedMetadata.has(id)
+      ? true
+      : undefined;
+  }
   function setList(next: ChannelList, discoveryChanged = false) {
     const previous = new Map(
       list.channels.map((channel) => [channel.id, channel]),
     );
+    const retained = new Set(next.channels.map((channel) => channel.id));
+    for (const id of checkedMetadata)
+      if (!retained.has(id)) checkedMetadata.delete(id);
     const channels = next.channels.map((channel) => {
+      const pending = metadataPending(channel.id);
       const preview =
         messagePreview(windows.get(channel.id)?.snapshot.rows) ??
         tails.peek(channel.id)?.preview ??
@@ -206,12 +218,14 @@ export function createChannelStore(
       return old &&
         old.name === channel.name &&
         old.description === channel.description &&
+        old.metadataPending === pending &&
         old.visibility === channel.visibility &&
         old.preview === preview &&
         old.hidden === channel.hidden &&
         old.private === channel.private &&
         old.channelType === channel.channelType &&
         old.parentChannelId === channel.parentChannelId &&
+        old.huddle === channel.huddle &&
         old.updatedAt === channel.updatedAt &&
         old.archived === channel.archived &&
         old.readOnly === channel.readOnly &&
@@ -225,7 +239,7 @@ export function createChannelStore(
           (id, index) => id === channel.participants?.[index],
         )
         ? old
-        : Object.freeze({ ...channel, preview });
+        : Object.freeze({ ...channel, metadataPending: pending, preview });
     });
     const sameChannels =
       channels.length === list.channels.length &&
@@ -1183,6 +1197,8 @@ export function createChannelStore(
           { signal: controller.signal },
         );
         if (disposed || generation !== epoch) return;
+        for (const id of wanted.slice(offset, offset + DISCOVERY_LIMIT))
+          checkedMetadata.add(id);
         applyDiscovery(metadata);
         if (disposed || generation !== epoch) return;
       }
@@ -1348,6 +1364,7 @@ export function createChannelStore(
       )
         resumed = discovery.resume(id) || resumed;
     }
+    for (const id of ids) checkedMetadata.add(id);
     // A bounded exact roster fills omissions from capped discovery. Apply grants
     // before private metadata so a newly resolved member never transiently loses access.
     applyDiscovery([
@@ -1557,7 +1574,10 @@ export function createChannelStore(
   }
   const queries: ChannelQueries = Object.freeze({
     list: () => list,
-    get: (id: string) => discovery?.get(id),
+    get: (id: string) => {
+      const channel = discovery?.get(id);
+      return channel && { ...channel, metadataPending: metadataPending(id) };
+    },
     resolve,
     refreshRoster,
     subscribeList: (listener: Listener) => subscribe(listListeners, listener),
@@ -1846,8 +1866,9 @@ export function createChannelStore(
         for (const event of events) {
           if (
             incomingIds.has(event.id) ||
-            ![9, 40002, 40008, 40099, 40003, 5, 9005, 7, 39005].includes(
-              event.kind,
+            !(
+              channelRowKind(event.kind) ||
+              [40003, 5, 9005, 7, 39005].includes(event.kind)
             )
           )
             continue;

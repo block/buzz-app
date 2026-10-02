@@ -321,6 +321,7 @@ export function createAgentActivity(
             if (
               closed ||
               current !== generation ||
+              !canAccess(managementChannel) ||
               [raw, ...items].some((value) => {
                 const item = object(value);
                 return text(item?.channelId) && !canAccess(item.channelId);

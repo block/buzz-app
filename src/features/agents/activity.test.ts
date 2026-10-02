@@ -400,6 +400,60 @@ it("notifies the working-channel subscriber only on set changes, including timer
   unsubscribe();
   f.release();
 });
+it.each([undefined, "visible-channel"])(
+  "rejects a denied payload channel after resolution with envelope channel %s",
+  async (channelId) => {
+    let release!: () => void;
+    const resolution = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const resolve = vi.fn(() => resolution);
+    const observe = vi.fn();
+    const activity = createAgentActivity(
+      true,
+      observe,
+      (id) => id === "visible-channel",
+      (listener) => listener(),
+      resolve,
+    );
+    const receive = vi.fn();
+    activity.management.activate();
+    activity.management.subscribe(receive);
+    activity.state(connected);
+    try {
+      activity.receive(
+        {
+          id: "2".repeat(64),
+          agent,
+          createdAt: Math.floor(Date.now() / 1000),
+          plaintext: JSON.stringify({
+            kind: "agent_management_request",
+            channelId,
+            payload: {
+              type: "agent_management_request",
+              action: "update",
+              requestId: "denied-payload",
+              request: {
+                channelId: "denied-channel",
+                agentName: "Sol",
+                model: "gpt-6-sol",
+              },
+            },
+          }),
+        },
+        observe.mock.lastCall?.[0] as number,
+      );
+      expect(resolve).toHaveBeenCalledExactlyOnceWith("denied-channel");
+      release();
+      await resolution;
+      expect(receive).not.toHaveBeenCalled();
+    } finally {
+      release();
+      activity.dispose();
+    }
+  },
+);
+
 it("resolves an unknown management channel before applying its access check", async () => {
   let allowed = false;
   let resolvePending: (() => void) | undefined;

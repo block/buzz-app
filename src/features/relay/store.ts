@@ -99,7 +99,7 @@ export function createChannelStore(
         restored?(events: readonly RelayEvent[]): void;
         /** Returns true when session post-subscribe catch-up owns this demand. */
         demand?(channelId: string): boolean;
-        rosterChanged?(): void;
+        rosterChanged?(strong?: boolean): void;
       })
     | null,
   directory: ProfileDirectory,
@@ -999,7 +999,7 @@ export function createChannelStore(
     listRetryAt = 0;
     listBusy = true;
     rosterRefresh = Object.freeze({ state: "pending" });
-    transport.rosterChanged?.();
+    transport.rosterChanged?.(consistency.consistency === "strong");
     if (disposed) {
       listBusy = false;
       return;
@@ -1189,9 +1189,6 @@ export function createChannelStore(
       if (!disposed && generation === epoch) outcome = { state: "verified" };
     } catch (error) {
       if (disposed || generation !== epoch) return;
-      // A failed pass has not fulfilled its writer requirement. Even a names
-      // failure retries the roster, which must not fall back to a stale replica.
-      if (consistency.consistency === "strong") strongListAgain = true;
       outcome = isAbort(error)
         ? { state: "deferred" }
         : { state: "error", error: describe(error) };
@@ -1221,6 +1218,14 @@ export function createChannelStore(
         setList({ ...list, status: "error", error: describe(error) });
       }
     } finally {
+      // Failure or interruption has not fulfilled the writer requirement, even
+      // after roster authority landed. Restore it before a queued pass starts.
+      if (
+        !disposed &&
+        consistency.consistency === "strong" &&
+        outcome.state !== "verified"
+      )
+        strongListAgain = true;
       controllers.delete(controller);
       if (!disposed && readingRoster) {
         coverage = "partial";
@@ -1240,15 +1245,16 @@ export function createChannelStore(
   }
   /** Resolve only returned/demanded nonmember channels, through the verified reader.
    *
-   * Two properties here carry the create-channel path in work-sessions.ts
-   * `refresh`, which guards them with real-store tests in work-sessions.test.ts
-   * rather than through this store's own suite:
+   * Search, work-sessions.ts `refresh`, and session.ts membership hints rely on
+   * these properties. The create-channel path guards them with real-store tests
+   * in work-sessions.test.ts rather than through this store's own suite:
    * - The id filter keeps every channel the store does not yet authorize, so a
    *   just-created channel is confirmed by one exact `#d` read instead of the
    *   full viewer-roster rediscovery. Skipping such ids would send every create
-   *   back through the full pass. See "admits a created ... channel through the
-   *   store's exact read without rediscovering the roster". Ids the store
-   *   already authorizes stay skipped: a member addition to a joined channel is
+   *   back through the full pass. Session hints route held channels to the full
+   *   pass because this filter skips them (including unarchive triggers). See
+   *   "admits a created ... channel through the store's exact read without
+   *   rediscovering the roster". A member addition to a joined channel is
    *   confirmed by `refreshRoster` below, not by widening this filter.
    * - Events apply through `applyDiscovery`, which always commits the list as
    *   `ready`. Only resolve into a list discovery has already made ready; on an
@@ -1256,7 +1262,11 @@ export function createChannelStore(
    *   these channels and hide a failed initial discovery. See "creates a channel
    *   during initial discovery without committing a list of only that channel";
    *   its check that every ready snapshot carries the first page's channel is
-   *   the canonical regression test. */
+   *   the canonical regression test.
+   * - Every call is a fresh read that the reader never merges with an identical
+   *   read in flight. The session coalesces hints across deliveries and skips
+   *   ids it is already confirming; a full pass that starts later retires
+   *   those confirmations, so a delayed grant cannot outlive the complete roster. */
   async function resolve(
     channelIds: readonly string[],
     settings?: ChannelReadOptions,

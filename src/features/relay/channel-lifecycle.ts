@@ -277,6 +277,7 @@ export function createChannelLifecycle({
               );
             const permitted = {
               archive: settings.canArchive,
+              unarchive: settings.canUnarchive,
               delete: settings.canDelete,
               leave: settings.canLeave,
               hide: settings.canHide,
@@ -333,10 +334,16 @@ export function createChannelLifecycle({
                 true,
               );
               const record = lifecycleRecord(events, kind, id, relayAuthor);
-              if (action === "archive") {
+              if (action === "archive" || action === "unarchive") {
+                const archived =
+                  record && exactLifecycleTag(record, "archived");
+                // The relay omits the archived tag on active channels. Absence
+                // of the whole record is never evidence of restoration.
                 if (
                   record &&
-                  exactLifecycleTag(record, "archived") === "true"
+                  (action === "archive"
+                    ? archived === "true"
+                    : archived === undefined || archived === "false")
                 ) {
                   acceptDiscovery([record]);
                   return;

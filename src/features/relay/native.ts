@@ -77,6 +77,7 @@ export const nativeWriteKinds = [
   9000,
   9001,
   30030,
+  30177,
   30315,
   40003,
   40100,

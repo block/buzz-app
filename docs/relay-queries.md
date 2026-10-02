@@ -78,11 +78,13 @@ confirmation retries are unchanged.
 
 Channel discovery accepts an explicit consistency option for post-write exact
 reads and the full-roster fallback. A queued writer-backed refresh survives an
-older in-flight pass or quota pause. If the writer-backed pass itself fails,
-including its metadata phase, its explicit retry retains writer routing and the
+older in-flight pass or quota pause. If the writer-backed pass itself fails or
+is interrupted, including its metadata phase, its next pass retains writer routing and the
 existing cooldown; a successful pass returns later refreshes to ordinary routing.
-Signed membership hints request that same full writer-backed pass, including metadata;
-ordinary startup, browsing, reconnect, and DM visibility refresh stay replica-
+Signed membership hints use writer-backed exact reads or the existing full-roster
+fallback, including metadata. A replica pass superseding pending exact hint
+confirmations queues a writer-backed pass to settle those grants.
+Ordinary startup, browsing, reconnect, and DM visibility refresh stay replica-
 eligible. The details editor and member-administration capability use writer-backed
 state for their shared load/preflight/confirmation reads; the member dialog's
 separate display-roster load remains replica-eligible. Work-session membership
@@ -709,7 +711,19 @@ including failures when no channel is selected. The store owns that obligation,
 the optional metadata read, and its learned retry time; live Retry and diagnostic
 Refresh channels share the same cooldown. Metadata failure never revokes successful
 membership authority. Hints during an active read coalesce into one follow-up;
-a refused read retains the obligation without draining queued work. Live Retry
+a member-added hint naming a channel the viewer does not yet hold confirms only
+that channel when the list is already ready, while removals, unnamed hints, held
+channels and CLOSED still schedule the full refresh. Named hints arriving
+together share one exact read, a channel already being confirmed is not read
+again, and a full refresh that starts afterwards retires pending confirmations
+in favour of its own result. A full refresh that fails while a confirmation is
+pending keeps its error for Retry rather than triggering another refresh, but a
+superseding refresh that a concurrent revocation interrupts before it settles
+reruns, because the grants it inherited still need a complete roster. A cache
+clear or disconnect drops queued and pending confirmations outright, before a
+queued hint can read into the new session state; the next establishment's
+refresh or Retry owns recovery there.
+A refused read retains the obligation without draining queued work. Live Retry
 retries failed/deferred work, not every successful refresh or healthy subscription.
 A new channel-route failure with Buzz's `restricted: channel access revoked`
 reason schedules this same coalesced refresh. CLOSED is a hint, not archive or

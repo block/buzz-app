@@ -15,8 +15,11 @@ import {
 import {
   ArrowsDownUpIcon,
   CaretDownIcon,
+  CaretUpIcon,
   DotsThreeIcon,
   PlusIcon,
+  TextAaIcon,
+  TimerIcon,
 } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import type { RelaySession } from "../../features/relay/session";
@@ -77,7 +80,7 @@ export function SidebarSection({
               aria-label="New message"
               title="New message"
               onClick={newMessage}
-              icon={<PlusIcon weight="bold" size={15} />}
+              icon={<PlusIcon strokeWidth={2.5} size={15} />}
             />
           )}
         </div>
@@ -108,7 +111,7 @@ export function SidebarSection({
               <FadingLabel className={styles.sectionTitle}>{title}</FadingLabel>
             </span>
             <span className={`${styles.sidebarIcon} ${styles.sectionChevron}`}>
-              <CaretDownIcon weight="bold" size={15} />
+              <CaretDownIcon strokeWidth={2.5} size={15} />
             </span>
           </summary>
         </details>
@@ -120,7 +123,7 @@ export function SidebarSection({
                   {...props}
                   size="compact"
                   aria-label={`More actions for ${title}`}
-                  icon={<DotsThreeIcon weight="bold" size={15} />}
+                  icon={<DotsThreeIcon strokeWidth={2.5} size={15} />}
                 />
               )}
             />
@@ -145,9 +148,15 @@ export function SidebarSection({
                       }}
                     >
                       <MenuRadioItem closeOnClick={false} value="recent">
+                        <MenuIcon>
+                          <TimerIcon size={14} />
+                        </MenuIcon>
                         Recent
                       </MenuRadioItem>
                       <MenuRadioItem closeOnClick={false} value="alpha">
+                        <MenuIcon>
+                          <TextAaIcon size={14} />
+                        </MenuIcon>
                         A–Z
                       </MenuRadioItem>
                     </MenuRadioGroup>
@@ -160,6 +169,13 @@ export function SidebarSection({
                   setMenuOpen(false);
                 }}
               >
+                <MenuIcon>
+                  {open ? (
+                    <CaretUpIcon size={14} />
+                  ) : (
+                    <CaretDownIcon size={14} />
+                  )}
+                </MenuIcon>
                 {open ? "Collapse section" : "Expand section"}
               </MenuItem>
             </MenuPopup>
@@ -170,7 +186,7 @@ export function SidebarSection({
               aria-label="New message"
               title="New message"
               onClick={newMessage}
-              icon={<PlusIcon weight="bold" size={15} />}
+              icon={<PlusIcon strokeWidth={2.5} size={15} />}
             />
           )}
           {createChannel && (
@@ -184,7 +200,7 @@ export function SidebarSection({
               }
               disabled={!createChannel.available}
               onClick={(event) => createChannel.open(event.currentTarget)}
-              icon={<PlusIcon weight="bold" size={15} />}
+              icon={<PlusIcon strokeWidth={2.5} size={15} />}
             />
           )}
         </div>

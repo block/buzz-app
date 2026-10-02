@@ -2511,6 +2511,21 @@ test("lifecycle uses dedicated shape-limited host routes, never the message writ
       400,
     );
     expect(h.publications).toHaveLength(1);
+    const unarchive = {
+      ...template,
+      kind: 9002,
+      tags: [
+        ["h", id],
+        ["archived", "false"],
+      ],
+    };
+    expect((await h.post("sign", unarchive)).status).toBe(400);
+    const restore = await transport.channelLifecycle.sign(unarchive, signal);
+    expect(verifyEvent(restore)).toBe(true);
+    expect(restore).toMatchObject(unarchive);
+    expect((await h.post("publish", restore)).status).toBe(400);
+    await transport.channelLifecycle.publish(restore, signal);
+    expect(h.publications).toHaveLength(2);
   } finally {
     live?.dispose();
     await h.close();
@@ -2879,9 +2894,14 @@ test("details routes are narrow, require the live owner, and do not widen lifecy
       { ...template, kind: 9001 },
       { ...template, content: "extra" },
       { ...template, tags: [...template.tags, ["archived", "true"]] },
+      ...["0", "-1", "1.5", "2147483648"].map((ttl) => ({
+        ...template,
+        tags: [...template.tags, ["ttl", ttl]],
+      })),
+      { ...template, tags: [...template.tags, ["ttl", "60"], ["ttl", "60"]] },
       {
         ...template,
-        tags: [...template.tags.slice(0, 3), ["visibility", "open"]],
+        tags: [...template.tags.slice(0, 3), ["visibility", "public"]],
       },
       { ...template, tags: [template.tags[0], ["topic", "x"]] },
       {
@@ -2904,12 +2924,33 @@ test("details routes are narrow, require the live owner, and do not widen lifecy
     live = await openBrokerSocket(transport);
     await transport.channelDetails.publish(event, signal);
     expect(h.publications).toHaveLength(1);
+    for (const ttl of ["604800", ""]) {
+      const change = { ...template, tags: [...template.tags, ["ttl", ttl]] };
+      expect((await h.post("sign", change)).status).toBe(400);
+      expect((await h.post("channel-lifecycle-sign", change)).status).toBe(400);
+      const signed = await transport.channelDetails.sign(change, signal);
+      expect(signed).toMatchObject(change);
+      await transport.channelDetails.publish(signed, signal);
+    }
+    const reopening = {
+      ...template,
+      tags: [...template.tags.slice(0, 3), ["visibility", "open"]],
+    };
+    expect((await h.post("sign", reopening)).status).toBe(400);
+    expect((await h.post("channel-lifecycle-sign", reopening)).status).toBe(
+      400,
+    );
+    const reopened = await transport.channelDetails.sign(reopening, signal);
+    expect(reopened).toMatchObject(reopening);
+    expect((await h.post("publish", reopened)).status).toBe(400);
+    await transport.channelDetails.publish(reopened, signal);
+    expect(h.publications).toHaveLength(4);
     const foreign = finalizeEvent(
       structuredClone(template),
       new Uint8Array(32).fill(5),
     );
     expect((await h.post("channel-details-publish", foreign)).status).toBe(400);
-    expect(h.publications).toHaveLength(1);
+    expect(h.publications).toHaveLength(4);
   } finally {
     live?.dispose();
     await h.close();
@@ -3014,6 +3055,111 @@ test("member administration uses isolated shape-limited routes and the current c
     expect(h.publications).toHaveLength(2);
   } finally {
     live?.dispose();
+    await h.close();
+  }
+});
+
+test("inventory inspection returns saved identities without owner resolution or publication", async () => {
+  const key = new Uint8Array(32);
+  key[31] = 7;
+  const pubkey = "ab".repeat(32);
+  let forged = false;
+  let member = true;
+  const h = await harness(
+    () => {
+      const event = finalizeEvent(
+        {
+          kind: 30177,
+          created_at: 1700000000,
+          content: JSON.stringify({ name: "Saved agent" }),
+          tags: [["d", member ? pubkey : "cd".repeat(32)]],
+        },
+        key,
+      );
+      if (forged) event.sig = "00".repeat(64);
+      return Response.json([event]);
+    },
+    { archiveAuthority: getPublicKey(key) },
+  );
+  const route = `${encodeURIComponent(fixtureRelayUrl)}/agent-inventory`;
+  try {
+    expect((await h.post("agent-inventory", {})).status).toBe(400);
+    expect((await h.post(route, { confirmed: true })).status).toBe(400);
+    expect(h.calls).toHaveLength(0);
+    expect(await (await h.post(route, {})).json()).toEqual({
+      identities: [pubkey],
+    });
+    member = false;
+    expect(await (await h.post(route, {})).json()).toEqual({
+      identities: ["cd".repeat(32)],
+    });
+    forged = true;
+    expect((await h.post(route, {})).status).toBe(409);
+    expect(h.publications).toHaveLength(0);
+  } finally {
+    await h.close();
+  }
+  const unavailable = await harness(() => Response.json([]));
+  try {
+    expect(await (await unavailable.post(route, {})).json()).toEqual({
+      identities: [],
+    });
+    expect(unavailable.calls).toHaveLength(1);
+  } finally {
+    await unavailable.close();
+  }
+});
+
+test("inventory rejects foreign pages, ignores invalid heads and follows exact-key pages", async () => {
+  const key = new Uint8Array(32);
+  key[31] = 7;
+  const foreign = new Uint8Array(32);
+  foreign[31] = 8;
+  const pubkey = "ab".repeat(32);
+  const record = (
+    d,
+    content = '{"name":"Same name"}',
+    time = 1,
+    author = key,
+    kind = 30177,
+  ) =>
+    finalizeEvent(
+      { kind, created_at: time, content, tags: [["d", d]] },
+      author,
+    );
+  let rows = [];
+  const h = await harness(({ body }) =>
+    Response.json(body[0].before_id ? [record(pubkey)] : rows),
+  );
+  const route = `${encodeURIComponent(fixtureRelayUrl)}/agent-inventory`;
+  const input = {};
+  try {
+    rows = [record(pubkey, undefined, 1, foreign)];
+    expect((await h.post(route, input)).status).toBe(409);
+    for (const invalid of [
+      [record(pubkey, "not JSON")],
+      [record(pubkey), record(pubkey, "null", 2)],
+
+      [record(pubkey, '{"display_name":"Template"}', 1, key, 30175)],
+    ]) {
+      rows = invalid;
+      expect(await (await h.post(route, input)).json()).toEqual({
+        identities: [],
+      });
+    }
+    rows = Array.from({ length: 200 }, (_, i) =>
+      record(i.toString(16).padStart(64, "0")),
+    );
+    expect((await h.post(route, input)).status).toBe(200);
+    expect(h.calls.at(-1).body[0]).toMatchObject({
+      until: 1,
+      before_id: [...rows]
+        .map((e) => e.id)
+        .sort()
+        .at(-1),
+    });
+    expect(h.publications).toHaveLength(0);
+  } finally {
     await h.close();
   }
 });

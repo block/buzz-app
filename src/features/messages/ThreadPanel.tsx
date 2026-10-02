@@ -36,6 +36,7 @@ import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
+import { correctScrollTop } from "./scroll-correction";
 
 export type ThreadPanelProps = {
   extensions?: ConversationExtensions | undefined;
@@ -226,6 +227,11 @@ function ThreadMessages({
     view.snapshot,
     view.snapshot,
   );
+  // Read the current root only when sharing; paging must not invalidate every reply row.
+  const getThreadRoot = useCallback(() => {
+    const current = view.snapshot();
+    return current.status === "ready" ? current.root : undefined;
+  }, [view]);
   const tree = useMemo(
     () => replyTree(snapshot.replies, snapshot.root?.id),
     [snapshot.replies, snapshot.root?.id],
@@ -584,14 +590,17 @@ function ThreadMessages({
           ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
         ].find((row) => row.dataset.messageId === anchor.id);
         if (row)
-          element.scrollTop += row.getBoundingClientRect().top - anchor.top;
+          correctScrollTop(
+            element,
+            row.getBoundingClientRect().top - anchor.top,
+          );
         if (snapshot.status !== "loading") olderAnchor.current = undefined;
       }
     }
     if (targetAnchor.current !== undefined) {
       const offset = selectedOffset();
       if (offset !== undefined) {
-        element.scrollTop += offset - targetAnchor.current;
+        correctScrollTop(element, offset - targetAnchor.current);
         targetAnchor.current = offset;
         follow.current = false;
       }
@@ -725,6 +734,7 @@ function ThreadMessages({
           scope={scope}
           onReply={snapshot.root ? targetReply : undefined}
           row={row}
+          getThreadRoot={getThreadRoot}
           profile={profiles.get(row.authorId)}
           participantProfiles={profiles}
           agentPubkeys={agentPubkeys}

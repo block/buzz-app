@@ -15,7 +15,12 @@ export interface AgentDraft {
   databricks?: { host: string; filter: string } | null;
 }
 export function isGoose(command: string): boolean {
-  return command.replaceAll("\\", "/").split("/").at(-1) === "goose";
+  const name = command
+    .replaceAll("\\", "/")
+    .split("/")
+    .at(-1)
+    ?.replace(/\.exe$/, "");
+  return name === "goose" || name === "goose-acp";
 }
 /** Agent defaults harness a saved command belongs to, matching native. */
 export function harnessKind(
@@ -23,7 +28,7 @@ export function harnessKind(
 ): "buzz-agent" | "goose" | "pi" | undefined {
   const name = command.replaceAll("\\", "/").split("/").at(-1);
   if (name === "buzz-agent") return "buzz-agent";
-  if (name === "goose") return "goose";
+  if (isGoose(command)) return "goose";
   if (name === "buzz-pi-acp") return "pi";
   return undefined;
 }
@@ -43,6 +48,17 @@ const GOOSE_API_KEYS: Record<string, { label: string; env: string }> = {
 };
 export function gooseApiKey(provider: string) {
   return GOOSE_API_KEYS[provider];
+}
+export function effectiveGooseProvider(
+  provider: string,
+  environment: Record<string, string | null>,
+  savedKeys: string[],
+) {
+  const override = environment.GOOSE_PROVIDER;
+  if (typeof override === "string") return override;
+  if (override === undefined && savedKeys.includes("GOOSE_PROVIDER"))
+    return null;
+  return provider;
 }
 // Pi provider key variables from `pi --help`. Buzz never inherits shell-exported
 // keys, so these are the providers someone can sign in to from the agent form.

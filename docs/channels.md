@@ -307,7 +307,8 @@ change shared-menu styling.
 
 The row menu resolves fresh relay-authored metadata (`39000`), administrators
 (`39001`) and membership (`39002`) at exact channel coordinates before offering
-Archive/Delete/Leave or DM Hide. Archive requires a direct owner/admin role;
+Archive/Unarchive/Delete/Leave or DM Hide. Archive and Unarchive require a direct
+owner/admin role;
 Delete is offered to a direct owner or a member with verified ownership evidence
 for an owner-role agent; the last direct owner cannot Leave. The menu omits Leave
 when it is forbidden, without an ownership-transfer explanation. Action labels
@@ -318,12 +319,13 @@ owners' latest signed kind-0 profiles in bounded exact-author batches, then veri
 the unique NIP-OA tag, target binding, owner signature and conditions against the
 profile event. Display-only owner fields and agent hints never qualify. The
 existing shared verifier owns these checks; no new relay query or deployment is
-needed. Direct owners, DMs, archived channels and Archive/Leave execution do not
-require these optional profile reads. A failed five-second owner-profile lookup
+needed. Direct owners, DMs, archived channels and Archive/Unarchive/Leave
+execution do not require these optional profile reads. A failed five-second owner-profile lookup
 preserves independently established Archive/Leave, omits Delete and exposes
 "Delete check unavailable" with explicit retry in both surfaces. Settings keeps
 its retry button focusable and busy during a fresh read, without retaining stale
-actions. If focus is still on recovery when the read finishes, it moves to the
+actions. Pending progress stays inside the button spinner, not a duplicate visible
+status sentence. If focus is still on recovery when the read finishes, it moves to the
 retry, an allowed action (Delete first), or a no-actions status. Moving focus
 elsewhere while waiting cancels that handoff.
 
@@ -335,8 +337,8 @@ Profile replacement does not establish relay ownership transfer or revocation.
 The viewer signs the unchanged Delete command and the relay enforces its stored
 ownership and current channel state. A definitive rejection retains the channel
 and recoverable confirmation; uncertain delivery still blocks blind resubmission.
-Archive/Leave depend only on the viewer's own channel role. Existing membership
-requirements remain; nonmember access, owner-agent Archive authority and
+Archive/Unarchive/Leave depend only on the viewer's own channel role. Existing
+membership requirements remain; nonmember access, owner-agent Archive/Unarchive authority and
 community-admin overrides are not added.
 Membership accepts NIP-29 `p` tags with optional relay and role fields
 (`["p", pubkey, relay_hint?, role?]`), including the relay's four-field roster.
@@ -354,18 +356,36 @@ though Leave is forbidden, while an ordinary admin without owner-agent evidence 
 Forbidden entries are omitted; failed checks offer retry and unsupported
 connections explain unavailability. DMs, sessions and read-only nonmember/cached views have no channel
 lifecycle entries. Archived channels cannot be deleted:
-the relay rejects Delete while archived. An administrator must restore the channel
-through another supported client before deletion.
+the relay rejects Delete while archived. A direct owner/admin can restore it with
+**Unarchive channel**, which replaces Archive in the same Settings position, before
+deletion.
 These controls hand off to the same persistent sidebar confirmation/navigation
 owner, so confirmed removal can unmount Settings without cancelling completion.
 Cancellation returns focus to the originating Settings button (or the sidebar
-fallback if that entry has gone away). Archive retains messages and membership;
-restore requires another supported client until archived browsing/restore lands.
-Archive confirmation explains that a channel administrator can unarchive later
-using another supported client, and that this app cannot restore it yet. Archive and Leave
-use the default button style in Settings. Archive, Leave and Hide confirmation
-primary actions use the prominent variant; Delete remains destructive and Cancel
-keeps the default secondary style.
+fallback if that entry has gone away). Archive retains the current conversation,
+messages, membership and open Settings, replacing Archive with Unarchive after a
+fresh permission read. The conversation stays selected after reload; archived
+write restrictions still apply. When refreshed Settings actions remount, focus
+returns to its persistent Settings-tab close control instead of an unrelated sidebar row;
+joined archived channels remain available by name in search, labeled **Archived
+channel**, but stay out of the sidebar and Recent activity. Open the search result
+and Settings to restore it. This uses the existing membership discovery and exact
+navigation, not a new archived-channel directory or nonmember discovery.
+Unarchive publishes the existing narrow `9002` command with `archived=false` and
+requires fresh relay metadata with a missing/false archive tag before updating
+shared discovery; a missing record is not success. Restoration returns the sidebar
+row and keeps the current conversation and Settings open, with fresh actions.
+When upgrading an already-running development server, restart the **Node process**
+before trying Unarchive: Vite's in-process restart can retain the broker's imported
+archive-only validator even while the browser has the new action. A page reload
+alone does not update that host module.
+Archive, Unarchive and Leave use the default button style in Settings. Archive,
+Unarchive, Leave and Hide confirmation primary actions use the prominent variant; Delete remains destructive and Cancel
+keeps the default secondary style. Every shared confirmation shows its pending
+state inside the primary button using the standard loading spinner (with an
+accessible status), without adding a visible status paragraph. Duplicate submission
+and Cancel/Escape remain blocked until the operation settles; rejection restores
+the action, while an uncertain outcome still blocks blind resubmission.
 Delete keeps the named-channel warning and destructive confirmation button without
 requiring the channel name to be typed. Metadata and member-role editing remain
 separate.
@@ -374,8 +394,16 @@ Each command has explicit confirmation. The lifecycle owner rechecks signed chan
 profile eligibility before signing and again before publication, validates
 the returned command, and confirms relay-owned state before removing a row. Archive retains membership;
 confirmed Delete/Leave use the existing access-loss purge. Commands use narrow
-development-broker routes, never the message outbox or automatic replay. Hosts
-without this capability display an unavailable notice; packaged native transport supports these dedicated commands.
+development-broker routes or the packaged native `relay_channel_sign` and
+`relay_channel_publish` commands, never the message outbox or automatic replay.
+Both hosts admit only the exact two-tag `9002` shape with `archived=true` (Archive)
+or `archived=false` (Unarchive); other values, extra tags, cross-route commands and
+altered or foreign signatures are rejected. Hosts without this capability display
+an unavailable notice. Native Unarchive requires rebuilding/restarting the desktop
+binary; updating the frontend alone does not update the Rust validator. Rust
+validator and production-IPC tests cover both values, but do not establish an
+installed desktop Archive → Unarchive round trip against a live relay; that
+acceptance remains outstanding.
 
 Main’s DM × remains local removal, including restoration on new message evidence.
 The separate, confirmed Hide conversation action publishes `41012`, not Leave or Delete. The separate relay-authored `30622`
@@ -391,9 +419,9 @@ confirmation has an uncertain outcome, the dialog warns that the command may hav
 taken effect, disables blind resubmission and asks the user to close and refresh
 channels. Cancellation/cache clear/session replacement fence late results but cannot
 retract a request already sent. Cancellation returns focus to the originating row;
-confirmed removal moves an active conversation to another available destination
+confirmed Delete, Leave or Hide moves an active conversation to another available destination
 (or the neutral Messages page) with a visible sidebar-row focus fallback. Last-row
-completion uses the explicit version-1 Channels route `"empty"`, which bypasses
+Delete/Leave/Hide completion uses the explicit version-1 Channels route `"empty"`, which bypasses
 saved/default conversation selection, including after reload. Retained archived or
 hidden membership cannot reopen itself through that destination; intentional exact
 navigation to a hidden DM remains supported.
@@ -401,9 +429,11 @@ navigation to a hidden DM remains supported.
 ## Channel-management modal dismissal
 
 Channel-management modals explicitly opt into the shared Dialog's backdrop-click
-cancellation. Create, Edit details, Canvas, Members, lifecycle confirmations,
-new sections, personal groups and templates/teams use the same Close/Cancel path
-for outside clicks. Clicks inside or in portaled controls do not dismiss them.
+cancellation. Canvas, Members, lifecycle confirmations, new sections, personal
+groups and templates/teams use the same Close/Cancel path for outside clicks.
+Create and Edit details use their Close path: untouched forms close immediately;
+changed drafts require discard confirmation, while explicit Cancel discards immediately.
+Clicks inside or in portaled controls do not dismiss them.
 The non-modal Settings panel is unchanged; the shared Dialog default stays opt-in.
 
 Canvas reload, template/team deletion and template replacement use nested shared
@@ -421,14 +451,24 @@ No dismissal saves, retries, replaces setup or confirms a destructive action.
 
 Channel Settings shows the signed name, description and explicit visibility for
 ordinary channels; missing visibility stays **Not available**, not implicitly
-Public. **Edit details** opens the shared Dialog with one Name/Description/Visibility
-draft. Selecting Private does not publish. **Save changes** submits all fields
-together and is enabled only for valid, changed values. **Cancel**, Close and
-Escape discard unsaved edits and return focus to Edit details without closing
-Settings. Pending saves and status checks block dialog dismissal; an uncertain
-save may be closed and reopened through **Review pending changes** for check-only
-recovery, never a blind resend. The panel retains its own Close/Escape focus
-return, conversation and collapsed Diagnostics.
+Public. **Edit details** opens the shared Dialog with one Name/Description/Duration/Private
+draft. Duration uses Create's Ongoing/Temporary cards, and Private uses the same
+switch in the action row. These controls stage changes; neither publishes immediately.
+**Save changes** submits the draft together and is enabled only for valid, changed values.
+**Cancel** explicitly discards edits and closes without confirmation. Close, Escape
+and backdrop clicks close untouched forms immediately; changed drafts first show
+**Discard changes?** with **Keep editing** initially focused. Keep editing, Escape,
+Close or a backdrop click in that confirmation returns to the intact form.
+**Discard changes** drops the draft and returns focus to Edit details without
+closing Settings, as does the form’s explicit **Cancel**. Pending saves and status
+checks block dialog dismissal and show a
+loading spinner on the disabled **Edit details** button without changing its label.
+Saving and permission loading do not add text status rows or reserve empty space;
+viewers without editing authority see neither Edit details nor an explanatory hint.
+Actionable errors and uncertain-save warnings remain visible.
+After an uncertain outcome, **Edit details** re-enables so the save may be closed
+and reopened for check-only recovery, never a blind resend. The panel retains its
+own Close/Escape focus return, conversation and collapsed Diagnostics.
 Names accept 1–120 code points and descriptions up to 1,000. Typing and paste
 are capped at those limits without splitting Unicode code points; a middle edit
 keeps the existing suffix and accepts only the inserted text that fits. Existing
@@ -442,13 +482,97 @@ before validation, signing and confirmation. Empty descriptions clear the value.
 rejected with a specific explanation only when present, not as part of length
 feedback. Command validation still rejects oversized input independently of the UI.
 
+### Create/Edit form parity
+
+The dialogs share `ChannelTextField` for Name and Description: the same code-point
+input caps, middle-edit preservation, label-row counters and connected errors.
+Both forms canonicalize names with `canonicalDetailsName` before handing off the
+draft. `ChannelDurationField` shares the Ongoing/Temporary cards and draft-only
+subtle minus/plus controls beside the selected Temporary card. Unselected copy is
+“Cleans up without activity.”; selected copy is “Cleans up **after [duration]** without
+activity.” `motion/react` expands/collapses the middle phrase and the adjustment
+space together over 200ms, without scaling text. The middle phrase uses Medium
+weight and standard text color against muted surrounding copy. Reduced motion and
+keyboard navigation switch immediately; hidden controls are inert and excluded
+from accessibility, with one complete accessible description per state.
+Steps are **1 day ↔ 7 days ↔ 2 weeks**, starting at seven days, with
+unavailable directions disabled. Switching to Ongoing and back retains the chosen
+time within the draft. Private reuses the shared switch, left-aligned in each
+footer with matching enabled/disabled label treatment. Both forms use a compact
+12px header-to-body gap and 16px field spacing. Write ownership stays with each
+workflow.
+
+Both forms show Description immediately; Create opens with Name focused and keeps
+Description optional. The workflows intentionally remain distinct: Create owns
+template setup plus frozen creation retry; Edit shows the
+saved description, retains custom durations, and owns authority/conflict checks,
+Save/Cancel and check-only uncertainty recovery. Create still trims optional
+Description on submission; Edit preserves its exact text and can explicitly clear it.
+
+Both dialogs opt into backdrop dismissal and guard Close, Escape and backdrop
+dismissal with an in-dialog discard confirmation when the draft differs. Comparison covers raw
+text, staged privacy and effective duration; Create also compares accepted template
+setup, treating the opening group's automatic default as initial data. Reverting
+all fields removes the warning. Pending operations still block dismissal, and
+frozen/uncertain requests remain owned by recovery rather than being offered for
+discard. Returning from a discard confirmation focuses Name and retains the draft.
+
+Create has no destination picker. Opening from a saved group's sidebar + fixes
+that destination for the draft and titles the modal **Create a channel in [icon]
+[group name]**, reusing the sidebar's decorative Unicode/custom-emoji renderer.
+Opening from the general Channels section stays ungrouped and uses **Create a
+channel**. Group placement remains managed through the left-nav Move action.
+Group template defaults and frozen retry input remain unchanged; unavailable groups
+block a new create rather than silently falling back to a different destination.
+
+Create's session and existing creation helper also use `canonicalDetailsName`,
+including template preflight and ordinary recovery matching. New frozen intent and
+signed names retain the relay's Unicode rules: trim Unicode White_Space and leading
+hashes, preserve U+FEFF, then enforce the code-point limit. This is cleanup, not a
+new invisible-character policy. Recovery derives its comparison name without
+rewriting a saved command: retry still publishes the exact original signed event.
+
 Editing requires fresh relay-authored metadata (`39000`), administrators (`39001`)
 and membership (`39002`) for the exact channel, plus current session participation.
 Only direct channel owners/admins may edit ordinary stream/forum channels. Cached,
 read-only, archived, DM and work-session views do not offer this editor. A local
 key, delegated agent role or community-admin status does not imply channel authority.
-Public → private is supported with an explanation before Save; private → public
-is not. The relay remains the final authority.
+Public ↔ private is supported as a draft choice, never an immediate mutation.
+In both Create and Edit, a Private toggle normally replaces the form with a confirmation
+step in the same modal. The whole surface crossfades using `motion/react`: the form scales from
+1 to 1.05 and blurs while confirmation sharpens from 0.95 to 1. Returning reverses
+the transition; reduced motion and keyboard navigation swap immediately. Outgoing
+controls are inert, with one backdrop and focus trap throughout. This happens
+before changing the switch, including a reversal back to the saved
+value. There is one backdrop and focus trap, not a second overlaid modal. Public → private says
+“Only channel members will have access.” Private → public explicitly warns that everyone in
+this community can view the channel's full history. Continue
+only stages the choice; Create channel or Save changes still performs the write. Cancel/Escape or
+the confirmation's Close control leaves the switch unchanged and returns to the
+intact form with focus on the switch. All other draft fields—including Create's
+selected destination and accepted template setup—survive either path. The consequence
+is shown once in the confirmation body, connected as the dialog's accessible description.
+**Don’t show me this again** is saved only on **Continue** and skips both public and
+private warnings. It is a device-local preference shared by Create and Edit for the
+same community/viewer scope, using the existing view-state storage. Existing opt-outs
+for either direction also skip both warnings. Cancel, Escape,
+Close and backdrop dismissal do not remember it. If storage is unavailable or invalid,
+the warning remains enabled. Skipping the warning still only stages the choice:
+Create/Save, authorization and discard protection are unchanged. Busy/frozen creation
+cannot open confirmation, and restoring a frozen attempt dismisses an open confirmation.
+In Edit, visibility is sent only when changed (`private` or `open`);
+text-only edits omit it so they do not reopen the channel in the remaining write race.
+The relay remains the final authority.
+
+Temporary defaults to seven days without activity, matching Create. Existing custom
+positive durations are shown accurately and retained until explicitly adjusted;
+minus/plus selects the nearest offered shorter/longer step without silently rounding
+on open. Frozen Create recovery displays the exact original duration and disables
+adjustment. Editing text or toggling back to the original lifetime does not reset
+the relay cleanup deadline. A duration change
+emits the existing `ttl` command (positive seconds for Temporary, empty to clear for
+Ongoing). Absent signed metadata TTL means Ongoing; malformed/duplicate TTL fails
+closed. Confirmation checks the exact duration alongside the other draft fields.
 
 `features/relay/channel-details.ts` owns the command and uncertain intent. It
 rechecks authority and the edit's metadata version immediately before signing and
@@ -459,9 +583,15 @@ The version check detects observed conflicts but is not a relay-side compare-and
 concurrent writers can still race after the last read.
 
 A definitive rejection keeps the editable draft. **Reload details** rechecks the
-base without discarding text edits; if the channel has become private, the draft
-adopts that enforced visibility. Inspect the retained edits before saving again. A lost
-publication response or failed/mismatched readback locks the submitted draft and
+base without discarding text edits. Untouched visibility and duration follow the
+reloaded base; explicit choices stay in the draft. A duration-only comparison baseline
+survives failed reloads, so an untouched duration follows the next successful read
+while an explicit change to Ongoing remains staged. This baseline never grants
+editing authority: a failed read still clears the current base and disables Save.
+If a failed reload has lost the prior base, privacy adopts the fresh value
+conservatively: a stale public text draft must not become reopening intent. Choose
+visibility again after that recovery. Inspect the retained edits before
+saving again. A lost publication response or failed/mismatched readback locks the submitted draft and
 offers **Check save status**, which only reads and never republishes. Uncertain
 intent survives panel close/reopen and cache clear within the same session; no
 background polling, automatic replay or durable recovery record is added. If
@@ -483,8 +613,8 @@ and disposal (13 added lines). Policy and write logic remain in the feature owne
 
 The development broker exposes separate `channel-details-sign` and
 `channel-details-publish` routes, accepting only bounded name/about and optional
-private visibility. Existing archive-only lifecycle, invitation and message-outbox
-admission are unchanged. Publishing reuses the same community's authenticated live
+open/private visibility plus an optional bounded TTL change/clear. Existing archive-state-only
+lifecycle, invitation and message-outbox admission are unchanged. Publishing reuses the same community's authenticated live
 socket; no HTTP fallback or new connection is added. Restart an already-running
 dev broker to load these routes. `just web` supports this complete browser flow;
 `just desktop` is not required. Hosts without the dedicated capability stay
@@ -918,8 +1048,33 @@ tables, task lists, strikethrough and code, while preserving chat-style single l
 Only credential-free HTTPS links are active; raw HTML is ignored and inline remote images
 are not loaded. Existing image Markdown is projected as an attachment instead. Custom emoji remain
 event-local and are not substituted inside links or code.
-Authenticated live traffic reconciles through the same session. Channel creation and composer
-preview/toolbars are not implemented. Reply counts open a bounded thread view; attachments are
+Authenticated live traffic reconciles through the same session. Channel creation is not
+implemented. In the composer, typing the third character of a line holding only ```` ``` ```` or
+`~~~` turns that line into a code block at once, and one undo restores the typed characters.
+Shift+Enter on an empty last line leaves the block. Only a fence that opens a block converts: a
+fence typed inside an existing code block stays literal, and so does pasted or restored fenced
+text, including its closing fence line, so Enter after a pasted or edited fenced block sends or
+saves as usual and the text still renders as code once sent.
+Typing the space after a list or quote marker that starts a line (`- `, `* ` or `+ `, a number
+with a dot or parenthesis such as `1. ` or `3) `, or `> `) turns that line into a bullet, a
+numbered item starting at that number, or a quoted paragraph at once, the same block the
+formatting toolbar creates, and one undo restores the typed marker and its space. Inside a
+quote the markers nest: `- ` opens a list and `> ` a second quote. Inside a list item only a
+marker of the item's own list kind, typed as the only text of an item after the first,
+converts, nesting that item as Tab does. A marker typed after prose on the same line, inside
+a code block or inside pasted fenced text stays literal and renders as prose or code once
+sent. A marker on a line holding a mention, emoji or link, a quote marker or a marker of the
+other list kind typed inside a list item, and any marker typed in a list's first item or
+beside an item's prose also stay literal text in the composer but still render once sent: the
+timeline shows the list or quote, nested inside the item, where the composer shows the marker.
+Two lists of one kind typed one after the other, or separated only by empty lines, send with
+alternating markers (`-` then `*`, `1.` then `1)`) so they stay separate lists once sent.
+Typing an inline span (`**bold**` or `__bold__`, `_italic_` or `*italic*`, `~~strike~~`,
+`` `code` ``) converts it to formatting as the closing delimiter is typed, including on a
+heading line such as `# Title **bold**`, and one undo restores the typed characters. Heading
+lines themselves stay text in the composer and render as headings once sent. A single `~`
+never strikes, and pasted or restored delimiters stay literal text that still renders once
+sent. Reply counts open a bounded thread view; attachments are
 links. Routine freshness labels are not shown; Channel Settings → Diagnostics
 exposes refresh, outbox inspection and timings. Packaged builds do not
 include the development relay broker. GitHub fetches public data only; signed-in
@@ -1022,11 +1177,20 @@ and OS notifications are not enabled by this feature.
 
 ### Attachment layout and scrolling
 
+Message rows show images as fixed square thumbnails with centered `cover` cropping:
+small images scale up and wide or tall images crop to fill the tile without stretching.
+Inline video previews and their posters also fill their bounded frames with `cover`.
+Image and video thumbnails share smoothed corners and a 1px outer hairline, black at
+10% in light mode and white at 10% in dark mode. The expanded viewer shows the full
+media against a pure-black canvas; thumbnail cropping does not change the original.
+
+For non-thumbnail attachment surfaces, the following reserved-layout contract applies.
 Image attachments reserve their preview geometry before loading and across virtualized
 row remounts. Valid `imeta dim` metadata supplies the aspect ratio, bounded to 360px wide
-and 320px tall without upscaling. Missing/invalid dimensions use a stable 360:320 frame
-that shrinks with the available width; the image is contained without cropping or
-upscaling. Unknown-size images may therefore have empty space in the frame. Loading,
+and 320px tall without enlarging the frame beyond the original dimensions.
+Missing/invalid dimensions use a stable 360:320 frame that shrinks with the available
+width. Images scale proportionally and crop centrally to fill their reserved frame,
+including when their dimensions were initially unknown. Loading,
 failure, or retry does not resize it or force an above-bottom reader to the newest row.
 Valid message-carried `imeta blurhash` is decoded locally into a 32×32 canvas in
 that same frame when it intersects the viewport. No thumbnail is fetched. The

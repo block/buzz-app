@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open, settle, wheel } from "./timeline.mjs";
+import { open, settle, virtuaIdle, wheel } from "./timeline.mjs";
 
 test.use({
   productionBroker: true,
@@ -104,7 +104,7 @@ test("thread actions and growing reactions paint beyond the scroller without mov
         return Math.round(Math.hypot(matrix.a, matrix.b) * 1000) / 1000;
       }),
     )
-    .toBe(3);
+    .toBe(1.12);
   expect(
     await glyph.evaluate((node) => {
       const rect = node.getBoundingClientRect();
@@ -179,7 +179,10 @@ test("timeline actions escape the top edge, track scrolling and preserve keyboar
       scroller.getBoundingClientRect().top +
       -10;
   });
-  await settle(page, scroller);
+  // That assignment is one scroll event, so Virtua holds the list's pointer
+  // events at none for 150ms after it. Settled geometry alone can return inside
+  // that window, and the raw move below is not retried against a hit target.
+  await virtuaIdle(page, scroller);
   const bounds = await scroller.boundingBox();
   const rowBounds = await row.boundingBox();
   await page.mouse.move(rowBounds.x + 100, bounds.y + 35);

@@ -35,7 +35,11 @@ import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
-import type { ChannelMessage, Profile } from "../relay/contracts";
+import type {
+  ChannelMessage,
+  ChannelSummary,
+  Profile,
+} from "../relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
@@ -476,6 +480,34 @@ it("autofocuses each selected conversation once without stealing focus on update
   }
 });
 
+it("defers initial focus until an inert startup ancestor is revealed", async () => {
+  document.body.setAttribute("inert", "");
+  try {
+    const h = mount({ autoFocus: true });
+    expect(h.input()).not.toHaveFocus();
+    document.body.removeAttribute("inert");
+    await waitFor(() => expect(h.input()).toHaveFocus());
+  } finally {
+    document.body.removeAttribute("inert");
+  }
+});
+
+it("does not reclaim startup focus after another control takes it", async () => {
+  document.body.setAttribute("inert", "");
+  const other = document.createElement("button");
+  document.body.append(other);
+  try {
+    const h = mount({ autoFocus: true });
+    other.focus();
+    document.body.removeAttribute("inert");
+    await waitFor(() => expect(other).toHaveFocus());
+    expect(h.input()).not.toHaveFocus();
+  } finally {
+    document.body.removeAttribute("inert");
+    other.remove();
+  }
+});
+
 it("does not take focus from a modal when the conversation mounts behind it", () => {
   const dialog = document.createElement("div");
   dialog.setAttribute("role", "dialog");
@@ -710,6 +742,123 @@ it("sends channel messages and thread replies through real form and keyboard eve
   expect(h.messages.send).toHaveBeenCalledTimes(1);
   expect(h.onSend.mock.calls).toEqual([["channel-id"], ["reply-id"]]);
   expect(h.input()).toHaveValue("");
+});
+
+it("opens a code block as ``` is typed without waiting for Enter, then sends the fenced block", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "```");
+  expect(h.input().querySelector("pre > code")).not.toBeNull();
+  expect(h.input()).toHaveValue("");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  await h.user.keyboard("const answer = 42;{Shift>}{Enter}{/Shift}answer");
+  expect(h.input()).toHaveValue("const answer = 42;\nanswer");
+  await h.user.keyboard("{Enter}");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "```\nconst answer = 42;\nanswer\n```",
+    [],
+    [],
+  );
+  expect(h.input()).toHaveValue("");
+  expect(h.input().querySelector("pre")).toBeNull();
+});
+
+it("opens a bullet as `- ` is typed, continues it with Shift+Enter and sends the list on Enter", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "- first");
+  expect(h.input().querySelector("ul > li")).toHaveTextContent("first");
+  expect(h.input()).toHaveValue("first");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}second{Enter}");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "- first\n- second",
+    [],
+    [],
+  );
+  expect(h.input()).toHaveValue("");
+  expect(h.input().querySelector("ul")).toBeNull();
+});
+
+it("sends a pasted fenced block verbatim on Enter instead of opening a block from its closing fence", async () => {
+  const h = mount();
+  act(() => {
+    h.input().focus();
+    fireEvent.paste(h.input(), {
+      clipboardData: {
+        items: [],
+        getData: (type: string) =>
+          type === "text/plain" ? "```\ncode\n```" : "",
+      },
+    });
+  });
+  expect(h.input()).toHaveValue("```\ncode\n```");
+  await h.user.keyboard("{Enter}");
+  expect(h.input().querySelector("pre")).toBeNull();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "```\ncode\n```",
+    [],
+    [],
+  );
+  expect(h.input()).toHaveValue("");
+});
+
+it("keeps a composed message unchanged through caret keys at its end and refuses a Right Arrow committed as text in either form", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "```");
+  expect(h.input().querySelector("pre")).not.toBeNull();
+  await h.user.keyboard(
+    "Hello!{Shift>}{Enter}{Enter}{/Shift}acascac{Shift>}{Enter}{/Shift}a**a** _a_{Shift>}{Enter}{/Shift}- acacs{Shift>}{Enter}{Enter}{/Shift}",
+  );
+  expect(h.input().querySelector("pre code")).toHaveTextContent("Hello!");
+  expect(h.input().querySelector("strong")).toHaveTextContent("a");
+  expect(h.input().querySelector("em")).toHaveTextContent("a");
+  expect(h.input().querySelector("ul > li")).toHaveTextContent("acacs");
+  expect(h.input()).toHaveValue("Hello!\nacascac\naa a\nacacs\n");
+  const html = h.input().innerHTML;
+  for (let i = 0; i < 11; i++) await h.user.keyboard("{ArrowRight}");
+  for (const key of [
+    "ArrowLeft",
+    "ArrowUp",
+    "ArrowDown",
+    "Shift",
+    "Meta",
+    "Escape",
+  ])
+    await h.user.keyboard(`{${key}}`);
+  // jsdom does not model Home and End on a contenteditable element.
+  for (const key of ["Home", "End"]) {
+    fireEvent.keyDown(h.input(), { key, code: key });
+    fireEvent.keyUp(h.input(), { key, code: key });
+  }
+  expect(h.input()).toHaveValue("Hello!\nacascac\naa a\nacacs\n");
+  expect(h.input().innerHTML).toBe(html);
+  expect(h.messages.send).not.toHaveBeenCalled();
+  // The desktop build committed Right Arrow's raw keyboard-layout translation
+  // U+001D; AppKit's function-key character for the key is U+F703. Neither
+  // has a glyph, so each assertion names its form rather than the character.
+  for (const [label, character] of [
+    ["Right Arrow's layout translation U+001D", "\u001D"],
+    ["Right Arrow's function-key character U+F703", "\uF703"],
+  ] as const) {
+    let prevented = false;
+    act(() => {
+      h.input().focus();
+      prevented = !h.input().dispatchEvent(
+        new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertText",
+          data: character,
+        }),
+      );
+    });
+    expect(prevented, label).toBe(true);
+    expect(h.input(), label).toHaveValue("Hello!\nacascac\naa a\nacacs\n");
+    expect(h.input().innerHTML, label).toBe(html);
+    expect(h.messages.send, label).not.toHaveBeenCalled();
+  }
 });
 
 it("prefixes thread replies with the selected media time and clears it after send", async () => {
@@ -2269,6 +2418,27 @@ it.each(["bullet_list", "ordered_list", "code_block"] as const)(
   },
 );
 
+it("saves an edited fenced message on Enter instead of opening a block from its closing fence", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage({ content: "```js\ncode\n```" })]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveValue("```js\ncode\n```");
+  act(() => {
+    h.input().setSelectionRange(10, 10);
+    h.input().insertText("!");
+    const end = h.input().value.length;
+    h.input().setSelectionRange(end, end);
+  });
+  fireEvent.keyDown(h.input(), { key: "Enter", keyCode: 13 });
+  expect(h.input().querySelector("pre")).toBeNull();
+  expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
+    "c".repeat(64),
+    "```js\ncode!\n```",
+    "c".repeat(64),
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
 it("saves only once, locks until delivery, and restores the new-message composer on acceptance", () => {
   const h = mount({}, undefined, first.pubkey);
   const row = editableMessage();
@@ -2575,6 +2745,51 @@ it("does not reopen a target with an unresolved edit after closing it", () => {
   fireEvent.keyDown(h.input(), { key: "ArrowUp" });
   expect(h.input()).toHaveValue("");
   expect(screen.queryByText("Editing message")).not.toBeInTheDocument();
+});
+
+it("keeps the draft but blocks new messages while archived, then re-enables it on restore", async () => {
+  const h = mount();
+  let channel: ChannelSummary = { id: "channel", name: "General" };
+  let list = { status: "ready" as const, channels: [channel] };
+  const listeners = new Set<() => void>();
+  h.retarget({
+    session: {
+      ...h.session,
+      channels: {
+        ...h.session.channels,
+        get: () => channel,
+        list: () => list,
+        subscribeList: (listener) => {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
+      },
+    },
+  });
+  h.fill("Draft survives archive");
+  const archive = (archived: true | undefined) =>
+    act(() => {
+      channel = {
+        id: "channel",
+        name: "General",
+        ...(archived ? { archived } : {}),
+      };
+      list = { ...list, channels: [channel] };
+      for (const listener of listeners) listener();
+    });
+  archive(true);
+  expect(h.input()).toHaveAttribute("aria-disabled", "true");
+  expect(h.input()).toHaveValue("Draft survives archive");
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  h.submit();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  archive(undefined);
+  expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
+  expect(h.input()).toHaveValue("Draft survives archive");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
 });
 
 it.each(["archived", "readOnly"] as const)(

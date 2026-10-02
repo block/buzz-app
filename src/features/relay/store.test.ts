@@ -472,6 +472,57 @@ it("reports no fresh roster evidence when an exact read omits the cached channel
     test.store.dispose();
   }
 });
+it.each([
+  ["older", 1_700_000_000, false],
+  ["identical", 1_700_000_001, true],
+] as const)(
+  "requires discovery confirmation for an %s roster over a restored cache",
+  async (_version, timestamp, confirmed) => {
+    const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const cached = roster(
+      relay,
+      "alpha",
+      [viewer.pubkey, alice.pubkey],
+      1_700_000_001,
+    );
+    const persistence: HeadPersistence = {
+      read: async () => [],
+      readStartup: async () => ({
+        discovery: {
+          savedAt: Date.now(),
+          relayAuthor: relay.pubkey,
+          events: [cached, metadata(relay, "alpha", "Alpha")],
+        },
+      }),
+      writeStartup: async () => {},
+      write: async () => {},
+      remove: async () => {},
+      retain: async () => {},
+      clear: async () => {},
+      close: () => {},
+    };
+    const owner = createRelaySession(scripted.transport, {
+      persistence,
+      prepared: true,
+    });
+    try {
+      await owner.restore();
+      expect(owner.session.channels.list().channels[0]?.cached).toBe(true);
+      const refreshing = owner.session.channels.refreshRoster?.("alpha");
+      scripted
+        .next()
+        .respond([
+          roster(relay, "alpha", [viewer.pubkey, alice.pubkey], timestamp),
+        ]);
+      await expect(refreshing).resolves.toBe(confirmed);
+      expect(!!owner.session.channels.list().channels[0]?.cached).toBe(
+        !confirmed,
+      );
+    } finally {
+      owner.dispose();
+    }
+  },
+);
 it("keeps a cached denial and never reads for a channel it does not authorize", async () => {
   const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
   const agent = keypair().pubkey;

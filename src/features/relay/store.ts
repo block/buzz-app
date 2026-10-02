@@ -1416,7 +1416,13 @@ export function createChannelStore(
         "Channel roster refresh exceeded its read budget",
       );
     if (events.length) applyDiscovery(events);
-    return events.length === 1;
+    const roster = events[0];
+    return (
+      !!roster &&
+      discovery.rosterVersions().get(channelId)?.id === roster.id &&
+      discovery.authorized(channelId) &&
+      !discovery.get(channelId)?.cached
+    );
   }
   const cachedResolutions = new Set<string>();
   function revalidateCached(channelId: string) {

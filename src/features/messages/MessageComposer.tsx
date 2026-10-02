@@ -235,14 +235,17 @@ function Composer({
   useEffect(() => {
     // A navigation/dialog owner may restore focus during this commit. Let that
     // explicit handoff win over the conversation's default initial focus.
-    const previous = focusOnMount.current;
-    if (
-      previous &&
-      (previous === document.activeElement ||
-        (!previous.isConnected && document.activeElement === document.body))
-    ) {
+    if (!focusOnMount.current) return;
+    const focus = () => {
+      const previous = focusOnMount.current;
+      if (
+        !previous ||
+        (previous !== document.activeElement &&
+          (previous.isConnected || document.activeElement !== document.body))
+      )
+        return;
       const editor = input.current;
-      if (!editor) return;
+      if (!editor || editor.closest("[inert]")) return;
       // A conversation can finish loading behind an already-focused dialog.
       // Its default focus must not interrupt that modal's explicit owner.
       const modal = document.activeElement?.closest(
@@ -251,10 +254,26 @@ function Composer({
       if (modal && !modal.contains(editor)) return;
       const end = editor.value.length;
       editor.focus();
+      if (document.activeElement !== editor) return;
       editor.setSelectionRange(end, end);
       // Effect replay recreates the editor; retain this successful focus handoff.
       focusOnMount.current = editor;
+    };
+    const inertAncestor = input.current?.closest("[inert]");
+    if (inertAncestor) {
+      const observer = new MutationObserver(() => {
+        if (!inertAncestor.hasAttribute("inert")) {
+          observer.disconnect();
+          focus();
+        }
+      });
+      observer.observe(inertAncestor, {
+        attributes: true,
+        attributeFilter: ["inert"],
+      });
+      return () => observer.disconnect();
     }
+    focus();
   }, []);
   const nonmembers = useNonmemberMentions(session, channelId, () =>
     input.current?.focus(),

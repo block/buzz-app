@@ -122,7 +122,9 @@ function ConnectedApp({ services }: { services: AppServices }) {
       </div>
     );
   return (
-    <ToastProvider>
+    <ToastProvider
+      portalContainer={document.getElementById("buzz-toast-root") ?? undefined}
+    >
       <ChannelNavigationProvider relay={services.relay}>
         <AppShell
           sidebar={(pageNavigation) =>

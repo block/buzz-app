@@ -403,6 +403,11 @@ test("launch waits for the initial sidebar and message history before revealing 
     await expect(
       page.locator('[aria-label="Channel sidebar"][data-buzz-launch-pending]'),
     ).toHaveCount(0);
+    const composer = page.locator(
+      '#root [role="textbox"][contenteditable="true"]',
+    );
+    await expect(composer).toBeAttached();
+    await expect(composer).not.toBeFocused();
     await expect(page.locator("[data-buzz-launch-pending]")).toBeAttached();
     await page.clock.runFor(1900);
     await expect(launch).toBeVisible();
@@ -413,6 +418,7 @@ test("launch waits for the initial sidebar and message history before revealing 
     ).toContainText("primary alpha message 0");
     await expect(page.locator("[data-buzz-launch-pending]")).toHaveCount(0);
     await expect(launch).toHaveCount(0);
+    await expect(composer).toBeFocused();
     await expect(page.locator("#root")).not.toHaveAttribute("inert");
     await expect(page.locator("#root")).not.toHaveAttribute("aria-hidden");
     await expect(page.locator("#buzz-toast-root")).not.toHaveAttribute("inert");

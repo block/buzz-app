@@ -27,7 +27,7 @@ it("keeps startup notices inside the inert toast host", () => {
   document.body.append(host);
   try {
     render(
-      <ToastProvider>
+      <ToastProvider portalContainer={host}>
         <ToastNotice title="Ready to update" onDismiss={() => {}}>
           <Button>Update now</Button>
         </ToastNotice>

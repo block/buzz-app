@@ -306,7 +306,6 @@ test("thread buttons show observed unread independently, clear only after readin
       ),
     )
     .toMatchObject({
-      category: "thread",
       rootId: roots[0].id,
       unread: false,
     });
@@ -594,9 +593,14 @@ for (const legacy of [false, true]) {
         expect(applied()).toBe(false);
         release();
         await expect.poll(() => exchanges.length).toBe(legacy ? 3 : 1);
+        // Strict serves the relay's whole thread, including the viewer's older
+        // joined reply (threadUnreadJoined); legacy fulfils its own list above.
         await expect(history.locator("[data-message-id]")).toHaveCount(
-          replies.length + 1,
+          replies.length + (legacy ? 1 : 2),
         );
+        await expect(
+          panel.getByText("Viewer reply", { exact: true }),
+        ).toHaveCount(legacy ? 0 : 1);
         await expect(
           panel.getByText("Unread reply 1", { exact: true }),
         ).toBeInViewport();

@@ -1,5 +1,6 @@
 import { test, expect, ids } from "./fixture.mjs";
 import { end, open, settle } from "./timeline.mjs";
+import { readJournal } from "./reading.mjs";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 
 test.use({
@@ -288,7 +289,8 @@ test("a fully visible incoming row stays quiet without publishing read intent", 
     )
     .toBe(true);
   // Controlled policy/dwell ordering, not evidence about native frame scheduling.
-  // Exact-row navigation and reflow journeys below retain native rAF.
+  // The exact-row journeys below control reveal frames, then resume native rAF
+  // for their dwell and reflow checks.
   const base = Date.now();
   await page.clock.install({ time: base });
   await page.clock.pauseAt(base + 30_000);
@@ -366,10 +368,19 @@ for (const kind of ["mention", "thread reply"]) {
     expect(await page.evaluate(() => window.notificationEvents[0].title)).toBe(
       `${incoming.pubkey.slice(0, 10)} ${root ? "replied" : "mentioned you"} in #Beta`,
     );
+    // A slow assertion can outlive the 300 ms reading dwell after reveal.
+    // Control that boundary, not wall-clock time spent polling from the runner.
+    await page.clock.pauseAt(new Date());
     const before = app.report.readWrites.length;
-    const start = performance.now();
     await page.evaluate(() => window.notificationEvents[0].onclick());
     expect(app.report.readWrites.length).toBe(before);
+    await expect
+      .poll(async () => {
+        // Exact reveal needs animation frames; stop advancing as soon as opened.
+        await page.clock.runFor(16);
+        return page.evaluate(() => window.fixtureNavigation.snapshot().status);
+      })
+      .toBe("opened");
     const surface = page.getByRole("region", {
       name: root ? "Thread messages" : "Channel message history",
       exact: true,
@@ -380,15 +391,7 @@ for (const kind of ["mention", "thread reply"]) {
     await expect(row.locator("strong").filter({ hasText: kind })).toHaveText(
       kind,
     );
-    await expect
-      .poll(() =>
-        page.evaluate(() => window.fixtureNavigation.snapshot().status),
-      )
-      .toBe("opened");
-    app.report.measurements.push({
-      mode: `live ${kind} click to exact conversation row`,
-      clickToOpenedMs: performance.now() - start,
-    });
+    expect((await readJournal(page)).pending).toEqual([]);
     expect(app.report.readWrites.length).toBe(before);
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
@@ -411,6 +414,8 @@ for (const kind of ["mention", "thread reply"]) {
         app.report.queries.filter((q) => q.filter.depth_limit),
       ).toHaveLength(0);
     }
+    // Ordinary dwell and the later fractional reflow use the running clock.
+    await page.clock.resume();
     await expect
       .poll(() => app.report.readWrites.length)
       .toBeGreaterThan(before);

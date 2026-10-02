@@ -465,6 +465,7 @@ it("confirms local deletion, keeps the card on failure, and removes it only afte
   );
   fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
   const dialog = screen.getByRole("dialog", { name: "Delete Fixture agent?" });
+  expect(dialog).toHaveAttribute("aria-modal", "true");
   expect(
     within(dialog).getByText(/relay identity and past messages remain visible/),
   ).toBeVisible();
@@ -1057,6 +1058,7 @@ it.each(["Create agent", "Edit agent"] as const)(
       );
     }
     const dialog = screen.getByRole("dialog", { name: dialogName });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
     fireEvent.change(within(dialog).getByLabelText("Name"), {
       target: { value: "Edited before setup" },
     });

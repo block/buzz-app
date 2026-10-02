@@ -331,7 +331,13 @@ it("selects filtered results from search, ignores IME Enter, and keeps rejected 
   await user.clear(search);
   // Public keys are not completion matches; search by the member's name.
   await user.type(search, "Member");
-  fireEvent.keyDown(search, { key: "Enter", isComposing: true });
+  // Synthetic coverage checks the guard, not native IME behavior.
+  for (const composition of [{ isComposing: true }, { keyCode: 229 }]) {
+    fireEvent.keyDown(search, { key: "ArrowDown", ...composition });
+    expect(search).toHaveFocus();
+    fireEvent.keyDown(search, { key: "Enter", ...composition });
+    expect(select).not.toHaveBeenCalled();
+  }
   expect(fireEvent.keyDown(search, { key: "Enter", shiftKey: true })).toBe(
     false,
   );

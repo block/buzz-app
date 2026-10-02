@@ -1069,6 +1069,7 @@ export function relayBrokerPlugin({
                     authors: [viewer],
                     "#d": ["channel-sort"],
                     limit: 1,
+                    consistency: "strong",
                   },
                 ];
                 const lane = admissions(relay, viewer).api;
@@ -1212,6 +1213,7 @@ export function relayBrokerPlugin({
                     authors: [viewer],
                     "#d": ["channel-mutes"],
                     limit: 1,
+                    consistency: "strong",
                   },
                 ];
                 const lane = admissions(relay, viewer).api;
@@ -1336,6 +1338,7 @@ export function relayBrokerPlugin({
                     authors: [viewer],
                     "#d": [starring ? "channel-stars" : "channel-sections"],
                     limit: 1,
+                    consistency: "strong",
                   },
                 ];
                 const lane = admissions(relay, viewer).api;

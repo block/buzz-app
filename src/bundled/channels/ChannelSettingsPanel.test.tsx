@@ -3,11 +3,12 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { keypair, signed } from "../../features/relay/testing";
-import type { ChannelCanvas } from "../../features/channel-templates/capability";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 it("shows known channel details with diagnostics collapsed until requested", async () => {
   const user = userEvent.setup();
@@ -30,6 +31,10 @@ it("shows known channel details with diagnostics collapsed until requested", asy
   ).toBeVisible();
   expect(screen.getByRole("heading", { name: "Alpha" })).toBeVisible();
   expect(screen.getByText("alpha")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Canvas" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   expect(screen.getByText("2")).toBeVisible();
   expect(screen.getByRole("tab", { name: "Channel settings" })).toHaveFocus();
   expect(screen.getByText("Refresh messages")).not.toBeVisible();
@@ -75,7 +80,7 @@ it("does not invent unknown metadata and still exposes diagnostics without a cha
       Diagnostics content
     </ChannelSettingsPanel>,
   );
-  expect(screen.getByText("Direct message")).toBeVisible();
+  expect(screen.queryByText("Channel type")).not.toBeInTheDocument();
   expect(screen.queryByText("Members")).not.toBeInTheDocument();
   rerender(
     <ChannelSettingsPanel
@@ -91,99 +96,33 @@ it("does not invent unknown metadata and still exposes diagnostics without a cha
   expect(screen.getByText("Diagnostics content")).toBeVisible();
 });
 
-it("opens Canvas from its own keyboard-accessible row before setup actions", async () => {
+it("opens even an empty members list without an Edit ingress", async () => {
+  const openMembers = vi.fn();
   const user = userEvent.setup();
-  const openCanvas = vi.fn();
   render(
     <ChannelSettingsPanel
       scope="community:viewer"
-      channel={{ id: "alpha", name: "Alpha", channelType: "stream" }}
+      channel={{ id: "alpha", name: "Alpha", members: [] }}
+      openMembers={openMembers}
       close={() => {}}
-      openCanvas={openCanvas}
-      setupTools={<button type="button">Leave channel</button>}
     >
-      Diagnostics content
+      Diagnostics
     </ChannelSettingsPanel>,
   );
-  const canvas = screen.getByRole("button", { name: "Canvas" });
-  expect(canvas).toHaveAttribute("aria-haspopup", "dialog");
-  expect(canvas).not.toHaveTextContent("Shared notes and plans");
-  expect(openCanvas).not.toHaveBeenCalled();
-  expect(screen.getByRole("tab", { name: "Channel settings" })).toHaveFocus();
-  await user.tab();
-  expect(
-    screen.getByRole("button", { name: "Close Channel settings tab" }),
-  ).toHaveFocus();
-  await user.tab();
-  expect(canvas).toHaveFocus();
+  const members = screen.getByRole("button", { name: "View members" });
+  expect(members).toHaveAccessibleDescription("0");
+  expect(members).not.toHaveTextContent("Edit");
+  expect(members.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+  members.focus();
   await user.keyboard("{Enter}");
-  expect(openCanvas).toHaveBeenCalledTimes(1);
-  expect(openCanvas).toHaveBeenLastCalledWith(canvas);
-  await user.tab();
-  expect(screen.getByRole("button", { name: "Leave channel" })).toHaveFocus();
-  await user.click(canvas);
-  expect(openCanvas).toHaveBeenCalledTimes(2);
+  expect(openMembers).toHaveBeenCalledWith(members);
 });
 
-it("omits Canvas without a writable channel or an opener", () => {
-  const channel = { id: "alpha", name: "Alpha" };
-  const { rerender } = render(
-    <ChannelSettingsPanel
-      scope="community:viewer"
-      channel={channel}
-      close={() => {}}
-    >
-      Diagnostics content
-    </ChannelSettingsPanel>,
-  );
-  expect(
-    screen.queryByRole("button", { name: "Canvas" }),
-  ).not.toBeInTheDocument();
-  for (const unavailable of [
-    undefined,
-    { ...channel, readOnly: true as const },
-  ]) {
-    rerender(
-      <ChannelSettingsPanel
-        scope="community:viewer"
-        channel={unavailable}
-        close={() => {}}
-        openCanvas={() => {}}
-      >
-        Diagnostics content
-      </ChannelSettingsPanel>,
-    );
-    expect(
-      screen.queryByRole("button", { name: "Canvas" }),
-    ).not.toBeInTheDocument();
-  }
-});
-
-const head = signed(keypair(), {
-  kind: 40100,
-  content: "# Google root-link preview submission deep dive",
-  tags: [["h", "alpha"]],
-});
-function previewFixture() {
-  return {
-    available: true,
-    read: vi.fn<ChannelCanvas["read"]>().mockResolvedValue(head),
-    save: vi.fn<ChannelCanvas["save"]>(),
-  };
-}
-function panel(
-  canvas: ChannelCanvas,
-  id = "alpha",
-  canvasOpen = false,
-  readOnly?: true,
-) {
+function idPanel(id = "11111111-1111-4111-8111-111111111111") {
   return (
     <ChannelSettingsPanel
       scope="community:viewer"
-      canvas={canvas}
-      channel={{ id, name: id, ...(readOnly ? { readOnly } : {}) }}
-      canvasOpen={canvasOpen}
-      openCanvas={() => {}}
+      channel={{ id, name: "Alpha" }}
       close={() => {}}
     >
       Diagnostics
@@ -191,121 +130,119 @@ function panel(
   );
 }
 
-it("shows Canvas as the first line and saved plain text as the secondary preview", async () => {
-  const canvas = previewFixture();
-  const { container } = render(panel(canvas));
-  expect(screen.getByText("Loading preview…")).toBeVisible();
-  await screen.findByText("Google root-link preview submission deep dive");
-  const row = screen.getByRole("button", { name: "Canvas" });
-  expect(row).toHaveAccessibleDescription(
-    "Google root-link preview submission deep dive",
+it("copies the exact channel ID with keyboard access and reports success", async () => {
+  const user = userEvent.setup();
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  render(idPanel());
+  const copy = screen.getByRole("button", { name: "Copy channel id" });
+  expect(copy).toHaveAttribute("aria-haspopup", "false");
+  expect(copy).toHaveTextContent(/^Channel ID$/);
+  expect(copy.querySelector("svg")?.parentElement).toHaveAttribute(
+    "aria-hidden",
+    "true",
   );
-  expect(row.querySelector(".buzz-choice-row-label")).toHaveTextContent(
-    /^Canvas$/,
+  expect(copy.querySelector("svg")).toHaveAttribute("width", "0.875rem");
+  await user.hover(copy);
+  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  copy.focus();
+  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  await user.keyboard("{Enter}");
+  expect(write).toHaveBeenCalledExactlyOnceWith(
+    "11111111-1111-4111-8111-111111111111",
   );
-  expect(row.querySelector(".buzz-choice-row-description")).toHaveTextContent(
-    "Google root-link preview submission deep dive",
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Channel ID copied",
   );
-  expect(canvas.read).toHaveBeenCalledWith("alpha");
-  expect(canvas.save).not.toHaveBeenCalled();
-  expect(container.querySelector("img, script")).toBeNull();
+  expect(copy).toHaveFocus();
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+  );
+  await user.unhover(copy);
+  await user.hover(copy);
+  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 });
 
-it.each([
-  undefined,
-  { ...head, content: "   \n" },
-  { ...head, content: "<!-- comment -->" },
-])("uses neutral empty copy for %j", async (event) => {
-  const canvas = previewFixture();
-  canvas.read.mockResolvedValue(event);
-  render(panel(canvas));
-  expect(await screen.findByText("No content yet")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Canvas" })).toBeEnabled();
-});
-
-it("keeps a failed preview openable and refreshes saved content after closing the editor", async () => {
-  const canvas = previewFixture();
-  canvas.read.mockRejectedValueOnce(new Error("Offline"));
-  const { rerender } = render(panel(canvas));
+it("keeps the ID visible after clipboard denial and supports retry", async () => {
+  const user = userEvent.setup();
+  const write = vi
+    .spyOn(navigator.clipboard, "writeText")
+    .mockRejectedValueOnce(new Error("denied"))
+    .mockResolvedValue();
+  render(idPanel("alpha"));
+  const copy = screen.getByRole("button", { name: "Copy channel id" });
+  await user.click(copy);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t copy channel ID. Try again.",
+  );
+  expect(screen.getByText("alpha")).toBeVisible();
   expect(
-    await screen.findByText("Preview unavailable. Open to retry."),
-  ).toBeVisible();
-  expect(screen.getByRole("button", { name: "Canvas" })).toBeEnabled();
-  rerender(panel(canvas, "alpha", true));
-  expect(canvas.read).toHaveBeenCalledTimes(1);
-  rerender(panel(canvas));
-  expect(
-    await screen.findByText("Google root-link preview submission deep dive"),
-  ).toBeVisible();
-  rerender(panel(canvas, "alpha", true));
-  canvas.read.mockResolvedValue({ ...head, content: "# Updated document" });
-  rerender(panel(canvas));
-  expect(await screen.findByText("Updated document")).toBeVisible();
-  expect(canvas.save).not.toHaveBeenCalled();
+    screen.queryByRole("button", { name: "Canvas" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  expect(copy).toBeEnabled();
+  await user.click(copy);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Channel ID copied",
+  );
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(write).toHaveBeenCalledTimes(2);
 });
 
-it("ignores an old channel's pending preview and hides content immediately on scope or access changes", async () => {
-  const canvas = previewFixture();
-  let release!: (event: typeof head) => void;
-  canvas.read.mockReturnValueOnce(
-    new Promise((resolve) => {
-      release = resolve;
-    }),
-  );
-  const { rerender } = render(panel(canvas));
+it("reports an unavailable clipboard without throwing", async () => {
+  const user = userEvent.setup();
+  const descriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  if (!descriptor) throw new Error("Missing clipboard test stub");
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: undefined,
+  });
   try {
-    canvas.read.mockResolvedValue({ ...head, content: "# Beta document" });
-    rerender(panel(canvas, "beta"));
-    expect(await screen.findByText("Beta document")).toBeVisible();
+    render(idPanel());
+    await user.click(screen.getByRole("button", { name: "Copy channel id" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn’t copy channel ID.",
+    );
   } finally {
-    await act(async () => release(head));
+    Object.defineProperty(navigator, "clipboard", descriptor);
   }
-  expect(
-    screen.queryByText("Google root-link preview submission deep dive"),
-  ).not.toBeInTheDocument();
-  const otherCommunity = previewFixture();
-  otherCommunity.read.mockResolvedValue(undefined);
-  rerender(panel(otherCommunity, "beta"));
-  expect(screen.queryByText("Beta document")).not.toBeInTheDocument();
-  expect(await screen.findByText("No content yet")).toBeVisible();
-  rerender(panel(otherCommunity, "beta", false, true));
-  expect(
-    screen.queryByRole("button", { name: /^Canvas/ }),
-  ).not.toBeInTheDocument();
-  await waitFor(() => expect(otherCommunity.read).toHaveBeenCalledTimes(1));
 });
 
-it("replaces a saved preview with loading and failure states during refresh", async () => {
-  const canvas = previewFixture();
-  const { rerender } = render(panel(canvas));
-  await screen.findByText("Google root-link preview submission deep dive");
-  rerender(panel(canvas, "alpha", true));
-  let reject!: (error: Error) => void;
-  canvas.read.mockReturnValueOnce(
-    new Promise((_, rejectRead) => {
-      reject = rejectRead;
-    }),
-  );
-  try {
-    rerender(panel(canvas));
-    expect(canvas.read).toHaveBeenCalledTimes(2);
-    expect(screen.getByText("Loading preview…")).toBeVisible();
-    expect(
-      screen.queryByText("Google root-link preview submission deep dive"),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Canvas" }),
-    ).toHaveAccessibleDescription("Loading preview…");
-  } finally {
-    await act(async () => reject(new Error("Offline")));
-  }
-  expect(screen.getByText("Preview unavailable. Open to retry.")).toBeVisible();
-  expect(
-    screen.getByRole("button", { name: "Canvas" }),
-  ).toHaveAccessibleDescription("Preview unavailable. Open to retry.");
-  expect(screen.getByRole("button", { name: "Canvas" })).toBeEnabled();
-  expect(
-    screen.queryByText("Google root-link preview submission deep dive"),
-  ).not.toBeInTheDocument();
-  expect(canvas.save).not.toHaveBeenCalled();
-});
+it.each(["resolve", "reject"])(
+  "does not show stale copy feedback after changing channels (%s)",
+  async (outcome) => {
+    const user = userEvent.setup();
+    let resolve!: () => void;
+    let reject!: (reason: Error) => void;
+    const pending = new Promise<void>((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    const write = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockReturnValueOnce(pending)
+      .mockResolvedValue();
+    const { rerender } = render(idPanel("alpha"));
+    await user.click(screen.getByRole("button", { name: "Copy channel id" }));
+    try {
+      expect(
+        screen.getByRole("button", { name: "Copy channel id" }),
+      ).toHaveAttribute("aria-disabled", "true");
+      rerender(idPanel("beta"));
+      expect(
+        screen.getByRole("button", { name: "Copy channel id" }),
+      ).toBeEnabled();
+    } finally {
+      await act(async () =>
+        outcome === "resolve" ? resolve() : reject(new Error("denied")),
+      );
+    }
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Copy channel id" }));
+    expect(write).toHaveBeenLastCalledWith("beta");
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Channel ID copied",
+    );
+  },
+);

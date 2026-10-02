@@ -1,10 +1,12 @@
 import {
   createContext,
   useCallback,
+  useLayoutEffect,
   useContext,
   useMemo,
   useState,
   useRef,
+  useSyncExternalStore,
   type RefObject,
   type ReactNode,
 } from "react";
@@ -14,6 +16,46 @@ import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
 import { readView, writeView } from "../../shared/view-state";
+
+/** The persistent sidebar owns writes/recovery; each menu owns its focus and read status. */
+export type ChannelMenuSurface = {
+  /** Navigation presentation lifetime, not the session-owned write lifetime. */
+  signal?: AbortSignal | undefined;
+  close(finalFocus?: () => HTMLElement | false): void;
+  focus(): void;
+  pending: boolean;
+  runRead(action: () => Promise<unknown>): Promise<void>;
+};
+type MenuActions = (
+  channel: ChannelSummary,
+  surface: ChannelMenuSurface,
+) => readonly ReactNode[];
+function createMenuActions() {
+  let current: MenuActions | undefined;
+  const listeners = new Set<() => void>();
+  return {
+    snapshot: () => current,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    publish(actions: MenuActions | undefined) {
+      current = actions;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+const noActions = () => undefined;
+const noSubscribe = () => () => {};
+export function useChannelMenuActions() {
+  const handoff = useChannelNavigation();
+  return useSyncExternalStore(
+    handoff?.menuActions.subscribe ?? noSubscribe,
+    handoff?.menuActions.snapshot ?? noActions,
+  );
+}
 
 type PreparingDm = { existing: Set<string>; members: Set<string | undefined> };
 type State = {
@@ -27,6 +69,7 @@ type State = {
         action: ChannelLifecycleAction;
         trigger?: HTMLElement;
         focusFallback?: HTMLElement | undefined;
+        origin?: AbortSignal;
       }
     | undefined;
 };
@@ -43,6 +86,7 @@ type ActivityAgent = {
   trigger: HTMLElement | null;
 };
 type Handoff = State & {
+  menuActions: ReturnType<typeof createMenuActions>;
   activityThread: RefObject<ActivityThread | undefined>;
   activityAgent: RefObject<ActivityAgent | undefined>;
   updateDraftParents(update: (previous: string[]) => string[]): void;
@@ -52,6 +96,7 @@ type Handoff = State & {
     channel: ChannelSummary,
     action: ChannelLifecycleAction,
     trigger?: HTMLElement,
+    origin?: AbortSignal,
   ): void;
   closeLifecycle(): void;
 };
@@ -69,6 +114,8 @@ export function ChannelNavigationProvider({
 }) {
   const connection = useRelayConnection(relay);
   const scope = connection.scope ?? "disconnected";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: retire all sidebar callbacks when the relay session or scope changes.
+  const menuActions = useMemo(createMenuActions, [connection.session, scope]);
   const activityThread = useRef<ActivityThread | undefined>(undefined);
   const activityAgent = useRef<ActivityAgent | undefined>(undefined);
   const [state, setState] = useState<State>(() =>
@@ -94,9 +141,23 @@ export function ChannelNavigationProvider({
       previous.preparingDm ? { ...previous, preparingDm: undefined } : previous,
     );
   }, [update]);
+  const lifecycleOrigin = state.lifecycleDialog?.origin;
+  useLayoutEffect(() => {
+    if (!lifecycleOrigin) return;
+    const retire = () =>
+      update((previous) =>
+        previous.lifecycleDialog?.origin === lifecycleOrigin
+          ? { ...previous, lifecycleDialog: undefined }
+          : previous,
+      );
+    if (lifecycleOrigin.aborted) retire();
+    else lifecycleOrigin.addEventListener("abort", retire, { once: true });
+    return () => lifecycleOrigin.removeEventListener("abort", retire);
+  }, [lifecycleOrigin, update]);
   const value = useMemo<Handoff>(
     () => ({
       ...state,
+      menuActions,
       activityThread,
       activityAgent,
       updateDraftParents(change) {
@@ -121,9 +182,9 @@ export function ChannelNavigationProvider({
           },
         }));
       },
-      openLifecycle(channel, action, trigger) {
+      openLifecycle(channel, action, trigger, origin) {
         update((previous) =>
-          previous.lifecycleDialog
+          origin?.aborted || previous.lifecycleDialog
             ? previous
             : {
                 ...previous,
@@ -143,6 +204,7 @@ export function ChannelNavigationProvider({
                       ?.closest("aside")
                       ?.querySelector<HTMLElement>("button") ??
                     undefined,
+                  ...(origin ? { origin } : {}),
                 },
               },
         );
@@ -152,7 +214,14 @@ export function ChannelNavigationProvider({
       },
       clearPreparingDm,
     }),
-    [state, connection.session, connection.viewer, update, clearPreparingDm],
+    [
+      state,
+      menuActions,
+      connection.session,
+      connection.viewer,
+      update,
+      clearPreparingDm,
+    ],
   );
   return (
     <ChannelNavigationContext value={value}>

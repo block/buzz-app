@@ -1,5 +1,6 @@
 import type { Outbox, LocalEvents } from "../relay/outbox";
 import type { KitEntry } from "./model";
+import { isDefinitiveCanvasConflict } from "./canvas-conflict";
 export type ChannelSetup = {
   canvas: string;
   agents: string[];
@@ -299,10 +300,7 @@ export function createChannelSetup({
                 const failed = local
                   .snapshot()
                   .find((item) => item.event.id === canvas);
-                if (
-                  failed?.delivery === "failed" &&
-                  failed.error?.startsWith("conflict:")
-                ) {
+                if (isDefinitiveCanvasConflict(failed)) {
                   // A refused seed must not fence a later manual Canvas save.
                   await outbox.dismiss(canvas);
                   throw new Error(

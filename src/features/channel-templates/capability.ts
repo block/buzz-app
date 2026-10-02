@@ -2,6 +2,7 @@ import type { RelayReader } from "../relay/reader";
 import type { RelayEvent, ReadFilter } from "../relay/events";
 import type { Outbox, LocalEvents } from "../relay/outbox";
 import type { ChannelKitHost } from "./host";
+import { isDefinitiveCanvasConflict } from "./canvas-conflict";
 import {
   CANVAS_BYTES,
   coordinate,
@@ -146,12 +147,7 @@ export function createChannelKit({
           "This operation could not be confirmed and is too old to replay. Keep your draft and inspect the current result before making a new save.",
         );
       // A proven Canvas CAS refusal cannot become valid by replaying these bytes.
-      if (
-        saved.event.kind === 40100 &&
-        saved.delivery === "failed" &&
-        saved.error?.startsWith("conflict:")
-      )
-        throw new Error(saved.error);
+      if (isDefinitiveCanvasConflict(saved)) throw new Error(saved.error);
       await delivered(id);
       if (
         !(await fresh([{ ids: [id], limit: 1, consistency: "strong" }])).some(
@@ -163,12 +159,7 @@ export function createChannelKit({
         );
     } catch (error) {
       const failed = local?.snapshot().find((item) => item.event.id === id);
-      if (
-        outbox &&
-        failed?.event.kind === 40100 &&
-        failed.delivery === "failed" &&
-        failed.error?.startsWith("conflict:")
-      ) {
+      if (outbox && isDefinitiveCanvasConflict(failed)) {
         // Refused before mutation. Release the pending gate, not uncertain saves.
         await outbox.dismiss(id);
         throw new Error(canvasConflict);

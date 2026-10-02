@@ -913,16 +913,31 @@ function Composer({
       }
     }
   }
-  const accessories = extensions?.accessories && (
-    <ComposerAccessories
-      registry={extensions.accessories}
-      session={session}
-      scope={scope}
-      channelId={channelId}
-      threadRootId={threadRootId}
-      canOpen={(target) => canOpenLink?.(target) ?? false}
-      open={(target) => onOpenLink?.(target) ?? false}
-    />
+  const readingOnly = !outbox?.supports(9) && !cached;
+  const context = (
+    <div
+      className={styles.composerContext}
+      data-reserve-typing={!submission || readingOnly || undefined}
+    >
+      {readingOnly || (!disabled && !submission && !editing.target) ? (
+        <TypingIndicator
+          session={session}
+          channelId={channelId}
+          threadRootId={threadRootId}
+        />
+      ) : null}
+      {extensions?.accessories && (
+        <ComposerAccessories
+          registry={extensions.accessories}
+          session={session}
+          scope={scope}
+          channelId={channelId}
+          threadRootId={threadRootId}
+          canOpen={(target) => canOpenLink?.(target) ?? false}
+          open={(target) => onOpenLink?.(target) ?? false}
+        />
+      )}
+    </div>
   );
   const renderLeadingTools = (tools: ReactNode) => (
     <>
@@ -963,23 +978,18 @@ function Composer({
       )}
     </>
   );
-  if (!outbox?.supports(9) && !cached)
+  if (readingOnly)
     return (
       <>
-        {accessories}
+        {context}
         <footer className={styles.composer}>
-          <TypingIndicator
-            session={session}
-            channelId={channelId}
-            threadRootId={threadRootId}
-          />
           This relay connection supports reading only.
         </footer>
       </>
     );
   return (
     <SelectedMentionContext.Provider value={value.recipients}>
-      {accessories}
+      {context}
       {active && nonmembers.dialog}
       <form
         ref={form}
@@ -1035,13 +1045,6 @@ function Composer({
               icon={<XIcon size={18} />}
             />
           </div>
-        )}
-        {!disabled && !submission && !editing.target && (
-          <TypingIndicator
-            session={session}
-            channelId={channelId}
-            threadRootId={threadRootId}
-          />
         )}
         <label className="sr-only" htmlFor={inputId}>
           {label}

@@ -1483,7 +1483,7 @@ it.each([
   },
 );
 
-// Inbox reads the relay's per-message verdict (Eva 3b4a22d3): a row exists only
+// Inbox reads the relay's per-message verdict: a row exists only
 // for a verified candidate the relay calls unread with a direct, mention or
 // conversation reason. Tests drive only the public session surface.
 type Verdict = MessageReadState["status"] | `unread:${string}`;
@@ -2206,7 +2206,7 @@ it("inbox: unaskable ancestry never starves an askable mention of demand", async
   expect(settled(snapshot)).toBe(true);
 });
 
-// Eva 26afbef6: an answered row keeps its proof and verdict through events that
+// An answered row keeps its proof and verdict through events that
 // say nothing about it. Held responses keep a fast refetch from masking loss.
 function provenZero(h: ReturnType<typeof setup>) {
   h.grant(other, [h.viewer.pubkey, h.peer.pubkey]);
@@ -2341,7 +2341,7 @@ it.each(["loading", "stale"] as const)(
   },
 );
 
-// Eva 29becf88: the acceptance rule is a stable row, lease and verdict. A
+// The acceptance rule is a stable row, lease and verdict. A
 // same-channel re-ask is the context owner's channel refresh and is allowed.
 it.each(["same", "different"] as const)(
   "inbox: notification demand that fits in a %s channel leaves the Inbox row and verdict alone",
@@ -2395,7 +2395,7 @@ it.each(["same", "different"] as const)(
   },
 );
 
-// Eva 17:27: notification demand retains first and releases Inbox only when
+// Notification demand retains first and releases Inbox only when
 // the context owner refuses for capacity.
 it("inbox: notification demand at context capacity takes the Inbox lease instead of failing", async () => {
   const h = setup();
@@ -2427,7 +2427,7 @@ it("inbox: notification demand at context capacity takes the Inbox lease instead
   expect(() => h.unread.subscribe(selected, () => {})).toThrow("capacity");
 });
 
-// Named limit (Eva 31716927, documented in docs/inbox.md): the 100 questions
+// Named limit (documented in docs/inbox.md): the 100 questions
 // go to the newest foreign messages in channels not proven zero, so newer
 // chatter in a mention's own channel can take its lease. Honest, not hidden:
 // the snapshot reads stale. Removing it needs a relay listing, not a reorder.
@@ -2458,7 +2458,7 @@ it("inbox limit: 100 newer foreign messages in a channel with attention push out
   for (const row of chatter) expect(demanded).toContain(row.id);
 });
 
-// Eva 17:27 rule: a zero row proves absence only if its request started after
+// A zero row proves absence only if its request started after
 // the channel's last cached event. Until that row arrives, new evidence is asked.
 function holdSidebar(h: ReturnType<typeof setup>) {
   const held = deferredSidebar<void>(),
@@ -2564,7 +2564,7 @@ it("inbox: 101 candidates in a channel with attention do not settle, even when e
   for (const row of rows.slice(1)) expect(demanded).toContain(row.id);
 });
 
-// Eva 8a373655: a zero row proves absence only once it has also cleared any
+// A zero row proves absence only once it has also cleared any
 // unread live hint, the sidebar's own bar for "the row has caught up". An
 // incomplete row clears the watermark but not the hint, so the badge and the
 // Inbox keep agreeing.
@@ -2603,7 +2603,7 @@ it("inbox: an incomplete zero row does not clear a live unread hint, so the ment
   ]);
 });
 
-// Eva 02177317: the row's messageId and rootId describe ONE message, the oldest
+// The row's messageId and rootId describe ONE message, the oldest
 // in the group (the pair #499 opens). target and readThrough stay on the newest.
 it.each([
   [

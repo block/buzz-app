@@ -664,11 +664,11 @@ export function HostedCommunities({ active }: { active(): boolean }) {
             </div>
           )}
           {deletionEnabled && blockedOwner && (
-            <p role="status" className={`${card} text-body-sm wrap-anywhere`}>
+            <p role="status" className={`${card} text-body-sm`}>
               {blockedOwner === bound ? (
                 <>
-                  This identity has a deletion request from another Builderlab
-                  server pending on this device. It can't be checked here, so
+                  This identity has a deletion request saved from a different
+                  app address on this device. It can't be checked here, so
                   contact support before starting another deletion.
                 </>
               ) : (
@@ -882,7 +882,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
                 setBlockedOwner(occupied.owner_pubkey);
                 setError(
                   occupied.owner_pubkey === bound
-                    ? "Deletion was not sent. This identity has a pending deletion request from another Builderlab server on this device."
+                    ? "Deletion was not sent. This identity has a deletion request saved from a different app address on this device. Contact support before starting another deletion."
                     : `Deletion was not sent. A deletion request from ${npub(occupied.owner_pubkey)} is already pending on this device.`,
                 );
               }

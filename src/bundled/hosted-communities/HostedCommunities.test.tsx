@@ -1723,6 +1723,23 @@ it("explains when another context cleared the blocked slot before final confirma
   expect(within(dialog).getByRole("alert")).toHaveTextContent(/^Try again\.$/);
   expect(deletionPosts()).toHaveLength(0);
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
+  // The copy promises that pressing Start deletion again is enough.
+  const admission = hold();
+  routes["/api/builderlab/delete"] = admission.answer as Handler;
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Start deletion" }),
+  );
+  await waitFor(() => expect(deletionPosts()).toHaveLength(1));
+  const stored = JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? "");
+  expect(stored.owner_pubkey).toBe(local);
+  expect(deletionPosts()[0]?.[1]).toEqual(stored.request);
+  await act(async () =>
+    admission.release(
+      Response.json(accepted(stored.request), { status: 202 }),
+    ),
+  );
+  expect(await screen.findByText("Deletion started")).toBeVisible();
+  expect(deletionPosts()).toHaveLength(1);
 });
 
 it("explains a same-owner envelope saved for another origin without asking to switch identity", async () => {
@@ -1745,7 +1762,7 @@ it("explains a same-owner envelope saved for another origin without asking to sw
   renderCard();
   expect(
     await screen.findByText(
-      "This identity has a deletion request from another Builderlab server pending on this device. It can't be checked here, so contact support before starting another deletion.",
+      "This identity has a deletion request saved from a different app address on this device. It can't be checked here, so contact support before starting another deletion.",
     ),
   ).toBeVisible();
   expect(
@@ -1784,7 +1801,7 @@ it("explains a same-owner other-origin slot occupied at final confirmation", asy
     within(dialog).getByRole("button", { name: "Start deletion" }),
   );
   expect(within(dialog).getByRole("alert")).toHaveTextContent(
-    "Deletion was not sent. This identity has a pending deletion request from another Builderlab server on this device.",
+    "Deletion was not sent. This identity has a deletion request saved from a different app address on this device. Contact support before starting another deletion.",
   );
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
   expect(deletionPosts()).toHaveLength(0);

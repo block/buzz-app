@@ -584,6 +584,26 @@ it("session replacement during publication cannot apply a late completion", asyn
   expect(h.removed).not.toHaveBeenCalled();
   expect(h.acceptDiscovery).not.toHaveBeenCalled();
 });
+it("retiring a caller during publication keeps the outcome uncertain without replay", async () => {
+  const h = harness();
+  const caller = new AbortController();
+  const started = deferred<void>();
+  const gate = deferred<void>();
+  h.publish.mockImplementationOnce(async () => {
+    started.resolve();
+    await gate.promise;
+  });
+  const result = expect(
+    h.owner.capability.run("delete", id, caller.signal),
+  ).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed);
+  await started.promise;
+  caller.abort();
+  gate.resolve();
+  await result;
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.removed).not.toHaveBeenCalled();
+  h.owner.dispose();
+});
 it("reads exact relay-owned coordinates fresh both before sign and before publish", async () => {
   const h = harness();
   await h.owner.capability.run("delete", id);

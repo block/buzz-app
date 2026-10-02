@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 async function openLifecycle(page, app) {
@@ -157,9 +158,7 @@ test("archive confirmation returns focus on cancel and retains the conversation 
   await expect(dialog).toHaveCount(0);
   await expect(row).toHaveCount(0);
   await expect(page).toHaveURL(conversationUrl);
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await expect(
     page.getByRole("button", { name: "Unarchive channel", exact: true }),
   ).toBeVisible();
@@ -335,7 +334,7 @@ for (const action of ["archive", "hide"]) {
       await expect(page.getByRole("dialog")).toHaveCount(0);
       const destination =
         action === "archive"
-          ? page.getByRole("button", { name: "Channel settings", exact: true })
+          ? page.getByRole("button", { name: "Channel actions", exact: true })
           : page.getByText("Select a channel to read it.", { exact: true });
       await expect(destination).toBeVisible();
       if (action === "archive") await expect(page).toHaveURL(exactUrl);
@@ -346,7 +345,7 @@ for (const action of ["archive", "hide"]) {
       await expect(destination).toBeVisible();
       if (action === "archive") {
         await expect(page).toHaveURL(exactUrl);
-        await destination.click();
+        await openChannelDetails(page);
         await expect(
           page.getByRole("button", { name: "Unarchive channel", exact: true }),
         ).toBeVisible();

@@ -272,3 +272,59 @@ test("working agents open their thread when linked, otherwise the conversation",
     messageId,
   );
 });
+
+test("a typing agent offers no activity view while Agent Activity is off", async () => {
+  const user = userEvent.setup();
+  const agent = "a".repeat(64);
+  const openWorkingAgent = vi.fn();
+  const unread = {
+    channelId: "studio",
+    items: [],
+    coverage: "observed",
+    freshness: "observed",
+  };
+  const session = {
+    agentActivity: {
+      snapshot: () => ({
+        status: "disabled",
+        records: [],
+        turns: [],
+        typing: [],
+        trimmed: 0,
+      }),
+      subscribe: () => () => {},
+    },
+    unread: {
+      activity: () => unread,
+      subscribeActivity: () => () => {},
+    },
+    profiles: { ensure: vi.fn(async () => {}) },
+    media: vi.fn(),
+  } as unknown as RelaySession;
+  render(
+    <ChannelActivityPopover
+      session={session}
+      channelId="studio"
+      channelName="Studio"
+      trigger={<Button>Activity</Button>}
+      agents={[agent]}
+      agentProfiles={new Map([[agent, { name: "Buzzy" }]])}
+      onOpenWorkingAgent={openWorkingAgent}
+      onOpenAgentActivity={vi.fn()}
+      onOpenThread={vi.fn()}
+    />,
+  );
+  screen.getByRole("button", { name: "Activity" }).focus();
+  await user.keyboard("{Enter}");
+  expect(screen.queryByRole("button", { name: /View .* activity/ })).toBeNull();
+  await user.click(
+    screen.getByRole("button", {
+      name: "Open conversation for Buzzy in Studio",
+    }),
+  );
+  expect(openWorkingAgent).toHaveBeenCalledExactlyOnceWith(
+    "studio",
+    agent,
+    undefined,
+  );
+});

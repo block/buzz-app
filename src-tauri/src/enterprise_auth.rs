@@ -1,9 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Mutex, OnceLock,
-    },
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 
@@ -185,6 +182,7 @@ pub(crate) struct EnterpriseAuthInfo {
 struct LoginState {
     active: Option<ActiveLogin>,
     canceled: VecDeque<String>,
+    generation: u64,
 }
 
 struct ActiveLogin {
@@ -197,8 +195,6 @@ pub(crate) struct EnterpriseAuthHost {
     session: Arc<Mutex<Option<(Scope, StoredSession)>>>,
     login: Arc<Mutex<LoginState>>,
     commit: Arc<tokio::sync::Mutex<()>>,
-    // A validation may finish after another operation has invalidated its input.
-    generation: Arc<AtomicU64>,
     store: Arc<dyn CredentialStore>,
 }
 
@@ -222,7 +218,6 @@ impl EnterpriseAuthHost {
             session: Arc::new(Mutex::new(None)),
             login: Arc::new(Mutex::new(LoginState::default())),
             commit: Arc::new(tokio::sync::Mutex::new(())),
-            generation: Arc::new(AtomicU64::new(0)),
             store,
         }
     }
@@ -242,7 +237,7 @@ impl EnterpriseAuthHost {
         scope: Scope,
         http_client: &reqwest::Client,
     ) -> Result<Option<EnterpriseAuthInfo>> {
-        let generation = self.generation.load(Ordering::Acquire);
+        let generation = self.current_generation()?;
         if let Some(session) = self.cached(&scope) {
             let raw = encode_session(&session)?;
             return match check_session(
@@ -255,7 +250,11 @@ impl EnterpriseAuthHost {
             {
                 SessionCheck::Valid(info) => {
                     let _commit = self.commit.lock().await;
-                    if self.generation.load(Ordering::Acquire) != generation {
+                    let state = self
+                        .login
+                        .lock()
+                        .map_err(|_| "Enterprise authentication state is unavailable".to_owned())?;
+                    if state.generation != generation {
                         return Ok(self.cached_info(&scope));
                     }
                     if let Some(current) = self.cached(&scope) {
@@ -276,7 +275,11 @@ impl EnterpriseAuthHost {
         }
         let Some(persisted) = self.read(&scope).await? else {
             let _commit = self.commit.lock().await;
-            if self.generation.load(Ordering::Acquire) != generation {
+            let state = self
+                .login
+                .lock()
+                .map_err(|_| "Enterprise authentication state is unavailable".to_owned())?;
+            if state.generation != generation {
                 return Ok(self.cached_info(&scope));
             }
             self.clear_memory(&scope, None);
@@ -292,7 +295,11 @@ impl EnterpriseAuthHost {
         {
             SessionCheck::Valid(info) => {
                 let _commit = self.commit.lock().await;
-                if self.generation.load(Ordering::Acquire) != generation {
+                let mut state = self
+                    .login
+                    .lock()
+                    .map_err(|_| "Enterprise authentication state is unavailable".to_owned())?;
+                if state.generation != generation {
                     return Ok(self.cached_info(&scope));
                 }
                 if let Some(current) = self.cached(&scope) {
@@ -302,6 +309,7 @@ impl EnterpriseAuthHost {
                         }));
                     }
                 } else {
+                    Self::bump_generation(&mut state);
                     self.remember(scope, persisted.session);
                 }
                 Ok(Some(info))
@@ -328,10 +336,21 @@ impl EnterpriseAuthHost {
         generation: u64,
     ) -> Result<Option<EnterpriseAuthInfo>> {
         let _commit = self.commit.lock().await;
-        if self.generation.load(Ordering::Acquire) != generation {
+        let should_invalidate = {
+            let mut state = self
+                .login
+                .lock()
+                .map_err(|_| "Enterprise authentication state is unavailable".to_owned())?;
+            if state.generation != generation {
+                false
+            } else {
+                Self::bump_generation(&mut state);
+                true
+            }
+        };
+        if !should_invalidate {
             return Ok(self.cached_info(scope));
         }
-        self.bump_generation();
         self.delete_if_matches(scope, raw).await?;
         self.clear_memory(scope, Some(token));
         Ok(None)
@@ -365,6 +384,7 @@ impl EnterpriseAuthHost {
         if state.active.as_ref().is_some_and(|active| active.id == id) {
             let active = state.active.take().expect("active login checked above");
             remember_canceled(&mut state.canceled, id);
+            Self::bump_generation(&mut state);
             drop(state);
             let _ = active.cancel.send(());
         } else {
@@ -379,16 +399,36 @@ impl EnterpriseAuthHost {
     }
 
     async fn clear_scope(&self, scope: Scope) -> Result<()> {
-        // Fence validations before waiting for storage, then recheck before cleanup.
-        self.bump_generation();
-        self.cancel_active();
-        let generation = self.generation.load(Ordering::Acquire);
+        // Cancel and fence as one state transition before waiting for storage.
+        let generation = {
+            let mut state = self
+                .login
+                .lock()
+                .map_err(|_| "Enterprise authentication state is unavailable".to_owned())?;
+            Self::bump_generation(&mut state);
+            if let Some(active) = state.active.take() {
+                remember_canceled(&mut state.canceled, &active.id);
+                let _ = active.cancel.send(());
+            }
+            state.generation
+        };
         let _commit = self.commit.lock().await;
-        if self.generation.load(Ordering::Acquire) != generation {
+        let should_clear = {
+            let mut state = self
+                .login
+                .lock()
+                .map_err(|_| "Enterprise authentication state is unavailable".to_owned())?;
+            if state.generation != generation {
+                false
+            } else {
+                Self::bump_generation(&mut state);
+                self.clear_memory(&scope, None);
+                true
+            }
+        };
+        if !should_clear {
             return Ok(());
         }
-        self.bump_generation();
-        self.clear_memory(&scope, None);
         let Some(persisted) = self.read(&scope).await? else {
             return Ok(());
         };
@@ -457,24 +497,22 @@ impl EnterpriseAuthHost {
             remember_canceled(&mut state.canceled, &previous.id);
             let _ = previous.cancel.send(());
         }
-        self.bump_generation();
+        Self::bump_generation(&mut state);
         state.active = Some(ActiveLogin { id, cancel });
         Ok(true)
     }
 
-    fn cancel_active(&self) {
-        if let Ok(mut state) = self.login.lock() {
-            if let Some(active) = state.active.take() {
-                remember_canceled(&mut state.canceled, &active.id);
-                let _ = active.cancel.send(());
-            }
-        }
+    fn current_generation(&self) -> Result<u64> {
+        Ok(self
+            .login
+            .lock()
+            .map_err(|_| "Enterprise authentication state is unavailable".to_owned())?
+            .generation)
     }
 
-    fn bump_generation(&self) -> u64 {
-        self.generation
-            .fetch_add(1, Ordering::AcqRel)
-            .wrapping_add(1)
+    fn bump_generation(state: &mut LoginState) -> u64 {
+        state.generation = state.generation.wrapping_add(1);
+        state.generation
     }
 
     fn finish(&self, id: &str) {
@@ -509,11 +547,26 @@ impl EnterpriseAuthHost {
             return Err("Enterprise authentication was canceled".into());
         }
         self.replace(scope, raw.clone()).await?;
-        if !self.is_active(id)? {
+        let adopted = {
+            // This is the adoption linearization point. begin/cancel use the
+            // same owner lock, so neither can interleave the final active
+            // check, generation fence, and cache update.
+            let mut state = self
+                .login
+                .lock()
+                .map_err(|_| "Enterprise authentication state is unavailable".to_owned())?;
+            if state.active.as_ref().is_some_and(|active| active.id == id) {
+                Self::bump_generation(&mut state);
+                self.remember(scope.clone(), session);
+                true
+            } else {
+                false
+            }
+        };
+        if !adopted {
             self.delete_if_matches(scope, raw).await?;
             return Err("Enterprise authentication was canceled".into());
         }
-        self.remember(scope.clone(), session);
         Ok(info)
     }
 
@@ -1386,6 +1439,10 @@ mod tests {
 
     impl HeldSessionServer {
         async fn spawn() -> Self {
+            Self::spawn_with_statuses(StatusCode::OK, StatusCode::UNAUTHORIZED).await
+        }
+
+        async fn spawn_with_statuses(first_status: StatusCode, second_status: StatusCode) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = format!("http://{}", listener.local_addr().unwrap());
             let first_started = Arc::new(tokio::sync::Notify::new());
@@ -1395,6 +1452,8 @@ mod tests {
             let first_started_for_route = first_started.clone();
             let release_first_for_route = release_first.clone();
             let second_started_for_route = second_started.clone();
+            let first_status_for_route = first_status;
+            let second_status_for_route = second_status;
             let app = Router::new().route(
                 "/v1/session",
                 get(move || {
@@ -1402,19 +1461,25 @@ mod tests {
                     let first_started = first_started_for_route.clone();
                     let release_first = release_first_for_route.clone();
                     let second_started = second_started_for_route.clone();
+                    let first_status = first_status_for_route;
+                    let second_status = second_status_for_route;
                     async move {
                         if call == 0 {
                             first_started.notify_one();
                             release_first.notified().await;
                             (
-                                StatusCode::OK,
-                                Json(serde_json::json!({
-                                    "expires_at": "2030-01-01T00:00:00Z"
-                                })),
+                                first_status,
+                                Json(if first_status.is_success() {
+                                    serde_json::json!({
+                                        "expires_at": "2030-01-01T00:00:00Z"
+                                    })
+                                } else {
+                                    serde_json::json!({})
+                                }),
                             )
                         } else {
                             second_started.notify_one();
-                            (StatusCode::UNAUTHORIZED, Json(serde_json::json!({})))
+                            (second_status, Json(serde_json::json!({})))
                         }
                     }
                 }),
@@ -1930,6 +1995,71 @@ mod tests {
             store.read(scope.service, &scope.account),
             Err(StoreError::Absent)
         );
+    }
+
+    #[tokio::test]
+    async fn validation_started_before_new_adoption_cannot_replace_or_clear_it() {
+        let viewer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        for first_status in [StatusCode::OK, StatusCode::UNAUTHORIZED] {
+            let server =
+                HeldSessionServer::spawn_with_statuses(first_status, StatusCode::UNAUTHORIZED)
+                    .await;
+            let scope = scope_for_adapter(&server.base, viewer).unwrap();
+            let old = StoredSession {
+                token: Zeroizing::new("old-session".into()),
+                expires_at: "2030-01-01T00:00:00Z".into(),
+            };
+            let newer = StoredSession {
+                token: Zeroizing::new("new-session".into()),
+                expires_at: "2031-01-01T00:00:00Z".into(),
+            };
+            let store = Arc::new(FixtureStore::default());
+            let old_raw = encode_session(&old).unwrap();
+            store
+                .replace(scope.service, &scope.account, &old_raw)
+                .unwrap();
+            let host = EnterpriseAuthHost::with_store(store.clone());
+            let (cancel, _receiver) = oneshot::channel();
+            assert!(host.begin("new-login".into(), cancel).unwrap());
+            let client = test_http_client(Duration::from_secs(1));
+            let validation = tokio::spawn({
+                let host = host.clone();
+                let scope = scope.clone();
+                let client = client.clone();
+                async move { host.get_scope_with_client(scope, &client).await }
+            });
+            server.first_started.notified().await;
+
+            let newer_raw = encode_session(&newer).unwrap();
+            assert_eq!(
+                host.commit_session(
+                    &scope,
+                    "new-login",
+                    newer,
+                    EnterpriseAuthInfo {
+                        expires_at: "2031-01-01T00:00:00Z".into(),
+                    },
+                )
+                .await
+                .unwrap()
+                .expires_at,
+                "2031-01-01T00:00:00Z"
+            );
+
+            server.release_first.notify_one();
+            assert_eq!(
+                validation.await.unwrap().unwrap().unwrap().expires_at,
+                "2031-01-01T00:00:00Z"
+            );
+            assert_eq!(host.cached(&scope).unwrap().token.as_str(), "new-session");
+            assert_eq!(
+                store
+                    .read(scope.service, &scope.account)
+                    .unwrap()
+                    .as_slice(),
+                newer_raw.as_slice()
+            );
+        }
     }
 
     #[tokio::test]

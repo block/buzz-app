@@ -189,9 +189,7 @@ mod tests {
             let address = listener.local_addr().unwrap();
             let join = thread::spawn(move || {
                 let (mut stream, _) = listener.accept().unwrap();
-                let Some(request) = read_request(&mut stream).unwrap() else {
-                    return None;
-                };
+                let request = read_request(&mut stream).ok()??;
                 let _ = stream.write_all(&response);
                 Some(request)
             });
@@ -274,14 +272,7 @@ mod tests {
     }
 
     fn trusted_relays() -> Vec<String> {
-        vec![TRUSTED_RELAY.to_owned()]
-    }
-
-    fn unused_url() -> Url {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        drop(listener);
-        Url::parse(&format!("http://{address}/info")).unwrap()
+        parse_enterprise_relay_allowlist(TRUSTED_RELAY).unwrap()
     }
 
     async fn discover_with_fixture(
@@ -380,14 +371,17 @@ mod tests {
 
     #[tokio::test]
     async fn ordinary_and_unconfigured_relays_never_fetch_discovery() {
+        let body = serde_json::to_vec(&discovery_document()).unwrap();
         for (relay, trusted) in [
             ("wss://ordinary.example", trusted_relays()),
             (TRUSTED_RELAY, Vec::new()),
         ] {
-            let status = discover_enterprise_login_gate(relay, &trusted, Some(unused_url()))
+            let fixture = Fixture::spawn(response("200 OK", &body, body.len()));
+            let status = discover_enterprise_login_gate(relay, &trusted, Some(fixture.url.clone()))
                 .await
                 .unwrap();
             assert_eq!(status, EnterpriseLoginGateStatus::NotRequired);
+            assert!(fixture.finish().is_none());
         }
     }
 
@@ -405,6 +399,7 @@ mod tests {
         let cases = [
             ("503 Service Unavailable", b"unavailable".to_vec(), "failed"),
             ("200 OK", b"not json".to_vec(), "invalid"),
+            ("200 OK", b"{}".to_vec(), "did not advertise"),
             (
                 "200 OK",
                 br#"{"limitation":{"federated_identity":true}}"#.to_vec(),

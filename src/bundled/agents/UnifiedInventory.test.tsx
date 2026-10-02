@@ -39,6 +39,7 @@ function setup(
   client?: ClientSnapshot,
   transport: Partial<ReadTransport> = {},
   naming = false,
+  viewer = "de".repeat(32),
 ) {
   const f = controlFixture();
   configure(f);
@@ -52,24 +53,27 @@ function setup(
             ) ?? [])
           : { identities },
     );
-  const owned = createRelaySession({
-    viewer: "de".repeat(32),
-    relayAuthor: "ef".repeat(32),
-    scope: "wss://relay.example.test",
-    readAgentLibrary: async () => ({
-      definitions,
-      identities: [
-        {
-          pubkey: "cd".repeat(32),
-          name: "Not imported",
-          definitionId: "linked",
-        },
-      ],
-    }),
-    query: async () => [],
-    media: () => undefined,
-    ...transport,
-  });
+  const owned = createRelaySession(
+    {
+      viewer,
+      relayAuthor: "ef".repeat(32),
+      scope: "wss://relay.example.test",
+      readAgentLibrary: async () => ({
+        definitions,
+        identities: [
+          {
+            pubkey: "cd".repeat(32),
+            name: "Not imported",
+            definitionId: "linked",
+          },
+        ],
+      }),
+      query: async () => [],
+      media: () => undefined,
+      ...transport,
+    },
+    { outboxStorage: { load: () => [], save: () => {} } },
+  );
   const control = createAgentControl(f.host);
   disposals.push(() => {
     owned.dispose();
@@ -88,10 +92,10 @@ function setup(
   };
   let connection: RelaySnapshot = {
     status: mode === "disconnected" ? "disconnected" : "ready",
-    viewer: "de".repeat(32),
+    viewer,
     ...(mode === "disconnected"
       ? {}
-      : { scope: `wss://relay.example.test:${"de".repeat(32)}` }),
+      : { scope: `wss://relay.example.test:${viewer}` }),
     generation: 1,
     session:
       mode === "archived"
@@ -806,3 +810,60 @@ for (const duplicate of [false, true]) {
     }
   });
 }
+
+it("removes a relay-only agent after confirmation and keeps it on Cancel or failure", async () => {
+  const published: { kind: number; tags: string[][] }[] = [];
+  let refuse: Error | undefined = Error("restricted: not authorized");
+  const signer = keypair();
+  setup(
+    "connected",
+    (fixture) => {
+      fixture.data.parked = [];
+    },
+    ["cd".repeat(32)],
+    [],
+    undefined,
+    {
+      writer: {
+        kinds: [9001, 5],
+        sign: async (template) => signed(signer, { ...template }),
+        async publish(event) {
+          if (refuse) throw refuse;
+          published.push(event);
+        },
+      },
+    },
+    false,
+    signer.pubkey,
+  );
+  const group = await screen.findByRole("region", {
+    name: "Relay-only agents",
+  });
+  const card = within(group).getByRole("article", {
+    name: "Agent Not imported",
+  });
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  let dialog = await screen.findByRole("alertdialog", {
+    name: "Remove Not imported?",
+  });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(published).toEqual([]);
+
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  dialog = await screen.findByRole("alertdialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Remove agent" }));
+  expect(await within(card).findByRole("alert")).toHaveTextContent(
+    "restricted: not authorized",
+  );
+  expect(card).toBeInTheDocument();
+
+  refuse = undefined;
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  dialog = await screen.findByRole("alertdialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Remove agent" }));
+  await waitFor(() => expect(card).not.toBeInTheDocument());
+  expect(published.map(({ kind, tags }) => [kind, tags[0]])).toEqual([
+    [5, ["a", `30177:${signer.pubkey}:${"cd".repeat(32)}`]],
+  ]);
+});

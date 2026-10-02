@@ -12,7 +12,12 @@ import { CaretDownIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard } from "./AgentCard";
 import { ManagedAgentActions } from "./ManagedAgentActions";
-import { localHereGroup, type inventoryDecision } from "./inventory-decisions";
+import { RelayAgentRemove } from "./RelayAgentRemove";
+import {
+  localHereGroup,
+  relayGroup,
+  type inventoryDecision,
+} from "./inventory-decisions";
 import { type AgentInventoryIdentity, localSetups } from "./inventory-model";
 
 /** One complete inventory identity; source selection belongs to the enclosing inventory. */
@@ -29,6 +34,7 @@ export function InventoryIdentityCard({
   edit,
   duplicate,
   remove,
+  removeRelay,
   importedId,
   onUseHere,
   onImport,
@@ -47,6 +53,10 @@ export function InventoryIdentityCard({
   edit(agent: AgentView, avatar?: string): void;
   duplicate?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
+  /** Undefined when this connection cannot remove relay-only agents. */
+  removeRelay?:
+    | ((pubkey: string, signal: AbortSignal) => Promise<void>)
+    | undefined;
   importedId: string | null;
   onUseHere(
     pubkey: string,
@@ -197,6 +207,19 @@ export function InventoryIdentityCard({
           </>
         )}
         {(tile || decision.action === "clone") && cloneAction}
+        {removeRelay &&
+          decision.group === relayGroup &&
+          // Removal writes to the connected community only.
+          (row.knownCommunities.has(destination) ? (
+            <RelayAgentRemove
+              name={row.displayName}
+              remove={(signal) => removeRelay(row.pubkey, signal)}
+            />
+          ) : (
+            <p role="status" className="m-0 text-body-sm text-secondary">
+              Switch to this community to remove this agent.
+            </p>
+          ))}
       </div>
       {decision.action === "wait" && (
         <p role="status" className="m-0 text-body-sm text-secondary">

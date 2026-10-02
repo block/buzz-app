@@ -263,7 +263,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
               including agents using it; start an agent again to reconnect to
               another member’s compute. Buzz remembers one sharing configuration
               for its selected identity and community; sharing elsewhere
-              replaces it.
+              replaces it. Disconnect also stops this shared node for now; saved
+              sharing resumes when you reopen Buzz in this community. Use Stop
+              sharing to keep it off.
             </p>
             <ShareModelPicker
               model={model}

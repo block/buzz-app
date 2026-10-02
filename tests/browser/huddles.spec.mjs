@@ -882,6 +882,7 @@ test("Huddle chat expands beside the call and stays separate from Live transcrip
     name: "Huddle ended",
     exact: true,
   });
+  await expect(endedCard).toHaveCount(1);
   await expect(
     endedCard.getByRole("button", { name: "Join", exact: true }),
   ).toHaveCount(0);

@@ -372,7 +372,7 @@ export function foldMessages(
       }),
     );
   }
-  return rows.sort(compareMessages);
+  return collapseHuddleCards(rows).sort(compareMessages);
 }
 
 /** Count people, but retain event IDs for author-only removal and duplicate cleanup. */
@@ -429,5 +429,19 @@ export function groupReactions(
           events: Object.freeze(events),
         }),
       ),
+  );
+}
+
+/** Keep a start card stable while it observes its end; preserve a lone end fallback. */
+export function collapseHuddleCards(rows: ChannelMessage[]): ChannelMessage[] {
+  const startedRooms = new Set(
+    rows
+      .filter((row) => row.huddle?.state === "started")
+      .map((row) => row.huddle?.room),
+  );
+  if (!startedRooms.size) return rows;
+  return rows.filter(
+    (row) =>
+      row.huddle?.state !== "ended" || !startedRooms.has(row.huddle.room),
   );
 }

@@ -550,10 +550,10 @@ mod tests {
                 author_id: "ab".repeat(32),
                 channel_id: "room".into(),
                 attachments: vec![serde_json::from_value(serde_json::json!({
-                    "url": "https://relay.example/media/photo.png",
+                    "url": "https://relay.example/media/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png",
                     "kind": "image", "mime": "image/png", "name": "photo.png", "size": 123,
                     "dimensions": { "width": 640, "height": 480 },
-                    "source": "http://buzz-media.localhost/photo.png",
+                    "source": "http://buzz-media.localhost/https%3A%2F%2Frelay.example%2Fmedia%2Faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png",
                     "previewUrl": "https://relay.example/media/preview.png",
                     "previewSource": "http://buzz-media.localhost/preview.png"
                 }))
@@ -566,7 +566,7 @@ mod tests {
             }],
         });
         let host = HuddleWindow::default();
-        let source = "http://buzz-media.localhost/photo.png";
+        let source = "http://buzz-media.localhost/https%3A%2F%2Frelay.example%2Fmedia%2Faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png";
         assert!(!host.permits_download(source, "photo.png"));
         *host.0.lock().unwrap() = Some(Session {
             view: presentation.clone(),
@@ -575,6 +575,7 @@ mod tests {
         });
         assert!(host.permits_download(source, "photo.png"));
         assert!(!host.permits_download(source, "other.png"));
+        assert!(!host.permits_download(source, ""));
         assert!(!host.permits_download("http://buzz-media.localhost/other.png", "photo.png"));
         host.0.lock().unwrap().as_mut().unwrap().view.phase = "leaving".into();
         assert!(!host.permits_download(source, "photo.png"));

@@ -112,19 +112,6 @@ const lifecycleEvent = (kind: number, at: number) => ({
   ],
   sig: "",
 });
-const cardMessage: ChannelMessage = {
-  id: "ab".repeat(32),
-  channelId: destination.channelId,
-  authorId: viewer,
-  createdAt: startedAt,
-  content: "Huddle started",
-  huddle: { room: roomId, state: "started" },
-  mentions: [],
-  attachments: [],
-  reactions: [],
-  replyCount: 0,
-  participants: [],
-};
 const legacyRoom = new URLSearchParams(location.search).has("legacyRoom");
 const room = {
   id: roomId,
@@ -635,16 +622,22 @@ function Fixture() {
           color: "var(--text-standard)",
         }}
       >
-        <MessageBody
-          registry={cardRegistry}
-          message={cardMessage}
-          open={(target) => {
-            setChatTarget(target);
-            return true;
-          }}
-        >
-          Huddle started
-        </MessageBody>
+        {foldMessages(destination.channelId, lifecycleCreator, [
+          lifecycleEvent(48100, startedAt),
+          ...(endedAt ? [lifecycleEvent(48103, endedAt)] : []),
+        ]).map((message) => (
+          <MessageBody
+            key={message.id}
+            registry={cardRegistry}
+            message={message}
+            open={(target) => {
+              setChatTarget(target);
+              return true;
+            }}
+          >
+            Huddle started
+          </MessageBody>
+        ))}
         {chatTarget && (
           <aside
             aria-label="Saved Huddle conversation"

@@ -1,3 +1,4 @@
+import { foldMessages } from "../relay/fold";
 import { expect, it } from "vitest";
 import {
   keypair,
@@ -60,10 +61,7 @@ it("projects actual Huddle history cards and marked room metadata through the re
     await flush();
     expect(
       owner.session.channels.window(parent).rows.map((row) => row.huddle),
-    ).toEqual([
-      { room, state: "started" },
-      { room, state: "ended" },
-    ]);
+    ).toEqual([{ room, state: "started" }]);
   } finally {
     owner.dispose();
   }
@@ -92,4 +90,36 @@ it("ignores forged participation/end and preserves an authoritative end across l
       relay.pubkey,
     ).endedAt,
   ).toBe(30);
+});
+
+it("keeps one stable card for a retained start/end pair and an end-only fallback", () => {
+  const start = event(48100, author, 10),
+    end = event(48103, relay, 20);
+  for (const events of [
+    [start, end],
+    [end, start],
+  ]) {
+    const rows = foldMessages(parent, relay.pubkey, events);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(start.id);
+    expect(huddleLifecycle(events, room, parent, relay.pubkey).endedAt).toBe(
+      20,
+    );
+  }
+  expect(foldMessages(parent, relay.pubkey, [end])).toMatchObject([
+    { id: end.id, huddle: { state: "ended" } },
+  ]);
+  const otherParent = { ...start, tags: [["h", "another-parent"]] };
+  expect(foldMessages(parent, relay.pubkey, [otherParent, end])).toHaveLength(
+    1,
+  );
+  const deleted = signed(author, {
+    kind: 5,
+    tags: [["e", start.id]],
+    created_at: 30,
+    content: "",
+  });
+  expect(
+    foldMessages(parent, relay.pubkey, [start, end, deleted]),
+  ).toMatchObject([{ id: end.id }]);
 });

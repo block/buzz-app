@@ -288,7 +288,7 @@ export function ImageReviewStage({
             title="Download image"
             onClick={() => {
               setDownloadErrorSource(undefined);
-              void downloadNativeMedia(source).catch(() =>
+              void downloadNativeMedia(source, selected?.name ?? "").catch(() =>
                 setDownloadErrorSource(source),
               );
             }}

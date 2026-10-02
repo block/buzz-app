@@ -106,8 +106,9 @@ export function ChannelCanvasDialog({
         setError("");
       }
     } catch (reason) {
-      // Even an error may follow a delivered write. Never adopt content or
-      // rebase a draft on that uncertain outcome, and never retry automatically.
+      // Save may replay the same signed event with its original precondition.
+      // Even an error may follow a delivered write. Never adopt content, rebase
+      // a draft, or start another restore on that uncertain outcome.
       try {
         const event = await canvas.read(channelId);
         if (generation === operation.current) setHead(event);

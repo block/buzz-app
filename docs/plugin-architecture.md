@@ -304,10 +304,14 @@ new signed revision through the existing Canvas save/outbox owner. Its precondit
 is the displayed head, never the historical revision or a silently substituted
 newer head. Clean editors adopt the confirmed result. Edited or stale recovered
 drafts keep their content and original base until explicit reload; browsing and
-cancelling never replace drafts. Failed/uncertain restores retain drafts and show
-the actual error without automatically retrying. Empty revisions can be restored;
-revisions exceeding the existing 24 KiB save limit remain previewable but cannot
-be restored here. No diff viewer or new delivery owner is introduced.
+cancelling never replace drafts. Restore inherits Save's delivery confirmation,
+which may automatically replay the exact signed event with its original
+`expected-revision`. It never creates a fresh event or substitutes a newer
+precondition to retry. If confirmation ultimately fails or remains uncertain,
+the dialog retains drafts and shows the error without starting another restore.
+Empty revisions can be restored; revisions exceeding the existing 24 KiB save
+limit remain previewable but cannot be restored here. No diff viewer or new
+delivery owner is introduced.
 
 ### Top-bar launchers and the companion slot
 

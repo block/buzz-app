@@ -2,6 +2,7 @@ import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { holdReadingFocus } from "./reading.mjs";
 
 test.use({ productionBroker: true, savedSidebar: true });
 
@@ -750,6 +751,9 @@ test("Create new retains its draft when preferences fail before submission and r
   page,
   app,
 }) => {
+  // This is a sidebar/modal journey, not reading intent. Keep incidental
+  // timeline dwell from starting a read-state publication across the reload.
+  await holdReadingFocus(page);
   await open(page, app);
   const beta = rowIn(page, "group:work");
   await beta.click();
@@ -831,6 +835,12 @@ test("Create new retains its draft when preferences fail before submission and r
     await expect(sidebar(page).locator('[data-channel-id="beta"]')).toHaveCount(
       1,
     );
+    // Reload retires the old document: no incidental publisher crossed it.
+    expect(
+      app.report.brokerRequests.filter(({ url }) =>
+        /\/read-state-(sign|publish)$/.test(url),
+      ),
+    ).toEqual([]);
   } finally {
     held.resolve();
     await page.unroute("**/sidebar-preferences", failLegacy);

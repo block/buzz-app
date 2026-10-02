@@ -155,13 +155,6 @@ html[data-keyboard-navigation] .panelViewport {
   outline-offset: 2px;
 }
 
-.swatch:focus-visible,
-.customColor:focus-within,
-.dropzone:focus-visible {
-  outline: 2px solid var(--text-standard);
-  outline-offset: 3px;
-}
-
 .customColor {
   overflow: hidden;
   background: conic-gradient(

@@ -19,6 +19,9 @@ import type {
 import * as communityApi from "../features/communities/api";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { ProfileSettings } from "./ProfileSettings";
+import { stubAvatarBrowserApis } from "../features/agents/avatar-testing";
+
+stubAvatarBrowserApis();
 
 const viewer = "ab".repeat(32);
 
@@ -51,6 +54,7 @@ function communities(): Communities {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 it("loads and publishes the selected community profile before updating the local seed", async () => {

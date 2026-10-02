@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { fixtureRelayUrl } from "../relay-config.ts";
@@ -31,9 +32,7 @@ test("Canvas confirmation backdrop dismisses only the top layer and retains the 
     .getByRole("navigation", { name: "Subscribed channels" })
     .getByRole("button", { name: "Alpha", exact: true })
     .click();
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   const settings = page.getByRole("complementary", {
     name: "Channel settings",
     exact: true,

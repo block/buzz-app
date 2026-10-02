@@ -33,7 +33,7 @@ function harness() {
   };
 }
 const intent = { group: "section:work", mode: "recent", sectionIds: ["work"] };
-it("mutates only the selected override, preserves unprojected data, and encodes alpha as absence", () => {
+it("mutates only the selected register, imports recognized legacy modes, and encodes alpha as a tombstone", () => {
   const h = harness();
   const blob = {
     version: 1,
@@ -47,10 +47,23 @@ it("mutates only the selected override, preserves unprojected data, and encodes 
   const draft = prepareSidebarSort([h.encrypt(blob)], intent, h.secret, 50_000);
   expect(verifyEvent(draft.event)).toBe(true);
   expect(draft.event.created_at).toBe(101);
-  expect(h.decode(draft.event)).toEqual({
-    ...blob,
-    groups: { ...blob.groups, "section:work": "recent" },
+  const saved = h.decode(draft.event);
+  expect(saved.groups).toEqual({
+    channels: "recent",
+    "section:elsewhere": "recent",
+    "section:work": "recent",
   });
+  expect(saved.future).toEqual(blob.future);
+  expect(saved.meta.g.channels).toEqual([
+    100_000,
+    "0000000000000000",
+    "recent",
+  ]);
+  expect(saved.meta.g["section:work"]).toEqual([
+    100_001,
+    expect.stringMatching(/^[0-9a-f]{16}$/),
+    "recent",
+  ]);
   expect(draft.groups).toEqual({
     channels: "recent",
     "section:work": "recent",
@@ -61,7 +74,17 @@ it("mutates only the selected override, preserves unprojected data, and encodes 
     h.secret,
     50_000,
   );
-  expect(h.decode(alpha.event)).toEqual(blob);
+  const reset = h.decode(alpha.event);
+  expect(reset.groups).toEqual({
+    channels: "recent",
+    "section:elsewhere": "recent",
+  });
+  expect(reset.meta.g["section:work"]).toEqual([
+    100_002,
+    saved.meta.g["section:work"][1],
+    null,
+  ]);
+  expect(reset.meta.g.channels).toEqual(saved.meta.g.channels);
   expect(alpha.event.created_at).toBe(102);
   expect(
     prepareSidebarSort([alpha.event], { ...intent, mode: "alpha" }, h.secret)
@@ -173,10 +196,11 @@ it("whole-blob LWW can lose an intervening other-section save while both mutatio
       },
     );
     expect(result).toEqual({ starred: "recent", channels: "recent" });
-    expect(h.decode(heads[0])).toEqual({
-      version: 1,
-      groups: { starred: "recent", channels: "recent" },
+    expect(h.decode(heads[0]).groups).toEqual({
+      starred: "recent",
+      channels: "recent",
     });
+    expect(h.decode(heads[0]).meta.g.forums).toBeUndefined();
   } finally {
     clock.mockRestore();
   }
@@ -208,4 +232,39 @@ it("projection accepts full-length section keys, rejects over-budget data, and i
       ),
     }),
   ).toThrow("budget exceeded");
+});
+
+it("edits the authoritative metadata, preserves tombstones and confirms projected intent", async () => {
+  const h = harness();
+  const reg = (v) => [9_000_000_000_000, "1111111111111111", v];
+  let head = h.encrypt({
+    version: 1,
+    groups: { channels: "recent" },
+    meta: { v: 1, g: { channels: reg(null), forums: reg("recent") } },
+  });
+  const result = await mutateSidebarSort(
+    { group: "channels", mode: "recent", sectionIds: [] },
+    h.secret,
+    async () => [head],
+    async (event) => {
+      head = event;
+    },
+  );
+  expect(result).toEqual({ channels: "recent", forums: "recent" });
+  expect(h.decode(head).meta.g.channels).toEqual([
+    9_000_000_000_001,
+    expect.stringMatching(/^[0-9a-f]{16}$/),
+    "recent",
+  ]);
+  expect(h.decode(head).meta.g.forums).toEqual(reg("recent"));
+  const publish = vi.fn();
+  await expect(
+    mutateSidebarSort(
+      intent,
+      h.secret,
+      async () => [h.encrypt({ version: 1, groups: {}, meta: { v: 2 } })],
+      publish,
+    ),
+  ).rejects.toThrow("metadata");
+  expect(publish).not.toHaveBeenCalled();
 });

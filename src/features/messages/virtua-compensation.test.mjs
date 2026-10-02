@@ -50,6 +50,7 @@ function setup({
   };
   const viewport = new EventTarget();
   const calls = [];
+  let resize;
   const axis = horizontal ? "overflow-x" : "overflow-y";
   const key = horizontal ? "scrollLeft" : "scrollTop";
   const option = horizontal ? "left" : "top";
@@ -61,6 +62,9 @@ function setup({
     ownerDocument: {
       defaultView: {
         ResizeObserver: class {
+          constructor(callback) {
+            resize = callback;
+          }
           observe() {}
           unobserve() {}
           disconnect() {}
@@ -99,6 +103,7 @@ function setup({
     style,
     axis,
     calls,
+    resize: (entries) => resize(entries),
     // Render computes the mounted range between the length change and the
     // layout effect that flushes the jump; ChannelTimeline's buffer is 1600.
     prepend(length = 40, buffer = 1600) {
@@ -592,6 +597,59 @@ it("delivers the latest resize per target outside native observer delivery", () 
   expect(h.received).toEqual([[latest, other]]);
   expect(h.frames.size).toBe(0);
 });
+
+it("delivers a viewport resize during native delivery and still defers item resizes", () => {
+  const h = resizeHarness();
+  const viewport = h.node(),
+    item = h.node();
+  h.observer.A(viewport, true);
+  h.observer.A(item);
+  const size = { target: viewport, contentRect: { height: 500 } };
+  const row = { target: item, contentRect: { height: 40 } };
+  h.notify([size, row]);
+  // Item rendering stays outside native delivery; the viewport mounts only
+  // deeper rows, and deferring it would cost a frame before any row paints.
+  expect(h.received).toEqual([[size]]);
+  expect(h.frames.size).toBe(1);
+  h.flush();
+  expect(h.received).toEqual([[size], [row]]);
+  h.observer.B(viewport);
+  h.notify([size]);
+  h.flush();
+  expect(h.received).toEqual([[size], [row]]);
+  h.observer.X();
+  h.observer.A(viewport);
+  h.notify([size]);
+  expect(h.received).toEqual([[size], [row]]);
+  h.flush();
+  expect(h.received).toEqual([[size], [row], [size]]);
+});
+
+it.each([
+  ["ltr", {}],
+  ["rtl", { horizontal: true, direction: "rtl" }],
+])(
+  "renders the first %s viewport range at a scroll that precedes its event",
+  (_, config) => {
+    const c = setup(config);
+    const key = config.horizontal ? "scrollLeft" : "scrollTop";
+    const native = config.direction === "rtl" ? -1 : 1;
+    // An imperative jump wrote the native offset; its scroll event is queued.
+    c.viewport[key] = 1700 * native;
+    c.resize([
+      { target: c.viewport, contentRect: { height: 600, width: 600 } },
+    ]);
+    expect(c.store.T()).toBe(1700);
+    expect(c.store.o()).toBe(600);
+    const [first, last] = c.store.i(0);
+    expect(first).toBe(17);
+    expect(last).toBeGreaterThanOrEqual(19);
+    // The queued event then carries no new offset.
+    c.viewport.dispatchEvent(new Event("scroll"));
+    expect(c.store.T()).toBe(1700);
+    c.driver._();
+  },
+);
 
 it("drops retired targets, cancels pending delivery on disposal, and can remount", () => {
   const h = resizeHarness();

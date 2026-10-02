@@ -92,7 +92,11 @@ export const ChannelBody = memo(function ChannelBody({
     );
   if (window.status !== "ready" && !window.rows.length)
     return (
-      <div className={styles.empty} role="status">
+      <div
+        className={styles.empty}
+        role="status"
+        data-buzz-launch-pending={!cached ? "required" : undefined}
+      >
         Loading messages…
       </div>
     );
@@ -105,6 +109,13 @@ export const ChannelBody = memo(function ChannelBody({
       channelId={channelId}
       queries={queries}
       window={window}
+      launchPending={
+        !cached &&
+        !window.error &&
+        (window.status === "idle" ||
+          window.status === "loading" ||
+          (window.status === "ready" && window.freshness === "cached"))
+      }
       onOpenLink={onOpenLink}
       canOpenLink={canOpenLink}
       {...(onOpenThread ? { onOpenThread } : {})}

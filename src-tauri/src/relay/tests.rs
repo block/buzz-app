@@ -440,6 +440,51 @@ fn isolated_agent_ipc_probe() {
     .contains("Invalid workflow read"));
 }
 
+#[test]
+fn managed_agent_registration_signs_as_owner_through_existing_ipc() {
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+        .build()
+        .unwrap();
+    let invoke = |cmd: &str, body: serde_json::Value| {
+        get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: cmd.into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(body),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.into(),
+            },
+        )
+        .map(|body| body.deserialize::<serde_json::Value>().unwrap())
+    };
+    let public = invoke("identity_restore", serde_json::json!({})).unwrap();
+    let registration = serde_json::json!({
+        "kind": 30177, "created_at": 123, "tags": [["d", "02".repeat(32)]],
+        "content": r#"{"name":"Remote agent","parallelism":1,"respond_to":"owner-only"}"#
+    });
+    let registered = invoke(
+        "relay_sign",
+        serde_json::json!({
+            "community": "https://relay.test", "event": registration
+        }),
+    )
+    .unwrap();
+    assert_eq!(registered["pubkey"], public);
+    for field in ["kind", "created_at", "tags", "content"] {
+        assert_eq!(registered[field], registration[field]);
+    }
+    verify(&registered);
+}
+
 #[tokio::test]
 async fn signing_is_verifiable_and_does_not_export_a_key() {
     let event = IdentityHost::fixture()
@@ -1754,4 +1799,57 @@ async fn preference_batches_reject_invalid_ciphertext_after_signature_verificati
             assert!(result.is_err());
         }
     }
+}
+
+#[test]
+fn canvas_signing_bounds_revision_preconditions_and_allows_exact_legacy_retries() {
+    let channel = vec![
+        "h".to_string(),
+        "11111111-1111-4111-8111-111111111111".to_string(),
+    ];
+    let event = |tags| EventTemplate {
+        kind: 40100,
+        content: "# Plan".into(),
+        created_at: 100,
+        tags,
+    };
+    assert!(validate_event("https://relay.test", &event(vec![channel.clone()])).is_ok());
+    for revision in ["none".to_string(), "a".repeat(64)] {
+        assert!(validate_event(
+            "https://relay.test",
+            &event(vec![
+                channel.clone(),
+                vec!["expected-revision".into(), revision]
+            ])
+        )
+        .is_ok());
+    }
+    for tags in [
+        vec![],
+        vec![channel.clone(), channel.clone()],
+        vec![channel.clone(), vec!["p".into(), "a".repeat(64)]],
+        vec![
+            channel.clone(),
+            vec!["expected-revision".into(), "bad".into()],
+        ],
+        vec![
+            channel.clone(),
+            vec!["expected-revision".into(), "A".repeat(64)],
+        ],
+        vec![
+            channel.clone(),
+            vec!["expected-revision".into(), "none".into(), "extra".into()],
+        ],
+        vec![
+            channel.clone(),
+            vec!["expected-revision".into(), "none".into()],
+            vec!["expected-revision".into(), "none".into()],
+        ],
+        vec![channel.clone(), vec![]],
+    ] {
+        assert!(validate_event("https://relay.test", &event(tags)).is_err());
+    }
+    let mut too_large = event(vec![channel]);
+    too_large.content = "é".repeat(13 * 1024);
+    assert!(validate_event("https://relay.test", &too_large).is_err());
 }

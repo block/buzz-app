@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test as base, expect } from "./fixture.mjs";
 import { streamEvidence } from "./stream-evidence.mjs";
 import { open } from "./timeline.mjs";
@@ -20,6 +21,15 @@ const list = (page) =>
   page.getByRole("navigation", { name: "Subscribed channels" });
 const cue = (page, edge) =>
   sidebar(page).locator(`button[data-edge="${edge}"]`);
+// Exit animation retains the button, but it must not remain actionable.
+const expectCueHidden = async (page, edge) => {
+  const button = cue(page, edge);
+  await expect(button).toHaveCount(1);
+  await expect(button.locator("..")).toHaveAttribute("inert", "");
+  await expect(button.locator("..")).toHaveAttribute("aria-hidden", "true");
+  await expect(sidebar(page).getByRole("button").and(button)).toHaveCount(0);
+  await expect(button).toBeHidden();
+};
 const row = (page, id) =>
   list(page).locator(`button[data-channel-id="${id.toLowerCase()}"]`);
 const removeDm = async (page, id) => {
@@ -226,7 +236,7 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
     getComputedStyle(el).transitionProperty.split(", "),
   );
   expect(transitionProperties).toEqual(["background-color", "color"]);
-  await expect(cue(page, "above")).toHaveCount(0);
+  await expectCueHidden(page, "above");
   await releaseReadingFocus(page);
   // Keep actionable DMs below while moving only ordinary unread above: priority
   // is derived from the destinations on each edge, not from the whole roster.
@@ -272,7 +282,7 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await cue(page, "below").focus();
   await cue(page, "below").press("Enter");
   await expect.poll(() => inView(page, "dm-090")).toBe(true);
-  await expect(cue(page, "below")).toHaveCount(0);
+  await expectCueHidden(page, "below");
   expect(await list(page).boundingBox()).toEqual(size); // Overlay never resizes the list.
   const warmed = heads(app)
     .slice(before)
@@ -299,7 +309,7 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   // Use the real wheel, too; programmatic reveal and direct gestures share updates.
   await list(page).hover({ position: { x: 5, y: 5 } });
   await page.mouse.wheel(0, -10000);
-  await expect(cue(page, "above")).toHaveCount(0);
+  await expectCueHidden(page, "above");
   await expect(cue(page, "below")).toBeVisible();
   await page.getByRole("button", { name: "Search Buzz", exact: true }).focus();
   await page.keyboard.press("Tab"); // Set keyboard modality from visible chrome, not an offscreen row.
@@ -376,25 +386,31 @@ test("resizing, collapsed groups and new unread evidence update only the display
   // A tall viewport makes every row visible; shrinking restores the bottom cue.
   await scroll(page, 0);
   await page.setViewportSize({ width: 1440, height: 6000 });
-  await expect(cue(page, "below")).toHaveCount(0);
+  await expectCueHidden(page, "below");
   await page.setViewportSize({ width: 1440, height: 950 });
   await expect(cue(page, "below")).toBeVisible();
+  await expect(cue(page, "below").locator("..")).not.toHaveAttribute("inert");
+  await expect(cue(page, "below").locator("..")).toHaveAttribute(
+    "aria-hidden",
+    "false",
+  );
+  await expect(
+    sidebar(page).getByRole("button").and(cue(page, "below")),
+  ).toHaveCount(1);
   await cue(page, "below").click();
   await cue(page, "below").click();
-  await expect(cue(page, "below")).toHaveCount(0);
+  await expectCueHidden(page, "below");
   app.append("primary", "dm-127", "New offscreen unread", false, false);
   // Non-active channels have no live content route. Discover the new evidence
   // through the existing bounded refresh, not by inventing a subscription.
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await page.getByText("Diagnostics", { exact: true }).click();
   await page.getByText("Unread status", { exact: true }).click();
   await page
     .getByRole("button", { name: "Refresh unread observations", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "Channel settings", exact: true })
+    .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   await expect(cue(page, "below")).toBeVisible();
   await cue(page, "below").click();
@@ -404,9 +420,7 @@ test("resizing, collapsed groups and new unread evidence update only the display
   await expect(
     page.getByText("New offscreen unread", { exact: true }),
   ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await page.getByText("Diagnostics", { exact: true }).click();
   await page
     .getByRole("button", {
@@ -416,10 +430,10 @@ test("resizing, collapsed groups and new unread evidence update only the display
     .click();
   await expect(row(page, "dm-127").getByRole("img")).toHaveCount(0);
   await page
-    .getByRole("button", { name: "Channel settings", exact: true })
+    .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   await scroll(page, 2700);
-  await expect(cue(page, "below")).toHaveCount(0);
+  await expectCueHidden(page, "below");
 });
 
 test("session changes discard the previous sidebar targets and manual unread still participates", async ({
@@ -445,16 +459,14 @@ test("session changes discard the previous sidebar targets and manual unread sti
     await expect(
       page.getByText(/secondary alpha message/).first(),
     ).toBeVisible();
-    await expect(cue(page, "below")).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .click();
+    await expectCueHidden(page, "below");
+    await openChannelDetails(page);
     await page.getByText("Diagnostics", { exact: true }).click();
     await page
       .getByRole("button", { name: "Mark unread on this device", exact: true })
       .click();
     await page
-      .getByRole("button", { name: "Channel settings", exact: true })
+      .getByRole("button", { name: "Close Channel settings tab", exact: true })
       .click();
     await expect.poll(() => pendingRoutes.length).toBeGreaterThan(0);
     const panel = page.getByRole("complementary", { name: "Channel sidebar" });

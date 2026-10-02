@@ -29,6 +29,7 @@ fn main() {
             "identity_import",
             "identity_create",
             "identity_export",
+            "identity_prepare_remote_agent_authorization",
             "relay_sign",
             "relay_decode_read_state",
             "relay_sign_read_state",

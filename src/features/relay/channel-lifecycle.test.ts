@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
-import { describe, expect, it, vi } from "vitest";
+import { assert, describe, expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { PublishRejected } from "./outbox";
 import {
@@ -143,6 +143,41 @@ function harness(role = "owner", type = "stream", owners = 1) {
     },
   };
 }
+
+it.each(["archive", "delete", "leave", "hide"] as const)(
+  "confirms %s while ordinary reads still see pre-write state",
+  async (action) => {
+    const h = harness("owner", action === "hide" ? "dm" : "stream", 2);
+    const replica = h.getEvents();
+    const currentRead = h.read.getMockImplementation();
+    assert(currentRead);
+    h.read.mockImplementation(async (filters, options) => {
+      if (filters.every((filter) => filter.consistency === "strong"))
+        return currentRead(filters, options);
+      if (filters[0]?.kinds?.[0] === 30622) return [];
+      return replica.filter((event) =>
+        filters.some((filter) => filter.kinds?.includes(event.kind)),
+      );
+    });
+    try {
+      await h.owner.capability.refreshVisibility();
+      expect(h.read.mock.calls[0]?.[0][0]).not.toHaveProperty("consistency");
+      await h.owner.capability.run(action, id);
+      for (const [filters] of h.read.mock.calls.slice(1, 3))
+        for (const filter of filters)
+          expect(filter).not.toHaveProperty("consistency");
+      expect(h.publish).toHaveBeenCalledOnce();
+      expect(h.read.mock.calls.at(-1)?.[0][0]?.consistency).toBe("strong");
+      if (action === "hide")
+        expect(h.owner.capability.snapshot().hidden).toEqual([id]);
+      else if (action === "archive")
+        expect(h.acceptDiscovery).toHaveBeenCalledOnce();
+      else expect(h.removed).toHaveBeenCalledExactlyOnceWith(id);
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
 
 describe("type and role boundaries", () => {
   it.each([
@@ -302,6 +337,7 @@ it.each(["archive", "unarchive", "delete", "leave", "hide"] as const)(
         expect(h.read.mock.calls.at(-1)?.[0]).toEqual([
           {
             kinds: [39002],
+            consistency: "strong",
             authors: [relayAuthor],
             "#d": [id],
             "#p": [viewer],
@@ -547,6 +583,26 @@ it("session replacement during publication cannot apply a late completion", asyn
   await expect(run).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed);
   expect(h.removed).not.toHaveBeenCalled();
   expect(h.acceptDiscovery).not.toHaveBeenCalled();
+});
+it("retiring a caller during publication keeps the outcome uncertain without replay", async () => {
+  const h = harness();
+  const caller = new AbortController();
+  const started = deferred<void>();
+  const gate = deferred<void>();
+  h.publish.mockImplementationOnce(async () => {
+    started.resolve();
+    await gate.promise;
+  });
+  const result = expect(
+    h.owner.capability.run("delete", id, caller.signal),
+  ).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed);
+  await started.promise;
+  caller.abort();
+  gate.resolve();
+  await result;
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.removed).not.toHaveBeenCalled();
+  h.owner.dispose();
 });
 it("reads exact relay-owned coordinates fresh both before sign and before publish", async () => {
   const h = harness();

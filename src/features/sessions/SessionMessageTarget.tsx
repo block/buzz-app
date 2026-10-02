@@ -61,7 +61,16 @@ export function SessionMessageTarget(props: Props) {
     }
   }, [session, channelId, messageId, navigation]);
   return (
-    <div className={styles.timeline}>
+    <div
+      className={styles.timeline}
+      data-buzz-launch-pending={
+        failed !== navigation &&
+        !navigation.signal.aborted &&
+        owned?.request !== navigation
+          ? "required"
+          : undefined
+      }
+    >
       <div className={styles.targetNavigation}>
         <span>Selected message</span>
         <Button type="button" onClick={props.onLatest}>
@@ -158,6 +167,13 @@ function SelectedMessage({
     <section
       ref={scroller}
       data-message-scroller
+      data-buzz-launch-pending={
+        !target &&
+        snapshot.targetStatus !== "unavailable" &&
+        snapshot.targetStatus !== "error"
+          ? "required"
+          : undefined
+      }
       className={messages.feed}
       aria-label="Selected session message"
     >

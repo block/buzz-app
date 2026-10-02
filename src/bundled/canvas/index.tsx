@@ -47,6 +47,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       <ChannelCanvasDialog
         key={`${state.scope}:${state.generation}:${channelContext.channelId}`}
         canvas={state.session.canvas}
+        profiles={state.session.profiles}
         scope={state.scope}
         channelId={channelContext.channelId}
         open

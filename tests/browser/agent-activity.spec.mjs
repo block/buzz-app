@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 import { npubEncode } from "nostr-tools/nip19";
@@ -455,12 +456,10 @@ it("profile activity opens the exact agent and originating channel before its fi
   await open(page, app);
   // The production broker advertises read-state writes even without the
   // readState fixture option. Exercise that publication before profile activity.
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await expect(
-    page.getByRole("region", {
-      name: "Edit channel details",
+    page.getByRole("complementary", {
+      name: "Channel settings",
       exact: true,
       includeHidden: true,
     }),
@@ -478,7 +477,7 @@ it("profile activity opens the exact agent and originating channel before its fi
   await expect.poll(() => app.report.readPublications.length).toBe(1);
   await expect(page.getByRole("alert")).toHaveCount(0);
   await page
-    .getByRole("button", { name: "Channel settings", exact: true })
+    .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   const profile = page.getByRole("complementary", {
@@ -832,8 +831,21 @@ test.describe("thread activity", () => {
       name: "Reply to thread",
       exact: true,
     });
+    // Visible content can precede the dock's entrance finishing. Measure all
+    // alignment against the settled panel, not different animation frames.
+    await page.locator("[data-panel-dock]").evaluate(async (element) => {
+      await Promise.all(
+        element.getAnimations().map((animation) => animation.finished),
+      );
+    });
+    const typingIndicator = thread.getByRole("status", {
+      name: "Typing activity",
+    });
+    await expect(typingIndicator).toBeVisible();
     const entryBox = await entry.boundingBox(),
-      formBox = await form.boundingBox();
+      formBox = await form.boundingBox(),
+      typingBox = await typingIndicator.boundingBox();
+    expect(typingBox.y + typingBox.height).toBeLessThan(entryBox.y);
     expect(entryBox.y + entryBox.height).toBeLessThanOrEqual(formBox.y);
     expect(formBox.y - entryBox.y - entryBox.height).toBeCloseTo(4, 0);
     const inset = await entry.evaluate((element) =>
@@ -862,8 +874,15 @@ test.describe("thread activity", () => {
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
       .toBe(390);
+    await expect(typingIndicator).toBeVisible();
     const narrowEntry = await entry.boundingBox(),
-      narrowForm = await form.boundingBox();
+      narrowForm = await form.boundingBox(),
+      narrowTyping = await typingIndicator.boundingBox();
+    expect(narrowTyping.y + narrowTyping.height).toBeLessThan(narrowEntry.y);
+    expect(narrowTyping.x).toBeGreaterThanOrEqual(narrowForm.x);
+    expect(narrowTyping.x + narrowTyping.width).toBeLessThanOrEqual(
+      narrowForm.x + narrowForm.width,
+    );
     expect(narrowEntry.y + narrowEntry.height).toBeLessThanOrEqual(
       narrowForm.y,
     );
@@ -904,6 +923,15 @@ test.describe("thread activity", () => {
     const channelForm = await page
       .getByRole("form", { name: "Send a message to Alpha", exact: true })
       .boundingBox();
+    const channelTyping = page
+      .getByRole("form", { name: "Send a message to Alpha", exact: true })
+      .locator("..")
+      .getByRole("status", { name: "Typing activity" });
+    await expect(channelTyping).toBeVisible();
+    const channelTypingBox = await channelTyping.boundingBox();
+    expect(channelTypingBox.y + channelTypingBox.height).toBeLessThan(
+      channelBox.y,
+    );
     expect(channelBox.y + channelBox.height).toBeLessThanOrEqual(channelForm.y);
     await expect(marker).toHaveCount(0, { timeout: 10_000 });
     await expect(channelActivity(page)).toHaveCount(0);

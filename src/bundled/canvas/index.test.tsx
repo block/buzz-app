@@ -40,6 +40,7 @@ it("restores a closed draft, isolates channels, and saves through the canvas cap
   });
   const canvas = {
     available: true,
+    history: vi.fn(async () => ({ revisions: [head], next: undefined })),
     read: vi.fn(async () => head),
     save: vi.fn(async (_id: string, content: string) => ({
       ...head,

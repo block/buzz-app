@@ -1,3 +1,8 @@
+import {
+  editSidebarRecord,
+  nextSidebarSectionOrder,
+  projectSidebarRecord,
+} from "./sidebar-registers";
 import { invoke } from "@tauri-apps/api/core";
 import { eventDto, type RelayEvent } from "./events";
 import {
@@ -73,7 +78,13 @@ export function nativeSidebar(transport: ReadTransport) {
     // The Rust decoder checks signature, author, coordinate and plaintext budget.
     const value = payload as Record<string, unknown>;
     project(coordinate, value);
-    return { payload: value, createdAt: events[0]?.created_at ?? 0 };
+    return {
+      payload:
+        coordinate === "channel-sections" || coordinate === "channel-sort"
+          ? projectSidebarRecord(coordinate, value)
+          : value,
+      createdAt: events[0]?.created_at ?? 0,
+    };
   }
   function project(
     coordinate: Coordinate,
@@ -91,7 +102,10 @@ export function nativeSidebar(transport: ReadTransport) {
   async function mutate<T>(
     coordinate: Coordinate,
     signal: AbortSignal,
-    prepare: (current: Record<string, unknown>) => {
+    prepare: (
+      current: Record<string, unknown>,
+      createdAt: number,
+    ) => {
       next: Record<string, unknown>;
       result: T;
     },
@@ -99,7 +113,7 @@ export function nativeSidebar(transport: ReadTransport) {
     conflict: string,
   ): Promise<T> {
     const current = await head(coordinate, signal);
-    const draft = prepare(current.payload);
+    const draft = prepare(current.payload, current.createdAt);
     if (same(current.payload, draft.next)) return draft.result;
     // Reject unsupported/over-budget writes at the existing projection boundary.
     project(coordinate, draft.next);
@@ -123,7 +137,7 @@ export function nativeSidebar(transport: ReadTransport) {
     await writer.publish(event, signal);
     const confirmed = await head(coordinate, signal);
     if (!confirms(confirmed.payload)) throw new Error(conflict);
-    return prepare(confirmed.payload).result;
+    return prepare(confirmed.payload, confirmed.createdAt).result;
   }
   return {
     decodeSidebarPreferences: decode,
@@ -147,7 +161,7 @@ export function nativeSidebar(transport: ReadTransport) {
       )
         throw new Error("Invalid sidebar assignment intent");
       const section = createSection?.id ?? sectionId;
-      const prepare = (current: Record<string, unknown>) => {
+      const prepare = (current: Record<string, unknown>, createdAt: number) => {
         const existing = current.sections as SidebarGroups["sections"];
         const sections = [...existing];
         if (createSection) {
@@ -159,7 +173,7 @@ export function nativeSidebar(transport: ReadTransport) {
             sections.push({
               id: createSection.id,
               name,
-              order: Math.max(-1, ...sections.map((entry) => entry.order)) + 1,
+              order: nextSidebarSectionOrder(current),
             });
         }
         if (
@@ -167,12 +181,25 @@ export function nativeSidebar(transport: ReadTransport) {
           !sections.some((entry) => entry.id === section)
         )
           throw new Error("Sidebar group no longer exists");
-        const assignments = {
-          ...(current.assignments as Record<string, string>),
-        };
-        if (section === undefined) delete assignments[channelId];
-        else assignments[channelId] = section;
-        const next = { ...current, sections, assignments };
+        const writes: [string[], unknown][] = [
+          [["a", channelId], section ?? null],
+        ];
+        if (createSection && !existing.some(({ id }) => id === section)) {
+          const added = sections.find(({ id }) => id === section);
+          if (!added) throw new Error("Sidebar group no longer exists");
+          writes.push(
+            [["s", added.id, "name"], added.name],
+            [["s", added.id, "icon"], null],
+            [["s", added.id, "order"], added.order],
+            [["s", added.id, "live"], true],
+          );
+        }
+        const next = editSidebarRecord(
+          "channel-sections",
+          current,
+          createdAt,
+          writes,
+        );
         const { sections: projected, assignments: mapped } = project(
           "channel-sections",
           next,
@@ -239,13 +266,10 @@ export function nativeSidebar(transport: ReadTransport) {
           ))
       )
         throw new Error("Invalid sidebar sort intent");
-      const prepare = (current: Record<string, unknown>) => {
-        const groups = {
-          ...(current.groups as Record<string, SidebarSortMode>),
-        };
-        if (mode === "alpha") delete groups[group];
-        else groups[group] = mode;
-        const next = { ...current, groups };
+      const prepare = (current: Record<string, unknown>, createdAt: number) => {
+        const next = editSidebarRecord("channel-sort", current, createdAt, [
+          [["g", group], mode === "alpha" ? null : mode],
+        ]);
         return {
           next,
           result: project("channel-sort", next, sectionIds).sort ?? {},

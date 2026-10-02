@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
@@ -42,19 +43,23 @@ async function visible(page) {
       .map((row) => row.dataset.messageId);
   });
 }
-async function options(page) {
-  const trigger = page.getByRole("button", {
+async function options(page, clockPaused = false) {
+  const panel = page.getByRole("complementary", {
     name: "Channel settings",
     exact: true,
   });
-  const opening = (await trigger.getAttribute("aria-expanded")) === "false";
-  await trigger.click();
+  const opening = !(await panel.isVisible());
+  if (opening) await openChannelDetails(page, { clockPaused });
+  else
+    await page
+      .getByRole("button", { name: "Close Channel settings tab", exact: true })
+      .click();
   if (opening) {
     // The details and lifecycle readers finish independently. Observe both before
     // checking diagnostics so a late details alert cannot escape the assertion.
     await expect(
-      page.getByRole("region", {
-        name: "Edit channel details",
+      page.getByRole("complementary", {
+        name: "Channel settings",
         exact: true,
         includeHidden: true,
       }),
@@ -247,7 +252,7 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
   await page.clock.runFor(900);
   // Keep policy time paused through the durable action and UI round trips;
   // runner delays must not overtake a later fixed pause target.
-  await options(page);
+  await options(page, true);
   await page
     .getByRole("button", { name: "Mark unread on this device", exact: true })
     .click();
@@ -257,7 +262,7 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
     .poll(async () => (await journal(page)).localUnread[alphaId])
     .toBeGreaterThan(0);
   expect((await journal(page)).state.frontiers).toEqual({});
-  await options(page);
+  await options(page, true);
   await expect(
     alpha(page).getByRole("img", {
       name: "Marked unread on this device only",

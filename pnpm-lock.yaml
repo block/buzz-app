@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@base-ui/react@1.8.0': 7fa81e73a79e25bc6cddeeb432a4609fbc8f1795141fbd0cfebacbfbaa02757f
-  virtua@0.51.0: 0f8e7edf94d4816db2c41126307d590f09481872465e211d6c9f0355178c5387
+  virtua@0.51.0: a484a9280f82301968645f0e81dec58e297e4e4f0741ef1753d2fb469e82543b
 
 importers:
 
@@ -36,12 +36,12 @@ importers:
       '@noble/curves':
         specifier: 2.0.1
         version: 2.0.1
-      '@phosphor-icons/core':
-        specifier: 2.1.1
-        version: 2.1.1
-      '@phosphor-icons/react':
-        specifier: 2.1.10
-        version: 2.1.10(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@tabler/icons':
+        specifier: 3.46.0
+        version: 3.46.0
+      '@tabler/icons-react':
+        specifier: 3.46.0
+        version: 3.46.0(react@19.2.8)
       '@tanstack/react-router':
         specifier: ^1.168.10
         version: 1.170.33(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -137,7 +137,7 @@ importers:
         version: 4.0.1
       virtua:
         specifier: 0.51.0
-        version: 0.51.0(patch_hash=0f8e7edf94d4816db2c41126307d590f09481872465e211d6c9f0355178c5387)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        version: 0.51.0(patch_hash=a484a9280f82301968645f0e81dec58e297e4e4f0741ef1753d2fb469e82543b)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       yaml:
         specifier: 2.9.1
         version: 2.9.1
@@ -456,16 +456,6 @@ packages:
   '@oxc-project/types@0.148.0':
     resolution: {integrity: sha512-Nm4s/jB+4FpFsPhWGEC4h7rzksesmtnMXomo6rCMcg/b8zLQuOziRgkCS1fxDCXOlJB/6Q8oABOZ/OP6RIPj9A==}
 
-  '@phosphor-icons/core@2.1.1':
-    resolution: {integrity: sha512-v4ARvrip4qBCImOE5rmPUylOEK4iiED9ZyKjcvzuezqMaiRASCHKcRIuvvxL/twvLpkfnEODCOJp5dM4eZilxQ==}
-
-  '@phosphor-icons/react@2.1.10':
-    resolution: {integrity: sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==}
-    engines: {node: '>=10'}
-    peerDependencies:
-      react: '>= 16.8'
-      react-dom: '>= 16.8'
-
   '@playwright/test@1.63.0':
     resolution: {integrity: sha512-oxMK4vllB9RK5NQ2l1pq1IfOf2AvnEuj/vYGDj0H2nMtmtZpKtCwt/l00GEO6xjGfpBNAvjovvYdCm50dRQkpQ==}
     engines: {node: '>=20'}
@@ -577,6 +567,14 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
+  '@tabler/icons-react@3.46.0':
+    resolution: {integrity: sha512-CCm7xJWhDT2PH4ZIFkP6AgYKtVhq0gpYkjUN+GVh1AzmIQaa77OW0bQPBPQiTE0PsXMR9oSxFqA3qBglzPyrVQ==}
+    peerDependencies:
+      react: '>= 16'
+
+  '@tabler/icons@3.46.0':
+    resolution: {integrity: sha512-f2RYFl3fzPwj5WO82x6en0dmkjefxEfOm16D1ByM6cj/McNiwOkL4VaPUoP9VVIrXAD9WnTSVFr70px703b//A==}
 
   '@tailwindcss/node@4.3.3':
     resolution: {integrity: sha512-/T8IKEsf9VTU6tLjgC7+sv2mOPtQxzE2jMw7u4Tt40Tx+QSZxpzh95/H6cMKoja9XuW7iMdLJYBB0o9G1CaAgg==}
@@ -2277,13 +2275,6 @@ snapshots:
 
   '@oxc-project/types@0.148.0': {}
 
-  '@phosphor-icons/core@2.1.1': {}
-
-  '@phosphor-icons/react@2.1.10(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
-    dependencies:
-      react: 19.2.8
-      react-dom: 19.2.8(react@19.2.8)
-
   '@playwright/test@1.63.0':
     dependencies:
       playwright: 1.63.0
@@ -2349,6 +2340,13 @@ snapshots:
       '@scure/base': 2.0.0
 
   '@standard-schema/spec@1.1.0': {}
+
+  '@tabler/icons-react@3.46.0(react@19.2.8)':
+    dependencies:
+      '@tabler/icons': 3.46.0
+      react: 19.2.8
+
+  '@tabler/icons@3.46.0': {}
 
   '@tailwindcss/node@4.3.3':
     dependencies:
@@ -3776,7 +3774,7 @@ snapshots:
       '@types/unist': 3.0.3
       vfile-message: 4.0.3
 
-  virtua@0.51.0(patch_hash=0f8e7edf94d4816db2c41126307d590f09481872465e211d6c9f0355178c5387)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+  virtua@0.51.0(patch_hash=a484a9280f82301968645f0e81dec58e297e4e4f0741ef1753d2fb469e82543b)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     optionalDependencies:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)

@@ -15,6 +15,10 @@ for (const kind of ["image", "video"]) {
       exact: true,
     });
     await expect(heading).toBeVisible();
+    await expect(dialog.locator("[data-review-stage]")).toHaveCSS(
+      "background-color",
+      "rgb(0, 0, 0)",
+    );
     await expect(heading).toHaveCSS("color", "rgb(255, 255, 255)");
     await expect(heading).toHaveCSS("font-size", "14px");
     const header = heading.locator("xpath=ancestor::header");
@@ -46,6 +50,19 @@ for (const kind of ["image", "video"]) {
     }
     for (const width of [320, 800, 1280]) {
       await page.setViewportSize({ width, height: 720 });
+      if (kind === "video") {
+        await page.evaluate(() =>
+          window.dispatchEvent(new Event("fixture-typing")),
+        );
+        const typing = dialog.getByRole("status", { name: "Typing activity" });
+        const frameOption = dialog.getByRole("checkbox", {
+          name: "Comment at current frame",
+        });
+        await expect(typing).toContainText("Alex is typing");
+        const typingBox = await typing.boundingBox();
+        const optionBox = await frameOption.boundingBox();
+        expect(typingBox.y).toBeGreaterThan(optionBox.y + optionBox.height);
+      }
       const control = dialog.getByRole("button", {
         name: kind === "image" ? /^Image zoom:/ : "Play video",
         exact: true,
@@ -115,6 +132,12 @@ test("narrow video thumbnails keep play clear of the progress controls", async (
   await page.setViewportSize({ width: 320, height: 720 });
   await page.goto("/tests/fixtures/media-review.html");
   const preview = page.locator("[data-video-preview]");
+  await expect(preview.locator("video")).toHaveCSS("object-fit", "cover");
+  await expect(preview).toHaveCSS("clip-path", "none");
+  await expect(preview.locator("[data-image-outline]")).toHaveCSS(
+    "overflow",
+    "visible",
+  );
   const play = preview.getByRole("button", { name: "Play video", exact: true });
   // Metadata enables the timeline; do not tab past its initial disabled state.
   await expect(

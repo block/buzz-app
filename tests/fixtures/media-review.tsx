@@ -147,6 +147,29 @@ const owner = createRelaySession(
         events.push(event);
       },
     },
+    subscribe(callbacks) {
+      callbacks.state({ status: "connected", routes: [] });
+      const typing = () =>
+        callbacks.receive([
+          signed(designer, {
+            kind: 20002,
+            content: "",
+            created_at: Math.floor(Date.now() / 1000),
+            tags: [
+              ["h", "video-preview"],
+              ["e", rootMessage.id, "", "reply"],
+            ],
+          }),
+        ]);
+      window.addEventListener("fixture-typing", typing);
+      return {
+        update() {},
+        retry() {},
+        dispose() {
+          window.removeEventListener("fixture-typing", typing);
+        },
+      };
+    },
     async query(filters) {
       if (
         new URLSearchParams(location.search).has("slow") &&

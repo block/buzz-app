@@ -14,7 +14,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, assert, expect, it, vi } from "vitest";
-import { useState, useSyncExternalStore } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { createRelaySession } from "../../features/relay/session";
 import { connectBrokerTransport } from "../../features/relay/transport";
 import type { RelayData } from "../../features/relay/service";
@@ -26,7 +26,7 @@ import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 import { keypair, signed, roster } from "../../features/relay/testing";
 import { matchesEvent } from "../../features/relay/projection";
-import type { RelayEvent } from "../../features/relay/events";
+import type { ReadFilter, RelayEvent } from "../../features/relay/events";
 import { createOutbox, type OutgoingEvent } from "../../features/relay/outbox";
 import type { EventTemplate } from "nostr-tools";
 import type { KitRecord } from "../../features/channel-templates/model";
@@ -46,6 +46,7 @@ import { CreateChannelDialog } from "../channels/CreateChannelDialog";
 import { TemplateEditor } from "./TemplateEditor";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { SaveAsTemplate } from "./TemplateSettings";
+import { ChannelHeaderMenu } from "../channels/ChannelHeaderMenu";
 import { MentionPicker } from "../mentions/MentionPicker";
 import { MentionCompletion } from "../mentions/MentionCompletion";
 import type { CompletionResult } from "../../features/conversation/contracts";
@@ -89,6 +90,7 @@ function harness(
   beforeNativeRead?: () => Promise<void>,
   beforePublish?: (event: RelayEvent) => Promise<void>,
   afterPublish?: (event: RelayEvent) => Promise<void>,
+  beforeCanvasRead?: () => Promise<void>,
 ) {
   const viewer = keypair(),
     relay = keypair();
@@ -105,6 +107,8 @@ function harness(
   });
   const stored = new Map<string, KitRecord>();
   const published: RelayEvent[] = [];
+  const replica = { lag: false };
+  const reads: ReadFilter[] = [];
   const sign = vi.fn(async (value: EventTemplate) => signed(viewer, value));
   let journal: readonly OutgoingEvent[] = [];
   const channels = new Map<string, string[]>([
@@ -177,6 +181,9 @@ function harness(
         },
       },
       query: async (filters) => {
+        reads.push(...filters);
+        if (filters.some((filter) => filter.kinds?.includes(40100)))
+          await beforeCanvasRead?.();
         if (
           filters.some((filter) =>
             filter.kinds?.some((kind) => [39000, 39002].includes(kind)),
@@ -211,7 +218,13 @@ function harness(
           ),
         ];
         return events.filter((event) =>
-          filters.some((filter) => matchesEvent(event, filter)),
+          filters.some(
+            (filter) =>
+              matchesEvent(event, filter) &&
+              (!replica.lag ||
+                filter.consistency === "strong" ||
+                ![9007, 9000, 40100, 39000, 39002].includes(event.kind)),
+          ),
         );
       },
     },
@@ -231,6 +244,8 @@ function harness(
     native,
     fixture,
     published,
+    replica,
+    reads,
     sign,
     viewer,
     journal: () => journal,
@@ -500,12 +515,16 @@ it("does not consume a legacy group default while its required identity is still
 it("copies a complete managed lineup without an unused legacy warning", async () => {
   const test = harness(),
     user = userEvent.setup();
+  const read = vi.fn(test.owner.session.canvas.read);
   try {
     await test.owner.session.agentChoices.refresh();
     await test.owner.session.archives.ensure();
     render(
       <SaveAsTemplate
-        session={test.owner.session}
+        session={{
+          ...test.owner.session,
+          canvas: { ...test.owner.session.canvas, read },
+        }}
         channel={{
           id: "11111111-1111-4111-8111-111111111111",
           name: "Partial",
@@ -525,6 +544,9 @@ it("copies a complete managed lineup without an unused legacy warning", async ()
     expect(
       screen.queryByText(/Incomplete agent inventory/),
     ).not.toBeInTheDocument();
+    expect(read).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111", {
+      strong: false,
+    });
     expect(test.published).toEqual([]);
   } finally {
     cleanup();
@@ -1265,6 +1287,60 @@ it.each([
   },
 );
 
+it.each(["", "# Seed plan"])(
+  "finishes template setup against the writer with stale replicas and no live echoes (Canvas: %s)",
+  async (canvas) => {
+    const test = harness();
+    test.replica.lag = true;
+    try {
+      const id = await test.owner.session.channelCreation.create({
+        name: "Writer-confirmed setup",
+        visibility: "private",
+        setup: {
+          agents: [test.fixture.agent.pubkey],
+          canvas,
+          groupId: "",
+          templateId: "saved",
+        },
+      });
+      const receipt = `buzz-channel-setup.v2:https://relay.example.test:${test.viewer.pubkey}:${id}`;
+      // Receipt retirement is the completion barrier, not admission or publish ACK.
+      await waitFor(() => expect(localStorage.getItem(receipt)).toBeNull());
+      expect(test.owner.session.channelCreation.notices()).toEqual([]);
+      expect(test.published.map((event) => event.kind)).toEqual(
+        canvas ? [9007, 40100, 9000] : [9007, 9000],
+      );
+      expect(test.sign).toHaveBeenCalledTimes(test.published.length);
+      expect(test.journal()).toEqual([]);
+      expect(test.owner.session.channels.get?.(id)?.members).toContain(
+        test.fixture.agent.pubkey,
+      );
+      for (const event of test.published.filter((event) => event.kind !== 9007))
+        expect(test.reads).toContainEqual({
+          ids: [event.id],
+          limit: 1,
+          consistency: "strong",
+        });
+      if (canvas) {
+        const heads = test.reads.filter((filter) =>
+          filter.kinds?.includes(40100),
+        );
+        expect(heads).toHaveLength(3); // Before seeding, after save, before members.
+        expect(heads.every((filter) => filter.consistency === "strong")).toBe(
+          true,
+        );
+        // Ordinary browsing still uses the lagging replica, not the writer.
+        await expect(
+          test.owner.session.canvas.read(id, { strong: false }),
+        ).resolves.toBeUndefined();
+        expect(test.reads.at(-1)?.consistency).toBeUndefined();
+      }
+    } finally {
+      test.dispose();
+    }
+  },
+);
+
 it("retains a failed group placement independently and permits another Create", async () => {
   const test = harness();
   try {
@@ -1767,6 +1843,127 @@ it("template replacement dismisses only its confirmation and preserves setup unt
     expect(close).not.toHaveBeenCalled();
     expect(test.published).toEqual([]);
   } finally {
+    test.dispose();
+  }
+});
+
+function HeaderTemplateMenu({
+  test,
+  registry,
+}: {
+  test: ReturnType<typeof harness>;
+  registry: ReturnType<typeof providerFixture>;
+}) {
+  const entries = useSyncExternalStore(
+    registry.providers.subscribe,
+    registry.providers.snapshot,
+  );
+  const trigger = useRef<HTMLButtonElement>(null);
+  return (
+    <ChannelHeaderMenu
+      channel={{ id: "11111111-1111-4111-8111-111111111111", name: "Copy me" }}
+      session={test.owner.session}
+      providers={registry.providers}
+      templateProvider={entries[0]}
+      trigger={trigger}
+      openDetails={() => {}}
+      openCanvas={() => {}}
+    />
+  );
+}
+
+it("keeps failed template reads retryable in the header and opens the existing dialog only after success", async () => {
+  const read = vi
+    .fn(async () => {})
+    .mockRejectedValueOnce(new Error("Canvas unavailable"));
+  const test = harness(
+      undefined,
+      undefined,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      read,
+    ),
+    registry = providerFixture(),
+    user = userEvent.setup();
+  try {
+    render(<HeaderTemplateMenu test={test} registry={registry} />);
+    const trigger = screen.getByRole("button", { name: "Channel actions" });
+    await user.click(trigger);
+    const copy = await screen.findByRole("menuitem", {
+      name: "Save as template…",
+    });
+    await waitFor(() =>
+      expect(copy).not.toHaveAttribute("aria-disabled", "true"),
+    );
+    await user.click(copy);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Canvas unavailable",
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(copy);
+    await screen.findByRole("dialog", { name: "Channel template" });
+    expect(read).toHaveBeenCalledTimes(2);
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(test.published).toEqual([]);
+  } finally {
+    cleanup();
+    test.dispose();
+  }
+});
+
+it("retires an in-flight header template copy when its optional provider is disabled", async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const read = vi.fn(async () => {
+    await held;
+  });
+  const test = harness(
+      undefined,
+      undefined,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      read,
+    ),
+    registry = providerFixture(),
+    user = userEvent.setup();
+  try {
+    render(<HeaderTemplateMenu test={test} registry={registry} />);
+    await user.click(screen.getByRole("button", { name: "Channel actions" }));
+    const copy = await screen.findByRole("menuitem", {
+      name: "Save as template…",
+    });
+    await waitFor(() =>
+      expect(copy).not.toHaveAttribute("aria-disabled", "true"),
+    );
+    await user.click(copy);
+    await waitFor(() => expect(read).toHaveBeenCalledOnce());
+    expect(copy).toHaveAttribute("aria-disabled", "true");
+    act(() => registry.toggle(false));
+    await act(async () => {
+      release();
+      await held;
+    });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: "Save as template…" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "View channel details" }),
+    ).toBeVisible();
+    expect(test.published).toEqual([]);
+  } finally {
+    release();
+    cleanup();
     test.dispose();
   }
 });

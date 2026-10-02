@@ -3,7 +3,11 @@ import { useEffect, useRef, type RefObject } from "react";
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"]):not([disabled])';
 
-/** Makes a portalled viewer a real modal and restores its connected opener. */
+const available = (target: HTMLElement | undefined) =>
+  !!target?.isConnected &&
+  !target.closest('[hidden], [inert], [aria-hidden="true"]');
+
+/** Makes a portalled viewer a real modal and restores its available opener. */
 export function useModalBoundary(
   backdrop: RefObject<HTMLElement | null>,
   initialFocus: RefObject<HTMLElement | null>,
@@ -11,14 +15,16 @@ export function useModalBoundary(
   restoreFocus?: RefObject<HTMLElement | null>,
 ) {
   const closeRef = useRef(close);
+  const openerRef = useRef<HTMLElement | undefined>(undefined);
   closeRef.current = close;
   useEffect(() => {
-    const opener =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : undefined;
     const container = backdrop.current;
     if (!container) return;
+    const active = document.activeElement;
+    // Effect replay must not replace the actual opener with the modal's focus.
+    if (!container.contains(active))
+      openerRef.current = active instanceof HTMLElement ? active : undefined;
+    const opener = openerRef.current;
     const siblings = [...document.body.children].filter(
       (element): element is HTMLElement =>
         element instanceof HTMLElement && element !== container,
@@ -85,8 +91,23 @@ export function useModalBoundary(
         else state.element.setAttribute("aria-hidden", state.ariaHidden);
       }
       const target = restoreFocus?.current ?? opener;
-      if (target?.isConnected)
-        requestAnimationFrame(() => target.focus({ preventScroll: true }));
+      let handoffFocus: Element | null = null;
+      const mayRestore = () =>
+        available(target) &&
+        (document.activeElement === document.body ||
+          container.contains(document.activeElement) ||
+          document.activeElement === handoffFocus);
+      if (mayRestore()) {
+        // An explicit handoff wins over mount effects (e.g. ThreadHeader focus)
+        // in this commit, but not a later focus move before the queued frame.
+        if (restoreFocus?.current)
+          queueMicrotask(() => {
+            handoffFocus = document.activeElement;
+          });
+        requestAnimationFrame(() => {
+          if (mayRestore()) target?.focus({ preventScroll: true });
+        });
+      }
     };
   }, [backdrop, initialFocus, restoreFocus]);
 }

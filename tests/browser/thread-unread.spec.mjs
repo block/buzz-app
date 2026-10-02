@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, virtuaIdle } from "./timeline.mjs";
 import { holdReadingFocus, releaseReadingFocus } from "./reading.mjs";
@@ -52,8 +53,9 @@ test("thread buttons show observed unread independently, clear only after readin
   page,
   app,
 }, testInfo) => {
-  // Reading needs a 300ms dwell (use-reading.ts). The clock runs that deadline
-  // exactly where the test proves that something is not reading.
+  // Reading needs a 300ms dwell (use-reading.ts). An installed clock still
+  // flows, so pause it wherever an open surface must not earn that dwell, and
+  // run the deadline exactly where the test proves reading.
   await page.clock.install();
   await holdReadingFocus(page);
   await open(page, app);
@@ -89,15 +91,13 @@ test("thread buttons show observed unread independently, clear only after readin
     "font-weight",
     "600",
   );
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await page.getByText("Diagnostics", { exact: true }).click();
   await page
     .getByRole("button", { name: "Mark unread on this device", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "Channel settings", exact: true })
+    .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   await expect(
     alpha.getByRole("img", { name: /Marked unread on this device only/ }),
@@ -162,6 +162,10 @@ test("thread buttons show observed unread independently, clear only after readin
     .first();
   await item.focus();
   await expect(item).toBeFocused();
+  // This open only proves the handoff. Its thread must stay unread, so a slow
+  // close must not let the open panel earn reading dwell. Pause just ahead of
+  // the page clock, which keeps flowing during the round trip.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000);
   await releaseReadingFocus(page);
   await item.press("Enter");
   await expect(
@@ -171,6 +175,7 @@ test("thread buttons show observed unread independently, clear only after readin
     .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })
     .click();
   await expect(alpha).toBeFocused();
+  await page.clock.resume();
   const beforeRect = await first.boundingBox();
   await first.hover();
   const afterRect = await first.boundingBox();
@@ -266,9 +271,14 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(dot(first)).toHaveCount(0);
   await expect(dot(other)).toBeVisible();
   await expect(other).toHaveAccessibleName(/Observed unread replies/); // No channel-wide shortcut.
+  // The close transition owns channel width; unread receipt does not mean its
+  // resulting Virtua remeasurement and native scrolling have finished.
   await page
     .getByRole("button", { name: "Close Thread tab", exact: true })
     .click();
+  await expect(
+    page.locator('[data-panel-dock][data-closing="true"]'),
+  ).toHaveCount(0);
   const own = app.reply(roots[0].id, true);
   // Barrier: the session has indexed the reply, so its unread effect is final.
   await expect
@@ -283,7 +293,28 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(first).toHaveAccessibleName("View thread: 23 replies");
   app.reply(roots[0].id);
   await expect(first).toHaveAccessibleName(/Observed unread replies/);
+  await virtuaIdle(page);
+  // Remeasurement while geometry settles may start another native scroll.
+  await expect(page.locator("[data-channel-timeline] ol")).toHaveCSS(
+    "pointer-events",
+    "auto",
+  );
+  const reopenAttempt = await page.evaluate(
+    () => window.fixtureNavigation.snapshot().attempt.id,
+  );
   await first.click();
+  await expect
+    .poll(() =>
+      page.evaluate((before) => {
+        const { status, entry, attempt } = window.fixtureNavigation.snapshot();
+        return {
+          status,
+          freshAttempt: attempt.id !== before,
+          messageId: entry.target.messageId,
+        };
+      }, reopenAttempt),
+    )
+    .toEqual({ status: "opened", freshAttempt: true, messageId: roots[0].id });
   await expect(
     panel.getByText("New peer reply", { exact: true }),
   ).toBeVisible();

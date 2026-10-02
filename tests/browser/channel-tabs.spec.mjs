@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { openPage } from "./navigation.mjs";
@@ -30,6 +31,24 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
   await expect(
     workspace.getByRole("searchbox", { name: "Find a channel or person" }),
   ).toBeFocused();
+  // Browser-only: compact-button CSS must not shrink tab close artwork below header icons.
+  const tabClose = workspace.getByRole("button", {
+    name: "Close New tab tab",
+    exact: true,
+  });
+  await expect(tabClose.locator("svg")).toHaveCSS("width", "16px");
+  await expect(tabClose.locator("svg")).toHaveCSS("height", "16px");
+  await expect(tabClose).toHaveCSS("width", "20px");
+  await expect(tabClose).toHaveCSS("height", "20px");
+  await expect(
+    main
+      .getByRole("button", { name: "Channel actions", exact: true })
+      .locator("svg"),
+  ).toHaveClass(/tabler-icon-dots/);
+  await expect(split.locator("svg")).toHaveClass(
+    /tabler-icon-layout-sidebar-right/,
+  );
+  await expect(split.locator("svg")).toHaveCSS("width", "16px");
   await workspace
     .getByRole("searchbox", { name: "Find a channel or person" })
     .fill("Beta");
@@ -81,9 +100,7 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
   await main
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .fill("Alpha draft");
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await page.locator('button[data-channel-id="beta"]').click();
   await page.locator('button[data-channel-id="alpha"]').click();
   await expect(
@@ -273,7 +290,7 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
     .click();
   await expect(workspace).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Channel settings", exact: true }),
+    page.getByRole("button", { name: "Channel actions", exact: true }),
   ).toBeFocused();
 });
 
@@ -401,7 +418,12 @@ test("Canvas opens once beside Thread and retains its channel draft", async ({
     .getByRole("button", { name: "Close Canvas tab", exact: true })
     .click();
   await expect(thread).toHaveAttribute("aria-selected", "true");
-  await launch.click();
+  await main
+    .getByRole("button", { name: "Channel actions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "View canvas", exact: true })
+    .click();
   await expect(text).toHaveValue("Channel-scoped draft");
   await page.locator('button[data-channel-id="beta"]').click();
   await launch.click();

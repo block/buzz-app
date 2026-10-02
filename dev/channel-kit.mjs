@@ -70,16 +70,20 @@ export function validCanvas(event) {
     typeof event.content === "string" &&
     Buffer.byteLength(event.content) <= 24 * 1024 &&
     Array.isArray(event.tags) &&
-    event.tags.filter((t) => t[0] === "h").length === 1 &&
+    event.tags.filter((t) => t?.[0] === "h").length === 1 &&
+    event.tags.filter((t) => t?.[0] === "expected-revision").length <= 1 &&
     event.tags.every(
       (t) =>
         Array.isArray(t) &&
         t.length === 2 &&
         (t[0] === "h"
           ? /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(t[1])
-          : t[0] === "client-id" &&
-            typeof t[1] === "string" &&
-            t[1].length <= 128),
+          : t[0] === "expected-revision"
+            ? typeof t[1] === "string" &&
+              (t[1] === "none" || /^[0-9a-f]{64}$/.test(t[1]))
+            : t[0] === "client-id" &&
+              typeof t[1] === "string" &&
+              t[1].length <= 128),
     )
   );
 }

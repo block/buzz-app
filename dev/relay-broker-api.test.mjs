@@ -1,4 +1,7 @@
 import { createConsola } from "consola";
+import { Context } from "@deepseek-ai/cordis";
+import { HostService } from "../src/features/host/service.ts";
+import { authTagOwner } from "../src/features/agents/owner-attestation.ts";
 import { logSocketFrame } from "../src/features/developer/traffic.ts";
 import { getLogger, setLogLevel } from "../src/features/developer/logging.ts";
 import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
@@ -33,7 +36,12 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 // Real browser HTTP -> production broker. Ephemeral key; upstream I/O is entirely local.
-async function harness(respond, capabilities = {}, relayUrl = fixtureRelayUrl) {
+async function harness(
+  respond,
+  capabilities = {},
+  relayUrl = fixtureRelayUrl,
+  builderlab = {},
+) {
   const key = new Uint8Array(32);
   key[31] = 7;
   const viewer = getPublicKey(key);
@@ -51,6 +59,7 @@ async function harness(respond, capabilities = {}, relayUrl = fixtureRelayUrl) {
   });
   const plugin = relayBrokerPlugin({
     relayUrl,
+    builderlab,
     communityAliases: fixtureAliases,
     identity: () => key,
     socketFactory: socket.factory,
@@ -125,12 +134,141 @@ async function harness(respond, capabilities = {}, relayUrl = fixtureRelayUrl) {
   };
 }
 const filters = [{ kinds: [0], limit: 1 }];
+
+test.each([
+  [202, { status: "aborted" }],
+  [409, { error: { code: "must_archive" } }],
+])(
+  "Builderlab HTTP forwards structured deletion status %s",
+  async (status, result) => {
+    let openLogin;
+    const loginOpened = new Promise((resolve) => {
+      openLogin = resolve;
+    });
+    const request = {
+      community_id: "11111111-1111-4111-8111-111111111111",
+      host: "north.communities.buzz.xyz",
+      request_id: "22222222-2222-4222-8222-222222222222",
+      acknowledgement_version: 1,
+    };
+    const upstream = [];
+    const h = await harness(() => Response.json([]), {}, fixtureRelayUrl, {
+      open: async (url) => openLogin(url),
+      fetch: async (url, init) => {
+        const path = new URL(url).pathname;
+        if (path.endsWith("/v1/auth/login/exchange"))
+          return Response.json({
+            session_credential: "fixture-only",
+            expires_at: "2030",
+          });
+        if (path.endsWith("/v1/auth/me"))
+          return Response.json({
+            email: "fixture@example.com",
+            expires_at: "2030",
+          });
+        if (path.endsWith("/v1/buzz/communities/delete")) {
+          upstream.push(JSON.parse(init.body));
+          return Response.json({ ...request, ...result }, { status });
+        }
+        throw new Error(`Unexpected fixture request: ${path}`);
+      },
+    });
+    try {
+      const login = fetch(`${h.base}/api/builderlab/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const opened = new URL(await loginOpened);
+      const callback = opened.searchParams.get("returnTo");
+      expect(callback).toBeTruthy();
+      expect((await fetch(`${callback}?code=fixture`)).status).toBe(200);
+      expect((await login).status).toBe(200);
+      const response = await fetch(`${h.base}/api/builderlab/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual({ ...request, ...result });
+      expect(upstream).toEqual([request]);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
 const success = (call) =>
   Response.json(
     call.url.endsWith("/events")
       ? { accepted: true, event_id: call.body.id }
       : [],
   );
+
+test("remote agent authorization is owner-bound and works without a community", async () => {
+  // No default community is selected, and any upstream request fails.
+  const h = await harness(
+    () => {
+      throw new Error("Authorization must not contact upstream");
+    },
+    {},
+    "",
+  );
+  try {
+    const owner = (await (await h.get("identity")).json()).viewer;
+    const agentPubkey = getPublicKey(generateSecretKey());
+    const http = globalThis.fetch;
+    vi.stubGlobal("fetch", (url, input) => http(new URL(url, h.base), input));
+    vi.stubEnv("VITE_BUZZ_LIVE", "1");
+    const context = new Context();
+    const host = new HostService(context);
+    const tag = await host.prepareRemoteAgentAuthorization(agentPubkey);
+    // The host returns an unconditional proof for the requested agent and owner.
+    expect(await authTagOwner(agentPubkey, tag)).toBe(owner);
+    expect(tag.slice(0, 3)).toEqual(["auth", h.event.pubkey, ""]);
+    // The signature binds the exact agent key to the NIP-OA domain.
+    expect(
+      schnorr.verify(
+        Buffer.from(tag[3], "hex"),
+        createHash("sha256")
+          .update(`nostr:agent-auth:${agentPubkey}:`)
+          .digest(),
+        Buffer.from(tag[1], "hex"),
+      ),
+    ).toBe(true);
+    const route = "prepare-remote-agent-authorization";
+    for (const rejected of [
+      "invalid", // Malformed key.
+      "A".repeat(64), // Uppercase hex.
+      h.event.pubkey, // Self-attestation.
+      null, // Null agent key.
+      42, // Non-string agent key.
+    ]) {
+      expect(
+        (await h.post(route, { owner: h.event.pubkey, agentPubkey: rejected }))
+          .status,
+      ).toBe(400);
+    }
+    // A different owner cannot use the broker's identity to sign.
+    expect(
+      (await h.post(route, { owner: "f".repeat(64), agentPubkey })).status,
+    ).toBe(403);
+    // The request must explicitly bind the current owner.
+    expect((await h.post(route, { agentPubkey })).status).toBe(403);
+    // A non-object request body is rejected.
+    expect((await h.post(route, null)).status).toBe(400);
+    // Oversized requests are rejected before signing.
+    expect(
+      (await h.post(route, { owner, agentPubkey: "a".repeat(4096) })).status,
+    ).toBe(413);
+    // Successful and rejected authorization requests stay local.
+    expect(h.calls).toEqual([]);
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    await h.close();
+  }
+});
 
 test("production transport obtains scoped broker harness log proofs for aliases and canonical origins", async () => {
   const h = await harness(success);
@@ -954,6 +1092,27 @@ test("local capacity is explicitly unsent, not relay quota; unknown upstream pub
     await uncertain.close();
   }
 }, 10000);
+
+test("strong channel confirmation filters reach the upstream query unchanged", async () => {
+  const h = await harness(() => Response.json([]));
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const filters = [
+      {
+        kinds: [39002],
+        "#d": ["11111111-1111-4111-8111-111111111111"],
+        limit: 1,
+        consistency: "strong",
+      },
+    ];
+    await transport.query(filters);
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0].url).toBe(`${fixtureRelayUrl}/query`);
+    expect(h.calls[0].body).toEqual(filters);
+  } finally {
+    await h.close();
+  }
+});
 
 // Reader-to-host priority propagation control contributed by Brain.
 test("reader and transport start foreground work without waiting for background completion", async () => {

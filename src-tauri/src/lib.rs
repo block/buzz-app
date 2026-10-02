@@ -15,10 +15,8 @@ mod agent_models;
 mod agents;
 mod deep_links;
 mod dock;
-mod enterprise_auth;
-#[cfg(test)]
-#[path = "enterprise_adapter_url.rs"]
 mod enterprise_adapter_url;
+mod enterprise_auth;
 #[cfg(test)]
 #[path = "enterprise_auth_build.rs"]
 mod enterprise_auth_build;

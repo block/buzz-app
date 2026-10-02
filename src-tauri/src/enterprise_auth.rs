@@ -602,7 +602,7 @@ fn scope_for_adapter(adapter: &str, viewer: &str) -> Result<Scope> {
 fn adapter_base_url() -> Result<String> {
     let raw = option_env!("BUZZ_BUILD_ENTERPRISE_AUTH_ADAPTER_BASE_URL")
         .ok_or("This Buzz build has no enterprise authentication adapter")?;
-    crate::enterprise_relay_url::validate_enterprise_adapter_url(raw)
+    crate::enterprise_adapter_url::validate_enterprise_adapter_url(raw)
         .map_err(|_| "Enterprise authentication adapter is invalid".into())
 }
 
@@ -1038,8 +1038,10 @@ mod tests {
     #[test]
     fn adapter_url_requires_https_except_for_loopback_development() {
         assert!(
-            crate::enterprise_relay_url::validate_enterprise_adapter_url("https://adapter.example")
-                .is_ok()
+            crate::enterprise_adapter_url::validate_enterprise_adapter_url(
+                "https://adapter.example",
+            )
+            .is_ok()
         );
         for value in [
             "http://adapter.example",
@@ -1048,13 +1050,13 @@ mod tests {
             "https://adapter.example?tenant=one",
         ] {
             assert!(
-                crate::enterprise_relay_url::validate_enterprise_adapter_url(value).is_err(),
+                crate::enterprise_adapter_url::validate_enterprise_adapter_url(value).is_err(),
                 "{value}"
             );
         }
         for value in ["http://localhost:4318/", "http://127.0.0.1:4318"] {
             assert!(
-                crate::enterprise_relay_url::validate_enterprise_adapter_url(value).is_ok(),
+                crate::enterprise_adapter_url::validate_enterprise_adapter_url(value).is_ok(),
                 "{value}"
             );
         }

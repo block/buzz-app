@@ -817,8 +817,10 @@ another non-owner member:
 | Target role | Change role | Remove from this channel |
 | --- | --- | --- |
 | Admin / Member / Guest | Admin / Member, excluding the current role | Yes |
-| Bot | No conversion | Yes |
+| Bot | Admin / Member, after explicit confirmation | Yes |
 | Owner, self, unknown or inconsistent | No | No |
+
+Agent identity is independent of channel role. Explicitly promoting a Bot to Admin grants authority to that agent’s own public key and preserves its verified agent identity; the human owner’s roles do not confer authority.
 
 The menu deliberately omits **Make guest** while Guest's permission contract is
 unsettled: the inspected relay message path does not enforce the role's documented

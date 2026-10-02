@@ -271,8 +271,8 @@ fn valid_canvas(event: &EventTemplate) -> bool {
 /** Only the owner's managed-agent coordinate may use this global kind-5 shape. */
 fn valid_managed_agent_deletion(event: &EventTemplate) -> bool {
     if !event.content.is_empty()
+        // Signed events return to JavaScript; timestamps must fit Number.MAX_SAFE_INTEGER.
         || event.created_at > 9_007_199_254_740_991
-        || event.tags.len() > 3
         || event.tags.iter().any(|tag| {
             tag.len() != 2
                 || tag[1].len() > 256

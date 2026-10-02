@@ -472,7 +472,7 @@ function AvatarDraft({
         {!(mode === "background" && customColorOpen) && (
           <div className="flex flex-wrap justify-between gap-2">
             <Button
-              variant="ghost"
+              variant="destructive"
               disabled={(!value && !picture) || disabled || busy}
               onClick={() => done("")}
             >

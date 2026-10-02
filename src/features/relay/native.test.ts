@@ -271,6 +271,63 @@ it.each([true, false])(
   },
 );
 
+it.each([true, false])(
+  "delivers managed-agent unregister through the native outbox (accepted: %s)",
+  async (accepted) => {
+    const transport = await connectNativeTransport(community);
+    assert.exists(transport.writer);
+    const owner = createOutbox(viewer.pubkey, transport.writer, {
+      load: () => [],
+      save: () => {},
+    });
+    owners.push(owner);
+    await owner.outbox.ready();
+    respond = (request) => ({
+      body: {
+        accepted,
+        event_id: JSON.parse(request.body ?? "{}").id,
+        message: accepted ? "" : "denied",
+      },
+    });
+    const coordinate = `30177:${viewer.pubkey}:${"02".repeat(32)}`;
+    const id = owner.outbox.send({
+      kind: 5,
+      content: "",
+      tags: [["a", coordinate]],
+    });
+    await vi.waitFor(() =>
+      expect(
+        owner.outbox.snapshot().find((item) => item.event.id === id)?.delivery,
+      ).toBe(accepted ? "accepted" : "failed"),
+    );
+    const event = JSON.parse(
+      requests.find((request) => request.path === "/events")?.body ?? "null",
+    );
+    expect(event).toMatchObject({
+      id,
+      kind: 5,
+      pubkey: viewer.pubkey,
+      content: "",
+    });
+    expect(event.tags).toEqual([
+      ["a", coordinate],
+      ["client-id", expect.any(String)],
+    ]);
+    expect(vi.mocked(invoke).mock.calls).toContainEqual([
+      "relay_sign",
+      {
+        community,
+        event: {
+          kind: 5,
+          created_at: event.created_at,
+          content: "",
+          tags: event.tags,
+        },
+      },
+    ]);
+  },
+);
+
 it("rejects tampered reads and keeps refusals distinct from uncertain receipts", async () => {
   const transport = await connectNativeTransport(community);
   const event = message(viewer, "channel", "original", 1700000000);

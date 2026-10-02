@@ -83,7 +83,6 @@ function Message({
     () => bodyPreview(message.body, message.bodyHtml, url),
     [message.body, message.bodyHtml, url],
   );
-  const hasMetadata = kind === "description" || kind === "review";
   const MarkerIcon =
     kind === "review"
       ? reviewState === "APPROVED"
@@ -98,7 +97,7 @@ function Message({
         : ChatCircleIcon;
   return (
     <Collapsible.Root
-      className={`${styles.conversationMessage} ${hasMetadata ? styles.messageWithMetadata : styles.quietMessage}`}
+      className={styles.conversationMessage}
       data-buzz-ui=""
       role="group"
       aria-label={label}
@@ -133,31 +132,22 @@ function Message({
         />
       </div>
       <div className={styles.messageContent}>
-        {hasMetadata ? (
-          <div className={styles.messageMetadata}>
-            <Author message={message} />
-            <span
-              className={styles.messageLabel}
-              title={
-                label === "Description"
-                  ? undefined
-                  : "Submitted review event, not the PR’s current approval status"
-              }
-            >
-              {label}
-            </span>
-            <span className={styles.messageTime}>
-              <PostedTime value={message.createdAt} />
-            </span>
-          </div>
-        ) : (
-          <div className={styles.messageMetadata}>
-            <Author message={message} />
-            <span className={styles.messageLabel}>
-              {kind === "code" ? "Code comment" : "Comment"}
-            </span>
-          </div>
-        )}
+        <div className={styles.messageMetadata}>
+          <Author message={message} />
+          <span
+            className={styles.messageLabel}
+            title={
+              kind === "review"
+                ? "Submitted review event, not the PR’s current approval status"
+                : undefined
+            }
+          >
+            {kind === "code" ? "Code comment" : label}
+          </span>
+          <span className={styles.messageTime}>
+            <PostedTime value={message.createdAt} />
+          </span>
+        </div>
         <Collapsible.Trigger
           className={`buzz-accordion-trigger text-body-sm ${styles.messageTrigger}`}
           aria-label={`Expand ${label}`}
@@ -189,11 +179,6 @@ function Message({
           </span>
           <CaretDownIcon size={14} aria-hidden="true" />
         </Collapsible.Trigger>
-        {!hasMetadata && (
-          <span className={styles.messageTime}>
-            <PostedTime value={message.createdAt} />
-          </span>
-        )}
         <Collapsible.Panel className={styles.messageBody}>
           {message.body ? (
             <GitHubBody

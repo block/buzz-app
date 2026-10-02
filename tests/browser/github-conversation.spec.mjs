@@ -271,7 +271,6 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
         authorX: quiet.querySelector("a").parentElement.getBoundingClientRect()
           .left,
         timeX: commentTime.right,
-        textRight: commentTrigger.right,
         sameRow:
           commentTime.top < commentTrigger.bottom &&
           commentTime.bottom > commentTrigger.top,
@@ -279,8 +278,37 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     });
     expect(Math.abs(geometry.railX - geometry.markerX)).toBeLessThan(1);
     expect(Math.abs(geometry.textX - geometry.authorX)).toBeLessThan(1);
-    expect(geometry.timeX).toBeGreaterThan(geometry.textRight);
-    expect(geometry.sameRow).toBe(true);
+    expect(geometry.sameRow).toBe(false);
+    for (const label of [
+      "Description",
+      "Comment",
+      "Reviewed",
+      "Changes requested",
+    ]) {
+      const layout = await conversation
+        .getByRole("group", { name: label, exact: true })
+        .evaluate((node) => {
+          const author = node
+            .querySelector("a")
+            .parentElement.getBoundingClientRect();
+          const time = node.querySelector("time").getBoundingClientRect();
+          const excerpt = node
+            .querySelector('[aria-label^="Expand "]')
+            .getBoundingClientRect();
+          return {
+            authorX: author.left,
+            excerptX: excerpt.left,
+            authorBottom: author.bottom,
+            timeBottom: time.bottom,
+            timeRight: time.right,
+            excerptTop: excerpt.top,
+          };
+        });
+      expect(Math.abs(layout.authorX - layout.excerptX)).toBeLessThan(1);
+      expect(layout.excerptTop).toBeGreaterThanOrEqual(layout.authorBottom);
+      expect(layout.excerptTop).toBeGreaterThanOrEqual(layout.timeBottom);
+      expect(Math.abs(layout.timeRight - geometry.timeX)).toBeLessThan(1);
+    }
     const descriptionTimeRight = await conversation
       .getByRole("group", { name: "Description", exact: true })
       .locator("time")

@@ -331,13 +331,6 @@
   position: relative;
   min-width: 0;
 }
-.quietMessage .messageContent {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: 0 var(--space-2);
-  padding-right: var(--space-6);
-}
 .messageMetadata {
   display: flex;
   flex-wrap: wrap;
@@ -347,8 +340,6 @@
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
   overflow-wrap: anywhere;
-}
-.messageWithMetadata .messageMetadata {
   padding-right: var(--space-6);
 }
 .messageMetadata time {
@@ -357,25 +348,17 @@
 .messageAuthor {
   font-weight: var(--text-label--font-weight);
   overflow-wrap: anywhere;
-}
-.messageWithMetadata .messageAuthor {
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
   letter-spacing: var(--text-body-sm--letter-spacing);
 }
-.quietMessage .messageAuthor,
 .messageTime {
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
-}
-.messageTime {
-  grid-column: 3;
+  margin-left: auto;
   color: var(--text-subtle);
   text-align: right;
-}
-.messageWithMetadata .messageTime {
-  margin-left: auto;
 }
 .messageTrigger {
   align-items: start;
@@ -447,21 +430,9 @@
   letter-spacing: var(--text-caption--letter-spacing);
 }
 .messageBody {
-  grid-column: 1 / -1;
   padding-top: var(--space-2);
 }
 @container (max-width: 24rem) {
-  .quietMessage .messageContent {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-  .quietMessage .messageTrigger {
-    grid-column: 1 / -1;
-    grid-row: 2;
-  }
-  .messageTime {
-    grid-column: 2;
-    grid-row: 1;
-  }
   .previewText {
     white-space: normal;
     overflow-wrap: anywhere;
@@ -530,12 +501,6 @@
   .messageMarker,
   .conversationMessage > .eventIcon {
     margin-bottom: var(--space-2);
-  }
-  .quietMessage .messageContent {
-    display: block;
-  }
-  .messageTime {
-    display: block;
   }
   .conversationTimeline::before {
     display: none;

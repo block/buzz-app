@@ -375,7 +375,7 @@ test("launch waits for the initial sidebar and message history before revealing 
       route
         .request()
         .postDataJSON()
-        .some((filter) => filter.top_level && filter["#h"]?.includes("alpha"))
+        .some((filter) => filter.top_level && filter["#h"]?.includes(ids.alpha))
     ) {
       requested = true;
       await head.promise;
@@ -439,7 +439,7 @@ test("cached workspace remains usable when live reconnect stalls", async ({
   await open(page, app);
   await expect
     .poll(async () =>
-      (await cached(page)).heads.some((head) => head.channelId === "alpha"),
+      (await cached(page)).heads.some((head) => head.channelId === ids.alpha),
     )
     .toBe(true);
   const connection = held();
@@ -454,9 +454,17 @@ test("cached workspace remains usable when live reconnect stalls", async ({
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect.poll(() => requested).toBe(true);
     await expect(
+      page.getByRole("region", {
+        name: "Channel message history",
+        includeHidden: true,
+      }),
+    ).toContainText("primary alpha message 0");
+    // Cached content mounts behind the launch overlay. Advance its settling
+    // budget, next animation cycle, and fade before requiring accessible UI.
+    await page.clock.runFor(3 * 1760 + 240);
+    await expect(
       page.getByRole("region", { name: "Channel message history" }),
     ).toContainText("primary alpha message 0");
-    await page.clock.runFor(3600);
     await expect(
       page.getByRole("status", { name: "Opening Buzz" }),
     ).toHaveCount(0);

@@ -133,7 +133,9 @@ test("nested replies send, stay open, and reveal through links at readable panel
   // Main's Up-to-edit shares this composer; cancel must retain the nested target
   // and the native draft history, rather than sending the draft to the root.
   await editor.fill("Unsent nested draft");
+  await expect(editor).toHaveJSProperty("value", "Unsent nested draft");
   await editor.fill("");
+  await expect(editor).toHaveJSProperty("value", "");
   await editor.press("ArrowUp");
   const editInput = panel.getByRole("textbox", {
     name: "Edit message",
@@ -322,10 +324,11 @@ test("nested replies send, stay open, and reveal through links at readable panel
   const finalReply = app.report.publications.find(
     ({ event }) => event?.content === "Own ordinary thread reply",
   ).event;
+  const finalActions = await replyActions(
+    panel.locator(`[data-message-id="${finalReply.id}"]`),
+  );
   await expect(
-    panel
-      .locator(`[data-message-id="${finalReply.id}"]`)
-      .getByRole("button", { name: "Reply", exact: true }),
+    finalActions.getByRole("button", { name: "Reply", exact: true }),
   ).toBeEnabled();
 });
 

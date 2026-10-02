@@ -9,6 +9,75 @@ test.use({
   historyCounts: { alpha: 3, beta: 1 },
 });
 
+// Native Tab must discover deferred controls before the browser chooses focus;
+// continuation rows have no avatar that could activate them on the way in.
+for (const direction of ["forward", "backward"]) {
+  test(`Tab enters untouched continuation actions ${direction} without an extra stop`, async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    await page
+      .getByRole("textbox", { name: "Message #Alpha", exact: true })
+      .click();
+    await page.mouse.move(0, 0);
+    const before = app.append(
+      "primary",
+      ids.alpha,
+      "[Before](https://example.com/before)",
+    );
+    const target = app.append("primary", ids.alpha, "Untouched continuation");
+    const after = app.append(
+      "primary",
+      ids.alpha,
+      "Following author",
+      true,
+      false,
+    );
+    const row = (event) =>
+      page.locator(`[data-channel-timeline] [data-message-id="${event.id}"]`);
+    await expect(
+      row(target).locator('[data-layout="continuation"]'),
+    ).toBeVisible();
+    await expect(row(after)).toBeVisible();
+    await settle(page);
+    const actions = row(target).getByRole("group", {
+      name: "Message actions",
+      includeHidden: true,
+    });
+    await expect(
+      actions.getByRole("button", { includeHidden: true }),
+    ).toHaveCount(0);
+    if (direction === "forward")
+      await row(before)
+        .getByRole("link", { name: "Before", exact: true })
+        .focus();
+    else
+      await row(after)
+        .getByRole("button", { name: /^View .* profile$/ })
+        .first()
+        .focus();
+    await expect(
+      actions.getByRole("button", { includeHidden: true }),
+    ).toHaveCount(0);
+    await page.keyboard.press(direction === "forward" ? "Tab" : "Shift+Tab");
+    await expect(
+      actions.getByRole("button", {
+        name:
+          direction === "forward" ? "React with 👍" : "More message actions",
+        exact: true,
+      }),
+    ).toBeFocused();
+    await page.keyboard.press(direction === "forward" ? "Tab" : "Shift+Tab");
+    await expect(
+      actions.getByRole("button", {
+        name: direction === "forward" ? "React with ❤️" : "Copy link",
+        exact: true,
+      }),
+    ).toBeFocused();
+  });
+}
+
 // Browser-only contracts: actual hover/coarse-pointer layout, portal focus return,
 // and opening a real thread then focusing its real editor. Clipboard failures and
 // mention matrices live in colocated unit tests, not a browser scenario matrix.
@@ -461,6 +530,8 @@ test("historical single-day DMs and their threads expose dates without hover", a
     timeline.getByRole("button", { name: "Load older messages" }),
   ).toHaveCount(0);
   const reply = row.getByRole("button", { name: "Reply", exact: true });
+  // Start real keyboard navigation so the untouched row prepares its controls.
+  await page.keyboard.press("Tab");
   await reply.focus();
   await reply.press("Enter");
   const thread = page.getByRole("complementary", {

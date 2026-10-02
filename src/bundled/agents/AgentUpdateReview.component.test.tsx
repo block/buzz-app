@@ -127,6 +127,10 @@ function setup(known: boolean, failInventory = false) {
     failRoster: (failed: boolean) => {
       failRoster = failed;
     },
+    setListStatus: (status: ChannelList["status"]) => {
+      list = { ...list, status };
+      for (const listener of listeners) listener();
+    },
     revoke: () => {
       channel.members = [];
     },
@@ -161,6 +165,27 @@ it("keeps the selected agent editor after a rename reports restart failure", asy
     screen.getByRole("button", { name: "Restart to apply" }),
   ).toBeEnabled();
   expect(screen.queryByText(/No personal agent named/)).toBeNull();
+  f.failRoster(true);
+  await act(async () => f.setListStatus("loading"));
+  await act(async () => f.setListStatus("ready"));
+  const retry = await screen.findByRole("button", { name: "Retry" });
+  f.failRoster(false);
+  await userEvent.click(retry);
+  expect(
+    await screen.findByRole("dialog", { name: "Edit agent" }),
+  ).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+    "Renamed fixture agent",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(f.control.snapshot().busy).toBe(false));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "1 agent couldn’t restart with the new settings; check Agents.",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Runtime" }));
+  expect(
+    screen.getByRole("button", { name: "Restart to apply" }),
+  ).toBeEnabled();
 });
 
 it("waits for a busy operation before refreshing inventory for a request", async () => {

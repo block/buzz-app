@@ -50,7 +50,7 @@ export function AgentUpdateReview({
   const [rosterError, setRosterError] =
     useState<PendingManagementRequest | null>(null);
   const [selection, setSelection] = useState<{
-    request: PendingManagementRequest;
+    value: AgentManagementRequest;
     id: string;
   } | null>(null);
   const request = requests[0] ?? null;
@@ -122,7 +122,8 @@ export function AgentUpdateReview({
       current = false;
     };
   }, [control, controlState.busy, refreshedRequestId, request]);
-  const selectedId = selection?.request === request ? selection.id : undefined;
+  const selectedId =
+    selection?.value === request?.value ? selection?.id : undefined;
   const matches = useMemo(() => {
     if (request?.value.action !== "update" || !connection.scope) return [];
     const community = connection.scope.split(":").slice(0, -1).join(":");
@@ -142,7 +143,7 @@ export function AgentUpdateReview({
       !selectedId &&
       match
     )
-      setSelection({ request, id: match.id });
+      setSelection({ value: request.value, id: match.id });
   }, [authorizedRequest, matches, refreshedRequestId, request, selectedId]);
   if (!request) return null;
   const dismiss = () => setRequests((pending) => pending.slice(1));

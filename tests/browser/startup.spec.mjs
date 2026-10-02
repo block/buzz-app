@@ -367,7 +367,7 @@ test("launch waits for the initial sidebar and message history before revealing 
   app,
 }) => {
   await page.clock.install();
-  app.relay.holdUnread();
+  app.relay.sidebarApi.hold();
   const head = held();
   let requested = false;
   await page.route("**/api/relay/**/query", async (route) => {
@@ -399,7 +399,7 @@ test("launch waits for the initial sidebar and message history before revealing 
     await page.clock.runFor(1900);
     await expect(launch).toBeVisible();
 
-    app.relay.releaseUnread();
+    app.relay.sidebarApi.release();
     await expect.poll(() => requested).toBe(true);
     await expect(
       page.locator('[aria-label="Channel sidebar"][data-buzz-launch-pending]'),
@@ -427,7 +427,7 @@ test("launch waits for the initial sidebar and message history before revealing 
       "aria-hidden",
     );
   } finally {
-    app.relay.releaseUnread();
+    app.relay.sidebarApi.release();
     head.release();
   }
 });

@@ -1,3 +1,6 @@
+#[path = "src/enterprise_relay_url.rs"]
+mod enterprise_relay_url;
+
 fn main() {
     configure_enterprise_auth();
     // Release builds enable the updater only when both values are supplied; its
@@ -139,7 +142,8 @@ fn configure_enterprise_auth() {
         println!("cargo:rustc-env={RELAYS}={relays}");
     }
     if let Some(adapter) = adapter.as_deref() {
-        validate_enterprise_url(adapter, ADAPTER, false);
+        enterprise_relay_url::validate_enterprise_adapter_url(adapter)
+            .unwrap_or_else(|_| panic!("{ADAPTER} contains an unsupported or unsafe URL"));
         println!("cargo:rustc-env={ADAPTER}={adapter}");
     }
 }
@@ -159,7 +163,7 @@ fn validate_enterprise_url(raw: &str, name: &str, relay: bool) {
         || url.fragment().is_some()
         || raw.is_empty()
         || !scheme_allowed
-        || (matches!(url.scheme(), "http" | "ws") && (!relay || !is_loopback(&url)))
+        || (matches!(url.scheme(), "http" | "ws") && !is_loopback(&url))
     {
         panic!("{name} contains an unsupported or unsafe URL");
     }

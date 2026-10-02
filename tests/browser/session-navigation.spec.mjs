@@ -25,6 +25,55 @@ const history = (page) =>
 const selected = (page) =>
   page.getByRole("region", { name: "Selected session message", exact: true });
 
+const launchTest = test.extend({ launchAnimation: true });
+launchTest(
+  "cold exact message waits behind launch until its read finishes",
+  async ({ page, app }) => {
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    let requested = false;
+    await page.route("**/api/relay/**/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      if (filters.some((filter) => filter.ids?.includes(app.exact.target.id))) {
+        requested = true;
+        await held;
+      }
+      await route.continue().catch(() => {});
+    });
+    try {
+      await page.clock.install();
+      const address = target(app, app.exact.target.id, app.exact.root.id);
+      await page.goto(
+        `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify(address))}`,
+      );
+      await expect.poll(() => requested).toBe(true);
+      const loading = page.getByText("Loading selected message…", {
+        exact: true,
+        includeHidden: true,
+      });
+      await expect(loading).toBeAttached();
+      await expect
+        .poll(() =>
+          loading.evaluate(
+            (node) => !!node.closest('[data-buzz-launch-pending="required"]'),
+          ),
+        )
+        .toBe(true);
+      await page.clock.runFor(1900);
+      await expect(page.locator("#buzz-launch")).toBeVisible();
+      release();
+      await expect(page.locator("#buzz-launch")).toHaveCount(0);
+      await expect(
+        selected(page).locator(`[data-message-id="${app.exact.target.id}"]`),
+      ).toBeVisible();
+    } finally {
+      release();
+    }
+  },
+);
+
 test("older session root and reply links fetch and reveal inline, then sending returns to latest", async ({
   page,
   app,

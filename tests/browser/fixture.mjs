@@ -1689,6 +1689,9 @@ export const test = base.extend({
             const launch = document.getElementById("buzz-launch");
             if (!launch) return;
             launch.remove();
+            const root = document.getElementById("root");
+            root?.removeAttribute("inert");
+            root?.removeAttribute("aria-hidden");
             observer.disconnect();
           });
           observer.observe(document, { childList: true, subtree: true });

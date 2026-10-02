@@ -385,6 +385,8 @@ test("launch waits for the initial sidebar and message history before revealing 
     await page.goto(app.origin, { waitUntil: "domcontentloaded" });
     const launch = page.getByRole("status", { name: "Opening Buzz" });
     await expect(launch).toBeVisible();
+    await expect(page.locator("#root")).toHaveAttribute("inert", "");
+    await expect(page.locator("#root")).toHaveAttribute("aria-hidden", "true");
     await expect(
       page.locator('[aria-label="Channel sidebar"][data-buzz-launch-pending]'),
     ).toBeAttached();
@@ -406,6 +408,8 @@ test("launch waits for the initial sidebar and message history before revealing 
     ).toContainText("primary alpha message 0");
     await expect(page.locator("[data-buzz-launch-pending]")).toHaveCount(0);
     await expect(launch).toHaveCount(0);
+    await expect(page.locator("#root")).not.toHaveAttribute("inert");
+    await expect(page.locator("#root")).not.toHaveAttribute("aria-hidden");
   } finally {
     app.relay.releaseUnread();
     head.release();

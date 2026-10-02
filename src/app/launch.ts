@@ -11,8 +11,15 @@ let budgetTimer: number | undefined;
 let waitingForMark = false;
 let observer: MutationObserver | undefined;
 let contentReady = false;
+let bypassPending = false;
 let revision = 0;
 const fallbackStartedAt = performance.now();
+
+function revealRoot() {
+  const root = document.getElementById("root");
+  root?.removeAttribute("inert");
+  root?.removeAttribute("aria-hidden");
+}
 
 function startedAt() {
   const value = Number(
@@ -22,6 +29,7 @@ function startedAt() {
 }
 
 function hasPendingContent() {
+  if (bypassPending) return false;
   if (document.querySelector('#root [data-buzz-launch-pending="required"]'))
     return true;
   return (
@@ -30,12 +38,20 @@ function hasPendingContent() {
   );
 }
 
+function checkSettlingBudget() {
+  budgetTimer = undefined;
+  const remaining = startedAt() + SETTLING_BUDGET_MS - performance.now();
+  if (remaining > 0)
+    budgetTimer = window.setTimeout(checkSettlingBudget, remaining);
+  else syncContent();
+}
+
 function watchContent() {
   if (observer || !document.getElementById("buzz-launch")) return;
   const root = document.getElementById("root");
   if (!root) return;
   budgetTimer = window.setTimeout(
-    syncContent,
+    checkSettlingBudget,
     Math.max(0, startedAt() + SETTLING_BUDGET_MS - performance.now()),
   );
   observer = new MutationObserver(syncContent);
@@ -58,7 +74,10 @@ function fade(launch: HTMLElement) {
   observer?.disconnect();
   observer = undefined;
   launch.classList.add("buzz-launch--leaving");
-  window.setTimeout(() => launch.remove(), FADE_MS + 20);
+  window.setTimeout(() => {
+    launch.remove();
+    revealRoot();
+  }, FADE_MS + 20);
 }
 
 function schedule() {
@@ -119,8 +138,10 @@ function syncContent() {
   );
 }
 
-export function setLaunchReady(next: boolean) {
+export function setLaunchReady(next: boolean, terminal = false) {
   ready = next;
+  bypassPending = terminal;
+  if (!document.getElementById("buzz-launch")) revealRoot();
   watchContent();
   syncContent();
 }

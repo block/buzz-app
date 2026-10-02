@@ -12,7 +12,7 @@ beforeEach(() => {
     return 0;
   });
   document.body.innerHTML =
-    '<div id="buzz-launch"><img src="/buzz-loading-mark.svg"></div><div id="root"></div>';
+    '<div id="buzz-launch"><img src="/buzz-loading-mark.svg"></div><div id="root" inert aria-hidden="true"></div>';
   const element = document.getElementById("buzz-launch");
   if (!element) throw new Error("Missing launch fixture");
   launch = element;
@@ -43,6 +43,8 @@ it("finishes the first cycle before fading when content is ready early", async (
   expect(launch).toHaveClass("buzz-launch--leaving");
   vi.advanceTimersByTime(240);
   expect(launch.isConnected).toBe(false);
+  expect(document.getElementById("root")).not.toHaveAttribute("inert");
+  expect(document.getElementById("root")).not.toHaveAttribute("aria-hidden");
 });
 
 it("keeps looping while content is pending, then finishes the current cycle", async () => {
@@ -116,4 +118,39 @@ it("reveals usable cached content after two cycles if refresh stalls", async () 
   await Promise.resolve();
   vi.advanceTimersByTime(0);
   expect(launch).toHaveClass("buzz-launch--leaving");
+});
+
+it("rearms the settling budget when the mark starts after observation", async () => {
+  const root = document.getElementById("root");
+  if (!root) throw new Error("Missing root fixture");
+  const pending = document.createElement("div");
+  pending.dataset.buzzLaunchPending = "settling";
+  root.append(pending);
+  const { setLaunchReady } = await import("./launch");
+  setLaunchReady(true);
+  await Promise.resolve();
+  vi.advanceTimersByTime(500);
+  launch.dataset.startedAt = "500";
+  vi.advanceTimersByTime(3020);
+  expect(launch).not.toHaveClass("buzz-launch--leaving");
+  vi.advanceTimersByTime(500);
+  await Promise.resolve();
+  vi.advanceTimersByTime(0);
+  expect(launch).toHaveClass("buzz-launch--leaving");
+});
+
+it("reveals a terminal failure even while content is pending", async () => {
+  const root = document.getElementById("root");
+  if (!root) throw new Error("Missing root fixture");
+  const pending = document.createElement("div");
+  pending.dataset.buzzLaunchPending = "required";
+  root.append(pending);
+  const { setLaunchReady } = await import("./launch");
+  setLaunchReady(true, true);
+  await Promise.resolve();
+  vi.advanceTimersByTime(1760);
+  expect(launch).toHaveClass("buzz-launch--leaving");
+  expect(root).toHaveAttribute("inert");
+  vi.advanceTimersByTime(240);
+  expect(root).not.toHaveAttribute("inert");
 });

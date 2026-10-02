@@ -61,9 +61,18 @@ function ConnectedApp({ services }: { services: AppServices }) {
   );
   const restoring = client.status === "loading" || !!connection.restoring;
   const settings = route.target.kind === "settings";
+  const terminal =
+    startup === "recovery" ||
+    route.state.status === "failed" ||
+    (!route.state.ingress && !!route.failure);
   const launchReady =
-    settings || (!restoring && startup !== "loading" && !route.waiting);
-  useEffect(() => setLaunchReady(launchReady), [launchReady]);
+    settings ||
+    terminal ||
+    (!restoring && startup !== "loading" && !route.waiting);
+  useEffect(
+    () => setLaunchReady(launchReady, terminal),
+    [launchReady, terminal],
+  );
   const select = route.select;
   useEffect(
     () =>

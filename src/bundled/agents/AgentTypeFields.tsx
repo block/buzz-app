@@ -118,6 +118,22 @@ export function AgentTypeFields({
               }
             />
           ))}
+          {type.workspace ? (
+            <Field
+              label="Workspace"
+              description="Optional. The agent can read and write files in this folder and run commands that start there. Commands are not limited to it."
+            >
+              <Input
+                disabled={disabled}
+                spellCheck={false}
+                placeholder="/absolute/path/to/a/folder"
+                value={draft.workspace}
+                onChange={(event) =>
+                  onChange({ workspace: event.target.value })
+                }
+              />
+            </Field>
+          ) : null}
         </fieldset>
       ) : (
         <p role="status" className="text-body-sm text-secondary">

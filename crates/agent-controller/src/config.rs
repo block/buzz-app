@@ -366,16 +366,20 @@ impl Agent {
         }
         text(&self.system_prompt, 128 * 1024, "System prompt")?;
         if let Some(plugin) = &self.plugin {
-            // No process, so no workspace or harness to launch with. The environment
-            // holds the secrets its type declared instead: write-only like a harness
-            // agent's, and read one at a time by `plugin_secret`.
-            if !self.workspace.is_empty()
-                || !self.harness.command.is_empty()
-                || !self.harness.args.is_empty()
-            {
+            // No process, so no harness to launch with. The environment holds the
+            // secrets its type declared instead: write-only like a harness agent's,
+            // and read one at a time by `plugin_secret`.
+            if !self.harness.command.is_empty() || !self.harness.args.is_empty() {
                 return Err("Plugin agents have no harness settings".into());
             }
             validate_environment(&self.environment, "")?;
+            // Optional: the one directory the agent's file and command calls work in.
+            if !self.workspace.is_empty() {
+                text(&self.workspace, 4096, "Workspace")?;
+                if !Path::new(&self.workspace).is_absolute() {
+                    return Err("Choose an absolute workspace path".into());
+                }
+            }
             return plugin.validate();
         }
         text(&self.workspace, 4096, "Workspace")?;

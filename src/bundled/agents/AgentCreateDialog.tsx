@@ -303,10 +303,12 @@ export function AgentCreateDialog({
                 ]}
                 onValueChange={(key) => {
                   const type = types.find((type) => type.key === key);
-                  // Values typed for one runtime must not be saved on another.
+                  // Values typed for one runtime must not be saved on another. A
+                  // plugin agent gets a workspace only when its owner enters one.
                   const { plugin: _, ...harness } = {
                     ...draft,
                     environment: {},
+                    workspace: type ? "" : (state.data?.defaultWorkspace ?? ""),
                   };
                   setDraft(
                     type

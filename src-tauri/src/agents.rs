@@ -1424,6 +1424,7 @@ pub(crate) async fn agent_identity_secret(
 }
 
 mod profile_http;
+pub(crate) mod workspace;
 
 #[cfg(test)]
 pub(crate) mod tests;

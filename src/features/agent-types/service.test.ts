@@ -92,6 +92,19 @@ function fakeControl(agents: AgentView[], status = "ready") {
   const refresh = vi.fn(async () => {});
   const publishAs = vi.fn(async () => ({ id: "f".repeat(64), created_at: 2 }));
   const secret = vi.fn(async (_id: string, name: string) => `value of ${name}`);
+  const workspace = {
+    read: vi.fn(async (_id: string, path: string) => `text of ${path}`),
+    write: vi.fn(async () => {}),
+    list: vi.fn(async () => [{ name: "src", directory: true }]),
+    exec: vi.fn(
+      (_id: string, _command: string, options?: { signal?: AbortSignal }) =>
+        new Promise<number | null>((_, reject) =>
+          options?.signal?.addEventListener("abort", () =>
+            reject(new Error("Command was cancelled")),
+          ),
+        ),
+    ),
+  };
   const control = {
     snapshot: () => state as unknown as AgentControlState,
     subscribe(listener: () => void) {
@@ -101,11 +114,13 @@ function fakeControl(agents: AgentView[], status = "ready") {
     refresh,
     publishAs,
     secret,
+    workspace,
   } as unknown as AgentControl;
   return {
     control,
     publishAs,
     secret,
+    workspace,
     refresh,
     set(agents: AgentView[]) {
       state = { ...state, data: { agents } };
@@ -397,6 +412,51 @@ it("hands a run only the secrets its type declares", async () => {
   native.set([agent({ word: "x" }, { enabled: false, status: "stopped" })]);
   await expect(identity?.secret("apiKey")).rejects.toThrow();
   expect(native.secret).toHaveBeenCalledTimes(1);
+  await ctx.fiber.dispose();
+});
+
+it("gives a run its agent's workspace only when the type asks and the owner chose one", async () => {
+  const { ctx, fake, native, run, register } = setup([
+    agent({ word: "x" }, { workspace: "/work" }),
+    agent({ word: "x" }, { id: "bot-2", pubkey: "d".repeat(64) }),
+  ]);
+  register({ workspace: true });
+  fake.emit({ events: [event("w1")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  const [chosen, none] = run.mock.calls.map(([delivery]) => delivery.agent);
+  expect(none?.workspace).toBeUndefined();
+  const workspace = chosen?.workspace;
+  expect(workspace?.path).toBe("/work");
+  await expect(workspace?.readFile("a.ts")).resolves.toBe("text of a.ts");
+  expect(native.workspace.read).toHaveBeenCalledWith("bot-1", "a.ts");
+  await workspace?.writeFile("b.ts", "b");
+  expect(native.workspace.write).toHaveBeenCalledWith("bot-1", "b.ts", "b");
+  await expect(workspace?.list(".")).resolves.toEqual([
+    { name: "src", directory: true },
+  ]);
+  // Stopping the agent kills a command in progress and refuses later calls.
+  const command = workspace?.exec("sleep 60");
+  native.set([
+    agent(
+      { word: "x" },
+      { workspace: "/work", enabled: false, status: "stopped" },
+    ),
+  ]);
+  await expect(command).rejects.toThrow("cancelled");
+  await expect(workspace?.readFile("a.ts")).rejects.toThrow("no longer");
+  await expect(workspace?.exec("ls")).rejects.toThrow("no longer");
+  expect(native.workspace.exec).toHaveBeenCalledTimes(1);
+  await ctx.fiber.dispose();
+});
+
+it("keeps a saved workspace from a type that does not ask for one", async () => {
+  const { ctx, fake, run, register } = setup([
+    agent({ word: "x" }, { workspace: "/work" }),
+  ]);
+  register();
+  fake.emit({ events: [event("w2")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  expect(run.mock.calls[0]?.[0].agent.workspace).toBeUndefined();
   await ctx.fiber.dispose();
 });
 

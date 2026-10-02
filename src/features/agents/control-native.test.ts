@@ -1,7 +1,13 @@
 import { expect, it, vi } from "vitest";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { nativeAgentControlHost } from "./control-native";
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+  isTauri: vi.fn(),
+  Channel: class {
+    onmessage = (_event: unknown) => {};
+  },
+}));
 it("browser constructs no native capability", () => {
   vi.mocked(isTauri).mockReturnValue(false);
   expect(nativeAgentControlHost()).toBeNull();
@@ -179,4 +185,70 @@ it("retained inventory actions use native custody commands", async () => {
     ["agent_control_use_here", { id: "retained", resolution }],
     ["agent_control_local_clone_settings", { id: "retained" }],
   ]);
+});
+
+it("a workspace command streams output and settles on its final event", async () => {
+  vi.mocked(isTauri).mockReturnValue(true);
+  const workspace = nativeAgentControlHost()?.workspace;
+  if (!workspace) throw new Error("Missing fixture host");
+  type Events = { onmessage(event: unknown): void };
+  let final: unknown = { type: "exit", code: 2 };
+  vi.mocked(invoke).mockReset();
+  vi.mocked(invoke).mockImplementation(async (name, args) => {
+    if (name !== "agent_workspace_exec") return undefined as never;
+    const events = (args as { onEvent: Events }).onEvent;
+    events.onmessage({ type: "output", text: "one\n" });
+    // The final event may be delivered after the call has resolved.
+    if (final) setTimeout(() => events.onmessage(final));
+    return undefined as never;
+  });
+  const output: string[] = [];
+  await expect(
+    workspace.exec("exact-id", "ls", {
+      timeoutMs: 5000,
+      onData: (text) => output.push(text),
+    }),
+  ).resolves.toBe(2);
+  expect(output).toEqual(["one\n"]);
+  expect(vi.mocked(invoke).mock.calls[0]).toEqual([
+    "agent_workspace_exec",
+    {
+      id: "exact-id",
+      execId: expect.any(String),
+      command: "ls",
+      timeoutMs: 5000,
+      onEvent: expect.anything(),
+    },
+  ]);
+  final = { type: "error", message: "Command timed out" };
+  await expect(workspace.exec("exact-id", "ls")).rejects.toThrow(
+    "Command timed out",
+  );
+
+  // Aborting cancels the same command id; native then ends it with an error.
+  vi.mocked(invoke).mockReset();
+  const controller = new AbortController();
+  vi.mocked(invoke).mockImplementation(async (name, args) => {
+    if (name !== "agent_workspace_exec") return undefined as never;
+    controller.abort(new Error("stopped"));
+    (args as { onEvent: Events }).onEvent.onmessage({
+      type: "error",
+      message: "Command was cancelled",
+    });
+    return undefined as never;
+  });
+  await expect(
+    workspace.exec("exact-id", "sleep 60", { signal: controller.signal }),
+  ).rejects.toThrow("stopped");
+  const [started, cancelled] = vi.mocked(invoke).mock.calls;
+  expect(cancelled).toEqual([
+    "agent_workspace_exec_cancel",
+    { execId: (started?.[1] as { execId?: string } | undefined)?.execId },
+  ]);
+  expect(cancelled?.[1]).toEqual({ execId: expect.any(String) });
+
+  vi.mocked(invoke).mockRejectedValue("Path is outside the agent's workspace");
+  await expect(workspace.read("exact-id", "../x")).rejects.toThrow(
+    new Error("Path is outside the agent's workspace"),
+  );
 });

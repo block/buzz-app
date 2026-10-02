@@ -942,6 +942,29 @@ The community applies its normal rules to the agent as author: it must be a memb
 of a private channel to post there. Creating an agent does not join it to any
 channel, so an agent can be delivered events from channels it cannot post to.
 
+**Workspace.** A type that sets `workspace: true` gets a Workspace field under its
+`Configure`. The owner may enter one absolute directory, saved in the agent
+record's existing `workspace` field, not in the plugin's config. `run` then
+receives `agent.workspace`; it is absent when the owner entered none.
+
+- `readFile(path)`, `writeFile(path, content)` and `list(path)` call
+  `agent_workspace_read`, `_write` and `_list`. Native resolves `..` and symlinks
+  and refuses a path outside the directory. Files are UTF-8 text of at most 8 MiB.
+- `exec(command, { timeoutMs, signal, onData })` calls `agent_workspace_exec`, which
+  runs `bash -c` with the directory as its working directory and the app's resolved
+  `PATH`. Output and errors arrive merged through `onData` as they are written, up
+  to 8 MiB. It resolves to the exit code. On `signal`, on the deadline (30 minutes at
+  most) and when the agent stops, the whole process group is killed. macOS and
+  Linux only.
+- Native checks, on every call, that the agent is an enabled plugin agent whose
+  workspace is an existing directory.
+
+The two halves are different grants. File calls are confined to the directory. A
+command is not: it only starts there, and can read, write and run anything the
+owner's account can, including the network. Confining it needs an operating-system
+sandbox, which this does not have. Entering a workspace is therefore the same
+decision as running a harness agent in that directory.
+
 Known limitations.
 
 - Agents run only while the app is open with the agent's community selected.
@@ -954,5 +977,8 @@ Known limitations.
 - Plugins share the WebView and are trusted. The kind allowlist and the native key
   are a boundary on what is signed, not a sandbox: any enabled plugin can reach the
   agent control service.
+- The workspace commands are keyed by agent id, not by plugin, and no manifest
+  field declares them. Any enabled plugin can call them for any enabled plugin
+  agent that has a workspace, and a plugin's import preview does not mention it.
 - Harness agents are not agent types yet. The shape allows it (the harness form as
   `Configure`, mentions as the subscription), but nothing has been moved.

@@ -1,5 +1,60 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
-import { createAgentControl, type AgentControlHost } from "./control";
+import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
+import {
+  createAgentControl,
+  type AgentControlHost,
+  type AgentWorkspaceHost,
+} from "./control";
+
+type ExecEvent =
+  | { type: "output"; text: string }
+  | { type: "exit"; code: number | null }
+  | { type: "error"; message: string };
+
+/** Native rejects with a sanitized reason; the agent's function reads it. */
+const call = <T>(command: string, args: Record<string, unknown>) =>
+  invoke<T>(command, args).catch((problem) => {
+    throw new Error(
+      typeof problem === "string" ? problem : "Workspace call failed",
+    );
+  });
+const workspace: AgentWorkspaceHost = {
+  read: (id, path) => call("agent_workspace_read", { id, path }),
+  write: (id, path, content) =>
+    call("agent_workspace_write", { id, path, content }),
+  list: (id, path) => call("agent_workspace_list", { id, path }),
+  async exec(id, command, { timeoutMs, signal, onData } = {}) {
+    signal?.throwIfAborted();
+    const execId = crypto.randomUUID();
+    const stop = () =>
+      void invoke("agent_workspace_exec_cancel", { execId }).catch(() => {});
+    const events = new Channel<ExecEvent>();
+    // The final event can arrive after the call itself has resolved.
+    const outcome = new Promise<Exclude<ExecEvent, { type: "output" }>>(
+      (resolve) => {
+        events.onmessage = (event) => {
+          if (event.type === "output") onData?.(event.text);
+          else resolve(event);
+        };
+      },
+    );
+    signal?.addEventListener("abort", stop, { once: true });
+    try {
+      await call("agent_workspace_exec", {
+        id,
+        execId,
+        command,
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        onEvent: events,
+      });
+      const end = await outcome;
+      signal?.throwIfAborted();
+      if (end.type === "exit") return end.code;
+      throw new Error(end.message);
+    } finally {
+      signal?.removeEventListener("abort", stop);
+    }
+  },
+};
 
 export function nativeAgentControlHost(): AgentControlHost | null {
   if (!isTauri()) return null;
@@ -16,6 +71,7 @@ export function nativeAgentControlHost(): AgentControlHost | null {
     publishProfile: (id) => invoke("agent_control_creation_profile", { id }),
     publishAs: (id, event) => invoke("agent_identity_publish", { id, event }),
     secret: (id, name) => invoke("agent_identity_secret", { id, name }),
+    workspace,
     setStartOnAppLaunch: (id, enabled) =>
       invoke("agent_control_start_on_app_launch", { id, enabled }),
     snapshot: () => invoke("agent_control_snapshot"),

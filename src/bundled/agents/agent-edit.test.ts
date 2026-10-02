@@ -69,3 +69,16 @@ it("avatar edits preserve an omitted picture, retain managed artwork, and serial
   ).toBe("https://images.example/new.png");
   expect(agentEdit({ ...draft, picture: "" }).picture).toBe("");
 });
+
+it("a plugin agent sends its workspace and no harness settings", () => {
+  const draft = {
+    ...agentDraft(controlFixture().agent),
+    workspace: " /work/site ",
+    plugin: { type: "example/coder", config: {} },
+  };
+  expect(agentEdit(draft)).toMatchObject({
+    workspace: "/work/site",
+    harness: { command: "", args: [] },
+  });
+  expect(agentEdit({ ...draft, workspace: "" }).workspace).toBe("");
+});

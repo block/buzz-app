@@ -76,11 +76,11 @@ pub(crate) enum FetchEvent {
     End,
     Error { message: String },
 }
-/// Streams a plugin may still cancel, keyed by the caller's stream id.
+/// Streams and agent commands a plugin may still cancel, keyed by the caller's id.
 #[derive(Clone, Default)]
 pub(crate) struct HostStreams(Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>>);
 impl HostStreams {
-    fn open(&self, id: &str) -> Result<tokio::sync::oneshot::Receiver<()>, String> {
+    pub(crate) fn open(&self, id: &str) -> Result<tokio::sync::oneshot::Receiver<()>, String> {
         let mut streams = self.0.lock().map_err(|_| "Host request is unavailable")?;
         if id.is_empty() || id.len() > 64 || streams.contains_key(id) {
             return Err("Invalid host stream".into());
@@ -92,7 +92,7 @@ impl HostStreams {
         streams.insert(id.into(), cancel);
         Ok(cancelled)
     }
-    fn close(&self, id: &str) -> Option<tokio::sync::oneshot::Sender<()>> {
+    pub(crate) fn close(&self, id: &str) -> Option<tokio::sync::oneshot::Sender<()>> {
         self.0.lock().ok()?.remove(id)
     }
 }

@@ -3296,5 +3296,46 @@ fn plugin_secrets_are_saved_write_only_and_read_only_while_the_agent_is_on() {
     assert!(controller.plugin_secret("missing", "apiKey").is_err());
 }
 
+#[test]
+fn a_plugin_agents_workspace_is_optional_absolute_and_usable_only_while_it_is_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = dir.path().join("work");
+    std::fs::create_dir(&work).unwrap();
+    let mut saved = agent(dir.path());
+    saved.harness.command = String::new();
+    saved.harness.model = String::new();
+    saved.harness.provider = String::new();
+    saved.plugin = Some(crate::PluginRuntime {
+        r#type: "example/coder".into(),
+        config: json!({}),
+    });
+    saved.workspace = "work".into();
+    assert!(saved.validate().is_err());
+    saved.workspace = work.to_str().unwrap().into();
+    saved.validate().unwrap();
+    let mut none = saved.clone();
+    none.workspace = String::new();
+    none.validate().unwrap();
+
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![saved.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("No fixture runtime".into()),
+        dir.path().join("ownership"),
+    );
+    // Off: the type's function is not running, so nothing may use the directory.
+    assert!(controller.plugin_workspace(&saved.id).is_err());
+    controller.action(&saved.id, Action::Start).unwrap();
+    assert_eq!(
+        controller.plugin_workspace(&saved.id).unwrap(),
+        std::fs::canonicalize(&work).unwrap()
+    );
+    assert!(controller.plugin_workspace("missing").is_err());
+    std::fs::remove_dir(&work).unwrap();
+    assert!(controller.plugin_workspace(&saved.id).is_err());
+}
+
 #[cfg(target_os = "macos")]
 mod protection_integration;

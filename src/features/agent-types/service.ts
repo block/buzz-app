@@ -14,6 +14,8 @@ import type {
   AgentEventTemplate,
   AgentView,
   PublishedAgentEvent,
+  WorkspaceEntry,
+  WorkspaceExecOptions,
 } from "../agents/control";
 import type { RelayEvent } from "../relay/events";
 import type { LiveBatch } from "../relay/incoming";
@@ -52,6 +54,25 @@ export type AgentIdentity = Readonly<{
   /** Reads one of the secrets the agent's type declares. Rejects for any other name,
    * when the owner has saved no value, and once the agent is stopped or deleted. */
   secret(name: string): Promise<string>;
+  /** Present when the agent's type asks for a workspace and the owner chose one. */
+  workspace?: AgentWorkspace;
+}>;
+/** Files and commands in the one directory the owner chose for an agent. File
+ * paths are relative to it, or absolute inside it; native refuses any other.
+ * `exec` only starts there: bash can reach whatever the owner's account can.
+ * Every call rejects once the agent is stopped, edited or deleted. */
+export type AgentWorkspace = Readonly<{
+  /** The directory as the owner entered it. */
+  path: string;
+  /** A UTF-8 text file of at most 8 MiB. */
+  readFile(path: string): Promise<string>;
+  /** Replaces the file, creating its folders. */
+  writeFile(path: string, content: string): Promise<void>;
+  list(path: string): Promise<readonly WorkspaceEntry[]>;
+  /** Runs `command` with bash. Resolves to its exit code, or to `null` when a
+   * signal ended it. Rejects if it could not start, timed out or was aborted,
+   * which also happens when the agent stops. */
+  exec(command: string, options?: WorkspaceExecOptions): Promise<number | null>;
 }>;
 /** A value the owner types once and the app never shows again, such as an API key.
  * It is kept out of `config`, so no form, snapshot or other plugin can read it. */
@@ -107,6 +128,9 @@ export type AgentType<Config = unknown> = {
   concurrency?: number;
   /** Write-only values the host asks for under `Configure`. */
   secrets?: readonly AgentSecret[];
+  /** Asks the owner for a directory under `Configure`, and gives `run` files and
+   * commands there as `agent.workspace`. */
+  workspace?: boolean;
 };
 export type RegisteredAgentType = Contribution<AgentType>;
 /** One agent's runs in this window since the app opened. */
@@ -412,6 +436,11 @@ export class AgentTypesService extends Service implements AgentTypes {
     seen = new Set<string>(),
   ): Instance | { error: string } {
     const controller = new AbortController();
+    const listening = () => {
+      if (controller.signal.aborted || binding.signal.aborted)
+        throw new Error("This agent is no longer listening");
+    };
+    const files = this.control.workspace;
     const identity: AgentIdentity = Object.freeze({
       id: agent.id,
       pubkey: agent.pubkey,
@@ -439,6 +468,36 @@ export class AgentTypesService extends Service implements AgentTypes {
           );
         return this.control.secret(agent.id, name);
       },
+      ...(type.workspace && agent.workspace && files
+        ? {
+            workspace: Object.freeze({
+              path: agent.workspace,
+              readFile: async (path: string) => {
+                listening();
+                return files.read(agent.id, path);
+              },
+              writeFile: async (path: string, content: string) => {
+                listening();
+                return files.write(agent.id, path, content);
+              },
+              list: async (path: string) => {
+                listening();
+                return files.list(agent.id, path);
+              },
+              exec: async (command: string, options?: WorkspaceExecOptions) => {
+                listening();
+                return files.exec(agent.id, command, {
+                  ...options,
+                  signal: AbortSignal.any([
+                    controller.signal,
+                    binding.signal,
+                    ...(options?.signal ? [options.signal] : []),
+                  ]),
+                });
+              },
+            }),
+          }
+        : {}),
     });
     try {
       const message = type.validate?.(agent.plugin?.config);

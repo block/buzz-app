@@ -121,14 +121,14 @@ const DEADLINE: Duration = Duration::from_secs(5);
 
 // Tokio kills only the direct child on future cancellation; the group also owns descendants.
 #[cfg(unix)]
-struct ProcessGroupGuard {
-    process_id: i32,
-    armed: bool,
+pub(crate) struct ProcessGroupGuard {
+    pub(crate) process_id: i32,
+    pub(crate) armed: bool,
 }
 
 #[cfg(unix)]
 impl ProcessGroupGuard {
-    fn kill(&self) {
+    pub(crate) fn kill(&self) {
         unsafe { libc::kill(-self.process_id, libc::SIGKILL) };
     }
 }

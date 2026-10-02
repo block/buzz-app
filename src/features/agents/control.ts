@@ -204,6 +204,32 @@ export type CommunityResolution = {
   signature: string;
 };
 export type CloneSettings = Pick<AgentEdit, "name" | "systemPrompt">;
+export type WorkspaceEntry = Readonly<{ name: string; directory: boolean }>;
+export type WorkspaceExecOptions = Readonly<{
+  /** Deadline in milliseconds; native allows at most 30 minutes. */
+  timeoutMs?: number;
+  /** Kills the command and everything it started. */
+  signal?: AbortSignal;
+  /** Standard output and error, merged, as the command writes them. */
+  onData?(text: string): void;
+}>;
+/** Files and commands in a plugin agent's saved `workspace` directory. Native
+ * resolves every file path and refuses one outside it. `exec` only starts there:
+ * the command can reach whatever the person's account can. */
+export interface AgentWorkspaceHost {
+  /** A UTF-8 text file of at most 8 MiB. */
+  read(id: string, path: string): Promise<string>;
+  /** Replaces the file, creating its folders. */
+  write(id: string, path: string, content: string): Promise<void>;
+  list(id: string, path: string): Promise<WorkspaceEntry[]>;
+  /** Runs `command` with bash. Resolves to its exit code, or to `null` when a
+   * signal ended it. Rejects if it could not start, timed out or was aborted. */
+  exec(
+    id: string,
+    command: string,
+    options?: WorkspaceExecOptions,
+  ): Promise<number | null>;
+}
 export interface AgentControlHost {
   readLog?(target: AgentLogTarget): Promise<string>;
   configureHere?(
@@ -232,6 +258,7 @@ export interface AgentControlHost {
   ): Promise<PublishedAgentEvent>;
   /** One saved value of an enabled plugin agent, by the name its type declared. */
   secret?(id: string, name: string): Promise<string>;
+  workspace?: AgentWorkspaceHost;
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): Promise<ControlSnapshot>;
   save(
@@ -295,6 +322,8 @@ export interface AgentControl {
   /** Enabled plugin agents only. The agent-types service checks the name against
    * the agent's type before asking. */
   secret?: AgentControlHost["secret"];
+  /** Enabled plugin agents with a saved workspace only. */
+  workspace?: AgentWorkspaceHost;
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): AgentControlState;
   subscribe(listener: () => void): () => void;
@@ -659,6 +688,7 @@ export function createAgentControl(
           },
         }
       : {}),
+    ...(host?.workspace ? { workspace: host.workspace } : {}),
     ...(host?.setStartOnAppLaunch
       ? {
           setStartOnAppLaunch: (id: string, enabled: boolean) =>

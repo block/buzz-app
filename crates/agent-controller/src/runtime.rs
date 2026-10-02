@@ -979,6 +979,26 @@ impl Controller {
             .cloned()
             .ok_or_else(|| "This agent has no saved value for that secret".into())
     }
+    /// The directory an enabled plugin agent's file and command calls work in, with
+    /// symlinks resolved. Fails when the owner chose none or it is not a directory.
+    pub fn plugin_workspace(&self, id: &str) -> Result<PathBuf> {
+        let agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|a| a.id == id)
+            .ok_or("Agent no longer exists")?;
+        if agent.plugin.is_none() || !agent.enabled {
+            return Err("Agent is not a running plugin agent".into());
+        }
+        if agent.workspace.is_empty() {
+            return Err("This agent has no workspace".into());
+        }
+        std::fs::canonicalize(&agent.workspace)
+            .ok()
+            .filter(|path| path.is_dir())
+            .ok_or_else(|| "The agent's workspace is not a directory".into())
+    }
     fn start(&mut self, id: &str) -> Result<()> {
         self.start_with_key(id, None, None, None)
     }

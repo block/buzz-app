@@ -240,14 +240,14 @@ fn macos_keychain_denials_are_sanitized() {
     for code in [-128, -25293, -25308] {
         assert_eq!(
             error(keyring::Error::PlatformFailure(Box::new(
-                security_framework::base::Error::from_status(code),
+                security_framework::base::Error::from_code(code),
             ))),
             Error::Denied
         );
     }
     assert_eq!(
         error(keyring::Error::PlatformFailure(Box::new(
-            security_framework::base::Error::from_status(-1),
+            security_framework::base::Error::from_code(-1),
         ))),
         Error::Unavailable
     );

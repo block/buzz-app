@@ -361,14 +361,14 @@ impl EnterpriseAuthHost {
                 Some(Self::bump_generation(&mut state))
             }
         };
-        let Some(invalidation_generation) = invalidation_generation else {
+        let Some(_) = invalidation_generation else {
             return Ok(self.cached_info(scope));
         };
         let deletion = self.delete_if_matches(scope, raw).await;
         if deletion.is_ok() {
             self.clear_memory(scope, Some(token));
         }
-        match (deletion, self.fence_generation(invalidation_generation)) {
+        match (deletion, self.fence_generation()) {
             (Err(error), _) => Err(error),
             (Ok(()), Ok(())) => Ok(None),
             (Ok(()), Err(error)) => Err(error),
@@ -445,7 +445,7 @@ impl EnterpriseAuthHost {
                 Some(clear_generation)
             }
         };
-        let Some(clear_generation) = clear_generation else {
+        let Some(_) = clear_generation else {
             return Ok(());
         };
         let storage = match self.read(&scope).await {
@@ -453,7 +453,7 @@ impl EnterpriseAuthHost {
             Ok(None) => Ok(()),
             Err(error) => Err(error),
         };
-        match (storage, self.fence_generation(clear_generation)) {
+        match (storage, self.fence_generation()) {
             (Err(error), _) => Err(error),
             (Ok(()), Ok(())) => Ok(()),
             (Ok(()), Err(error)) => Err(error),
@@ -540,16 +540,16 @@ impl EnterpriseAuthHost {
         state.generation
     }
 
-    fn fence_generation(&self, expected: u64) -> Result<()> {
+    fn fence_generation(&self) -> Result<()> {
         // The commit owner remains held by both invalidation callers while this
-        // final fence closes the window around their storage operation.
+        // final fence closes the window around their storage operation. A newer
+        // login may have begun without this owner, but its active id is checked
+        // separately when it commits and must not disable this reader fence.
         let mut state = self
             .login
             .lock()
             .map_err(|_| "Enterprise authentication state is unavailable".to_owned())?;
-        if state.generation == expected {
-            Self::bump_generation(&mut state);
-        }
+        Self::bump_generation(&mut state);
         Ok(())
     }
 
@@ -2293,6 +2293,8 @@ mod tests {
         tokio::task::spawn_blocking(move || delete_started_receiver.recv().unwrap())
             .await
             .unwrap();
+        let (cancel, _cancel_receiver) = oneshot::channel();
+        assert!(host.begin("new-login".into(), cancel).unwrap());
 
         let restore = tokio::spawn({
             let host = host.clone();
@@ -2309,6 +2311,27 @@ mod tests {
         assert_eq!(
             store.read(scope.service, &scope.account),
             Err(StoreError::Absent)
+        );
+        let newer = StoredSession {
+            token: Zeroizing::new("new-session".into()),
+            expires_at: "2031-01-01T00:00:00Z".into(),
+        };
+        let newer_raw = encode_session(&newer).unwrap();
+        assert!(host
+            .commit_session(
+                &scope,
+                "new-login",
+                newer,
+                EnterpriseAuthInfo {
+                    expires_at: "2031-01-01T00:00:00Z".into(),
+                },
+            )
+            .await
+            .is_ok());
+        assert_eq!(host.cached(&scope).unwrap().token.as_str(), "new-session");
+        assert_eq!(
+            store.read(scope.service, &scope.account).unwrap(),
+            newer_raw
         );
     }
 
@@ -2342,6 +2365,8 @@ mod tests {
         tokio::task::spawn_blocking(move || delete_started_receiver.recv().unwrap())
             .await
             .unwrap();
+        let (cancel, _cancel_receiver) = oneshot::channel();
+        assert!(host.begin("new-login".into(), cancel).unwrap());
 
         let restore = tokio::spawn({
             let host = host.clone();
@@ -2358,6 +2383,27 @@ mod tests {
         assert_eq!(
             store.read(scope.service, &scope.account),
             Err(StoreError::Absent)
+        );
+        let newer = StoredSession {
+            token: Zeroizing::new("new-session".into()),
+            expires_at: "2031-01-01T00:00:00Z".into(),
+        };
+        let newer_raw = encode_session(&newer).unwrap();
+        assert!(host
+            .commit_session(
+                &scope,
+                "new-login",
+                newer,
+                EnterpriseAuthInfo {
+                    expires_at: "2031-01-01T00:00:00Z".into(),
+                },
+            )
+            .await
+            .is_ok());
+        assert_eq!(host.cached(&scope).unwrap().token.as_str(), "new-session");
+        assert_eq!(
+            store.read(scope.service, &scope.account).unwrap(),
+            newer_raw
         );
     }
 

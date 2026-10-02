@@ -2216,5 +2216,5 @@ button[data-jump-to-latest] {
 .sentFromThread {
   font-size: var(--text-caption);
   color: var(--text-secondary);
-  margin-block: 4px;
+  margin-block: var(--space-1);
 }

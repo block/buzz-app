@@ -15,6 +15,7 @@ import { profileTarget } from "../profiles/target";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
 import { keypair, message, signed, summary } from "../relay/testing";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { MessageRow } from "./MessageRow";
 import type { ChannelMessage } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
@@ -1360,6 +1361,7 @@ it.each(["own", "other", "root", "pending", "archived", "read-only"])(
       status: "ready",
     };
     const send = vi.fn();
+    const getThreadRoot = vi.fn(() => row);
     const session = {
       viewer: row.authorId,
       channels: { list: () => snapshot, subscribeList: () => () => {} },
@@ -1377,6 +1379,7 @@ it.each(["own", "other", "root", "pending", "archived", "read-only"])(
       renderDom(
         <MessageRow
           row={reply}
+          getThreadRoot={getThreadRoot}
           session={session}
           profile={undefined}
           media={() => undefined}
@@ -1384,6 +1387,7 @@ it.each(["own", "other", "root", "pending", "archived", "read-only"])(
           day={false}
           retry={undefined}
         />,
+        { wrapper: ToastProvider },
       );
       fireEvent.click(
         screen.getByRole("button", { name: "More message actions" }),
@@ -1391,6 +1395,12 @@ it.each(["own", "other", "root", "pending", "archived", "read-only"])(
       await screen.findByRole("menu");
       const item = screen.queryByRole("menuitem", { name: "Send to channel" });
       expect(!!item).toBe(scenario === "own");
+      expect(getThreadRoot).not.toHaveBeenCalled();
+      if (item) {
+        fireEvent.click(item);
+        expect(getThreadRoot).toHaveBeenCalledOnce();
+        expect(send).toHaveBeenCalledWith(reply, row);
+      }
     } finally {
       cleanup();
     }

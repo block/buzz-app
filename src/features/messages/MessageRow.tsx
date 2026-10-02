@@ -49,7 +49,7 @@ import { messageCopyLink, messageCopyText } from "./message-copy";
 
 export type MessageRowProps = {
   row: ChannelMessage;
-  threadRoot?: ChannelMessage | undefined;
+  getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
   session?: RelaySession | undefined;
   scope?: string | undefined;
   unread?: UnreadCapability | undefined;
@@ -129,7 +129,7 @@ function revealFocusedThumbnail(event: FocusEvent<HTMLDivElement>) {
 
 export const MessageRow = memo(function MessageRow({
   row,
-  threadRoot,
+  getThreadRoot,
   session,
   scope,
   unread,
@@ -438,7 +438,7 @@ export const MessageRow = memo(function MessageRow({
                     ["accepted", "seen"].includes(row.delivery)) &&
                   session.outbox?.supports(9)
                     ? () => {
-                        session.messages.sendToChannel(row, threadRoot);
+                        session.messages.sendToChannel(row, getThreadRoot?.());
                       }
                     : undefined
                 }

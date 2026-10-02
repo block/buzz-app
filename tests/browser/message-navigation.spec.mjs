@@ -283,7 +283,15 @@ test("loaded virtual rows reveal per attempt without thread reads or live-update
   await jump.focus();
   await page.keyboard.press("Enter");
   await expect(history).toBeFocused();
-  await expect(jump).toHaveCount(0);
+  await expect(jump).toHaveCount(1);
+  await expect(
+    jump.locator("xpath=ancestor::*[@data-visible][1]"),
+  ).toHaveAttribute("inert", "");
+  await expect(
+    jump.locator("xpath=ancestor::*[@data-visible][1]"),
+  ).toHaveAttribute("aria-hidden", "true");
+  await expect(history.getByRole("button").and(jump)).toHaveCount(0);
+  await expect(jump).toBeHidden();
   await composer.focus();
   app.append("primary", "alpha", "Live after exact timeline reveal");
   await expect(history).toContainText("Live after exact timeline reveal");

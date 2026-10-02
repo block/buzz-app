@@ -322,10 +322,11 @@ test("nested replies send, stay open, and reveal through links at readable panel
   const finalReply = app.report.publications.find(
     ({ event }) => event?.content === "Own ordinary thread reply",
   ).event;
+  const finalActions = await replyActions(
+    panel.locator(`[data-message-id="${finalReply.id}"]`),
+  );
   await expect(
-    panel
-      .locator(`[data-message-id="${finalReply.id}"]`)
-      .getByRole("button", { name: "Reply", exact: true }),
+    finalActions.getByRole("button", { name: "Reply", exact: true }),
   ).toBeEnabled();
 });
 

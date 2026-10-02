@@ -1,6 +1,7 @@
 <?xml version="1.0" ?>
 <!-- Buzz website opening mark, looped while app startup is pending. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="-16 -16 498 341" width="498" height="341">
+  <title>Buzz loading animation</title>
   <defs>
     <mask id="buzz-loading-cutouts" x="-80" y="-80" width="626" height="469" maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse">
       <rect x="-80" y="-80" width="626" height="469" fill="#fff"/>

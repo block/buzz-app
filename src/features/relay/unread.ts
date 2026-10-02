@@ -193,12 +193,7 @@ export function createUnread({
         const query = { target, message_ids: [demand.target.messageId] };
         try {
           demand.lease = state.retain(query);
-        } catch (error) {
-          if (
-            !(error instanceof Error) ||
-            error.message !== "Read context capacity reached"
-          )
-            throw error;
+        } catch {
           releaseInbox();
           demand.lease = state.retain(query);
         }

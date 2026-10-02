@@ -28,6 +28,8 @@ admission/invalidation. Queued, in-flight, failed or newer mid-request invalidat
 remain unproven. Refreshing, stale or error status alone does not revoke a row's
 proof or its leases; owner status still determines snapshot freshness.
 `subscribeInbox()` retains at most 100 candidate selectors while subscribed.
+An older mention can leave the Inbox once 100 newer foreign messages are cached
+in channels with attention.
 Notification/message subscriptions have priority under the existing shared
 1,000-selector/context-lease bounds, displacing Inbox leases only when admission
 would otherwise exceed capacity. Disposal releases Inbox demand. Reading

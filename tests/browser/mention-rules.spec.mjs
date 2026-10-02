@@ -48,6 +48,13 @@ test("an open list preserves keys and highlight when membership is revoked", asy
   await input.fill("@Honey");
   const rows = page.getByRole("option");
   await expect(rows).toHaveCount(2);
+  // Let the directory page settle, so it cannot race the revocation below.
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.searches()))
+    .toContain("Honey");
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.reads().pending))
+    .toBe(0);
   const rowKeys = () =>
     rows.evaluateAll((nodes) =>
       nodes.map((n) => n.querySelector("small")?.textContent),
@@ -60,10 +67,14 @@ test("an open list preserves keys and highlight when membership is revoked", asy
   await expect(removed).toHaveAttribute("aria-selected", "true");
   const selectedId = await input.getAttribute("aria-activedescendant");
   await page.evaluate(() => window.mentionFixture.removeFirst());
+  // The directory still finds the removed person, so the row stays, now
+  // disabled until the list is reopened for a fresh review.
   await expect(
-    page.getByRole("option", { name: /No longer available/ }),
+    page.getByRole("option", { name: /Channel membership changed/ }),
   ).toHaveAttribute("aria-disabled", "true");
-  const archived = page.getByRole("option", { name: /No longer available/ });
+  const archived = page.getByRole("option", {
+    name: /Channel membership changed/,
+  });
   await expect(archived).toHaveAttribute("aria-selected", "true");
   await expect(input).toHaveAttribute("aria-activedescendant", selectedId);
   const position = before.indexOf(revokedKey);

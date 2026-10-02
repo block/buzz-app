@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, virtuaIdle } from "./timeline.mjs";
 import { holdReadingFocus, releaseReadingFocus } from "./reading.mjs";
@@ -89,15 +90,13 @@ test("thread buttons show observed unread independently, clear only after readin
     "font-weight",
     "600",
   );
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await page.getByText("Diagnostics", { exact: true }).click();
   await page
     .getByRole("button", { name: "Mark unread on this device", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "Channel settings", exact: true })
+    .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   await expect(
     alpha.getByRole("img", { name: /Marked unread on this device only/ }),

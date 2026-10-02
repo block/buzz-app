@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { fixtureRelayUrl } from "../relay-config.ts";
@@ -31,15 +32,22 @@ test("Canvas confirmation backdrop dismisses only the top layer and retains the 
     .getByRole("navigation", { name: "Subscribed channels" })
     .getByRole("button", { name: "Alpha", exact: true })
     .click();
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   const settings = page.getByRole("complementary", {
     name: "Channel settings",
     exact: true,
   });
-  const trigger = settings.getByRole("button", { name: "Canvas", exact: true });
-  await trigger.click();
+  const trigger = page.getByRole("button", {
+    name: "Channel actions",
+    exact: true,
+  });
+  const openCanvas = async () => {
+    await trigger.click();
+    await page
+      .getByRole("menuitem", { name: "View canvas", exact: true })
+      .click();
+  };
+  await openCanvas();
   const editor = page.getByRole("dialog", {
     name: "Channel Canvas",
     exact: true,
@@ -76,7 +84,7 @@ test("Canvas confirmation backdrop dismisses only the top layer and retains the 
   await expect(editor).toHaveCount(0);
   await expect(trigger).toBeFocused();
   await expect(settings).toBeVisible();
-  await trigger.click();
+  await openCanvas();
   await expect(text).toHaveValue("Local draft");
   expect(app.report.lifecyclePublications ?? []).toEqual([]);
 });

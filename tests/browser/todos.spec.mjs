@@ -288,8 +288,10 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await messages();
   await expect(launcher).toHaveCount(0);
   await expect(drawer).toHaveCount(0);
-  await button("Channel settings").click();
-  await button("Canvas").click();
+  await button("Channel actions").click();
+  await page
+    .getByRole("menuitem", { name: "View canvas", exact: true })
+    .click();
   const canvas = page.getByRole("textbox", {
     name: "Canvas Markdown",
     exact: true,

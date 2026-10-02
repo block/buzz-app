@@ -1,4 +1,5 @@
 import { settleShellToggle } from "./navigation.mjs";
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, wheel } from "./timeline.mjs";
 
@@ -737,9 +738,7 @@ test("channel name fades follow renames without resizing the sidebar", async ({
   const originalWidth = await label.evaluate((element) => element.clientWidth);
   const sidebarWidth = (await sidebar.boundingBox()).width;
   await expect(label).not.toHaveAttribute("data-overflowing");
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   const settings = page.getByRole("complementary", {
     name: "Channel settings",
     exact: true,

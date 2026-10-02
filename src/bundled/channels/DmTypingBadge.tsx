@@ -3,6 +3,8 @@ import { useChannelIdentityNames } from "../../features/identity-names/react";
 import type { RelaySession } from "../../features/relay/session";
 import styles from "./Channels.module.css";
 
+const noAgents: readonly string[] = [];
+
 // Exact block/buzz composer typing copy (TypingIndicatorRow formatTypingLabel).
 export function formatTypingLabel(names: readonly string[]) {
   if (names.length === 1) return `${names[0]} is typing...`;
@@ -19,10 +21,13 @@ export function formatTypingLabel(names: readonly string[]) {
 export function DmTypingBadge({
   session,
   channelId,
+  agents = noAgents,
   children,
 }: {
   session: RelaySession;
   channelId: string;
+  /** Agents this row already shows as working. */
+  agents?: readonly string[];
   children: ReactNode;
 }) {
   // Select a per-row primitive so unrelated typing changes do not re-render
@@ -36,7 +41,12 @@ export function DmTypingBadge({
   const pubkeys = typing ? typing.split(",") : [];
   // Idle rows read no names or profiles.
   return pubkeys.length ? (
-    <TypingDots session={session} channelId={channelId} pubkeys={pubkeys}>
+    <TypingDots
+      session={session}
+      channelId={channelId}
+      pubkeys={pubkeys}
+      agents={agents}
+    >
       {children}
     </TypingDots>
   ) : (
@@ -48,11 +58,13 @@ function TypingDots({
   session,
   channelId,
   pubkeys,
+  agents,
   children,
 }: {
   session: RelaySession;
   channelId: string;
   pubkeys: readonly string[];
+  agents: readonly string[];
   children: ReactNode;
 }) {
   const resolveName = useChannelIdentityNames(session, channelId);
@@ -62,7 +74,9 @@ function TypingDots({
   );
   // Human-only: known agents are represented by the Agent working signal.
   // Unclassified signers stay visible until a loaded profile marks them.
-  const humans = pubkeys.filter((pubkey) => !profiles.get(pubkey)?.isAgent);
+  const humans = pubkeys.filter(
+    (pubkey) => !agents.includes(pubkey) && !profiles.get(pubkey)?.isAgent,
+  );
   if (!humans.length) return children;
   // Reuse already available names; optional typing must not trigger profile reads.
   const label = formatTypingLabel(

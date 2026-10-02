@@ -324,7 +324,20 @@ test("PR state, changes and branch links use shared roles in both themes", async
         "700",
       );
     }
-    await expect(changes.locator("dd")).toHaveCSS("font-size", "14px");
+    const facts = panel.locator("dl");
+    const captionLineHeight = await facts.evaluate((node) => {
+      const probe = document.createElement("span");
+      probe.style.fontSize = "var(--text-caption)";
+      probe.style.lineHeight = "var(--text-caption--line-height)";
+      node.append(probe);
+      const value = getComputedStyle(probe).lineHeight;
+      probe.remove();
+      return value;
+    });
+    for (const cell of await facts.locator("dt, dd").all()) {
+      await expect(cell).toHaveCSS("font-size", "12px");
+      await expect(cell).toHaveCSS("line-height", captionLineHeight);
+    }
     await expect(changes.locator("dd")).toHaveCSS("font-weight", "400");
     await expect(changes.locator("dd")).toHaveCSS("color", colors.standard);
     await expect(changes.locator("dd")).toHaveText("+174 / −28");
@@ -619,6 +632,8 @@ test("PR check summaries expose counts and relative update time in the built pan
     await link(page, `https://github.com/block/buzz/pull/${sample.id}`).click();
     const summary = panel.getByText(sample.label, { exact: true });
     await expect(summary).toBeVisible();
+    await expect(summary).toHaveCSS("font-size", "12px");
+    await expect(panel.locator("time")).toHaveCSS("font-size", "12px");
     await expect(summary).toHaveAttribute("data-check-state", sample.state);
     await expect(summary.locator("svg")).toHaveAttribute("aria-hidden", "true");
     await expect(panel.locator("time")).toHaveText("3 minutes ago");
@@ -670,6 +685,11 @@ test("PR check summaries expose counts and relative update time in the built pan
     .locator("html")
     .evaluate((node) => node.style.setProperty("--buzz-text-scale", "2"));
   await expect(panel.getByText("Successful", { exact: true })).toBeVisible();
+  await expect(panel.getByText("Successful", { exact: true })).toHaveCSS(
+    "font-size",
+    "24px",
+  );
+  await expect(panel.locator("time")).toHaveCSS("font-size", "24px");
   const facts = panel.locator("dl");
   await expect
     .poll(() => facts.evaluate((node) => node.scrollWidth <= node.clientWidth))

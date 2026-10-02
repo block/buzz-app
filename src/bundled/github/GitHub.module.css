@@ -145,6 +145,9 @@
   color: var(--github-deletions-text);
 }
 .facts {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
   padding: var(--space-3);
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-control);

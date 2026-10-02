@@ -2,20 +2,144 @@
 import { afterEach, expect, it, vi } from "vitest";
 import {
   cleanup,
+  act,
   fireEvent,
   render as rtlRender,
   screen,
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactElement } from "react";
+import {
+  StrictMode,
+  useRef,
+  type ReactElement,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { useKeyboardFocusVisibility } from "../../shared/design-system/useKeyboardFocusVisibility";
 const render = (ui: ReactElement) => rtlRender(ui, { wrapper: ToastProvider });
 import { MessageActionBar } from "./MessageActionBar";
 import { MenuItem } from "../../shared/design-system/ui/Menu";
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+function Row(props: ComponentProps<typeof MessageActionBar>) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  return (
+    <div ref={rowRef} data-testid="message">
+      <MessageActionBar {...props} rowRef={rowRef} />
+    </div>
+  );
+}
+
+function KeyboardModality({ children }: { children: ReactNode }) {
+  useKeyboardFocusVisibility();
+  return children;
+}
+
+function pointerMedia(matches = true) {
+  const listeners = new Set<() => void>();
+  const query = {
+    matches,
+    addEventListener: (_: string, listener: () => void) =>
+      listeners.add(listener),
+    removeEventListener: (_: string, listener: () => void) =>
+      listeners.delete(listener),
+  };
+  vi.stubGlobal("matchMedia", () => query);
+  return (next: boolean) =>
+    act(() => {
+      query.matches = next;
+      for (const listener of listeners) listener();
+    });
+}
+
+it("defers desktop controls until row interaction and retains them after leaving", () => {
+  pointerMedia();
+  render(
+    <StrictMode>
+      <Row copyText={() => "Hello"} />
+    </StrictMode>,
+  );
+  expect(
+    screen.queryByRole("button", {
+      name: "More message actions",
+      hidden: true,
+    }),
+  ).toBeNull();
+  fireEvent.pointerEnter(screen.getByTestId("message"));
+  const trigger = screen.getByRole("button", {
+    name: "More message actions",
+    hidden: true,
+  });
+  fireEvent.pointerLeave(screen.getByTestId("message"));
+  expect(
+    screen.getByRole("button", { name: "More message actions", hidden: true }),
+  ).toBe(trigger);
+});
+
+it("prepares untouched rows synchronously for Tab navigation and leaves new pointer rows deferred", () => {
+  pointerMedia();
+  const view = (extra = false) => (
+    <KeyboardModality>
+      <Row copyText={() => "First"} />
+      <Row copyText={() => "Second"} />
+      {extra && <Row copyText={() => "Third"} />}
+    </KeyboardModality>
+  );
+  const { rerender } = render(view());
+  fireEvent.keyDown(window, { key: "Tab", ctrlKey: true });
+  expect(screen.queryAllByRole("button", { hidden: true })).toHaveLength(0);
+  const atDefaultAction = vi.fn(() => {
+    expect(
+      screen.getAllByRole("button", {
+        name: "More message actions",
+        hidden: true,
+      }),
+    ).toHaveLength(2);
+  });
+  window.addEventListener("keydown", atDefaultAction, { once: true });
+  fireEvent.keyDown(window, { key: "Tab", shiftKey: true });
+  expect(atDefaultAction).toHaveBeenCalledOnce();
+  fireEvent.pointerDown(window);
+  rerender(view(true));
+  expect(
+    screen.getAllByRole("button", {
+      name: "More message actions",
+      hidden: true,
+    }),
+  ).toHaveLength(2);
+  fireEvent.keyDown(window, { key: "Tab" });
+  expect(
+    screen.getAllByRole("button", {
+      name: "More message actions",
+      hidden: true,
+    }),
+  ).toHaveLength(3);
+});
+
+it("renders coarse-pointer controls immediately and activates when pointer capability changes", () => {
+  const changePointer = pointerMedia(false);
+  const { rerender } = render(<Row key="touch" copyText={() => "Touch"} />);
+  expect(
+    screen.getByRole("button", { name: "More message actions", hidden: true }),
+  ).toBeTruthy();
+  changePointer(true);
+  rerender(<Row key="desktop" copyText={() => "Desktop"} />);
+  expect(
+    screen.queryByRole("button", {
+      name: "More message actions",
+      hidden: true,
+    }),
+  ).toBeNull();
+  changePointer(false);
+  expect(
+    screen.getByRole("button", { name: "More message actions", hidden: true }),
+  ).toBeTruthy();
 });
 it("replies and exposes real sibling controls without placeholders", () => {
   const reply = vi.fn();

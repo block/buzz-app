@@ -23,24 +23,17 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import styles from "./Messages.module.css";
-import { useFloatingActionBar } from "./useFloatingActionBar";
+import {
+  useFloatingActionBar,
+  useMessageActionBarReady,
+} from "./useFloatingActionBar";
 
 const AfterMenuClose = createContext<
   ((action: () => void) => void) | undefined
 >(undefined);
 export const useAfterMessageMenuClose = () => useContext(AfterMenuClose);
 
-export function MessageActionBar({
-  onReply,
-  replyDisabled,
-  link,
-  copyText,
-  quickControls,
-  overflowItems,
-  messageId,
-  menuTriggerRef,
-  rowRef,
-}: {
+type Props = {
   rowRef?: RefObject<HTMLDivElement | null>;
   messageId?: string;
   menuTriggerRef?: Ref<HTMLButtonElement>;
@@ -50,7 +43,35 @@ export function MessageActionBar({
   copyText(): string;
   quickControls?: ReactNode;
   overflowItems?: ReactNode;
-}) {
+};
+
+export function MessageActionBar(props: Props) {
+  const ready = useMessageActionBarReady(props.rowRef);
+  return ready ? (
+    <MessageActionBarControls {...props} />
+  ) : (
+    <div className={styles.messageActionsSlot}>
+      {/* biome-ignore lint/a11y/useSemanticElements: This groups message actions, not form fields. */}
+      <div
+        className={styles.messageActions}
+        role="group"
+        aria-label="Message actions"
+      />
+    </div>
+  );
+}
+
+function MessageActionBarControls({
+  onReply,
+  replyDisabled,
+  link,
+  copyText,
+  quickControls,
+  overflowItems,
+  messageId,
+  menuTriggerRef,
+  rowRef,
+}: Props) {
   const [open, setOpen] = useState(false);
   const barRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);

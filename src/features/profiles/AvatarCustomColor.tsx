@@ -60,20 +60,12 @@ export function AvatarCustomColor({
   };
   const move = (event: PointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
-    const inset = Number.parseFloat(
-      getComputedStyle(event.currentTarget).paddingLeft,
-    );
     update({
       saturation: clamp(
-        ((event.clientX - rect.left - inset) /
-          Math.max(1, rect.width - inset * 2)) *
-          100,
+        ((event.clientX - rect.left) / Math.max(1, rect.width)) * 100,
       ),
       value: clamp(
-        (1 -
-          (event.clientY - rect.top - inset) /
-            Math.max(1, rect.height - inset * 2)) *
-          100,
+        (1 - (event.clientY - rect.top) / Math.max(1, rect.height)) * 100,
       ),
     });
   };

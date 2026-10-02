@@ -290,6 +290,23 @@ test("avatar custom spectrum supports dragging, keyboard hue and return focus", 
   await spectrum.press("ArrowUp");
   await expect(spectrum).toHaveAttribute("aria-valuenow", "0");
   await spectrum.press("End");
+  await hue.press("Home");
+  // Sample the actual gradient paint before the thumb moves over the target.
+  const painted = await spectrum.screenshot();
+  const expectedColor = await page.evaluate(async (png) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${png}`;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0);
+    return [
+      ...context.getImageData(image.width * 0.773, image.height * 0.317, 1, 1)
+        .data,
+    ].slice(0, 3);
+  }, painted.toString("base64"));
   const box = await spectrum.boundingBox();
   await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
   await page.mouse.down();
@@ -304,6 +321,14 @@ test("avatar custom spectrum supports dragging, keyboard hue and return focus", 
   const handle = await spectrum.locator("span").boundingBox();
   expect(Math.abs(handle.x + handle.width / 2 - target.x)).toBeLessThan(1);
   expect(Math.abs(handle.y + handle.height / 2 - target.y)).toBeLessThan(1);
+  const selectedColor = await spectrum
+    .locator("span")
+    .evaluate((el) =>
+      getComputedStyle(el).backgroundColor.match(/\d+/g).map(Number),
+    );
+  expectedColor.forEach((channel, index) => {
+    expect(Math.abs(selectedColor[index] - channel)).toBeLessThanOrEqual(3);
+  });
   await hue.press("Home");
   await hue.press("ArrowRight");
   await expect(hue).toHaveValue("1");
@@ -341,6 +366,58 @@ test("avatar custom spectrum supports dragging, keyboard hue and return focus", 
   await expect(viewport).toHaveCSS("transition-duration", "0s");
 });
 
+// Real layout is needed to prove a failed lazy mount cannot overlap the footer.
+test("emoji picker load failure fits above the footer and retries on reopen", async ({
+  page,
+}) => {
+  await page.route("**/src/bundled/emoji/emoji-mart.ts", (route) =>
+    route.fulfill({
+      contentType: "text/javascript",
+      body: `import { mountEmojiMart as mount } from "/src/bundled/emoji/emoji-mart.ts?retry-fixture";
+      let first = true;
+      export function mountEmojiMart(options) {
+        if (first) { first = false; throw new Error("Fixture picker mount failed"); }
+        return mount(options);
+      }`,
+    }),
+  );
+  await page.goto("/tests/fixtures/agent-control.html?avatars");
+  await page
+    .getByRole("button", { name: "Edit human profile", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit avatar", exact: true }).click();
+  await page.getByRole("tab", { name: "Emoji", exact: true }).click();
+  const alert = page.getByRole("alert");
+  await expect(alert).toHaveText(
+    "Could not load the emoji picker. Reopen it to retry.",
+  );
+  await expect
+    .poll(() =>
+      alert.evaluate((el) => {
+        const picker = el.closest("fieldset");
+        const done = [...picker.querySelectorAll("button")].find(
+          (button) => button.textContent === "Done",
+        );
+        const bounds = el.getBoundingClientRect();
+        return (
+          bounds.bottom <= done.getBoundingClientRect().top &&
+          bounds.bottom <= picker.parentElement.getBoundingClientRect().bottom
+        );
+      }),
+    )
+    .toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("dialog", { name: "Edit avatar", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Edit avatar", exact: true }).click();
+  await page.getByRole("tab", { name: "Emoji", exact: true }).click();
+  await expect(
+    page.getByRole("searchbox", { name: "Search emoji" }),
+  ).toBeVisible();
+  await expect(alert).toHaveCount(0);
+});
+
 test("custom color and footer resize together without reversing direction", async ({
   page,
 }) => {
@@ -371,23 +448,66 @@ test("custom color and footer resize together without reversing direction", asyn
       .getByRole("button", { name, exact: true })
       .evaluate(async (button) => {
         const popup = document.querySelector("[data-buzz-ui].popover-surface");
+        const picker = popup.querySelector(
+          'fieldset[aria-label="Avatar picker"]',
+        );
+        const viewport = picker.parentElement;
         const frames = [];
         const capture = () => {
           const bounds = popup.getBoundingClientRect();
           frames.push({ height: bounds.height, y: bounds.y });
         };
         capture();
+        // Hold the actual CSS transition at the style commit, before a slow
+        // runner can finish it. Seek its timeline instead of a wall-clock loop.
+        const committed = new Promise((resolve) => {
+          const observer = new MutationObserver(() => {
+            const transitions = viewport
+              .getAnimations()
+              .filter((a) => a.transitionProperty === "height");
+            if (!transitions.length) return;
+            observer.disconnect();
+            for (const transition of transitions) transition.pause();
+            resolve(transitions);
+          });
+          observer.observe(viewport, {
+            attributes: true,
+            attributeFilter: ["style"],
+          });
+        });
         button.click();
-        const start = performance.now();
-        while (performance.now() - start < 400) {
-          await new Promise(requestAnimationFrame);
-          capture();
+        const transitions = await committed;
+        try {
+          for (const progress of [0, 0.1, 0.25, 0.5, 0.75, 1]) {
+            for (const transition of transitions)
+              transition.currentTime =
+                transition.effect.getTiming().duration * progress;
+            // Let ResizeObserver and popover positioning catch up at this fixed time.
+            await new Promise(requestAnimationFrame);
+            await new Promise(requestAnimationFrame);
+            capture();
+          }
+        } finally {
+          for (const transition of transitions) transition.finish();
+          await Promise.all(transitions.map((a) => a.finished));
         }
+        if (
+          Math.abs(
+            viewport.getBoundingClientRect().height - picker.offsetHeight,
+          ) > 1
+        )
+          throw new Error("Picker height did not reach its content height");
         return frames;
       });
     const first = frames[0];
     const last = frames.at(-1);
+    expect(frames).toHaveLength(7);
+    expect(Math.abs(frames[1].height - first.height)).toBeLessThanOrEqual(1);
     expect(Math.abs(last.height - first.height)).toBeGreaterThan(10);
+    for (const frame of frames.slice(2, -1)) {
+      expect(frame.height).toBeGreaterThan(Math.min(first.height, last.height));
+      expect(frame.height).toBeLessThan(Math.max(first.height, last.height));
+    }
     for (const axis of ["height", "y"]) {
       const direction = Math.sign(last[axis] - first[axis]);
       for (let i = 1; i < frames.length; i++) {

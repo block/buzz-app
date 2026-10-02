@@ -605,6 +605,12 @@ function AvatarEmojiPicker({
       dispose?.();
     };
   }, [scale, perLine]);
+  if (error)
+    return (
+      <p role="alert" className={emojiStyles.emojiStatus}>
+        Could not load the emoji picker. Reopen it to retry.
+      </p>
+    );
   return (
     <div
       onPointerDownCapture={() => {
@@ -617,9 +623,6 @@ function AvatarEmojiPicker({
       className={emojiStyles.emojiMart}
     >
       <div ref={host} tabIndex={-1} />
-      {error && (
-        <p role="alert">Could not load the emoji picker. Reopen it to retry.</p>
-      )}
     </div>
   );
 }

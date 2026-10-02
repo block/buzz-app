@@ -1,14 +1,14 @@
 .panel {
   display: grid;
-  gap: var(--space-3);
-  padding: var(--space-3);
+  /* Reserve the thumb radius outside the spectrum at its endpoints. */
+  gap: var(--space-4);
+  padding: var(--space-4);
 }
 
 /* Literal colors are the spectrum's artwork, matching the original Buzz picker. */
 .spectrum {
   position: relative;
   height: 14rem;
-  padding: var(--space-6);
   border-radius: var(--radius-control);
   background-image:
     linear-gradient(to bottom, transparent, #000),
@@ -19,7 +19,7 @@
 }
 .grid {
   position: absolute;
-  inset: var(--space-6);
+  inset: 0;
   pointer-events: none;
 }
 .thumb {

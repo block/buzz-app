@@ -22,6 +22,16 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
       exact: true,
     });
   // Every message exposes first-reaction controls, not just previously reacted rows.
+  const rows = page.locator("[data-message-id]");
+  await expect(rows).toHaveCount(6);
+  for (const row of await rows.all()) {
+    await row.hover();
+    await expect(
+      row
+        .getByRole("group", { name: "Message actions" })
+        .getByRole("button", { name: "Add reaction", exact: true }),
+    ).toBeVisible();
+  }
   await expect(
     page
       .getByRole("group", { name: "Message actions" })

@@ -60,6 +60,14 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
                   user: { login: "author" },
                   body: "Yes, the fallback stays visible.",
                 },
+                {
+                  ...common,
+                  id: 32,
+                  path: "src/standalone.ts",
+                  line: 8,
+                  user: { login: "other-reviewer" },
+                  body: "This code thread has no loaded review.",
+                },
               ]
             : {
                 ...common,
@@ -106,7 +114,9 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     name: "Pull request conversation",
     exact: true,
   });
-  await expect(conversation.getByText("All pages loaded")).toHaveCount(3);
+  await expect(
+    conversation.getByText("Conversation loaded · oldest first"),
+  ).toBeVisible();
   const description = panel.getByRole("button", {
     name: "Expand Description",
     exact: true,
@@ -137,6 +147,10 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await expect(
     conversation.locator('[data-buzz-ui][aria-label="Comment"] .buzz-avatar'),
   ).toHaveCSS("width", "24px");
+  const standalone = panel.getByRole("button", {
+    name: "src/standalone.ts:8 · 1 loaded comment",
+    exact: true,
+  });
   for (const mode of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: mode });
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
@@ -148,7 +162,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     await expect(conversation).toHaveCSS("border-radius", "0px");
     const featuredFill = await conversation.evaluate((node) => {
       const probe = document.createElement("span");
-      probe.style.backgroundColor = "var(--surface-inset)";
+      probe.style.backgroundColor = "var(--surface-popover)";
       node.append(probe);
       const fill = getComputedStyle(probe).backgroundColor;
       probe.remove();
@@ -159,14 +173,70 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
         conversation.getByRole("group", { name: label, exact: true }),
       ).toHaveCSS("background-color", featuredFill);
     }
-    await expect(
-      conversation.getByRole("group", { name: "Comment", exact: true }),
-    ).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    const quiet = conversation.getByRole("group", {
+      name: "Comment",
+      exact: true,
+    });
+    await expect(quiet).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    const geometry = await conversation.evaluate((node) => {
+      const featured = node.querySelector('[aria-label="Description"]');
+      const quiet = node.querySelector('[aria-label="Comment"]');
+      const timeline = featured.parentElement;
+      const rail = getComputedStyle(timeline, "::before");
+      const commentTime = quiet.querySelector("time").getBoundingClientRect();
+      const commentTrigger = quiet
+        .querySelector('[aria-label="Expand Comment"]')
+        .getBoundingClientRect();
+      const avatar = quiet
+        .querySelector(".buzz-avatar")
+        .getBoundingClientRect();
+      const featuredTrigger = featured
+        .querySelector('[aria-label="Expand Description"]')
+        .getBoundingClientRect();
+      return {
+        railX: timeline.getBoundingClientRect().left + parseFloat(rail.left),
+        markerX: avatar.left + avatar.width / 2,
+        textX: featuredTrigger.left,
+        authorX: quiet.querySelector("a").parentElement.getBoundingClientRect()
+          .left,
+        timeX: commentTime.right,
+        textRight: commentTrigger.right,
+        sameRow:
+          commentTime.top < commentTrigger.bottom &&
+          commentTime.bottom > commentTrigger.top,
+      };
+    });
+    expect(Math.abs(geometry.railX - geometry.markerX)).toBeLessThan(1);
+    expect(Math.abs(geometry.textX - geometry.authorX)).toBeLessThan(1);
+    expect(geometry.timeX).toBeGreaterThan(geometry.textRight);
+    expect(geometry.sameRow).toBe(true);
+    const standaloneIndent = await standalone.evaluate((node) => {
+      const owner = node.closest(".buzz-accordion").parentElement;
+      return {
+        actual: getComputedStyle(owner).paddingLeft,
+        token: getComputedStyle(owner).getPropertyValue("--space-16").trim(),
+      };
+    });
+    expect(standaloneIndent.actual).toBe("64px");
+    expect(standaloneIndent.token).toBe("4rem");
+    await expect(conversation.getByText("All pages loaded")).toHaveCount(0);
     await panel.getByRole("heading").first().hover();
     await panel.screenshot({
       path: testInfo.outputPath(`conversation-${mode}.png`),
     });
   }
+  const commentMarker = panel.getByRole("button", {
+    name: "Toggle Comment",
+    exact: true,
+  });
+  await description.focus();
+  await page.keyboard.press("Tab");
+  await expect(commentMarker).toBeFocused();
+  await commentMarker.tap();
+  await expect(comment).toHaveAttribute("aria-expanded", "true");
+  await commentMarker.focus();
+  await page.keyboard.press("Space");
+  await expect(comment).toHaveAttribute("aria-expanded", "false");
   // Pointer/touch on a thumbnail expands the description, never a media viewer.
   await description.locator("img").first().tap();
   await expect(
@@ -199,6 +269,12 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await expect(panel.getByText("Yes, the fallback stays visible.")).toHaveCount(
     2,
   );
+  await standalone.click();
+  const standaloneComment = panel.getByRole("button", {
+    name: "Expand Code comment by other-reviewer",
+    exact: true,
+  });
+  await standaloneComment.click();
   await panel.screenshot({
     path: testInfo.outputPath("conversation-expanded-dark.png"),
   });
@@ -210,6 +286,16 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     });
     expect(
       await description.evaluate(
+        (node) => node.scrollWidth <= node.clientWidth,
+      ),
+    ).toBe(true);
+    expect(
+      await conversation.evaluate(
+        (node) => node.scrollWidth <= node.clientWidth,
+      ),
+    ).toBe(true);
+    expect(
+      await standaloneComment.evaluate(
         (node) => node.scrollWidth <= node.clientWidth,
       ),
     ).toBe(true);
@@ -226,12 +312,24 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await settle(page);
   await page.locator(`a[href="${target}"]`).click();
   await expect(description).toHaveCSS("font-size", "28px");
-  await expect(conversation.getByText("All pages loaded")).toHaveCount(3);
+  await expect(
+    conversation.getByText("Conversation loaded · oldest first"),
+  ).toBeVisible();
   await description.scrollIntoViewIfNeeded();
   const preview = description.locator("span").first().locator("span").first();
   expect((await preview.boundingBox()).width).toBeGreaterThan(100);
   expect(
     await description.evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
+  await standalone.click();
+  await standaloneComment.click();
+  expect(
+    await conversation.evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
+  expect(
+    await standaloneComment.evaluate(
+      (node) => node.scrollWidth <= node.clientWidth,
+    ),
   ).toBe(true);
   await description
     .locator("xpath=../..")

@@ -289,31 +289,42 @@
 .conversationMessage {
   display: grid;
   grid-template-columns: 2rem minmax(0, 1fr);
-  gap: var(--space-2);
+  gap: var(--space-3);
+  align-items: start;
 }
 .featuredMessage {
   padding: var(--space-4);
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-row);
-  background: var(--surface-inset);
+  background: var(--surface-popover);
+  box-shadow: var(--shadow-xs);
+  position: relative;
 }
 .quietMessage {
-  grid-template-columns: 1.5rem minmax(0, 1fr);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid transparent;
 }
 .messageAvatar {
   position: relative;
   z-index: 1;
+  display: flex;
+  justify-content: center;
+  width: 2rem;
 }
 .messageContent {
   min-width: 0;
+}
+.quietMessage .messageContent {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0 var(--space-2);
 }
 .messageMetadata {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-1) var(--space-2);
-  padding: 0 var(--space-2);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
@@ -322,8 +333,31 @@
 .messageMetadata time {
   color: var(--text-subtle);
 }
-.quietMessage .messageMetadata time {
-  margin-left: auto;
+.messageAuthor {
+  font-weight: var(--text-label--font-weight);
+  overflow-wrap: anywhere;
+}
+.featuredMessage .messageAuthor {
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
+.quietMessage .messageAuthor,
+.messageTime {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.messageTime {
+  color: var(--text-subtle);
+  text-align: right;
+}
+.messageTrigger {
+  padding: var(--space-1) 0;
+}
+.messageTrigger > svg {
+  flex-shrink: 0;
+  color: var(--text-subtle);
 }
 .messageLabel {
   color: var(--text-subtle);
@@ -338,11 +372,9 @@
 .previewText {
   flex: 1;
   min-width: 0;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
   overflow: hidden;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .thumbnails {
   display: flex;
@@ -379,9 +411,28 @@
   letter-spacing: var(--text-caption--letter-spacing);
 }
 .messageBody {
-  padding: 0 var(--space-2);
+  grid-column: 1 / -1;
+  padding-top: var(--space-2);
 }
 @container (max-width: 24rem) {
+  .quietMessage .messageContent {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .quietMessage .messageTrigger {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .messageTime {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .previewText {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
   .messagePreview {
     flex-wrap: wrap;
   }
@@ -401,26 +452,23 @@
   overflow-wrap: anywhere;
 }
 .conversationNotice {
-  margin: var(--space-3) var(--space-2);
+  margin: var(--space-3) 0;
 }
 .conversationTimeline {
   display: grid;
-  gap: var(--space-2);
+  gap: var(--space-3);
   position: relative;
 }
 .conversationTimeline::before {
   content: "";
   position: absolute;
-  left: 1.75rem;
-  top: var(--space-4);
-  bottom: var(--space-4);
+  left: calc(2rem + 1px);
+  top: var(--space-5);
+  bottom: var(--space-5);
   border-left: 1px solid var(--border-standard);
 }
-.conversationTimeline > .featuredMessage {
-  position: relative;
-}
 .standaloneThread {
-  padding: 0 var(--space-4) 0 var(--space-12);
+  padding: 0 var(--space-4) 0 var(--space-16);
   min-width: 0;
 }
 .threadLabel {
@@ -464,7 +512,14 @@
     padding: var(--space-2);
   }
   .messageAvatar {
-    margin: 0 var(--space-2) var(--space-2);
+    margin-bottom: var(--space-2);
+  }
+  .quietMessage .messageContent {
+    display: block;
+  }
+  .messageTime {
+    display: block;
+    text-align: left;
   }
   .conversationTimeline::before {
     display: none;

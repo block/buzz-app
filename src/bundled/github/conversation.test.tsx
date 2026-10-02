@@ -221,7 +221,7 @@ it("keeps source failures independent, retains pages during retry and fetches mo
   expect(
     screen.getAllByRole("button", { name: "Expand Comment" }),
   ).toHaveLength(2);
-  expect(screen.getAllByText("All pages loaded")).toHaveLength(3);
+  expect(screen.getByText("Conversation loaded · oldest first")).toBeVisible();
   expect(
     fetch.mock.calls
       .map(([target]) => target)
@@ -288,6 +288,10 @@ it("expands independently with linked authors outside triggers and empty reviews
   const profile = screen.getByRole("link", { name: "author" });
   await user.click(profile);
   expect(description).toHaveAttribute("aria-expanded", "false");
+  await user.click(screen.getByRole("button", { name: "Toggle Description" }));
+  expect(description).toHaveAttribute("aria-expanded", "true");
+  await user.click(description);
+  expect(description).toHaveAttribute("aria-expanded", "false");
   await user.click(description);
   await user.click(screen.getByRole("button", { name: "Expand Comment" }));
   expect(
@@ -331,7 +335,9 @@ it("aborts all old sources, ignores late results and resets pages and expansion 
     />,
   );
   await waitFor(() =>
-    expect(screen.getAllByText("All pages loaded")).toHaveLength(3),
+    expect(
+      screen.getByText("Conversation loaded · oldest first"),
+    ).toBeVisible(),
   );
   expect(pending.every(({ signal }) => signal.aborted)).toBe(true);
   await act(async () => {
@@ -363,10 +369,10 @@ it("keeps description usable while held sources load and gives neutral empty cop
     screen.getByText("No comments or submitted reviews yet."),
   ).toBeVisible();
   expect(
-    within(screen.getByRole("region", { name: "Discussion" })).getByText(
-      "Discussion · 0 loaded",
-    ),
-  ).toBeVisible();
+    screen.queryByRole("region", { name: "Discussion" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText("All pages loaded")).not.toBeInTheDocument();
+  expect(screen.getByText("Conversation loaded · oldest first")).toBeVisible();
 });
 
 it("keeps more-page loading explicit and ignores late page results after switching PRs", async () => {
@@ -410,7 +416,9 @@ it("keeps more-page loading explicit and ignores late page results after switchi
     <GitHubConversation details={details} url={url.replace("/1", "/2")} />,
   );
   await waitFor(() =>
-    expect(screen.getAllByText("All pages loaded")).toHaveLength(3),
+    expect(
+      screen.getByText("Conversation loaded · oldest first"),
+    ).toBeVisible(),
   );
   expect(signal?.aborted).toBe(true);
   await act(async () => finish(response([{ id: 21, body: "Stale page two" }])));

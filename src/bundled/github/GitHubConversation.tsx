@@ -2,6 +2,7 @@ import { Collapsible } from "@base-ui/react/collapsible";
 import { useMemo, type ReactNode } from "react";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   conversationEvents,
   useConversationSource,
@@ -35,6 +36,25 @@ function PostedTime({ value }: { value: string | undefined }) {
   );
 }
 
+function Author({ message }: { message: ConversationMessage }) {
+  return (
+    <span className={styles.messageAuthor}>
+      {message.authorUrl ? (
+        <a
+          className={inlineStyles.link}
+          href={message.authorUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {message.author || "Unknown author"}
+        </a>
+      ) : (
+        message.author || "Unknown author"
+      )}
+    </span>
+  );
+}
+
 function Message({
   message,
   url,
@@ -62,32 +82,45 @@ function Message({
       aria-label={label}
     >
       <div className={styles.messageAvatar}>
-        <Avatar
-          src={message.authorAvatar}
-          alt=""
-          fallback={message.author}
-          size={featured ? "default" : "small"}
+        <Collapsible.Trigger
+          render={
+            <IconButton
+              variant="avatar"
+              size="sm"
+              aria-label={`Toggle ${label}`}
+              icon={
+                <Avatar
+                  src={message.authorAvatar}
+                  alt=""
+                  fallback={message.author}
+                  size={featured ? "default" : "small"}
+                />
+              }
+            />
+          }
         />
       </div>
       <div className={styles.messageContent}>
-        <div className={styles.messageMetadata}>
-          {message.authorUrl ? (
-            <a
-              className={inlineStyles.link}
-              href={message.authorUrl}
-              target="_blank"
-              rel="noreferrer"
+        {featured ? (
+          <div className={styles.messageMetadata}>
+            <Author message={message} />
+            <span
+              className={styles.messageLabel}
+              title={
+                label === "Description"
+                  ? undefined
+                  : "Submitted review event, not the PR’s current approval status"
+              }
             >
-              {message.author || "Unknown author"}
-            </a>
-          ) : (
-            <span>{message.author || "Unknown author"}</span>
-          )}
-          <span className={styles.messageLabel}>{label}</span>
-          <PostedTime value={message.createdAt} />
-        </div>
+              {label}
+            </span>
+            <PostedTime value={message.createdAt} />
+          </div>
+        ) : (
+          <Author message={message} />
+        )}
         <Collapsible.Trigger
-          className="buzz-accordion-trigger text-body-sm"
+          className={`buzz-accordion-trigger text-body-sm ${styles.messageTrigger}`}
           aria-label={`Expand ${label}`}
         >
           <span className={styles.messagePreview}>
@@ -117,6 +150,11 @@ function Message({
           </span>
           <CaretDownIcon size={14} aria-hidden="true" />
         </Collapsible.Trigger>
+        {!featured && (
+          <span className={styles.messageTime}>
+            <PostedTime value={message.createdAt} />
+          </span>
+        )}
         <Collapsible.Panel className={styles.messageBody}>
           {message.body ? (
             <GitHubBody
@@ -188,6 +226,7 @@ function SourceStatus({
   label: string;
   source: ReturnType<typeof useConversationSource>;
 }) {
+  if (!source.loading && !source.error && !source.next) return null;
   return (
     <section className={styles.sourceStatus} aria-label={label}>
       <span>
@@ -206,9 +245,7 @@ function SourceStatus({
         <Button size="xs" onClick={source.loadMore}>
           Load more {label.toLowerCase()}
         </Button>
-      ) : (
-        <span>All pages loaded</span>
-      )}
+      ) : null}
     </section>
   );
 }
@@ -237,20 +274,14 @@ function Conversation({
       className={styles.conversation}
       aria-label="Pull request conversation"
     >
-      <Message
-        message={details}
-        url={url}
-        label="Description"
-        featured
-        fallback="No description provided"
-      />
-      <p className={styles.conversationNotice}>
-        {incomplete
-          ? "Loaded conversation only · some sources are incomplete."
-          : "Conversation · oldest first"}{" "}
-        Reviews are submitted events, not the PR’s current approval status.
-      </p>
       <div className={styles.conversationTimeline}>
+        <Message
+          message={details}
+          url={url}
+          label="Description"
+          featured
+          fallback="No description provided"
+        />
         {events.map((event) =>
           event.kind === "thread" ? (
             <div className={styles.standaloneThread} key={event.key}>
@@ -292,11 +323,20 @@ function Conversation({
           No comments or submitted reviews yet.
         </p>
       )}
-      <div className={styles.conversationSources}>
-        <SourceStatus label="Discussion" source={discussion} />
-        <SourceStatus label="Reviews" source={reviews} />
-        <SourceStatus label="Code comments" source={inline} />
-      </div>
+      {incomplete ? (
+        <div className={styles.conversationSources}>
+          <p className={styles.conversationNotice}>
+            Loaded conversation only · some sources are incomplete.
+          </p>
+          <SourceStatus label="Discussion" source={discussion} />
+          <SourceStatus label="Reviews" source={reviews} />
+          <SourceStatus label="Code comments" source={inline} />
+        </div>
+      ) : (
+        <p className={styles.conversationNotice}>
+          Conversation loaded · oldest first
+        </p>
+      )}
     </section>
   );
 }

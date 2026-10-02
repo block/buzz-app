@@ -425,3 +425,81 @@ it("keeps more-page loading explicit and ignores late page results after switchi
   expect(screen.queryByText("Stale page two")).not.toBeInTheDocument();
   expect(screen.queryByText("First page")).not.toBeInTheDocument();
 });
+
+it("uses the opening avatar only, then distinct event icons with explicit review labels", async () => {
+  const states = [
+    "APPROVED",
+    "CHANGES_REQUESTED",
+    "COMMENTED",
+    "DISMISSED",
+    "UNKNOWN",
+  ];
+  const labels = [
+    "Approved",
+    "Changes requested",
+    "Reviewed",
+    "Review dismissed",
+    "Reviewed",
+  ];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (target: string) =>
+      response(
+        target.includes("/reviews?")
+          ? states.map((state, index) => ({
+              id: 10 + index,
+              state,
+              submitted_at: date(13 + index),
+              user: { login: `reviewer-${index}` },
+              body: "Review message",
+            }))
+          : target.includes("/issues/")
+            ? [{ id: 20, user: { login: "commenter" }, body: "Discussion" }]
+            : [],
+      ),
+    ),
+  );
+  const { container } = render(
+    <GitHubConversation details={details} url={url} />,
+  );
+  await screen.findByText("Conversation loaded · oldest first");
+  expect(container.querySelectorAll(".buzz-avatar")).toHaveLength(1);
+  expect(
+    screen
+      .getByRole("group", { name: "Description" })
+      .querySelector(".buzz-avatar"),
+  ).not.toBeNull();
+  const icons = states.map((state, index) => {
+    const marker = container.querySelector(`[data-review-state="${state}"]`);
+    expect(marker).not.toBeNull();
+    if (!marker) throw new Error(`Missing ${state} marker`);
+    const group = marker.closest<HTMLElement>('[role="group"]');
+    if (!group) throw new Error(`Missing ${state} event`);
+    expect(group).toHaveAttribute("aria-label", labels[index]);
+    expect(
+      within(group).getByText(labels[index] ?? "Reviewed"),
+    ).toHaveAttribute(
+      "title",
+      "Submitted review event, not the PR’s current approval status",
+    );
+    const icon = marker.querySelector("svg");
+    if (!icon) throw new Error(`Missing ${state} icon`);
+    expect(icon).toHaveAttribute("aria-hidden", "true");
+    return icon.innerHTML;
+  });
+  expect(new Set(icons.slice(0, 4)).size).toBe(4);
+  expect(icons[4]).toBe(icons[2]);
+  const comment = screen.getByRole("group", { name: "Comment" });
+  expect(within(comment).getByText("Comment")).toBeVisible();
+  expect(comment.querySelector(".buzz-avatar")).toBeNull();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Toggle Approved" }));
+  expect(
+    screen.getByRole("button", { name: "Expand Approved" }),
+  ).toHaveAttribute("aria-expanded", "true");
+  expect(
+    screen.getByRole("button", {
+      name: "Expand Changes requested",
+    }),
+  ).toHaveAttribute("aria-expanded", "false");
+});

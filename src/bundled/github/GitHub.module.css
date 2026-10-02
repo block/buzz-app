@@ -14,6 +14,8 @@
   --github-checks-success: var(--text-success);
   --github-checks-failure: var(--text-danger);
   --github-checks-pending: var(--text-warning);
+  --github-review-approved: var(--text-success);
+  --github-review-changes-requested: var(--text-danger);
   padding: var(--space-5);
   overflow-y: auto;
   min-height: 0;
@@ -291,25 +293,32 @@
   grid-template-columns: 2rem minmax(0, 1fr);
   gap: var(--space-3);
   align-items: start;
+  padding: var(--space-2) 0;
 }
-.featuredMessage {
-  padding: var(--space-4);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-row);
-  background: var(--surface-popover);
-  box-shadow: var(--shadow-xs);
-  position: relative;
-}
-.quietMessage {
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid transparent;
-}
-.messageAvatar {
+.messageMarker {
   position: relative;
   z-index: 1;
   display: flex;
   justify-content: center;
   width: 2rem;
+}
+.eventIcon {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface-panel);
+  color: var(--text-subtle);
+}
+.eventIcon[data-review-state="APPROVED"] {
+  color: var(--github-review-approved);
+}
+.eventIcon[data-review-state="CHANGES_REQUESTED"] {
+  color: var(--github-review-changes-requested);
 }
 .messageContent {
   min-width: 0;
@@ -337,7 +346,7 @@
   font-weight: var(--text-label--font-weight);
   overflow-wrap: anywhere;
 }
-.featuredMessage .messageAuthor {
+.messageWithMetadata .messageAuthor {
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
   letter-spacing: var(--text-body-sm--letter-spacing);
@@ -462,14 +471,10 @@
 .conversationTimeline::before {
   content: "";
   position: absolute;
-  left: calc(2rem + 1px);
+  left: 1rem;
   top: var(--space-5);
   bottom: var(--space-5);
   border-left: 1px solid var(--border-standard);
-}
-.standaloneThread {
-  padding: 0 var(--space-4) 0 var(--space-16);
-  min-width: 0;
 }
 .threadLabel {
   overflow-wrap: anywhere;
@@ -504,14 +509,8 @@
   .conversationMessage {
     display: block;
   }
-  .featuredMessage {
-    padding: var(--space-2);
-  }
-  .quietMessage,
-  .standaloneThread {
-    padding: var(--space-2);
-  }
-  .messageAvatar {
+  .messageMarker,
+  .conversationMessage > .eventIcon {
     margin-bottom: var(--space-2);
   }
   .quietMessage .messageContent {

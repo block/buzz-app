@@ -8,7 +8,7 @@ const target = "https://github.com/sample/project/pull/1";
 const picture =
   "https://raw.githubusercontent.com/sample/project/main/preview.png";
 
-// Browser-only: actual app wiring, themed reading surfaces, responsive geometry,
+// Browser-only: actual app wiring, event markers on an unboxed timeline, responsive geometry,
 // native keyboard/touch activation and thumbnails as an inline disclosure target.
 // Source recovery, paging and grouping matrices belong to colocated tests.
 test("PR conversation hierarchy and disclosures survive themes, narrow panes and enlarged text", async ({
@@ -29,6 +29,20 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
               state: "CHANGES_REQUESTED",
               user: { login: "reviewer" },
               body: "Keep the empty state useful.\n\n## Review details\n\nPlease preserve the retry action.",
+            },
+            {
+              id: 11,
+              submitted_at: "2026-10-01T20:00:00Z",
+              state: "COMMENTED",
+              user: { login: "reader" },
+              body: "The timeline is easier to scan now.",
+            },
+            {
+              id: 12,
+              submitted_at: "2026-10-01T21:00:00Z",
+              state: "APPROVED",
+              user: { login: "maintainer" },
+              body: "The empty state and retry look good.",
             },
           ]
         : url.pathname.endsWith("/issues/1/comments")
@@ -144,9 +158,19 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
       '[data-buzz-ui][aria-label="Description"] .buzz-avatar',
     ),
   ).toHaveCSS("width", "32px");
-  await expect(
-    conversation.locator('[data-buzz-ui][aria-label="Comment"] .buzz-avatar'),
-  ).toHaveCSS("width", "24px");
+  await expect(conversation.locator(".buzz-avatar")).toHaveCount(1);
+  for (const label of [
+    "Comment",
+    "Reviewed",
+    "Approved",
+    "Changes requested",
+  ]) {
+    const marker = conversation.getByRole("button", {
+      name: `Toggle ${label}`,
+      exact: true,
+    });
+    await expect(marker.locator("svg")).toHaveCSS("width", "20px");
+  }
   const standalone = panel.getByRole("button", {
     name: "src/standalone.ts:8 · 1 loaded comment",
     exact: true,
@@ -160,19 +184,49 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     );
     await expect(conversation).toHaveCSS("padding", "0px");
     await expect(conversation).toHaveCSS("border-radius", "0px");
-    const featuredFill = await conversation.evaluate((node) => {
-      const probe = document.createElement("span");
-      probe.style.backgroundColor = "var(--surface-popover)";
-      node.append(probe);
-      const fill = getComputedStyle(probe).backgroundColor;
-      probe.remove();
-      return fill;
-    });
-    for (const label of ["Description", "Changes requested"]) {
-      await expect(
-        conversation.getByRole("group", { name: label, exact: true }),
-      ).toHaveCSS("background-color", featuredFill);
+    for (const label of [
+      "Description",
+      "Reviewed",
+      "Approved",
+      "Changes requested",
+    ]) {
+      const event = conversation.getByRole("group", {
+        name: label,
+        exact: true,
+      });
+      await expect(event).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(event).toHaveCSS("border-radius", "0px");
+      await expect(event).toHaveCSS("border-width", "0px");
+      await expect(event).toHaveCSS("box-shadow", "none");
     }
+    const colors = await conversation.evaluate((node) => {
+      const resolved = (token) => {
+        const probe = document.createElement("span");
+        probe.style.color = `var(${token})`;
+        node.append(probe);
+        const color = getComputedStyle(probe).color;
+        probe.remove();
+        return color;
+      };
+      const markerColor = (label) =>
+        getComputedStyle(
+          node.querySelector(`[aria-label="Toggle ${label}"] svg`),
+        ).color;
+      return {
+        approved: markerColor("Approved"),
+        requested: markerColor("Changes requested"),
+        reviewed: markerColor("Reviewed"),
+        success: resolved("--text-success"),
+        danger: resolved("--text-danger"),
+        neutral: resolved("--text-subtle"),
+      };
+    });
+    expect(colors.approved).toBe(colors.success);
+    expect(colors.requested).toBe(colors.danger);
+    expect(colors.reviewed).toBe(colors.neutral);
+    expect(
+      new Set([colors.approved, colors.requested, colors.reviewed]).size,
+    ).toBe(3);
     const quiet = conversation.getByRole("group", {
       name: "Comment",
       exact: true,
@@ -188,7 +242,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
         .querySelector('[aria-label="Expand Comment"]')
         .getBoundingClientRect();
       const avatar = quiet
-        .querySelector(".buzz-avatar")
+        .querySelector('[aria-label="Toggle Comment"]')
         .getBoundingClientRect();
       const featuredTrigger = featured
         .querySelector('[aria-label="Expand Description"]')
@@ -210,15 +264,24 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     expect(Math.abs(geometry.textX - geometry.authorX)).toBeLessThan(1);
     expect(geometry.timeX).toBeGreaterThan(geometry.textRight);
     expect(geometry.sameRow).toBe(true);
-    const standaloneIndent = await standalone.evaluate((node) => {
-      const owner = node.closest(".buzz-accordion").parentElement;
+    const standaloneGeometry = await standalone.evaluate((node) => {
+      const content = node.closest(".buzz-accordion").parentElement;
+      const event = content.parentElement;
       return {
-        actual: getComputedStyle(owner).paddingLeft,
-        token: getComputedStyle(owner).getPropertyValue("--space-16").trim(),
+        contentX: content.getBoundingClientRect().left,
+        markerX: event.querySelector("svg").getBoundingClientRect().left,
+        eventX: event.getBoundingClientRect().left,
       };
     });
-    expect(standaloneIndent.actual).toBe("64px");
-    expect(standaloneIndent.token).toBe("4rem");
+    expect(Math.abs(standaloneGeometry.contentX - geometry.textX)).toBeLessThan(
+      1,
+    );
+    expect(standaloneGeometry.markerX).toBeGreaterThan(
+      standaloneGeometry.eventX,
+    );
+    expect(standaloneGeometry.markerX).toBeLessThan(
+      standaloneGeometry.contentX,
+    );
     await expect(conversation.getByText("All pages loaded")).toHaveCount(0);
     await panel.getByRole("heading").first().hover();
     await panel.screenshot({

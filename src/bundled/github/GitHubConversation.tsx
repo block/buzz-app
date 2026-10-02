@@ -9,7 +9,15 @@ import {
   type CodeThread,
 } from "./conversation";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { CaretDownIcon } from "../../shared/design-system/icons";
+import {
+  CaretDownIcon,
+  ChatCircleIcon,
+  CheckCircleIcon,
+  CodeIcon,
+  EyeIcon,
+  XCircleIcon,
+  XIcon,
+} from "../../shared/design-system/icons";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import { GitHubBody } from "./GitHubBody";
 import type { GitHubDetails } from "./data";
@@ -59,14 +67,16 @@ function Message({
   message,
   url,
   label,
-  featured = false,
+  kind = "comment",
+  reviewState,
   fallback = "No message provided",
   children,
 }: {
   message: ConversationMessage;
   url: string;
   label: string;
-  featured?: boolean;
+  kind?: "description" | "review" | "comment" | "code";
+  reviewState?: string | undefined;
   fallback?: string;
   children?: ReactNode;
 }) {
@@ -74,14 +84,27 @@ function Message({
     () => bodyPreview(message.body, message.bodyHtml, url),
     [message.body, message.bodyHtml, url],
   );
+  const hasMetadata = kind === "description" || kind === "review";
+  const MarkerIcon =
+    kind === "review"
+      ? reviewState === "APPROVED"
+        ? CheckCircleIcon
+        : reviewState === "CHANGES_REQUESTED"
+          ? XCircleIcon
+          : reviewState === "DISMISSED"
+            ? XIcon
+            : EyeIcon
+      : kind === "code"
+        ? CodeIcon
+        : ChatCircleIcon;
   return (
     <Collapsible.Root
-      className={`${styles.conversationMessage} ${featured ? styles.featuredMessage : styles.quietMessage}`}
+      className={`${styles.conversationMessage} ${hasMetadata ? styles.messageWithMetadata : styles.quietMessage}`}
       data-buzz-ui=""
       role="group"
       aria-label={label}
     >
-      <div className={styles.messageAvatar}>
+      <div className={styles.messageMarker}>
         <Collapsible.Trigger
           render={
             <IconButton
@@ -89,19 +112,29 @@ function Message({
               size="sm"
               aria-label={`Toggle ${label}`}
               icon={
-                <Avatar
-                  src={message.authorAvatar}
-                  alt=""
-                  fallback={message.author}
-                  size={featured ? "default" : "small"}
-                />
+                kind === "description" ? (
+                  <Avatar
+                    src={message.authorAvatar}
+                    alt=""
+                    fallback={message.author}
+                  />
+                ) : (
+                  <span
+                    className={styles.eventIcon}
+                    data-review-state={
+                      kind === "review" ? reviewState : undefined
+                    }
+                  >
+                    <MarkerIcon size={20} aria-hidden="true" />
+                  </span>
+                )
               }
             />
           }
         />
       </div>
       <div className={styles.messageContent}>
-        {featured ? (
+        {hasMetadata ? (
           <div className={styles.messageMetadata}>
             <Author message={message} />
             <span
@@ -117,7 +150,12 @@ function Message({
             <PostedTime value={message.createdAt} />
           </div>
         ) : (
-          <Author message={message} />
+          <div className={styles.messageMetadata}>
+            <Author message={message} />
+            <span className={styles.messageLabel}>
+              {kind === "code" ? "Code comment" : "Comment"}
+            </span>
+          </div>
         )}
         <Collapsible.Trigger
           className={`buzz-accordion-trigger text-body-sm ${styles.messageTrigger}`}
@@ -150,7 +188,7 @@ function Message({
           </span>
           <CaretDownIcon size={14} aria-hidden="true" />
         </Collapsible.Trigger>
-        {!featured && (
+        {!hasMetadata && (
           <span className={styles.messageTime}>
             <PostedTime value={message.createdAt} />
           </span>
@@ -201,6 +239,7 @@ function Thread({ thread, url }: { thread: CodeThread; url: string }) {
                   key={message.id}
                   message={message}
                   url={url}
+                  kind="code"
                   label={`Code comment by ${message.author || "unknown author"}`}
                 />
               ))}
@@ -279,15 +318,20 @@ function Conversation({
           message={details}
           url={url}
           label="Description"
-          featured
+          kind="description"
           fallback="No description provided"
         />
         {events.map((event) =>
           event.kind === "thread" ? (
-            <div className={styles.standaloneThread} key={event.key}>
-              {event.threads.map((thread) => (
-                <Thread key={thread.id} thread={thread} url={url} />
-              ))}
+            <div className={styles.conversationMessage} key={event.key}>
+              <span className={styles.eventIcon} aria-hidden="true">
+                <CodeIcon size={20} />
+              </span>
+              <div className={styles.messageContent}>
+                {event.threads.map((thread) => (
+                  <Thread key={thread.id} thread={thread} url={url} />
+                ))}
+              </div>
             </div>
           ) : (
             <Message
@@ -299,7 +343,8 @@ function Conversation({
                   ? (reviewLabels[event.message.state ?? ""] ?? "Reviewed")
                   : "Comment"
               }
-              featured={event.kind === "review"}
+              kind={event.kind === "review" ? "review" : "comment"}
+              reviewState={event.message.state}
               fallback={
                 event.kind === "review"
                   ? `${reviewLabels[event.message.state ?? ""] ?? "Reviewed"} · ${event.threads.length} loaded code threads`

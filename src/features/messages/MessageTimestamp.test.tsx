@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
+import { memo } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DayDivider, MessageTimestamp } from "./MessageTimestamp";
 
@@ -136,3 +137,43 @@ it.each([
     );
   },
 );
+
+// Rows are memoized and a quiet conversation never re-renders them, so the
+// labels must follow the local day on their own.
+const QuietRow = memo(function QuietRow({ createdAt }: { createdAt: number }) {
+  return (
+    <>
+      <DayDivider createdAt={createdAt} />
+      <MessageTimestamp createdAt={createdAt} />
+    </>
+  );
+});
+function renderQuietRow() {
+  vi.setSystemTime(new Date(2026, 8, 24, 23, 59));
+  const createdAt = new Date(2026, 8, 24, 9, 5).getTime() / 1000;
+  const { container } = render(<QuietRow createdAt={createdAt} />);
+  const divider = () => container.querySelector("[data-day]");
+  const byline = () => container.querySelector('time [aria-hidden="true"]');
+  expect(divider()).toHaveTextContent(/^Today$/);
+  expect(byline()).toHaveTextContent(/^9:05 AM$/);
+  return { divider, byline };
+}
+
+it("relabels a mounted quiet row at local midnight", () => {
+  const { divider, byline } = renderQuietRow();
+  act(() => vi.advanceTimersByTime(60_000));
+  expect(divider()).toHaveTextContent(/^Yesterday$/);
+  expect(byline()).toHaveTextContent(/^Yesterday at 9:05 AM$/);
+});
+
+it("relabels a mounted quiet row when the window wakes after midnight", () => {
+  const { divider, byline } = renderQuietRow();
+  // Sleep: the clock moves on but the midnight timer has not fired yet.
+  vi.setSystemTime(new Date(2026, 8, 26, 8));
+  expect(divider()).toHaveTextContent(/^Today$/);
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  expect(divider()).toHaveTextContent(/^Thursday$/);
+  expect(byline()).toHaveTextContent(/^Thursday at 9:05 AM$/);
+});

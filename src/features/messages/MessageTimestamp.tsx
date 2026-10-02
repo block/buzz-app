@@ -4,6 +4,7 @@ import {
   formatFullTimestamp,
   formatItemTimestamp,
 } from "../../shared/datetime";
+import { useLocalDay } from "../../shared/use-local-day";
 import styles from "./Messages.module.css";
 
 // Retain only the current locale/zone pair, never message content. Resolve the
@@ -28,6 +29,7 @@ function clock() {
 /** The divider above a day's first row: "Today", "Monday", "June 20, 2025".
  * `data-day` carries the local calendar day. */
 export function DayDivider({ createdAt }: { createdAt: number }) {
+  useLocalDay();
   const date = new Date(createdAt * 1000);
   const day = [date.getFullYear(), date.getMonth() + 1, date.getDate()]
     .map((part) => String(part).padStart(2, "0"))
@@ -50,6 +52,7 @@ export function MessageTimestamp({
   createdAt: number;
   compact?: boolean;
 }) {
+  useLocalDay();
   const date = new Date(createdAt * 1000);
   const label = compact
     ? clock()

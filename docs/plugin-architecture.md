@@ -593,7 +593,9 @@ the message list: `itemTimestamp(seconds, { withTime })` for bylines ("9:05 AM",
 "Monday"), `fullTimestamp(seconds)` for the full hover date, and
 `relativeTimestamp(seconds)` for link previews ("5 minutes ago"). They use the
 current locale and time zone; all but `fullTimestamp` take an optional `now`
-for tests.
+for tests. They compute the label when called. `conversation.ui.Message` and
+the host's day dividers re-render at local midnight; a plugin that shows these
+labels in its own long-lived view must call them again when the day changes.
 This remains a host-matched preview, not a stable cross-version SDK. Shared session
 ownership and trusted-plugin authority do not change.
 

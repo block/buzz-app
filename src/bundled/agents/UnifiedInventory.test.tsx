@@ -19,7 +19,7 @@ import * as destinations from "../../features/communities/destination";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 import { createRelaySession } from "../../features/relay/session";
-import { keypair, signed } from "../../features/relay/testing";
+import { archiveRelay, keypair, signed } from "../../features/relay/testing";
 import type { ReadTransport } from "../../features/relay/transport";
 import type { RelaySnapshot } from "../../features/relay/service";
 import { bindNames } from "../../features/identity-names/service";
@@ -866,4 +866,49 @@ it("removes a relay-only agent after confirmation and keeps it on Cancel or fail
   expect(published.map(({ kind, tags }) => [kind, tags[0]])).toEqual([
     [5, ["a", `30177:${signer.pubkey}:${"cd".repeat(32)}`]],
   ]);
+});
+
+it("keeps an archived card until its record deletion succeeds", async () => {
+  const viewer = keypair();
+  const agent = "cd".repeat(32);
+  // Admin consent archives an agent with no live profile.
+  const relay = archiveRelay(viewer, keypair(), [], {
+    [viewer.pubkey]: "admin",
+  });
+  relay.removal.fail = Error("restricted: not authorized");
+  relay.removal.failKind = 5;
+  setup(
+    "connected",
+    (fixture) => {
+      fixture.data.parked = [];
+    },
+    [agent],
+    [],
+    undefined,
+    relay.transport,
+    false,
+    viewer.pubkey,
+  );
+  const group = await screen.findByRole("region", {
+    name: "Relay-only agents",
+  });
+  const card = within(group).getByRole("article", {
+    name: "Agent Not imported",
+  });
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  let dialog = await screen.findByRole("alertdialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Remove agent" }));
+  expect(await within(card).findByRole("alert")).toHaveTextContent(
+    "restricted: not authorized",
+  );
+  expect(relay.archived.has(agent)).toBe(true);
+  expect(card).toBeInTheDocument();
+
+  delete relay.removal.fail;
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  dialog = await screen.findByRole("alertdialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Remove agent" }));
+  await waitFor(() => expect(card).not.toBeInTheDocument());
+  expect(relay.published.map((event) => event.kind)).toEqual([9035, 5]);
+  expect(relay.deleted).toEqual(new Set([`30177:${viewer.pubkey}:${agent}`]));
 });

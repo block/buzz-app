@@ -1496,7 +1496,9 @@ test("inventory keeps current-community tiles and compact rows without repeated 
       name: "Remove 121212121212?",
     });
     await expect(
-      removal.getByText("Removes the agent from every channel it belongs to."),
+      removal.getByText(
+        "Tries to remove the agent from every channel it belongs to.",
+      ),
     ).toBeVisible();
     await removal.screenshot({
       path: testInfo.outputPath("remove-dialog.png"),

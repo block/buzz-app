@@ -63,6 +63,7 @@ export type {
   AgentConfigProps,
   AgentActivity,
   AgentSecret,
+  AgentWorkspace,
   RegisteredAgentType,
 } from "../features/agent-types/service";
 export type {
@@ -75,6 +76,8 @@ export type {
 export type {
   AgentEventTemplate,
   PublishedAgentEvent,
+  WorkspaceEntry,
+  WorkspaceExecOptions,
 } from "../features/agents/control";
 export type { LiveBatch } from "../features/relay/incoming";
 

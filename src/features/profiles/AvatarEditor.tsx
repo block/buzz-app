@@ -24,6 +24,7 @@ import {
 import { useAvatarPreview } from "./use-avatar-preview";
 import { AvatarCustomColor } from "./AvatarCustomColor";
 import type { EmojiSearchSelection } from "../../bundled/emoji/emoji-mart";
+import type { ReadTransport } from "../relay/transport";
 
 type Props = {
   value: string;
@@ -34,6 +35,9 @@ type Props = {
   disabled?: boolean;
   onChange(value: string): void;
   onBusyChange?: ((busy: boolean) => void) | undefined;
+  connect?:
+    | ((community: string, signal: AbortSignal) => Promise<ReadTransport>)
+    | undefined;
 };
 
 type DraftPreview = {
@@ -212,6 +216,7 @@ function AvatarDraft({
   onPreview,
   disabled = false,
   done,
+  connect,
 }: Props & {
   done(value: string): void;
   onPreview(value: DraftPreview | null): void;
@@ -269,7 +274,7 @@ function AvatarDraft({
     try {
       const file = await makeFile();
       request.signal.throwIfAborted();
-      const url = await uploadAvatar(file, community, request.signal);
+      const url = await uploadAvatar(file, community, request.signal, connect);
       if (!request.signal.aborted) {
         if (apply) done(url);
         else setPicture(url);

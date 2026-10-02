@@ -5,6 +5,7 @@ import { nativeMediaUrl } from "../relay/native";
 import { connectCommunityTransport } from "../communities/connection";
 import { communityDestination } from "../communities/destination";
 import { avatarSource } from "../../shared/avatar-source";
+import type { ReadTransport } from "../relay/transport";
 
 /** Shared save policy; display-only inherited artwork may still fail validation. */
 export function avatarPictureError(value: string): string | undefined {
@@ -40,15 +41,17 @@ export async function uploadAvatar(
   file: File,
   community: string,
   signal: AbortSignal,
+  connect: (
+    community: string,
+    signal: AbortSignal,
+  ) => Promise<ReadTransport> = (id, request) =>
+    connectCommunityTransport(id, request),
 ): Promise<string> {
   if (!/^image\/(png|jpeg|gif|webp|heic|heif)$/.test(file.type))
     throw new Error("Choose a PNG, JPEG, GIF, WebP or HEIC image.");
   if (!file.size || file.size > 50 * 1024 * 1024)
     throw new Error("Choose an image smaller than 50 MiB.");
-  const transport = await connectCommunityTransport(
-    communityDestination(community).id,
-    signal,
-  );
+  const transport = await connect(communityDestination(community).id, signal);
   if (!transport.uploadAttachment)
     throw new Error("Image uploads are unavailable on this connection.");
   const prepared = await prepareAttachment(file, signal);

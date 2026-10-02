@@ -7,6 +7,7 @@ import { provideRelay, type RelayData } from "../relay/service";
 import { connectBrokerTransport, type ReadTransport } from "../relay/transport";
 import { communityDestination, isCommunityAlias } from "./destination";
 import { purgeCommunityDeviceState, type PurgeFailure } from "./device-state";
+import type { EnterpriseAuthClient } from "./enterpriseAuthApi";
 
 export const PROFILE_ABOUT_MAX_LENGTH = 500;
 export type PersonalProfile = { name: string; picture: string; about?: string };
@@ -22,7 +23,19 @@ export type ClientSnapshot = Saved & {
   relayAvailable: boolean;
   viewer?: string;
   error?: string;
+  enterprise?: EnterpriseLoginSnapshot | undefined;
 };
+export type EnterpriseLoginSnapshot = {
+  communityId: string;
+  status: "required" | "opening" | "error";
+  error?: string;
+};
+export class EnterpriseLoginRequired extends Error {
+  constructor(readonly communityId: string) {
+    super("Enterprise sign-in is required for this community");
+    this.name = "EnterpriseLoginRequired";
+  }
+}
 /** Read-only membership inventory; does not acquire or select relay sessions. */
 export type CommunityReader = {
   snapshot(): ClientSnapshot;
@@ -46,8 +59,9 @@ export function createCommunities(
   agentChoices?: Pick<AgentControl, "snapshot" | "subscribe" | "refresh">,
   identityReady?: Promise<string>,
   nativeConnect?: (id: string, signal: AbortSignal) => Promise<ReadTransport>,
+  enterpriseAuth?: EnterpriseAuthClient,
 ) {
-  const connect = live
+  const baseConnect = live
     ? (id: string, signal: AbortSignal) =>
         connectBrokerTransport("", signal, id)
     : identityReady
@@ -56,7 +70,7 @@ export function createCommunities(
   let state: ClientSnapshot = {
     ...empty(),
     status: live || identityReady ? "loading" : "unavailable",
-    relayAvailable: !!connect,
+    relayAvailable: !!baseConnect,
   };
   // Retain temporarily unresolvable deployment aliases in storage, not active UI/sessions.
   const unresolvedMemberships: Membership[] = [];
@@ -67,6 +81,8 @@ export function createCommunities(
   const listeners = new Set<() => void>();
   const relayListeners = new Set<() => void>();
   const sessions = new Map<string, RelayData>();
+  let enterpriseAttempt: { communityId: string; attemptId: string } | undefined;
+  let enterpriseGateGeneration = 0;
   // Each session owns a scope so leaving can dispose exactly that one.
   const sessionScopes = new Map<string, Context>();
   const scopes: Context[] = [];
@@ -122,6 +138,70 @@ export function createCommunities(
     for (const fn of listeners) fn();
     emitRelay();
   };
+  const setEnterprise = (
+    communityId: string,
+    status: EnterpriseLoginSnapshot["status"],
+    error?: string,
+  ) =>
+    update(
+      {
+        enterprise: {
+          communityId,
+          status,
+          ...(error ? { error } : {}),
+        },
+      },
+      false,
+    );
+  const waitFor = <T>(operation: Promise<T>, signal: AbortSignal) => {
+    signal.throwIfAborted();
+    return new Promise<T>((resolve, reject) => {
+      const abort = () => reject(signal.reason);
+      signal.addEventListener("abort", abort, { once: true });
+      operation.then(resolve, reject).then(
+        () => signal.removeEventListener("abort", abort),
+        () => signal.removeEventListener("abort", abort),
+      );
+    });
+  };
+  async function requireEnterpriseLogin(id: string, signal: AbortSignal) {
+    if (!enterpriseAuth || live || !baseConnect) return;
+    const generation = ++enterpriseGateGeneration;
+    const current = () => !disposed && enterpriseGateGeneration === generation;
+    const superseded = () =>
+      new DOMException("Community connection was superseded", "AbortError");
+    try {
+      if (!(await waitFor(enterpriseAuth.gate(id), signal))) {
+        if (!current()) throw superseded();
+        return;
+      }
+      if (!current()) throw superseded();
+      if (await waitFor(enterpriseAuth.get(), signal)) {
+        if (!current()) throw superseded();
+        if (state.enterprise?.communityId === id)
+          update({ enterprise: undefined }, false);
+        return;
+      }
+    } catch (reason) {
+      if (!current()) throw superseded();
+      if (signal.aborted) throw reason;
+      setEnterprise(
+        id,
+        "error",
+        reason instanceof Error ? reason.message : String(reason),
+      );
+      throw reason;
+    }
+    if (!current()) throw superseded();
+    setEnterprise(id, "required");
+    throw new EnterpriseLoginRequired(id);
+  }
+  const connect = baseConnect
+    ? async (id: string, signal: AbortSignal) => {
+        await requireEnterpriseLogin(id, signal);
+        return baseConnect(id, signal);
+      }
+    : undefined;
   const acquire = (id: string, viewer = state.viewer) => {
     if (!connect) return disconnected;
     let session = sessions.get(id);
@@ -274,6 +354,49 @@ export function createCommunities(
     relayListeners.clear();
     return Promise.all(scopes.map((scope) => scope.fiber.dispose()));
   });
+  async function startEnterpriseLogin() {
+    const pending = state.enterprise;
+    if (!enterpriseAuth || !pending || pending.status === "opening") return;
+    const attempt = {
+      communityId: pending.communityId,
+      attemptId: crypto.randomUUID(),
+    };
+    enterpriseAttempt = attempt;
+    setEnterprise(attempt.communityId, "opening");
+    try {
+      await enterpriseAuth.start(attempt.attemptId);
+      if (disposed || enterpriseAttempt?.attemptId !== attempt.attemptId)
+        return;
+      enterpriseAttempt = undefined;
+      update({ enterprise: undefined }, false);
+      const session = sessions.get(attempt.communityId);
+      if (session) {
+        session.disconnect();
+        session.retry();
+      }
+    } catch (reason) {
+      if (disposed || enterpriseAttempt?.attemptId !== attempt.attemptId)
+        return;
+      enterpriseAttempt = undefined;
+      setEnterprise(
+        attempt.communityId,
+        "error",
+        reason instanceof Error ? reason.message : String(reason),
+      );
+    }
+  }
+  function cancelEnterpriseLogin() {
+    enterpriseGateGeneration += 1;
+    const attempt = enterpriseAttempt;
+    enterpriseAttempt = undefined;
+    if (attempt && enterpriseAuth)
+      void enterpriseAuth.cancel(attempt.attemptId).catch(() => {});
+    if (attempt) setEnterprise(attempt.communityId, "required");
+  }
+  function dismissEnterpriseLogin() {
+    cancelEnterpriseLogin();
+    if (state.enterprise) update({ enterprise: undefined }, false);
+  }
   return {
     presence: presenceActivity,
     relay,
@@ -284,10 +407,21 @@ export function createCommunities(
         listeners.delete(fn);
       };
     },
+    connect(id: string, signal: AbortSignal) {
+      if (!connect)
+        return Promise.reject(new Error("Community connection is unavailable"));
+      return connect(id, signal);
+    },
+    startEnterpriseLogin,
+    cancelEnterpriseLogin,
+    dismissEnterpriseLogin,
     select(id: string | null) {
       if (id) id = communityDestination(id).id;
       if (id && !state.memberships.some((m) => m.id === id))
         throw new Error("Join this community first");
+      if (id !== state.selected) enterpriseGateGeneration += 1;
+      if (enterpriseAttempt && enterpriseAttempt.communityId !== id)
+        dismissEnterpriseLogin();
       if (id) acquire(id);
       update({ selected: id });
     },
@@ -299,6 +433,9 @@ export function createCommunities(
         ...membership,
         id: communityDestination(membership.id).id,
       };
+      enterpriseGateGeneration += 1;
+      if (enterpriseAttempt && enterpriseAttempt.communityId !== membership.id)
+        dismissEnterpriseLogin();
       update(
         {
           memberships: [

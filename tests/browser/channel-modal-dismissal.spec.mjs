@@ -8,7 +8,7 @@ test.use({
   historyCounts: { alpha: 2, beta: 1 },
 });
 
-// Browser-only contract: real hit-testing between centered modal layers,
+// Browser-only contract: confirmation hit-testing over a retained Canvas tab,
 // inside-origin drags, backdrop pointer focus return and Settings survival.
 // Cancellation matrices and writes stay in mounted component/domain tests.
 test("Canvas confirmation backdrop dismisses only the top layer and retains the draft", async ({
@@ -38,10 +38,17 @@ test("Canvas confirmation backdrop dismisses only the top layer and retains the 
     name: "Channel settings",
     exact: true,
   });
-  const trigger = settings.getByRole("button", { name: "Canvas", exact: true });
+  const workspace = page.locator("[data-panel-workspace]");
+  const settingsTab = workspace.getByRole("tab", {
+    name: "Channel settings",
+    exact: true,
+  });
+  const trigger = page
+    .getByRole("article", { name: "Conversation", exact: true })
+    .getByRole("button", { name: "Toggle channel canvas", exact: true });
   await trigger.click();
-  const editor = page.getByRole("dialog", {
-    name: "Channel Canvas",
+  const editor = workspace.getByRole("tabpanel", {
+    name: "Canvas",
     exact: true,
   });
   const text = editor.getByRole("textbox", { name: "Canvas Markdown" });
@@ -73,8 +80,14 @@ test("Canvas confirmation backdrop dismisses only the top layer and retains the 
   await expect(reload).toBeFocused();
   await expect(text).toHaveValue("Local draft");
   await page.mouse.click(8, 8);
+  await expect(editor).toBeVisible();
+  await expect(text).toHaveValue("Local draft");
+  await workspace
+    .getByRole("button", { name: "Close Canvas tab", exact: true })
+    .click();
   await expect(editor).toHaveCount(0);
-  await expect(trigger).toBeFocused();
+  await expect(settingsTab).toHaveAttribute("aria-selected", "true");
+  await expect(settingsTab).toBeFocused();
   await expect(settings).toBeVisible();
   await trigger.click();
   await expect(text).toHaveValue("Local draft");

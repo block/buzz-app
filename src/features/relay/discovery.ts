@@ -4,6 +4,22 @@ import { objectBody } from "./body";
 import { newer, hasTag, tag, type RelayEvent } from "./events";
 import type { ChannelSummary } from "./contracts";
 
+/** Display name from signed channel metadata; the content body overrides the tag. */
+export function metadataName(event: RelayEvent): string | undefined {
+  const body = objectBody(event.content);
+  if (typeof body?.name === "string" && body.name) return body.name;
+  return tag(event, "name") || undefined;
+}
+
+/** Explicit signed public metadata: readable and joinable by any viewer. */
+export function openMetadata(event: RelayEvent): boolean {
+  return (
+    event.tags.some(([name]) => name === "public") &&
+    !event.tags.some(([name]) => name === "private" || name === "hidden") &&
+    !event.tags.some(([name, value]) => name === "t" && value === "dm")
+  );
+}
+
 /** NIP-29 discovery: relay-authored replaceable metadata (39000) and rosters (39002). */
 export class DiscoveryState {
   private denied = new Set<string>();
@@ -137,12 +153,7 @@ export class DiscoveryState {
   /** Explicit signed public metadata grants reading, never membership. */
   private open(id: string): boolean {
     const event = this.metadata.get(id);
-    return (
-      !!event &&
-      event.tags.some(([name]) => name === "public") &&
-      !event.tags.some(([name]) => name === "private" || name === "hidden") &&
-      !event.tags.some(([name, value]) => name === "t" && value === "dm")
-    );
+    return !!event && openMetadata(event);
   }
   canParticipate(id: string): boolean {
     const roster = this.rosters.get(id);
@@ -166,11 +177,7 @@ export class DiscoveryState {
   }
   name(id: string): string {
     const event = this.metadata.get(id);
-    if (!event) return id.slice(0, 8);
-    let name = tag(event, "name");
-    const body = objectBody(event.content);
-    if (typeof body?.name === "string" && body.name) name = body.name;
-    return name || id.slice(0, 8);
+    return (event && metadataName(event)) || id.slice(0, 8);
   }
   /** NIP-29 `hidden` marks channels (DMs) that are members-only and absent from channel directories. */
   hidden(id: string): boolean {

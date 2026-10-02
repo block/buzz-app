@@ -393,7 +393,14 @@ returns to its persistent Settings-tab close control instead of an unrelated sid
 joined archived channels remain available by name in search, labeled **Archived
 channel**, but stay out of the sidebar and Recent activity. Open the search result
 and Settings to restore it. This uses the existing membership discovery and exact
-navigation, not a new archived-channel directory or nonmember discovery.
+navigation, not a new archived-channel directory.
+
+Search also finds active public channels the viewer has not joined, by name,
+labeled **Public channel · not joined** after joined matches. Opening one shows the
+read-only preview. The preview offers **Join channel**; after the relay confirms
+membership, the channel joins the sidebar and the composer becomes available and
+focused. Joining a channel is not available for DMs, private, archived or session
+conversations. See [relay queries](relay-queries.md#public-channel-name-search-and-join).
 Unarchive publishes the existing narrow `9002` command with `archived=false` and
 requires fresh relay metadata with a missing/false archive tag before updating
 shared discovery; a missing record is not success. Restoration returns the sidebar

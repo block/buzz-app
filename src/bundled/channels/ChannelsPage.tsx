@@ -32,6 +32,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useChannelPanels } from "./useChannelPanels";
 import { ChannelHeaderMenu } from "./ChannelHeaderMenu";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
+import { ChannelJoinNotice } from "./ChannelJoinNotice";
 import { ChannelLifecycleActions } from "./ChannelLifecycleActions";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -228,6 +229,9 @@ function ChannelWorkspace({
     channelId: string;
     navigation: PageNavigation | undefined;
   }>();
+  const [composerFocus, setComposerFocus] = useState(0);
+  // Join confirmation and the enabled composer arrive in separate commits.
+  const [joinedChannel, setJoinedChannel] = useState<string>();
   const canvasTrigger = useRef<HTMLButtonElement>(null);
   const [membersChannel, setMembersChannel] = useState<string>();
   const membersTrigger = useRef<HTMLButtonElement>(null);
@@ -368,6 +372,12 @@ function ChannelWorkspace({
     setSelected(current.id);
     writeView(scope, "selected-channel", current.id);
   }, [navigation?.target, current, scope]);
+  useEffect(() => {
+    if (!joinedChannel || current?.id !== joinedChannel || current.readOnly)
+      return;
+    setJoinedChannel(undefined);
+    setComposerFocus((value) => value + 1);
+  }, [joinedChannel, current]);
   const CurrentChannelIcon = channelIcon(current);
   useEffect(() => {
     if (navigation?.signal.aborted) return;
@@ -1638,9 +1648,17 @@ function ChannelWorkspace({
                   </div>
                 )}
                 {current?.readOnly && !current.cached && (
-                  <p className="px-4 py-2 text-body-sm text-subtle">
-                    Read-only preview · You haven’t joined this conversation.
-                  </p>
+                  <ChannelJoinNotice
+                    key={`join:${current.id}`}
+                    channelId={current.id}
+                    lifecycle={queries.channelLifecycle}
+                    joinable={
+                      !current.archived &&
+                      (current.channelType === "stream" ||
+                        current.channelType === "forum")
+                    }
+                    onJoined={() => setJoinedChannel(current.id)}
+                  />
                 )}
                 {current && (
                   <MessageComposer
@@ -1662,6 +1680,7 @@ function ChannelWorkspace({
                         : undefined
                     }
                     onSend={onComposerSend}
+                    focusRequest={composerFocus}
                   />
                 )}
               </SessionColumn>

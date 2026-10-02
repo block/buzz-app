@@ -22,6 +22,9 @@ import { fixtureBody } from "./fixture-body.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
+// Public nonmember channel for search/preview/join journeys. Real channel ids
+// are UUIDs, and lifecycle commands accept only UUID channel ids.
+const OPEN_CHANNEL = "6f70656e-0000-4000-8000-000000000001";
 export const channels = ["alpha", "beta"];
 export const historySize = 640;
 
@@ -387,7 +390,7 @@ export const test = base.extend({
     if (openSearch) {
       const root = sign(
         9,
-        [["h", "open"]],
+        [["h", OPEN_CHANNEL]],
         "Public conversation root",
         userKey,
         1699999000,
@@ -395,14 +398,14 @@ export const test = base.extend({
       searchTarget = sign(
         9,
         [
-          ["h", "open"],
+          ["h", OPEN_CHANNEL],
           ["e", root.id, "", "reply"],
         ],
         "crew-search exact public reply",
         userKey,
         1699999001,
       );
-      histories.set("primary/open", [root]);
+      histories.set(`primary/${OPEN_CHANNEL}`, [root]);
       targetEvents.push(searchTarget);
     }
     let exact;
@@ -834,7 +837,9 @@ export const test = base.extend({
             ]),
           );
       if (filter.kinds?.includes(39000))
-        return [...rosterIds, ...(openSearch ? ["open"] : [])]
+        return [
+          ...new Set([...rosterIds, ...(openSearch ? [OPEN_CHANNEL] : [])]),
+        ]
           .filter((id) => !filter["#d"] || filter["#d"].includes(id))
           .map((id) =>
             sign(
@@ -846,7 +851,13 @@ export const test = base.extend({
                   renamedChannels.get(id) ??
                     channelNames[id] ??
                     lifecycleRows.find((row) => row.id === id)?.name ??
-                    (id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id),
+                    (id === "alpha"
+                      ? "Alpha"
+                      : id === "beta"
+                        ? "Beta"
+                        : id === OPEN_CHANNEL
+                          ? "open"
+                          : id),
                 ],
                 [
                   "t",
@@ -1222,6 +1233,14 @@ export const test = base.extend({
     const acceptReadPublication = (community, event) => {
       expect(verifyEvent(event)).toBe(true);
       expect(event.pubkey).toBe(viewer);
+      if (openSearch && event.kind === 9021) {
+        // NIP-29 join: the relay adds an open channel's requester to its roster.
+        expect(event.tags).toEqual([["h", OPEN_CHANNEL]]);
+        if (!rosterIds.includes(OPEN_CHANNEL)) rosterIds.push(OPEN_CHANNEL);
+        report.lifecyclePublications ??= [];
+        report.lifecyclePublications.push(event);
+        return;
+      }
       if (channelLifecycle && [9002, 9008, 9022, 41012].includes(event.kind)) {
         const id = event.tags.find(([key]) => key === "h")?.[1];
         expect(lifecycleRows.some((row) => row.id === id)).toBe(true);
@@ -1778,6 +1797,7 @@ export const test = base.extend({
         presenceThread,
         exact,
         searchTarget,
+        openChannelId: OPEN_CHANNEL,
         membership(
           type,
           targetIndex,

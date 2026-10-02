@@ -150,17 +150,15 @@ it("keeps the selected agent editor after a rename reports restart failure", asy
   await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(f.control.snapshot().busy).toBe(false));
   expect(editor).toBeVisible();
-  expect(
-    screen.getByRole("textbox", { name: "Name", exact: true }),
-  ).toHaveValue("Renamed fixture agent");
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+    "Renamed fixture agent",
+  );
   expect(screen.getByRole("status")).toHaveTextContent(
     "1 agent couldn’t restart with the new settings; check Agents.",
   );
-  await userEvent.click(
-    screen.getByRole("button", { name: "Runtime", exact: true }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: "Runtime" }));
   expect(
-    screen.getByRole("button", { name: "Restart to apply", exact: true }),
+    screen.getByRole("button", { name: "Restart to apply" }),
   ).toBeEnabled();
   expect(screen.queryByText(/No personal agent named/)).toBeNull();
 });

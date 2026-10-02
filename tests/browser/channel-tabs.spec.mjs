@@ -42,9 +42,9 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
   await expect(tabClose).toHaveCSS("height", "20px");
   await expect(
     main
-      .getByRole("button", { name: "Channel settings", exact: true })
+      .getByRole("button", { name: "Channel actions", exact: true })
       .locator("svg"),
-  ).toHaveClass(/tabler-icon-settings/);
+  ).toHaveClass(/tabler-icon-dots/);
   await expect(split.locator("svg")).toHaveClass(
     /tabler-icon-layout-sidebar-right/,
   );

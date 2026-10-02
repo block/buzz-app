@@ -1,8 +1,10 @@
 # Inbox: relay-authoritative exported surface
 
-Inbox remains a bundled placeholder. This merge exports the session capability;
-it does not port the dependent Inbox UI (#499), selection policy, or an action
-executor. Ordinary channel/thread reading retains its existing policy.
+Inbox is a bundled page (`buzz.inbox/inbox`) for the selected community. It uses
+`session.unread.inbox()` for rows and `session.inboxFeed` for bounded addressed
+history demand. Presentation, filtering and selection belong to the page;
+ordinary channel/thread reading retains its existing policy. No Inbox-owned
+session, parallel fold, composer, signing or persistence is added.
 
 ## One authority, bounded candidates
 
@@ -63,9 +65,14 @@ saving is not proof that the relay applied the operation.
 `readThrough` contains only a thread-prefix step anchored on the newest admitted
 reply. A thread prefix never acknowledges its top-level root. A standalone
 top-level mention has an empty `readThrough`: **empty on a non-DM means no Inbox
-read action**. Never substitute a channel prefix or an exact-message receipt.
+read action**. Never substitute a channel prefix or an exact-message receipt
+in that click action. This does not disable ordinary reader dwell: once a
+standalone mention is shown, focused and settled, the shared reader can advance
+the channel prefix through it, covering older top-level unread too.
 DM rows also have no steps; their separate explicit channel action can use
-`prepareChannelRead`. This merge ships no executor for either action.
+`prepareChannelRead`. The page delegates these actions to the unread owner;
+opening Inbox alone does not mark rows read. Hosts without `frontier-sync`
+disable read mutations.
 
 `prepareChannelRead(channelId)` captures the sidebar's latest-message ID/time,
 current epoch and the manual-mark keys then present, once. Every invocation
@@ -101,9 +108,47 @@ loop or participation repair is added.
 Current membership/access fences apply to all rows, reads and publications.
 Before joining, cached public messages create no demand or unresolved rows;
 after joining, their relay verdict decides admission without replay or a join floor.
-A finite feed completing does not imply context verdicts have completed. A
-future UI must subscribe to both capabilities and honor both statuses. Neither
+A finite feed completing does not imply context verdicts have completed. The
+page subscribes to both capabilities and must honor both statuses. Neither
 an empty list nor feed-ready establishes archive completeness.
+
+## Conversation presentation
+
+The page offers Activity type and Sender filters and an Unread only toggle.
+The projection remains unread-only even with that toggle off; it is not a read
+archive. “Unread only” is therefore inert, and the row menu's “Mark unread”
+action remains disabled: every admitted row is unread. Both controls remain
+visible pending the relay listing follow-up. Sender classification uses
+`session.agentChoices` and cached/profile identity evidence, never a parallel
+inventory or name heuristic.
+
+Opening a row captures its channel, message and optional thread root and uses
+an existing channel window or exact shared thread reader to reveal the target.
+The captured visit survives removal from the unread projection; it does not add
+a list row. Back/Close ends the visit. The existing detail handles unavailable
+channel access and the shared readers handle deleted or unavailable targets,
+not the unread projection. Read retries are fenced by visit, access, membership,
+generation and successful local intent
+revision. A DM retry reuses its prepared sidebar anchor and manual-clear keys,
+not the retry-time clock or later arrivals. Manual unread remains device-local
+and cannot independently restore a dismissed row.
+
+`inboxFeed.incomplete` identifies exact group members awaiting edit/deletion
+closure. Those rows show “Preview updating…” or “Preview unavailable. Retry
+inbox.” rather than exposing an incomplete body. Retry is available above both
+panes. Revalidation withholds an admitted reader and its composer without
+unmounting them; hidden content cannot earn read dwell. The shared conversation
+presentation boundary dismisses media/link previews, source actions and composer
+subdialogs while preserving the main editor, draft and uploads. Inline audio
+and video pause; recovery requires explicit Play rather than resuming playback.
+Access loss retires the reader. Focus recovery respects focus moved elsewhere.
+
+Detail uses the existing reader/composer and canonical origin. Close/Escape
+returns focus to the invoking or surviving row, or the persistent Activity type
+filter. Portalled controls retain their own dismissal. Pane layout responds to
+available Inbox width. Row descriptions use safe previews or incomplete
+placeholders; Show more follows the filtered result count. `NavigationItem`
+owns selected styling and `aria-current`.
 
 ## Validation scope
 
@@ -111,5 +156,9 @@ Colocated session tests cover verdict admission, local intent, bounded demand,
 thread-only actions, frozen retries and feed edit/deletion/lifecycle closure.
 They do not establish browser paint, real relay persistence, native acceptance
 or human approval. Browser/hosted checks remain with the integration owner.
-Reminders, follow/mute policy, full backlog discovery and the #499 UI are out of
-scope; this is not a full original Inbox port.
+The incoming mounted `InboxPage.test.tsx` / `InboxDetail.test.tsx` and four
+`tests/browser/inbox*` specs require validation against this relay-authoritative
+contract; their presence is not evidence that the merged tests pass. Browser
+fixture evidence also does not establish live relay or packaged acceptance.
+Reminders, follow/mute policy and full backlog discovery remain out of scope;
+this is not a full original Inbox port.

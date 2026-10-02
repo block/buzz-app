@@ -264,10 +264,14 @@ it("preserves split UTF-8 section names in the published record and response", a
   const key = nip44.v2.utils.getConversationKey(h.key, h.viewer);
   try {
     const published = h.heads.get("channel-sections");
-    expect(JSON.parse(nip44.v2.decrypt(published.content, key))).toEqual({
-      version: 1,
-      ...expected,
-    });
+    const { meta, ...projection } = JSON.parse(
+      nip44.v2.decrypt(published.content, key),
+    );
+    expect(projection).toEqual({ version: 1, ...expected });
+    expect(meta.s[intent.createSection.id].name[2]).toBe(
+      intent.createSection.name,
+    );
+    expect(meta.a.alpha[2]).toBe(intent.createSection.id);
   } finally {
     key.fill(0);
   }

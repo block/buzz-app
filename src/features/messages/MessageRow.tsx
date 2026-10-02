@@ -1,4 +1,5 @@
 import { hasUnread } from "../relay/unread";
+import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageLink } from "../conversation/MessageLink";
 import { MessageTimestamp } from "./MessageTimestamp";
 import { useChannelIdentityNames } from "../identity-names/react";
@@ -238,6 +239,7 @@ export const MessageRow = memo(function MessageRow({
   );
   const rowRef = useRef<HTMLDivElement>(null);
   const menuTrigger = useRef<HTMLButtonElement>(null);
+  const active = useConversationPresentation();
   const [reporting, setReporting] = useState<"open" | "sent">();
   const reportActive = reporting !== undefined;
   // The dialog, pending submit and notice live in this row; eviction loses them.
@@ -253,7 +255,10 @@ export const MessageRow = memo(function MessageRow({
       ? session?.messages.report
       : undefined;
   const reportItem = report && (
-    <MenuItem onClick={() => setReporting("open")}>
+    <MenuItem
+      disabled={reporting === "open"}
+      onClick={() => setReporting("open")}
+    >
       <MenuIcon>
         <FlagIcon />
       </MenuIcon>
@@ -403,7 +408,7 @@ export const MessageRow = memo(function MessageRow({
               finalFocus={menuTrigger}
             />
           )}
-          {reporting === "sent" && (
+          {active && reporting === "sent" && (
             <ToastNotice
               tone="success"
               timeout={5000}

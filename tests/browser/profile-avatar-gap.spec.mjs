@@ -166,6 +166,12 @@ test("profile avatar cutout shows the shell through hover, press and open menu",
     await control.press("Enter");
     await expect(control).toHaveAttribute("aria-expanded", "true");
     await page.keyboard.press("Escape");
+    // The paint reset is not the menu's teardown/final-focus boundary. Let its
+    // existing return finish before the outside click deliberately blurs it.
+    await expect(page.locator('[data-profile-menu][role="menu"]')).toHaveCount(
+      0,
+    );
+    await expect(control).toBeFocused();
     await expect(control).toHaveCSS("mask-image", "none");
     await page.mouse.click(400, 20);
     await expect(control).not.toBeFocused();

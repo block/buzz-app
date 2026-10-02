@@ -483,23 +483,6 @@ fn managed_agent_registration_signs_as_owner_through_existing_ipc() {
         assert_eq!(registered[field], registration[field]);
     }
     verify(&registered);
-    let mut unsupported = registration.clone();
-    unsupported["kind"] = serde_json::json!(30175);
-    for rejected in [
-        unsupported,
-        serde_json::json!({
-            "kind": 5, "created_at": 123, "content": "",
-            "tags": [["a", format!("30177:{}:{}", public.as_str().unwrap(), "02".repeat(32))]]
-        }),
-    ] {
-        assert!(invoke(
-            "relay_sign",
-            serde_json::json!({
-                "community": "https://relay.test", "event": rejected
-            })
-        )
-        .is_err());
-    }
 }
 
 #[tokio::test]

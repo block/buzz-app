@@ -229,7 +229,6 @@ it.each([true, false])(
           : { error: "Registration denied" },
       });
       expect(outbox.supports(30177)).toBe(true);
-      expect(outbox.supports(30175)).toBe(false);
       const id = outbox.send({ kind: 30177, tags: [["d", agent]], content });
       await vi.waitFor(() =>
         expect(

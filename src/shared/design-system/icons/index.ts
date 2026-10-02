@@ -347,3 +347,11 @@ import TablerPlayFilledIcon from "@tabler/icons-react/dist/esm/icons/IconPlayerP
 export const PlayFilledIcon = defineIcon("tabler", TablerPlayFilledIcon);
 import TablerPauseFilledIcon from "@tabler/icons-react/dist/esm/icons/IconPlayerPauseFilled.mjs";
 export const PauseFilledIcon = defineIcon("tabler", TablerPauseFilledIcon);
+
+import { HashArrowInArtwork } from "./HashArrowIn";
+export const HashArrowInIcon = defineIcon("custom", HashArrowInArtwork, {
+  meaning: "Send to channel",
+  category: "messaging",
+  provenance: "Original Buzz HashArrowIn; retained by explicit design request",
+  intendedSizes: [{ width: 16, height: 16 }],
+});

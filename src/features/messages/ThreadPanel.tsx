@@ -729,6 +729,7 @@ function ThreadMessages({
           scope={scope}
           onReply={snapshot.root ? targetReply : undefined}
           row={row}
+          threadRoot={snapshot.status === "ready" ? snapshot.root : undefined}
           profile={profiles.get(row.authorId)}
           participantProfiles={profiles}
           agentPubkeys={agentPubkeys}

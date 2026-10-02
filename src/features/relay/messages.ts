@@ -1,6 +1,8 @@
 import { attachmentMessage, type UploadedAttachment } from "./attachments";
 import { validReactionContent, type CustomEmoji } from "./emoji";
 import type { EventTemplate } from "nostr-tools";
+import type { ChannelMessage } from "./contracts";
+import { threadReference } from "./thread-reference";
 import type { EventData } from "./events";
 import type { Outbox, OutboxRecovery } from "./outbox";
 
@@ -83,6 +85,86 @@ export function createMessages(
         },
         ...(recovery ? [recovery] : []),
       );
+    },
+    /** Copy an authored reply as a fresh top-level event, preserving its displayed semantics. */
+    sendToChannel(row: ChannelMessage, root?: ChannelMessage) {
+      const original = find(row.id);
+      const thread = original && threadReference(original);
+      if (original?.kind !== 9 || !thread)
+        throw new Error("Load a thread reply before sending it to the channel");
+      if (!viewer || original.pubkey !== viewer || row.authorId !== viewer)
+        throw new Error("Only your own messages can be sent to the channel");
+      const channelId = original.tags.find(([name]) => name === "h")?.[1];
+      if (
+        !channelId ||
+        channelId !== row.channelId ||
+        row.threadRootId !== thread.rootId ||
+        (row.delivery && !["accepted", "seen"].includes(row.delivery))
+      )
+        throw new Error(
+          "Reload the thread reply before sending it to the channel",
+        );
+      const attachmentSource = find(row.attachmentSourceId ?? row.id);
+      if (
+        !attachmentSource ||
+        attachmentSource.pubkey !== viewer ||
+        (attachmentSource.id !== original.id &&
+          (attachmentSource.kind !== 40003 ||
+            !attachmentSource.tags.some(
+              ([name, id]) => name === "e" && id === row.id,
+            ) ||
+            attachmentSource.tags.some(
+              ([name, id]) => name === "h" && id !== channelId,
+            )))
+      )
+        throw new Error("Reload the message attachments before sending");
+      // The mounted thread supplies its reconciled root, including edits/deletions.
+      // Never fall back to the raw retained event, which may contain superseded text.
+      const excerpt =
+        root?.id === thread.rootId && root.channelId === channelId
+          ? Array.from(
+              root.content
+                .replace(/\|\|[\s\S]*?(?:\|\||$)/g, " ")
+                .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+                .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+                .replace(/(?:https?:\/\/|buzz:\/\/)\S+/g, " ")
+                .replace(/[`*_~>#|]/g, " ")
+                .replace(/\s+/g, " ")
+                .trim(),
+            )
+          : [];
+      const label =
+        excerpt.length > 64
+          ? `${excerpt.slice(0, 63).join("")}…`
+          : excerpt.join("");
+      const content = row.sourceContent ?? row.content;
+      return writer(9, channelId).send({
+        kind: 9,
+        content: text(
+          content.trim()
+            ? content
+            : row.attachments.map((attachment) => attachment.url).join("\n"),
+        ),
+        tags: [
+          ["h", channelId],
+          ["buzz:sent-from-thread", thread.rootId, ...(label ? [label] : [])],
+          // Sharing does not notify the original recipients again. Preserve display binding only.
+          ...referenceTags([
+            ...new Set([
+              ...(row.edited ? [] : row.mentions),
+              ...(row.mentionReferences ?? []),
+            ]),
+          ]),
+          ...(row.emoji ?? []).map((emoji) => [
+            "emoji",
+            emoji.shortcode,
+            emoji.url,
+          ]),
+          ...attachmentSource.tags.filter(
+            ([name]) => name === "imeta" || name === "link-preview",
+          ),
+        ],
+      });
     },
     reply(
       channelId: string,

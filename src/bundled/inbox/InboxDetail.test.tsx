@@ -166,11 +166,12 @@ async function fixture() {
       media: (url) => url,
       readState: {
         decode: async (records) => decodeReadState(records, viewer.secret),
-        sign: async (intent) =>
+        sign: async (intent, signal) =>
           signReadState(
             intent,
             viewer.secret,
             createLocalSigningDelegate(viewer.secret),
+            signal,
           ),
         publish: async (event) => {
           events.push(event);

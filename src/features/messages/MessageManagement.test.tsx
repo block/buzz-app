@@ -108,11 +108,12 @@ async function fixture(
             readState: {
               decode: async (events: readonly RelayEvent[]) =>
                 decodeReadState(events, viewer.secret),
-              sign: async (intent: ReadStateSigning) =>
+              sign: async (intent: ReadStateSigning, signal: AbortSignal) =>
                 signReadState(
                   intent,
                   viewer.secret,
                   createLocalSigningDelegate(viewer.secret),
+                  signal,
                 ),
               publish: async () => {},
             },

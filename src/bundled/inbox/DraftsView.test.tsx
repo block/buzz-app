@@ -216,11 +216,13 @@ function fixture(
           decodeReadState(records, viewer.secret),
         sign: async (
           intent: import("../../features/relay/read-state-host").ReadStateSigning,
+          signal: AbortSignal,
         ) =>
           signReadState(
             intent,
             viewer.secret,
             createLocalSigningDelegate(viewer.secret),
+            signal,
           ),
         publish: async (event: RelayEvent) => {
           events.push(event);

@@ -14,6 +14,7 @@ import type { RelaySnapshot } from "../../features/relay/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import { inventoryIdentities, localSetups } from "./inventory-model";
 import { identityTiles } from "./identity-tiles";
+import { removeRelayAgent } from "../../features/agents/relay-removal";
 
 /** Discovery, saved metadata and execution are facts of one exact public key. */
 export function UnifiedInventory({
@@ -71,6 +72,9 @@ export function UnifiedInventory({
       ? relayOrigin(connection.scope.slice(0, -(connection.viewer.length + 1)))
       : "";
   const [refresh, setRefresh] = useState(0);
+  // Hide confirmed removals at once; the refreshed reads then agree. A removal
+  // is per community, so the key includes the destination.
+  const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
   const {
     communityIdentities,
     profiles: sourceProfiles,
@@ -115,9 +119,28 @@ export function UnifiedInventory({
   );
   // Apply archive evidence after all discovery sources join. Keep local controls.
   for (const row of rows.values()) {
-    if (archives.state(row.pubkey) === "archived" && !row.localIdentity)
+    if (
+      (archives.state(row.pubkey) === "archived" ||
+        removed.has(`${destination} ${row.pubkey}`)) &&
+      !row.localIdentity
+    )
       rows.delete(row.pubkey);
   }
+  const viewer = connection.viewer;
+  const removeRelay =
+    connection.status === "ready" &&
+    selectedViewerMatches &&
+    viewer &&
+    connection.session.outbox?.supports(5)
+      ? async (pubkey: string, signal: AbortSignal) => {
+          await removeRelayAgent(connection.session, viewer, pubkey, signal);
+          setRemoved(
+            (saved) => new Set([...saved, `${destination} ${pubkey}`]),
+          );
+          void library.refresh();
+          setRefresh((value) => value + 1);
+        }
+      : undefined;
   const candidates = [...rows.keys()];
   const displayFacts = [...rows.values()].map((row) => ({
     pubkey: row.pubkey,
@@ -153,6 +176,7 @@ export function UnifiedInventory({
       edit={edit}
       duplicate={duplicate}
       remove={remove}
+      removeRelay={removeRelay}
       importedId={importedId}
       onUseHere={onUseHere}
       onImport={onImport}

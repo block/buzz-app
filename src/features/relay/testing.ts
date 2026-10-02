@@ -159,6 +159,8 @@ export function archiveRelay(
   channels: Record<string, string[]> = {},
 ) {
   const archived = new Set<string>();
+  /** NIP-09 coordinates the relay accepted for deletion. */
+  const deleted = new Set<string>();
   const published: RelayEvent[] = [];
   const signedBy: string[] = [];
   const script: { hold?: Promise<void>; fail?: Error; apply: boolean } = {
@@ -232,7 +234,7 @@ export function archiveRelay(
         return [];
       }),
     writer: {
-      kinds: [9001],
+      kinds: [9001, 5],
       async sign(template) {
         return finalizeEvent({ ...template }, viewer.secret);
       },
@@ -241,6 +243,11 @@ export function archiveRelay(
         if (removal.fail) throw removal.fail;
         published.push(event);
         if (!removal.apply) return;
+        if (event.kind === 5) {
+          for (const [name, value] of event.tags)
+            if (name === "a" && value) deleted.add(value);
+          return;
+        }
         const tag = (name: string) =>
           event.tags.find(([key]) => key === name)?.[1] ?? "";
         channels[tag("h")] = (channels[tag("h")] ?? []).filter(
@@ -285,5 +292,6 @@ export function archiveRelay(
     script,
     channels,
     removal,
+    deleted,
   };
 }

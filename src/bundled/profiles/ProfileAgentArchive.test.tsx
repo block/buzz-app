@@ -30,7 +30,7 @@ import { profileTarget } from "../../features/profiles/target";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 import { PublishRejected } from "../../features/relay/outbox";
-import { removeAgentFromChannels } from "./ProfileAgentDelete";
+import { removeAgentFromChannels } from "../../features/agents/relay-removal";
 import { ProfilePanel } from "./ProfilePanel";
 
 const viewer = keypair(),

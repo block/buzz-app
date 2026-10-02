@@ -1,6 +1,10 @@
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import type { EventTemplate, VerifiedEvent } from "nostr-tools";
+import {
+  type EventTemplate,
+  type VerifiedEvent,
+  verifyEvent,
+} from "nostr-tools";
 import {
   connectNativeTransport,
   nativeRelayRequest,
@@ -10,6 +14,7 @@ import {
 import { keypair, message, signed } from "./testing";
 import { createOutbox, type OutgoingEvent, PublishRejected } from "./outbox";
 import { createMessages } from "./messages";
+import { createRelaySession } from "./session";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -199,6 +204,73 @@ it("discovers the relay, verifies reads and publishes through the same native id
   );
   expect(fetch).not.toHaveBeenCalled();
 });
+
+it.each([true, false])(
+  "publishes owner-signed managed-agent registrations through the session outbox (accepted: %s)",
+  async (accepted) => {
+    const transport = await connectNativeTransport(community);
+    const owner = createRelaySession(transport, {
+      outboxStorage: { load: () => [], save: () => {} },
+    });
+    try {
+      const outbox = owner.session.outbox;
+      assert.exists(outbox);
+      await outbox.ready();
+      const agent = keypair().pubkey;
+      const content = JSON.stringify({
+        name: "Remote agent",
+        parallelism: 1,
+        respond_to: "owner-only",
+      });
+      respond = (request) => ({
+        status: accepted ? 200 : 403,
+        body: accepted
+          ? { accepted: true, event_id: JSON.parse(request.body ?? "{}").id }
+          : { error: "Registration denied" },
+      });
+      expect(outbox.supports(30177)).toBe(true);
+      expect(outbox.supports(30175)).toBe(false);
+      const id = outbox.send({ kind: 30177, tags: [["d", agent]], content });
+      await vi.waitFor(() =>
+        expect(
+          outbox.snapshot().find((item) => item.event.id === id),
+        ).toMatchObject({
+          delivery: accepted ? "accepted" : "failed",
+          ...(accepted ? {} : { error: "Relay rejected the message (403)" }),
+        }),
+      );
+      const publishes = requests.filter(
+        (request) => request.path === "/events",
+      );
+      expect(publishes).toHaveLength(1);
+      expect(publishes[0]).toMatchObject({ community, method: "POST" });
+      const event = JSON.parse(publishes[0]?.body ?? "null");
+      expect(event).toMatchObject({
+        id,
+        kind: 30177,
+        pubkey: viewer.pubkey,
+        content,
+      });
+      expect(event.tags).toEqual([
+        ["d", agent],
+        ["client-id", expect.any(String)],
+      ]);
+      expect(verifyEvent(event)).toBe(true);
+      expect(invoke).toHaveBeenCalledWith("relay_sign", {
+        community,
+        event: {
+          kind: 30177,
+          created_at: event.created_at,
+          tags: event.tags,
+          content,
+        },
+      });
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      owner.dispose();
+    }
+  },
+);
 
 it("rejects tampered reads and keeps refusals distinct from uncertain receipts", async () => {
   const transport = await connectNativeTransport(community);

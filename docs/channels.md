@@ -212,7 +212,8 @@ maximum. Orphan assignments are omitted from the legacy projection, not deleted
 from metadata. Read projection accepts Desktop string values on retained section
 name/icon registers; only projected live text receives UI length limits. Already
 satisfied intents return without rewriting the head, including assignment removal
-when its register is absent or explicitly null. Actual rewrites still reject
+when its register is absent, explicitly null, or points to a nonprojecting section.
+Actual rewrites still reject
 out-of-policy retained values rather than dropping or truncating them.
 Unsupported/malformed metadata fails closed, including unknown fields;
 this is not general forward-schema salvage. Live projection caps remain 100

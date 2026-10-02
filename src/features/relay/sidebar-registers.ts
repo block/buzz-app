@@ -220,14 +220,15 @@ export function editSidebarRecord(
     let node: Tree | SidebarRegister | undefined = tree;
     for (const key of path)
       node = node && !Array.isArray(node) ? own(node, key) : undefined;
-    // Removing an absent assignment is already satisfied at the fresh head.
-    // Do not mint a tombstone (or rewrite unrelated retained text) for Unstar.
+    // Removing an unprojected assignment is already satisfied at the fresh head,
+    // including a retained reference to a deleted section. Do not rewrite it.
     if (
-      node === undefined &&
       value === null &&
       coordinate === "channel-sections" &&
       path.length === 2 &&
-      path[0] === "a"
+      path[0] === "a" &&
+      path[1] !== undefined &&
+      !Object.hasOwn(projection(coordinate, tree).assignments ?? {}, path[1])
     )
       return false;
     return !Array.isArray(node) || node[2] !== value;

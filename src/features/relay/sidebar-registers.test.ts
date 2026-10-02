@@ -172,8 +172,13 @@ it.each(["name", "icon"])(
     };
     const before = structuredClone(dead);
     expect(projectSidebarPreferences(dead, undefined).sections).toEqual([]);
-    expect(() =>
+    expect(
       editSidebarRecord("channel-sections", dead, 1, [[["a", "a"], null]]),
+    ).toBe(dead);
+    expect(() =>
+      editSidebarRecord("channel-sections", dead, 1, [
+        [["s", "dead", "icon"], null],
+      ]),
     ).toThrow("Invalid sidebar register");
     expect(dead).toEqual(before);
   },

@@ -214,13 +214,15 @@ it("appends after the rounded order imported from a fractional legacy head", () 
 });
 
 it.each([
-  { assigned: false, oversized: false },
-  { assigned: true, oversized: false },
-  { assigned: false, oversized: true },
-  { assigned: true, oversized: true },
+  { assignment: undefined, oversized: false },
+  { assignment: null, oversized: false },
+  { assignment: "dead", oversized: false },
+  { assignment: undefined, oversized: true },
+  { assignment: null, oversized: true },
+  { assignment: "dead", oversized: true },
 ])(
   "does not publish an already-clear assignment: %j",
-  async ({ assigned, oversized }) => {
+  async ({ assignment, oversized }) => {
     const reg = (value) => [100, "1111111111111111", value];
     const blob = {
       version: 1,
@@ -235,7 +237,10 @@ it.each([
             live: reg(false),
           },
         },
-        a: { ...(assigned ? { alpha: reg(null) } : {}), beta: reg("work") },
+        a: {
+          ...(assignment === undefined ? {} : { alpha: reg(assignment) }),
+          beta: reg("work"),
+        },
       },
     };
     let head = event(blob);

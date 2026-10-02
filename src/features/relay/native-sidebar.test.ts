@@ -468,13 +468,15 @@ it.each([false, true])(
 );
 
 it.each([
-  { assigned: false, oversized: false },
-  { assigned: true, oversized: false },
-  { assigned: false, oversized: true },
-  { assigned: true, oversized: true },
+  { assignment: undefined, oversized: false },
+  { assignment: null, oversized: false },
+  { assignment: "dead", oversized: false },
+  { assignment: undefined, oversized: true },
+  { assignment: null, oversized: true },
+  { assignment: "dead", oversized: true },
 ])(
   "Unstar clears only stars when assignment is already clear: %j",
-  async ({ assigned, oversized }) => {
+  async ({ assignment, oversized }) => {
     const reg = (value: unknown) => [100, "1111111111111111", value];
     const sections = signedRecord("channel-sections", {
       version: 1,
@@ -489,7 +491,10 @@ it.each([
             live: reg(false),
           },
         },
-        a: { ...(assigned ? { c1: reg(null) } : {}), c2: reg("work") },
+        a: {
+          ...(assignment === undefined ? {} : { c1: reg(assignment) }),
+          c2: reg("work"),
+        },
       },
     });
     records.set("channel-sections", sections);

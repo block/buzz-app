@@ -683,6 +683,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-winrt-notification",
  "tempfile",
+ "time",
  "tokio",
  "url",
  "user-idle",

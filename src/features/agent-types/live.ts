@@ -52,7 +52,10 @@ export type LiveRunView = Readonly<{
   id: number;
   agent: Readonly<{ id: string; pubkey: string; name: string }>;
   channelId: string;
-  /** The thread the delivered event belongs to, or that a reply to it starts. */
+  /** The delivered event. */
+  eventId: string;
+  /** The thread the delivered event belongs to, or that a reply to it starts: the
+   * event's own id when it is not in a thread. */
   threadRootId: string;
   steps: readonly LiveStepView[];
 }>;

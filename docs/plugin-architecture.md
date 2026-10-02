@@ -911,15 +911,16 @@ already streams: the channel kinds in `features/relay/live.ts` for the channels 
 owner has joined, plus the global routes. Replayed history, finite reads and local
 unsent intent never run it.
 
-`run` receives the event, the route's channel when known, the config, a signal and
-`agent`: `{ id, pubkey, name, owner, publish }`. It receives no key, session or UI
-object.
+`run` receives the event, the route's channel when known, the config, a signal,
+`live` and `agent`: `{ id, pubkey, name, owner, publish, secret }`. It receives no
+key, session or UI object.
 
 - The agent's own events are skipped. The owner's events and other agents' events
   are input.
-- Each agent sees an event id once (the last 512 ids), runs one event at a time,
-  queues at most 32, and runs at most 60 times per minute. Excess matches are
-  counted as skipped.
+- Each agent sees an event id once (the last 512 ids), runs one event at a time
+  unless its type sets `concurrency` (1 to 16 runs in progress per agent, started in
+  arrival order), queues at most 32, and runs at most 60 times per minute. Excess
+  matches are counted as skipped. Agents never wait on each other.
 - A run has 30 seconds (`timeoutMs` on the type overrides). `signal` aborts on
   timeout, Stop, save, delete, plugin disable or replacement, and when the session is
   replaced. `agent.publish` rejects after any of those except timeout.
@@ -941,6 +942,60 @@ from the identity that authenticated the connection.
 The community applies its normal rules to the agent as author: it must be a member
 of a private channel to post there. Creating an agent does not join it to any
 channel, so an agent can be delivered events from channels it cannot post to.
+
+**Live runs.** `live` shows a run's progress in the window that is running it, and
+nowhere else: nothing sent to it reaches the relay.
+
+```ts
+const thinking = live.step({ kind: "thinking" });
+thinking.append("The test expects…"); // streamed text, any number of times
+thinking.finish();
+const command = live.step({ kind: "command", label: "pnpm test" });
+command.finish({ error: "exit 1" }); // or finish() when it worked
+const reply = live.step({ kind: "message" });
+reply.append(token);
+const sent = await agent.publish({ kind: 9, content, tags });
+reply.finish({ published: sent.id });
+```
+
+- A step's `kind` is one of `thinking`, `message`, `command`, `read`, `write`,
+  `search` and `tool`. The host picks the icon and the wording from the kind
+  ("Running…", then "Ran"); `label` only replaces the generic noun with specifics
+  such as a command line or a path. Steps are append-only, keep the order they were
+  opened in, and may run in parallel. `append` is for `thinking` and `message` text;
+  a command's output is not streamed.
+- The host owns where the view sits and how long it lasts. It appears above the
+  composer of the conversation the delivered event is in: the event's thread, or the
+  channel when the event is top-level (and then also the thread a reply opens). It is
+  removed when `run` settles, times out or is aborted, so a type never closes it. A
+  run that opens no step shows nothing, and a delivery with no channel gets a `live`
+  that does nothing.
+- A `message` step is the reply as it is being written. The type publishes the
+  finished text once with `agent.publish`, then calls `finish({ published: id })`,
+  and the row leaves the view because the real message is now in the timeline. The
+  relay sees one kind 9 and no edits.
+- The view folds all but the latest four steps behind "N previous steps". A run
+  keeps at most 512 steps and 256 KB of text per step; later calls are ignored.
+  Calls never throw.
+- The records behind the view are plain JSON (`{ t: "step" | "text" | "end", id, … }`,
+  exported as `RunEvent`), so the same stream could later be sent somewhere other
+  than this window. `ctx.agentTypes.runs` is the store the accessory reads.
+
+**Secrets.** A type lists the write-only values it needs:
+`secrets: [{ name: "API_KEY", label: "Provider API key", optional?: true }]`. The
+host renders each under `Configure` as a password field that never shows a saved
+value, refuses to save while a required one is missing, and stores what was typed
+in the agent's environment, where a harness agent's API keys already live. A name
+has letters, digits and underscores and must be accepted by the native environment
+rules, which reserve names such as `BUZZ_PRIVATE_KEY`. Secrets are not part of `config`, so
+`Configure`, the control snapshot and other plugins cannot read them.
+
+`agent.secret(name)` resolves to the saved value. It rejects for a name the type did
+not declare, when nothing is saved, and once the agent is stopped, edited or
+deleted. The value then crosses into the WebView for the run, so this hides a key
+from forms and snapshots but not from other enabled plugins. The stronger design
+keeps the value in native: the type names the secret and the request header it
+belongs in, and `ctx.host.fetch` adds that header to the outgoing request.
 
 **Workspace.** A type that sets `workspace: true` gets a Workspace field under its
 `Configure`. The owner may enter one absolute directory, saved in the agent
@@ -977,6 +1032,14 @@ Known limitations.
 - Plugins share the WebView and are trusted. The kind allowlist and the native key
   are a boundary on what is signed, not a sandbox: any enabled plugin can reach the
   agent control service.
+- Progress is visible to the owner only, and only in the window running the agent.
+  Other people see nothing until the run publishes. The typing pulse (kind 20002)
+  would be the cheapest signal for them, but the relay refuses it on `/events`
+  ("restricted: unknown event kind") and accepts it only on a WebSocket
+  authenticated as the agent, which a plugin agent does not have.
+- The live view lasts only as long as the run. A finished message does not keep its
+  steps, and a run that fails or times out leaves the view without saying why; the
+  agent's screen has the failure.
 - The workspace commands are keyed by agent id, not by plugin, and no manifest
   field declares them. Any enabled plugin can call them for any enabled plugin
   agent that has a workspace, and a plugin's import preview does not mention it.

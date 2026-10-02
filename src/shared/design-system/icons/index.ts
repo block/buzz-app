@@ -296,6 +296,9 @@ export const QuotesIcon = defineIcon("tabler", TablerQuotesIcon);
 import TablerDetectiveIcon from "@tabler/icons-react/dist/esm/icons/IconSpy.mjs";
 export const DetectiveIcon = defineIcon("tabler", TablerDetectiveIcon);
 
+import TablerLightbulbIcon from "@tabler/icons-react/dist/esm/icons/IconBulb.mjs";
+export const LightbulbIcon = defineIcon("tabler", TablerLightbulbIcon);
+
 import TablerPencilSimpleIcon from "@tabler/icons-react/dist/esm/icons/IconPencil.mjs";
 export const PencilSimpleIcon = defineIcon("tabler", TablerPencilSimpleIcon);
 

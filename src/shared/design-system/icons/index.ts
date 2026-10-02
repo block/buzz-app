@@ -77,6 +77,8 @@ import TablerTicketIcon from "@tabler/icons-react/dist/esm/icons/IconTicket.mjs"
 export const TicketIcon = defineIcon("tabler", TablerTicketIcon);
 import TablerCopyIcon from "@tabler/icons-react/dist/esm/icons/IconCopy.mjs";
 export const CopyIcon = defineIcon("tabler", TablerCopyIcon);
+import TablerCloudUploadIcon from "@tabler/icons-react/dist/esm/icons/IconCloudUpload.mjs";
+export const CloudUploadIcon = defineIcon("tabler", TablerCloudUploadIcon);
 import TablerCrownIcon from "@tabler/icons-react/dist/esm/icons/IconCrown.mjs";
 export const CrownIcon = defineIcon("tabler", TablerCrownIcon);
 import TablerDotsThreeIcon from "@tabler/icons-react/dist/esm/icons/IconDots.mjs";
@@ -347,3 +349,11 @@ import TablerPlayFilledIcon from "@tabler/icons-react/dist/esm/icons/IconPlayerP
 export const PlayFilledIcon = defineIcon("tabler", TablerPlayFilledIcon);
 import TablerPauseFilledIcon from "@tabler/icons-react/dist/esm/icons/IconPlayerPauseFilled.mjs";
 export const PauseFilledIcon = defineIcon("tabler", TablerPauseFilledIcon);
+
+import { HashArrowInArtwork } from "./HashArrowIn";
+export const HashArrowInIcon = defineIcon("custom", HashArrowInArtwork, {
+  meaning: "Send to channel",
+  category: "messaging",
+  provenance: "Original Buzz HashArrowIn; retained by explicit design request",
+  intendedSizes: [{ width: 16, height: 16 }],
+});

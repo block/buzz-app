@@ -30,6 +30,7 @@ function setup(sessionMode = false) {
     return signed(viewer, template);
   });
   let currentRoster: RelayEvent | undefined;
+  let replicaRoster: RelayEvent | undefined;
   const profileEvents: RelayEvent[] = [];
   const owner = createRelaySession(
     {
@@ -40,7 +41,13 @@ function setup(sessionMode = false) {
           filters[0]?.kinds?.[0] === 39002 &&
           filters[0]?.limit === 1
         )
-          return Promise.resolve(currentRoster ? [currentRoster] : []);
+          return Promise.resolve(
+            replicaRoster && filters[0]?.consistency !== "strong"
+              ? [replicaRoster]
+              : currentRoster
+                ? [currentRoster]
+                : [],
+          );
         if (
           sessionMode &&
           filters.every((filter) => filter.kinds?.every((kind) => kind === 0))
@@ -98,6 +105,9 @@ function setup(sessionMode = false) {
     ...wire,
     ...owner,
     members,
+    lagReplica: () => {
+      replicaRoster = currentRoster;
+    },
     async agentProfile(key: typeof honey) {
       profileEvents.push(
         signed(key, {
@@ -145,6 +155,17 @@ it.each([false, true])(
     expect(h.session.outbox?.snapshot()[0]?.delivery).toBe("accepted");
   },
 );
+it("mentions a just-added member despite an older replica roster", async () => {
+  const h = setup();
+  await h.members([viewer.pubkey]);
+  h.lagReplica();
+  await h.members([viewer.pubkey, honey.pubkey], 1700000001);
+  const id = h.session.messages.send("c", "@Honey help", [honey.pubkey]);
+  await vi.waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+  expect(h.publish.mock.calls[0]?.[0].id).toBe(id);
+  expect(h.publish.mock.calls[0]?.[0].tags).toContainEqual(["p", honey.pubkey]);
+});
+
 it("typed names create no recipient tags; unconfirmed or forged membership cannot grant mention permission", async () => {
   const h = setup();
   expect(() => h.session.messages.send("c", "@Honey", [honey.pubkey])).toThrow(

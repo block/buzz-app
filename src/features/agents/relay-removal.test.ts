@@ -149,17 +149,92 @@ it("waits for every channel removal before finishing, and leaves no outbox work"
     },
   );
   let finished = false;
-  const removal = remove().then(() => {
-    finished = true;
-  });
-  await expect.poll(() => fixture.deleted.size).toBe(1);
-  await expect.poll(() => [...attempts].sort()).toEqual([first, second]);
-  // One failure must not finish Remove while another channel is still sending.
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(finished).toBe(false);
-  release();
-  await removal;
+  try {
+    const removal = remove().then(() => {
+      finished = true;
+    });
+    await expect.poll(() => fixture.deleted.size).toBe(1);
+    // Both removals were attempted; the first has already been refused.
+    await expect.poll(() => [...attempts].sort()).toEqual([first, second]);
+    expect(finished).toBe(false);
+    release();
+    await removal;
+  } finally {
+    release();
+  }
   expect(instance.session.outbox?.snapshot()).toEqual([]);
+});
+
+it("settles already enqueued channel removals when a later enqueue throws", async () => {
+  const [first, second] = ["first", "second"].map(
+    (name) => `${name.padEnd(8, "x")}-channel`,
+  );
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { instance, remove } = setup(
+    viewer,
+    {
+      [first as string]: [agent.pubkey, viewer.pubkey],
+      [second as string]: [agent.pubkey, viewer.pubkey],
+    },
+    ({ transport }) => {
+      const writer = transport.writer;
+      if (!writer) throw new Error("fixture writer missing");
+      const publish = writer.publish.bind(writer);
+      writer.publish = (event, signal) => {
+        // Unrelated filler operations fail and stay in the outbox.
+        if (
+          event.kind === 5 &&
+          !event.tags.some(([, value]) => value === coordinate())
+        )
+          return Promise.reject<void>(new PublishRejected("filler"));
+        // The one enqueued channel removal fails only after release.
+        if (event.kind === 9001)
+          return held.then<void>(() => {
+            throw new PublishRejected("restricted: refused");
+          });
+        return publish(event, signal);
+      };
+    },
+  );
+  const outbox = instance.session.outbox;
+  if (!outbox) throw new Error("fixture outbox missing");
+  await outbox.ready();
+  // Fill the outbox (256 operations) so it takes one channel removal, then
+  // refuses the next.
+  for (let index = 0; index < 255; index++)
+    outbox.send({
+      kind: 5,
+      content: "",
+      tags: [["a", `30177:${viewer.pubkey}:${index}`]],
+    });
+  await expect
+    .poll(() =>
+      outbox.snapshot().every(({ delivery }) => delivery === "failed"),
+    )
+    .toBe(true);
+  const removals = () =>
+    outbox.snapshot().filter(({ event }) => event.kind === 9001);
+  let finished = false;
+  try {
+    const removal = remove().then(() => {
+      finished = true;
+    });
+    // One removal is enqueued and still sending; the next enqueue threw.
+    await expect
+      .poll(() => removals().map(({ delivery }) => delivery))
+      .toEqual(["sending"]);
+    await expect.poll(() => outbox.snapshot().length).toBe(256);
+    expect(finished).toBe(false);
+    release();
+    await removal;
+  } finally {
+    release();
+  }
+  expect(removals()).toEqual([]);
+  expect(outbox.snapshot()).toHaveLength(255);
 });
 
 it("a cancelled removal signs and publishes nothing", async () => {

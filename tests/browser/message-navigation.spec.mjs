@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect, ids } from "./fixture.mjs";
 import { open, end, settle, wheel } from "./timeline.mjs";
 import {
@@ -108,9 +109,7 @@ test("old root and reply open exactly in a bounded newest window; reclick and Ba
     window.retainedSettingsThread = element;
   });
   const position = await thread(page).evaluate((element) => element.scrollTop);
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await expect(threadElement).toBeHidden();
   await expect(threadElement.locator("..")).toHaveAttribute("inert", "");
   // Hidden retained content cannot be focused even though its layout is kept.
@@ -156,9 +155,7 @@ test("old root and reply open exactly in a bounded newest window; reclick and Ba
   await profile.evaluate((element) => {
     window.retainedSettingsProfile = element;
   });
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await expect(profile).toBeHidden();
   await page
     .getByRole("button", { name: "Close Channel settings tab" })
@@ -606,9 +603,7 @@ test("post-success membership loss removes the thread and live updates do not sn
   await expect(channelButton).toBeFocused();
   expect(await region.evaluate((element) => element.scrollTop)).toBe(before);
   app.omitChannel(ids.alpha);
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await page.getByText("Diagnostics", { exact: true }).click();
   await page
     .getByRole("button", { name: "Refresh channels", exact: true })
@@ -844,9 +839,7 @@ readTest(
     await row.focus();
     await expect(row).toBeFocused();
     // Programmatic opening deliberately does not focus the settings trigger first.
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .evaluate((element) => element.click());
+    await openChannelDetails(page, { programmatic: true, clockPaused: true });
     await expect(
       page.getByRole("complementary", {
         name: "Channel settings",
@@ -897,9 +890,7 @@ traversalTest(
     );
     await row.getByRole("button", { name: "Reveal spoiler" }).click();
     await expect(row.locator('[data-revealed="true"]')).toHaveCount(1);
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .click();
+    await openChannelDetails(page);
     const settings = page.getByRole("complementary", {
       name: "Channel settings",
       exact: true,

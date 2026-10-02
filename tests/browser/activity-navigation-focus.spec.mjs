@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { generateSecretKey } from "nostr-tools";
@@ -129,9 +130,7 @@ for (const destination of ["reply", "off-window root"]) {
       exact: true,
     });
     for (const hiddenBy of ["settings", "collapsed"]) {
-      await main
-        .getByRole("button", { name: "Channel settings", exact: true })
-        .click();
+      await openChannelDetails(page);
       await expect(panel).toBeHidden();
       if (hiddenBy === "collapsed")
         await main

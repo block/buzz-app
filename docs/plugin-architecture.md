@@ -246,7 +246,7 @@ quotes and fenced examples are not tasks in this view. Doing and checkbox edits
 change one source byte; additions insert below the heading without rewriting other
 content.
 Duplicate Todos sections block editing until corrected in Canvas. Disabling removes
-the convenience UI, not the saved list: Channel settings → Canvas remains editable.
+the convenience UI, not the saved list: Channel actions → View canvas remains editable.
 
 An optional terminal suffix records assignment as ordinary Markdown:
 ` · Assignee: [Display name](nostr:npub…)`, using a full valid npub, not the abbreviated

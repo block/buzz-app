@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import {
   openPage,
   pageChoices,
@@ -871,7 +872,7 @@ todosOverlapTest(
     await link(page, app, "https://github.com/block/buzz/pull/7");
     await toggle.click();
     await stacked(linked);
-    await button(page, "Channel settings").click();
+    await openChannelDetails(page);
     await expect(settings).toBeVisible();
     await expect(todos).toHaveCount(0); // Settings intentionally retires the drawer.
     await button(page, "Close Channel settings tab").click();
@@ -926,9 +927,7 @@ companionReadingTest(
       await expect(
         button(page, "Close Companion fixture panel"),
       ).toBeInViewport();
-      await page
-        .getByRole("button", { name: "Channel settings", exact: true })
-        .evaluate((element) => element.click());
+      await openChannelDetails(page, { programmatic: true });
       const settings = page.getByRole("complementary", {
         name: "Channel settings",
         exact: true,

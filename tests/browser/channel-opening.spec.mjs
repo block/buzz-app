@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { readFile } from "node:fs/promises";
 import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -193,9 +194,7 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
         });
     }
     expect(submittedHeads).toHaveLength(before);
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .click();
+    await openChannelDetails(page);
     const diagnostics = page
       .locator("summary")
       .filter({ hasText: /^Relay timings$/ });

@@ -16,7 +16,10 @@ mod notifications;
 mod os_idle;
 use os_idle::get_os_idle_seconds;
 mod relay;
-use identity::{identity_create, identity_export, identity_import, identity_restore, IdentityHost};
+use identity::{
+    identity_create, identity_export, identity_import, identity_prepare_remote_agent_authorization,
+    identity_restore, IdentityHost,
+};
 use relay::{
     media_download, relay_agent_library, relay_agent_log_proof, relay_agent_memories_read,
     relay_agent_observer, relay_agent_resolve, relay_channel_publish, relay_channel_sign,
@@ -378,6 +381,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         identity_import,
         identity_create,
         identity_export,
+        identity_prepare_remote_agent_authorization,
         relay_sign,
         relay_http,
         relay_workflow_runs,

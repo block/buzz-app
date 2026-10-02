@@ -657,8 +657,8 @@ export function createRelaySession(
           visible: (events) => events.filter(visibility(events)),
           restored: (events) => unread.accept(events),
           demand: (channelId) => demandChannel(channelId),
-          rosterChanged: () => {
-            settleHintConfirmations();
+          rosterChanged: (strong) => {
+            settleHintConfirmations(strong);
             publishLive();
           },
         }
@@ -978,6 +978,7 @@ export function createRelaySession(
       [
         {
           kinds: [39002],
+          consistency: "strong",
           authors: [transport.relayAuthor],
           "#d": [channelId],
           limit: 1,
@@ -1034,7 +1035,15 @@ export function createRelaySession(
       // Confirm only this viewer's exact creation receipt. Discovery may be
       // incomplete; this never admits the channel or grants content access.
       const events = await requests.reader.read(
-        [{ kinds: [9007], ids: [id], authors: [transport.viewer], limit: 1 }],
+        [
+          {
+            kinds: [9007],
+            ids: [id],
+            authors: [transport.viewer],
+            limit: 1,
+            consistency: "strong",
+          },
+        ],
         { signal: lifetime.signal, fresh: true },
       );
       return events.some(
@@ -1216,16 +1225,17 @@ export function createRelaySession(
             await workSessions.delivered(id, undefined, false, false);
             if (
               !(
-                await verified.read([{ ids: [id], limit: 1 }], {
-                  signal: lifetime.signal,
-                  fresh: true,
-                })
+                await verified.read(
+                  [{ ids: [id], limit: 1, consistency: "strong" }],
+                  { signal: lifetime.signal, fresh: true },
+                )
               ).some((event) => event.id === id)
             )
               throw new Error("Setup is awaiting exact relay confirmation");
           },
           refresh: (id, member) => workSessions.refresh(id, { member }, false),
-          canvasHead: async (id) => (await channelKit.canvas.read(id))?.id,
+          canvasHead: async (id) =>
+            (await channelKit.canvas.read(id, { consistency: "strong" }))?.id,
           async preflight(input) {
             if (
               !canonicalDetailsName(input.name) ||
@@ -1893,8 +1903,10 @@ export function createRelaySession(
   let rosterOwesGrants = false;
   let hintTimer: ReturnType<typeof setTimeout> | undefined;
   let rosterTimer: ReturnType<typeof setTimeout> | undefined;
-  function refreshRoster() {
+  let strongRosterRefresh = false;
+  function refreshRoster(strong = false) {
     if (closed) return;
+    strongRosterRefresh ||= strong || hintQueue.size > 0 || hintReads.size > 0;
     // The full pass covers every grant still waiting for its exact read.
     rosterOwesGrants ||= hintQueue.size > 0;
     hintQueue.clear();
@@ -1902,7 +1914,11 @@ export function createRelaySession(
     const timer = setTimeout(() => {
       timers.delete(timer);
       rosterTimer = undefined;
-      if (!closed) channels.queries.refreshList?.();
+      const consistency = strongRosterRefresh
+        ? { consistency: "strong" as const }
+        : {};
+      strongRosterRefresh = false;
+      if (!closed) channels.queries.refreshList?.(consistency);
     }, 0);
     rosterTimer = timer;
     timers.add(timer);
@@ -1921,10 +1937,12 @@ export function createRelaySession(
   }
   /** A cache clear, a disconnect or a list that leaves ready drops hints with
    * the rest of the session's reader work, before a queued batch's timer can
-   * dispatch it into the new epoch, and releases any inherited grants: a ready
-   * commit must not hide a failed discovery, and the next establishment's full
-   * pass or Retry owns recovery. */
+   * dispatch it into the new epoch. Transfer their writer requirement to the
+   * store without scheduling work: a ready commit must not hide a failed
+   * discovery, and the next establishment's full pass or Retry owns recovery. */
   function dropHintConfirmations() {
+    if (hintQueue.size > 0 || hintReads.size > 0)
+      channels.requireStrongListRead();
     rosterOwesGrants = false;
     retireHintConfirmations();
   }
@@ -1935,12 +1953,14 @@ export function createRelaySession(
    * but a pass interrupted by a concurrent revocation ends deferred having
    * settled nothing, so it reruns instead of leaving those grants to Retry,
    * another hint or a reconnect. */
-  function settleHintConfirmations() {
+  function settleHintConfirmations(strong = false) {
     const { state } = channels.roster();
     if (state === "pending") {
       rosterOwesGrants ||= hintQueue.size > 0 || hintReads.size > 0;
       retireHintConfirmations();
-    } else if (state === "deferred" && rosterOwesGrants) refreshRoster();
+      // A replica pass cannot settle the writer-backed confirmations it retired.
+      if (rosterOwesGrants && !strong) refreshRoster(true);
+    } else if (state === "deferred" && rosterOwesGrants) refreshRoster(true);
     else rosterOwesGrants = false;
   }
   const stopHintGuard = channels.queries.subscribeList(() => {
@@ -1961,7 +1981,7 @@ export function createRelaySession(
         channels.queries.list().status !== "ready" ||
         held(id)
       ) {
-        refreshRoster();
+        refreshRoster(true);
         return;
       }
       hintQueue.add(id);
@@ -1980,7 +2000,7 @@ export function createRelaySession(
     hintQueue.clear();
     if (closed || !wanted.length) return;
     if (channels.queries.list().status !== "ready") {
-      refreshRoster();
+      refreshRoster(true);
       return;
     }
     const cleared = cacheClearEpoch;
@@ -1996,14 +2016,15 @@ export function createRelaySession(
       const intact = () => current() && !controller.signal.aborted;
       void (
         channels.queries.resolve?.(batch, {
+          consistency: "strong",
           signal: AbortSignal.any([lifetime.signal, controller.signal]),
         }) ?? Promise.resolve()
       )
         .then(() => {
-          if (intact() && !batch.every(held)) refreshRoster();
+          if (intact() && !batch.every(held)) refreshRoster(true);
         })
         .catch(() => {
-          if (intact()) refreshRoster();
+          if (intact()) refreshRoster(true);
         })
         .finally(() => {
           for (const id of batch)

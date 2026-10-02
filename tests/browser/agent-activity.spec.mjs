@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect, ids } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 import { npubEncode } from "nostr-tools/nip19";
@@ -463,12 +464,10 @@ it("profile activity opens the exact agent and originating channel before its fi
     .waitFor();
   await settle(page);
   // Exercise a read write through the ordinary message action before activity.
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await expect(
-    page.getByRole("region", {
-      name: "Edit channel details",
+    page.getByRole("complementary", {
+      name: "Channel settings",
       exact: true,
       includeHidden: true,
     }),
@@ -477,7 +476,7 @@ it("profile activity opens the exact agent and originating channel before its fi
     page.getByRole("button", { name: "Leave channel", exact: true }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "Channel settings", exact: true })
+    .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   const initialMessage = app.histories.get(`primary/${profileChannelId}`)[0];
   const initialRow = page.locator(
@@ -882,6 +881,13 @@ test.describe("thread activity", () => {
     const form = thread.getByRole("form", {
       name: "Reply to thread",
       exact: true,
+    });
+    // Visible content can precede the dock's entrance finishing. Measure all
+    // alignment against the settled panel, not different animation frames.
+    await page.locator("[data-panel-dock]").evaluate(async (element) => {
+      await Promise.all(
+        element.getAnimations().map((animation) => animation.finished),
+      );
     });
     const entryBox = await entry.boundingBox(),
       formBox = await form.boundingBox();

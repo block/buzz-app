@@ -59,7 +59,7 @@ function harness(role = "owner") {
     record(39001, role === "member" ? [] : [["p", viewer, role]]),
     record(39002, [["p", viewer, "", role]]),
   ];
-  const read = vi.fn(async () => events);
+  const read = vi.fn(async (_filters: readonly ReadFilter[]) => events);
   const sign = vi.fn(async (event: EventTemplate) =>
     finalizeEvent(structuredClone(event), key),
   );
@@ -114,6 +114,7 @@ it("saves only after two fresh authority checks and projects confirmed readback"
     expect(call).toEqual([
       [39000, 39001, 39002].map((kind) => ({
         kinds: [kind],
+        consistency: "strong",
         authors: [relayAuthor],
         "#d": [id],
         limit: 1,
@@ -123,6 +124,20 @@ it("saves only after two fresh authority checks and projects confirmed readback"
   }
   expect(h.publish).toHaveBeenCalledOnce();
   expect(h.acceptDiscovery).toHaveBeenCalledWith([h.events()[0]]);
+  expect(h.owner.capability.snapshot(id)).toBeUndefined();
+});
+it("confirms channel edits while the replica still has the old metadata", async () => {
+  const h = harness();
+  const replica = h.events();
+  h.read.mockImplementation(async (filters) =>
+    filters.every((filter) => filter.consistency === "strong")
+      ? h.events()
+      : replica,
+  );
+  const base = await h.owner.capability.load(id);
+  await h.owner.capability.save(base, draft);
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.acceptDiscovery).toHaveBeenLastCalledWith([h.events()[0]]);
   expect(h.owner.capability.snapshot(id)).toBeUndefined();
 });
 it.each(["owner", "admin", "member"])(

@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect, ids } from "./fixture.mjs";
 
@@ -20,9 +21,7 @@ async function openSettings(page, app) {
       exact: true,
     }),
   ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await expect(panelFor(page)).toBeVisible();
   return sidebar;
 }

@@ -1,7 +1,7 @@
 # Contribution workflow
 
 The repository pins just 1.58.0, Node.js 24.18.0, pnpm 11.8.0, Lefthook 2.1.12,
-and Rust 1.97.1
+and Rust 1.98.1
 (including Cargo, rustfmt, and Clippy) with [Hermit](https://cashapp.github.io/hermit/).
 No global tool installation is required: `bin/hermit` bootstraps Hermit and tools
 are downloaded on first use. Desktop development still requires the

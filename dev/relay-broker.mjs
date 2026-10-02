@@ -829,6 +829,52 @@ export function relayBrokerPlugin({
             return json(res, 200, { ...stats, connects: upstream.connects() });
           if (url.pathname === "/api/relay/identity" && req.method === "GET")
             return json(res, 200, { viewer });
+          if (
+            url.pathname === "/api/relay/prepare-remote-agent-authorization" &&
+            req.method === "POST"
+          ) {
+            let raw = "";
+            for await (const part of req) {
+              raw += part;
+              if (Buffer.byteLength(raw) > 4096)
+                return json(res, 413, {
+                  error: "Authorization request is too large",
+                });
+            }
+            try {
+              const { owner, agentPubkey } = JSON.parse(raw);
+              if (owner !== viewer)
+                return json(res, 403, {
+                  error: "The agent owner is not your signed-in identity",
+                });
+              if (
+                typeof agentPubkey !== "string" ||
+                !/^[0-9a-f]{64}$/.test(agentPubkey)
+              )
+                throw new Error(
+                  "Agent pubkey must be 64 lowercase hex characters",
+                );
+              if (agentPubkey === viewer)
+                throw new Error("Owner and agent pubkeys must differ");
+              cancel.signal.throwIfAborted();
+              const digest = createHash("sha256")
+                .update(`nostr:agent-auth:${agentPubkey}:`)
+                .digest();
+              return json(res, 200, [
+                "auth",
+                viewer,
+                "",
+                Buffer.from(schnorr.sign(digest, key)).toString("hex"),
+              ]);
+            } catch (error) {
+              return json(res, 400, {
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Owner authorization failed",
+              });
+            }
+          }
           const parts = url.pathname.split("/").filter(Boolean);
           const scoped = parts.length === 4;
           let id;

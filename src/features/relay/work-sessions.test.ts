@@ -590,18 +590,26 @@ it.each<["open" | "private", string[][]]>([
         request.filters.some((filter) => filter["#d"]),
       );
       expect(exact?.filters).toEqual([
-        { kinds: [39000], authors: [relay.pubkey], "#d": [id], limit: 2 },
+        {
+          kinds: [39000],
+          authors: [relay.pubkey],
+          "#d": [id],
+          limit: 2,
+          consistency: "strong",
+        },
         {
           kinds: [39002],
           authors: [relay.pubkey],
           "#d": [id],
           "#p": [viewer.pubkey],
           limit: 2,
+          consistency: "strong",
         },
       ]);
       for (const request of wire.pending.splice(0))
         request.respond(
-          request === exact
+          request === exact &&
+            request.filters.every((filter) => filter.consistency === "strong")
             ? [
                 metadata(relay, id, "Release notes", undefined, tags),
                 roster(relay, id, [viewer.pubkey]),
@@ -667,14 +675,16 @@ it("creates a channel during initial discovery without committing a list of only
       records
         .find(({ event }) => event.kind === 9007)
         ?.event.tags.find(([name]) => name === "h")?.[1] ?? "";
-    // Serve every pending read: the viewer roster page lists `joined`, and
-    // metadata answers whatever ids discovery asks for.
-    const serve = (joined: readonly string[]) => {
+    // Ordinary reads remain frozen before creation; only writer reads see it.
+    // Metadata answers the IDs requested by each discovery pass.
+    const serve = () => {
       for (const request of wire.pending.splice(0)) {
         const [filter] = request.filters;
         request.respond(
           filter?.kinds?.includes(39002) && filter["#p"]
-            ? joined.map((channel) => roster(relay, channel, [viewer.pubkey]))
+            ? (filter.consistency === "strong" ? [other, id] : [other]).map(
+                (channel) => roster(relay, channel, [viewer.pubkey]),
+              )
             : filter?.kinds?.includes(39000)
               ? (filter["#d"] ?? []).map((channel) =>
                   metadata(
@@ -699,7 +709,7 @@ it("creates a channel during initial discovery without committing a list of only
       ),
     ).toBe(false);
     // The in-flight page was served before the relay accepted the create.
-    serve([other]);
+    serve();
     await vi.waitFor(() =>
       expect(
         snapshots.find((snapshot) => snapshot.status === "ready")?.channels,
@@ -708,7 +718,7 @@ it("creates a channel during initial discovery without committing a list of only
     // The first pass finishes with its metadata read before the forced second
     // pass starts; that pass carries the new channel's roster.
     await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
-    serve([other]);
+    serve();
     await vi.waitFor(() =>
       expect(
         wire.pending.some((request) =>
@@ -716,7 +726,8 @@ it("creates a channel during initial discovery without committing a list of only
         ),
       ).toBe(true),
     );
-    serve([other, id]);
+    expect(wire.pending[0]?.filters[0]?.consistency).toBe("strong");
+    serve();
     await expect(creating).resolves.toBe(id);
     expect(owner.session.channels.list()).toMatchObject({
       status: "ready",
@@ -725,6 +736,16 @@ it("creates a channel during initial discovery without committing a list of only
         expect.objectContaining({ id, members: [viewer.pubkey] }),
       ]),
     });
+    // Finish metadata and prove the one-shot writer selection does not stick.
+    await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+    expect(wire.pending[0]?.filters[0]?.consistency).toBe("strong");
+    serve();
+    await vi.waitFor(() =>
+      expect(owner.session.live.snapshot().roster.state).toBe("verified"),
+    );
+    owner.session.channels.refreshList?.();
+    await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+    expect(wire.pending[0]?.filters[0]).not.toHaveProperty("consistency");
     // Canonical check, cited from the store's `resolve` docstring: no ready
     // snapshot ever held only the new channel.
     expect(
@@ -790,9 +811,21 @@ it("confirms an agent added to a session and its parent with two concurrent exac
       roster(relay, parent, members.get(parent) ?? [], clock),
       roster(relay, child, members.get(child) ?? [], clock),
     ];
-    return events.filter((event) =>
-      filters.some((filter) => matchesEvent(event, filter)),
+    const replica = events.map((event) =>
+      event.kind === 39002
+        ? roster(
+            relay,
+            event.tags.find(([key]) => key === "d")?.[1] ?? "",
+            [viewer.pubkey],
+            1_700_000_000,
+          )
+        : event,
     );
+    return (
+      filters.every((filter) => filter.consistency === "strong")
+        ? events
+        : replica
+    ).filter((event) => filters.some((filter) => matchesEvent(event, filter)));
   });
   const owner = createRelaySession(
     {
@@ -843,6 +876,7 @@ it("confirms an agent added to a session and its parent with two concurrent exac
           "#d": [id],
           "#p": [viewer.pubkey],
           limit: 2,
+          consistency: "strong",
         },
       ]);
     for (const { release } of held.splice(0)) release();
@@ -932,6 +966,7 @@ it.each([true, false])(
           [
             {
               kinds: [9007],
+              consistency: "strong",
               ids: [creation.id],
               authors: [viewer.pubkey],
               limit: 1,
@@ -1094,6 +1129,7 @@ it("admits a new channel from its exact lookup without a full discovery", async 
   ).resolves.toBeUndefined();
   expect(test.resolve).toHaveBeenCalledExactlyOnceWith([id], {
     signal: expect.any(AbortSignal),
+    consistency: "strong",
   });
   expect(lookupSignal(test).aborted).toBe(true);
   expect(test.refreshList).not.toHaveBeenCalled();
@@ -1172,6 +1208,7 @@ it.each([
     await vi.waitFor(() => expect(test.refreshList).toHaveBeenCalledOnce());
     expect(test.resolve).toHaveBeenCalledExactlyOnceWith([id], {
       signal: expect.any(AbortSignal),
+      consistency: "strong",
     });
     expect(test.resolve.mock.invocationCallOrder[0]).toBeLessThan(
       test.refreshList.mock.invocationCallOrder[0] ?? 0,
@@ -1217,6 +1254,7 @@ it("confirms an agent added to a listed channel from one exact roster read witho
   expect(test.resolve).not.toHaveBeenCalled();
   expect(test.refreshRoster).toHaveBeenCalledExactlyOnceWith(id, {
     signal: expect.any(AbortSignal),
+    consistency: "strong",
   });
   expect(lookupSignal(test, test.refreshRoster).aborted).toBe(true);
   expect(test.refreshList).not.toHaveBeenCalled();
@@ -1288,6 +1326,7 @@ it.each([
     await vi.waitFor(() => expect(test.refreshList).toHaveBeenCalledOnce());
     expect(test.refreshRoster).toHaveBeenCalledExactlyOnceWith(id, {
       signal: expect.any(AbortSignal),
+      consistency: "strong",
     });
     expect(test.refreshRoster.mock.invocationCallOrder[0]).toBeLessThan(
       test.refreshList.mock.invocationCallOrder[0] ?? 0,
@@ -1521,10 +1560,11 @@ it("recovers a lost normal-channel creation acknowledgment only with its exact v
     [
       {
         kinds: [39000, 39002],
+        consistency: "strong",
         "#d": ["11111111-1111-4111-8111-111111111111"],
         limit: 2,
       },
-      { ids: [creation.id], limit: 1 },
+      { ids: [creation.id], limit: 1, consistency: "strong" },
     ],
     expect.anything(),
   );

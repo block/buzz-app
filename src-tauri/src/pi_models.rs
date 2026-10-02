@@ -106,7 +106,11 @@ fn spawn(
     command.envs(context.environment).env("PATH", context.path);
     #[cfg(unix)]
     command.process_group(0);
-    let mut child = LookupChild::new(command.spawn().map_err(|_| "Could not start Pi")?);
+    let mut child = LookupChild::new(
+        command
+            .spawn()
+            .map_err(|error| format!("Could not start Pi: {error}"))?,
+    );
     let stdin = child.child.stdin.take().ok_or(FAILURE)?;
     let stdout = child.child.stdout.take().ok_or(FAILURE)?;
     Ok((

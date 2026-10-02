@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { openPage } from "./navigation.mjs";
@@ -41,9 +42,9 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
   await expect(tabClose).toHaveCSS("height", "20px");
   await expect(
     main
-      .getByRole("button", { name: "Channel settings", exact: true })
+      .getByRole("button", { name: "Channel actions", exact: true })
       .locator("svg"),
-  ).toHaveClass(/tabler-icon-settings/);
+  ).toHaveClass(/tabler-icon-dots/);
   await expect(split.locator("svg")).toHaveClass(
     /tabler-icon-layout-sidebar-right/,
   );
@@ -99,9 +100,7 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
   await main
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .fill("Alpha draft");
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await page.locator(`button[data-channel-id="${ids.beta}"]`).click();
   await page.locator(`button[data-channel-id="${ids.alpha}"]`).click();
   await expect(
@@ -293,7 +292,7 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
     .click();
   await expect(workspace).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Channel settings", exact: true }),
+    page.getByRole("button", { name: "Channel actions", exact: true }),
   ).toBeFocused();
 });
 

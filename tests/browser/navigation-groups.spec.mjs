@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -574,16 +575,14 @@ test("dismissing a failed move restores keyboard focus to its placement or a sur
   await failMove();
   // Upstream roster omission, not direct client-state injection.
   app.omitChannel(ids.beta);
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await page.getByText("Diagnostics", { exact: true }).click();
   await page
     .getByRole("button", { name: "Refresh channels", exact: true })
     .click();
   await expect(beta).toHaveCount(0);
   await page
-    .getByRole("button", { name: "Channel settings", exact: true })
+    .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   await dismiss();
   await expect(
@@ -761,9 +760,7 @@ test("Create new retains its draft when preferences fail before submission and r
   await open(page, app);
   const beta = rowIn(page, "group:work");
   await beta.click();
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await page.getByText("Diagnostics", { exact: true }).click();
   const held = gate(),
     started = gate();
@@ -1018,9 +1015,7 @@ test.describe("new personal schema", () => {
     await page.keyboard.press("Escape");
 
     await page.route("**/sidebar-preferences", failLegacy);
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .click();
+    await openChannelDetails(page);
     await page.getByText("Diagnostics", { exact: true }).click();
     await page
       .getByRole("button", { name: "Refresh groups and stars", exact: true })

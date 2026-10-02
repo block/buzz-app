@@ -8,6 +8,7 @@
     "allow-identity-create",
     "allow-identity-export",
     "allow-relay-sign",
+    "allow-identity-prepare-remote-agent-authorization",
     "allow-relay-http",
     "allow-relay-workflow-runs",
     "allow-relay-channel-sign",

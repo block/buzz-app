@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -30,11 +31,7 @@ test("selecting a channel or DM focuses its composer and retains drafts", async 
       await expect(input).toHaveText(`Draft for ${name} continued`);
     }
   }
-  const settings = page.getByRole("button", {
-    name: "Channel settings",
-    exact: true,
-  });
-  await settings.click();
+  await openChannelDetails(page);
   await expect(
     page.getByRole("tab", { name: "Channel settings", exact: true }),
   ).toBeFocused();
@@ -116,4 +113,97 @@ test.describe("retained agent focus", () => {
     );
     await expect(input).toHaveJSProperty("value", retained);
   });
+});
+
+// Real CSS and :focus-visible/modality switching are browser-owned. Keep the
+// shared field exception consistent with the rich editor in the actual app.
+test.describe("text field focus appearance", () => {
+  test.use({
+    historyCounts: { alpha: 1, beta: 0 },
+    productionBroker: false,
+    sessionWriteKinds: [9, 9000, 9007],
+  });
+
+  for (const mode of ["light", "dark"]) {
+    test(`typing and caret navigation keep the ${mode} composer free of an inner outline`, async ({
+      page,
+      app,
+    }) => {
+      await page.emulateMedia({ colorScheme: mode });
+      await open(page, app);
+      const input = page
+        .getByRole("article", { name: "Conversation" })
+        .getByRole("textbox");
+      await input.click();
+      await page.keyboard.type("A draft");
+      await expect(input).toHaveCSS("outline-style", "none");
+      await page.keyboard.press("ArrowLeft");
+      await page.keyboard.press("ArrowRight");
+      await expect(page.locator("html")).toHaveAttribute(
+        "data-keyboard-navigation",
+        "",
+      );
+      await expect(input).toBeFocused();
+      await expect(input).toHaveCSS("outline-style", "none");
+      await page.keyboard.type(" continued");
+      await expect(input).toHaveText("A draft continued");
+      await page.keyboard.press("Tab");
+      const tool = page.locator(":focus");
+      await expect(tool).toHaveRole("button");
+      await expect(tool).toHaveCSS("outline-style", "solid");
+      await expect(tool).toHaveCSS("outline-width", "2px");
+      await page.keyboard.press("Shift+Tab");
+      await expect(input).toBeFocused();
+      await expect(input).toHaveCSS("outline-style", "none");
+      for (const width of [1440, 800, 390]) {
+        await page.setViewportSize({ width, height: 950 });
+        await expect(input).toBeFocused();
+        await expect(input).toHaveCSS("outline-style", "none");
+        await expect(input).toHaveText("A draft continued");
+        await input.locator("xpath=ancestor::form").screenshot({
+          path: test.info().outputPath(`composer-focus-${mode}-${width}.png`),
+        });
+      }
+      await page.setViewportSize({ width: 1440, height: 950 });
+
+      // The same shared recipe must reach ordinary fields, not just composers.
+      await page
+        .getByRole("button", { name: "Create channel", exact: true })
+        .click();
+      const dialog = page.getByRole("dialog");
+      const name = dialog.getByRole("textbox", { name: "Name", exact: true });
+      const description = dialog.getByRole("textbox", {
+        name: "Description",
+        exact: true,
+      });
+      for (const field of [name, description]) {
+        await field.click();
+        await page.keyboard.type("Draft");
+        await page.keyboard.press("ArrowLeft");
+        await expect(field).toBeFocused();
+        await expect(field).toHaveValue("Draft");
+        await expect(field).toHaveCSS("outline-style", "none");
+        await expect(field).toHaveCSS("border-top-width", "1px");
+        await expect(field).toHaveCSS("border-top-style", "solid");
+        expect(
+          await field.evaluate(
+            (element) => getComputedStyle(element).borderTopColor,
+          ),
+        ).not.toBe("rgba(0, 0, 0, 0)");
+        await page.keyboard.press("Tab");
+        await page.keyboard.press("Shift+Tab");
+        await expect(field).toBeFocused();
+        await expect(field).toHaveCSS("outline-style", "none");
+      }
+      await dialog
+        .getByRole("button", { name: "Close channel creation" })
+        .click();
+      await page
+        .getByRole("dialog", { name: "Discard changes?" })
+        .getByRole("button", { name: "Discard changes" })
+        .click();
+      await expect(dialog).toHaveCount(0);
+      await expect(input).toHaveText("A draft continued");
+    });
+  }
 });

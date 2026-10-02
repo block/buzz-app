@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { test, expect, ids } from "./fixture.mjs";
@@ -425,9 +426,7 @@ test("profiles primary actions through production broker and built app", async (
       ms: entry.confirmed - entry.action,
     });
   }
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   const diagnostics = page
     .locator("summary")
     .filter({ hasText: /^Relay timings$/ });

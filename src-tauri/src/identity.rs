@@ -549,13 +549,23 @@ impl IdentityHost {
         .await
     }
 
-    /// Callers bind `agent` to a key the app generated; the owner must be this identity.
+    /// Prepares a NIP-OA proof for one agent key; the owner must be this identity.
     pub(crate) async fn authorize_agent(
         &self,
         owner: String,
         agent: String,
     ) -> Result<Vec<String>> {
         with_identity(self.clone(), move |identity| {
+            if agent.len() != 64
+                || !agent
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            {
+                return Err("Agent pubkey must be 64 lowercase hex characters".into());
+            }
+            if agent == owner {
+                return Err("Owner and agent pubkeys must differ".into());
+            }
             if identity.restore()?.as_deref() != Some(owner.as_str()) {
                 return Err("The agent owner is not your signed-in identity".into());
             }
@@ -588,6 +598,15 @@ async fn with_identity<T: Send + 'static>(
     })
     .await
     .map_err(|_| "Identity operation could not complete")?
+}
+/// Prepares an unconditional NIP-OA proof; the caller submits it to the remote agent service.
+#[tauri::command]
+pub async fn identity_prepare_remote_agent_authorization(
+    host: tauri::State<'_, IdentityHost>,
+    owner: String,
+    agent_pubkey: String,
+) -> Result<Vec<String>> {
+    host.authorize_agent(owner, agent_pubkey).await
 }
 #[tauri::command]
 pub async fn identity_restore(host: tauri::State<'_, IdentityHost>) -> Result<Option<String>> {

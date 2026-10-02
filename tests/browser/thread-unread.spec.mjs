@@ -53,8 +53,9 @@ test("thread buttons show observed unread independently, clear only after readin
   page,
   app,
 }, testInfo) => {
-  // Reading needs a 300ms dwell (use-reading.ts). The clock runs that deadline
-  // exactly where the test proves that something is not reading.
+  // Reading needs a 300ms dwell (use-reading.ts). An installed clock still
+  // flows, so pause it wherever an open surface must not earn that dwell, and
+  // run the deadline exactly where the test proves reading.
   await page.clock.install();
   const fullHistory = app.histories.get(`primary/${ids.alpha}`);
   const fullReplies = new Map(app.threadReplies);
@@ -181,6 +182,10 @@ test("thread buttons show observed unread independently, clear only after readin
     .first();
   await item.focus();
   await expect(item).toBeFocused();
+  // This open only proves the handoff. Its thread must stay unread, so a slow
+  // close must not let the open panel earn reading dwell. Pause just ahead of
+  // the page clock, which keeps flowing during the round trip.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000);
   await releaseReadingFocus(page);
   await item.press("Enter");
   await expect(
@@ -190,6 +195,7 @@ test("thread buttons show observed unread independently, clear only after readin
     .getByRole("button", { name: "Close Thread tab", exact: true })
     .click();
   await expect(alpha).toBeFocused();
+  await page.clock.resume();
   const beforeRect = await first.boundingBox();
   await first.hover();
   const afterRect = await first.boundingBox();

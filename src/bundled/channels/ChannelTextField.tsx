@@ -54,7 +54,7 @@ export function ChannelTextField(props: Props) {
           ref={props.inputRef}
           data-create-channel-name={props.creation ? "" : undefined}
           required
-          autoComplete="off"
+          autoComplete={props.creation ? "off" : undefined}
           autoCapitalize="none"
           spellCheck={false}
           placeholder="release-notes"

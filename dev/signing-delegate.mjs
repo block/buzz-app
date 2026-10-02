@@ -1,21 +1,23 @@
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { finalizeEvent } from "nostr-tools";
+import { finalizeEvent, getPublicKey } from "nostr-tools";
 
-/** Local implementation of the broker's asynchronous signing/publication delegate.
- * The broker selects a delegate with { relay, identity } for each request. A
- * future remote implementation can replace signing and publication independently;
- * validation, admission and receipt handling remain with their existing owners.
- * `send()` is bound to the validated event and captured signal/transport. It
- * never opens another connection; publishEvent returns its original receipt.
- * The secret is borrowed: its lifetime and zeroing remain broker-owned.
- */
+/** Local event-signing delegate. The secret is borrowed and broker-owned. */
 export function createLocalSigningDelegate(secret) {
   return {
+    async getPublicKey() {
+      return getPublicKey(secret);
+    },
     async signEvent(template, signal) {
       signal?.throwIfAborted();
       return finalizeEvent(template, secret);
     },
+  };
+}
+
+/** Local-only raw Schnorr capabilities; these are not Nostr event signing. */
+export function createLocalSigningCapabilities(secret) {
+  return {
     // NIP-OA authorizes an agent using a raw digest, not a Nostr event.
     async authorizeAgent(pubkey, signal) {
       signal?.throwIfAborted();
@@ -37,10 +39,6 @@ export function createLocalSigningDelegate(secret) {
         .update(`nostr:agent-community:${pubkey}:${relay}`)
         .digest();
       return Buffer.from(schnorr.sign(digest, secret)).toString("hex");
-    },
-    async publishEvent(_event, send, signal) {
-      signal?.throwIfAborted();
-      return send();
     },
   };
 }

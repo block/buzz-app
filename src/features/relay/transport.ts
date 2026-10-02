@@ -32,6 +32,9 @@ import {
 } from "./sidebar-preferences";
 import { createHostAdmission } from "./host-admission";
 import { relayOrigin } from "../communities/destination";
+import type { Signer } from "./signing-delegate";
+export { bindSigningDelegate } from "./signing-delegate";
+export type { Signer, SigningDelegateScope } from "./signing-delegate";
 import {
   admittedApiRequest,
   ApiPaused,
@@ -51,7 +54,7 @@ import {
 import { subscribeBrokerTraffic } from "./broker-live";
 import { PublishRejected } from "./outbox";
 import { httpReadError, ReadError } from "./errors";
-import type { EventTemplate, VerifiedEvent } from "nostr-tools";
+import type { EventTemplate } from "nostr-tools";
 import {
   createEventVerifier,
   eventDto,
@@ -171,17 +174,6 @@ export function mediaUrl(
   }
   return /^https:\/\//.test(url) ? url : undefined;
 }
-export interface Signer {
-  getPublicKey(): Promise<string>;
-  signEvent(event: EventTemplate): Promise<VerifiedEvent>;
-  /** The host authenticates and sends exact bytes without exposing credentials to JS. */
-  request(url: string, body: string, signal?: AbortSignal): Promise<Response>;
-  /** Native hosts sign and send `PUT /upload` for these exact bytes. */
-  upload?(file: File, signal: AbortSignal): Promise<Response>;
-  /** Native hosts serve relay `/media/` URLs through an authenticated proxy. */
-  media?(url: string): string;
-}
-
 /** The host's explicit HTTP base wins; otherwise translate the ws(s) relay URL's scheme. */
 export function relayHttpBase(
   explicit: unknown,
@@ -1038,6 +1030,9 @@ export async function connectSignedTransport(
   httpOrigin: string,
   relayAuthor: string,
 ): Promise<ReadTransport> {
+  const request = signer.request?.bind(signer);
+  if (!request)
+    throw new Error("Signed transport requires a host request capability");
   const viewer = await signer.getPublicKey();
   httpOrigin = relayOrigin(httpOrigin);
   const principal = () => signedAdmissions(httpOrigin, viewer);
@@ -1058,7 +1053,7 @@ export async function connectSignedTransport(
       const bounded = AbortSignal.any([signal, AbortSignal.timeout(10000)]);
       try {
         const response = await signedPost(
-          signer,
+          request,
           `${httpOrigin}/query`,
           filters,
           bounded,
@@ -1132,7 +1127,7 @@ export async function connectSignedTransport(
       async publish(event, signal) {
         return acceptPublish(
           await signedPost(
-            signer,
+            request,
             `${httpOrigin}/events`,
             event,
             signal,
@@ -1151,7 +1146,7 @@ export async function connectSignedTransport(
     query: (filters, signal, requestId = "read", priority = "foreground") =>
       measureQuery(httpOrigin, priority, async (sized) => {
         const result = await signedPost(
-          signer,
+          request,
           `${httpOrigin}/query`,
           filters,
           signal,
@@ -1180,7 +1175,7 @@ export async function connectSignedTransport(
 }
 
 async function signedPost(
-  signer: Signer,
+  request: NonNullable<Signer["request"]>,
   url: string,
   value: unknown,
   signal: AbortSignal | undefined,
@@ -1200,7 +1195,7 @@ async function signedPost(
     return dispatch(() => {
       signal?.throwIfAborted();
       return profiling.measureAsync("http.fetch", id, () =>
-        signer.request(url, body, signal),
+        request(url, body, signal),
       );
     });
   });

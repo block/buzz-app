@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-/** Idempotent participant-set command. Keys stay in the broker. */
-export async function directMessageEvent(input, viewer, signer, signal) {
+/** Validate and shape an idempotent participant-set command. */
+export function directMessageTemplate(input, viewer) {
   if (
     !input ||
     !Array.isArray(input.pubkeys) ||
@@ -16,18 +16,15 @@ export async function directMessageEvent(input, viewer, signer, signal) {
     new Set(input.pubkeys).size !== input.pubkeys.length
   )
     throw new Error("Choose between one and eight other people.");
-  return signer.signEvent(
-    {
-      kind: 41010,
-      content: "",
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [
-        ...input.pubkeys.map((pubkey) => ["p", pubkey]),
-        ["client", randomUUID()],
-      ],
-    },
-    signal,
-  );
+  return {
+    kind: 41010,
+    content: "",
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ...input.pubkeys.map((pubkey) => ["p", pubkey]),
+      ["client", randomUUID()],
+    ],
+  };
 }
 
 export function directMessageReceipt(text, eventId) {

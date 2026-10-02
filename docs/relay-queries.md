@@ -605,30 +605,71 @@ retain explicit extensions and pass `dev/vite-config.test.mjs`.
 
 ## Host signing delegates
 
-The development broker selects a signing delegate with the request's canonical
-`{ relay, identity }` through `selectSigningDelegate`. The default is the local
-nsec implementation in `dev/signing-delegate.mjs`. Selection captures the request's
-destination and public viewer; changing communities does not retarget pending work.
+Packaged and development relay paths share the asynchronous `Signer` contract in
+`src/features/relay/transport.ts`:
 
-The delegate exposes asynchronous `signEvent(template, signal)`,
-`authorizeAgent(pubkey, signal)` (the existing NIP-OA digest), and
-`publishEvent(event, send, signal)`. Narrow `signHarnessLogProof` and
-`authorizeAgentCommunity` methods retain the existing native log-proof and
-community-setup digest formats. `send()` is bound to the already validated
-event, destination and cancellation signal. The local delegate calls it once and
-returns its original receipt: a socket receipt string or the HTTP response for
-profile/DM setup, community member commands and sidebar sorting. Validation, admission, socket ownership, receipt checking and
-outbox retry remain with their existing owners. HTTP authentication rechecks
-cancellation, freshness and admission after signing; live traffic retains its
-connection-generation checks.
+```ts
+getPublicKey(): Promise<string>
+signEvent(template: EventTemplate, signal?: AbortSignal): Promise<VerifiedEvent>
+```
 
-Uploads, media, Git authentication and encrypted read-state/sidebar events use the same
-signing delegate. Builderlab account binding uses its fixed account-service origin
-and viewer, independently of the selected community, and checks session lifetime
-after signing. Keys remain host-local, with their existing loading/zeroing and
-NIP-44 encryption owners. Native agent-creation signing is a separate owner.
-This refactor supplies only the local delegate; NIP-46, remote identity loading
-and remote encryption capabilities are future work.
+`bindSigningDelegate(delegate, { relay, identity })` captures the canonical relay
+and public viewer for one connection. It returns the captured identity, rejects a
+signed event whose author differs, and preserves optional native request, upload
+and media capabilities while fencing request URLs to that relay. The development
+broker calls `selectSigningDelegate({ relay, identity })` for each canonical relay;
+the default is the local nsec delegate. Packaged `connectNativeTransport` obtains
+the restored public identity, binds the existing `nativeRelaySigner`, and then
+passes it to `connectSignedTransport`. Rust `IdentityHost` remains the custody and
+signing owner. A pending operation cannot retarget when the selected community
+changes.
+
+The delegate creates signed events only. Relay/session/outbox/socket owners still
+perform admission, publication, receipt handling and retry. In particular,
+`/publish`, profile/DM/member/leave HTTP requests and sidebar publication do not
+call a delegate publication method. Uploads, media, Git authentication and live
+AUTH continue to use their existing transport owners; the delegate supplies only
+the event signature where those owners already require one.
+
+Raw Schnorr digest proofs remain separate local capabilities: NIP-OA owner
+authorization, harness-log authorization and community-setup authorization are
+served by the broker's local `createLocalSigningCapabilities`, not by the event
+delegate. Their current key ownership, validation, cancellation and zeroing are
+unchanged. A future remote signer cannot be assumed to implement them.
+
+The current implementation is still local-signing only. Dev sidebar and read-state
+decoders derive their NIP-44 conversation keys from the broker-local nsec, and
+native NIP-44 remains inside the native identity owner. Therefore this seam does
+not claim arbitrary remote authorship, remote encryption, local-secret export or
+remote custody; encrypted records and their author must remain consistent.
+
+### NIP-46 capability audit
+
+This PR does not implement [NIP-46](https://github.com/nostr-protocol/nips/blob/master/46.md).
+The table records whether the protocol already has a relevant primitive and what
+Buzz would still need to integrate. [NIP-44](https://github.com/nostr-protocol/nips/blob/master/44.md)
+is also listed because encrypted sidebar/read-state data is a current boundary.
+The upstream method set relevant to this audit is `connect`, `sign_event`,
+`ping`, `get_public_key`, `nip04_encrypt`, `nip04_decrypt`, `nip44_encrypt`,
+`nip44_decrypt`, `switch_relays` and `logout`; `connect` can carry optional
+permissions and an authorization URL.
+
+| Production need | NIP-46 primitive | Exact status in this PR |
+| --- | --- | --- |
+| Sign a Nostr event template | `sign_event` | **Already supported by the protocol.** The shared local delegate matches this shape; a future adapter would still need Buzz request permissions, cancellation and identity checks. |
+| Discover the signing identity | `get_public_key` | **Already supported.** Buzz additionally binds the result to the selected relay and verifies every returned event author. |
+| NIP-44 encrypt/decrypt | `nip44_encrypt`, `nip44_decrypt` | **Already supported; not an intrinsic NIP-46 gap.** Buzz still needs a purpose-bound adapter for its local sidebar/read-state formats and must move/coordinate encryption ownership before claiming remote support. |
+| Raw SHA-256 digest Schnorr proofs | None in the standard method set | **Protocol gap/custom capability.** NIP-OA, harness-log and community-setup proofs stay separate local/native APIs. |
+| Export or import the local nsec; choose custody | None | **Integration/product gap.** NIP-46 intentionally permits the remote signer to retain the user key; it does not provide Buzz's local export/custody contract. |
+| NIP-98 HTTP (including its endpoint/method/payload/nonce auth), uploads, media, Git, WebSocket AUTH and event publication | None generic to NIP-46 (`switch_relays` is not a Buzz transport API) | **Integration gap.** Existing Buzz transport/session/socket owners remain authoritative and would need explicit remote capabilities, relay policy and receipts. |
+| Relay-scoped authorization and permission prompts | `connect`, optional `perms`, `auth_url`, `logout` | **Partial integration gap.** The protocol has sessions and permissions, but not Buzz's relay-specific NIP-98 policy, native consent UX or purpose-bound capability policy. |
+| Cancellation, timeout and request lifecycle | `ping`/`logout`, but no general cancel method | **Integration gap.** Buzz must map aborts, deadlines, disconnects and uncertain receipts onto a remote session without retrying an unknown publication. |
+
+Thus NIP-44 encryption is not falsely advertised as missing, while raw proofs,
+custody/export, Buzz networking/publication and lifecycle policy are not falsely
+advertised as solved by NIP-46. The architecture remains consistent with Buzz's
+[relay/workspace vision](https://github.com/block/buzz/blob/main/VISION.md) and
+[sovereign identity constraints](https://github.com/block/buzz/blob/main/VISION_SOVEREIGN.md).
 
 ## WebSocket-first publication
 

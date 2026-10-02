@@ -17,15 +17,7 @@ export function assertSidebarMuteIntent(intent) {
     throw new Error("Invalid sidebar mute intent");
 }
 
-/** One explicit mute intent against a fresh signed head; keep unmute tombstones. */
-export async function prepareSidebarMute(
-  events,
-  intent,
-  secret,
-  signer,
-  signal,
-  now = Date.now(),
-) {
+function readSidebarMuteState(events, intent, secret, now = Date.now()) {
   assertSidebarMuteIntent(intent);
   // The shared bounded decoder verifies signature, own author, schema and budgets.
   decodeSidebarPreferences(events, secret);
@@ -53,29 +45,51 @@ export async function prepareSidebarMute(
       intent.muted,
       now,
     );
-    if (mutes === current) return { mutes };
-    const event = await signer.signEvent(
-      {
-        kind: 30078,
-        content: nip44.v2.encrypt(JSON.stringify(mutes), key),
-        created_at: Math.max(
-          Math.floor(now / 1000),
-          (head?.created_at ?? 0) + 1,
-        ),
-        tags: [
-          ["d", COORDINATE],
-          ["t", COORDINATE],
-        ],
-      },
-      signal,
-    );
-    signal?.throwIfAborted();
-    // Refuse over-budget changes rather than silently trimming other channels.
-    decodeSidebarPreferences([event], secret);
-    return { mutes, event };
+    if (mutes === current) return { mutes, changed: false };
+    return { mutes, changed: true, head };
   } finally {
     key.fill(0);
   }
+}
+
+/** One explicit mute intent against a fresh signed head; keep unmute tombstones. */
+export async function prepareSidebarMute(
+  events,
+  intent,
+  secret,
+  signer,
+  signal,
+  now = Date.now(),
+) {
+  const state = readSidebarMuteState(events, intent, secret, now);
+  if (!state.changed) return state;
+  const viewer = getPublicKey(secret);
+  const key = nip44.v2.utils.getConversationKey(secret, viewer);
+  let content;
+  try {
+    content = nip44.v2.encrypt(JSON.stringify(state.mutes), key);
+  } finally {
+    key.fill(0);
+  }
+  const event = await signer.signEvent(
+    {
+      kind: 30078,
+      content,
+      created_at: Math.max(
+        Math.floor(now / 1000),
+        (state.head?.created_at ?? 0) + 1,
+      ),
+      tags: [
+        ["d", COORDINATE],
+        ["t", COORDINATE],
+      ],
+    },
+    signal,
+  );
+  signal?.throwIfAborted();
+  // Refuse over-budget changes rather than silently trimming other channels.
+  decodeSidebarPreferences([event], secret);
+  return { mutes: state.mutes, event };
 }
 
 export async function mutateSidebarMute(
@@ -97,15 +111,9 @@ export async function mutateSidebarMute(
   signal?.throwIfAborted();
   if (!draft.event) return draft.mutes;
   await publish(draft.event);
-  const confirmation = await prepareSidebarMute(
-    await readHead(),
-    intent,
-    secret,
-    signer,
-    signal,
-  );
+  const confirmation = readSidebarMuteState(await readHead(), intent, secret);
   signal?.throwIfAborted();
-  if (confirmation.event)
+  if (confirmation.changed)
     throw new Error(
       "Sidebar mutes changed on another device; reload and try again",
     );

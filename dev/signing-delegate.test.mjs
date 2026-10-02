@@ -6,7 +6,10 @@ import { afterEach, expect, test, vi } from "vitest";
 import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
-import { createLocalSigningDelegate } from "./signing-delegate.mjs";
+import {
+  createLocalSigningCapabilities,
+  createLocalSigningDelegate,
+} from "./signing-delegate.mjs";
 
 const primary = "https://primary.example";
 const secondary = "https://secondary.example";
@@ -97,15 +100,19 @@ async function harness(select, respond = () => Response.json([]), publish) {
   };
 }
 
-test("local delegate preserves event fields, NIP-OA digest and the original send receipt", async () => {
+test("event signing and raw proof capabilities remain separate", async () => {
   const key = new Uint8Array(32).fill(5);
   const delegate = createLocalSigningDelegate(key);
+  const capabilities = createLocalSigningCapabilities(key);
   const input = template();
   const event = await delegate.signEvent(input);
   expect(event).toMatchObject({ ...input, pubkey: getPublicKey(key) });
   expect(verifyEvent(event)).toBe(true);
+  expect(await delegate.getPublicKey()).toBe(getPublicKey(key));
+  expect(delegate.publishEvent).toBeUndefined();
+  expect(delegate.authorizeAgent).toBeUndefined();
   const agent = "a".repeat(64);
-  const signature = await delegate.authorizeAgent(agent);
+  const signature = await capabilities.authorizeAgent(agent);
   expect(
     schnorr.verify(
       Buffer.from(signature, "hex"),
@@ -113,58 +120,37 @@ test("local delegate preserves event fields, NIP-OA digest and the original send
       Buffer.from(getPublicKey(key), "hex"),
     ),
   ).toBe(true);
-  const receipt = { accepted: true };
-  const send = vi.fn(async () => receipt);
-  expect(await delegate.publishEvent(event, send)).toBe(receipt);
-  expect(send).toHaveBeenCalledExactlyOnceWith();
   const abort = new AbortController();
   abort.abort();
   await expect(
-    delegate.publishEvent(event, send, abort.signal),
+    capabilities.authorizeAgent(agent, abort.signal),
   ).rejects.toThrow();
-  expect(send).toHaveBeenCalledTimes(1);
 });
 
 test.each(["signHarnessLogProof", "authorizeAgentCommunity"])(
-  "broker awaits %s through the captured delegate",
+  "broker keeps %s outside the event-signing delegate",
   async (method) => {
-    const started = gate(),
-      release = gate();
-    const signature = "a".repeat(128);
-    const sign = vi.fn(async () => {
-      started.resolve();
-      await release.promise;
-      return signature;
-    });
-    const h = await harness((local) => ({ ...local, [method]: sign }));
+    const h = await harness();
     const pubkey = "b".repeat(64);
     const relayUrl = primary.replace("https:", "wss:");
     const id = `${pubkey}-${createHash("sha256").update(relayUrl).digest("hex")}`;
     const nonce = "12345678-1234-1234-1234-123456789abc";
     try {
-      const pending =
-        method === "signHarnessLogProof"
-          ? h.post("primary/agent-log-proof", { id, pubkey, relayUrl, nonce })
-          : h.post("primary/resolve-agent-community", {
-              owner: h.viewer,
-              pubkey,
-              confirmed: true,
-            });
-      await started.promise;
-      expect(h.completed()).toBe(0);
-      expect(h.calls).toHaveLength(0);
-      expect(sign.mock.calls[0].slice(0, -1)).toEqual(
-        method === "signHarnessLogProof"
-          ? [id, pubkey, relayUrl, nonce]
-          : [pubkey, relayUrl],
-      );
-      release.resolve();
-      const response = await pending;
+      const response = await (method === "signHarnessLogProof"
+        ? h.post("primary/agent-log-proof", { id, pubkey, relayUrl, nonce })
+        : h.post("primary/resolve-agent-community", {
+            owner: h.viewer,
+            pubkey,
+            confirmed: true,
+          }));
       expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject({ signature });
+      expect(await response.json()).toMatchObject({
+        ...(method === "signHarnessLogProof"
+          ? { signature: expect.any(String) }
+          : { owner: h.viewer }),
+      });
       expect(h.selections).toEqual([{ relay: primary, identity: h.viewer }]);
     } finally {
-      release.resolve();
       await h.close();
     }
   },
@@ -210,11 +196,25 @@ test("captures canonical relay and identity while another community signs", asyn
   }
 });
 
-test("awaits message signing and delegate publication before the existing socket sends", async () => {
+test("rejects a selected delegate whose signed author drifts from the captured identity", async () => {
+  const other = new Uint8Array(32).fill(8);
+  const h = await harness(() => createLocalSigningDelegate(other));
+  try {
+    const response = await h.post("primary/query", query);
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: "Local relay broker failed",
+    });
+    expect(h.calls).toHaveLength(0);
+    expect(h.selections).toEqual([{ relay: primary, identity: h.viewer }]);
+  } finally {
+    await h.close();
+  }
+});
+
+test("awaits message signing while the existing socket owns publication", async () => {
   const signing = gate(),
-    signed = gate(),
-    publishing = gate(),
-    publish = gate();
+    signed = gate();
   const h = await harness((local) => ({
     ...local,
     async signEvent(event, signal) {
@@ -223,11 +223,6 @@ test("awaits message signing and delegate publication before the existing socket
         await signed.promise;
       }
       return local.signEvent(event, signal);
-    },
-    async publishEvent(event, send, signal) {
-      publishing.resolve();
-      await publish.promise;
-      return local.publishEvent(event, send, signal);
     },
   }));
   try {
@@ -240,9 +235,6 @@ test("awaits message signing and delegate publication before the existing socket
     const event = await (await pending).json();
     expect(event).toMatchObject({ ...input, pubkey: h.viewer });
     const sent = h.post("publish", event);
-    await publishing.promise;
-    expect(h.socket.publications).toHaveLength(0);
-    publish.resolve();
     expect(await (await sent).json()).toMatchObject({
       accepted: true,
       event_id: event.id,
@@ -251,22 +243,22 @@ test("awaits message signing and delegate publication before the existing socket
     expect(h.calls).toHaveLength(0);
   } finally {
     signed.resolve();
-    publish.resolve();
     await h.close();
   }
 });
 
-test("leave publication awaits the delegate and preserves its HTTP receipt", async () => {
+test("leave signing is awaited before its existing HTTP publication", async () => {
   const started = gate(),
     release = gate();
   const h = await harness(
     (local) => ({
       ...local,
-      async publishEvent(event, send, signal) {
-        expect(event.kind).toBe(28936);
-        started.resolve();
-        await release.promise;
-        return local.publishEvent(event, send, signal);
+      async signEvent(event, signal) {
+        if (event.kind === 28936) {
+          started.resolve();
+          await release.promise;
+        }
+        return local.signEvent(event, signal);
       },
     }),
     (_url, init) =>
@@ -288,29 +280,6 @@ test("leave publication awaits the delegate and preserves its HTTP receipt", asy
     expect(h.calls[0].url).toBe(`${primary}/events`);
   } finally {
     release.resolve();
-    await h.close();
-  }
-});
-
-test("delegate can deliver a signed event without requesting a local socket", async () => {
-  const delivered = [];
-  const h = await harness((local) => ({
-    ...local,
-    async publishEvent(event) {
-      delivered.push(event);
-      return "accepted";
-    },
-  }));
-  try {
-    const event = await h.local.signEvent(template());
-    expect(await (await h.post("publish", event)).json()).toEqual({
-      accepted: true,
-      event_id: event.id,
-      message: "accepted",
-    });
-    expect(delivered).toEqual([event]);
-    expect(h.socket.publications).toHaveLength(0);
-  } finally {
     await h.close();
   }
 });
@@ -348,7 +317,7 @@ test("disconnect during signing never dispatches a late result, even if the sign
   }
 });
 
-test.each(["pause", "expiry", "rejection"])(
+test.each(["pause", "rejection"])(
   "handles %s while signing without sending or retrying",
   async (mode) => {
     const started = gate(),
@@ -378,17 +347,11 @@ test.each(["pause", "expiry", "rejection"])(
     try {
       const pending = h.post("query", query);
       await started.promise;
-      if (mode === "pause")
-        expect((await h.post("query", query)).status).toBe(429);
-      if (mode === "expiry")
-        vi.spyOn(Date, "now").mockReturnValue(Date.now() + 46000);
       release.resolve();
       const response = await pending;
-      expect(response.status).toBe(
-        mode === "pause" ? 429 : mode === "expiry" ? 503 : 500,
-      );
-      if (mode !== "rejection")
-        expect(await response.json()).toMatchObject({ sent: false });
+      expect(response.status).toBe(mode === "pause" ? 429 : 500);
+      if (mode === "pause")
+        expect(await response.json()).toMatchObject({ quota: "api" });
       expect(h.calls).toHaveLength(mode === "pause" ? 1 : 0);
       if (mode === "rejection")
         expect((await h.post("query", query)).status).toBe(200);
@@ -400,7 +363,7 @@ test.each(["pause", "expiry", "rejection"])(
 );
 
 test.each(["profile", "direct-message", "member"])(
-  "%s publication awaits the delegate and retains its HTTP receipt",
+  "%s signing is awaited before its HTTP publication",
   async (route) => {
     const started = gate(),
       release = gate();
@@ -408,11 +371,16 @@ test.each(["profile", "direct-message", "member"])(
     const h = await harness(
       (local) => ({
         ...local,
-        async publishEvent(event, send, signal) {
-          publication = event;
-          started.resolve();
-          await release.promise;
-          return local.publishEvent(event, send, signal);
+        async signEvent(event, signal) {
+          if (
+            event.kind ===
+            (route === "profile" ? 0 : route === "member" ? 9031 : 41010)
+          ) {
+            publication = event;
+            started.resolve();
+            await release.promise;
+          }
+          return local.signEvent(event, signal);
         },
       }),
       (_url, init) => {
@@ -454,19 +422,49 @@ test.each(["profile", "direct-message", "member"])(
   },
 );
 
-test("a delegate-provided HTTP receipt does not report timings for an unused local transport", async () => {
-  const h = await harness((local) => ({
-    ...local,
-    async publishEvent(event) {
-      return Response.json({ accepted: true, event_id: event.id });
-    },
-  }));
+test.each(["direct-message", "member", "leave"])(
+  "%s signer failures are not reported as participant validation errors",
+  async (route) => {
+    const h = await harness((local) => ({
+      ...local,
+      async signEvent(event, signal) {
+        if ([41010, 9031, 28936].includes(event.kind))
+          throw new Error("signing declined");
+        return local.signEvent(event, signal);
+      },
+    }));
+    try {
+      const response = await h.post(
+        `primary/${route}`,
+        route === "member"
+          ? { action: "remove", pubkey: "a".repeat(64) }
+          : route === "direct-message"
+            ? { pubkeys: ["a".repeat(64)] }
+            : {},
+      );
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({
+        error: "Local relay broker failed",
+      });
+      expect(h.calls).toHaveLength(0);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
+/*
+ * Publication is intentionally not a delegate capability. The relay socket
+ * owns delivery and receipts, including its unavailable-socket response.
+ */
+test("publication keeps its existing socket-unavailable response", async () => {
+  const h = await harness();
   try {
-    const response = await h.post("profile", { name: "Name", picture: "" });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ accepted: true });
-    expect(response.headers.get("Server-Timing")).toBe("");
-    expect(h.calls).toHaveLength(0);
+    const event = await h.local.signEvent(template());
+    expect(await (await h.post("publish", event)).json()).toEqual({
+      error: "Publication socket unavailable",
+      sent: false,
+    });
   } finally {
     await h.close();
   }
@@ -488,11 +486,13 @@ test.each([
       release = gate(),
       cancelled = gate();
     let heads = [];
+    let signCount = 0;
     const h = await harness(
       (local) => ({
         ...local,
         async signEvent(event, signal) {
           if (event.kind === 30078) {
+            signCount++;
             signal.addEventListener("abort", () => cancelled.resolve(), {
               once: true,
             });
@@ -566,6 +566,7 @@ test.each([
         ]);
         expect(h.socket.publications).toHaveLength(kind === "mute" ? 1 : 0);
       }
+      expect(signCount).toBe(1);
     } finally {
       release.resolve();
       await h.close();

@@ -32,16 +32,15 @@ function attested(owner: Key) {
     ],
   });
 }
-function setup(owner: Key = viewer) {
-  const fixture = archiveRelay(
-    viewer,
-    relay,
-    [attested(owner)],
-    {},
-    {
-      [`${"a".repeat(8)}-channel`]: [agent.pubkey, viewer.pubkey],
-    },
-  );
+function setup(
+  owner: Key = viewer,
+  channels: Record<string, string[]> = {
+    [`${"a".repeat(8)}-channel`]: [agent.pubkey, viewer.pubkey],
+  },
+  configure: (fixture: ReturnType<typeof archiveRelay>) => void = () => {},
+) {
+  const fixture = archiveRelay(viewer, relay, [attested(owner)], {}, channels);
+  configure(fixture);
   const instance = createRelaySession(fixture.transport, {
     outboxStorage: { load: () => [], save: () => {} },
   });
@@ -111,6 +110,55 @@ it("a refused channel removal does not fail Remove or leave outbox work", async 
   expect(fixture.archived.has(agent.pubkey)).toBe(true);
   expect(fixture.deleted).toEqual(new Set([coordinate()]));
   expect(Object.values(fixture.channels).flat()).toContain(agent.pubkey);
+  expect(instance.session.outbox?.snapshot()).toEqual([]);
+});
+
+it("waits for every channel removal before finishing, and leaves no outbox work", async () => {
+  const [first, second] = ["first", "second"].map(
+    (name) => `${name.padEnd(8, "x")}-channel`,
+  );
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const attempts: string[] = [];
+  const { fixture, instance, remove } = setup(
+    viewer,
+    {
+      [first as string]: [agent.pubkey, viewer.pubkey],
+      [second as string]: [agent.pubkey, viewer.pubkey],
+    },
+    ({ transport }) => {
+      const writer = transport.writer;
+      if (!writer) throw new Error("fixture writer missing");
+      const publish = writer.publish.bind(writer);
+      // The first channel refuses at once; the second fails only after release.
+      writer.publish = (event, signal) => {
+        const channel = event.tags.find(([name]) => name === "h")?.[1];
+        if (event.kind === 9001 && channel) attempts.push(channel);
+        if (event.kind === 9001 && channel === first)
+          return Promise.reject<void>(
+            new PublishRejected("restricted: first refused"),
+          );
+        if (event.kind === 9001 && channel === second)
+          return held.then<void>(() => {
+            throw new PublishRejected("restricted: second refused");
+          });
+        return publish(event, signal);
+      };
+    },
+  );
+  let finished = false;
+  const removal = remove().then(() => {
+    finished = true;
+  });
+  await expect.poll(() => fixture.deleted.size).toBe(1);
+  await expect.poll(() => [...attempts].sort()).toEqual([first, second]);
+  // One failure must not finish Remove while another channel is still sending.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(finished).toBe(false);
+  release();
+  await removal;
   expect(instance.session.outbox?.snapshot()).toEqual([]);
 });
 

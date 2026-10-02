@@ -94,7 +94,8 @@ async function deleteAgentRecord(
 
 /** Base Buzz `removeAgentFromAllChannels` over the relay's rosters for this
  * agent plus the viewer's loaded channels. Resolves only once a fresh relay
- * read lists the agent in none of them; any refusal or unknown outcome throws. */
+ * read lists the agent in none of them; any refusal or unknown outcome throws
+ * after every channel operation has settled. */
 export async function removeAgentFromChannels(
   session: Pick<RelaySession, "outbox" | "channels" | "workSessions">,
   pubkey: string,
@@ -144,11 +145,15 @@ export async function removeAgentFromChannels(
       );
     return operation;
   });
-  await Promise.all(
+  // Settle every operation before reporting a failure, so no channel removal
+  // is still sending when the caller cleans up or its view goes away.
+  const outcomes = await Promise.allSettled(
     operations.map((id) =>
       delivered(outbox, id, signal, "Channel removal is not confirmed. Retry."),
     ),
   );
+  const failure = outcomes.find((outcome) => outcome.status === "rejected");
+  if (failure) throw failure.reason;
   // Confirm each channel against its own fresh roster: a cached loaded roster
   // may still list the agent after the relay removed it.
   const listed = await Promise.all(

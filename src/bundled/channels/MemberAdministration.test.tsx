@@ -224,7 +224,7 @@ async function setup(
       return screen.findByRole("dialog", {
         name:
           name === "Remove from channel"
-            ? "Remove member from channel"
+            ? `Remove ${targetAgent ? "agent" : "member"} from channel`
             : "Change member role?",
       });
     },
@@ -748,6 +748,23 @@ it.each([false, true])(
     expect(
       screen.queryByRole("menuitem", { name: /Make / }),
     ).not.toBeInTheDocument();
+    expect(t.publish).not.toHaveBeenCalled();
+    await t.user.click(
+      screen.getByRole("menuitem", { name: "Remove from channel" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: `Remove ${agent ? "agent" : "member"} from channel`,
+    });
+    expect(
+      within(dialog).getByRole("button", {
+        name: `Remove ${agent ? "agent" : "member"}`,
+      }),
+    ).toBeVisible();
+    expect(dialog).toHaveTextContent(
+      agent
+        ? "This does not delete or stop the agent. It can be added back later."
+        : "This does not delete their identity or stop their agents. They may need an invitation to rejoin.",
+    );
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
@@ -1601,8 +1618,15 @@ it.each(["bot", "member"])(
     ).not.toBeInTheDocument();
     await t.user.click(remove);
     const dialog = await screen.findByRole("dialog", {
-      name: "Remove member from channel",
+      name: "Remove agent from channel",
     });
+    expect(dialog).toHaveTextContent(
+      "This does not delete or stop the agent. It can be added back later.",
+    );
+    expect(dialog).not.toHaveTextContent("their agents");
+    expect(
+      within(dialog).getByRole("button", { name: "Remove agent" }),
+    ).toHaveAttribute("data-variant", "destructive");
     await vi.waitFor(() =>
       expect(
         within(dialog).getByRole("button", { name: "Cancel" }),
@@ -1612,7 +1636,7 @@ it.each(["bot", "member"])(
     expect(t.publish).not.toHaveBeenCalled();
     const confirm = await t.choose("Remove from channel");
     await t.user.click(
-      within(confirm).getByRole("button", { name: "Remove member" }),
+      within(confirm).getByRole("button", { name: "Remove agent" }),
     );
     await vi.waitFor(() =>
       expect(

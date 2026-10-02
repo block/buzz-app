@@ -215,15 +215,21 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
       .getByRole("heading", { name: "After", exact: true })
       .scrollIntoViewIfNeeded();
     const overflow = await panel.evaluate((element) =>
-      [...element.querySelectorAll("video, table, img")].map((media) => {
-        const outer = element.getBoundingClientRect(),
-          inner = media.getBoundingClientRect();
-        return {
-          left: inner.left >= outer.left - 1,
-          right: inner.right <= outer.right + 1,
-        };
-      }),
+      [...element.querySelectorAll("video, table, img")]
+        // Expanded descriptions retain hidden summary thumbnails in the DOM.
+        // Only rendered media have bounds to compare with the panel.
+        .filter((media) => media.getClientRects().length > 0)
+        .map((media) => {
+          const outer = element.getBoundingClientRect(),
+            inner = media.getBoundingClientRect();
+          return {
+            left: inner.left >= outer.left - 1,
+            right: inner.right <= outer.right + 1,
+          };
+        }),
     );
+    // Two videos, the table and the expanded image must all be measured.
+    expect(overflow).toHaveLength(4);
     expect(overflow.every(({ left, right }) => left && right)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath(`panel-${width}.png`) });
   }

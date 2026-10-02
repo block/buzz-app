@@ -412,7 +412,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
       .evaluate((tile) => {
         const outline = getComputedStyle(tile, "::after");
         const probe = document.createElement("span");
-        probe.style.color = "var(--border-prominent)";
+        probe.style.color = "var(--border-standard)";
         tile.append(probe);
         const token = getComputedStyle(probe).color;
         probe.remove();

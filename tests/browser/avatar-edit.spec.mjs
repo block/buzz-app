@@ -2,6 +2,58 @@ import { test, expect } from "./source-fixture.mjs";
 import { readFile } from "node:fs/promises";
 import { watchPageErrors } from "./page-errors.mjs";
 
+test("avatar image controls retain their hover fill and accessible URL label", async ({
+  page,
+}) => {
+  await page.route("**/api/relay/**", (route) => route.abort());
+  await page.goto("/tests/fixtures/agent-control.html?avatars");
+  await page
+    .getByRole("button", { name: "Edit human profile", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit avatar", exact: true }).click();
+  const dropzone = page.getByRole("button", {
+    name: "Drop or browse",
+    exact: true,
+  });
+  const url = page.getByRole("textbox", {
+    name: "Picture URL (optional)",
+    exact: true,
+  });
+  await expect(url).toBeVisible();
+  await expect(url.locator("..")).toHaveClass("buzz-input-group");
+  for (const dark of [false, true]) {
+    await page.evaluate(
+      (dark) => document.documentElement.classList.toggle("dark", dark),
+      dark,
+    );
+    await dropzone.hover();
+    await expect(dropzone).toHaveCSS(
+      "background-color",
+      dark ? "rgb(46, 46, 46)" : "rgb(241, 241, 242)",
+    );
+    await expect(dropzone).toBeVisible();
+    // Opening scale must not leave the animated height clipping the footer.
+    await expect
+      .poll(() =>
+        page
+          .getByRole("button", { name: "Done", exact: true })
+          .evaluate((button) => {
+            const viewport = button.closest("fieldset").parentElement;
+            return (
+              viewport.getBoundingClientRect().bottom -
+              button.getBoundingClientRect().bottom
+            );
+          }),
+      )
+      .toBeGreaterThanOrEqual(0);
+    await page.screenshot({
+      path: test
+        .info()
+        .outputPath(`avatar-image-${dark ? "dark" : "light"}.png`),
+    });
+  }
+});
+
 // Browser boundary: nested overlay hit-testing/focus, canvas image preparation,
 // lazy shadow-DOM emoji picker, and narrow viewport geometry in both engines.
 test("shared human and agent avatar upload, scoped save, publication retry and nested popup", async ({
@@ -85,17 +137,17 @@ test("shared human and agent avatar upload, scoped save, publication retry and n
   await expect(search).toBeFocused();
   await search.fill("grinning");
   const emoji = page.getByRole("button", { name: "😀", exact: true });
-  await expect(emoji).toHaveCSS("width", "36px");
+  await expect(emoji).toHaveCSS("width", "48px");
   await page.evaluate(() =>
     document.documentElement.style.setProperty("--buzz-text-scale", "2"),
   );
-  await expect(emoji).toHaveCSS("width", "72px");
+  await expect(emoji).toHaveCSS("width", "96px");
   await expect(search).toHaveValue("grinning");
   await expect(search).toBeFocused();
   await page.evaluate(() =>
     document.documentElement.style.setProperty("--buzz-text-scale", "1"),
   );
-  await expect(emoji).toHaveCSS("width", "36px");
+  await expect(emoji).toHaveCSS("width", "48px");
   await search.press("Escape");
   await expect(search).toHaveValue("");
   await page.evaluate(() =>
@@ -103,7 +155,7 @@ test("shared human and agent avatar upload, scoped save, publication retry and n
   );
   await expect(
     page.locator("em-emoji-picker .category button").first(),
-  ).toHaveCSS("width", "72px");
+  ).toHaveCSS("width", "96px");
   await expect(search).toHaveValue("");
   await expect(search).toBeFocused();
   await page.evaluate(() =>
@@ -111,28 +163,30 @@ test("shared human and agent avatar upload, scoped save, publication retry and n
   );
   await expect(
     page.locator("em-emoji-picker .category button").first(),
-  ).toHaveCSS("width", "36px");
-  const manualEmoji = page.getByLabel("Emoji", { exact: true });
-  await manualEmoji.fill("🧠");
-  await page.evaluate(() =>
-    document.documentElement.style.setProperty("--buzz-text-scale", "2"),
+  ).toHaveCSS("width", "48px");
+  await search.fill("brain");
+  await page.getByRole("button", { name: "🧠", exact: true }).click();
+  await expect(page.getByText("Paste an emoji", { exact: true })).toHaveCount(
+    0,
   );
   await expect(
-    page.locator("em-emoji-picker .category button").first(),
-  ).toHaveCSS("width", "72px");
-  await expect(manualEmoji).toBeFocused();
-  await page.keyboard.type("ABC");
-  await expect(manualEmoji).toHaveValue("🧠ABC");
-  await expect(search).toHaveValue("");
-  await page.evaluate(() =>
-    document.documentElement.style.setProperty("--buzz-text-scale", "1"),
-  );
+    page.getByText("Choose Done, then save your profile to apply the avatar.", {
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await page.getByRole("tab", { name: "Background", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Use #476CFF background", exact: true })
+    .click();
   await expect(
-    page.locator("em-emoji-picker .category button").first(),
-  ).toHaveCSS("width", "36px");
-  await expect(manualEmoji).toBeFocused();
-  await manualEmoji.fill("🧠");
-  await page.getByLabel("Background color", { exact: true }).fill("#FFF4CC");
+    page.getByRole("img", { name: "Emoji avatar preview", exact: true }),
+  ).toHaveCSS("background-color", "rgb(71, 108, 255)");
+  await page
+    .getByRole("button", { name: "Use #FFF4CC background", exact: true })
+    .click();
+  await page.screenshot({
+    path: test.info().outputPath("emoji-avatar-picker.png"),
+  });
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await page
@@ -207,4 +261,220 @@ test("shared human and agent avatar upload, scoped save, publication retry and n
   ]);
   expect(result.actions[0].payload.edit.picture).toBe(result.agent.picture);
   expect(errors.unexplained()).toEqual([]);
+});
+
+test("avatar custom spectrum supports dragging, keyboard hue and return focus", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/agent-control.html?avatars");
+  await page
+    .getByRole("button", { name: "Edit human profile", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit avatar", exact: true }).click();
+  await page.getByRole("tab", { name: "Background", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Custom background color", exact: true })
+    .click();
+  const spectrum = page.getByRole("slider", {
+    name: "Color spectrum",
+    exact: true,
+  });
+  await expect(
+    page.getByRole("button", { name: "Done", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Remove avatar", exact: true }),
+  ).toHaveCount(0);
+  const hue = page.getByRole("slider", { name: "Color hue", exact: true });
+  await spectrum.press("Home");
+  await spectrum.press("ArrowUp");
+  await expect(spectrum).toHaveAttribute("aria-valuenow", "0");
+  await spectrum.press("End");
+  const box = await spectrum.boundingBox();
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
+  await page.mouse.down();
+  const target = {
+    x: box.x + box.width * 0.773,
+    y: box.y + box.height * 0.317,
+  };
+  await page.mouse.move(target.x, target.y, {
+    steps: 5,
+  });
+  await page.mouse.up();
+  const handle = await spectrum.locator("span").boundingBox();
+  expect(Math.abs(handle.x + handle.width / 2 - target.x)).toBeLessThan(1);
+  expect(Math.abs(handle.y + handle.height / 2 - target.y)).toBeLessThan(1);
+  await hue.press("Home");
+  await hue.press("ArrowRight");
+  await expect(hue).toHaveValue("1");
+  const color = await spectrum
+    .locator("span")
+    .evaluate((el) => getComputedStyle(el).backgroundColor);
+  await expect(
+    page.getByRole("img", { name: "Emoji avatar preview" }),
+  ).toHaveCSS("background-color", color);
+  await page.screenshot({
+    path: test.info().outputPath("avatar-custom-color.png"),
+  });
+  await page.getByRole("button", { name: "Use color", exact: true }).click();
+  await expect(
+    page.getByRole("tab", { name: "Background", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByRole("button", { name: "Done", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Remove avatar", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Custom background color", exact: true }),
+  ).toBeFocused();
+  await page.getByRole("tab", { name: "Emoji", exact: true }).click();
+  await expect(
+    page.getByRole("img", { name: "Emoji avatar preview" }),
+  ).toHaveCSS("background-color", color);
+  const viewport = page
+    .getByRole("tablist", { name: "Avatar source" })
+    .locator("../../../..");
+  await expect(viewport).toHaveCSS("transition-property", "height");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(viewport).toHaveCSS("transition-duration", "0s");
+});
+
+test("custom color and footer resize together without reversing direction", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 720 });
+  await page.goto("/tests/fixtures/agent-control.html?avatars");
+  await page
+    .getByRole("button", { name: "Edit human profile", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit avatar", exact: true }).click();
+  await page.getByRole("tab", { name: "Background", exact: true }).click();
+  const custom = page.getByRole("button", {
+    name: "Custom background color",
+    exact: true,
+  });
+  await custom.waitFor({ state: "visible" });
+  // Finish the initial tab transition before measuring the two custom-color states.
+  await page
+    .locator("[data-buzz-ui].popover-surface")
+    .evaluate(async (popup) => {
+      await Promise.all(
+        popup
+          .getAnimations({ subtree: true })
+          .map((animation) => animation.finished),
+      );
+    });
+  for (const name of ["Custom background color", "Use color"]) {
+    const frames = await page
+      .getByRole("button", { name, exact: true })
+      .evaluate(async (button) => {
+        const popup = document.querySelector("[data-buzz-ui].popover-surface");
+        const frames = [];
+        const capture = () => {
+          const bounds = popup.getBoundingClientRect();
+          frames.push({ height: bounds.height, y: bounds.y });
+        };
+        capture();
+        button.click();
+        const start = performance.now();
+        while (performance.now() - start < 400) {
+          await new Promise(requestAnimationFrame);
+          capture();
+        }
+        return frames;
+      });
+    const first = frames[0];
+    const last = frames.at(-1);
+    expect(Math.abs(last.height - first.height)).toBeGreaterThan(10);
+    for (const axis of ["height", "y"]) {
+      const direction = Math.sign(last[axis] - first[axis]);
+      for (let i = 1; i < frames.length; i++) {
+        expect(
+          (frames[i][axis] - frames[i - 1][axis]) * direction,
+          `${name} ${axis}`,
+        ).toBeGreaterThanOrEqual(-1);
+      }
+    }
+  }
+});
+
+test("emoji avatar artwork is centered for faces, symbols, and joined glyphs", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/agent-control.html?avatars");
+  const centers = await page.evaluate(async () => {
+    const { paintEmojiAvatar } = await import(
+      "/src/features/profiles/avatar-upload.ts"
+    );
+    return ["😀", "❤️", "🧑🏽‍💻", "🐈", "🇬🇧"].map((emoji) => {
+      const canvas = document.createElement("canvas");
+      paintEmojiAvatar(canvas, emoji);
+      const pixels = canvas.getContext("2d").getImageData(0, 0, 512, 512).data;
+      let left = 512,
+        right = 0,
+        top = 512,
+        bottom = 0;
+      for (let y = 0; y < 512; y++) {
+        for (let x = 0; x < 512; x++) {
+          if (pixels[(y * 512 + x) * 4 + 3] < 32) continue;
+          left = Math.min(left, x);
+          right = Math.max(right, x);
+          top = Math.min(top, y);
+          bottom = Math.max(bottom, y);
+        }
+      }
+      return { emoji, x: (left + right + 1) / 2, y: (top + bottom + 1) / 2 };
+    });
+  });
+  for (const center of centers) {
+    expect(
+      Math.abs(center.x - 256),
+      `${center.emoji} horizontal center`,
+    ).toBeLessThanOrEqual(3);
+    expect(
+      Math.abs(center.y - 256),
+      `${center.emoji} vertical center`,
+    ).toBeLessThanOrEqual(3);
+  }
+});
+
+test("avatar picker previews pointer selections and respects reduced motion", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/agent-control.html?avatars");
+  await page
+    .getByRole("button", { name: "Edit human profile", exact: true })
+    .click();
+  await page
+    .getByRole("heading", { name: "Profile", exact: true })
+    .evaluate((element) => element.scrollIntoView({ block: "start" }));
+  await page.getByRole("button", { name: "Edit avatar", exact: true }).click();
+  await page.getByRole("tab", { name: "Emoji", exact: true }).click();
+  const search = page.getByRole("searchbox", { name: "Search emoji" });
+  await search.fill("grinning");
+  const emoji = page.getByRole("button", { name: "😀", exact: true });
+  await emoji.click();
+  const artwork = page
+    .getByRole("img", { name: "Emoji avatar preview" })
+    .locator("canvas");
+  await expect(artwork).toHaveAttribute("data-animate", "true");
+  await emoji.press("Enter");
+  await expect(artwork).not.toHaveAttribute("data-animate");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await emoji.click();
+  await expect(artwork).not.toHaveAttribute("data-animate");
+  await page.getByRole("tab", { name: "Background", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Use #63C6F2 background", exact: true })
+    .click();
+  await expect(
+    page.getByRole("img", { name: "Emoji avatar preview" }),
+  ).toHaveCSS("background-color", "rgb(99, 198, 242)");
+  await page.getByRole("tab", { name: "Emoji", exact: true }).click();
+  await search.fill("");
+  await page.screenshot({
+    path: test.info().outputPath("profile-avatar-picker.png"),
+  });
 });

@@ -334,7 +334,7 @@ impl EnterpriseAuthHost {
             .map_err(|_| "Could not start the enterprise login callback")?
             .port();
         let nonce = random_secret()?;
-        let callback_url = format!("http://127.0.0.1:{port}/callback/{nonce}");
+        let callback_url = format!("http://127.0.0.1:{port}/callback/{}", nonce.as_str());
         let (sender, callback) = oneshot::channel();
         let state = Arc::new(CallbackState {
             nonce,
@@ -449,7 +449,7 @@ impl EnterpriseAuthHost {
                 current.service == scope.service
                     && current.account == scope.account
                     && current.adapter == scope.adapter
-                    && token.is_none_or(|token| session.token.as_str() == token.as_str())
+                    && token.map_or(true, |token| session.token.as_str() == token.as_str())
             }) {
                 *stored = None;
             }
@@ -516,7 +516,7 @@ pub(crate) async fn cancel_enterprise_auth_login(
 }
 
 struct CallbackState {
-    nonce: String,
+    nonce: Zeroizing<String>,
     sender: Mutex<Option<oneshot::Sender<Result<String>>>>,
 }
 
@@ -539,7 +539,7 @@ async fn login_callback(
     Query(query): Query<HashMap<String, String>>,
     AxumState(state): AxumState<Arc<CallbackState>>,
 ) -> Response {
-    if nonce != state.nonce {
+    if nonce != state.nonce.as_str() {
         return (StatusCode::NOT_FOUND, "Not found").into_response();
     }
     let result = match query.get("code").filter(|code| {
@@ -602,27 +602,8 @@ fn scope_for_adapter(adapter: &str, viewer: &str) -> Result<Scope> {
 fn adapter_base_url() -> Result<String> {
     let raw = option_env!("BUZZ_BUILD_ENTERPRISE_AUTH_ADAPTER_BASE_URL")
         .ok_or("This Buzz build has no enterprise authentication adapter")?;
-    validate_adapter_base_url(raw)
-}
-
-fn validate_adapter_base_url(raw: &str) -> Result<String> {
-    let url = Url::parse(raw).map_err(|_| "Enterprise authentication adapter is invalid")?;
-    let loopback = url
-        .host_str()
-        .is_some_and(|host| host.eq_ignore_ascii_case("localhost"))
-        || matches!(url.host(), Some(url::Host::Ipv4(address)) if address.is_loopback())
-        || matches!(url.host(), Some(url::Host::Ipv6(address)) if address.is_loopback());
-    let loopback_http = url.scheme() == "http" && loopback;
-    if url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || !(url.scheme() == "https" || loopback_http)
-    {
-        return Err("Enterprise authentication adapter is invalid".into());
-    }
-    Ok(raw.trim_end_matches('/').to_owned())
+    crate::enterprise_relay_url::validate_enterprise_adapter_url(raw)
+        .map_err(|_| "Enterprise authentication adapter is invalid".into())
 }
 
 fn api_url(base: &str, path: &str) -> Result<Url> {
@@ -1056,17 +1037,26 @@ mod tests {
 
     #[test]
     fn adapter_url_requires_https_except_for_loopback_development() {
-        assert!(validate_adapter_base_url("https://adapter.example").is_ok());
+        assert!(
+            crate::enterprise_relay_url::validate_enterprise_adapter_url("https://adapter.example")
+                .is_ok()
+        );
         for value in [
             "http://adapter.example",
             "ws://127.0.0.1",
             "https://user:password@adapter.example",
             "https://adapter.example?tenant=one",
         ] {
-            assert!(validate_adapter_base_url(value).is_err(), "{value}");
+            assert!(
+                crate::enterprise_relay_url::validate_enterprise_adapter_url(value).is_err(),
+                "{value}"
+            );
         }
         for value in ["http://localhost:4318/", "http://127.0.0.1:4318"] {
-            assert!(validate_adapter_base_url(value).is_ok(), "{value}");
+            assert!(
+                crate::enterprise_relay_url::validate_enterprise_adapter_url(value).is_ok(),
+                "{value}"
+            );
         }
     }
 
@@ -1074,7 +1064,7 @@ mod tests {
     fn handoff_challenge_is_sha256_base64url() {
         assert_eq!(
             handoff_challenge("secret"),
-            "K7gNU3sdo-OL0wNhqoVWhr8B7JY9L1M8Q6YfKc8e7JQ"
+            "K7gNU3sdo-OL0wNhqoVWhr3g6s1xYv72ol_pe_Unols"
         );
     }
 
@@ -1112,7 +1102,7 @@ mod tests {
     fn callback_rejects_wrong_nonce_without_consuming_code() {
         let (sender, _receiver) = oneshot::channel();
         let state = Arc::new(CallbackState {
-            nonce: "right".into(),
+            nonce: Zeroizing::new("right".into()),
             sender: Mutex::new(Some(sender)),
         });
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1135,7 +1125,7 @@ mod tests {
     fn callback_reports_a_bounded_adapter_error_without_exposing_secrets() {
         let (sender, receiver) = oneshot::channel();
         let state = Arc::new(CallbackState {
-            nonce: "right".into(),
+            nonce: Zeroizing::new("right".into()),
             sender: Mutex::new(Some(sender)),
         });
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1199,6 +1189,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn storage_errors_preserve_saved_session_without_adopting_it() {
+        let scope = scope_for_adapter(
+            "https://adapter.example",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        let session = StoredSession {
+            token: Zeroizing::new("fixture-session".into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        };
+        let store = Arc::new(FixtureStore::default());
+        let raw = encode_session(&session).unwrap();
+        store.replace(scope.service, &scope.account, &raw).unwrap();
+        let host = EnterpriseAuthHost::with_store(store.clone());
+
+        for (error, message) in [
+            (
+                StoreError::Denied,
+                "Enterprise secure storage access was denied; unlock it and retry",
+            ),
+            (
+                StoreError::Corrupt,
+                "Saved enterprise authentication is corrupt",
+            ),
+            (
+                StoreError::Unavailable,
+                "Enterprise secure storage is unavailable; retry without changing credentials",
+            ),
+            (
+                StoreError::Busy,
+                "Another Buzz process is using enterprise secure storage; retry shortly",
+            ),
+        ] {
+            *store.error.lock().unwrap() = Some(error);
+            assert!(matches!(
+                host.get_scope(scope.clone()).await,
+                Err(error) if error == message
+            ));
+            assert!(host.cached(&scope).is_none());
+
+            *store.error.lock().unwrap() = None;
+            assert_eq!(
+                store
+                    .read(scope.service, &scope.account)
+                    .unwrap()
+                    .as_slice(),
+                raw.as_slice()
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn local_adapter_restores_a_session_on_a_fresh_host() {
         let expiry = "2030-01-01T00:00:00Z";
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1212,7 +1254,9 @@ mod tests {
                 )
             }),
         );
-        let server = tokio::spawn(axum::serve(listener, app));
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
         let scope = scope_for_adapter(
             &base,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -1254,7 +1298,9 @@ mod tests {
                 async { (StatusCode::OK, Json(serde_json::json!({}))) }
             }),
         );
-        let server = tokio::spawn(axum::serve(listener, app));
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
         let scope = scope_for_adapter(
             &base,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -1305,7 +1351,9 @@ mod tests {
                 }
             }),
         );
-        let server = tokio::spawn(axum::serve(listener, app));
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
         let scope = scope_for_adapter(
             &base,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -1360,7 +1408,9 @@ mod tests {
                 )
             }),
         );
-        let server = tokio::spawn(axum::serve(listener, app));
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
         let scope = scope_for_adapter(
             &base,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -1404,7 +1454,9 @@ mod tests {
                 async move { (status, "retry") }
             }),
         );
-        let server = tokio::spawn(axum::serve(listener, app));
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
         let scope = scope_for_adapter(
             &base,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -1445,7 +1497,7 @@ mod tests {
         let app = Router::new()
             .route(
                 "/v1/login/exchange",
-                post(|| async {
+                post(move || async move {
                     Json(serde_json::json!({
                         "session_token": "fixture-session",
                         "expires_at": expiry,
@@ -1461,7 +1513,9 @@ mod tests {
                     )
                 }),
             );
-        let server = tokio::spawn(axum::serve(listener, app));
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
         let (session, info) = exchange(&base, "fixture-code", "fixture-secret")
             .await
             .unwrap();
@@ -1491,7 +1545,9 @@ mod tests {
                 }
             }),
         );
-        let target_server = tokio::spawn(axum::serve(target_listener, target));
+        let target_server = tokio::spawn(async move {
+            let _ = axum::serve(target_listener, target).await;
+        });
 
         let redirect_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let redirect_url = format!("http://{}", redirect_listener.local_addr().unwrap());
@@ -1507,7 +1563,9 @@ mod tests {
                 }
             }),
         );
-        let redirect_server = tokio::spawn(axum::serve(redirect_listener, redirect));
+        let redirect_server = tokio::spawn(async move {
+            let _ = axum::serve(redirect_listener, redirect).await;
+        });
         let result = check_session(
             &redirect_url,
             &StoredSession {

@@ -1,3 +1,11 @@
+import { eventDto, type RelayEvent } from "../relay/events.ts";
+
+export const ACTIVITY_HISTORY_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+export type ActivityHistoryDecoder = (
+  events: readonly RelayEvent[],
+  signal: AbortSignal,
+) => Promise<readonly ObserverFrame[]>;
+
 /** Host-projected telemetry. Never a signed RelayEvent or a general decrypt API. */
 export const OBSERVER_KIND = 24200;
 export const OBSERVER_PLAINTEXT_BYTES = 65535;
@@ -6,6 +14,8 @@ export type ObserverFrame = Readonly<{
   agent: string;
   createdAt: number;
   plaintext: string;
+  /** Original owner-encrypted wire envelope; plaintext is never persisted. */
+  envelope?: RelayEvent;
 }>;
 export function observerFrame(value: unknown): ObserverFrame {
   const frame = value as ObserverFrame | null;
@@ -25,11 +35,22 @@ export function observerFrame(value: unknown): ObserverFrame {
     throw new Error("Invalid observer frame");
   // Validate JSON here; unknown fields and event kinds remain inert raw evidence.
   JSON.parse(frame.plaintext);
+  const envelope =
+    frame.envelope === undefined ? undefined : eventDto(frame.envelope);
+  if (
+    envelope &&
+    (envelope.kind !== OBSERVER_KIND ||
+      envelope.id !== frame.id ||
+      envelope.pubkey !== frame.agent ||
+      envelope.created_at !== frame.createdAt)
+  )
+    throw new Error("Observer envelope mismatch");
   return Object.freeze({
     id: frame.id,
     agent: frame.agent,
     createdAt: frame.createdAt,
     plaintext: frame.plaintext,
+    ...(envelope ? { envelope } : {}),
   });
 }
 export function observerGeneration(value: unknown): number | null {

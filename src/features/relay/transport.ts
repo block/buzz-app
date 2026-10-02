@@ -1,3 +1,4 @@
+import { observerFrame, type ActivityHistoryDecoder } from "../agents/observer";
 import {
   memoryResponseText,
   type MemoryReader,
@@ -91,6 +92,7 @@ export interface ReadTransport {
   readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
+  readonly decodeActivityHistory?: ActivityHistoryDecoder;
   /** Explicit relay-advertised session command support. */
   /** Host-projected local library; display only, never relay authority. */
   readonly readAgentLibrary?: AgentLibraryReader;
@@ -488,6 +490,27 @@ export async function connectBrokerTransport(
         }
       : {}),
     agentActivity: session.agentActivity === true && session.live === true,
+    ...(session.agentActivity === true && session.live === true
+      ? {
+          async decodeActivityHistory(
+            events: readonly RelayEvent[],
+            signal: AbortSignal,
+          ) {
+            const response = await fetch(`${endpoint}/agent-history-decode`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ viewer: session.viewer, events }),
+              signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+            });
+            if (!response.ok) throw new Error("Activity history unavailable");
+            const value: unknown = await response.json();
+            if (!Array.isArray(value) || value.length > events.length)
+              throw new Error("Invalid activity history");
+            return value.map(observerFrame);
+          },
+        }
+      : {}),
     ...(session.live
       ? {
           subscribe: (callbacks: LiveCallbacks) => {

@@ -87,6 +87,8 @@ export function ActivityDetails({
   );
   const agent = selected || agents[0] || "";
   const [expanded, expand] = useState<string[]>([]);
+  const [clearError, setClearError] = useState("");
+  const [clearing, setClearing] = useState(false);
   const agentRecords = snapshot.records.filter((row) => row.agent === agent);
   const records = useMemo(
     () => activityRecords(snapshot.records, agent, channelId),
@@ -127,14 +129,14 @@ export function ActivityDetails({
     >
       <h2 className="text-heading">Agent activity</h2>
       <p className="text-body-sm text-secondary">
-        Live, owner-only telemetry received while this plugin is enabled. This
-        is not a complete ACP recording; publication must be enabled on the
-        agent.
+        Owner-only activity captured on this device while the plugin is enabled.
+        Saved records are history, not current working status. This is not a
+        complete ACP recording; the agent must publish telemetry.
       </p>
       {snapshot.status === "unavailable" ? (
         <p>
-          This host cannot decode agent activity. Live activity currently
-          requires the development broker.
+          This host cannot decode agent activity. Use the desktop app or
+          development broker.
         </p>
       ) : (
         <>
@@ -147,10 +149,42 @@ export function ActivityDetails({
               Retry live feed
             </Button>
           )}
+          <p role="status">
+            {snapshot.history === "loading"
+              ? "Loading local history…"
+              : snapshot.history === "error"
+                ? "Local history is unavailable or could not be saved. Live activity may still appear."
+                : snapshot.history === "unavailable"
+                  ? "Local history is unavailable on this host."
+                  : "Local history loaded."}
+          </p>
+          <Button
+            size="compact"
+            disabled={clearing}
+            onClick={async () => {
+              setClearing(true);
+              setClearError("");
+              try {
+                await activity.clearHistory();
+              } catch {
+                setClearError("Could not clear local history. Try again.");
+              } finally {
+                setClearing(false);
+              }
+            }}
+          >
+            Clear this community’s activity history
+          </Button>
+          <p className="text-body-sm text-secondary">
+            Clears all agents’ saved activity for this account in this
+            community. New activity can still be captured.
+          </p>
+          {clearError && <p role="alert">{clearError}</p>}
           {!agents.length && !selected ? (
             <p>
-              Waiting for live records. Select an agent after its first frame
-              arrives; there is no history backfill.
+              No captured activity yet. New activity appears when an agent
+              publishes telemetry while this plugin is enabled. There is no
+              relay backfill.
             </p>
           ) : (
             <>
@@ -220,9 +254,10 @@ export function ActivityDetails({
               </p>
               {!records.length && (
                 <p>
-                  Waiting for live records for this identity
+                  No captured records for this identity
                   {channelId ? " in this channel" : ""}. Only owner-visible
-                  agent telemetry appears; there is no history backfill.
+                  agent telemetry appears. Activity published while capture was
+                  off cannot be recovered.
                 </p>
               )}
               <Accordion
@@ -230,7 +265,7 @@ export function ActivityDetails({
                 onValueChange={expand}
                 items={records.map((row) => ({
                   value: row.id,
-                  title: `${row.kind} · ${new Date(row.receivedAt).toLocaleTimeString()}`,
+                  title: `${row.kind} · ${new Date(row.receivedAt).toLocaleString()}`,
                   content: (
                     <div className="min-w-0">
                       <p className="break-all text-body-sm text-secondary">
@@ -252,8 +287,9 @@ export function ActivityDetails({
             </p>
           )}
           <p className="text-body-sm text-secondary">
-            RAM only: up to 200 envelopes / 2 MiB and 512 turn states. Cleared
-            on disable, cache/access reset, or session replacement.
+            Local history: up to seven days, 200 encrypted envelopes / 2 MiB per
+            account and community. Older entries are discarded. Disabling the
+            plugin stops capture but keeps saved history.
           </p>
         </>
       )}

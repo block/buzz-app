@@ -1,7 +1,13 @@
 import type { EventData } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
 import type { LiveSnapshot } from "../relay/live";
-import { observerFrame, type ObserverFrame } from "./observer";
+import {
+  ACTIVITY_HISTORY_AGE_MS,
+  observerFrame,
+  type ObserverFrame,
+  type ActivityHistoryDecoder,
+} from "./observer";
+import type { ActivityHistory } from "./activity-history";
 
 export const ACTIVITY_RECORD_LIMIT = 200;
 export const ACTIVITY_BYTE_LIMIT = 2 * 1024 * 1024;
@@ -43,6 +49,7 @@ type Snapshot = Readonly<{
   turns: readonly ActivityTurn[];
   typing: readonly Typing[];
   trimmed: number;
+  history: "unavailable" | "loading" | "ready" | "error";
 }>;
 type Turn = Omit<ActivityTurn, "state"> & { ended: boolean; epoch: number };
 const object = (value: unknown): Record<string, unknown> | undefined =>
@@ -60,17 +67,30 @@ const starts = new Set([
 ]);
 const ends = new Set(["turn_completed", "turn_error", "agent_panic"]);
 
-/** Session-owned RAM only. Plugin activation owns demand, not sockets or keys. */
+/** Session-owned live evidence and bounded local history. Plugin activation owns demand, not sockets or keys. */
 export function createAgentActivity(
   available: boolean,
   observe: (generation: number | null) => void,
   canAccess: (channel: string) => boolean,
   notify = (listener: () => void) => listener(),
+  history?: {
+    storage: ActivityHistory;
+    decode: ActivityHistoryDecoder | undefined;
+    canRestore: (channel: string) => boolean;
+  },
 ) {
   let closed = false,
     leases = 0,
     generation = 0,
     epoch = 0;
+  let historyStatus: Snapshot["history"] = history?.decode
+    ? "loading"
+    : "unavailable";
+  let historyGeneration = 0;
+  let historyAbort = new AbortController();
+  let loaded = false;
+  let restoreAgain = false;
+  const liveAgents = new Set<string>();
   let status: Snapshot["status"] = available ? "disabled" : "unavailable";
   let records: RawRecord[] = [],
     bytes = 0,
@@ -88,10 +108,26 @@ export function createAgentActivity(
     turns: [],
     typing: [],
     trimmed,
+    history: historyStatus,
   });
   function publish() {
     const now = Date.now();
-    const known = new Set(records.map((record) => record.agent));
+    const fresh = records.filter(
+      (record) => now - record.receivedAt < ACTIVITY_HISTORY_AGE_MS,
+    );
+    if (fresh.length !== records.length) {
+      trimmed += records.length - fresh.length;
+      records = fresh;
+      bytes = records.reduce(
+        (total, record) =>
+          total + new TextEncoder().encode(record.plaintext).length,
+        0,
+      );
+    }
+    const retained = new Set(records.map((record) => record.agent));
+    for (const agent of liveAgents)
+      if (!retained.has(agent)) liveAgents.delete(agent);
+    const known = liveAgents;
     for (const [key, entry] of typing)
       if (now >= entry.expiresAt || !known.has(entry.agent)) typing.delete(key);
     const typers = [...typing.values()].filter((entry) => entry.working);
@@ -134,6 +170,7 @@ export function createAgentActivity(
       snapshot.status === status &&
       snapshot.records === records &&
       snapshot.trimmed === trimmed &&
+      snapshot.history === historyStatus &&
       JSON.stringify(snapshot.turns) === JSON.stringify(visible) &&
       JSON.stringify(snapshot.typing) === JSON.stringify(typers)
     )
@@ -144,6 +181,7 @@ export function createAgentActivity(
       turns: Object.freeze(visible),
       typing: Object.freeze(typers),
       trimmed,
+      history: historyStatus,
     });
     for (const listener of listeners) notify(listener);
     if (workingChanged)
@@ -156,13 +194,20 @@ export function createAgentActivity(
     evidenceFloor = 0;
     turns.clear();
     typing.clear();
+    liveAgents.clear();
     epoch++;
   }
   function restart() {
+    historyGeneration++;
+    historyAbort.abort();
+    historyAbort = new AbortController();
+    loaded = false;
+    restoreAgain = false;
     generation++;
     reset();
     if (available && !closed && leases) {
       status = "connecting";
+      void restore();
       observe(generation);
     } else status = closed || !available ? "unavailable" : "disabled";
     publish();
@@ -212,9 +257,166 @@ export function createAgentActivity(
       }
     }
   }
+  function channelsAllowed(
+    raw: unknown,
+    allowed: (channel: string) => boolean,
+  ) {
+    const envelope = object(raw);
+    const children =
+      envelope?.kind === "batch" ? object(envelope.payload)?.events : undefined;
+    return ![raw, ...(Array.isArray(children) ? children : [])].some(
+      (value) => {
+        const channel = object(value)?.channelId;
+        return text(channel) && !allowed(channel);
+      },
+    );
+  }
+  function admit(
+    input: ObserverFrame,
+    receivedAt: number,
+    historical: boolean,
+  ) {
+    let frame: ObserverFrame, raw: unknown;
+    try {
+      frame = observerFrame(input);
+      raw = JSON.parse(frame.plaintext);
+    } catch {
+      return;
+    }
+    if (records.some((record) => record.id === frame.id)) return;
+    const envelope = object(raw);
+    const children =
+      envelope?.kind === "batch" ? object(envelope.payload)?.events : undefined;
+    const items = Array.isArray(children) ? children : [raw];
+    // A denied child cannot leak through an otherwise visible raw batch.
+    if (
+      !channelsAllowed(
+        raw,
+        historical && history ? history.canRestore : canAccess,
+      )
+    )
+      return;
+    if (!historical) {
+      liveAgents.add(frame.agent);
+      for (const item of items) fold(frame.agent, item);
+    }
+    const record = Object.freeze({
+      id: frame.id,
+      agent: frame.agent,
+      createdAt: frame.createdAt,
+      plaintext: frame.plaintext,
+      receivedAt,
+      kind: text(envelope?.kind) ? envelope.kind : "unknown",
+      channelIds: Object.freeze([
+        ...new Set(
+          [raw, ...items].flatMap((value) => {
+            const channelId = object(value)?.channelId;
+            return text(channelId) ? [channelId] : [];
+          }),
+        ),
+      ]),
+    });
+    records = [...records, record].sort((a, b) => a.receivedAt - b.receivedAt);
+    bytes += new TextEncoder().encode(frame.plaintext).length;
+    while (
+      records.length > ACTIVITY_RECORD_LIMIT ||
+      bytes > ACTIVITY_BYTE_LIMIT
+    ) {
+      const first = records.shift();
+      if (first) bytes -= new TextEncoder().encode(first.plaintext).length;
+      trimmed++;
+    }
+    if (!historical && history && frame.envelope) {
+      const token = historyGeneration;
+      void history.storage
+        .append({ event: frame.envelope, receivedAt })
+        .catch(() => {
+          if (closed || token !== historyGeneration) return;
+          historyStatus = "error";
+          publish();
+        });
+    }
+    publish();
+  }
+
+  async function restore() {
+    if (!history?.decode || closed || !leases || loaded) return;
+    loaded = true;
+    const token = historyGeneration;
+    const signal = historyAbort.signal;
+    historyStatus = "loading";
+    publish();
+    try {
+      const saved = await history.storage.load();
+      if (closed || token !== historyGeneration) return;
+      const visible = new Set(records.map((row) => row.id));
+      const pending = saved.filter((row) => !visible.has(row.event.id));
+      const frames = pending.length
+        ? await history.decode(
+            pending.map((row) => row.event),
+            signal,
+          )
+        : [];
+      if (closed || token !== historyGeneration) return;
+      for (const frame of frames) {
+        if (closed || token !== historyGeneration) return;
+        const row = saved.find(
+          (row) =>
+            row.event.id === frame.id && row.event.pubkey === frame.agent,
+        );
+        if (row && Date.now() - row.receivedAt < ACTIVITY_HISTORY_AGE_MS)
+          admit(frame, row.receivedAt, true);
+      }
+      if (closed || token !== historyGeneration) return;
+      historyStatus = "ready";
+    } catch {
+      if (closed || token !== historyGeneration) return;
+      historyStatus = "error";
+    }
+    publish();
+    if (
+      restoreAgain &&
+      token === historyGeneration &&
+      historyStatus === "ready"
+    ) {
+      restoreAgain = false;
+      loaded = false;
+      void restore();
+    }
+  }
+  function clearHistory() {
+    historyGeneration++;
+    historyAbort.abort();
+    historyAbort = new AbortController();
+    generation++;
+    reset();
+    loaded = true;
+    const token = historyGeneration;
+    const clearing = history?.storage.clear() ?? Promise.resolve();
+    if (available && !closed && leases) {
+      status = "connecting";
+      observe(generation);
+    }
+    historyStatus = history?.decode ? "loading" : "unavailable";
+    publish();
+    return clearing.then(
+      () => {
+        if (closed || token !== historyGeneration) return;
+        historyStatus = history?.decode ? "ready" : "unavailable";
+        publish();
+      },
+      () => {
+        if (closed || token !== historyGeneration) return;
+        historyStatus = "error";
+        publish();
+        throw new Error("Could not clear local activity history");
+      },
+    );
+  }
   return {
     queries: Object.freeze({
       snapshot: () => snapshot,
+      clearHistory,
       workingSnapshot: () => workingChannels,
       subscribeWorking(listener: () => void) {
         if (closed) return () => {};
@@ -248,58 +450,12 @@ export function createAgentActivity(
     }),
     receive(input: ObserverFrame, current: number) {
       if (closed || !available || !leases || current !== generation) return;
-      let frame: ObserverFrame, raw: unknown;
-      try {
-        frame = observerFrame(input);
-        raw = JSON.parse(frame.plaintext);
-      } catch {
-        return;
-      }
-      if (records.some((record) => record.id === frame.id)) return;
-      const envelope = object(raw);
-      const children =
-        envelope?.kind === "batch"
-          ? object(envelope.payload)?.events
-          : undefined;
-      const items = Array.isArray(children) ? children : [raw];
-      // A denied child cannot leak through an otherwise visible raw batch.
-      if (
-        [raw, ...items].some((value) => {
-          const item = object(value);
-          return text(item?.channelId) && !canAccess(item.channelId);
-        })
-      )
-        return;
-      for (const item of items) fold(frame.agent, item);
-      const record = Object.freeze({
-        ...frame,
-        receivedAt: Date.now(),
-        kind: text(envelope?.kind) ? envelope.kind : "unknown",
-        channelIds: Object.freeze([
-          ...new Set(
-            [raw, ...items].flatMap((value) => {
-              const channelId = object(value)?.channelId;
-              return text(channelId) ? [channelId] : [];
-            }),
-          ),
-        ]),
-      });
-      records = [...records, record];
-      bytes += new TextEncoder().encode(frame.plaintext).length;
-      while (
-        records.length > ACTIVITY_RECORD_LIMIT ||
-        bytes > ACTIVITY_BYTE_LIMIT
-      ) {
-        const first = records.shift();
-        if (first) bytes -= new TextEncoder().encode(first.plaintext).length;
-        trimmed++;
-      }
-      publish();
+      admit(input, Date.now(), false);
     },
     /** Public typing is scope/freshness evidence only, never ownership evidence. */
     channelEvents(events: readonly EventData[]) {
       if (closed || !leases || status !== "listening") return;
-      const known = new Set(records.map((record) => record.agent));
+      const known = liveAgents;
       const now = Date.now();
       for (const event of events) {
         if (![9, 20002].includes(event.kind) || !known.has(event.pubkey))
@@ -376,7 +532,19 @@ export function createAgentActivity(
       status = next;
       publish();
     },
-    clear: restart,
+    restoreHistory() {
+      // Channel discovery can establish additional positive access after activation.
+      if (historyStatus === "loading") {
+        restoreAgain = true;
+        return;
+      }
+      loaded = false;
+      void restore();
+    },
+    accessChanged() {
+      restart();
+    },
+    clear: clearHistory,
     dispose() {
       if (closed) return;
       closed = true;
@@ -384,6 +552,7 @@ export function createAgentActivity(
       observe(null);
       clearInterval(timer);
       restart();
+      history?.storage.close();
       listeners.clear();
       workingListeners.clear();
     },

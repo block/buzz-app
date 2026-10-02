@@ -350,8 +350,8 @@ queries; key fragments distinguish identities without profiles.
 Thread indicators consume the existing kind-20002 typing signal with the resolved
 NIP-10 root, not inferred observer turn IDs. The existing per-channel live route
 carries it; typing bypasses ordinary history, unread and persistent caches.
-Only identities already present in retained owner-visible observer records are
-recognized. Typing before that first frame, or without telemetry publication,
+Only identities observed on the current live owner-visible feed are
+recognized; restored history never establishes typing ownership. Typing before that first frame, or without telemetry publication,
 is deliberately omitted; public typing alone does not establish ownership.
 
 Typing expires eight seconds after its signed timestamp (future clock skew is
@@ -367,8 +367,7 @@ remain explicitly channel-wide.
 
 The display-only source is `session.typing`, not the plugin's typing evidence:
 typing by one of the viewer's own agents (the local library) anywhere in the
-channel, threads included. App-managed agents run without observer telemetry, so
-typing is their working signal. Other people's agents, known only from a
+channel, threads included. Typing remains a working signal when observer telemetry is explicitly disabled. Other people's agents, known only from a
 self-declared profile hint, are not shown. This store keeps working with the plugin off, rejects
 future timestamps instead of capping them, schedules its own expiry eight
 seconds after the signed timestamp and stays quiet for two seconds after the
@@ -409,12 +408,37 @@ freshness and size validation before host-only NIP-44 decryption. The browser
 receives a purpose-bound DTO, not keys or a general decrypt API. The relay's
 admission establishes agent ownership; a name, local library entry, or successful
 decryption alone does not. Observer records never enter ordinary history,
-message/unread reconciliation, or disk caches.
+message/unread reconciliation, or ordinary channel caches.
 
-Retention is session-owned RAM: at most 200 envelopes / 2 MiB plaintext and 512
-turn states, with visible trimming. Disable, cache/access reset and session
-replacement clear it; generation fences reject prior in-flight deliveries. A raw
-batch with a recognized denied channel is discarded as a whole.
+Retention in RAM is at most 200 envelopes / 2 MiB plaintext and 512 turn states,
+with visible trimming. Disable, cache/access reset and session replacement clear
+live evidence. A batch with a recognized denied channel is hidden as a whole.
+
+Local history retains the original signed, owner-encrypted kind-24200 envelopes
+in IndexedDB, partitioned by community endpoint and viewer public key. It never
+stores plaintext, decoded channel metadata, turn state, or private keys. The
+journal is capped at 200 envelopes / 2 MiB of serialized ciphertext records and
+seven days, checked on read/write. Inactive partitions are pruned the next time
+they are accessed, not by an operating-system background task. Signed envelope
+metadata (agent/recipient keys and event timestamps) remains visible on disk.
+
+Reopening/reloading restores retained records through the existing native or
+development key-owning host. Historical decode verifies signatures, exact tags,
+recipient and bounded age independently of the live decoder's five-minute
+freshness window. Restored records are display-only: they never fold into working
+turns or recognize typing agents. Channel-scoped records require positively known
+local channel access before rendering, including every recognized batch child.
+Access changes synchronously clear/fence decoded records, then re-evaluate them.
+They do **not** erase ciphertext: unknown/capped/suspended membership can recover.
+Agent removal and sign-out likewise do not erase encrypted history; another
+account cannot open that partition. Disable stops capture but preserves history.
+
+**Clear this community’s activity history** removes all agents' retained records
+for the current viewer/community, fences pending hydration and advances a durable
+write revision. Cache clear also removes this partition. New telemetry can be
+captured afterward. Storage/decoding errors are visible in the panel and do not
+stop live telemetry. No old-app import, relay backfill, export or transcript
+redesign is included.
 
 Working is fresh per-turn evidence, not process status. Batch children fold
 individually; `session_resolved` is activity, while `turn_completed`, `turn_error`
@@ -429,18 +453,23 @@ Use the [README's public-pin/Keychain setup](../README.md#relay-channels) and ru
 `bin/just web` (or `bin/just desktop`). Open the printed Local URL, choose
 the agent's community and open a channel. Keep the existing Buzz runner
 active, with telemetry publication enabled on the agent, then give it work. This
-app does not start agents or turn publishing on. No records may mean publishing
+activity plugin does not start agents. App-managed agents now default to publishing
+on their next normal start; explicit `BUZZ_ACP_RELAY_OBSERVER=false` overrides for
+Pi/Goose remain honored. Existing running processes are not restarted by this change. No records may mean publishing
 is off, no new traffic, or an interrupted feed—not that an agent is idle.
 
 For a contextual view, click the identity's avatar/mention in the channel, then
 **View activity**. It preselects that exact key and channel; **Channel → All channels**
 broadens the view. Alternatively, select an active agent above the channel or thread composer.
 Expand raw entries, close/reopen the panel, and toggle
-**Your profile → Settings → Plugins → Agent Activity** off/on. Re-enable starts
-empty. The feed is live-only, best-effort telemetry: the producer coalesces/batches
+**Your profile → Settings → Plugins → Agent Activity** off/on. Re-enable restores
+local history with no working evidence until fresh traffic arrives. Reload the app,
+open the agent profile's **View activity**, and verify saved entries remain. Use
+**Clear this community’s activity history** to remove them, then reload again.
+The feed is best-effort telemetry: the producer coalesces/batches
 and may elide oversized content. It is not a complete ACP transcript or archive.
 The development broker and packaged native identity host support this slice;
-native decoding remains purpose-bound to the shared live stream. No runtime controller,
+native decoding remains purpose-bound to telemetry. No runtime controller,
 recording export or old transcript renderer is included.
 
 ### Evidence and remaining acceptance

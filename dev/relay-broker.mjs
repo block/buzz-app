@@ -1439,6 +1439,35 @@ export function relayBrokerPlugin({
                 sidebarMutations.delete(relay);
             }
           }
+          if (
+            route === "/api/relay/agent-history-decode" &&
+            req.method === "POST"
+          ) {
+            let raw = "";
+            for await (const part of req) {
+              raw += part;
+              if (Buffer.byteLength(raw) > 2 * 1024 * 1024 + 1024)
+                return json(res, 413, { error: "Activity history too large" });
+            }
+            const body = JSON.parse(raw);
+            if (
+              body.viewer !== viewer ||
+              !Array.isArray(body.events) ||
+              body.events.length > 200
+            )
+              return json(res, 400, { error: "Invalid activity history" });
+            return json(
+              res,
+              200,
+              body.events.flatMap((event) => {
+                try {
+                  return [decodeAgentObserver(event, key, viewer, true)];
+                } catch {
+                  return [];
+                }
+              }),
+            );
+          }
           if (route === "/api/relay/agent-library" && req.method === "GET") {
             try {
               // Share concurrent reads, never retain the local snapshot after completion.

@@ -54,6 +54,7 @@ test("purpose-bound host decoder preserves raw JSON and never returns keys", () 
     agent: sender,
     createdAt: event.created_at,
     plaintext: raw,
+    envelope: event,
   });
 });
 test("rejects signature, recipient, sender, direction, cardinality, freshness, content and captured-viewer violations", () => {
@@ -79,4 +80,24 @@ test("rejects signature, recipient, sender, direction, cardinality, freshness, c
   const cached = frame();
   cached.content = frame({}, "{}").content;
   expect(() => decodeAgentObserver(cached, owner, viewer)).toThrow();
+});
+
+test("history decode accepts retained age without weakening live freshness or owner checks", () => {
+  const old = frame({ created_at: now - 3600 });
+  expect(() => decodeAgentObserver(old, owner, viewer)).toThrow();
+  expect(decodeAgentObserver(old, owner, viewer, true).plaintext).toBe(raw);
+  for (const event of [
+    frame({ created_at: now - 7 * 86400 - 1 }),
+    frame({ created_at: now + 301 }),
+    frame({ kind: 9 }),
+    frame({
+      tags: [
+        ["p", getPublicKey(stranger)],
+        ["agent", sender],
+        ["frame", "telemetry"],
+      ],
+    }),
+    { ...old, content: frame({}, "{}").content },
+  ])
+    expect(() => decodeAgentObserver(event, owner, viewer, true)).toThrow();
 });

@@ -88,7 +88,7 @@ test("mention picker demands the relay's protected archive snapshot", async ({
 
 // The composer entry is the only channel launcher. Profile activity remains the
 // durable fallback after fresh working evidence disappears (covered below).
-test("channel activity consumes telemetry, isolates mixed batches, selects agents, and resets on disable", async ({
+test("channel activity consumes telemetry, isolates mixed batches, selects agents, and retains history on disable", async ({
   page,
   app,
 }) => {
@@ -304,8 +304,8 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await agentEntry(page, first).click();
   await expect(
     panel.getByRole("button", { name: /turn_liveness/ }),
-  ).toHaveCount(1);
-  await expect(panel.getByRole("button", { name: /acp_read/ })).toHaveCount(0);
+  ).toHaveCount(2);
+  await expect(panel.getByRole("button", { name: /acp_read/ })).toHaveCount(1);
 
   // Stale evidence is unknown, not completed; one terminal turn must not hide
   // another active turn for the same agent. Capture survives closing the panel.
@@ -558,9 +558,7 @@ it("profile activity opens the exact agent and originating channel before its fi
     panel.getByRole("combobox", { name: "Channel", exact: true }),
   ).toHaveText(`Alpha · ${profileChannelId}`);
   await expect(
-    panel.getByText(
-      /Waiting for live records for this identity in this channel/,
-    ),
+    panel.getByText(/No captured records for this identity in this channel/),
   ).toBeVisible();
   const item = (kind, channelId, turnId) => ({
     kind,
@@ -914,4 +912,99 @@ test.describe("thread activity", () => {
     await expect(marker).toHaveCount(0, { timeout: 10_000 });
     await expect(channelActivity(page)).toHaveCount(0);
   });
+});
+
+// Browser-only: real IndexedDB durability across a document reload, through the
+// production broker/host decoder and actual plugin. Lower layers test race matrices.
+test("encrypted local history survives reload without working evidence and can be cleared", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
+  const key = generateSecretKey();
+  const agent = getPublicKey(key);
+  app.serveProfile(key, { name: "History agent", is_agent: true });
+  const record = app.observer(
+    activity("turn_liveness", "alpha", "saved", {
+      text: "secret-history-marker",
+    }),
+    key,
+  );
+  await agentEntry(page, agent).click();
+  const panel = activityPanel(page);
+  await expect(
+    panel.getByText("Local history loaded.", { exact: true }),
+  ).toBeVisible();
+  const disk = () =>
+    page.evaluate(async () => {
+      const db = await new Promise((resolve, reject) => {
+        const request = indexedDB.open("buzz-agent-activity-v1");
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      try {
+        return await new Promise((resolve, reject) => {
+          const request = db
+            .transaction("partitions")
+            .objectStore("partitions")
+            .getAll();
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      } finally {
+        db.close();
+      }
+    });
+  await expect
+    .poll(async () => JSON.stringify(await disk()))
+    .toContain(record.event.id);
+  expect(JSON.stringify(await disk())).not.toContain("secret-history-marker");
+  await open(page, app); // new document and session, same device/account/community
+  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
+  // Open through a profile: restored history must not create a working launcher.
+  const message = finalizeEvent(
+    {
+      kind: 9,
+      tags: [["h", "alpha"]],
+      content: "History profile entry",
+      created_at: Math.floor(Date.now() / 1000),
+    },
+    key,
+  );
+  app.relay.publish("primary", message);
+  await page
+    .locator(`[data-message-id="${message.id}"]`)
+    .getByRole("button", { name: /profile/ })
+    .click();
+  await page
+    .getByRole("button", { name: "View activity", exact: true })
+    .click();
+  await expect(
+    panel.getByText("Local history loaded.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    panel.getByText("No fresh working evidence.", { exact: true }),
+  ).toBeVisible();
+  await expect(agentEntry(page, agent)).toHaveCount(0);
+  await panel.getByRole("button", { name: /turn_liveness/ }).click();
+  await expect(panel.locator("pre code")).toContainText(
+    "secret-history-marker",
+  );
+  await panel
+    .getByRole("button", { name: "Clear this community’s activity history" })
+    .click();
+  await expect(
+    panel.getByText("Local history loaded.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    panel.getByRole("button", { name: /turn_liveness/ }),
+  ).toHaveCount(0);
+  await expect
+    .poll(
+      async () =>
+        (await disk()).flatMap((partition) => partition.records).length,
+    )
+    .toBe(0);
+  await page.screenshot({ path: "test-results/activity-history-cleared.png" });
 });

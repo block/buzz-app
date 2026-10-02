@@ -437,6 +437,18 @@ export async function connectNativeTransport(
     },
 
     agentActivity: true,
+    async decodeActivityHistory(events, signal) {
+      signal.throwIfAborted();
+      const value = await invoke<unknown>("relay_agent_history_decode", {
+        community: origin,
+        viewer: transport.viewer,
+        events,
+      });
+      signal.throwIfAborted();
+      if (!Array.isArray(value) || value.length > events.length)
+        throw new Error("Invalid activity history");
+      return value.map(observerFrame);
+    },
     subscribe(callbacks) {
       let active = true;
       let observerGeneration: number | null = null;

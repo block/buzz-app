@@ -194,7 +194,44 @@ pub(crate) async fn relay_agent_observer(
     host.with_key(move |secret, viewer| decode_observer_with_key(secret, viewer, &event))
         .await
 }
+#[tauri::command]
+pub(crate) async fn relay_agent_history_decode(
+    host: tauri::State<'_, IdentityHost>,
+    community: String,
+    viewer: String,
+    events: Vec<AgentEvent>,
+) -> Result<Value> {
+    origin(&community)?;
+    if events.len() > 200
+        || serde_json::to_vec(&events)
+            .map_err(|_| "Invalid history")?
+            .len()
+            > 2 * 1024 * 1024
+    {
+        return Err("Activity history too large".into());
+    }
+    host.with_key(move |secret, current| {
+        if current != viewer {
+            return Err("Activity viewer changed".into());
+        }
+        Ok(Value::Array(
+            events
+                .iter()
+                .filter_map(|event| decode_observer(secret, current, event, true).ok())
+                .collect(),
+        ))
+    })
+    .await
+}
 fn decode_observer_with_key(secret: &[u8; 32], viewer: &str, event: &AgentEvent) -> Result<Value> {
+    decode_observer(secret, viewer, event, false)
+}
+fn decode_observer(
+    secret: &[u8; 32],
+    viewer: &str,
+    event: &AgentEvent,
+    history: bool,
+) -> Result<Value> {
     verified(event)?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -204,8 +241,10 @@ fn decode_observer_with_key(secret: &[u8; 32], viewer: &str, event: &AgentEvent)
         || !exact(event, "p", viewer)
         || !exact(event, "agent", &event.pubkey)
         || !exact(event, "frame", "telemetry")
-        || now.abs_diff(event.created_at) > 300
+        || event.created_at > now + 300
+        || now.saturating_sub(event.created_at) > if history { 7 * 24 * 60 * 60 } else { 300 }
         || event.content.len() < 132
+        || event.content.len() > 87472
     {
         return Err("Invalid observer envelope".into());
     }
@@ -215,7 +254,7 @@ fn decode_observer_with_key(secret: &[u8; 32], viewer: &str, event: &AgentEvent)
     }
     serde_json::from_str::<Value>(&text).map_err(|_| "Invalid observer frame")?;
     Ok(
-        json!({"id": event.id, "agent": event.pubkey, "createdAt": event.created_at, "plaintext": text}),
+        json!({"id": event.id, "agent": event.pubkey, "createdAt": event.created_at, "plaintext": text, "envelope": event}),
     )
 }
 
@@ -908,9 +947,22 @@ mod tests {
             decode_observer_with_key(&viewer_secret, &viewer, &observer).unwrap()["agent"],
             agent
         );
+        let mut historical = observer.clone();
+        historical.created_at -= 3600;
+        resign(&mut historical, &agent_secret);
+        assert!(decode_observer_with_key(&viewer_secret, &viewer, &historical).is_err());
+        assert_eq!(
+            decode_observer(&viewer_secret, &viewer, &historical, true).unwrap()["plaintext"],
+            r#"{"type":"status","message":"active"}"#
+        );
+        assert!(decode_observer(&viewer_secret, &agent, &historical, true).is_err());
+        historical.created_at -= 7 * 24 * 60 * 60;
+        resign(&mut historical, &agent_secret);
+        assert!(decode_observer(&viewer_secret, &viewer, &historical, true).is_err());
         observer.tags.push(vec!["p".into(), viewer.clone()]);
         resign(&mut observer, &agent_secret);
         assert!(decode_observer_with_key(&viewer_secret, &viewer, &observer).is_err());
+        assert!(decode_observer(&viewer_secret, &viewer, &observer, true).is_err());
     }
 
     #[test]

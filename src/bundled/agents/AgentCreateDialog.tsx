@@ -303,7 +303,11 @@ export function AgentCreateDialog({
                 ]}
                 onValueChange={(key) => {
                   const type = types.find((type) => type.key === key);
-                  const { plugin: _, ...harness } = draft;
+                  // Values typed for one runtime must not be saved on another.
+                  const { plugin: _, ...harness } = {
+                    ...draft,
+                    environment: {},
+                  };
                   setDraft(
                     type
                       ? {

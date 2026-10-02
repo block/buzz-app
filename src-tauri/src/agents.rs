@@ -1409,6 +1409,20 @@ pub(crate) async fn agent_identity_publish(
     Ok(signed)
 }
 
+/// Hands one saved secret of an enabled plugin agent to the WebView, where its
+/// type's function runs. See `plugin_secret` for the native-only upgrade.
+#[tauri::command]
+pub(crate) async fn agent_identity_secret(
+    state: tauri::State<'_, AgentHost>,
+    id: String,
+    name: String,
+) -> Result<String, String> {
+    run(state.inner().clone(), move |host| {
+        host.controller.plugin_secret(&id, &name)
+    })
+    .await
+}
+
 mod profile_http;
 
 #[cfg(test)]

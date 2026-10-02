@@ -230,6 +230,8 @@ export interface AgentControlHost {
     id: string,
     event: AgentEventTemplate,
   ): Promise<PublishedAgentEvent>;
+  /** One saved value of an enabled plugin agent, by the name its type declared. */
+  secret?(id: string, name: string): Promise<string>;
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): Promise<ControlSnapshot>;
   save(
@@ -290,6 +292,9 @@ export interface AgentControl {
   publishProfile?(id: string): Promise<ControlSnapshot>;
   /** Enabled plugin agents only. Independent of the control snapshot and its busy state. */
   publishAs?: AgentControlHost["publishAs"];
+  /** Enabled plugin agents only. The agent-types service checks the name against
+   * the agent's type before asking. */
+  secret?: AgentControlHost["secret"];
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): AgentControlState;
   subscribe(listener: () => void): () => void;
@@ -359,6 +364,7 @@ export const agentControlUnavailable =
   "Local agent controls require the desktop app. This browser cannot run or manage agent processes.";
 
 type PublishAs = NonNullable<AgentControlHost["publishAs"]>;
+type Secret = NonNullable<AgentControlHost["secret"]>;
 /** Own once at app composition. Disposing this projection never stops native agents. */
 export function createAgentControl(
   host: AgentControlHost | null,
@@ -633,6 +639,21 @@ export function createAgentControl(
                 typeof problem === "string"
                   ? problem
                   : "The agent could not publish.",
+              );
+            }
+          },
+        }
+      : {}),
+    ...(host?.secret
+      ? {
+          secret: async (id: string, name: string) => {
+            try {
+              return await (host.secret as Secret)(id, name);
+            } catch (problem) {
+              throw new Error(
+                typeof problem === "string"
+                  ? problem
+                  : "The agent's secret could not be read.",
               );
             }
           },

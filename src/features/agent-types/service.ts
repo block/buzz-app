@@ -19,6 +19,13 @@ import type { RelayEvent } from "../relay/events";
 import type { LiveBatch } from "../relay/incoming";
 import { matchesEvent } from "../relay/projection";
 import type { RelayData } from "../relay/service";
+import { threadReference } from "../relay/thread-reference";
+import {
+  createLiveRuns,
+  noLive,
+  type AgentRunLive,
+  type LiveRuns,
+} from "./live";
 
 /** One NIP-01 filter. JSON data only, so any host can evaluate it: this app today,
  * a relay for a remote workload later. What a filter cannot say belongs in `run`. */
@@ -42,6 +49,18 @@ export type AgentIdentity = Readonly<{
   /** Signs a message (9), edit (40003), reaction (7) or deletion (5) as the agent and posts it to
    * the agent's community. Rejects once the agent is stopped, edited or deleted. */
   publish(event: AgentEventTemplate): Promise<PublishedAgentEvent>;
+  /** Reads one of the secrets the agent's type declares. Rejects for any other name,
+   * when the owner has saved no value, and once the agent is stopped or deleted. */
+  secret(name: string): Promise<string>;
+}>;
+/** A value the owner types once and the app never shows again, such as an API key.
+ * It is kept out of `config`, so no form, snapshot or other plugin can read it. */
+export type AgentSecret = Readonly<{
+  /** Letters, digits and underscores, not starting with a digit. */
+  name: string;
+  label: string;
+  /** An agent can be created and run without it. */
+  optional?: boolean;
 }>;
 /** What `run` receives. A match means "delivered", not "must respond". */
 export type AgentDelivery<Config> = Readonly<{
@@ -50,6 +69,9 @@ export type AgentDelivery<Config> = Readonly<{
   channelId?: string;
   agent: AgentIdentity;
   config: Config;
+  /** Shows this run's steps and streamed text in the owner's window while it runs.
+   * Nothing sent here reaches the relay; publish what other people should see. */
+  live: AgentRunLive;
   /** Aborts on timeout, when the agent is stopped, edited or deleted, when its plugin
    * is disabled or replaced, and when the owner's connection is replaced. */
   signal: AbortSignal;
@@ -80,6 +102,11 @@ export type AgentType<Config = unknown> = {
   run(delivery: AgentDelivery<Config>): void | Promise<void>;
   /** Per-run deadline in milliseconds; defaults to 30 seconds. */
   timeoutMs?: number;
+  /** How many runs one agent may have in progress at once, from 1 to 16. Defaults
+   * to 1, so each agent handles its events in order. */
+  concurrency?: number;
+  /** Write-only values the host asks for under `Configure`. */
+  secrets?: readonly AgentSecret[];
 };
 export type RegisteredAgentType = Contribution<AgentType>;
 /** One agent's runs in this window since the app opened. */
@@ -99,6 +126,9 @@ export type AgentTypes = {
   /** Keyed by agent id; replaced on every change. */
   activity(): Readonly<Record<string, AgentActivity>>;
   subscribe(listener: () => void): () => void;
+  /** Runs in progress in this window. Notifies apart from `subscribe`, because
+   * streamed text changes it many times a second. */
+  runs: LiveRuns;
 };
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -112,6 +142,9 @@ const SEEN_LIMIT = 512;
  * such as two agents that answer each other. */
 const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;
+const CONCURRENCY_LIMIT = 16;
+/** The names native accepts for a saved value. */
+const SECRET_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const strings = (value: unknown) =>
   Array.isArray(value) && value.every((item) => typeof item === "string");
 
@@ -161,7 +194,7 @@ type Instance = {
   controller: AbortController;
   queue: Job[];
   seen: Set<string>;
-  running: boolean;
+  running: number;
   windowStart: number;
   admitted: number;
 };
@@ -175,6 +208,11 @@ export class AgentTypesService extends Service implements AgentTypes {
   private readonly listeners = new Set<() => void>();
   private counters: Readonly<Record<string, AgentActivity>> = Object.freeze({});
   private binding: Binding | undefined;
+  private readonly liveRuns = createLiveRuns();
+  readonly runs: LiveRuns = {
+    snapshot: this.liveRuns.snapshot,
+    subscribe: this.liveRuns.subscribe,
+  };
 
   constructor(
     ctx: Context,
@@ -221,6 +259,31 @@ export class AgentTypesService extends Service implements AgentTypes {
     )
       throw new Error(
         "Agent types need an id, a title, Configure, subscription and run",
+      );
+    const { concurrency, secrets = [] } = type;
+    if (
+      concurrency !== undefined &&
+      !(
+        Number.isInteger(concurrency) &&
+        concurrency >= 1 &&
+        concurrency <= CONCURRENCY_LIMIT
+      )
+    )
+      throw new Error(
+        `Agent type concurrency must be a whole number from 1 to ${CONCURRENCY_LIMIT}`,
+      );
+    if (
+      !Array.isArray(secrets) ||
+      secrets.some(
+        (secret) =>
+          !SECRET_NAME.test(secret?.name ?? "") ||
+          typeof secret.label !== "string" ||
+          !secret.label.trim(),
+      ) ||
+      new Set(secrets.map((secret) => secret.name)).size !== secrets.length
+    )
+      throw new Error(
+        "Agent type secrets need a unique name of letters, digits and underscores, and a label",
       );
     this.contributions.register(this.ctx, type as unknown as AgentType);
   }
@@ -365,6 +428,17 @@ export class AgentTypesService extends Service implements AgentTypes {
           tags: event.tags ?? [],
         });
       },
+      secret: async (name: string) => {
+        if (controller.signal.aborted || binding.signal.aborted)
+          throw new Error("This agent is no longer listening");
+        if (!type.secrets?.some((secret) => secret.name === name))
+          throw new Error(`This agent type declares no secret named ${name}`);
+        if (!this.control.secret)
+          throw new Error(
+            "Agent secrets are available only in the desktop app",
+          );
+        return this.control.secret(agent.id, name);
+      },
     });
     try {
       const message = type.validate?.(agent.plugin?.config);
@@ -380,7 +454,7 @@ export class AgentTypesService extends Service implements AgentTypes {
         controller,
         queue: [],
         seen,
-        running: false,
+        running: 0,
         windowStart: 0,
         admitted: 0,
       };
@@ -423,23 +497,25 @@ export class AgentTypesService extends Service implements AgentTypes {
           event,
           ...(batch.channelId ? { channelId: batch.channelId } : {}),
         });
-        void this.drain(instance);
+        this.drain(instance);
       }
     }
   }
 
-  // One run at a time per agent; different agents never wait on each other.
-  private async drain(instance: Instance) {
-    if (instance.running) return;
-    instance.running = true;
-    try {
-      while (instance.queue.length) {
-        const job = instance.queue.shift() as Job;
-        if (instance.controller.signal.aborted) return;
-        await this.execute(instance, job);
-      }
-    } finally {
-      instance.running = false;
+  // Each agent runs up to its type's `concurrency` at once, in arrival order;
+  // different agents never wait on each other.
+  private drain(instance: Instance) {
+    while (
+      instance.running < (instance.type.concurrency ?? 1) &&
+      instance.queue.length &&
+      !instance.controller.signal.aborted
+    ) {
+      const job = instance.queue.shift() as Job;
+      instance.running++;
+      void this.execute(instance, job).finally(() => {
+        instance.running--;
+        this.drain(instance);
+      });
     }
   }
 
@@ -454,6 +530,19 @@ export class AgentTypesService extends Service implements AgentTypes {
       fired: now.fired + 1,
       lastFiredAt: Date.now(),
     }));
+    // The view sits where a reply to the event lands: in its thread, or the one a
+    // reply would start. It lasts exactly as long as the run.
+    const view = job.channelId
+      ? this.liveRuns.open({
+          agent: Object.freeze({
+            id,
+            pubkey: instance.agent.pubkey,
+            name: instance.agent.name,
+          }),
+          channelId: job.channelId,
+          threadRootId: threadReference(job.event)?.rootId ?? job.event.id,
+        })
+      : undefined;
     try {
       // Race the deadline so a function that ignores `signal` cannot stall its queue.
       await Promise.race([
@@ -464,6 +553,7 @@ export class AgentTypesService extends Service implements AgentTypes {
               ...(job.channelId ? { channelId: job.channelId } : {}),
               agent: instance.identity,
               config: instance.agent.plugin?.config,
+              live: view?.live ?? noLive,
               signal,
             }),
           ),
@@ -483,6 +573,8 @@ export class AgentTypesService extends Service implements AgentTypes {
         errors: now.errors + 1,
         lastError: message(error),
       }));
+    } finally {
+      view?.close();
     }
   }
 }

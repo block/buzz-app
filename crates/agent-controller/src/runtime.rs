@@ -955,6 +955,30 @@ impl Controller {
             auth,
         })
     }
+    /// One saved secret of an enabled plugin agent, for its type's function.
+    ///
+    /// This is the smaller of two designs: the value crosses IPC into the WebView for
+    /// the length of a run, and is stored like a harness agent's environment, readable
+    /// in `agents.json`. The upgrade is for the value never to leave native: a type
+    /// would name the secret and the request header it belongs in, and `host.fetch`
+    /// would add that header to the outgoing request, checked against the plugin's
+    /// allowed origins. This method and its command would then be removed.
+    pub fn plugin_secret(&self, id: &str, name: &str) -> Result<String> {
+        let agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|a| a.id == id)
+            .ok_or("Agent no longer exists")?;
+        if agent.plugin.is_none() || !agent.enabled {
+            return Err("Agent is not a running plugin agent".into());
+        }
+        agent
+            .environment
+            .get(name)
+            .cloned()
+            .ok_or_else(|| "This agent has no saved value for that secret".into())
+    }
     fn start(&mut self, id: &str) -> Result<()> {
         self.start_with_key(id, None, None, None)
     }

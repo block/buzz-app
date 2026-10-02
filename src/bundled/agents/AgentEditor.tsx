@@ -131,7 +131,11 @@ export function AgentEditor({
               }
               let edit: ReturnType<typeof agentEdit>;
               try {
-                const invalid = agentTypeError(current, types);
+                const invalid = agentTypeError(
+                  current,
+                  types,
+                  agent.harness.environmentKeys,
+                );
                 if (invalid) throw new Error(invalid);
                 edit = agentEdit(current);
               } catch (problem) {

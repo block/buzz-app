@@ -62,8 +62,16 @@ export type {
   AgentDelivery,
   AgentConfigProps,
   AgentActivity,
+  AgentSecret,
   RegisteredAgentType,
 } from "../features/agent-types/service";
+export type {
+  AgentRunLive,
+  LiveStep,
+  StepKind,
+  StepResult,
+  RunEvent,
+} from "../features/agent-types/live";
 export type {
   AgentEventTemplate,
   PublishedAgentEvent,

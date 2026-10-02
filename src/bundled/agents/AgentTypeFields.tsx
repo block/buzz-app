@@ -8,6 +8,7 @@ import type { AgentView } from "../../features/agents/control";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import type { AgentDraft } from "./agent-edit";
+import { SecretField } from "./ProviderApiKeyField";
 
 const noTypes: readonly RegisteredAgentType[] = Object.freeze([]);
 const noActivity: Readonly<Record<string, AgentActivity>> = Object.freeze({});
@@ -33,12 +34,31 @@ export function useAgentActivity(
 export function agentTypeError(
   draft: AgentDraft,
   types: readonly RegisteredAgentType[],
+  /** Names of the values already saved on the agent; none in Create agent. */
+  savedSecrets: readonly string[] = [],
 ): string | undefined {
   if (!draft.plugin) return undefined;
   const type = types.find((type) => type.key === draft.plugin?.type);
   if (!type)
     return "This agent's type is unavailable. Enable its plugin, then try again.";
+  const missing = type.secrets?.find(({ name, optional }) => {
+    const typed = draft.environment[name];
+    return (
+      !optional && !typed && (typed === null || !savedSecrets.includes(name))
+    );
+  });
+  if (missing) return `Enter ${missing.label}.`;
   return type.validate?.(draft.plugin.config) || undefined;
+}
+
+/** An emptied field sends nothing, so a saved value stays as it is. */
+function withSecret(
+  environment: AgentDraft["environment"],
+  name: string,
+  value: string,
+) {
+  const { [name]: _, ...rest } = environment;
+  return value ? { ...rest, [name]: value } : rest;
 }
 
 /** A plugin agent's whole form: the host asks for a name, the type for the rest. */
@@ -53,7 +73,7 @@ export function AgentTypeFields({
   types: readonly RegisteredAgentType[];
   disabled: boolean;
   /** The saved agent on its own screen; absent in Create agent. */
-  agent?: Pick<AgentView, "id" | "pubkey" | "name"> | undefined;
+  agent?: Pick<AgentView, "id" | "pubkey" | "name" | "harness"> | undefined;
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   const plugin = draft.plugin;
@@ -78,6 +98,26 @@ export function AgentTypeFields({
               onChange({ plugin: { type: plugin.type, config } })
             }
           />
+          {type.secrets?.map((secret) => (
+            <SecretField
+              key={secret.name}
+              label={secret.label}
+              noun="value"
+              value={draft.environment[secret.name]}
+              saved={!!agent?.harness.environmentKeys.includes(secret.name)}
+              disabled={disabled}
+              emptyPlaceholder={secret.optional ? "Optional" : ""}
+              onChange={(value) =>
+                onChange({
+                  environment: withSecret(
+                    draft.environment,
+                    secret.name,
+                    value,
+                  ),
+                })
+              }
+            />
+          ))}
         </fieldset>
       ) : (
         <p role="status" className="text-body-sm text-secondary">

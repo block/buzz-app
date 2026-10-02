@@ -13,7 +13,7 @@ import userEvent from "@testing-library/user-event";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 import type { ChannelList } from "../../features/relay/contracts";
-import type { RelayData } from "../../features/relay/service";
+import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import {
   createRelaySession,
   type RelaySession,
@@ -86,15 +86,19 @@ function setup(known: boolean, failInventory = false) {
       },
     },
   };
-  const snapshot = {
+  let snapshot: RelaySnapshot = {
     status: "ready" as const,
     generation: 1,
     scope: `${fixture.agent.relayUrl}:${"de".repeat(32)}`,
     session,
   };
+  const relayListeners = new Set<() => void>();
   const relay: RelayData = {
     snapshot: () => snapshot,
-    subscribe: () => () => {},
+    subscribe: (listener) => {
+      relayListeners.add(listener);
+      return () => relayListeners.delete(listener);
+    },
     retry() {},
     disconnect() {},
     clearCache: async () => {},
@@ -146,6 +150,12 @@ function setup(known: boolean, failInventory = false) {
       });
       return resume;
     },
+    replaceConnection: (account: boolean) => {
+      snapshot = account
+        ? { ...snapshot, scope: `${fixture.agent.relayUrl}:${"aa".repeat(32)}` }
+        : { ...snapshot, session: { ...session } };
+      for (const listener of relayListeners) listener();
+    },
     revoke: () => {
       channel.members = [];
     },
@@ -153,6 +163,33 @@ function setup(known: boolean, failInventory = false) {
       failInventory = false;
     },
   };
+}
+
+for (const account of [false, true]) {
+  it(`retires the active review when the ${account ? "account scope" : "session"} changes`, async () => {
+    const f = setup(true);
+    f.send();
+    await act(async () => f.release());
+    const editor = await screen.findByRole("dialog", { name: "Edit agent" });
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Agent instructions" }),
+      "Private owner edit",
+    );
+    await act(async () => f.replaceConnection(account));
+    expect(editor).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
+    expect(f.fixture.calls.filter(({ action }) => action === "save")).toEqual(
+      [],
+    );
+    f.send();
+    const freshEditor = await screen.findByRole("dialog", {
+      name: "Edit agent",
+    });
+    expect(freshEditor).not.toBe(editor);
+    expect(
+      screen.getByRole("textbox", { name: "Agent instructions" }),
+    ).toHaveValue(f.fixture.agent.systemPrompt);
+  });
 }
 
 it("preserves owner edits while blocking writes during membership revalidation", async () => {

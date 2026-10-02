@@ -1,7 +1,8 @@
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { Button } from "../../shared/design-system/ui/Button";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import type { RelayData } from "../../features/relay/service";
+import type { RelayData, RelaySnapshot } from "../../features/relay/service";
+import { messageViewKey } from "../../features/messages/view-key";
 import { agentDraft, harnessKind, type AgentDraft } from "./agent-edit";
 import { AgentEditor } from "./AgentEditor";
 import type {
@@ -31,6 +32,22 @@ export function AgentUpdateReview({
     relay.snapshot,
     relay.snapshot,
   );
+  return (
+    <SessionAgentUpdateReview
+      key={messageViewKey(connection.session, connection.scope)}
+      connection={connection}
+      control={control}
+    />
+  );
+}
+
+function SessionAgentUpdateReview({
+  connection,
+  control,
+}: {
+  connection: RelaySnapshot;
+  control: AgentControl;
+}) {
   const controlState = useSyncExternalStore(
     control.subscribe,
     control.snapshot,

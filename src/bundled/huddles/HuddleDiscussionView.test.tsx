@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
-import { afterEach, beforeAll, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, expect, it, vi, assert } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
+stubAvatarBrowserApis();
+import { invoke } from "@tauri-apps/api/core";
+vi.mock("@tauri-apps/api/core", async (original) => ({
+  ...(await original<typeof import("@tauri-apps/api/core")>()),
+  invoke: vi.fn(async () => {}),
+}));
 import { HuddleDiscussionView } from "./HuddleDiscussionView";
 import type { HuddleDiscussion } from "../../features/huddle/discussion";
 
@@ -21,6 +28,9 @@ function discussion(delivery: "failed" | "unknown"): HuddleDiscussion {
     rows: [
       {
         id: "message",
+        authorId: "ab".repeat(32),
+        channelId: "room",
+        attachments: [],
         author: "Alex",
         picture: null,
         text: "Hello",
@@ -130,4 +140,52 @@ it("keeps a surviving focus target across load retry success and failure", () =>
   value = { ...value, error: undefined, status: "ready", writable: true };
   rerender(view());
   expect(document.activeElement).toBe(log);
+});
+
+it("renders Markdown and downloads the resolved attachment, without falling back when media is unavailable", () => {
+  const value = discussion("failed");
+  const url = `https://relay.example/media/${"a".repeat(64)}`;
+  const source = `http://buzz-media.localhost/${encodeURIComponent(url)}`;
+  const row = value.rows[0];
+  assert(row);
+  value.rows[0] = {
+    ...row,
+    delivery: "seen",
+    text: "**Notes**",
+    attachments: [
+      {
+        url,
+        source,
+        previewSource: null,
+        kind: "file",
+        name: "notes.txt",
+        mime: "text/plain",
+        size: 23,
+      },
+    ],
+  };
+  const view = () => (
+    <HuddleDiscussionView
+      discussion={value}
+      composer={null}
+      older={() => {}}
+      retry={() => {}}
+      recover={() => {}}
+    />
+  );
+  const { rerender } = render(view());
+  expect(screen.getByText("Notes").tagName).toBe("STRONG");
+  fireEvent.click(screen.getByRole("button", { name: "Download notes.txt" }));
+  expect(invoke).toHaveBeenCalledWith("media_download", {
+    source,
+    name: "notes.txt",
+  });
+  const attachment = value.rows[0].attachments[0];
+  assert(attachment);
+  attachment.source = null;
+  rerender(view());
+  expect(
+    screen.queryByRole("button", { name: "Download notes.txt" }),
+  ).toBeNull();
+  expect(screen.getByText("File unavailable")).toBeTruthy();
 });

@@ -1,5 +1,6 @@
 import { huddleRoom } from "./lifecycle";
 import type { RelaySession } from "../relay/session";
+import type { Attachment } from "../relay/contracts";
 import type { Delivery } from "../relay/outbox";
 import { formatPublicKey } from "../../shared/identity/public-key";
 
@@ -16,6 +17,12 @@ export type HuddleDiscussion = {
   rows: {
     id: string;
     author: string;
+    authorId: string;
+    channelId: string;
+    attachments: (Attachment & {
+      source: string | null;
+      previewSource: string | null;
+    })[];
     picture: string | null;
     text: string;
     time: number;
@@ -142,6 +149,15 @@ export function createHuddleDiscussion(
             const profile = profiles.get(r.authorId);
             return {
               id: r.id,
+              authorId: r.authorId,
+              channelId: room,
+              attachments: r.attachments.map((attachment) => ({
+                ...attachment,
+                source: session.media(attachment.url) ?? null,
+                previewSource: attachment.previewUrl
+                  ? (session.media(attachment.previewUrl) ?? null)
+                  : null,
+              })),
               author: (
                 profile?.name ||
                 formatPublicKey(r.authorId) ||

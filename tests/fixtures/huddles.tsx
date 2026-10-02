@@ -1,7 +1,11 @@
 import type { AudioSettingsState } from "../../src/features/huddle/audio-settings";
 import { createHuddleRing, HUDDLE_RING } from "../../src/features/huddle/ring";
 // Local presentation/capture fixture. No identity, relay connection, or remote write.
-import type { UploadedAttachment } from "../../src/features/relay/attachments";
+import {
+  attachmentMessage,
+  type UploadedAttachment,
+} from "../../src/features/relay/attachments";
+import { foldMessages } from "../../src/features/relay/fold";
 import { createRoot } from "react-dom/client";
 import { useState, useSyncExternalStore } from "react";
 import { MessageBody } from "../../src/features/conversation/MessageBody";
@@ -210,12 +214,13 @@ const session = {
       signal.throwIfAborted();
       const text = await file.text();
       stats.uploads.push({ name: file.name, text });
+      const sha256 = stats.uploads.length.toString(16).padStart(64, "0");
       return {
         name: file.name,
-        url: "https://fixture.example/attachment",
+        url: `https://fixture.example/media/${sha256}${file.type.startsWith("image/") ? ".png" : ""}`,
         type: file.type,
         size: file.size,
-        sha256: "a".repeat(64),
+        sha256,
       };
     },
   },
@@ -231,27 +236,37 @@ const session = {
         throw new Error("Fixture rejected this message. Your draft is kept.");
       stats.sent.push({ text, mentions, attachments });
       const messageId = String(discussionRows.length + 1).padStart(64, "0");
+      const message = attachmentMessage(
+        text,
+        attachments,
+        "https://fixture.example",
+      );
       discussionRows = [
         ...discussionRows,
-        {
-          id: messageId,
-          channelId: id,
-          authorId: viewer,
-          createdAt: Math.floor(Date.now() / 1000),
-          content: text,
-          mentions: [],
-          attachments: [],
-          reactions: [],
-          replyCount: 0,
-          participants: [],
-        },
+        ...foldMessages(id, "", [
+          {
+            id: messageId,
+            pubkey: viewer,
+            created_at: Math.floor(Date.now() / 1000),
+            kind: 9,
+            content: message.content,
+            tags: [
+              ["h", id],
+              ...message.tags,
+              ...mentions.map((key) => ["p", key]),
+            ],
+          },
+        ]),
       ];
       for (const listener of discussionListeners) listener();
       return messageId;
     },
   },
   read: async () => (legacyRoom ? [lifecycleEvent(48101, startedAt)] : []),
-  media: (url: string) => url,
+  media: (url: string) =>
+    url.startsWith("https://fixture.example/media/") && url.endsWith(".png")
+      ? "/tests/fixtures/design-system/assets/avatar.png"
+      : url,
 };
 const snapshot = {
   status: "ready" as const,

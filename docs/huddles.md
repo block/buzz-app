@@ -149,6 +149,12 @@ but closing the panel releases its local files. An admitted message clears its p
 draft in the main app even if the companion closes before acknowledgment. The transcript tab is a placeholder: local speech
 generation is deferred and no transcription is recorded by this version.
 
+Both discussion surfaces use the shared message renderer for Markdown and attachments.
+The main owner supplies resolved media sources through the native presentation DTO;
+images open in the shared image stage without bypassing authenticated media. Native
+companion downloads are limited to source/name pairs in its current connected Huddle
+presentation, and use the existing bounded download command and safe file destination.
+
 Start/end events appear as cards in the parent conversation. Active cards show
 elapsed time beside the same avatar stack as the compact player, and one action:
 Join (or Open for your current call) while active, then View after ending. View

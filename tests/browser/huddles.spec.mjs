@@ -1,6 +1,7 @@
 import { test, expect, chromium } from "@playwright/test";
 import { createServer } from "./vite-server.mjs";
 import { fileURLToPath } from "node:url";
+import { readFile } from "node:fs/promises";
 
 let server, origin;
 test.beforeAll(async () => {
@@ -1017,6 +1018,59 @@ test("detached regular composer keeps failed drafts, uploads real file bytes and
       { name: "renamed.txt", text: "Huddle attachment bytes" },
     ],
   );
+  await editor.fill("**Shared image**");
+  await companion.getByLabel("Choose attachments").setInputFiles({
+    name: "photo.png",
+    mimeType: "image/png",
+    buffer: await readFile(
+      new URL("../fixtures/design-system/assets/avatar.png", import.meta.url),
+    ),
+  });
+  await expect(
+    companion.getByRole("status").filter({ hasText: /· Ready$/ }),
+  ).toHaveCount(1);
+  await editor.press("Enter");
+  const expectAttachments = async (surface) => {
+    await expect(
+      surface.getByRole("link", { name: "Open notes.txt", exact: true }),
+    ).toHaveAttribute("href", /https:\/\/fixture.example\/media\//);
+    await expect(
+      surface.getByRole("link", { name: "Open renamed.txt", exact: true }),
+    ).toBeVisible();
+    await expect(
+      surface.locator("strong", { hasText: "Shared image" }),
+    ).toBeVisible();
+    const image = surface.getByRole("link", {
+      name: "Open image attachment",
+      exact: true,
+    });
+    await expect(image).toBeVisible();
+    await expect
+      .poll(() =>
+        image
+          .locator("img")
+          .evaluate((img) => img.complete && img.naturalWidth > 0),
+      )
+      .toBe(true);
+    await image.focus();
+    await image.press("Enter");
+    const preview = page.getByRole("dialog", {
+      name: "photo.png",
+      exact: true,
+    });
+    await expect(preview).toBeVisible();
+    await expect
+      .poll(() =>
+        preview
+          .locator("img[data-review-media]")
+          .evaluate((img) => img.complete && img.naturalWidth > 0),
+      )
+      .toBe(true);
+    await preview.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(preview).toHaveCount(0);
+    await expect(image).toBeFocused();
+  };
+  await expectAttachments(companion);
   await companion
     .getByRole("button", { name: "Mention a member", exact: true })
     .click();
@@ -1037,6 +1091,17 @@ test("detached regular composer keeps failed drafts, uploads real file bytes and
   await expect(
     page.getByRole("dialog", { name: "Emoji picker" }),
   ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await companion
+    .getByRole("button", { name: "Leave huddle", exact: true })
+    .click();
+  await page
+    .getByRole("region", { name: "Huddle ended", exact: true })
+    .getByRole("button", { name: "View", exact: true })
+    .click();
+  await expectAttachments(
+    page.getByRole("complementary", { name: "Saved Huddle conversation" }),
+  );
 });
 
 test("drawer resize before its view update keeps avatars stationary and unchanged window sizes remain toggleable", async ({

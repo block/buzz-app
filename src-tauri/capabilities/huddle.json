@@ -3,5 +3,9 @@
   "identifier": "huddle-window",
   "description": "Presentation-only Huddle controls; no identity, microphone or relay authority.",
   "webviews": ["huddle"],
-  "permissions": ["allow-huddle-window-watch", "allow-huddle-window-action"]
+  "permissions": [
+    "allow-huddle-window-watch",
+    "allow-huddle-window-action",
+    "allow-media-download"
+  ]
 }

@@ -1082,11 +1082,22 @@ fn save_download(
 #[tauri::command]
 pub(crate) async fn media_download<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
+    webview: tauri::Webview<R>,
     host: tauri::State<'_, IdentityHost>,
     source: String,
     name: String,
 ) -> Result<()> {
     use tauri::Manager as _;
+    let allowed = match webview.label() {
+        "main" => true,
+        "huddle" => app
+            .try_state::<crate::huddle_window::HuddleWindow>()
+            .is_some_and(|host| host.permits_download(&source, &name)),
+        _ => false,
+    };
+    if !allowed {
+        return Err("This attachment is no longer available in this window".into());
+    }
     let url = download_target(&source).ok_or("Invalid media URL")?;
     let filename = download_name(&name, &url).to_owned();
     let directory = app

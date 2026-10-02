@@ -1,4 +1,6 @@
 import { expect, it, vi, assert } from "vitest";
+import { foldMessages } from "../relay/fold";
+import { attachmentMessage } from "../relay/attachments";
 import { createRelaySession } from "../relay/session";
 import { createHuddleDiscussion } from "./discussion";
 import type { ReadOptions } from "../relay/reader";
@@ -45,6 +47,8 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
     ...owner.session,
     viewer,
     relayAuthor: authority.pubkey,
+    media: (url: string) =>
+      `http://buzz-media.localhost/${encodeURIComponent(url)}`,
     read,
     messages: { ...owner.session.messages, send },
     outbox: {
@@ -331,3 +335,63 @@ it.each(["failed", "unknown"] as const)(
     }
   },
 );
+
+it("preserves sent attachment metadata and resolved media in the window presentation", async () => {
+  const h = harness();
+  try {
+    await vi.waitFor(() => expect(h.discussion.snapshot().writable).toBe(true));
+    const files = [
+      {
+        name: "notes.txt",
+        type: "text/plain",
+        size: 23,
+        sha256: "a".repeat(64),
+        url: `https://fixture.example/media/${"a".repeat(64)}`,
+      },
+      {
+        name: "photo.png",
+        type: "image/png",
+        size: 100,
+        sha256: "b".repeat(64),
+        url: `https://fixture.example/media/${"b".repeat(64)}.png`,
+      },
+    ];
+    const sent = attachmentMessage(
+      "**Meeting notes**",
+      files,
+      "https://fixture.example",
+    );
+    const rows = foldMessages("room", h.authority.pubkey, [
+      {
+        id: "message",
+        pubkey: "ab".repeat(32),
+        kind: 9,
+        created_at: 1,
+        content: sent.content,
+        tags: [["h", "room"], ...sent.tags],
+      },
+    ]);
+    h.rows(rows);
+    const row = h.discussion.snapshot().rows[0];
+    const folded = rows[0];
+    assert(row && folded);
+    expect(row).toMatchObject({
+      authorId: "ab".repeat(32),
+      channelId: "room",
+      text: "**Meeting notes**",
+    });
+    expect(row.attachments).toEqual(
+      folded.attachments.map((attachment) => ({
+        ...attachment,
+        source: `http://buzz-media.localhost/${encodeURIComponent(attachment.url)}`,
+        previewSource: null,
+      })),
+    );
+    expect(row.attachments.map((attachment) => attachment.kind)).toEqual([
+      "file",
+      "image",
+    ]);
+  } finally {
+    h.dispose();
+  }
+});

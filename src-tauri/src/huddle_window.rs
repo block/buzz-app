@@ -56,14 +56,56 @@ struct Discussion {
     rows: Vec<DiscussionRow>,
 }
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DiscussionRow {
     id: String,
+    author_id: String,
+    channel_id: String,
+    attachments: Vec<DiscussionAttachment>,
     author: String,
     picture: Option<String>,
     text: String,
     time: u64,
     delivery: String,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DiscussionAttachment {
+    url: String,
+    kind: String,
+    mime: Option<String>,
+    size: Option<u64>,
+    name: Option<String>,
+    duration: Option<f64>,
+    dimensions: Option<AttachmentDimensions>,
+    blurhash: Option<String>,
+    preview_url: Option<String>,
+    source: Option<String>,
+    preview_source: Option<String>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AttachmentDimensions {
+    width: u32,
+    height: u32,
+}
+impl DiscussionAttachment {
+    fn valid(&self) -> bool {
+        matches!(self.kind.as_str(), "image" | "video" | "audio" | "file")
+            && self.url.len() <= 8192
+            && [&self.source, &self.preview_source, &self.preview_url]
+                .iter()
+                .all(|url| url.as_ref().map_or(true, |url| url.len() <= 8192))
+            && self.name.as_ref().map_or(true, |name| name.len() <= 4096)
+            && self.mime.as_ref().map_or(true, |mime| mime.len() <= 256)
+            && self
+                .blurhash
+                .as_ref()
+                .map_or(true, |hash| hash.len() <= 256)
+            && self.duration.map_or(true, |duration| {
+                duration.is_finite() && (0.0..=86400.0).contains(&duration)
+            })
+    }
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -107,6 +149,26 @@ struct Session {
 }
 #[derive(Default)]
 pub(crate) struct HuddleWindow(Mutex<Option<Session>>);
+impl HuddleWindow {
+    /// Downloads are restricted to attachment sources supplied by the main owner.
+    pub(crate) fn permits_download(&self, source: &str, name: &str) -> bool {
+        self.0.lock().ok().is_some_and(|slot| {
+            slot.as_ref().is_some_and(|session| {
+                session.view.phase == "connected"
+                    && session.view.discussion.as_ref().is_some_and(|discussion| {
+                        discussion
+                            .rows
+                            .iter()
+                            .flat_map(|row| &row.attachments)
+                            .any(|attachment| {
+                                attachment.source.as_deref() == Some(source)
+                                    && attachment.name.as_deref().unwrap_or("") == name
+                            })
+                    })
+            })
+        })
+    }
+}
 fn require<R: tauri::Runtime>(window: &WebviewWindow<R>, label: &str) -> Result<()> {
     if window.label() == label {
         Ok(())
@@ -144,6 +206,9 @@ fn validate(view: &View) -> Result<()> {
                 || d.rows.len() > 200
                 || d.rows.iter().any(|r| {
                     r.id.len() > 128
+                        || r.author_id.len() > 128
+                        || r.channel_id.len() > 128
+                        || r.attachments.iter().any(|a| !a.valid())
                         || !matches!(
                             r.delivery.as_str(),
                             "sending" | "accepted" | "unknown" | "failed" | "seen"
@@ -468,7 +533,7 @@ mod tests {
         assert!(validate(&presentation).is_err());
     }
     #[test]
-    fn discussion_delivery_survives_the_native_dto() {
+    fn discussion_delivery_and_attachments_survive_the_native_dto() {
         let mut presentation = view("00000000-0000-4000-8000-000000000001");
         presentation.discussion = Some(Discussion {
             composer: None,
@@ -482,6 +547,17 @@ mod tests {
             has_more: false,
             rows: vec![DiscussionRow {
                 id: "same-event".into(),
+                author_id: "ab".repeat(32),
+                channel_id: "room".into(),
+                attachments: vec![serde_json::from_value(serde_json::json!({
+                    "url": "https://relay.example/media/photo.png",
+                    "kind": "image", "mime": "image/png", "name": "photo.png", "size": 123,
+                    "dimensions": { "width": 640, "height": 480 },
+                    "source": "http://buzz-media.localhost/photo.png",
+                    "previewUrl": "https://relay.example/media/preview.png",
+                    "previewSource": "http://buzz-media.localhost/preview.png"
+                }))
+                .unwrap()],
                 author: "Alex".into(),
                 picture: None,
                 text: "Hello".into(),
@@ -489,10 +565,36 @@ mod tests {
                 delivery: "unknown".into(),
             }],
         });
+        let host = HuddleWindow::default();
+        let source = "http://buzz-media.localhost/photo.png";
+        assert!(!host.permits_download(source, "photo.png"));
+        *host.0.lock().unwrap() = Some(Session {
+            view: presentation.clone(),
+            actions: Channel::new(|_| Ok(())),
+            updates: None,
+        });
+        assert!(host.permits_download(source, "photo.png"));
+        assert!(!host.permits_download(source, "other.png"));
+        assert!(!host.permits_download("http://buzz-media.localhost/other.png", "photo.png"));
+        host.0.lock().unwrap().as_mut().unwrap().view.phase = "leaving".into();
+        assert!(!host.permits_download(source, "photo.png"));
+        host.0.lock().unwrap().as_mut().unwrap().view.discussion = None;
+        host.0.lock().unwrap().as_mut().unwrap().view.phase = "connected".into();
+        assert!(!host.permits_download(source, "photo.png"));
         let serialized = serde_json::to_value(&presentation).unwrap();
         assert_eq!(serialized["discussion"]["rows"][0]["delivery"], "unknown");
-        let restored: View = serde_json::from_value(serialized).unwrap();
+        assert_eq!(
+            serialized["discussion"]["rows"][0]["authorId"],
+            "ab".repeat(32)
+        );
+        assert_eq!(serialized["discussion"]["rows"][0]["channelId"], "room");
+        let restored: View = serde_json::from_value(serialized.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&restored).unwrap(), serialized);
         assert!(validate(&restored).is_ok());
+        let attachment = &mut presentation.discussion.as_mut().unwrap().rows[0].attachments[0];
+        attachment.kind = "invalid".into();
+        assert!(validate(&presentation).is_err());
+        presentation.discussion.as_mut().unwrap().rows[0].attachments[0].kind = "image".into();
         presentation.discussion.as_mut().unwrap().rows[0].delivery = "invalid".into();
         assert!(validate(&presentation).is_err());
     }
@@ -568,7 +670,11 @@ mod tests {
         assert_eq!(capability["webviews"], serde_json::json!(["huddle"]));
         assert_eq!(
             capability["permissions"],
-            serde_json::json!(["allow-huddle-window-watch", "allow-huddle-window-action"])
+            serde_json::json!([
+                "allow-huddle-window-watch",
+                "allow-huddle-window-action",
+                "allow-media-download"
+            ])
         );
         assert!(serde_json::from_str::<Action>("\"start\"").is_err());
         assert!(validate(&view("bad-id")).is_err());

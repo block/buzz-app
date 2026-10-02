@@ -2583,22 +2583,21 @@ export function relayBrokerPlugin({
             // This route has already validated the signed event. Do not log its
             // content, tags, signature, or the browser's private stream handle.
             const publication = `publication id=${filters.id} kind=${filters.kind}`;
-            const unavailable = new SocketRequestError(
-              "Publication socket unavailable",
-              false,
-            );
-            const send = () => {
-              const stream = streams.get(req.headers["x-buzz-live-id"]);
-              if (!stream || stream.relay !== relay) {
-                log.warn(
-                  `${publication} stage=${stream ? "owner-mismatch" : "owner-missing"} sent=false`,
-                );
-                throw unavailable;
-              }
-              return stream.traffic.publish(filters, cancel.signal);
-            };
+            const stream = streams.get(req.headers["x-buzz-live-id"]);
+            if (!stream || stream.relay !== relay) {
+              log.warn(
+                `${publication} stage=${stream ? "owner-mismatch" : "owner-missing"} sent=false`,
+              );
+              return json(res, 503, {
+                error: "Publication socket unavailable",
+                sent: false,
+              });
+            }
             try {
-              const message = await send();
+              const message = await stream.traffic.publish(
+                filters,
+                cancel.signal,
+              );
               return json(res, 200, {
                 accepted: true,
                 event_id: filters.id,
@@ -2609,22 +2608,19 @@ export function relayBrokerPlugin({
               // and remote refusal text must never escape into terminal output.
               const failure =
                 error instanceof SocketRequestError ? error : undefined;
-              if (error !== unavailable)
-                log.warn(
-                  `${publication} stage=socket sent=${failure ? failure.sent : "unknown"} reason=${failure?.message ?? "unclassified failure"}${failure?.refusal ? ` refusal=${failure.refusal}` : ""}`,
-                );
+              log.warn(
+                `${publication} stage=socket sent=${failure ? failure.sent : "unknown"} reason=${failure?.message ?? "unclassified failure"}${failure?.refusal ? ` refusal=${failure.refusal}` : ""}`,
+              );
               // Match the relay's HTTP status for a proven CAS refusal.
               const conflict =
                 failure?.sent === false &&
                 failure.refusal?.startsWith("conflict:");
               return json(res, conflict ? 409 : 503, {
                 error:
-                  error === unavailable
-                    ? unavailable.message
-                    : failure?.sent === false &&
-                        failure.refusal?.startsWith("rate-limited:")
-                      ? failure.refusal
-                      : "Socket publication could not be confirmed",
+                  failure?.sent === false &&
+                  failure.refusal?.startsWith("rate-limited:")
+                    ? failure.refusal
+                    : "Socket publication could not be confirmed",
                 ...(error instanceof SocketRequestError && !error.sent
                   ? { sent: false }
                   : {}),
@@ -2758,18 +2754,12 @@ export function relayBrokerPlugin({
               response.headers.get("x-envoy-upstream-service-time"),
             );
             timings.push(
-              ...(connectsBefore === undefined
-                ? []
-                : upstream.connectTiming(connectsBefore)),
+              ...upstream.connectTiming(connectsBefore),
               ...(Number.isFinite(relayMs) &&
               response.headers.has("x-envoy-upstream-service-time")
                 ? [`relay;dur=${relayMs}`]
                 : []),
-              ...(upstreamStart === undefined
-                ? []
-                : [
-                    `upstream;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
-                  ]),
+              `upstream;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
             );
             res.setHeader("Server-Timing", timings.join(", "));
             stats.queries++;

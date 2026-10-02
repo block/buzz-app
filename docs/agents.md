@@ -360,15 +360,22 @@ clear only the matching agent/channel/thread scope and suppress delayed typing
 for two seconds. Disconnect, channel-route failure, disable, access/cache clear
 and disposal drop typing evidence. A fresh observer frame does not refresh it.
 
-The sidebar shows a quiet working dot from fresh channel observer turns or
-channel-scoped typing. It also shows typing by a known agent (profile hint or
-local library) anywhere in the channel, threads included: app-managed agents run
-without observer telemetry, so typing is their working signal. That is
-display-only evidence, not ownership. Observer records have no thread identity,
-so details remain explicitly channel-wide. A timeline thread summary shows the
-same dots while a known agent types in that thread; a thread with no replies
-yet has no summary to mark. No harness change, new subscription, directory or
-timer is added.
+The sidebar's quiet working dot has two independent sources. The plugin source
+is fresh channel observer turns or the channel-scoped typing above, and follows
+the plugin's lifecycle. Observer records have no thread identity, so its details
+remain explicitly channel-wide.
+
+The display-only source is `session.typing`, not the plugin's typing evidence:
+typing by a known agent (profile hint or local library) anywhere in the channel,
+threads included. App-managed agents run without observer telemetry, so typing
+is their working signal. This store keeps working with the plugin off, rejects
+future timestamps instead of capping them, schedules its own expiry eight
+seconds after the signed timestamp and stays quiet for two seconds after the
+typer's message. It is display-only evidence, not ownership; while the plugin is
+off, the channel popover lists such an agent without a **View activity** action.
+A timeline thread summary shows the same dots from this source while a known
+agent types in that thread; a thread with no replies yet has no summary to mark.
+No harness change, new subscription, directory or timer is added.
 The development broker loads subscription filters at startup: restart the
 existing dev server once to receive typing; frontend HMR alone is insufficient.
 

@@ -15,6 +15,7 @@
   --github-checks-failure: var(--text-danger);
   --github-checks-pending: var(--text-warning);
   --github-review-approved: var(--text-success);
+  --github-review-commented: var(--text-standard);
   --github-review-changes-requested: var(--text-danger);
   padding: var(--space-5);
   overflow-y: auto;
@@ -314,6 +315,12 @@
   background: var(--surface-panel);
   color: var(--text-subtle);
 }
+.eventIcon[data-review-state] {
+  color: var(--github-review-commented);
+}
+.eventIcon[data-review-state="DISMISSED"] {
+  color: var(--text-subtle);
+}
 .eventIcon[data-review-state="APPROVED"] {
   color: var(--github-review-approved);
 }
@@ -321,6 +328,7 @@
   color: var(--github-review-changes-requested);
 }
 .messageContent {
+  position: relative;
   min-width: 0;
 }
 .quietMessage .messageContent {
@@ -328,6 +336,9 @@
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: baseline;
   gap: 0 var(--space-2);
+}
+.quietMessage[data-open] .messageContent {
+  padding-right: var(--space-6);
 }
 .messageMetadata {
   display: flex;
@@ -338,6 +349,9 @@
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
   overflow-wrap: anywhere;
+}
+.messageWithMetadata .messageMetadata {
+  padding-right: var(--space-6);
 }
 .messageMetadata time {
   color: var(--text-subtle);
@@ -362,24 +376,35 @@
   text-align: right;
 }
 .messageTrigger {
+  align-items: start;
   padding: var(--space-1) 0;
 }
 .messageTrigger > svg {
   flex-shrink: 0;
+  margin-top: var(--space-1);
   color: var(--text-subtle);
+}
+.messageTrigger[data-panel-open] {
+  justify-content: flex-end;
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: var(--space-6);
+  padding: 0;
 }
 .messageLabel {
   color: var(--text-subtle);
 }
 .messagePreview {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
+  display: grid;
+  gap: var(--space-2);
   width: 100%;
   min-width: 0;
 }
+.messageTrigger[data-panel-open] .messagePreview {
+  display: none;
+}
 .previewText {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -389,7 +414,7 @@
   display: flex;
   gap: var(--space-1);
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: flex-start;
   min-width: 0;
 }
 .thumbnail {
@@ -441,15 +466,6 @@
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
-  }
-  .messagePreview {
-    flex-wrap: wrap;
-  }
-  .previewText {
-    flex-basis: 100%;
-  }
-  .thumbnails {
-    margin-left: auto;
   }
 }
 .conversationNotice,

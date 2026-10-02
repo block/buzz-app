@@ -426,7 +426,7 @@ it("keeps more-page loading explicit and ignores late page results after switchi
   expect(screen.queryByText("First page")).not.toBeInTheDocument();
 });
 
-it("uses the opening avatar only, then distinct event icons with explicit review labels", async () => {
+it("uses the opening avatar only, then verdict icons and shared feedback bubbles with explicit labels", async () => {
   const states = [
     "APPROVED",
     "CHANGES_REQUESTED",
@@ -492,6 +492,7 @@ it("uses the opening avatar only, then distinct event icons with explicit review
   const comment = screen.getByRole("group", { name: "Comment" });
   expect(within(comment).getByText("Comment")).toBeVisible();
   expect(comment.querySelector(".buzz-avatar")).toBeNull();
+  expect(comment.querySelector("svg")?.innerHTML).toBe(icons[2]);
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Toggle Approved" }));
   expect(

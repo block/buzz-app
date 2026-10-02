@@ -14,7 +14,6 @@ import {
   ChatCircleIcon,
   CheckCircleIcon,
   CodeIcon,
-  EyeIcon,
   XCircleIcon,
   XIcon,
 } from "../../shared/design-system/icons";
@@ -93,7 +92,7 @@ function Message({
           ? XCircleIcon
           : reviewState === "DISMISSED"
             ? XIcon
-            : EyeIcon
+            : ChatCircleIcon
       : kind === "code"
         ? CodeIcon
         : ChatCircleIcon;

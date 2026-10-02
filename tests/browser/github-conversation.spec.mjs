@@ -9,7 +9,7 @@ const picture =
   "https://raw.githubusercontent.com/sample/project/main/preview.png";
 
 // Browser-only: actual app wiring, event markers on an unboxed timeline, responsive geometry,
-// native keyboard/touch activation and thumbnails as an inline disclosure target.
+// keyboard/touch activation and thumbnails as a below-excerpt disclosure target.
 // Source recovery, paging and grouping matrices belong to colocated tests.
 test("PR conversation hierarchy and disclosures survive themes, narrow panes and enlarged text", async ({
   page,
@@ -42,7 +42,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
               submitted_at: "2026-10-01T21:00:00Z",
               state: "APPROVED",
               user: { login: "maintainer" },
-              body: "The empty state and retry look good.",
+              body: "",
             },
           ]
         : url.pathname.endsWith("/issues/1/comments")
@@ -171,6 +171,19 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     });
     await expect(marker.locator("svg")).toHaveCSS("width", "20px");
   }
+  const expectThumbnailsBelowExcerpt = async () => {
+    const excerpt = description.locator("span").first().locator("span").first();
+    const textBox = await excerpt.boundingBox();
+    const imageBox = await description
+      .locator("img")
+      .first()
+      .locator("..")
+      .boundingBox();
+    const caretBox = await description.locator(":scope > svg").boundingBox();
+    expect(imageBox.y).toBeGreaterThan(textBox.y + textBox.height);
+    expect(Math.abs(imageBox.x - textBox.x)).toBeLessThan(1);
+    expect(caretBox.y).toBeLessThan(textBox.y + textBox.height);
+  };
   const standalone = panel.getByRole("button", {
     name: "src/standalone.ts:8 · 1 loaded comment",
     exact: true,
@@ -216,14 +229,18 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
         approved: markerColor("Approved"),
         requested: markerColor("Changes requested"),
         reviewed: markerColor("Reviewed"),
+        comment: markerColor("Comment"),
         success: resolved("--text-success"),
         danger: resolved("--text-danger"),
         neutral: resolved("--text-subtle"),
+        standard: resolved("--text-standard"),
       };
     });
     expect(colors.approved).toBe(colors.success);
     expect(colors.requested).toBe(colors.danger);
-    expect(colors.reviewed).toBe(colors.neutral);
+    expect(colors.reviewed).toBe(colors.standard);
+    expect(colors.comment).toBe(colors.neutral);
+    expect(colors.reviewed).not.toBe(colors.comment);
     expect(
       new Set([colors.approved, colors.requested, colors.reviewed]).size,
     ).toBe(3);
@@ -283,6 +300,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
       standaloneGeometry.contentX,
     );
     await expect(conversation.getByText("All pages loaded")).toHaveCount(0);
+    await expectThumbnailsBelowExcerpt();
     await panel.getByRole("heading").first().hover();
     await panel.screenshot({
       path: testInfo.outputPath(`conversation-${mode}.png`),
@@ -305,6 +323,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await expect(
     panel.getByRole("heading", { name: "Description details" }),
   ).toBeVisible();
+  await expect(description.locator("span").first()).toBeHidden();
   await expect(
     page.getByRole("dialog", { name: "Image attachment" }),
   ).toHaveCount(0);
@@ -321,6 +340,21 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     panel.getByRole("heading", { name: "Review details" }),
   ).toBeVisible();
   await expect(comment).toHaveAttribute("aria-expanded", "true");
+  for (const expanded of [comment, review]) {
+    await expect(expanded.locator("span").first()).toBeHidden();
+  }
+  const approval = panel.getByRole("button", {
+    name: "Expand Approved",
+    exact: true,
+  });
+  await approval.click();
+  await expect(approval.locator("span").first()).toBeHidden();
+  await expect(
+    conversation
+      .getByText("Approved · 0 loaded code threads", { exact: true })
+      .filter({ visible: true }),
+  ).toHaveCount(1);
+  await approval.click();
   const thread = panel.getByRole("button", {
     name: "src/preview.ts:12 · 2 loaded comments",
   });
@@ -344,6 +378,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   for (const width of [800, 480]) {
     await page.setViewportSize({ width, height: 950 });
     await description.scrollIntoViewIfNeeded();
+    await expectThumbnailsBelowExcerpt();
     await description.screenshot({
       path: testInfo.outputPath(`summary-${width}.png`),
     });
@@ -379,6 +414,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     conversation.getByText("Conversation loaded · oldest first"),
   ).toBeVisible();
   await description.scrollIntoViewIfNeeded();
+  await expectThumbnailsBelowExcerpt();
   const preview = description.locator("span").first().locator("span").first();
   expect((await preview.boundingBox()).width).toBeGreaterThan(100);
   expect(

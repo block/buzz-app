@@ -343,6 +343,7 @@ it("shows a run's steps in its event's thread until the run ends", async () => {
     {
       agent: { id: "bot-1", pubkey: bot, name: "Echo" },
       channelId: "c1",
+      eventId: mention.id,
       threadRootId: root,
       steps: [
         { kind: "command", label: "pnpm test", state: "done" },
@@ -361,7 +362,9 @@ it("shows a run's steps in its event's thread until the run ends", async () => {
   const top = event("l2");
   fake.emit({ events: [top], channelId: "c1" });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-  expect(service.runs.snapshot()).toMatchObject([{ threadRootId: top.id }]);
+  expect(service.runs.snapshot()).toMatchObject([
+    { eventId: top.id, threadRootId: top.id },
+  ]);
   await ctx.fiber.dispose();
   expect(service.runs.snapshot()).toEqual([]);
 });

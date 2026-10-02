@@ -11,6 +11,7 @@ import {
 const place = {
   agent: { id: "bot-1", pubkey: "c".repeat(64), name: "Echo" },
   channelId: "c1",
+  eventId: "e".repeat(64),
   threadRootId: "9".repeat(64),
 };
 

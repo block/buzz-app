@@ -540,6 +540,7 @@ export class AgentTypesService extends Service implements AgentTypes {
             name: instance.agent.name,
           }),
           channelId: job.channelId,
+          eventId: job.event.id,
           threadRootId: threadReference(job.event)?.rootId ?? job.event.id,
         })
       : undefined;

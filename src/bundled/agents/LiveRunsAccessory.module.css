@@ -1,0 +1,80 @@
+.root {
+  min-width: 0;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-height: 16rem;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  /* Leave 4px before the composer's 12px top margin. */
+  margin: var(--space-3) var(--space-4) calc(-1 * var(--space-2));
+  background: var(--surface-panel);
+}
+.run {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.body {
+  min-width: 0;
+  flex: 1;
+}
+.earlier {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-subtle);
+  font: inherit;
+  cursor: pointer;
+}
+.earlier:hover {
+  color: var(--text-standard);
+}
+.earlier[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.step {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-standard);
+}
+.step[data-state="done"] {
+  color: var(--text-subtle);
+}
+.icon {
+  flex-shrink: 0;
+  /* Centre the 16px icon on the first line of text. */
+  margin-top: var(--space-half);
+}
+.text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.error {
+  display: block;
+  color: var(--text-danger);
+}
+
+@media (max-width: 40.625rem) {
+  .root {
+    /* The narrow composer has an 8px top margin. */
+    margin: var(--space-2) var(--space-3) calc(-1 * var(--space-1));
+  }
+}

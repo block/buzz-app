@@ -469,9 +469,11 @@ agent types" in `plugin-architecture.md` for the plugin contract. For native thi
 means:
 
 - The record is created by the same create path, with the same key custody and
-  owner attestation. Its workspace, harness and environment must be empty, the
-  type string is `pluginId/typeId`, and the config is opaque JSON of at most 64 KB.
-  The type cannot change after creation.
+  owner attestation. Its workspace and harness must be empty, the type string is
+  `pluginId/typeId`, and the config is opaque JSON of at most 64 KB. The type cannot
+  change after creation. Its environment holds the secrets its type declares, under
+  the same name rules and write-only snapshot (`environmentKeys`) as a harness
+  agent's environment.
 - Start, Stop and Restart only set `enabled`. No process is spawned, no key is
   handed to a child, and the snapshot reports an enabled plugin agent as `running`
   at its saved revision. `enabled` persists across app restarts. The agent is
@@ -482,6 +484,11 @@ means:
   7 and 5 only, bounds content and tags, replaces any supplied `auth` tag with the saved
   attestation, re-checks that the agent is still enabled before sending, and returns
   the signed event only after the relay's receipt names its id.
+- `agent_identity_secret(id, name)` returns one saved environment value of an
+  enabled plugin agent, and fails for a harness agent, a stopped agent or an unsaved
+  name. The agent-types service calls it only for names the agent's type declares.
+  The value is stored in `agents.json` like any agent environment and enters the
+  WebView; `Controller::plugin_secret` describes the native-only replacement.
 
 ## Ownership and handoff
 

@@ -11,7 +11,17 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
 import { bindNames } from "../../features/identity-names/service";
-import { profileTarget } from "../../features/profiles/target";
+import {
+  profileTarget,
+  profileActivityViewTarget,
+} from "../../features/profiles/target";
+import { Context } from "@deepseek-ai/cordis";
+import { PanelsService } from "../../features/panels/service";
+import {
+  activitySelection,
+  activityTarget,
+} from "../../features/agents/activity-target";
+import { ActivityPanel } from "../agent-activity/ActivityPanel";
 import { ProfilePanel } from "./ProfilePanel";
 
 import { agentDirectory } from "../../features/identity-names/testing";
@@ -569,5 +579,127 @@ it("exposes thinking through the named profile avatar across tabs", async () => 
   } finally {
     cleanup();
     owner.dispose();
+  }
+});
+
+it("opens profile Activity in its originating channel and retires a disabled contribution", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const panels = new PanelsService(root);
+  const owner = createRelaySession(null);
+  const activity = createAgentActivity(
+    true,
+    () => {},
+    () => true,
+  );
+  const activate = vi.fn(activity.queries.activate);
+  const session = {
+    ...owner.session,
+    agentActivity: { ...activity.queries, activate },
+  };
+  const snapshot = { status: "ready" as const, generation: 1, session };
+  const relay: RelayData = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    retry() {},
+    disconnect() {},
+    clearCache: async () => {},
+  };
+  const scope = root.extend({
+    pluginOwner: { id: "activity", revision: "one" },
+  });
+  const fiber = scope.plugin((ctx) =>
+    ctx.panels.register({
+      id: "activity",
+      title: "Activity",
+      matches: (target) => !!activitySelection(target),
+      component: (props) => <ActivityPanel {...props} relay={relay} />,
+    }),
+  );
+  await fiber.await();
+  const context = {
+    channelId: "originating-channel",
+    canOpen: (target: string) => !!panels.resolve(target),
+    open: vi.fn(() => true),
+  };
+  try {
+    const view = render(
+      <ProfilePanel
+        relay={relay}
+        panels={panels}
+        target={profileActivityViewTarget(key) ?? ""}
+        context={context}
+        close={() => {}}
+      />,
+    );
+    expect(
+      screen.getByRole("tab", { name: "Activity", selected: true }),
+    ).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Channel" })).toHaveTextContent(
+      "originating-channel",
+    );
+    expect(screen.getByText(key, { exact: true })).toBeVisible();
+    expect(activate).not.toHaveBeenCalled();
+    await act(() => fiber.dispose());
+    expect(
+      screen.queryByRole("tab", { name: "Activity" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Agent activity" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "Info", selected: true }),
+    ).toBeVisible();
+
+    const replacement = root.extend({
+      pluginOwner: { id: "activity", revision: "two" },
+    });
+    await act(async () => {
+      await replacement
+        .plugin((ctx) =>
+          ctx.panels.register({
+            id: "activity",
+            title: "Activity",
+            matches: (target) => !!activitySelection(target),
+            component: ({ target }) => <p>Replacement: {target}</p>,
+          }),
+        )
+        .await();
+    });
+    expect(
+      screen.getByRole("tab", { name: "Info", selected: true }),
+    ).toBeVisible();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("tab", { name: "Activity" }));
+    expect(
+      screen.getByText(
+        `Replacement: ${activityTarget(key, context.channelId)}`,
+      ),
+    ).toBeVisible();
+    view.rerender(
+      <ProfilePanel
+        relay={relay}
+        panels={panels}
+        target={profileActivityViewTarget(key) ?? ""}
+        close={() => {}}
+      />,
+    );
+    expect(
+      screen.queryByRole("tab", { name: "Activity" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Replacement:/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "Info", selected: true }),
+    ).toBeVisible();
+    expect(activate).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+    owner.dispose();
+    activity.dispose();
+    await root.fiber.dispose();
   }
 });

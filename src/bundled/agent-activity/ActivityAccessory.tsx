@@ -1,64 +1,100 @@
-import { useChannelIdentityNames } from "../../features/identity-names/react";
+import { usePresenceStatus } from "../../features/presence/react";
 import {
+  useContext,
   useEffect,
   useMemo,
+  useState,
   useSyncExternalStore,
-  type ReactNode,
 } from "react";
-import { Tooltip } from "../../shared/design-system/ui/Tooltip";
-import {
-  DotsThreeIcon,
-  QuestionIcon,
-} from "../../shared/design-system/icons/index";
-import type { ComposerAccessoryProps } from "../../features/conversation/contracts";
-import { activityTarget } from "../../features/agents/activity-target";
-import { selectProfiles } from "../../features/relay/profile-selection";
 import { AgentAvatar } from "../../features/agents/AgentAvatar";
-import { usePresenceStatus } from "../../features/presence/react";
+import type { ComposerAccessoryProps } from "../../features/conversation/contracts";
+import { useChannelIdentityNames } from "../../features/identity-names/react";
+import { LoadedThreadMessages } from "../../features/messages/loaded-thread-messages";
+import { activityRecords } from "../../features/agents/activity-records";
+import { activityTarget } from "../../features/agents/activity-target";
+import { profileActivityViewTarget } from "../../features/profiles/target";
+import { publicKeyLabels } from "../../shared/identity/public-key";
+import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import {
+  PopoverRoot,
+  PopoverTrigger,
+  PopoverPopup,
+  PopoverTitle,
+  PopoverDescription,
+  PopoverClose,
+} from "../../shared/design-system/ui/Popover";
+import { ActivityStream } from "./ActivityStream";
+import { threadActivity } from "./thread-activity";
+import { useTypingReplacement } from "../../features/conversation/typing-presentation";
 import styles from "./ActivityAccessory.module.css";
 
-/** Capture is leased by plugin activation, never by an individual composer. */
-export function ActivityAccessory({
-  session,
-  channelId,
-  threadRootId,
-  canOpen,
-  open,
-}: ComposerAccessoryProps) {
+/** One bottom group per conversation. Exact identities, never one row per message. */
+export function ActivityAccessory(props: ComposerAccessoryProps) {
+  const { session, channelId, threadRootId, canOpen } = props;
   const snapshot = useSyncExternalStore(
     session.agentActivity.subscribe,
     session.agentActivity.snapshot,
-    session.agentActivity.snapshot,
   );
-  const turns = snapshot.turns.filter(
-    (turn) =>
-      !threadRootId && turn.channelId === channelId && turn.state !== "ended",
+  const messages = useContext(LoadedThreadMessages);
+  const entries = useMemo(() => {
+    if (threadRootId)
+      return threadActivity(snapshot, channelId, threadRootId, messages).filter(
+        (entry) =>
+          entry.working || entry.turns.some((turn) => turn.state === "unknown"),
+      );
+    const agents = new Set([
+      ...snapshot.turns
+        .filter(
+          (turn) => turn.channelId === channelId && turn.state !== "ended",
+        )
+        .map((turn) => turn.agent),
+      ...snapshot.typing
+        .filter((entry) => entry.channelId === channelId && !entry.threadRootId)
+        .map((entry) => entry.agent),
+    ]);
+    return [...agents].sort().map((agent) => ({
+      agent,
+      working:
+        snapshot.status === "listening" &&
+        (snapshot.turns.some(
+          (turn) =>
+            turn.agent === agent &&
+            turn.channelId === channelId &&
+            turn.state === "working",
+        ) ||
+          snapshot.typing.some(
+            (entry) =>
+              entry.agent === agent &&
+              entry.channelId === channelId &&
+              !entry.threadRootId,
+          )),
+      selected: {
+        records: activityRecords(snapshot.records, agent, channelId),
+      },
+    }));
+  }, [snapshot, channelId, threadRootId, messages]);
+  const profiles = useSyncExternalStore(
+    session.profiles.subscribe,
+    session.profiles.snapshot,
   );
-  const typing = snapshot.typing.filter(
-    (entry) =>
-      entry.channelId === channelId && entry.threadRootId === threadRootId,
-  );
-  const keys = [...new Set([...turns, ...typing].map((entry) => entry.agent))]
-    .sort()
-    .join(":");
-  useEffect(() => {
-    if (keys)
-      void session.profiles
-        .ensure(keys.split(":"), "background")
-        .catch(() => {});
-  }, [session.profiles, keys]);
   const resolveName = useChannelIdentityNames(session, channelId);
-  const profiles = useMemo(
-    () => selectProfiles(session.profiles, keys ? keys.split(":") : []),
-    [session.profiles, keys],
+  const keys = entries.map((entry) => entry.agent);
+  const identityKeys = keys.join(":");
+  useEffect(() => {
+    if (identityKeys)
+      void session.profiles
+        .ensure(identityKeys.split(":"), "background")
+        .catch(() => {});
+  }, [session.profiles, identityKeys]);
+  const suffixes = publicKeyLabels(keys);
+  const names = keys.map((key) =>
+    resolveName(key, profiles.get(key)?.name ?? suffixes.get(key) ?? "Agent"),
   );
-  const identities = useSyncExternalStore(
-    profiles.subscribe,
-    profiles.snapshot,
-    profiles.snapshot,
+  const visible = entries.filter((entry) =>
+    canOpen(activityTarget(entry.agent, channelId)),
   );
-  if (!keys) return null;
+  if (!visible.length) return null;
   return (
     <section
       className={styles.root}
@@ -70,55 +106,21 @@ export function ActivityAccessory({
       }
     >
       <div className={styles.agents}>
-        {keys.split(":").map((agent) => {
-          const target = activityTarget(agent, channelId);
-          if (!canOpen(target)) return null;
-          const name = resolveName(
-            agent,
-            identities.get(agent)?.name ?? `Agent ${agent.slice(0, 8)}`,
-          );
-          const active = turns.filter((turn) => turn.agent === agent);
-          const working = active.filter(
-            (turn) => turn.state === "working",
-          ).length;
-          const unknown = active.length - working;
-          const isWorking =
-            working > 0 || typing.some((entry) => entry.agent === agent);
-          const picture = identities.get(agent)?.picture;
+        {visible.map((entry) => {
+          const name = names[keys.indexOf(entry.agent)] ?? "Agent";
+          const label =
+            names.filter((value) => value === name).length > 1
+              ? `${name} · ${suffixes.get(entry.agent)}`
+              : name;
           return (
             <ActivityEntry
-              key={agent}
-              tooltip={
-                <>
-                  <p className="text-body-sm">
-                    {threadRootId ? (
-                      "Working in this thread. Details show channel activity, including other threads."
-                    ) : (
-                      <>
-                        {working
-                          ? `${working} working turn(s)`
-                          : "No fresh working evidence"}
-                        {unknown ? ` · ${unknown} with unknown status` : ""} in
-                        this channel, including threads.
-                        {isWorking && !working
-                          ? " Fresh channel typing signal."
-                          : ""}
-                      </>
-                    )}
-                  </p>
-                  <p className="text-body-sm">
-                    Owner-only activity. Select to inspect.
-                  </p>
-                  <code className="font-mono text-mono">{agent}</code>
-                </>
-              }
-              session={session}
-              agent={agent}
-              src={picture ? (session.media(picture) ?? null) : null}
-              name={name}
-              isWorking={isWorking}
-              target={target}
-              open={open}
+              key={entry.agent}
+              {...props}
+              agent={entry.agent}
+              name={label}
+              picture={profiles.get(entry.agent)?.picture}
+              working={entry.working}
+              records={entry.selected.records}
             />
           );
         })}
@@ -126,61 +128,81 @@ export function ActivityAccessory({
     </section>
   );
 }
-
 function ActivityEntry({
   session,
-  agent,
-  src,
-  name,
-  isWorking,
-  target,
+  channelId,
+  threadRootId,
+  canOpen,
   open,
-  tooltip,
-}: {
-  session: ComposerAccessoryProps["session"];
+  agent,
+  name,
+  picture,
+  working,
+  records,
+}: ComposerAccessoryProps & {
   agent: string;
-  src: string | null;
   name: string;
-  isWorking: boolean;
-  target: ReturnType<typeof activityTarget>;
-  open: ComposerAccessoryProps["open"];
-  tooltip: ReactNode;
+  picture: string | undefined;
+  working: boolean;
+  records: ReturnType<typeof activityRecords>;
 }) {
   const presence = usePresenceStatus(session.presence, agent);
-  const Icon = isWorking ? DotsThreeIcon : QuestionIcon;
+  const [expanded, setExpanded] = useState(false);
+  const target = profileActivityViewTarget(agent);
+  useTypingReplacement(
+    { session, channelId, threadRootId, pubkey: agent },
+    working,
+  );
   return (
-    <Tooltip content={tooltip}>
-      <NavigationItem
-        aria-label={`View activity for ${name} ${agent.slice(0, 12)}${presence === "unknown" ? "" : `, Presence: ${presence}`}`}
-        onClick={() => open(target)}
-        icon={
-          <AgentAvatar
-            working={isWorking}
-            src={src}
-            alt=""
-            fallback={name}
-            size="small"
-            shape="squircle"
-            statusBadge={presence === "unknown" ? undefined : presence}
-          />
-        }
-        label={
-          <>
-            <span className={styles.name}>{name}</span>
-            {" · "}
-            <span className={styles.status}>
-              {isWorking ? "working" : "status unknown"}
-            </span>
-          </>
-        }
-        trailing={
-          <Icon
-            className={styles.indicator}
-            data-working={isWorking || undefined}
-            size={18}
+    <PopoverRoot open={expanded} onOpenChange={setExpanded}>
+      <PopoverTrigger
+        openOnHover
+        render={
+          <NavigationItem
+            icon={
+              <AgentAvatar
+                working={working}
+                src={picture ? (session.media(picture) ?? null) : null}
+                alt=""
+                fallback={name}
+                size="small"
+                shape="squircle"
+                statusBadge={presence === "unknown" ? undefined : presence}
+              />
+            }
+            aria-label={`View activity for ${name} ${agent.slice(0, 12)}${presence === "unknown" ? "" : `, Presence: ${presence}`}`}
+            label={`${name} · ${working ? "working…" : "work status unknown"}`}
           />
         }
       />
-    </Tooltip>
+      <PopoverPopup side="top" aria-label={`Activity for ${name}`}>
+        <PopoverTitle>{name}</PopoverTitle>
+        <PopoverDescription>
+          {working ? "Working" : "Activity interrupted or out of date"}
+          {threadRootId
+            ? " in this thread"
+            : " in this channel, including threads"}
+        </PopoverDescription>
+        {expanded && <ActivityStream records={records} />}
+        {target && canOpen(target) && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              if (open(target)) setExpanded(false);
+            }}
+          >
+            View activity
+          </Button>
+        )}
+        <PopoverClose
+          render={
+            <Button size="sm" variant="ghost">
+              Close
+            </Button>
+          }
+        />
+      </PopoverPopup>
+    </PopoverRoot>
   );
 }

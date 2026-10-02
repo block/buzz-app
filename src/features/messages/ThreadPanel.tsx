@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { LoadedThreadMessages } from "./loaded-thread-messages";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
 import { MessageEditScope } from "./MessageEditScope";
 import { ReplySummary } from "./ReplySummary";
@@ -985,72 +986,74 @@ function ThreadMessages({
         )}
       </section>
       {snapshot.root && (
-        <MessageComposer
-          sessionConversation={sessionConversation}
-          key={`${scope}:${channelId}:${snapshot.root.id}`}
-          extensions={extensions}
-          session={session}
-          scope={scope}
-          channelId={channelId}
-          channelName={channelName}
-          placeholder={`Reply in thread to ${resolveName(snapshot.root.authorId, profiles.get(snapshot.root.authorId)?.name ?? formatPublicKey(snapshot.root.authorId) ?? "Unknown author")}`}
-          threadRootId={snapshot.root.id}
-          replyParentId={replyParent}
-          disabled={!!replyParent && !selectedParent}
-          replyContext={
-            replyParent && !selectedParent ? (
-              <div className={styles.replyContext}>
-                <span>Reply target is no longer available.</span>
-                <Button size="sm" onClick={focusReply}>
-                  Cancel reply target
-                </Button>
-              </div>
-            ) : (
-              selectedParent && (
+        <LoadedThreadMessages.Provider value={rows}>
+          <MessageComposer
+            sessionConversation={sessionConversation}
+            key={`${scope}:${channelId}:${snapshot.root.id}`}
+            extensions={extensions}
+            session={session}
+            scope={scope}
+            channelId={channelId}
+            channelName={channelName}
+            placeholder={`Reply in thread to ${resolveName(snapshot.root.authorId, profiles.get(snapshot.root.authorId)?.name ?? formatPublicKey(snapshot.root.authorId) ?? "Unknown author")}`}
+            threadRootId={snapshot.root.id}
+            replyParentId={replyParent}
+            disabled={!!replyParent && !selectedParent}
+            replyContext={
+              replyParent && !selectedParent ? (
                 <div className={styles.replyContext}>
-                  <div>
-                    <span>
-                      Replying to{" "}
-                      {resolveName(
-                        selectedParent.authorId,
-                        profiles.get(selectedParent.authorId)?.name ??
-                          formatPublicKey(selectedParent.authorId) ??
-                          "Unknown author",
-                      )}
-                    </span>
-                    <p>{selectedParent.content}</p>
-                  </div>
-                  <IconButton
-                    size="sm"
-                    aria-label="Cancel reply target"
-                    onClick={focusReply}
-                    icon={<XIcon size={16} aria-hidden="true" />}
-                  />
+                  <span>Reply target is no longer available.</span>
+                  <Button size="sm" onClick={focusReply}>
+                    Cancel reply target
+                  </Button>
                 </div>
+              ) : (
+                selectedParent && (
+                  <div className={styles.replyContext}>
+                    <div>
+                      <span>
+                        Replying to{" "}
+                        {resolveName(
+                          selectedParent.authorId,
+                          profiles.get(selectedParent.authorId)?.name ??
+                            formatPublicKey(selectedParent.authorId) ??
+                            "Unknown author",
+                        )}
+                      </span>
+                      <p>{selectedParent.content}</p>
+                    </div>
+                    <IconButton
+                      size="sm"
+                      aria-label="Cancel reply target"
+                      onClick={focusReply}
+                      icon={<XIcon size={16} aria-hidden="true" />}
+                    />
+                  </div>
+                )
               )
-            )
-          }
-          editMessages={rows}
-          focusRequest={replyFocus}
-          onOpenLink={onOpenLink}
-          canOpenLink={canOpenLink}
-          onSend={(id) => {
-            targetAnchor.current = undefined;
-            positioned.current = true;
-            follow.current = !selectedParent;
-            if (selectedParent)
-              setExpanded(
-                (current) =>
-                  new Set([
-                    ...current,
-                    selectedParent.id,
-                    ...tree.ancestors(selectedParent.id),
-                  ]),
-              );
-            setReplyParent(undefined);
-            setSent(id);
-          }}
-        />
+            }
+            editMessages={rows}
+            focusRequest={replyFocus}
+            onOpenLink={onOpenLink}
+            canOpenLink={canOpenLink}
+            onSend={(id) => {
+              targetAnchor.current = undefined;
+              positioned.current = true;
+              follow.current = !selectedParent;
+              if (selectedParent)
+                setExpanded(
+                  (current) =>
+                    new Set([
+                      ...current,
+                      selectedParent.id,
+                      ...tree.ancestors(selectedParent.id),
+                    ]),
+                );
+              setReplyParent(undefined);
+              setSent(id);
+            }}
+          />
+        </LoadedThreadMessages.Provider>
       )}
     </MessageEditScope>
   );

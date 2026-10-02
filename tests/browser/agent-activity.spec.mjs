@@ -20,6 +20,27 @@ const agentEntry = (page, agent) =>
       `^View activity for .+ ${agent.slice(0, 12)}(?:, Presence: (?:online|away|offline))?$`,
     ),
   });
+const activityPopup = (page) =>
+  page.getByRole("dialog").filter({
+    has: page.getByRole("button", { name: "View activity", exact: true }),
+  });
+const openProfileActivity = async (page, entry) => {
+  await entry.click();
+  const popup = activityPopup(page);
+  await expect(popup).toBeVisible();
+  await expect(popup.getByRole("tab")).toHaveCount(0);
+  await popup
+    .getByRole("button", { name: "View activity", exact: true })
+    .click();
+  await expect(
+    page.getByRole("tab", { name: "Activity", selected: true, exact: true }),
+  ).toBeVisible();
+};
+const openRawRecords = async (panel) => {
+  const disclosure = panel.getByRole("button", { name: /^Raw records/ });
+  if ((await disclosure.getAttribute("aria-expanded")) !== "true")
+    await disclosure.click();
+};
 const activityPanel = (page) =>
   page.getByRole("region", { name: "Agent activity", exact: true });
 const activity = (kind, channelId, turnId, payload) => ({
@@ -180,36 +201,36 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await expect(region).toHaveCSS("border-right-width", "0px");
   await expect(region).toHaveCSS("border-bottom-width", "0px");
   await expect(region).toHaveCSS("border-left-width", "0px");
-  const workingIndicator = firstEntry.locator("svg[data-working]");
+  const workingIndicator = firstEntry.locator(".badge-pill-dots i").first();
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await expect(workingIndicator).not.toHaveCSS("animation-name", "none");
-  await expect(workingIndicator).toHaveCSS("animation-duration", "1.4s");
+  await expect(workingIndicator).toHaveCSS("animation-duration", "1.2s");
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await expect(workingIndicator).toHaveCSS("animation-name", "none");
+  await expect(workingIndicator).toHaveCSS(
+    "animation-name",
+    "badge-pill-typing-fade",
+  );
   await expect(firstEntry).toContainText("working");
   await page.emulateMedia({ reducedMotion: "no-preference" });
 
   await firstEntry.hover();
-  const tooltip = page.getByRole("tooltip").filter({ hasText: first });
-  await expect(tooltip).toContainText(
-    "1 working turn(s) in this channel, including threads.",
+  const popup = activityPopup(page);
+  await expect(popup).toContainText(
+    "Working in this channel, including threads",
   );
-  await expect(tooltip).toContainText(
-    "Owner-only activity. Select to inspect.",
-  );
+  await expect(popup.getByRole("tab")).toHaveCount(0);
   await page.keyboard.press("Escape");
-  await expect(tooltip).toHaveCount(0);
+  await expect(popup).toBeHidden();
   await page.mouse.move(0, 0);
-  // Establish a starting point, then leave and re-enter using actual keyboard
-  // input. focus() alone neither clears Escape dismissal nor proves :focus-visible.
   await firstEntry.focus();
-  await page.keyboard.press("Tab");
-  await expect(firstEntry).not.toBeFocused();
-  await page.keyboard.press("Shift+Tab");
-  await expect(firstEntry).toBeFocused();
-  await expect(tooltip).toContainText(first);
-  await expect(firstEntry).toHaveAccessibleDescription(/Owner-only activity/);
   await firstEntry.press("Enter");
+  await expect(popup).toBeVisible();
+  await popup
+    .getByRole("button", { name: "View activity", exact: true })
+    .click();
+  await expect(
+    page.getByRole("tab", { name: "Activity", selected: true, exact: true }),
+  ).toBeVisible();
 
   const panel = activityPanel(page);
   await expect(panel.locator("code").first()).toHaveText(first);
@@ -239,6 +260,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     await choice.click();
     await expect(panel.locator("code").first()).toHaveText(key);
   }
+  await openRawRecords(panel);
   const unsafeDisclosure = panel.getByRole("button", { name: /turn_liveness/ });
   await unsafeDisclosure.focus();
   await unsafeDisclosure.press("Enter");
@@ -255,17 +277,17 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await expect(panel.locator("pre code")).not.toContainText("other channel");
 
   await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
-  await expect(firstEntry).toBeFocused();
-  await secondEntry.click();
+  await openProfileActivity(page, secondEntry);
   await expect(panel.locator("code").first()).toHaveText(second);
+  await openRawRecords(panel);
   await expect(
     panel.getByRole("button", { name: /turn_liveness/ }),
   ).toBeVisible();
   await expect(panel.getByRole("button", { name: /acp_read/ })).toHaveCount(0);
   await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
-  await expect(secondEntry).toBeFocused();
-  await secondEntry.click();
+  await openProfileActivity(page, secondEntry);
   await expect(panel.locator("code").first()).toHaveText(second);
+  await openRawRecords(panel);
 
   const sockets = app.relay.sockets.length;
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
@@ -300,7 +322,8 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await page.locator('[data-channel-id="alpha"]').click();
   await expect(agentEntry(page, first)).toBeVisible();
   await expect(agentEntry(page, second)).toHaveCount(0);
-  await agentEntry(page, first).click();
+  await openProfileActivity(page, agentEntry(page, first));
+  await openRawRecords(panel);
   await expect(
     panel.getByRole("button", { name: /turn_liveness/ }),
   ).toHaveCount(1);
@@ -320,8 +343,8 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   );
   await expect(agentEntry(page, first)).toContainText("status unknown");
   await expect(
-    agentEntry(page, first).locator(".navigation-item-trailing svg"),
-  ).toHaveCSS("animation-name", "none");
+    agentEntry(page, first).locator(".badge-pill-dots i").first(),
+  ).toHaveCSS("animation-play-state", "paused");
   app.observer(activity("turn_liveness", "alpha", "fresh"), firstKey);
   await expect(agentEntry(page, first)).toContainText("working");
   app.observer(activity("turn_completed", "alpha", "fresh"), firstKey);
@@ -411,9 +434,12 @@ for (const mode of ["light", "dark"]) {
       // resize can keep WebKit's pointer over it, so make the next entry explicit.
       await page.mouse.move(0, 0);
       await entry.hover();
-      await expect(page.getByRole("tooltip")).toContainText(
-        "in this channel, including threads.",
+      await expect(activityPopup(page)).toContainText(
+        "in this channel, including threads",
       );
+      const popupBox = await activityPopup(page).boundingBox();
+      expect(popupBox.x).toBeGreaterThanOrEqual(0);
+      expect(popupBox.x + popupBox.width).toBeLessThanOrEqual(width);
       await page.screenshot({
         path: testInfo.outputPath(`activity-entry-${mode}-${width}.png`),
       });
@@ -421,12 +447,19 @@ for (const mode of ["light", "dark"]) {
       // Escape starts Base UI's asynchronous unmount. The closing portal still
       // has its wide-screen position and can overflow the next narrow viewport.
       await expect(
-        page.getByRole("tooltip", { includeHidden: true }),
+        page.getByRole("dialog", { includeHidden: true }).filter({
+          has: page.getByRole("button", {
+            name: "View activity",
+            exact: true,
+            includeHidden: true,
+          }),
+        }),
       ).toHaveCount(0);
     }
 
-    await entry.click();
+    await openProfileActivity(page, entry);
     const panel = activityPanel(page);
+    await openRawRecords(panel);
     await panel.getByRole("button", { name: /acp_read/ }).click();
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
@@ -549,7 +582,10 @@ it("profile activity opens the exact agent and originating channel before its fi
   await profile
     .getByRole("button", { name: "View activity", exact: true })
     .click();
-  await expect(profile).toHaveCount(0);
+  await expect(profile).toBeVisible();
+  await expect(
+    profile.getByRole("tab", { name: "Activity", selected: true, exact: true }),
+  ).toBeVisible();
   const panel = page.getByRole("region", {
     name: "Agent activity",
     exact: true,
@@ -580,6 +616,7 @@ it("profile activity opens the exact agent and originating channel before its fi
     item("turn_liveness", profileChannelId, "wanted"),
     agentKey,
   );
+  await openRawRecords(panel);
   const row = panel.getByRole("button", { name: /turn_liveness/ });
   await expect(row).toBeVisible();
   await expect(panel.getByText("1 observed working turn(s).")).toBeVisible();
@@ -602,12 +639,12 @@ it("profile activity opens the exact agent and originating channel before its fi
     panel.getByRole("button", { name: /session_resolved/ }),
   ).toBeVisible();
   await expect(panel.getByRole("button", { name: /acp_read/ })).toHaveCount(0);
-  await panel.press("Escape");
-  await expect(profile).toBeVisible();
+  // Activity is now part of this profile rather than a replacement panel.
+  await profile.getByRole("tab", { name: "Info", exact: true }).click();
   const profileTab = page
     .getByRole("tablist", { name: "Panel tabs" })
     .getByRole("tab", { selected: true });
-  await expect(profileTab).toBeFocused();
+  await profileTab.focus();
   await profileTab.press("Escape");
   await expect(profile).toBeHidden();
   await expect(avatar).toBeFocused();
@@ -844,17 +881,25 @@ test.describe("thread activity", () => {
       formBox.x + inset,
       0,
     );
-    await entry.hover();
-    await expect(page.getByRole("tooltip")).toContainText(
-      "Details show channel activity",
-    );
+    await entry.focus();
+    await entry.press("Enter");
+    await expect(activityPopup(page)).toContainText("Working in this thread");
+    await expect(activityPopup(page).getByRole("tab")).toHaveCount(0);
     await page.screenshot({
       path: testInfo.outputPath("thread-activity-above-composer.png"),
     });
+    await page.keyboard.press("Escape");
+    await expect(entry).toBeFocused();
     await page.mouse.move(0, 0);
-    // A closing tooltip retains its desktop position until its exit completes.
+    // A closing popup retains its desktop position until its exit completes.
     await expect(
-      page.getByRole("tooltip", { includeHidden: true }),
+      page.getByRole("dialog", { includeHidden: true }).filter({
+        has: page.getByRole("button", {
+          name: "View activity",
+          exact: true,
+          includeHidden: true,
+        }),
+      }),
     ).toHaveCount(0);
     await page.setViewportSize({ width: 390, height: 844 });
     sendTyping(root.id);
@@ -879,7 +924,7 @@ test.describe("thread activity", () => {
       path: testInfo.outputPath("thread-activity-narrow.png"),
     });
     await page.setViewportSize({ width: 1440, height: 950 });
-    await entry.click();
+    await openProfileActivity(page, entry);
     await expect(activityPanel(page).locator("code").first()).toHaveText(agent);
     await expect(
       activityPanel(page).getByRole("combobox", {

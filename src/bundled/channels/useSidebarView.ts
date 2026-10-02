@@ -55,9 +55,9 @@ export function readChannelSidebarWidth(scope: string): number {
  * Show the current destination (`aria-current="page"`) in the sidebar
  * viewport. Rows hidden by a collapsed section or session list are shown
  * through the header or parent row that represents them. Returns false while
- * no current entry is laid out yet.
+ * no current entry is laid out yet; otherwise returns the offset that shows it.
  */
-function revealCurrent(viewport: HTMLElement) {
+function revealCurrent(viewport: HTMLElement): number | false {
   const owners = [
     ...viewport.querySelectorAll<HTMLElement>('[aria-current="page"]'),
   ].map((entry) => {
@@ -76,16 +76,24 @@ function revealCurrent(viewport: HTMLElement) {
   const bottom = top + viewport.clientHeight;
   // A visible copy (for example, a starred channel) already shows it.
   if (rects.some((rect) => rect.top >= top && rect.bottom <= bottom))
-    return true;
+    return viewport.scrollTop;
   // Center an offscreen entry clear of the unread edge cues; nudge a clipped
   // one only as far as needed so the row under the pointer does not jump.
-  viewport.scrollTop +=
-    rect.bottom <= top || rect.top >= bottom
+  return (
+    viewport.scrollTop +
+    (rect.bottom <= top || rect.top >= bottom
       ? rect.top - top - (viewport.clientHeight - rect.height) / 2
       : rect.top < top
         ? rect.top - top
-        : rect.bottom - bottom;
-  return true;
+        : rect.bottom - bottom)
+  );
+}
+
+/** Scrolls to `top`; returns the new offset if the viewport moved. */
+function scroll(viewport: HTMLElement, top: number) {
+  const before = viewport.scrollTop;
+  viewport.scrollTop = top;
+  return viewport.scrollTop === before ? undefined : viewport.scrollTop;
 }
 
 /**
@@ -108,12 +116,24 @@ export function useSidebarView(
   // restored position.
   const restored = useRef(view.location);
 
-  // Once the viewport moves, the user owns it even if they return to the top.
+  // The offset this hook last scrolled to, until its scroll event arrives.
+  const moved = useRef<number | undefined>(undefined);
+
+  // Once the user moves the viewport, they own it even if they return to the
+  // top. A scroll event at the offset this hook set is its own restoration or
+  // reveal; any other offset includes user input.
   useLayoutEffect(() => {
     const viewport = list.current;
     if (!viewport) return;
     const scrolled = () => {
+      const own = moved.current === viewport.scrollTop;
+      moved.current = undefined;
+      if (own) return;
       pending.current = false;
+      // The user's position now belongs to the destination they navigated
+      // to, so returning there keeps it instead of revealing again.
+      if (reveal.current)
+        intent.current = { ...intent.current, location: reveal.current };
       reveal.current = restored.current = undefined;
     };
     viewport.addEventListener("scroll", scrolled, { passive: true });
@@ -125,11 +145,13 @@ export function useSidebarView(
     if (!ready || !pending.current || !list.current) return;
     // Compositor scrolling may update the position before its scroll event.
     if (list.current.scrollTop === 0)
-      list.current.scrollTop = intent.current.scrollTop;
+      moved.current =
+        scroll(list.current, intent.current.scrollTop) ?? moved.current;
     pending.current = false;
   }, [ready]);
   // A destination without an entry (the Messages landing page before it
-  // resolves to a conversation) stays pending and is never saved.
+  // resolves to a conversation) stays pending. It owns the saved position
+  // only if the user scrolls there.
   useLayoutEffect(() => {
     reveal.current = location === restored.current ? undefined : location;
   }, [location]);
@@ -137,7 +159,9 @@ export function useSidebarView(
   // retry after each commit until it exists. Runs after the restore above.
   useLayoutEffect(() => {
     if (!ready || !reveal.current || !list.current) return;
-    if (!revealCurrent(list.current)) return;
+    const top = revealCurrent(list.current);
+    if (top === false) return;
+    moved.current = scroll(list.current, top) ?? moved.current;
     intent.current = { ...intent.current, location: reveal.current };
     reveal.current = restored.current = undefined;
   });

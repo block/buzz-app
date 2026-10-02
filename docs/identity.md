@@ -85,6 +85,12 @@ network failures preserve the saved credential, while failed or inconsistent
 checks clear only the matching session when secure storage permits. JavaScript
 receives status and expiry only, never the session secret.
 
+Profile settings can clear the saved enterprise session on this device for the
+current adapter, active identity, and build. This is local sign-out only: it
+does not remove the Nostr identity, community memberships, or remote access.
+The native session is shared by the applicable communities in that scope; it
+is not a per-community token store.
+
 The native identity owner signs event templates and authenticates HTTP with
 NIP-98, including the exact request URL, method, a body hash on POST and a fresh nonce
 for each attempt. Native networking permits only discovery, join-policy, invite

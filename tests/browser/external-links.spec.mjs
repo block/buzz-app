@@ -98,6 +98,97 @@ test("unhandled links open externally and disabling GitHub restores the fallback
   expect(context.pages()).toHaveLength(1);
 });
 
+// Real external-link fallback and responsive action geometry require a browser;
+// API error-code and recovery matrices stay in the panel unit tests.
+test("GitHub API errors offer prominent external opening before retry", async ({
+  page,
+  context,
+  app,
+}, testInfo) => {
+  const target = `${github}#discussion_r1`;
+  const detailsUrl = "https://api.github.com/repos/block/buzz/pulls/1";
+  // Permit only this injected response's engine console report, once by exact URL.
+  app.report.githubFailures = [detailsUrl];
+  await context.route(github, (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: "<!doctype html><title>External destination</title>",
+    }),
+  );
+  let recover = false;
+  await page.route(detailsUrl, (route) =>
+    route.fulfill(
+      recover
+        ? { json: { title: "Recovered PR", state: "open" } }
+        : { status: 403, json: { message: "API rate limit exceeded" } },
+    ),
+  );
+  await page.goto(app.origin);
+  await openMessages(page);
+  app.append("primary", "alpha", target);
+  await expect(link(page, target)).toBeAttached();
+  await end(page);
+  await link(page, target).click();
+  const panel = page.getByRole("complementary", {
+    name: "GitHub",
+    exact: true,
+  });
+  const alert = panel.getByRole("alert");
+  await expect(alert).toContainText("public API limit");
+  const external = alert.getByRole("link", {
+    name: "Open on Github",
+    exact: true,
+  });
+  const retry = alert.getByRole("button", { name: "Retry", exact: true });
+  await expect(external).toHaveAttribute("data-variant", "prominent");
+  await expect(retry).toHaveAttribute("data-variant", "subtle");
+  const externalBox = await external.boundingBox();
+  const retryBox = await retry.boundingBox();
+  expect(externalBox).not.toBeNull();
+  expect(retryBox).not.toBeNull();
+  expect(externalBox.x + externalBox.width).toBeLessThan(retryBox.x);
+  expect(externalBox.y).toBeCloseTo(retryBox.y, 0);
+  for (const mode of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: mode });
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+    await panel.screenshot({
+      path: testInfo.outputPath(`github-error-${mode}.png`),
+    });
+  }
+  expect(await popup(page, external)).toBe(target);
+  await expect(alert).toBeVisible();
+  await external.focus();
+  await page.keyboard.press("Tab");
+  await expect(retry).toBeFocused();
+
+  // At 200% text the controls may wrap, but retain reading order and stay usable.
+  await page.setViewportSize({ width: 700, height: 950 });
+  await page.evaluate(() => {
+    document.documentElement.style.setProperty("--buzz-text-scale", "2");
+  });
+  await expect(external).toBeVisible();
+  await expect(retry).toBeVisible();
+  const alertBox = await alert.boundingBox();
+  for (const action of [external, retry]) {
+    const box = await action.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.x).toBeGreaterThanOrEqual(alertBox.x);
+    expect(box.x + box.width).toBeLessThanOrEqual(alertBox.x + alertBox.width);
+  }
+  await panel.screenshot({
+    path: testInfo.outputPath("github-error-narrow-200.png"),
+  });
+  recover = true;
+  await retry.click();
+  await expect(
+    panel.getByRole("heading", { name: "Recovered PR #1" }),
+  ).toBeVisible();
+  await expect(alert).toHaveCount(0);
+  await expect(
+    panel.getByRole("link", { name: "Open on Github", exact: true }),
+  ).toHaveCount(0);
+});
+
 test("GitHub object identities have comparable visible artwork at one size", async ({
   page,
   app,

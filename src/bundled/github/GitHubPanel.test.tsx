@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, assert, expect, it, vi } from "vitest";
 import { GitHubPanel } from "./index";
 import styles from "./GitHub.module.css";
@@ -303,26 +309,57 @@ it.each([
   },
 );
 
-it("keeps the PR title link usable while loading and after API failure", async () => {
-  let finish!: (response: Response) => void;
-  const response = new Promise<Response>((resolve) => {
-    finish = resolve;
-  });
-  vi.stubGlobal("fetch", vi.fn().mockReturnValue(response));
-  render(
-    <GitHubPanel
-      target="https://github.com/block/buzz-app/pull/629#discussion_r1"
-      close={() => {}}
-    />,
-  );
-  expect(screen.getByRole("status")).toHaveTextContent("Loading");
-  const titleLink = screen.getByRole("link", { name: "Pull request #629" });
-  expect(titleLink).toHaveAttribute(
-    "href",
-    "https://github.com/block/buzz-app/pull/629#discussion_r1",
-  );
-  finish(new Response(null, { status: 404 }));
-  await screen.findByRole("alert");
-  expect(titleLink).toBeVisible();
-  expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
-});
+it.each([403, 404, 429, 500])(
+  "keeps the PR title and prominent external recovery action usable after API failure %s",
+  async (status) => {
+    const target = "https://github.com/block/buzz-app/pull/629#discussion_r1";
+    let finish!: (response: Response) => void;
+    const response = new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+    const fetch = vi
+      .fn()
+      .mockReturnValueOnce(response)
+      .mockImplementation(
+        async (input: string) =>
+          new Response(
+            JSON.stringify(
+              input === "https://api.github.com/repos/block/buzz-app/pulls/629"
+                ? { title: "Recovered PR" }
+                : [],
+            ),
+          ),
+      );
+    vi.stubGlobal("fetch", fetch);
+    render(<GitHubPanel target={target} close={() => {}} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading");
+    expect(
+      screen.queryByRole("link", { name: "Open on Github" }),
+    ).not.toBeInTheDocument();
+    const titleLink = screen.getByRole("link", { name: "Pull request #629" });
+    expect(titleLink).toHaveAttribute("href", target);
+    finish(new Response(null, { status }));
+    const alert = await screen.findByRole("alert");
+    expect(titleLink).toBeVisible();
+    const external = within(alert).getByRole("link", {
+      name: "Open on Github",
+    });
+    const retry = within(alert).getByRole("button", { name: "Retry" });
+    expect(external).toHaveAttribute("href", target);
+    expect(external).toHaveAttribute("target", "_blank");
+    expect(external).toHaveAttribute("rel", "noreferrer");
+    expect(external).toHaveAttribute("data-variant", "prominent");
+    expect(retry).toHaveAttribute("data-variant", "subtle");
+    expect(external.nextElementSibling).toBe(retry);
+    fireEvent.click(retry);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading");
+    await screen.findByRole("heading", { name: "Recovered PR #629" });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Open on Github" }),
+    ).not.toBeInTheDocument();
+    expect(fetch.mock.calls[1]?.[0]).toBe(
+      "https://api.github.com/repos/block/buzz-app/pulls/629",
+    );
+  },
+);

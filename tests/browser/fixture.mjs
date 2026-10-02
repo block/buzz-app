@@ -1997,11 +1997,25 @@ export const test = base.extend({
         sidebarFailures.splice(match, 1);
         return true;
       };
+      const githubFailures = [...(report.githubFailures ?? [])];
+      const injectedGitHubFailure = (message, index) => {
+        if (
+          !/^Failed to load resource: the server responded with a status of 403/.test(
+            message,
+          )
+        )
+          return false;
+        const match = githubFailures.indexOf(consoleLocations.get(index));
+        if (match < 0) return false;
+        githubFailures.splice(match, 1);
+        return true;
+      };
       expect(
         report.consoleErrors.filter(
           (message, index) =>
             !retiredConsole(message, index) &&
             !injectedSidebarFailure(message, index) &&
+            !injectedGitHubFailure(message, index) &&
             !(
               expectedPageFailure &&
               message.includes("Fixture page render failure")

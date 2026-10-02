@@ -520,7 +520,7 @@ it("retires pending PR loads, retries errors, and clears media when navigating",
     second.resolve(new Response(null, { status: 500 }));
   });
   expect(screen.getByRole("alert")).toHaveTextContent("500");
-  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(screen.getByRole("status")).toHaveTextContent("Loading");
   await act(async () => {
     retry.resolve(

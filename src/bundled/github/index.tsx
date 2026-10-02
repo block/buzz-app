@@ -168,9 +168,26 @@ function ObjectPanel({
       ) : typeof result === "string" ? (
         <div role="alert">
           <p>{result}</p>
-          <Button type="button" onClick={retry}>
-            Try again
-          </Button>
+          <div className={styles.errorActions}>
+            <Button
+              variant="prominent"
+              nativeButton={false}
+              role="link"
+              render={
+                <a
+                  className={styles.errorExternal}
+                  href={reference.url}
+                  target="_blank"
+                  rel="noreferrer"
+                />
+              }
+            >
+              <span className={styles.errorActionLabel}>Open on Github</span>
+            </Button>
+            <Button type="button" onClick={retry}>
+              Retry
+            </Button>
+          </div>
         </div>
       ) : (
         <>

@@ -18,6 +18,7 @@ let formats:
       shortWeekdayMonthDay: Intl.DateTimeFormat;
       shortMonthDayYear: Intl.DateTimeFormat;
       time: Intl.DateTimeFormat;
+      full: Intl.DateTimeFormat;
     }
   | undefined;
 function dateFormats() {
@@ -46,6 +47,7 @@ function dateFormats() {
         year: "numeric",
       }),
       time: format({ hour: "numeric", minute: "2-digit" }),
+      full: format({ dateStyle: "full", timeStyle: "long" }),
     };
   }
   return formats;
@@ -129,6 +131,12 @@ export function formatItemTimestamp(
           ? f.shortWeekdayMonthDay.format(date)
           : f.shortMonthDayYear.format(date);
   return withTime ? `${dayLabel} at ${time}` : dayLabel;
+}
+
+/** The complete date and time, such as a timestamp's hover text:
+ * "Friday, October 2, 2026 at 3:05:09 PM EDT". */
+export function formatFullTimestamp(unixSeconds: number): string {
+  return dateFormats().full.format(new Date(unixSeconds * 1_000));
 }
 
 /** Local midnight of the calendar day containing `date`. */

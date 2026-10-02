@@ -1,5 +1,5 @@
 import { MessageLink } from "../conversation/MessageLink";
-import { MessageTimestamp } from "./MessageTimestamp";
+import { DayDivider, MessageTimestamp } from "./MessageTimestamp";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
@@ -310,18 +310,7 @@ export const MessageRow = memo(function MessageRow({
   );
   return (
     <div data-message-id={row.id}>
-      {day && (
-        <div className={styles.day}>
-          <span>
-            {new Date(row.createdAt * 1000).toLocaleDateString(undefined, {
-              year: "numeric",
-              weekday: "long",
-              month: "long",
-              day: "numeric",
-            })}
-          </span>
-        </div>
-      )}
+      {day && <DayDivider createdAt={row.createdAt} />}
       <div ref={rowRef} className={styles.message} data-layout={layout}>
         {layout === "continuation" ? (
           <span className={styles.messageGutter}>

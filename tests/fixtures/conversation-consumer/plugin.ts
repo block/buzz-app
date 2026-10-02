@@ -31,8 +31,8 @@ export function apply(ctx: Context) {
       ),
       h(
         "p",
-        null,
-        `Consumer dates ${ui.format.dayGroupLabel(Date.now() / 1000)}, ${ui.format.itemTimestamp(Date.now() / 1000 - 86_400)}`,
+        { title: ui.format.fullTimestamp(Date.now() / 1000) },
+        `Consumer dates ${ui.format.dayGroupLabel(Date.now() / 1000)}, ${ui.format.itemTimestamp(Date.now() / 1000 - 86_400)}, ${ui.format.relativeTimestamp(Date.now() / 1000 - 300)}`,
       ),
       h(
         "label",

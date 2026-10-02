@@ -51,6 +51,15 @@ it("registers both surfaces under the injecting plugin scope, removes and replac
           nowSeconds: now,
         }),
       ).toBe("Yesterday at 2:30 PM");
+      expect(conversation.format.relativeTimestamp(now - 300, now)).toBe(
+        "5 minutes ago",
+      );
+      expect(conversation.format.fullTimestamp(now)).toBe(
+        new Date(now * 1000).toLocaleString(undefined, {
+          dateStyle: "full",
+          timeStyle: "long",
+        }),
+      );
       ctx.conversation.registerTool({
         id: "tool",
         title: "Tool",

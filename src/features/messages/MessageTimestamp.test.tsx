@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { MessageTimestamp } from "./MessageTimestamp";
+import { DayDivider, MessageTimestamp } from "./MessageTimestamp";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -119,3 +119,20 @@ it("updates the visible clock, accessible date and datetime when a mounted row c
       .trim(),
   );
 });
+it.each([
+  [new Date(2026, 8, 24, 0, 1), "2026-09-24", "Today"],
+  [new Date(2026, 8, 23, 23, 59), "2026-09-23", "Yesterday"],
+  [new Date(2026, 8, 21, 9, 5), "2026-09-21", "Monday"],
+  [new Date(2026, 8, 17, 9, 5), "2026-09-17", "Thursday, September 17"],
+  [new Date(2025, 8, 17, 9, 5), "2025-09-17", "September 17, 2025"],
+])(
+  "the day divider for %s names its local day like plugins' dayGroupLabel",
+  (date, day, label) => {
+    const { container } = render(
+      <DayDivider createdAt={date.getTime() / 1000} />,
+    );
+    expect(container.querySelector(`[data-day="${day}"]`)).toHaveTextContent(
+      new RegExp(`^${label}$`),
+    );
+  },
+);

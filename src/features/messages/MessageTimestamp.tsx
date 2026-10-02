@@ -1,34 +1,42 @@
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
-import { formatItemTimestamp } from "../../shared/datetime";
+import {
+  formatDayGroupLabel,
+  formatFullTimestamp,
+  formatItemTimestamp,
+} from "../../shared/datetime";
 import styles from "./Messages.module.css";
 
 // Retain only the current locale/zone pair, never message content. Resolve the
 // defaults on each render so a running app still follows OS timezone changes.
-let formats:
-  | {
-      locale: string;
-      timeZone: string;
-      clock: Intl.DateTimeFormat;
-      full: Intl.DateTimeFormat;
-    }
+let clockFormat:
+  | { locale: string; timeZone: string; clock: Intl.DateTimeFormat }
   | undefined;
-function timestampFormats() {
+function clock() {
   const { locale, timeZone } = new Intl.DateTimeFormat().resolvedOptions();
-  if (formats?.locale !== locale || formats.timeZone !== timeZone) {
-    formats = {
+  if (clockFormat?.locale !== locale || clockFormat.timeZone !== timeZone)
+    clockFormat = {
       locale,
       timeZone,
       clock: new Intl.DateTimeFormat(undefined, {
         hour: "numeric",
         minute: "2-digit",
       }),
-      full: new Intl.DateTimeFormat(undefined, {
-        dateStyle: "full",
-        timeStyle: "long",
-      }),
     };
-  }
-  return formats;
+  return clockFormat.clock;
+}
+
+/** The divider above a day's first row: "Today", "Monday", "June 20, 2025".
+ * `data-day` carries the local calendar day. */
+export function DayDivider({ createdAt }: { createdAt: number }) {
+  const date = new Date(createdAt * 1000);
+  const day = [date.getFullYear(), date.getMonth() + 1, date.getDate()]
+    .map((part) => String(part).padStart(2, "0"))
+    .join("-");
+  return (
+    <div className={styles.day}>
+      <span data-day={day}>{formatDayGroupLabel(createdAt)}</span>
+    </div>
+  );
 }
 
 /** One date source for the byline and the compact continuation clock. The
@@ -43,16 +51,15 @@ export function MessageTimestamp({
   compact?: boolean;
 }) {
   const date = new Date(createdAt * 1000);
-  const { clock, full } = timestampFormats();
   const label = compact
-    ? clock
+    ? clock()
         .formatToParts(date)
         .filter((part) => part.type !== "dayPeriod")
         .map((part) => part.value)
         .join("")
         .trim()
     : formatItemTimestamp(createdAt, { withTime: true });
-  const fullDate = full.format(date);
+  const fullDate = formatFullTimestamp(createdAt);
   return (
     // The action bar can sit over the byline; keep the date hint non-interactive
     // so it cannot intercept nearby controls when their paint layers overlap.

@@ -269,7 +269,9 @@ test("independent packed author consumer and native-installed contribution survi
     await expect(draft).toHaveJSProperty("value", "Channels draft");
     // The independently built page uses the host's date labels.
     await expect(
-      page.getByText("Consumer dates Today, Yesterday", { exact: true }),
+      page.getByText("Consumer dates Today, Yesterday, 5 minutes ago", {
+        exact: true,
+      }),
     ).toBeVisible();
     // The independently built page consumes the host's registered Mentions tool.
     await page

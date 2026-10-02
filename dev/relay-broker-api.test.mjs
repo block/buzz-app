@@ -1,4 +1,7 @@
 import { createConsola } from "consola";
+import { Context } from "@deepseek-ai/cordis";
+import { HostService } from "../src/features/host/service.ts";
+import { authTagOwner } from "../src/features/agents/owner-attestation.ts";
 import { logSocketFrame } from "../src/features/developer/traffic.ts";
 import { getLogger, setLogLevel } from "../src/features/developer/logging.ts";
 import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
@@ -125,6 +128,62 @@ async function harness(respond, capabilities = {}, relayUrl = fixtureRelayUrl) {
   };
 }
 const filters = [{ kinds: [0], limit: 1 }];
+test("remote agent authorization is owner-bound and works without a community", async () => {
+  const h = await harness(
+    () => {
+      throw new Error("Authorization must not contact upstream");
+    },
+    {},
+    "",
+  );
+  try {
+    const owner = (await (await h.get("identity")).json()).viewer;
+    const agentPubkey = getPublicKey(generateSecretKey());
+    const http = globalThis.fetch;
+    vi.stubGlobal("fetch", (url, input) => http(new URL(url, h.base), input));
+    vi.stubEnv("VITE_BUZZ_LIVE", "1");
+    const context = new Context();
+    const host = new HostService(context);
+    const tag = await host.prepareRemoteAgentAuthorization(agentPubkey);
+    expect(await authTagOwner(agentPubkey, tag)).toBe(owner);
+    expect(tag.slice(0, 3)).toEqual(["auth", h.event.pubkey, ""]);
+    expect(
+      schnorr.verify(
+        Buffer.from(tag[3], "hex"),
+        createHash("sha256")
+          .update(`nostr:agent-auth:${agentPubkey}:`)
+          .digest(),
+        Buffer.from(tag[1], "hex"),
+      ),
+    ).toBe(true);
+    const route = "prepare-remote-agent-authorization";
+    for (const rejected of [
+      "invalid",
+      "A".repeat(64),
+      h.event.pubkey,
+      null,
+      42,
+    ]) {
+      expect(
+        (await h.post(route, { owner: h.event.pubkey, agentPubkey: rejected }))
+          .status,
+      ).toBe(400);
+    }
+    expect(
+      (await h.post(route, { owner: "f".repeat(64), agentPubkey })).status,
+    ).toBe(403);
+    expect((await h.post(route, { agentPubkey })).status).toBe(403);
+    expect((await h.post(route, null)).status).toBe(400);
+    expect(
+      (await h.post(route, { owner, agentPubkey: "a".repeat(4096) })).status,
+    ).toBe(413);
+    expect(h.calls).toEqual([]);
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    await h.close();
+  }
+});
 const success = (call) =>
   Response.json(
     call.url.endsWith("/events")

@@ -8,6 +8,7 @@
     "allow-identity-create",
     "allow-identity-export",
     "allow-relay-sign",
+    "allow-identity-prepare-remote-agent-authorization",
     "allow-relay-decode-read-state",
     "allow-relay-sign-read-state",
     "allow-relay-publish-read-state",

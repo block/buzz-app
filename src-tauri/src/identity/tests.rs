@@ -117,6 +117,78 @@ fn default_test_host_cannot_access_real_credentials() {
     assert!(IdentityHost::default().0.lock().unwrap().restore().is_err());
 }
 
+#[tokio::test]
+async fn remote_agent_authorization_binds_owner_and_agent_without_local_creation() {
+    use secp256k1::{schnorr::Signature, Secp256k1, XOnlyPublicKey};
+    let host = IdentityHost::fixture();
+    let owner = host.viewer().await.unwrap();
+    let agent = Key(Zeroizing::new([2; 32])).viewer().unwrap();
+    let tag = host
+        .authorize_agent(owner.clone(), agent.clone())
+        .await
+        .unwrap();
+    assert_eq!(&tag[..3], &["auth", owner.as_str(), ""]);
+    let signature: Signature = tag[3].parse().unwrap();
+    let pubkey: XOnlyPublicKey = owner.parse().unwrap();
+    let digest = Sha256::digest(format!("nostr:agent-auth:{agent}:"));
+    Secp256k1::verification_only()
+        .verify_schnorr(&signature, &digest, &pubkey)
+        .unwrap();
+    assert!(host
+        .authorize_agent(agent.clone(), owner.clone())
+        .await
+        .unwrap_err()
+        .contains("signed-in identity"));
+    for invalid in ["invalid".into(), "A".repeat(64), owner.clone()] {
+        assert!(host.authorize_agent(owner.clone(), invalid).await.is_err());
+    }
+    assert!(IdentityHost::default()
+        .authorize_agent(owner, agent)
+        .await
+        .is_err());
+}
+
+#[test]
+fn remote_agent_authorization_reaches_signer_through_production_ipc() {
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let owner = fixture().viewer().unwrap();
+    let agent = Key(Zeroizing::new([2; 32])).viewer().unwrap();
+    let response = get_ipc_response(
+        &view,
+        tauri::webview::InvokeRequest {
+            cmd: "identity_prepare_remote_agent_authorization".into(),
+            callback: tauri::ipc::CallbackFn(0),
+            error: tauri::ipc::CallbackFn(1),
+            url: view.url().unwrap(),
+            body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                "owner": owner, "agentPubkey": agent
+            })),
+            headers: Default::default(),
+            invoke_key: INVOKE_KEY.into(),
+        },
+    )
+    .unwrap()
+    .deserialize::<Vec<String>>()
+    .unwrap();
+    assert_eq!(&response[..3], &["auth", owner.as_str(), ""]);
+    let digest = Sha256::digest(format!("nostr:agent-auth:{agent}:"));
+    secp256k1::Secp256k1::verification_only()
+        .verify_schnorr(
+            &response[3].parse().unwrap(),
+            &digest,
+            &owner.parse().unwrap(),
+        )
+        .unwrap();
+}
+
 #[test]
 fn uppercase_import_keeps_the_exact_key_and_mixed_case_is_rejected() {
     let store = Arc::new(Memory::default());

@@ -334,6 +334,14 @@ limited PATH and passes that search path to the command.
 Plugins parse and retain their own credentials; the host has no provider registry
 or credential store.
 
+Trusted plugins can also call `ctx.host.prepareRemoteAgentAuthorization(agentPubkey, signal?)`
+to prepare a reusable NIP-OA proof from the current Buzz identity. It returns the
+structured `["auth", ownerPubkey, "", signature]` tag and requires no selected
+community or in-app approval prompt. Native sessions use the native identity; live
+development uses the pinned dev broker identity. The caller submits the proof to
+its remote agent service, which signs the final agent event. Caller cancellation
+discards late results; it cannot revoke a proof that has already been issued.
+
 Requests use the native HTTPS client, so an external plugin can declare an exact
 origin without changing the renderer CSP. URLs must use a declared origin; redirects
 are not followed and cookies are not forwarded. Requests accept up to 1 MiB of text

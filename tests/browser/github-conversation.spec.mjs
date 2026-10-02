@@ -281,6 +281,11 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     expect(Math.abs(geometry.textX - geometry.authorX)).toBeLessThan(1);
     expect(geometry.timeX).toBeGreaterThan(geometry.textRight);
     expect(geometry.sameRow).toBe(true);
+    const descriptionTimeRight = await conversation
+      .getByRole("group", { name: "Description", exact: true })
+      .locator("time")
+      .evaluate((node) => node.getBoundingClientRect().right);
+    expect(Math.abs(descriptionTimeRight - geometry.timeX)).toBeLessThan(1);
     const standaloneGeometry = await standalone.evaluate((node) => {
       const content = node.closest(".buzz-accordion").parentElement;
       const event = content.parentElement;
@@ -306,6 +311,17 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
       path: testInfo.outputPath(`conversation-${mode}.png`),
     });
   }
+  const timePositions = async () => {
+    const positions = {};
+    for (const label of ["Description", "Comment", "Changes requested"]) {
+      positions[label] = await conversation
+        .getByRole("group", { name: label, exact: true })
+        .locator("time")
+        .evaluate((node) => node.getBoundingClientRect().right);
+    }
+    return positions;
+  };
+  const collapsedTimes = await timePositions();
   const commentMarker = panel.getByRole("button", {
     name: "Toggle Comment",
     exact: true,
@@ -324,6 +340,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     panel.getByRole("heading", { name: "Description details" }),
   ).toBeVisible();
   await expect(description.locator("span").first()).toBeHidden();
+  expect(await timePositions()).toEqual(collapsedTimes);
   await expect(
     page.getByRole("dialog", { name: "Image attachment" }),
   ).toHaveCount(0);
@@ -343,6 +360,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   for (const expanded of [comment, review]) {
     await expect(expanded.locator("span").first()).toBeHidden();
   }
+  expect(await timePositions()).toEqual(collapsedTimes);
   const approval = panel.getByRole("button", {
     name: "Expand Approved",
     exact: true,

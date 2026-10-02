@@ -146,7 +146,9 @@ function Message({
             >
               {label}
             </span>
-            <PostedTime value={message.createdAt} />
+            <span className={styles.messageTime}>
+              <PostedTime value={message.createdAt} />
+            </span>
           </div>
         ) : (
           <div className={styles.messageMetadata}>

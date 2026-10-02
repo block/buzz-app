@@ -336,8 +336,6 @@
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: baseline;
   gap: 0 var(--space-2);
-}
-.quietMessage[data-open] .messageContent {
   padding-right: var(--space-6);
 }
 .messageMetadata {
@@ -372,8 +370,12 @@
   letter-spacing: var(--text-caption--letter-spacing);
 }
 .messageTime {
+  grid-column: 3;
   color: var(--text-subtle);
   text-align: right;
+}
+.messageWithMetadata .messageTime {
+  margin-left: auto;
 }
 .messageTrigger {
   align-items: start;
@@ -534,7 +536,6 @@
   }
   .messageTime {
     display: block;
-    text-align: left;
   }
   .conversationTimeline::before {
     display: none;

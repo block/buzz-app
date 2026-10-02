@@ -350,7 +350,6 @@ pub enum Action {
 }
 struct Running {
     process: Supervised,
-    _mesh: Option<crate::MeshLaunch>,
     revision: u64,
     /// Native-only: holds environment values and is never serialized.
     spawned: serde_json::Value,
@@ -361,11 +360,6 @@ struct Running {
 impl Drop for Running {
     fn drop(&mut self) {
         let _ = self.process.stop();
-        if !self.process.stopped() {
-            if let Some(mesh) = self._mesh.as_mut() {
-                mesh.retain_unconfirmed();
-            }
-        }
     }
 }
 /// Deliberately not serializable: only the native connection owner consumes it.
@@ -768,7 +762,7 @@ impl Controller {
     ) -> Result<()> {
         self.action_with_mesh(id, action, revision, key, replay_floor, None)
     }
-    /// Start with an acquired native Mesh grant, retaining it through process ownership.
+    /// Start with native Mesh endpoint configuration after node readiness.
     pub fn action_with_mesh(
         &mut self,
         id: &str,
@@ -895,7 +889,6 @@ impl Controller {
             id.into(),
             Running {
                 process,
-                _mesh: mesh,
                 revision: agent.revision,
                 spawned: crate::restart::spawn_config(&agent),
                 databricks_host: settings.map(|s| s.host),

@@ -2543,7 +2543,7 @@ fn use_here_exhausted_revision_preserves_the_saved_import() {
 }
 
 #[test]
-fn mesh_launch_is_bound_and_runtime_only_and_releases_on_drop() {
+fn mesh_launch_is_bound_and_runtime_only() {
     let dir = tempfile::tempdir().unwrap();
     let mut saved = agent(dir.path());
     saved.harness.provider = "relay-mesh".into();
@@ -2554,14 +2554,12 @@ fn mesh_launch_is_bound_and_runtime_only_and_releases_on_drop() {
     saved
         .environment
         .insert("BUZZ_AGENT_MAX_OUTPUT_TOKENS".into(), "8192".into());
-    let (release, released) = std::sync::mpsc::channel();
     let grant = crate::MeshLaunch::new(
         saved.id.clone(),
         saved.revision,
         saved.relay_url.clone(),
         "shared-model".into(),
         (19337, 65536),
-        (release, "unique-acquisition".into()),
     )
     .unwrap();
     let runtime = grant.apply(&saved).unwrap();
@@ -2580,10 +2578,6 @@ fn mesh_launch_is_bound_and_runtime_only_and_releases_on_drop() {
     changed = saved.clone();
     changed.harness.command = "goose".into();
     assert!(grant.apply(&changed).is_err());
-    assert!(released.try_recv().is_err());
-    drop(grant);
-    assert_eq!(released.try_recv().unwrap(), "unique-acquisition");
-    assert!(released.try_recv().is_err());
 }
 
 #[test]
@@ -2591,14 +2585,12 @@ fn mesh_output_budget_is_runtime_only_and_explicit_invalid_values_fail() {
     let dir = tempfile::tempdir().unwrap();
     let mut saved = agent(dir.path());
     saved.harness.provider = "relay-mesh".into();
-    let (tx, rx) = std::sync::mpsc::channel();
-    let mut grant = crate::MeshLaunch::new(
+    let grant = crate::MeshLaunch::new(
         saved.id.clone(),
         saved.revision,
         saved.relay_url.clone(),
         "mesh".into(),
         (19337, 16384),
-        (tx, "pending".into()),
     )
     .unwrap();
     let runtime = grant.apply(&saved).unwrap();
@@ -2624,7 +2616,4 @@ fn mesh_output_budget_is_runtime_only_and_explicit_invalid_values_fail() {
             .insert("BUZZ_AGENT_MAX_OUTPUT_TOKENS".into(), value.into());
         assert!(grant.apply(&saved).is_err());
     }
-    grant.retain_unconfirmed();
-    drop(grant);
-    assert!(rx.try_recv().is_err());
 }

@@ -1,8 +1,7 @@
-//! Native-only grant for one saved Mesh agent start. Never persisted or serialized.
+//! Native-only endpoint configuration for one saved Mesh agent start. Never persisted.
 use crate::{config::Agent, Result};
 
-/// Holds an acquired consumer until cancellation, failed launch, or process teardown.
-/// The native owner receives a release signal; clones are deliberately forbidden.
+/// Prepared after node readiness; the app, not an agent process, owns the node.
 pub struct MeshLaunch {
     agent_id: String,
     revision: u64,
@@ -10,12 +9,10 @@ pub struct MeshLaunch {
     model: String,
     port: u16,
     context: u64,
-    release: std::sync::mpsc::Sender<String>,
-    token: Option<String>,
 }
 
 impl MeshLaunch {
-    /// Create only after native discovery and consumer readiness succeed.
+    /// Create only after native discovery and node readiness succeed.
     /// A port, rather than an arbitrary URL, limits child routing to loopback.
     pub fn new(
         agent_id: String,
@@ -23,7 +20,6 @@ impl MeshLaunch {
         relay: String,
         model: String,
         endpoint: (u16, u64),
-        release: (std::sync::mpsc::Sender<String>, String),
     ) -> Result<Self> {
         let grant = Self {
             agent_id: agent_id.clone(),
@@ -32,21 +28,11 @@ impl MeshLaunch {
             model,
             port: endpoint.0,
             context: endpoint.1,
-            token: Some(release.1),
-            release: release.0,
         };
         if grant.port == 0 || grant.model.trim().is_empty() || grant.context == 0 {
             return Err("Shared compute requires a ready endpoint and model".into());
         }
         Ok(grant)
-    }
-
-    /// Retain the native acquisition when process teardown cannot be established.
-    /// MeshHost keeps the unresolved token until app shutdown/recovery.
-    pub(crate) fn retain_unconfirmed(&mut self) {
-        if self.token.take().is_some() {
-            eprintln!("Shared compute consumer retained: agent teardown unconfirmed; app shutdown required");
-        }
     }
 
     pub(crate) fn apply(&self, agent: &Agent) -> Result<Agent> {
@@ -93,13 +79,5 @@ impl MeshLaunch {
             runtime.environment.insert(name.into(), value);
         }
         Ok(runtime)
-    }
-}
-impl Drop for MeshLaunch {
-    fn drop(&mut self) {
-        // Unbounded std channel send does not wait for a receiver or node shutdown.
-        if let Some(token) = self.token.take() {
-            let _ = self.release.send(token);
-        }
     }
 }

@@ -453,9 +453,17 @@ test("cached workspace remains usable when live reconnect stalls", async ({
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect.poll(() => requested).toBe(true);
     await expect(
+      page.getByRole("region", {
+        name: "Channel message history",
+        includeHidden: true,
+      }),
+    ).toContainText("primary alpha message 0");
+    // Cached content mounts behind the launch overlay. Advance its settling
+    // budget, next animation cycle, and fade before requiring accessible UI.
+    await page.clock.runFor(3 * 1760 + 240);
+    await expect(
       page.getByRole("region", { name: "Channel message history" }),
     ).toContainText("primary alpha message 0");
-    await page.clock.runFor(3600);
     await expect(
       page.getByRole("status", { name: "Opening Buzz" }),
     ).toHaveCount(0);

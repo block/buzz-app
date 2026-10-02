@@ -135,6 +135,26 @@ it("matches only configured personal agents in the request community", () => {
   ).toEqual(["fixture-agent"]);
 });
 
+it("follows a selected ID through rename while preserving authorization checks", () => {
+  const { agent } = controlFixture();
+  const request = pending("request-1", agent.pubkey);
+  const renamed = { ...agent, name: "Renamed agent" };
+  const match = (candidate: typeof agent) =>
+    matchingManagementAgents(
+      [candidate],
+      request,
+      "https://relay.example.test",
+      agent.id,
+    );
+  expect(match(renamed)).toEqual([renamed]);
+  expect(match({ ...renamed, id: "replacement" })).toEqual([]);
+  expect(match({ ...renamed, pubkey: "cd".repeat(32) })).toEqual([]);
+  expect(match({ ...renamed, relayUrl: "wss://other.example.test" })).toEqual(
+    [],
+  );
+  expect(match({ ...renamed, configured: false })).toEqual([]);
+});
+
 it("queues requests received while another review is open and bounds the queue", () => {
   let requests = [pending("open")];
   requests = enqueueManagementRequest(requests, pending("next"));

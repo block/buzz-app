@@ -49,6 +49,10 @@ export function AgentUpdateReview({
     useState<PendingManagementRequest | null>(null);
   const [rosterError, setRosterError] =
     useState<PendingManagementRequest | null>(null);
+  const [selection, setSelection] = useState<{
+    request: PendingManagementRequest;
+    id: string;
+  } | null>(null);
   const request = requests[0] ?? null;
   useEffect(() => {
     if (connection.status !== "ready") return;
@@ -118,6 +122,7 @@ export function AgentUpdateReview({
       current = false;
     };
   }, [control, controlState.busy, refreshedRequestId, request]);
+  const selectedId = selection?.request === request ? selection.id : undefined;
   const matches = useMemo(() => {
     if (request?.value.action !== "update" || !connection.scope) return [];
     const community = connection.scope.split(":").slice(0, -1).join(":");
@@ -125,8 +130,20 @@ export function AgentUpdateReview({
       controlState.data?.agents ?? [],
       request,
       community,
+      selectedId,
     );
-  }, [connection.scope, controlState.data?.agents, request]);
+  }, [connection.scope, controlState.data?.agents, request, selectedId]);
+  useEffect(() => {
+    const match = matches.length === 1 ? matches[0] : undefined;
+    if (
+      request &&
+      authorizedRequest === request &&
+      refreshedRequestId === request.value.requestId &&
+      !selectedId &&
+      match
+    )
+      setSelection({ request, id: match.id });
+  }, [authorizedRequest, matches, refreshedRequestId, request, selectedId]);
   if (!request) return null;
   const dismiss = () => setRequests((pending) => pending.slice(1));
   if (rosterError === request) {
@@ -193,6 +210,7 @@ export function AgentUpdateReview({
   )
     return null;
   const agent = matches.length === 1 ? matches[0] : undefined;
+  if (agent && !selectedId) return null;
   if (!agent) {
     return (
       <ToastNotice
@@ -237,6 +255,7 @@ export function matchingManagementAgents(
   agents: readonly AgentView[],
   request: PendingManagementRequest,
   community: string,
+  selectedId?: string,
 ): AgentView[] {
   if (request.value.action !== "update") return [];
   const target = request.value.request.agentName.trim().toLocaleLowerCase();
@@ -245,7 +264,9 @@ export function matchingManagementAgents(
     if (
       agent.configured === false ||
       !agent.relayUrl ||
-      agent.name.trim().toLocaleLowerCase() !== target ||
+      (selectedId
+        ? agent.id !== selectedId
+        : agent.name.trim().toLocaleLowerCase() !== target) ||
       agent.pubkey !== request.agent
     )
       return false;

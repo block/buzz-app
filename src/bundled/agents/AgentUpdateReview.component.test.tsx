@@ -101,7 +101,7 @@ function setup(known: boolean, failInventory = false) {
   render(<AgentUpdateReview relay={relay} control={control} />, {
     wrapper: ToastProvider,
   });
-  const send = () =>
+  const send = (changes: { displayName?: string } = {}) =>
     act(() =>
       receive(fixture.agent.pubkey, {
         type: "agent_management_request",
@@ -111,6 +111,7 @@ function setup(known: boolean, failInventory = false) {
           channelId: channel.id,
           agentName: fixture.agent.name,
           model: "gpt-6-sol",
+          ...changes,
         },
       }),
     );
@@ -134,6 +135,35 @@ function setup(known: boolean, failInventory = false) {
     },
   };
 }
+
+it("keeps the selected agent editor after a rename reports restart failure", async () => {
+  const f = setup(true);
+  const save = f.fixture.host.save;
+  f.fixture.host.save = async (...args) => ({
+    ...(await save(...args)),
+    restarted: 0,
+    restartFailures: 1,
+  });
+  f.send({ displayName: "Renamed fixture agent" });
+  await act(async () => f.release());
+  const editor = await screen.findByRole("dialog", { name: "Edit agent" });
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(f.control.snapshot().busy).toBe(false));
+  expect(editor).toBeVisible();
+  expect(
+    screen.getByRole("textbox", { name: "Name", exact: true }),
+  ).toHaveValue("Renamed fixture agent");
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "1 agent couldn’t restart with the new settings; check Agents.",
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: "Runtime", exact: true }),
+  );
+  expect(
+    screen.getByRole("button", { name: "Restart to apply", exact: true }),
+  ).toBeEnabled();
+  expect(screen.queryByText(/No personal agent named/)).toBeNull();
+});
 
 it("waits for a busy operation before refreshing inventory for a request", async () => {
   const f = setup(true);

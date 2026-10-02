@@ -295,7 +295,7 @@ impl EnterpriseAuthHost {
         {
             SessionCheck::Valid(info) => {
                 let _commit = self.commit.lock().await;
-                let mut state = self
+                let state = self
                     .login
                     .lock()
                     .map_err(|_| "Enterprise authentication state is unavailable".to_owned())?;
@@ -309,7 +309,6 @@ impl EnterpriseAuthHost {
                         }));
                     }
                 } else {
-                    Self::bump_generation(&mut state);
                     self.remember(scope, persisted.session);
                 }
                 Ok(Some(info))
@@ -1434,24 +1433,40 @@ mod tests {
         first_started: Arc<tokio::sync::Notify>,
         release_first: Arc<tokio::sync::Notify>,
         second_started: Arc<tokio::sync::Notify>,
+        release_second: Arc<tokio::sync::Notify>,
         server: tokio::task::JoinHandle<()>,
     }
 
     impl HeldSessionServer {
         async fn spawn() -> Self {
-            Self::spawn_with_statuses(StatusCode::OK, StatusCode::UNAUTHORIZED).await
+            Self::spawn_with_holds(StatusCode::OK, StatusCode::UNAUTHORIZED, true, false).await
         }
 
         async fn spawn_with_statuses(first_status: StatusCode, second_status: StatusCode) -> Self {
+            Self::spawn_with_holds(first_status, second_status, true, false).await
+        }
+
+        async fn spawn_with_both_responses_held() -> Self {
+            Self::spawn_with_holds(StatusCode::OK, StatusCode::UNAUTHORIZED, true, true).await
+        }
+
+        async fn spawn_with_holds(
+            first_status: StatusCode,
+            second_status: StatusCode,
+            hold_first: bool,
+            hold_second: bool,
+        ) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = format!("http://{}", listener.local_addr().unwrap());
             let first_started = Arc::new(tokio::sync::Notify::new());
             let release_first = Arc::new(tokio::sync::Notify::new());
             let second_started = Arc::new(tokio::sync::Notify::new());
+            let release_second = Arc::new(tokio::sync::Notify::new());
             let calls = Arc::new(AtomicUsize::new(0));
             let first_started_for_route = first_started.clone();
             let release_first_for_route = release_first.clone();
             let second_started_for_route = second_started.clone();
+            let release_second_for_route = release_second.clone();
             let first_status_for_route = first_status;
             let second_status_for_route = second_status;
             let app = Router::new().route(
@@ -1461,12 +1476,15 @@ mod tests {
                     let first_started = first_started_for_route.clone();
                     let release_first = release_first_for_route.clone();
                     let second_started = second_started_for_route.clone();
+                    let release_second = release_second_for_route.clone();
                     let first_status = first_status_for_route;
                     let second_status = second_status_for_route;
                     async move {
                         if call == 0 {
                             first_started.notify_one();
-                            release_first.notified().await;
+                            if hold_first {
+                                release_first.notified().await;
+                            }
                             (
                                 first_status,
                                 Json(if first_status.is_success() {
@@ -1479,6 +1497,9 @@ mod tests {
                             )
                         } else {
                             second_started.notify_one();
+                            if hold_second {
+                                release_second.notified().await;
+                            }
                             (second_status, Json(serde_json::json!({})))
                         }
                     }
@@ -1492,6 +1513,7 @@ mod tests {
                 first_started,
                 release_first,
                 second_started,
+                release_second,
                 server,
             }
         }
@@ -1940,6 +1962,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn saved_session_rejection_wins_after_prior_success_for_both_paths() {
+        let viewer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        for cached in [false, true] {
+            let server = HeldSessionServer::spawn_with_both_responses_held().await;
+            let scope = scope_for_adapter(&server.base, viewer).unwrap();
+            let session = StoredSession {
+                token: Zeroizing::new("fixture-session".into()),
+                expires_at: "2030-01-01T00:00:00Z".into(),
+            };
+            let store = Arc::new(FixtureStore::default());
+            let raw = encode_session(&session).unwrap();
+            store.replace(scope.service, &scope.account, &raw).unwrap();
+            let host = EnterpriseAuthHost::with_store(store.clone());
+            if cached {
+                host.remember(scope.clone(), session);
+            }
+            let client = test_http_client(Duration::from_secs(1));
+
+            let first = tokio::spawn({
+                let host = host.clone();
+                let scope = scope.clone();
+                let client = client.clone();
+                async move { host.get_scope_with_client(scope, &client).await }
+            });
+            server.first_started.notified().await;
+            let second = tokio::spawn({
+                let host = host.clone();
+                let scope = scope.clone();
+                let client = client.clone();
+                async move { host.get_scope_with_client(scope, &client).await }
+            });
+            server.second_started.notified().await;
+
+            server.release_first.notify_one();
+            assert!(first.await.unwrap().unwrap().is_some());
+            server.release_second.notify_one();
+            assert!(second.await.unwrap().unwrap().is_none());
+            assert!(host.cached(&scope).is_none());
+            assert_eq!(
+                store.read(scope.service, &scope.account),
+                Err(StoreError::Absent)
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn validation_is_fenced_by_a_new_login_and_clear() {
         let viewer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -1990,6 +2058,53 @@ mod tests {
         host.clear_scope(scope.clone()).await.unwrap();
         server.release_first.notify_one();
         assert!(validation.await.unwrap().unwrap().is_none());
+        assert!(host.cached(&scope).is_none());
+        assert_eq!(
+            store.read(scope.service, &scope.account),
+            Err(StoreError::Absent)
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_fences_a_restore_before_a_blocked_commit() {
+        let server = HeldSessionServer::spawn().await;
+        let viewer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let scope = scope_for_adapter(&server.base, viewer).unwrap();
+        let session = StoredSession {
+            token: Zeroizing::new("fixture-session".into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        };
+        let store = Arc::new(FixtureStore::default());
+        let raw = encode_session(&session).unwrap();
+        store.replace(scope.service, &scope.account, &raw).unwrap();
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        let client = test_http_client(Duration::from_secs(1));
+        let commit_guard = host.commit.lock().await;
+        let restore = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            let client = client.clone();
+            async move { host.get_scope_with_client(scope, &client).await }
+        });
+        server.first_started.notified().await;
+
+        let clear = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            async move { host.clear_scope(scope).await }
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while host.current_generation().unwrap() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        server.release_first.notify_one();
+        drop(commit_guard);
+        clear.await.unwrap().unwrap();
+        assert!(restore.await.unwrap().unwrap().is_none());
         assert!(host.cached(&scope).is_none());
         assert_eq!(
             store.read(scope.service, &scope.account),

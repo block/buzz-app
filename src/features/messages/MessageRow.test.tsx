@@ -1097,8 +1097,11 @@ it.each([undefined, "canonical-root"])(
 );
 
 it("shows working dots only while a known agent types in this thread", () => {
+  // Known from the profile cache and the library only: no loaded row names them.
   const agent = "a".repeat(64);
   const other = "b".repeat(64);
+  const cached = new Map([[agent, { name: "Brain", isAgent: true }]]);
+  const library = { identities: [{ pubkey: other }] };
   const listeners = new Set<() => void>();
   let entries: readonly TypingEntry[] = [
     { channelId: row.channelId, threadRootId: row.id, pubkey: agent },
@@ -1110,6 +1113,8 @@ it("shows working dots only while a known agent types in this thread", () => {
   const session = {
     channels: { list: () => channels, subscribeList: () => () => {} },
     messages: {},
+    profiles: { snapshot: () => cached, subscribe: () => () => {} },
+    agentChoices: { snapshot: () => library, subscribe: () => () => {} },
     typing: {
       snapshot: () => entries,
       subscribe: (listener: () => void) => {
@@ -1120,12 +1125,7 @@ it("shows working dots only while a known agent types in this thread", () => {
       },
     },
   } as unknown as RelaySession;
-  const view = renderMessage({
-    session,
-    agentPubkeys: new Set([agent, other]),
-    participantProfiles: new Map([[agent, { name: "Brain" }]]),
-    onOpenThread: () => {},
-  });
+  const view = renderMessage({ session, onOpenThread: () => {} });
   try {
     const working = screen.getByRole("button", {
       name: "View thread: 23 replies. Brain working",

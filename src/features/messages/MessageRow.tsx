@@ -12,12 +12,14 @@ import {
   useState,
   useEffect,
   useCallback,
+  useMemo,
   useSyncExternalStore,
   type FocusEvent,
   type ReactNode,
 } from "react";
 import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
+import { knownAgentPubkeys } from "../agents/known";
 import type { UnreadCapability } from "../relay/unread";
 import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
 import { parseMediaTimeReply } from "./media-timecode";
@@ -164,7 +166,6 @@ export const MessageRow = memo(function MessageRow({
     row.replyCount > 0 && onOpenThread ? session : undefined,
     row.channelId,
     row.threadRootId ?? row.id,
-    agentPubkeys,
   );
   const channels = session?.channels;
   const listed = useListedChannel(
@@ -197,12 +198,7 @@ export const MessageRow = memo(function MessageRow({
           : undefined;
   const workingLabel = threadAgents.length
     ? `${threadAgents
-        .map((id) =>
-          resolveName(
-            id,
-            participantProfiles?.get(id)?.name ?? id.slice(0, 10),
-          ),
-        )
+        .map(({ id, name }) => resolveName(id, name ?? id.slice(0, 10)))
         .join(", ")} working`
     : undefined;
   const name = resolveName(
@@ -733,23 +729,24 @@ function useThreadUnread(
   return useSyncExternalStore(subscribe, get, get);
 }
 const noSubscribe = () => () => {};
-const noAgents: readonly string[] = [];
+const emptyProfiles: ReadonlyMap<string, Profile> = new Map();
+const noProfiles = () => emptyProfiles;
+const noLibrary = () => undefined;
 // App-managed agents publish typing, not observer telemetry, while they work.
-// A joined-key snapshot keeps unrelated typing from re-rendering the row.
+// A joined-key snapshot keeps unrelated typing from re-rendering the row. Like
+// the sidebar, typers are classified against every cached profile and the
+// library: an agent may be working here before any loaded row names it.
 function useThreadAgents(
   session: RelaySession | undefined,
   channelId: string,
   rootId: string,
-  agents: ReadonlySet<string> | undefined,
 ) {
   const get = () =>
     session?.typing
       .snapshot()
       .filter(
         (entry) =>
-          entry.channelId === channelId &&
-          entry.threadRootId === rootId &&
-          agents?.has(entry.pubkey),
+          entry.channelId === channelId && entry.threadRootId === rootId,
       )
       .map((entry) => entry.pubkey)
       .join(",") ?? "";
@@ -758,5 +755,24 @@ function useThreadAgents(
     get,
     get,
   );
-  return keys ? keys.split(",") : noAgents;
+  const live = keys ? session : undefined;
+  const getProfiles = live?.profiles.snapshot ?? noProfiles;
+  const profiles = useSyncExternalStore(
+    live?.profiles.subscribe ?? noSubscribe,
+    getProfiles,
+    getProfiles,
+  );
+  const getLibrary = live?.agentChoices.snapshot ?? noLibrary;
+  const library = useSyncExternalStore(
+    live?.agentChoices.subscribe ?? noSubscribe,
+    getLibrary,
+    getLibrary,
+  );
+  return useMemo(() => {
+    const known = knownAgentPubkeys(profiles, library);
+    return keys
+      .split(",")
+      .filter((id) => known.has(id))
+      .map((id) => ({ id, name: profiles.get(id)?.name }));
+  }, [keys, profiles, library]);
 }

@@ -1,27 +1,14 @@
 import { Collapsible } from "@base-ui/react/collapsible";
-import {
-  Children,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import { Accordion } from "../../shared/design-system/ui/Accordion";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import {
-  conversationEvents,
-  useConversationSource,
-  type CodeThread,
-} from "./conversation";
+import { conversationEvents, useConversationSource } from "./conversation";
 import { MediaAttachment } from "../../features/messages/MediaAttachment";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   CaretDownIcon,
   ChatCircleIcon,
   CheckCircleIcon,
-  CodeIcon,
   XCircleIcon,
   XIcon,
 } from "../../shared/design-system/icons";
@@ -128,15 +115,13 @@ function Message({
   kind = "comment",
   reviewState,
   fallback = "No message provided",
-  children,
 }: {
   message: ConversationMessage;
   url: string;
   label: string;
-  kind?: "description" | "review" | "comment" | "code";
+  kind?: "description" | "review" | "comment";
   reviewState?: string | undefined;
   fallback?: string;
-  children?: ReactNode;
 }) {
   const preview = useMemo(
     () => bodyPreview(message.body, message.bodyHtml, url),
@@ -150,8 +135,7 @@ function Message({
     [message.body, message.bodyHtml, url],
   );
   const hasBody = !!message.body.trim() || !!fallback;
-  const canFitOnOneLine =
-    textBody && !preview.images.length && !Children.toArray(children).length;
+  const canFitOnOneLine = textBody && !preview.images.length;
   useLayoutEffect(() => {
     const content = header.current;
     const probe = measure.current;
@@ -208,9 +192,7 @@ function Message({
           : reviewState === "DISMISSED"
             ? XIcon
             : ChatCircleIcon
-      : kind === "code"
-        ? CodeIcon
-        : ChatCircleIcon;
+      : ChatCircleIcon;
   const marker =
     kind === "description" ? (
       <Avatar src={message.authorAvatar} alt="" fallback={message.author} />
@@ -228,6 +210,7 @@ function Message({
       data-buzz-ui=""
       role="group"
       aria-label={label}
+      data-bodyless={!hasBody || undefined}
     >
       <div className={styles.messageMarker}>
         {expandable ? (
@@ -288,7 +271,7 @@ function Message({
                   : undefined
               }
             >
-              {kind === "code" ? "Code comment" : label}
+              {label}
             </span>
             <span className={styles.messageTime}>
               <PostedTime value={message.createdAt} />
@@ -326,52 +309,10 @@ function Message({
             ) : (
               <p>{fallback}</p>
             )}
-            {children}
           </Collapsible.Panel>
         )}
       </div>
     </Collapsible.Root>
-  );
-}
-
-function Thread({ thread, url }: { thread: CodeThread; url: string }) {
-  const { root } = thread;
-  return (
-    <Accordion
-      items={[
-        {
-          value: String(thread.id),
-          title: (
-            <span className={styles.threadLabel}>
-              {root.path || "Code thread"}
-              {root.line ? `:${root.line}` : ""} · {thread.replies.length + 1}{" "}
-              loaded {thread.replies.length ? "comments" : "comment"}
-            </span>
-          ),
-          content: (
-            <>
-              {thread.missingRoot && (
-                <p className={styles.conversationNotice}>
-                  Earlier context is unavailable in the loaded comments.
-                </p>
-              )}
-              {root.diff && (
-                <pre className={styles.codeContext}>{root.diff}</pre>
-              )}
-              {[root, ...thread.replies].map((message) => (
-                <Message
-                  key={message.id}
-                  message={message}
-                  url={url}
-                  kind="code"
-                  label={`Code comment by ${message.author || "unknown author"}`}
-                />
-              ))}
-            </>
-          ),
-        },
-      ]}
-    />
   );
 }
 
@@ -422,16 +363,13 @@ function Conversation({
 }) {
   const discussion = useConversationSource(url, "discussion");
   const reviews = useConversationSource(url, "reviews");
-  const inline = useConversationSource(url, "inline");
   const events = useMemo(
-    () =>
-      conversationEvents(discussion.entries, reviews.entries, inline.entries),
-    [discussion.entries, reviews.entries, inline.entries],
+    () => conversationEvents(discussion.entries, reviews.entries),
+    [discussion.entries, reviews.entries],
   );
-  const incomplete = [discussion, reviews, inline].some(
+  const incomplete = [discussion, reviews].some(
     (source) => source.loading || source.error || source.next,
   );
-  const incompleteThreads = inline.loading || inline.error || inline.next;
   return (
     <section
       className={styles.conversation}
@@ -445,49 +383,21 @@ function Conversation({
           kind="description"
           fallback="No description provided"
         />
-        {events.map((event) =>
-          event.kind === "thread" ? (
-            <div className={styles.conversationMessage} key={event.key}>
-              <span className={styles.eventIcon} aria-hidden="true">
-                <CodeIcon size={20} />
-              </span>
-              <div className={styles.messageContent}>
-                {event.threads.map((thread) => (
-                  <Thread key={thread.id} thread={thread} url={url} />
-                ))}
-              </div>
-            </div>
-          ) : (
-            <Message
-              key={event.key}
-              message={event.message}
-              url={url}
-              label={
-                event.kind === "review"
-                  ? (reviewLabels[event.message.state ?? ""] ?? "Reviewed")
-                  : "Comment"
-              }
-              kind={event.kind === "review" ? "review" : "comment"}
-              reviewState={event.message.state}
-              fallback={
-                event.kind === "review"
-                  ? event.threads.length
-                    ? `${event.threads.length} loaded code ${event.threads.length === 1 ? "thread" : "threads"}`
-                    : ""
-                  : "No message provided"
-              }
-            >
-              {event.kind === "review" && incompleteThreads && (
-                <p className={styles.conversationNotice}>
-                  Code threads may be incomplete.
-                </p>
-              )}
-              {event.threads.map((thread) => (
-                <Thread key={thread.id} thread={thread} url={url} />
-              ))}
-            </Message>
-          ),
-        )}
+        {events.map((event) => (
+          <Message
+            key={event.key}
+            message={event.message}
+            url={url}
+            label={
+              event.kind === "review"
+                ? (reviewLabels[event.message.state ?? ""] ?? "Reviewed")
+                : "Comment"
+            }
+            kind={event.kind === "review" ? "review" : "comment"}
+            reviewState={event.message.state}
+            fallback={event.kind === "review" ? "" : "No message provided"}
+          />
+        ))}
       </div>
       {!events.length && !incomplete && (
         <p className={styles.conversationNotice}>
@@ -501,7 +411,6 @@ function Conversation({
           </p>
           <SourceStatus label="Discussion" source={discussion} />
           <SourceStatus label="Reviews" source={reviews} />
-          <SourceStatus label="Code comments" source={inline} />
         </div>
       ) : (
         <p className={styles.conversationNotice}>

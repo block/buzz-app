@@ -46,7 +46,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("loads three credential-free bounded sources and honors paging without following external destinations", async () => {
+it("loads credential-free bounded sources and honors paging without following external destinations", async () => {
   const fetch = vi.fn(async () =>
     response(
       [
@@ -91,78 +91,58 @@ it("loads three credential-free bounded sources and honors paging without follow
   );
   expect(fetch).toHaveBeenCalledTimes(2);
 });
-it("uses created time and original line context, omits unsafe avatars and unavailable dates", async () => {
+it("uses discussion creation time and omits unsafe avatars and unavailable dates", async () => {
   const fetch = vi.fn(async (_target: string) =>
     response([
       {
         id: 4,
         created_at: "bad",
         user: { login: "sample", avatar_url: "https://other.test/avatar" },
-        original_line: 8,
-        line: null,
-        path: "src/example.ts",
-        in_reply_to_id: 3,
-        pull_request_review_id: 10,
-        diff_hunk: "@@ context",
         body: null,
+      },
+      {
+        id: 5,
+        created_at: date(13),
+        user: {
+          login: "author",
+          avatar_url: "https://avatars.githubusercontent.com/u/1",
+        },
+        body: "Comment",
       },
     ]),
   );
   vi.stubGlobal("fetch", fetch);
   const page = await loadConversationPage(
     url,
-    "inline",
+    "discussion",
     1,
     new AbortController().signal,
   );
   expect(fetch.mock.calls[0]?.[0]).toBe(
-    "https://api.github.com/repos/sample/project/pulls/1/comments?per_page=30&page=1&sort=created&direction=asc",
+    "https://api.github.com/repos/sample/project/issues/1/comments?per_page=30&page=1",
   );
   expect(page.entries[0]).toMatchObject({
-    line: 8,
-    replyTo: 3,
-    reviewId: 10,
-    diff: "@@ context",
     createdAt: undefined,
     authorAvatar: undefined,
     body: "",
   });
-});
-it("groups roots/replies once beneath their root review and preserves standalone missing context", () => {
-  const review = entry(10, { createdAt: date(14) });
-  const discussion = entry(20, { createdAt: date(13) });
-  const root = entry(30, { reviewId: 10, createdAt: date(14) });
-  const reply = entry(31, {
-    replyTo: 30,
-    reviewId: 11,
-    author: "reply-author",
-    createdAt: date(15),
+  expect(page.entries[1]).toMatchObject({
+    createdAt: date(13),
+    authorAvatar: "https://avatars.githubusercontent.com/u/1",
+    body: "Comment",
   });
-  const orphan = entry(32, { replyTo: 99, reviewId: 10 });
-  const standalone = entry(40, { reviewId: 77 });
+});
+it("orders discussion and submitted reviews chronologically with deterministic ties", () => {
   const events = conversationEvents(
-    [discussion],
-    [review],
-    [reply, standalone, root, orphan],
+    [entry(20, { createdAt: date(13) }), entry(21, { createdAt: date(14) })],
+    [entry(10, { createdAt: date(14) }), entry(22, { createdAt: date(14) })],
   );
   expect(events.map((event) => event.key)).toEqual([
-    "thread-99",
-    "thread-40",
     "discussion-20",
     "review-10",
+    "discussion-21",
+    "review-22",
   ]);
-  expect(events.at(-1)?.threads).toEqual([
-    { id: 30, root, replies: [reply], missingRoot: false },
-  ]);
-  expect(events[0]?.threads[0]?.missingRoot).toBe(true);
-  expect(
-    events.flatMap((event) =>
-      event.threads.flatMap((thread) => [
-        thread.root.id,
-        ...thread.replies.map((comment) => comment.id),
-      ]),
-    ),
-  ).toEqual([32, 40, 30, 31]);
 });
 it("keeps source failures independent, retains pages during retry and fetches more only on request", async () => {
   let failReviews = true,
@@ -201,7 +181,7 @@ it("keeps source failures independent, retains pages during retry and fetches mo
   render(<GitHubConversation details={details} url={url} />);
   const user = userEvent.setup();
   await screen.findByRole("button", { name: "Retry reviews" });
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(fetch).toHaveBeenCalledTimes(2);
   expect(screen.getByText(/some sources are incomplete/)).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Expand Description" }));
   expect(
@@ -240,65 +220,54 @@ it("keeps source failures independent, retains pages during retry and fetches mo
       .filter((target) => target.includes("/issues/")),
   ).toHaveLength(3);
 });
-it("expands independently with linked authors outside triggers and empty reviews with grouped replies", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (target: string) =>
-      response(
-        target.includes("/reviews?")
-          ? [
-              {
-                id: 10,
-                state: "DISMISSED",
-                submitted_at: date(14),
-                user: { login: "reviewer" },
-                body: "",
-              },
-            ]
-          : target.includes("/issues/")
-            ? [
-                {
-                  id: 20,
-                  created_at: date(13),
-                  user: { login: "contributor" },
-                  body: "Brief\n\n## Full comment",
-                },
-              ]
-            : [
-                {
-                  id: 30,
-                  created_at: date(14),
-                  user: { login: "reviewer" },
-                  path: "src/body.ts",
-                  line: 7,
-                  diff_hunk: "@@ diff",
-                  body: "Root",
-                  pull_request_review_id: 10,
-                },
-                {
-                  id: 31,
-                  in_reply_to_id: 30,
-                  user: { login: "reply-author" },
-                  created_at: date(15),
-                  body: "Reply",
-                  pull_request_review_id: 11,
-                },
-              ],
-      ),
+it("fetches only discussion and reviews, keeps summary expansion independent and bodyless reviews noninteractive", async () => {
+  const fetch = vi.fn(async (target: string) =>
+    response(
+      target.includes("/reviews?")
+        ? [
+            {
+              id: 10,
+              state: "DISMISSED",
+              submitted_at: date(14),
+              user: { login: "reviewer" },
+              body: "  ",
+            },
+            {
+              id: 11,
+              state: "CHANGES_REQUESTED",
+              submitted_at: date(15),
+              user: { login: "another-reviewer" },
+              body: "Summary\n\n## Full review",
+            },
+          ]
+        : [
+            {
+              id: 20,
+              created_at: date(13),
+              user: { login: "contributor" },
+              body: "Brief\n\n## Full comment",
+            },
+          ],
     ),
   );
+  vi.stubGlobal("fetch", fetch);
   render(<GitHubConversation details={details} url={url} />);
+  await screen.findByText("Conversation loaded · oldest first");
+  expect(fetch.mock.calls.map(([target]) => target).sort()).toEqual([
+    "https://api.github.com/repos/sample/project/issues/1/comments?per_page=30&page=1",
+    "https://api.github.com/repos/sample/project/pulls/1/reviews?per_page=30&page=1",
+  ]);
+  const emptyReview = screen.getByRole("group", { name: "Review dismissed" });
+  expect(within(emptyReview).queryByRole("button")).not.toBeInTheDocument();
+  expect(emptyReview).toHaveAttribute("data-bodyless", "true");
+  expect(emptyReview).not.toHaveTextContent("No message provided");
+  expect(screen.queryByText(/code threads/i)).not.toBeInTheDocument();
   const user = userEvent.setup();
-  const review = await screen.findByRole("button", {
-    name: "Expand Review dismissed",
-  });
-  expect(review.parentElement).toHaveTextContent("1 loaded code thread");
   const description = screen.getByRole("button", {
     name: "Expand Description",
   });
   expect(description.querySelector("a")).toBeNull();
-  const profile = screen.getByRole("link", { name: "author" });
-  await user.click(profile);
+  await user.click(screen.getByRole("link", { name: "author" }));
   expect(description).toHaveAttribute("aria-expanded", "false");
   await user.click(screen.getByRole("button", { name: "Toggle Description" }));
   expect(description).toHaveAttribute("aria-expanded", "true");
@@ -306,27 +275,11 @@ it("expands independently with linked authors outside triggers and empty reviews
   expect(description).toHaveAttribute("aria-expanded", "false");
   await user.click(description);
   await user.click(screen.getByRole("button", { name: "Expand Comment" }));
-  expect(
-    screen.getByRole("heading", { name: "Full description" }),
-  ).toBeVisible();
-  expect(screen.getByRole("heading", { name: "Full comment" })).toBeVisible();
-  await user.click(review);
   await user.click(
-    screen.getByRole("button", { name: "src/body.ts:7 · 2 loaded comments" }),
+    screen.getByRole("button", { name: "Expand Changes requested" }),
   );
-  expect(screen.getByText("@@ diff")).toBeVisible();
-  const replyButton = screen.getByRole("button", {
-    name: "Expand Code comment by reply-author",
-  });
-  expect(replyButton.parentElement?.querySelector("time")).toHaveAttribute(
-    "datetime",
-    date(15),
-  );
-  expect(
-    screen
-      .getAllByText("Root")
-      .filter((node) => !node.closest("[aria-hidden]")),
-  ).toHaveLength(1);
+  for (const name of ["Full description", "Full comment", "Full review"])
+    expect(screen.getByRole("heading", { name })).toBeVisible();
 });
 it("aborts all old sources, ignores late results and resets pages and expansion on PR changes", async () => {
   const pending: { resolve(response: Response): void; signal: AbortSignal }[] =
@@ -342,7 +295,7 @@ it("aborts all old sources, ignores late results and resets pages and expansion 
     ),
   );
   const view = render(<GitHubConversation details={details} url={url} />);
-  await waitFor(() => expect(pending).toHaveLength(3));
+  await waitFor(() => expect(pending).toHaveLength(2));
   fireEvent.click(screen.getByRole("button", { name: "Expand Description" }));
   view.rerender(
     <GitHubConversation
@@ -375,8 +328,8 @@ it("keeps description usable while held sources load and gives neutral empty cop
     vi.fn(() => new Promise<Response>((resolve) => finish.push(resolve))),
   );
   render(<GitHubConversation details={{ ...details, body: "" }} url={url} />);
-  await waitFor(() => expect(finish).toHaveLength(3));
-  expect(screen.getAllByRole("status")).toHaveLength(3);
+  await waitFor(() => expect(finish).toHaveLength(2));
+  expect(screen.getAllByRole("status")).toHaveLength(2);
   expect(
     screen
       .getAllByText("No description provided")

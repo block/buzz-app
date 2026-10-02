@@ -119,7 +119,8 @@ export async function loadGitHubDetails(
       "Changes",
       { additions: data.additions, deletions: data.deletions },
     ]);
-  if (data.comments !== undefined) facts.push(["Comments", data.comments]);
+  if (reference.kind !== "pull" && data.comments !== undefined)
+    facts.push(["Comments", data.comments]);
   if (data.stargazers_count !== undefined)
     facts.push(["Stars", data.stargazers_count]);
   if (data.language) facts.push(["Language", data.language]);

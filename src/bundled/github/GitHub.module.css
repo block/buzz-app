@@ -308,6 +308,9 @@
   align-items: start;
   padding: var(--space-2) 0;
 }
+.conversationMessage[data-bodyless] {
+  align-items: center;
+}
 .messageMarker {
   position: relative;
   z-index: 1;
@@ -434,6 +437,17 @@
   flex-shrink: 0;
   border-radius: var(--radius-control);
 }
+/* Paint above the image: matching-color content cannot cover its edge. */
+.thumbnail::after,
+.attachment [data-image-preview]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  border: 1px solid var(--border-prominent);
+  border-radius: inherit;
+}
 .thumbnail [data-image-preview] {
   width: 100%;
   height: 100%;
@@ -505,20 +519,6 @@
   bottom: var(--space-5);
   border-left: 1px solid var(--border-standard);
 }
-.threadLabel {
-  overflow-wrap: anywhere;
-}
-.codeContext {
-  overflow-x: auto;
-  max-width: 100%;
-  padding: var(--space-2);
-  background: var(--surface-inset);
-  font-family: var(--font-system-mono);
-  font-size: var(--text-mono);
-  line-height: var(--text-mono--line-height);
-  letter-spacing: var(--text-mono--letter-spacing);
-  font-weight: var(--text-mono--font-weight);
-}
 .conversationSources {
   margin-top: var(--space-4);
   border-top: 1px solid var(--border-standard);
@@ -535,11 +535,10 @@
   margin-left: auto;
 }
 @container (max-width: 18rem) {
-  .conversationMessage {
+  .conversationMessage:not([data-bodyless]) {
     display: block;
   }
-  .messageMarker,
-  .conversationMessage > .eventIcon {
+  .conversationMessage:not([data-bodyless]) .messageMarker {
     margin-bottom: var(--space-2);
   }
   .conversationTimeline::before {

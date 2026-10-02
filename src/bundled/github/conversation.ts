@@ -3,26 +3,14 @@ import type { ConversationMessage } from "./GitHubConversation";
 
 export type ConversationEntry = ConversationMessage & {
   id: number;
-  reviewId?: number | undefined;
-  replyTo?: number | undefined;
-  path?: string | undefined;
-  line?: number | undefined;
-  diff?: string | undefined;
   state?: string | undefined;
-};
-export type CodeThread = {
-  id: number;
-  root: ConversationEntry;
-  replies: ConversationEntry[];
-  missingRoot: boolean;
 };
 export type ConversationEvent = {
   key: string;
   message: ConversationEntry;
-  kind: "discussion" | "review" | "thread";
-  threads: CodeThread[];
+  kind: "discussion" | "review";
 };
-export type ConversationSource = "discussion" | "reviews" | "inline";
+export type ConversationSource = "discussion" | "reviews";
 const pageSize = 30;
 
 function endpoint(url: string, source: ConversationSource) {
@@ -41,12 +29,6 @@ type EntryData = {
   created_at?: string;
   submitted_at?: string | null;
   state?: string;
-  pull_request_review_id?: number;
-  in_reply_to_id?: number;
-  path?: string;
-  line?: number | null;
-  original_line?: number | null;
-  diff_hunk?: string;
 };
 
 export async function loadConversationPage(
@@ -59,10 +41,6 @@ export async function loadConversationPage(
   const request = new URL(base);
   request.searchParams.set("per_page", String(pageSize));
   request.searchParams.set("page", String(page));
-  if (source === "inline") {
-    request.searchParams.set("sort", "created");
-    request.searchParams.set("direction", "asc");
-  }
   const response = await fetch(request.href, {
     signal,
     credentials: "omit",
@@ -100,11 +78,6 @@ export async function loadConversationPage(
         createdAt: date && Number.isFinite(Date.parse(date)) ? date : undefined,
         body: entry.body ?? "",
         bodyHtml: entry.body_html ?? undefined,
-        reviewId: entry.pull_request_review_id,
-        replyTo: entry.in_reply_to_id,
-        path: entry.path,
-        line: entry.line ?? entry.original_line ?? undefined,
-        diff: entry.diff_hunk,
         state: entry.state,
       };
     });
@@ -194,34 +167,13 @@ function chronological(a: ConversationEntry, b: ConversationEntry) {
 export function conversationEvents(
   discussion: ConversationEntry[],
   reviews: ConversationEntry[],
-  inline: ConversationEntry[],
 ): ConversationEvent[] {
-  const groups = new Map<number, ConversationEntry[]>();
-  for (const entry of inline) {
-    const id = entry.replyTo ?? entry.id;
-    groups.set(id, [...(groups.get(id) ?? []), entry]);
-  }
-  const threads = [...groups].flatMap(([id, entries]): CodeThread[] => {
-    entries.sort(chronological);
-    const root = entries.find((entry) => entry.id === id) ?? entries[0];
-    if (!root) return [];
-    return [
-      {
-        id,
-        root,
-        replies: entries.filter((entry) => entry !== root),
-        missingRoot: root.id !== id,
-      },
-    ];
-  });
-  const reviewIds = new Set(reviews.map((review) => review.id));
   return [
     ...discussion.map(
       (message): ConversationEvent => ({
         key: `discussion-${message.id}`,
         message,
         kind: "discussion",
-        threads: [],
       }),
     ),
     ...reviews.map(
@@ -229,25 +181,8 @@ export function conversationEvents(
         key: `review-${message.id}`,
         message,
         kind: "review",
-        threads: threads.filter(
-          (thread) =>
-            !thread.missingRoot && thread.root.reviewId === message.id,
-        ),
       }),
     ),
-    ...threads
-      .filter(
-        (thread) =>
-          thread.missingRoot || !reviewIds.has(thread.root.reviewId ?? -1),
-      )
-      .map(
-        (thread): ConversationEvent => ({
-          key: `thread-${thread.id}`,
-          message: thread.root,
-          kind: "thread",
-          threads: [thread],
-        }),
-      ),
   ].sort(
     (a, b) => chronological(a.message, b.message) || a.key.localeCompare(b.key),
   );

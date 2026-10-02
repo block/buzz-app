@@ -22,18 +22,16 @@ it("renders PR details while checks load, then exposes counts by pointer and key
   const pending = new Promise<Response>((resolve) => {
     finish = resolve;
   });
-  vi.stubGlobal(
-    "fetch",
-    vi.fn((url: string) => {
-      if (/\/(?:comments|reviews)\?/.test(url))
-        return Promise.resolve(response([]));
-      if (/\/pulls\/\d+$/.test(url)) return Promise.resolve(response(pull));
-      if (url.includes("/check-runs?")) return pending;
-      return Promise.resolve(
-        response({ total_count: 0, state: "pending", statuses: [] }),
-      );
-    }),
-  );
+  const fetch = vi.fn((url: string) => {
+    if (/\/(?:comments|reviews)\?/.test(url))
+      return Promise.resolve(response([]));
+    if (/\/pulls\/\d+$/.test(url)) return Promise.resolve(response(pull));
+    if (url.includes("/check-runs?")) return pending;
+    return Promise.resolve(
+      response({ total_count: 0, state: "pending", statuses: [] }),
+    );
+  });
+  vi.stubGlobal("fetch", fetch);
   render(<GitHubPanel target={target} close={() => {}} />);
   await screen.findByRole("heading", { name: "A small change #1" });
   expect(screen.getByText("Loading…")).toBeVisible();
@@ -57,6 +55,14 @@ it("renders PR details while checks load, then exposes counts by pointer and key
   const summary = await screen.findByText("Some not successful");
   expect(summary).toHaveAttribute("data-check-state", "failure");
   expect(summary.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+  await screen.findByText("Conversation loaded · oldest first");
+  expect(fetch.mock.calls.map(([url]) => url).sort()).toEqual([
+    "https://api.github.com/repos/sample/project/commits/head-sha/check-runs?per_page=100&page=1&filter=latest",
+    "https://api.github.com/repos/sample/project/commits/head-sha/status?per_page=100&page=1",
+    "https://api.github.com/repos/sample/project/issues/1/comments?per_page=30&page=1",
+    "https://api.github.com/repos/sample/project/pulls/1",
+    "https://api.github.com/repos/sample/project/pulls/1/reviews?per_page=30&page=1",
+  ]);
   const user = userEvent.setup();
   await user.hover(summary);
   const tooltip = await screen.findByRole("tooltip");
@@ -162,5 +168,6 @@ it("shows honest missing-data rows without inventing a head check request", asyn
   expect(
     screen.queryByRole("button", { name: "Retry checks" }),
   ).not.toBeInTheDocument();
-  expect(fetch).toHaveBeenCalledTimes(4);
+  await screen.findByText("Conversation loaded · oldest first");
+  expect(fetch).toHaveBeenCalledTimes(3);
 });

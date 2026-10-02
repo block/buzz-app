@@ -46,6 +46,7 @@ it("loads PR details and preserves merged state, branches, and change counts", a
         head: { label: "block:panels" },
         base: { label: "block:main" },
         changed_files: 3,
+        comments: 5,
         additions: 10,
         deletions: 80,
       }),
@@ -69,6 +70,7 @@ it("loads PR details and preserves merged state, branches, and change counts", a
     body: "An independent panel contract.",
     bodyHtml: "<p>An independent panel contract.</p>",
   });
+  expect(data.facts.map(([label]) => label)).not.toContain("Comments");
   expect(data.facts).toContainEqual([
     "Changes",
     { additions: 10, deletions: 80 },
@@ -173,4 +175,17 @@ it("uses PR creation time for the description and keeps its avatar to the GitHub
     updatedAt: "2026-10-02T12:00:00Z",
     authorAvatar: "https://avatars.githubusercontent.com/u/1?v=4",
   });
+});
+
+it("keeps the comment count on issues, where no conversation is rendered", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(new Response(JSON.stringify({ comments: 0 }))),
+  );
+  const issue = parseGitHubReference(
+    "https://github.com/sample/project/issues/1",
+  );
+  assert.exists(issue);
+  const data = await loadGitHubDetails(issue, new AbortController().signal);
+  expect(data.facts).toContainEqual(["Comments", 0]);
 });

@@ -50,3 +50,6 @@ pub mod inventory;
 pub mod model_context;
 
 pub mod roster;
+
+#[cfg(feature = "mesh")]
+pub mod publication;

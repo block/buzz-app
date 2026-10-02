@@ -1,0 +1,213 @@
+//! Community-only status notes, compatible with classic Buzz's discovery reader.
+use mesh_llm_host_runtime::crypto::OwnerKeypair;
+use nostr::event::{EventBuilder, Kind, Tag};
+use serde_json::{json, Value};
+
+use crate::discovery_types::{dedupe_models, MeshModelOption, MeshServeTarget, MESH_STATUS_KIND};
+use crate::identity::{member_binding_bytes, member_endpoint_binding_bytes};
+use crate::transport_policy::validate_advertised_endpoint;
+
+/// Construct only the discovery fields; never publish the SDK's raw status or invite.
+/// A consumer/stopped heartbeat carries owner bindings but no serving targets.
+pub fn status_event(
+    owner: &OwnerKeypair,
+    member: &str,
+    serving: bool,
+    status: Option<&Value>,
+    endpoint: Option<&str>,
+) -> anyhow::Result<EventBuilder> {
+    nostr::key::PublicKey::from_hex(member)?;
+    let models = if serving {
+        ready_models(status)
+    } else {
+        Vec::new()
+    };
+    let endpoint = if serving && !models.is_empty() {
+        endpoint.map(validate_advertised_endpoint).transpose()?
+    } else {
+        None
+    };
+    let tokens = endpoint
+        .as_ref()
+        .map(|value| vec![value.join_token.clone()])
+        .unwrap_or_default();
+    let targets = endpoint
+        .map(|endpoint| {
+            models
+                .iter()
+                .map(|model| MeshServeTarget {
+                    model_id: model.id.clone(),
+                    model_name: model.name.clone(),
+                    endpoint_addr: endpoint.join_token.clone(),
+                    reporter_pubkey: None,
+                    owner_id: None,
+                    node_name: status
+                        .and_then(|v| v["node_id"].as_str())
+                        .map(str::to_owned),
+                    capacity: None,
+                    endpoint_id: Some(endpoint.endpoint_id.clone()),
+                    device_id: None,
+                    device_name: None,
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let payload = json!({
+        "ownerId": owner.owner_id(),
+        "ownerVerifyingKey": hex::encode(owner.verifying_key().as_bytes()),
+        "ownerBindingSig": hex::encode(owner.sign_bytes(&member_binding_bytes(member))),
+        "ownerEndpointBindingSig": hex::encode(owner.sign_bytes(&member_endpoint_binding_bytes(member, &tokens))),
+        "models": models,
+        "serveTargets": targets,
+    });
+    Ok(
+        EventBuilder::new(Kind::Custom(MESH_STATUS_KIND as u16), payload.to_string()).tags([
+            Tag::parse([
+                "d",
+                &format!("buzz-mesh-member-status:{}", owner.owner_id()),
+            ])?,
+            Tag::parse(["k", "buzz-mesh-status"])?,
+        ]),
+    )
+}
+
+// Ported from classic mesh_llm/mod.rs:847-912. Requested serving_models are not ready.
+fn ready_models(status: Option<&Value>) -> Vec<MeshModelOption> {
+    fn collect(value: &Value, out: &mut Vec<MeshModelOption>) {
+        match value {
+            Value::Array(values) => {
+                for value in values {
+                    collect(value, out);
+                }
+            }
+            Value::Object(map) => {
+                let id = ["model_id", "modelId", "model_ref", "modelRef", "id", "name"]
+                    .iter()
+                    .find_map(|key| map.get(*key))
+                    .and_then(Value::as_str);
+                if let Some(id) = id {
+                    push(
+                        out,
+                        id,
+                        map.get("display_name")
+                            .or_else(|| map.get("displayName"))
+                            .and_then(Value::as_str),
+                    );
+                } else {
+                    for value in map.values().filter(|v| v.is_array() || v.is_object()) {
+                        collect(value, out);
+                    }
+                }
+            }
+            Value::String(id) => push(out, id, None),
+            _ => {}
+        }
+    }
+    fn push(out: &mut Vec<MeshModelOption>, id: &str, name: Option<&str>) {
+        let id = id.trim();
+        if !id.is_empty() && !id.starts_with("http://") && !id.starts_with("https://") {
+            out.push(MeshModelOption {
+                id: id.into(),
+                name: name.map(str::to_owned),
+            });
+        }
+    }
+    let mut models = Vec::new();
+    if let Some(status) = status {
+        for key in ["models", "hosted_models"] {
+            if let Some(value) = status.get(key) {
+                collect(value, &mut models);
+            }
+        }
+        if let Some(runtime) = status["runtime"]["models"].as_array() {
+            for model in runtime.iter().filter(|model| model["status"] == "ready") {
+                collect(model, &mut models);
+            }
+        }
+    }
+    dedupe_models(models)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::discovery::{availability_from_events, owner_ids_from_events};
+    use nostr::event::FinalizeEvent;
+    use nostr::key::Keys;
+
+    #[test]
+    fn signed_note_round_trips_discovery_and_does_not_publish_standby_or_raw_status() {
+        let member = Keys::generate();
+        let owner = OwnerKeypair::generate();
+        let token = crate::transport_policy::endpoint_token_for_test([iroh::TransportAddr::Ip(
+            "192.168.1.20:9999".parse().unwrap(),
+        )]);
+        let raw = json!({"hosted_models":["ready-model"], "runtime":{"models":[{"id":"warming-model","status":"loading"}]}, "serving_models":["requested-only"], "secret":"do-not-publish"});
+        let event = status_event(
+            &owner,
+            &member.public_key().to_hex(),
+            true,
+            Some(&raw),
+            Some(&token),
+        )
+        .unwrap()
+        .finalize(&member)
+        .unwrap();
+        event.verify().unwrap();
+        assert!(!event.content.contains("do-not-publish"));
+        assert!(!event.content.contains("warming-model"));
+        assert!(!event.content.contains("requested-only"));
+        let membership = EventBuilder::new(Kind::Custom(13534), "")
+            .tags([Tag::parse(["member", &member.public_key().to_hex()]).unwrap()])
+            .finalize(&Keys::generate())
+            .unwrap();
+        // Even the legitimate Nostr member cannot substitute a dial pointer
+        // without the Mesh owner's endpoint signature.
+        let mut altered: Value = serde_json::from_str(&event.content).unwrap();
+        altered["serveTargets"][0]["endpointAddr"] =
+            json!(crate::transport_policy::endpoint_token_for_test([
+                iroh::TransportAddr::Ip("192.168.1.21:9999".parse().unwrap())
+            ]));
+        let altered = EventBuilder::new(Kind::Custom(MESH_STATUS_KIND as u16), altered.to_string())
+            .tags(event.tags.clone())
+            .finalize(&member)
+            .unwrap();
+        assert!(availability_from_events(vec![membership.clone(), altered])
+            .serve_targets
+            .is_empty());
+        let events = vec![membership.clone(), event];
+        assert_eq!(owner_ids_from_events(&events), vec![owner.owner_id()]);
+        let available = availability_from_events(events);
+        assert_eq!(available.serve_targets.len(), 1);
+        assert_eq!(available.serve_targets[0].model_id, "ready-model");
+        let stopped = status_event(
+            &owner,
+            &member.public_key().to_hex(),
+            false,
+            Some(&raw),
+            Some(&token),
+        )
+        .unwrap()
+        .finalize(&member)
+        .unwrap();
+        assert!(!stopped.content.contains(&token));
+        let events = vec![membership, stopped];
+        assert_eq!(owner_ids_from_events(&events), vec![owner.owner_id()]);
+        assert!(availability_from_events(events).serve_targets.is_empty());
+    }
+
+    #[test]
+    fn invalid_endpoint_is_not_signed_and_only_ready_runtime_models_count() {
+        let raw = json!({"runtime":{"models":[{"model_ref":"ready","status":"ready"},{"id":"pending","status":"standby"}]}});
+        assert_eq!(ready_models(Some(&raw))[0].id, "ready");
+        assert_eq!(ready_models(Some(&raw)).len(), 1);
+        assert!(status_event(
+            &OwnerKeypair::generate(),
+            &Keys::generate().public_key().to_hex(),
+            true,
+            Some(&raw),
+            Some("invalid-token")
+        )
+        .is_err());
+    }
+}

@@ -8,13 +8,26 @@ use std::path::Path;
 /// Preserve the host-selected owner identity, unlocking encrypted files through the SDK.
 /// Only encrypted files consult the native credential store; this never writes credentials.
 pub fn ensure_owner_at(path: &Path) -> anyhow::Result<String> {
-    ensure_owner_with(path, load_owner_keypair_from_keychain)
+    Ok(load_owner_at(path)?.owner_id())
 }
 
+/// Load the same owner for signing discovery; encrypted files use the existing loader.
+pub fn load_owner_at(path: &Path) -> anyhow::Result<OwnerKeypair> {
+    load_owner_with(path, load_owner_keypair_from_keychain)
+}
+
+#[cfg(test)]
 fn ensure_owner_with(
     path: &Path,
     unlock: impl FnOnce(&Path) -> Result<OwnerKeypair, OwnerKeychainLoadError>,
 ) -> anyhow::Result<String> {
+    Ok(load_owner_with(path, unlock)?.owner_id())
+}
+
+fn load_owner_with(
+    path: &Path,
+    unlock: impl FnOnce(&Path) -> Result<OwnerKeypair, OwnerKeychainLoadError>,
+) -> anyhow::Result<OwnerKeypair> {
     let key = if keystore_exists(path) {
         if keystore_metadata(path)?.encrypted {
             unlock(path).map_err(|error| match error {
@@ -33,7 +46,7 @@ fn ensure_owner_with(
         save_keystore(path, &key, None, false)?;
         key
     };
-    Ok(key.owner_id())
+    Ok(key)
 }
 
 use sha2::{Digest, Sha256};

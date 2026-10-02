@@ -152,3 +152,29 @@ it("prevents duplicate clipboard writes until the first settles", async () => {
   await screen.findByText("Link copied");
   expect(link.hasAttribute("disabled")).toBe(false);
 });
+
+it.each([false, true])(
+  "sends from the overflow menu and keeps feedback after it closes (failure=%s)",
+  async (failure) => {
+    const user = userEvent.setup();
+    const send = vi.fn(() => {
+      if (failure) throw new Error("Join the conversation before posting");
+    });
+    render(
+      <MessageActionBar copyText={() => "Reply"} onSendToChannel={send} />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Send to channel" }),
+    );
+    expect(send).toHaveBeenCalledOnce();
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(
+      await screen.findByText(
+        failure ? "Join the conversation before posting" : "Sending to channel",
+      ),
+    ).toBeTruthy();
+  },
+);

@@ -1,3 +1,4 @@
+import { MessageLink } from "../conversation/MessageLink";
 import { MessageTimestamp } from "./MessageTimestamp";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -48,6 +49,7 @@ import { messageCopyLink, messageCopyText } from "./message-copy";
 
 export type MessageRowProps = {
   row: ChannelMessage;
+  getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
   session?: RelaySession | undefined;
   scope?: string | undefined;
   unread?: UnreadCapability | undefined;
@@ -127,6 +129,7 @@ function revealFocusedThumbnail(event: FocusEvent<HTMLDivElement>) {
 
 export const MessageRow = memo(function MessageRow({
   row,
+  getThreadRoot,
   session,
   scope,
   unread,
@@ -422,6 +425,23 @@ export const MessageRow = memo(function MessageRow({
                   archived ||
                   (!!session?.channels.get && (!listed || readOnly))
                 }
+                onSendToChannel={
+                  session &&
+                  listed &&
+                  !archived &&
+                  !readOnly &&
+                  row.threadRootId &&
+                  row.authorId === session.viewer &&
+                  !row.agentEnvelope &&
+                  !row.diff &&
+                  (!row.delivery ||
+                    ["accepted", "seen"].includes(row.delivery)) &&
+                  session.outbox?.supports(9)
+                    ? () => {
+                        session.messages.sendToChannel(row, getThreadRoot?.());
+                      }
+                    : undefined
+                }
                 link={messageCopyLink(row, scope)}
                 copyText={() =>
                   messageCopyText(row, directory.profiles, directory.agents)
@@ -462,6 +482,23 @@ export const MessageRow = memo(function MessageRow({
               )}
             </div>
           </div>
+          {row.sentFromThread && (
+            <div className={styles.sentFromThread}>
+              Sent from{" "}
+              <MessageLink
+                url={`buzz://message?${new URLSearchParams({ channel: row.channelId, id: row.sentFromThread.rootId, thread: row.sentFromThread.rootId })}`}
+                registry={extensions?.links}
+                session={session}
+                scope={scope}
+                onOpenLink={onOpenLink}
+                label={
+                  row.sentFromThread.excerpt
+                    ? `Thread — ${row.sentFromThread.excerpt}`
+                    : "Thread"
+                }
+              />
+            </div>
+          )}
           {timeReply && (
             <span className={styles.mediaTimeLink}>
               {onMediaTime ? (

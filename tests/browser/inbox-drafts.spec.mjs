@@ -394,6 +394,9 @@ test("keyboard draft retirement returns to its row, a remaining row, then Back t
   const inbox = page.getByRole("region", { name: "Inbox", exact: true });
   await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
   const activate = async (control) => {
+    // focus() does not wait for enabled; a saved thread draft keeps Send
+    // disabled until its root finishes loading.
+    await expect(control).toBeEnabled();
     await control.focus();
     await expect(control).toBeFocused();
     await page.keyboard.press("Enter");

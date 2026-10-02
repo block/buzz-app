@@ -140,6 +140,28 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   for (const mode of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: mode });
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+    await expect(conversation).toHaveCSS(
+      "background-color",
+      "rgba(0, 0, 0, 0)",
+    );
+    await expect(conversation).toHaveCSS("padding", "0px");
+    await expect(conversation).toHaveCSS("border-radius", "0px");
+    const featuredFill = await conversation.evaluate((node) => {
+      const probe = document.createElement("span");
+      probe.style.backgroundColor = "var(--surface-inset)";
+      node.append(probe);
+      const fill = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return fill;
+    });
+    for (const label of ["Description", "Changes requested"]) {
+      await expect(
+        conversation.getByRole("group", { name: label, exact: true }),
+      ).toHaveCSS("background-color", featuredFill);
+    }
+    await expect(
+      conversation.getByRole("group", { name: "Comment", exact: true }),
+    ).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await panel.getByRole("heading").first().hover();
     await panel.screenshot({
       path: testInfo.outputPath(`conversation-${mode}.png`),

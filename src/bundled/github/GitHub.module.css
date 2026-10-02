@@ -284,9 +284,6 @@
 }
 .conversation {
   container-type: inline-size;
-  background: var(--surface-inset);
-  border-radius: var(--radius-row);
-  padding: var(--space-3);
   margin-top: var(--space-5);
 }
 .conversationMessage {
@@ -298,7 +295,7 @@
   padding: var(--space-4);
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-row);
-  background: var(--surface-panel);
+  background: var(--surface-inset);
 }
 .quietMessage {
   grid-template-columns: 1.5rem minmax(0, 1fr);

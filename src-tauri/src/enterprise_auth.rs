@@ -1680,7 +1680,7 @@ mod tests {
     fn exchange_rejects_malformed_or_expired_session_expiry() {
         for expires_at in ["not-a-timestamp", "2020-01-01T00:00:00Z"] {
             assert!(session_from_exchange(ExchangeResponse {
-                session_token: "fixture-session".into(),
+                session_token: Zeroizing::new("fixture-session".into()),
                 expires_at: expires_at.into(),
             })
             .is_err());

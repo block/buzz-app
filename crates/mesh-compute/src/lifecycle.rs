@@ -8,7 +8,7 @@ use std::time::Duration;
 pub const MESH_STOP_TIMEOUT: Duration = Duration::from_secs(12);
 use tokio::sync::{mpsc, watch};
 
-use crate::config::ClientConfig;
+use crate::config::{ClientConfig, ServeConfig};
 use crate::transport_policy::validate_advertised_endpoint;
 
 type Operation<'a, T> = Pin<Box<dyn Future<Output = anyhow::Result<T>> + Send + 'a>>;
@@ -66,6 +66,12 @@ impl Lifecycle {
     pub fn start(&self, request: ClientConfig) -> anyhow::Result<()> {
         let config = request.build()?;
         self.launch(async move { mesh_llm_sdk::client::start(config).await })
+    }
+
+    /// Share a local model through the same exclusive SDK slot as consumers.
+    pub fn serve(&self, request: ServeConfig) -> anyhow::Result<()> {
+        let config = request.build()?;
+        self.launch(async move { mesh_llm_sdk::serve::start(config).await })
     }
 
     fn launch<N: Node>(

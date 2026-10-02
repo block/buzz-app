@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 /// A consumer starts closed and learns dial targets through verified host discovery.
-/// Provider admission and model acquisition are deliberately not enabled here.
+/// Serving reuses these host-owned transport and admission settings.
 pub struct ClientConfig {
     pub api_port: u16,
     pub console_port: u16,
@@ -68,6 +68,37 @@ impl ClientConfig {
     }
 }
 
+/// Classic serving role on the same private community node, including solo serving.
+pub struct ServeConfig {
+    pub node: ClientConfig,
+    pub model: String,
+    pub max_vram_gb: Option<u64>,
+}
+impl ServeConfig {
+    pub fn build(self) -> anyhow::Result<mesh_llm_sdk::serve::EmbeddedServeConfig> {
+        let model = self.model.trim();
+        if model.is_empty() {
+            anyhow::bail!("Choose a model before sharing compute");
+        }
+        if self.max_vram_gb == Some(0) {
+            anyhow::bail!("Shared compute memory limit must be positive");
+        }
+        let node = self.node.build()?;
+        let mut config = mesh_llm_sdk::serve::EmbeddedServeConfig::builder()
+            .model(model)
+            .build();
+        config.http = node.http;
+        config.network = node.network;
+        config.admission = node.admission;
+        config.storage = node.storage;
+        config.log_format = node.log_format;
+        // Classic serve startup budget; model download is prepared by the host.
+        config.startup_timeout = Duration::from_secs(180);
+        config.serving.max_vram_gb = self.max_vram_gb.map(|gb| gb as f64);
+        Ok(config)
+    }
+}
+
 // Legacy management wait is deliberately longer than the ingress readiness deadline.
 const MESH_CLIENT_MANAGEMENT_TIMEOUT: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 
@@ -102,6 +133,57 @@ mod tests {
             join_token: None,
             mesh_name: Some("fixture-community".into()),
         }
+    }
+
+    #[test]
+    fn solo_serving_has_no_remote_target_and_keeps_private_self_admission() {
+        let mut node = config();
+        node.trusted_owners = vec![node.owner_id.clone()];
+        let result = ServeConfig {
+            node,
+            model: " fixture-model ".into(),
+            max_vram_gb: Some(16),
+        }
+        .build()
+        .unwrap();
+        assert_eq!(result.serving.models, vec!["fixture-model"]);
+        assert_eq!(result.serving.max_vram_gb, Some(16.0));
+        assert_eq!(result.startup_timeout, Duration::from_secs(180));
+        assert!(result.network.join_tokens.is_empty());
+        assert!(!result.network.publish);
+        assert!(!result.network.auto_join);
+        assert!(result.network.nostr_relays.is_empty());
+        assert_eq!(result.admission.trust_policy, Some(TrustPolicy::Allowlist));
+        assert!(result.admission.owner_required);
+        assert_eq!(result.admission.trusted_owners, vec!["self-owner"]);
+        assert!(result.storage.isolated_config);
+    }
+
+    #[test]
+    fn serving_rejects_missing_model_invalid_limit_and_missing_roster() {
+        assert!(ServeConfig {
+            node: config(),
+            model: "  ".into(),
+            max_vram_gb: None
+        }
+        .build()
+        .is_err());
+        assert!(ServeConfig {
+            node: config(),
+            model: "model".into(),
+            max_vram_gb: Some(0)
+        }
+        .build()
+        .is_err());
+        let mut node = config();
+        node.trusted_owners.clear();
+        assert!(ServeConfig {
+            node,
+            model: "model".into(),
+            max_vram_gb: None
+        }
+        .build()
+        .is_err());
     }
 
     #[test]

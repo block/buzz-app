@@ -1,16 +1,73 @@
 # Inbox: in-progress port
 
-Inbox is currently a bundled placeholder page (`buzz.inbox/inbox`). This
-stacked PR's session evidence is not displayed until the dependent Inbox UI PR.
-No new navigation behavior is part of this evidence slice.
+Inbox is a bundled page (`buzz.inbox/inbox`) that opens recent conversations
+for the selected community. This intermediate stacked PR adds its conversation
+UI; the dependent Drafts PR completes the user-approved Inbox batch.
 
 ## Evidence slice (stacked with Inbox UI)
 
-PR3 adds no Inbox UI. The subsequent Inbox page uses `session.unread.inbox()` as
-its single conversation projection and `session.inboxFeed` as bounded addressed
-history demand. These changes are one launch batch, not a separately shippable
+PR3 added no Inbox UI. This page uses `session.unread.inbox()` as its single
+conversation projection and `session.inboxFeed` as bounded addressed history
+demand. These changes are one launch batch, not a separately shippable
 backend feature. Ordinary channel and thread readers, read-state storage and
 outbox retain their existing ownership. No projects, approvals or reminders.
+
+## Conversation UI (PR4; Drafts in PR5)
+
+Inbox now renders chat-only DMs, mentions and participating threads through
+`session.unread.inbox()`, with independent Activity type and Sender filters and
+an Unread only toggle. Sender classification uses `session.agentChoices` and
+cached/profile-backed identity evidence, never a new inventory or name heuristic.
+Rows retain exact IDs and current names while `inboxFeed.incomplete` marks only
+specific group members awaiting their stored edit/deletion closure. Those rows
+say “Preview updating…” or “Preview unavailable. Retry inbox.”; other rows stay
+usable and the detail does not reveal an incomplete body. A failed read exposes
+Retry above both panes, including narrow detail. This is a visible completeness
+warning, not a guarantee that the relay did not change after verification.
+Retry stays focusable while pending. Successful recovery returns focus to the
+visible detail Close control (or the Activity type filter with no detail) only
+if Retry still owned focus when its alert was removed; moving focus away is
+respected. Revalidation hides and disables an already-admitted reader and its
+composer without unmounting them; incomplete bodies remain outside the visible
+and accessibility trees, and hidden content cannot earn read dwell. Recovery
+preserves the visit and outside focus rather than replaying exact reveal. A
+conversation-scoped presentation flag dismisses its open media/link previews,
+source actions, and composer subdialogs; body portals cannot outlive withholding
+or reopen automatically afterward. The main editor/draft and uploads stay alive;
+unapplied link fields and unsubmitted report notes are discarded with their
+subdialogs. A submitted report retains its operation and outcome without reopening
+the modal; failure offers Review report after recovery. Pending send consent is
+cancelled without undoing already-dispatched work. First admission still waits for
+complete evidence, and lost access retires the reader. If withholding hides the focused reader control, visible Close owns
+the temporary focus; recovery restores the same valid control only while that
+handoff still owns focus. Moving elsewhere or deliberately blurring cancels it.
+Inline audio/video pauses while withheld and retains its position; recovery never
+resumes playback or replays an old pending seek. Explicit Play is required.
+
+Opening a row captures channel, message and optional thread root, then uses the
+existing channel window or an exact shared thread reader to reveal even an older
+target outside the newest bounded page. A late verified root can regroup a
+conversation without changing the captured visit or canonical origin. Reading
+is saved by the shared unread owner; failed actions retain their captured Retry
+unless the visit/access/session or a newer intent retires it. A DM Retry reuses
+the original channel cutoff and manual-clear keys, not the retry-time clock or
+later arrivals. Re-clicking the selected row preserves that visit and its retry,
+even if reading changed the row's representative. Closing a pending multi-step
+read lets its admitted save settle, then quietly cancels the remaining steps.
+Genuine storage/access failures remain visible, without reviving the cancelled
+Retry intent. Context menus allow device-local
+Mark unread. Focus returns to the invoking row, a surviving row, or the persistent
+Activity type filter on Close/Escape. Escape belongs to the detail, including in-head
+DMs and incomplete previews; a keyboard-opened incomplete preview focuses its
+visible Close control once per visit, without refocusing on placeholder updates.
+Portalled media and controls retain their own dismissal. DM timelines share the
+canonical reading/edit scope with their composer: a focused composer reads fully
+visible arrivals after the normal dwell, without widening the captured selection
+cutoff. Selected panes collapse by available Inbox width, including the sidebar's
+space. Row accessible descriptions reuse the visible safe preview or incomplete
+placeholder; Show more follows the filtered result count.
+`NavigationItem` owns selected styling and `aria-current`. No Inbox-owned session,
+parallel fold, composer or outbox.
 
 ## Ownership and limits
 
@@ -87,9 +144,12 @@ held edit and tombstone reads, failure/retry, reentrant access removal and cache
 reset, root regrouping, and an edited addressed target older than 500 ordinary
 messages. `unread.test.ts` retains the current main read/catch-up behavior and
 adds Inbox projection/read-state cases. Neither file establishes browser paint,
-real relay persistence or packaged/native acceptance. PR4 must cover the
-per-row pending/failed presentation contract and exact inline previews.
-
+real relay persistence or packaged/native acceptance. PR4's mounted real-session
+`InboxPage.test.tsx` covers filters, read/retry and pending row/detail evidence.
+`tests/browser/inbox.spec.mjs` uses the actual broker/browser in Chromium and
+WebKit for exact focus, viewport/scroll, responsive failure recovery, canonical
+origin and session-recipient publication. This is synthetic fixture evidence,
+not human live or packaged acceptance.
 
 ### Review repairs
 

@@ -16,6 +16,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
 import { keypair, message, signed, summary } from "../relay/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
 import type { ChannelMessage } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
@@ -1463,3 +1464,49 @@ it.each(["own", "other", "root", "pending", "archived", "read-only"])(
     }
   },
 );
+
+it("dismisses an unsubmitted report when its retained row is suspended", async () => {
+  const report = vi.fn(async () => {});
+  const session = {
+    messages: { report },
+    channels: {},
+    unread: { subscribe: () => () => {}, snapshot: () => undefined },
+  } as unknown as RelaySession;
+  const tree = (active: boolean) => (
+    <ToastProvider>
+      <ConversationPresentation value={active}>
+        <div hidden={!active} inert={!active}>
+          <MessageRow
+            row={row}
+            profile={undefined}
+            media={() => undefined}
+            onOpenLink={() => false}
+            day={false}
+            retry={undefined}
+            session={session}
+          />
+        </div>
+      </ConversationPresentation>
+    </ToastProvider>
+  );
+  try {
+    const view = renderDom(tree(true));
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Report" }));
+    expect(
+      await screen.findByRole("dialog", { name: "Report message" }),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "Unsubmitted note" },
+    });
+    view.rerender(tree(false));
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    view.rerender(tree(true));
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(report).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+  }
+});

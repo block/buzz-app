@@ -55,7 +55,22 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     assert.equal(inbox.primary, true);
     assert.match(
       renderToStaticMarkup(createElement(inbox.component)),
-      /Content coming soon/,
+      /Choose a community to see your inbox/,
+    );
+    const unread = services.relay.snapshot().session.unread;
+    await services.plugins.change("disable", "buzz.inbox");
+    assert.equal(
+      services.pages.snapshot().some((page) => page.key === "buzz.inbox/inbox"),
+      false,
+    );
+    assert.equal(services.relay.snapshot().session.unread, unread);
+    await services.plugins.change("enable", "buzz.inbox");
+    await vi.waitFor(() =>
+      assert.ok(
+        services.pages
+          .snapshot()
+          .some((page) => page.key === "buzz.inbox/inbox"),
+      ),
     );
     assert.deepEqual(services.channelTemplates.snapshot(), []);
     assert.deepEqual(

@@ -218,7 +218,12 @@ test("section labels fade on overflow and recover when widened", async ({
     .click();
   const dialog = page.getByRole("dialog", { name: "Create new section" });
   const name = "Interface gang collaboration";
-  await dialog.getByRole("textbox", { name: "Section name" }).fill(name);
+  const field = dialog.getByRole("textbox", { name: "Section name" });
+  // The menu-to-dialog handoff owns initial focus; mounting alone does not
+  // mean WebKit's keyboard insertion has its final destination.
+  await expect(field).toBeFocused();
+  await field.fill(name);
+  await expect(field).toHaveValue(name);
   await dialog.getByRole("button", { name: "Create and move" }).click();
   const summary = sidebar.locator("summary").filter({ hasText: name });
   await expect(summary).toBeVisible();

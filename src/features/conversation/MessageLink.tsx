@@ -1,3 +1,4 @@
+import { useConversationPresentation } from "./ConversationPresentation";
 import {
   useRef,
   useState,
@@ -60,6 +61,7 @@ export function MessageLink({
   interactive?: boolean;
   channelPrivate?: boolean;
 }) {
+  const active = useConversationPresentation();
   const renderers = useSyncExternalStore(
     registry?.subscribe ?? subscribe,
     registry?.snapshot ?? snapshot,
@@ -68,6 +70,7 @@ export function MessageLink({
   const renderer = resolveLink(url, renderers);
   const [unavailable, setUnavailable] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  if (!active && previewOpen) setPreviewOpen(false);
   const trigger = useRef<HTMLAnchorElement>(null);
   const internal = isBuzzLink(url);
   const parsed = internal ? parseBuzzLink(url) : null;
@@ -80,6 +83,10 @@ export function MessageLink({
     target: "_blank",
     rel: "noopener noreferrer",
     onClick: (event: MouseEvent<HTMLAnchorElement>) => {
+      if (!active) {
+        event.preventDefault();
+        return;
+      }
       if (internal) {
         event.preventDefault();
         if (trigger.current?.isConnected)
@@ -100,6 +107,10 @@ export function MessageLink({
     },
     onAuxClick: internal
       ? (event: MouseEvent<HTMLAnchorElement>) => {
+          if (!active) {
+            event.preventDefault();
+            return;
+          }
           if (event.button === 1) {
             event.preventDefault();
             if (trigger.current?.isConnected)
@@ -135,7 +146,7 @@ export function MessageLink({
         {content}
       </span>
     );
-    return interactive && preview && session ? (
+    return active && interactive && preview && session ? (
       <PreviewCard
         trigger={element}
         link={<a href={url} {...navigation} />}

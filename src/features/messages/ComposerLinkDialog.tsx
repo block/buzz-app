@@ -1,5 +1,5 @@
 import { useId, useRef, useState, type RefObject } from "react";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Dialog, type DialogProps } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -9,11 +9,13 @@ import { composerLinkUrl } from "./composer-link";
 export function ComposerLinkDialog({
   edit,
   input,
+  finalFocus = input,
   disabled,
   close,
 }: {
   edit: ComposerLinkEdit;
   input: RefObject<ComposerInputElement | null>;
+  finalFocus?: DialogProps["finalFocus"];
   disabled: boolean;
   close(): void;
 }) {
@@ -50,7 +52,7 @@ export function ComposerLinkDialog({
       }}
       title={edit.existing ? "Edit link" : "Add link"}
       initialFocus={edit.text ? urlInput : textInput}
-      finalFocus={input}
+      finalFocus={finalFocus}
       actions={
         <>
           {edit.existing && (

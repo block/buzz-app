@@ -19,6 +19,7 @@ import { MessageRow } from "./MessageRow";
 import type { ChannelMessage } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
 import type { RelaySession } from "../relay/session";
+import type { TypingEntry } from "../relay/typing";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 
 vi.mock("../../shared/design-system/ui/agent-thinking/ThinkingBadge", () => ({
@@ -1094,6 +1095,54 @@ it.each([undefined, "canonical-root"])(
     }
   },
 );
+
+it("shows working dots only while a known agent types in this thread", () => {
+  const agent = "a".repeat(64);
+  const other = "b".repeat(64);
+  const listeners = new Set<() => void>();
+  let entries: readonly TypingEntry[] = [
+    { channelId: row.channelId, threadRootId: row.id, pubkey: agent },
+    { channelId: row.channelId, threadRootId: row.id, pubkey: "human" },
+    { channelId: row.channelId, threadRootId: "elsewhere", pubkey: other },
+    { channelId: row.channelId, pubkey: other },
+  ];
+  const channels = { channels: [], status: "ready" };
+  const session = {
+    channels: { list: () => channels, subscribeList: () => () => {} },
+    messages: {},
+    typing: {
+      snapshot: () => entries,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    },
+  } as unknown as RelaySession;
+  const view = renderMessage({
+    session,
+    agentPubkeys: new Set([agent, other]),
+    participantProfiles: new Map([[agent, { name: "Brain" }]]),
+    onOpenThread: () => {},
+  });
+  try {
+    const working = screen.getByRole("button", {
+      name: "View thread: 23 replies. Brain working",
+    });
+    expect(working.querySelector("[data-thread-working]")).not.toBeNull();
+    act(() => {
+      entries = [];
+      for (const listener of listeners) listener();
+    });
+    const idle = screen.getByRole("button", {
+      name: "View thread: 23 replies",
+    });
+    expect(idle.querySelector("[data-thread-working]")).toBeNull();
+  } finally {
+    view.unmount();
+  }
+});
 
 it("bounds reply participants and projects artwork with fallback initials", () => {
   const media = vi.fn((url: string) =>

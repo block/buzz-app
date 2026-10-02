@@ -365,8 +365,10 @@ channel-scoped typing. It also shows typing by a known agent (profile hint or
 local library) anywhere in the channel, threads included: app-managed agents run
 without observer telemetry, so typing is their working signal. That is
 display-only evidence, not ownership. Observer records have no thread identity,
-so details remain explicitly channel-wide. No harness change, new subscription,
-directory or timer is added.
+so details remain explicitly channel-wide. A timeline thread summary shows the
+same dots while a known agent types in that thread; a thread with no replies
+yet has no summary to mark. No harness change, new subscription, directory or
+timer is added.
 The development broker loads subscription filters at startup: restart the
 existing dev server once to receive typing; frontend HMR alone is insufficient.
 

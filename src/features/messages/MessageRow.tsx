@@ -160,6 +160,12 @@ export const MessageRow = memo(function MessageRow({
     row.channelId,
     row.threadRootId ?? row.id,
   );
+  const threadAgents = useThreadAgents(
+    row.replyCount > 0 && onOpenThread ? session : undefined,
+    row.channelId,
+    row.threadRootId ?? row.id,
+    agentPubkeys,
+  );
   const channels = session?.channels;
   const listed = useListedChannel(
     channels,
@@ -189,6 +195,16 @@ export const MessageRow = memo(function MessageRow({
         : (threadUnread?.observedCount ?? 0) > 0
           ? `Observed unread replies${threadUnread?.freshness === "stale" ? "; may be out of date" : ""}. Not an exact total.`
           : undefined;
+  const workingLabel = threadAgents.length
+    ? `${threadAgents
+        .map((id) =>
+          resolveName(
+            id,
+            participantProfiles?.get(id)?.name ?? id.slice(0, 10),
+          ),
+        )
+        .join(", ")} working`
+    : undefined;
   const name = resolveName(
     row.authorId,
     profile?.name ?? row.authorId.slice(0, 10),
@@ -664,7 +680,7 @@ export const MessageRow = memo(function MessageRow({
                   : "circle"
               }
               type="button"
-              aria-label={`View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
+              aria-label={`View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}`}
               onClick={(event) => {
                 event.currentTarget.focus();
                 onOpenThread(row.id, row.threadRootId ?? row.id);
@@ -679,6 +695,17 @@ export const MessageRow = memo(function MessageRow({
                 media={media}
                 unreadLabel={unreadLabel}
               />
+              {threadAgents.length > 0 && (
+                <span
+                  className={styles.threadWorking}
+                  data-thread-working=""
+                  aria-hidden="true"
+                >
+                  <i />
+                  <i />
+                  <i />
+                </span>
+              )}
             </Button>
           )}
         </div>
@@ -704,4 +731,32 @@ function useThreadUnread(
     [unread, channelId, rootId],
   );
   return useSyncExternalStore(subscribe, get, get);
+}
+const noSubscribe = () => () => {};
+const noAgents: readonly string[] = [];
+// App-managed agents publish typing, not observer telemetry, while they work.
+// A joined-key snapshot keeps unrelated typing from re-rendering the row.
+function useThreadAgents(
+  session: RelaySession | undefined,
+  channelId: string,
+  rootId: string,
+  agents: ReadonlySet<string> | undefined,
+) {
+  const get = () =>
+    session?.typing
+      .snapshot()
+      .filter(
+        (entry) =>
+          entry.channelId === channelId &&
+          entry.threadRootId === rootId &&
+          agents?.has(entry.pubkey),
+      )
+      .map((entry) => entry.pubkey)
+      .join(",") ?? "";
+  const keys = useSyncExternalStore(
+    session?.typing.subscribe ?? noSubscribe,
+    get,
+    get,
+  );
+  return keys ? keys.split(",") : noAgents;
 }

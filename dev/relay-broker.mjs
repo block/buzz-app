@@ -114,7 +114,6 @@ import {
   admittedApiRequest,
   ApiPaused,
   ApiCapacity,
-  ApiNotSent,
   apiFailure,
   presenceFilter,
   presenceText,
@@ -710,7 +709,7 @@ function signedBrokerRequest({
     lane,
     async () => {
       signal.throwIfAborted();
-      const value = body === undefined ? undefined : JSON.stringify(body);
+      const value = JSON.stringify(body);
       const auth = await delegate.signEvent(
         {
           kind: 27235,
@@ -719,11 +718,7 @@ function signedBrokerRequest({
           tags: [
             ["u", `${relay}${path}`],
             ["method", "POST"],
-            ...(value === undefined
-              ? []
-              : [
-                  ["payload", createHash("sha256").update(value).digest("hex")],
-                ]),
+            ["payload", createHash("sha256").update(value).digest("hex")],
             ["nonce", randomBytes(16).toString("hex")],
           ],
         },
@@ -1261,15 +1256,9 @@ export function relayBrokerPlugin({
                   return readSidebarHead(response);
                 };
                 const publishEvent = async (event) => {
-                  const response = await delegate.publishEvent(
-                    event,
-                    () =>
-                      muting
-                        ? stream.traffic.publish(event, requestSignal)
-                        : dispatch("/events", event),
-                    requestSignal,
-                  );
-                  if (muting) return response;
+                  if (muting)
+                    return stream.traffic.publish(event, requestSignal);
+                  const response = await dispatch("/events", event);
                   if (!response.ok)
                     throw new Error(
                       `Sidebar preference publish failed (${response.status})`,
@@ -1307,8 +1296,6 @@ export function relayBrokerPlugin({
                   paused: true,
                   retryAfterMs: error.retryAfterMs,
                 });
-              if (error instanceof ApiNotSent)
-                return json(res, 503, { error: error.message, sent: false });
               return json(res, 502, {
                 error:
                   error instanceof Error
@@ -2843,8 +2830,6 @@ export function relayBrokerPlugin({
               error: "Query concurrency limit",
               sent: false,
             });
-          if (error instanceof ApiNotSent && !res.headersSent)
-            return json(res, 503, { error: error.message, sent: false });
           log.error(
             `Request failed: ${req.method} ${httpLabel(url.pathname)}: ${failureSummary(error)}`,
           );

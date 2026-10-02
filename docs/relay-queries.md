@@ -626,6 +626,17 @@ the existing `nativeRelaySigner` as its fallback; the broker passes its local ns
 delegate as its fallback. Rust `IdentityHost` remains the custody and signing
 owner. A pending operation cannot retarget when the selected community changes.
 
+Current packaged callers do not provide the optional factory, so the existing
+local/native signer remains the selected implementation in production; the
+broker likewise defaults to its local nsec delegate. This shared selection
+boundary exists to satisfy Brad Seiler's required production/development
+parity, not because Buzz currently uses a remote signer. A transport captures
+its viewer principal when it connects: selecting a new key under that existing
+connection is rejected by the bound delegate, so an identity switch must
+reconnect to capture the new public identity. The selector sees public identity
+and signed events only; native purpose-bound commands retain their existing
+no-secret-leak boundaries.
+
 The delegate creates signed events only. Relay/session/outbox/socket owners still
 perform admission, publication, receipt handling and retry. In particular,
 `/publish`, profile/DM/member/leave HTTP requests and sidebar publication do not

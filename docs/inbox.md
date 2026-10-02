@@ -1,8 +1,8 @@
 # Inbox: in-progress port
 
 Inbox is a bundled page (`buzz.inbox/inbox`) that opens recent conversations
-for the selected community. This intermediate stacked PR adds its conversation
-UI; the dependent Drafts PR completes the user-approved Inbox batch.
+for the selected community. The stacked evidence, conversation UI and Drafts
+PRs are one user-approved Inbox launch batch; none should ship independently.
 
 ## Evidence slice (stacked with Inbox UI)
 
@@ -68,6 +68,50 @@ space. Row accessible descriptions reuse the visible safe preview or incomplete
 placeholder; Show more follows the filtered result count.
 `NavigationItem` owns selected styling and `aria-current`. No Inbox-owned session,
 parallel fold, composer or outbox.
+
+## Drafts (PR5)
+
+Drafts is a quiet Inbox header action. It lists only meaningful saved composer
+text in this viewer/community scope, up to 500 with explicit truncation; an
+emptied selected editor stays open until send, close or confirmed delete. The
+list preserves the Inbox row hierarchy and supports channel, DM and exact-root
+thread coordinates. Only the selected draft loads history through the existing
+channel window or ThreadPanel; thread composition waits for a verified matching
+root, and a deleted/malformed root never rebinds its saved text. The shared
+composer and session outbox retain recipient, admission, signing and delivery
+rules. A selected channel/DM draft opens at the real returned tail without
+reading or overwriting the canonical saved scroll position. The origin action
+navigates separately and reports failure without dismissing the editor.
+
+The selected editor's lifetime does not depend on list-summary eligibility. Rich
+saved envelopes use an 8 MiB preview bound rather than the former 128 KiB text-sized
+cutoff; larger records receive an explicit notice instead of a false empty list.
+The shared composer reconciles an untouched editor with saved changes from another
+window. Locally edited documents remain in place with **Load saved draft** and
+**Keep my draft** choices; Send cannot silently use a conflicted document.
+Foreground revision checks also prevent an observed replacement being overwritten
+by stale send cleanup. These checks are not a cross-window storage transaction.
+
+Outbox acceptance and saved-draft replacement are separate outcomes. Drafts closes
+after replacement succeeds, not merely after acceptance. If no draft was ever saved
+and a fresh read still confirms absence, persistent write failure does not lock the
+composer after acceptance: no stale sent text needs cleanup. A nonempty unsaved
+agent follow-up stays editable with a save warning. Existing or unreadable saved
+revisions retain the accepted-message recovery state and offers **Retry draft cleanup**, never another
+Send of that accepted body. Recovery survives composer remounts within the same
+session; it is RAM evidence, not a new durable receipt or a guarantee across app
+restart. Existing outbox delivery/retry ownership is unchanged.
+
+Delete is consentful and device-local. Confirm moves keyboard focus to the
+actual destructive button; Cancel restores its trigger. After **successful**
+scoped saved-text cleanup, the existing attachment-draft owner clears only the
+same session/destination files and aborts its pending uploads. A failed text
+cleanup preserves files and text for retry; sibling channel/thread drafts and
+other viewers are untouched. Successful Close, Delete and saved Send restore focus
+to the invoking draft row, another remaining row, or Back to Inbox; callbacks from
+an earlier visit cannot retire a later selection. Failed Delete keeps its retryable
+confirmation focused. This is not a new persisted index or migration.
+
 
 ## Ownership and limits
 
@@ -136,6 +180,36 @@ approval queries, grouping, routing and detail presentation are deliberately
 excluded rather than presented as partial parity. Native/ACP packaged acceptance and human visual feedback
 remain open. Do not treat this as the full OG Inbox port.
 
+## Split assertion ledger
+
+The #422 source's 2,073-line mounted file has 38 literal `it` blocks plus
+four parameterized groups (2 + 2 + 3 + 2 = 9 executions), totaling
+**47 executed cases**. Fourteen literal Drafts cases moved intact to PR5's
+`DraftsView.test.tsx`; PR4 owns the remaining 24 literal cases and all four
+parameterized core groups. The original 47 = 24 core literals +
+14 Drafts literals + 9 grouped core executions. PR4's 41 expanded test runs
+at its published head comprise those 33 original core cases plus eight new
+regressions. PR5 adds two Drafts deletion tests. PR3 retains the existing
+unread suite and feed integration cases with historical edit/first-admission
+safety regressions. `view-state.test.ts` adds five scoped enumeration and
+meaningful-cap tests; `attachment-draft.test.tsx` adds pending/ready cleanup
+regressions.
+The mixed filter case keeps its two selector assertions in PR4; its Drafts
+header-button assertion belongs to PR5's mounted Drafts suite. Source
+project/todo/sidebar navigation tests already on main are not copied here.
+
+Browser mapping: original case 1's chat/filter/context/read/reflow assertions
+remain in PR4; its Drafts switch/return fragment lives in PR5's Drafts view test.
+Original case 2 is PR5's real rich-editor/scroll/geometry/send journey. Original
+strict-window case keeps exact unread anchor/new arrival/canonical origin/deletion
+in PR4 and moves saved-root newest-context to PR5. Original old-DM, session
+recipient and narrow failed-save cases stay in PR4. That is the original seven
+browser cases split across PR4/PR5, plus PR4's new in-head focus and Escape
+focus cases and development-React StrictMode case. The joined stack runs eight
+cases in PR4 and two in PR5, each in Chromium and WebKit (20 executions total).
+The fixture uses per-test isolated synthetic identities/servers, preserving the
+base `sessionWriteKinds`, `dmMembers`, companion and stale-stream guards.
+
 ## Verification status
 
 `inbox-feed.test.ts` exercises the real session reader/visibility/unread owners
@@ -149,19 +223,32 @@ real relay persistence or packaged/native acceptance. PR4's mounted real-session
 `tests/browser/inbox.spec.mjs` uses the actual broker/browser in Chromium and
 WebKit for exact focus, viewport/scroll, responsive failure recovery, canonical
 origin and session-recipient publication. This is synthetic fixture evidence,
-not human live or packaged acceptance.
+not human live or packaged acceptance. `DraftsView.test.tsx`,
+`view-state.test.ts`, `attachment-draft.test.tsx` and
+`tests/browser/inbox-drafts.spec.mjs` cover Drafts storage, exact-root admission,
+scoped editing/deletion (including failed text and pending uploads), selected-only
+history, native editing, scroll and responsive geometry in both engines.
 
-### Review repairs
+### Review repairs, 2026-10-01
 
-Incomplete obligations now survive lifecycle changes that retain readable evidence.
-Closure includes retained author edits omitted by later relay queries and fails
-visibly on withheld auxiliary evidence. Shared unread remains the sole row owner;
-the unused feed row copy and its 70-deletion abort were removed with explicit
-approval. A prepared channel-read intent lets the dependent UI retry the original
-cutoff and manual-clear keys. Tests retain all prior scenarios, distinguish both
-finite retention guards, and prove 71 admitted author deletions do not resurrect
-rows or require a second reconciliation buffer.
+The uncommitted repair tree based on `9d3d43cf` passed 561 focused tests across
+14 files, TypeScript, changed-file Biome, design checks and all 22 Inbox browser
+executions in Chromium/WebKit. The browser total is now 11 cases per engine:
+the prior ten plus one real two-page draft-storage journey. No cases were removed.
+Existing native-focus cases now also cover selected-row re-click, empty-filter
+focus fallback, and media Escape staying inside its portal before detail dismissal.
+State/failure permutations remain in mounted React or the relay owners' tests.
 
-Prior local tests and review cover the repairs on the combined tree; this PR's
-updated head requires its own checks. No human/live/native acceptance or shipping
-readiness is claimed.
+The relay regressions failed before repair for both lifecycle paths, omitted
+retained edits and withheld auxiliary pages. Separate advancing count/byte-limit
+cases fail when their corresponding guard is removed. Mounted Drafts regressions
+failed before repair for channel/thread post-send cleanup, external replacement
+and a valid rich document crossing 128 KiB. The DM cutoff and cold Settings
+fallback tests also fail when their repairs are reverted. An independent review
+of the first dismissal fix caught a portal propagation defect; both browser engines
+reproduced it before the DOM-containment guard and passed afterward.
+
+Independent changed-path re-review found no remaining blockers in the repairs.
+These are local fixture/service results, not checks on pushed PR heads or a future
+merged tree. Human, live-relay and attended native/packaged acceptance remain open;
+no full scan or shipping-readiness attestation is implied.

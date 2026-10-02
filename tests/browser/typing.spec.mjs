@@ -139,7 +139,9 @@ for (const scope of ["channel", "thread"]) {
       name: scope === "thread" ? "Reply to thread" : "Send a message to Alpha",
       exact: true,
     });
-    const indicator = composer.getByRole("status", { name: "Typing activity" });
+    const indicator = composer
+      .locator("..")
+      .getByRole("status", { name: "Typing activity" });
     const gap = () =>
       history.evaluate(
         (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
@@ -176,6 +178,8 @@ for (const scope of ["channel", "thread"]) {
     const target = scope === "thread" ? { root: root.id } : {};
     app.activity(target);
     await expect(indicator).toContainText("is typing");
+    const typingBounds = await indicator.boundingBox();
+    expect(typingBounds.y).toBeGreaterThanOrEqual(idle.y + idle.height);
     await stable();
     app.activity({ ...target, kind: 9 });
     await expect(indicator).toHaveCount(0);

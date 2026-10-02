@@ -460,6 +460,18 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   background: var(--affordance-subtle-hover);
   color: var(--text-subtle);
 }
+/* Keep public typing and plugin accessories in one non-collapsing stack. */
+.composerContext {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-width: 0;
+}
+/* Existing conversations keep a fixed row, even while nobody is typing. */
+.composerContext[data-reserve-typing] {
+  padding-top: var(--space-6);
+}
 /* The existing editor owns text; this surface owns only composer layout. */
 .composer {
   --composer-gap: var(--space-4);

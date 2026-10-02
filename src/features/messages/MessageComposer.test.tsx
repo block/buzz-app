@@ -2012,6 +2012,7 @@ it("keeps retry submission available while a new-session draft is locked", () =>
       submit,
     },
   });
+  expect(document.querySelector("[data-reserve-typing]")).toBeNull();
   expect(h.input()).toHaveAttribute("aria-disabled", "true");
   const send = screen.getByRole("button", { name: "Send message" });
   expect(send).toBeEnabled();

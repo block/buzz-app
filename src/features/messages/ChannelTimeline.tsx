@@ -130,6 +130,8 @@ export type ChannelTimelineProps = {
   inlineTarget?:
     | Readonly<{ messageId: string; signal: AbortSignal }>
     | undefined;
+  /** Draft context starts at the returned tail, never reads/writes canonical scroll. */
+  transient?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   onOpenThread?(
     messageId: string,
@@ -169,12 +171,15 @@ function Timeline({
   canOpenLink,
   revealMessageId,
   inlineTarget,
+  transient = false,
   navigation,
   onOpenThread,
   onOpenMediaReview,
 }: ChannelTimelineProps) {
   const [initialPosition] = useState(() =>
-    readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
+    transient
+      ? null
+      : readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
   );
   const savedPosition = useRef(initialPosition);
   const restoredAnchor = useRef<ReadingPosition["anchor"]>(undefined);
@@ -411,7 +416,8 @@ function Timeline({
       upwardGesture.current = false;
       olderDemand.current = false;
       settled.current = false;
-      writeView(scope, `scroll:${channelId}`, savedPosition.current);
+      if (!transient)
+        writeView(scope, `scroll:${channelId}`, savedPosition.current);
       observer.disconnect();
       if (handle.current)
         geometry.set(
@@ -422,7 +428,7 @@ function Timeline({
         );
     };
     // Initial signature only; mutations invalidate the saved cache on remount.
-  }, [channelId, geometry, scope]);
+  }, [channelId, geometry, scope, transient]);
   // A reveal completes when its scroll runs. Until then it stays pending under
   // the intent that scheduled it: a row update that cancels its frame (an echo,
   // an edit, an older-history prepend) reschedules it, while any newer intent

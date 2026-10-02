@@ -68,11 +68,14 @@ test("production composer catalogue preserves source and controls at responsive 
   });
   expect(copied).toBe(source);
   await page.keyboard.press("Tab");
+  const tool = page.locator(":focus");
+  await expect(tool).toHaveRole("button");
+  await expect(tool).toHaveCSS("outline-style", "solid");
+  await expect(tool).toHaveCSS("outline-width", "2px");
   await page.keyboard.press("Shift+Tab");
   await expect(input).toBeFocused();
-  expect(
-    await input.evaluate((element) => getComputedStyle(element).outlineStyle),
-  ).toBe("solid");
+  await expect(input).toHaveCSS("outline-style", "none");
+  await expect(input).toHaveJSProperty("value", source);
 });
 
 test("catalogue preserves disabled, read-only and failed-send recovery examples", async ({

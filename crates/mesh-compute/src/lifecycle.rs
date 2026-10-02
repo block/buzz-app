@@ -6,20 +6,27 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub const MESH_STOP_TIMEOUT: Duration = Duration::from_secs(12);
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::config::{ClientConfig, ServeConfig};
 use crate::transport_policy::validate_advertised_endpoint;
+
+/// SDK status returned by the owned worker; payload remains untyped JSON.
+pub use mesh_llm_sdk::EmbeddedNodeStatus as NodeStatus;
 
 type Operation<'a, T> = Pin<Box<dyn Future<Output = anyhow::Result<T>> + Send + 'a>>;
 
 trait Node: Send + 'static {
     fn join(&mut self, token: String) -> Operation<'_, ()>;
+    fn status(&self) -> Operation<'_, mesh_llm_sdk::EmbeddedNodeStatus>;
     fn stop(self) -> Operation<'static, ()>;
 }
 impl Node for mesh_llm_sdk::EmbeddedNodeHandle {
     fn join(&mut self, token: String) -> Operation<'_, ()> {
         Box::pin(self.join_token(token))
+    }
+    fn status(&self) -> Operation<'_, mesh_llm_sdk::EmbeddedNodeStatus> {
+        Box::pin(self.status())
     }
     fn stop(self) -> Operation<'static, ()> {
         Box::pin(self.stop())
@@ -41,6 +48,7 @@ struct Slot {
     phase: Phase,
     dial: Option<mpsc::Sender<String>>,
     stop: Option<watch::Sender<bool>>,
+    status: Option<mpsc::Sender<oneshot::Sender<anyhow::Result<mesh_llm_sdk::EmbeddedNodeStatus>>>>,
 }
 
 /// The app owns this across plugin/page lifetimes. Dropping it requests shutdown.
@@ -54,6 +62,7 @@ impl Default for Lifecycle {
                 phase: Phase::Stopped,
                 dial: None,
                 stop: None,
+                status: None,
             })),
         }
     }
@@ -61,6 +70,28 @@ impl Default for Lifecycle {
 impl Lifecycle {
     pub fn phase(&self) -> Phase {
         self.slot.lock().expect("mesh slot poisoned").phase.clone()
+    }
+
+    /// Ask the owned SDK handle for status; never discover a node by a guessed port.
+    pub async fn status(&self) -> anyhow::Result<mesh_llm_sdk::EmbeddedNodeStatus> {
+        let (reply, result) = oneshot::channel();
+        {
+            let slot = self
+                .slot
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Mesh slot unavailable"))?;
+            if slot.phase != Phase::Ready {
+                anyhow::bail!("Mesh status is not ready");
+            }
+            slot.status
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Mesh worker unavailable"))?
+                .try_send(reply)
+                .map_err(|_| anyhow::anyhow!("Mesh status request is already pending"))?;
+        }
+        result
+            .await
+            .map_err(|_| anyhow::anyhow!("Mesh stopped during status read"))?
     }
 
     pub fn start(&self, request: ClientConfig) -> anyhow::Result<()> {
@@ -84,10 +115,13 @@ impl Lifecycle {
         }
         let runtime = tokio::runtime::Handle::try_current()?;
         let (dial, mut pending) = mpsc::channel::<String>(64);
+        let (status, mut reads) =
+            mpsc::channel::<oneshot::Sender<anyhow::Result<mesh_llm_sdk::EmbeddedNodeStatus>>>(1);
         let (stop, mut stopping) = watch::channel(false);
         slot.phase = Phase::Starting;
         slot.dial = Some(dial);
         slot.stop = Some(stop);
+        slot.status = Some(status);
         let shared = self.slot.clone();
         // Detached from the caller's request lifetime, intentionally not abortable by IPC.
         runtime.spawn(async move {
@@ -107,6 +141,18 @@ impl Lifecycle {
                 tokio::select! {
                     biased;
                     _ = stopping.changed() => break,
+                    request = reads.recv() => {
+                        let Some(reply) = request else { break; };
+                        // Status is cancellable; unlike startup it creates no runtime.
+                        tokio::select! {
+                            biased;
+                            _ = stopping.changed() => break,
+                            result = tokio::time::timeout(Duration::from_secs(10), node.status()) => {
+                                let result = result.unwrap_or_else(|_| Err(anyhow::anyhow!("Mesh status read timed out")));
+                                let _ = reply.send(result);
+                            }
+                        }
+                    }
                     token = pending.recv() => {
                         let Some(token) = token else { break; };
                         if let Err(error) = node.join(token).await {
@@ -128,6 +174,7 @@ impl Lifecycle {
             };
             slot.dial = None;
             slot.stop = None;
+            slot.status = None;
         });
         Ok(())
     }
@@ -198,6 +245,16 @@ mod tests {
                 Ok(())
             })
         }
+        fn status(&self) -> Operation<'_, mesh_llm_sdk::EmbeddedNodeStatus> {
+            Box::pin(async {
+                Ok(mesh_llm_sdk::EmbeddedNodeStatus {
+                    api_base_url: "fixture".into(),
+                    console_url: "fixture".into(),
+                    invite_token: None,
+                    payload: serde_json::json!({"hosted_models":["fixture-model"]}),
+                })
+            })
+        }
         fn stop(self) -> Operation<'static, ()> {
             Box::pin(async move {
                 let _ = self.stopped.send(());
@@ -235,6 +292,25 @@ mod tests {
         .await
         .unwrap();
     }
+    #[tokio::test]
+    async fn status_reads_the_owned_node_only_after_start_and_rejects_after_stop() {
+        let owner = Lifecycle::default();
+        assert!(owner.status().await.is_err());
+        let (node, stopped, release, mut joined) = fixture();
+        owner.launch(async { Ok(node) }).unwrap();
+        owner.enqueue("ready-barrier".into()).unwrap();
+        joined.recv().await.unwrap();
+        assert_eq!(
+            owner.status().await.unwrap().payload["hosted_models"][0],
+            "fixture-model"
+        );
+        owner.stop();
+        stopped.await.unwrap();
+        assert!(owner.status().await.is_err());
+        release.send(()).unwrap();
+        wait_stopped(&owner).await;
+    }
+
     #[tokio::test]
     async fn stop_during_start_retains_worker_and_blocks_replacement_until_shutdown() {
         let owner = Lifecycle::default();

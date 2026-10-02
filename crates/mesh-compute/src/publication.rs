@@ -7,6 +7,22 @@ use crate::discovery_types::{dedupe_models, MeshModelOption, MeshServeTarget, ME
 use crate::identity::{member_binding_bytes, member_endpoint_binding_bytes};
 use crate::transport_policy::validate_advertised_endpoint;
 
+/// Project the pinned SDK wrapper; its payload is untyped JSON, not a typed model schema.
+pub fn sdk_status_event(
+    owner: &OwnerKeypair,
+    member: &str,
+    serving: bool,
+    status: &mesh_llm_sdk::EmbeddedNodeStatus,
+) -> anyhow::Result<EventBuilder> {
+    status_event(
+        owner,
+        member,
+        serving,
+        Some(&status.payload),
+        status.invite_token.as_deref(),
+    )
+}
+
 /// Construct only the discovery fields; never publish the SDK's raw status or invite.
 /// A consumer/stopped heartbeat carries owner bindings but no serving targets.
 pub fn status_event(
@@ -134,6 +150,40 @@ mod tests {
     use crate::discovery::{availability_from_events, owner_ids_from_events};
     use nostr::event::FinalizeEvent;
     use nostr::key::Keys;
+
+    #[test]
+    fn rc4_schema_projects_ready_models_through_pinned_sdk_status_wrapper() {
+        let raw: Value =
+            serde_json::from_str(include_str!("../fixtures/sdk-status-ready.json")).unwrap();
+        let owner = OwnerKeypair::generate();
+        let member = Keys::generate();
+        let token = crate::transport_policy::endpoint_token_for_test([iroh::TransportAddr::Ip(
+            "192.168.1.20:9999".parse().unwrap(),
+        )]);
+        let sdk = mesh_llm_sdk::EmbeddedNodeStatus {
+            api_base_url: "http://127.0.0.1:19337/v1".into(),
+            console_url: "http://127.0.0.1:13131".into(),
+            invite_token: Some(token.clone()),
+            payload: raw.clone(),
+        };
+        let event = sdk_status_event(&owner, &member.public_key().to_hex(), true, &sdk)
+            .unwrap()
+            .finalize(&member)
+            .unwrap();
+        let payload: Value = serde_json::from_str(&event.content).unwrap();
+        assert_eq!(payload["serveTargets"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            payload["serveTargets"][0]["modelId"],
+            raw["hosted_models"][0]
+        );
+        assert_eq!(payload["models"].as_array().unwrap().len(), 1);
+        assert!(payload.get("runtime").is_none());
+        // Independently exercise the runtime-only path used before hosted_models catches up.
+        assert_eq!(
+            ready_models(Some(&json!({"runtime": raw["runtime"]})))[0].id,
+            raw["hosted_models"][0].as_str().unwrap()
+        );
+    }
 
     #[test]
     fn signed_note_round_trips_discovery_and_does_not_publish_standby_or_raw_status() {

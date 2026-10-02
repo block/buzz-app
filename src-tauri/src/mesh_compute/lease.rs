@@ -4,6 +4,13 @@ use std::sync::Mutex;
 #[derive(Default)]
 pub(super) struct Lease(Mutex<Option<(String, String)>>);
 impl Lease {
+    pub fn current(&self) -> Result<Option<(String, String)>, String> {
+        self.0
+            .lock()
+            .map(|current| current.clone())
+            .map_err(|_| "Mesh selection unavailable".into())
+    }
+
     pub fn for_community(&self, community: &str) -> Result<String, String> {
         let current = self.0.lock().map_err(|_| "Mesh selection unavailable")?;
         current

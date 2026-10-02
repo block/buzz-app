@@ -6,6 +6,8 @@ pub(crate) use agent::prepare_agent;
 mod discovery;
 #[cfg(feature = "mesh")]
 mod lease;
+#[cfg(feature = "mesh")]
+mod publisher;
 
 #[derive(Default)]
 pub struct MeshHost {
@@ -15,10 +17,18 @@ pub struct MeshHost {
     lifecycle: buzz_mesh_compute::lifecycle::Lifecycle,
     #[cfg(feature = "mesh")]
     lease: lease::Lease,
+    #[cfg(feature = "mesh")]
+    publisher: std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl MeshHost {
     pub fn shutdown(&self) {
+        #[cfg(feature = "mesh")]
+        if let Ok(mut publisher) = self.publisher.lock() {
+            if let Some(task) = publisher.take() {
+                task.abort();
+            }
+        }
         #[cfg(feature = "mesh")]
         self.lease.clear();
         #[cfg(feature = "mesh")]
@@ -152,11 +162,16 @@ fn mesh_port(name: &str, fallback: u16) -> Result<u16, String> {
 #[cfg(feature = "mesh")]
 #[tauri::command]
 pub fn mesh_compute_select(
+    app: tauri::AppHandle,
     host: tauri::State<'_, MeshHost>,
     community: String,
 ) -> Result<String, String> {
     crate::relay::mesh_origin(&community)?;
-    host.lease.select_with(community, || host.lifecycle.stop())
+    let lease = host
+        .lease
+        .select_with(community, || host.lifecycle.stop())?;
+    publisher::ensure_started(app, &host)?;
+    Ok(lease)
 }
 #[cfg(feature = "mesh")]
 #[tauri::command]

@@ -1,3 +1,4 @@
+import { canonicalDetailsName } from "./channel-details-protocol";
 import { sessionDescription } from "../sessions/metadata";
 import type { Outbox } from "./outbox";
 import type { ChannelQueries } from "./contracts";
@@ -57,7 +58,10 @@ export function createWorkSessions(
         check();
         return;
       }
-      const events = await reader.read([{ ids: [id], limit: 1 }], { signal });
+      const events = await reader.read(
+        [{ ids: [id], limit: 1, consistency: "strong" }],
+        { signal },
+      );
       if (events.some((event) => event.id === id)) {
         check();
         return;
@@ -83,8 +87,13 @@ export function createWorkSessions(
         // by a stale roster. The verified reader applies signed discovery first.
         const events = await reader.read(
           [
-            { kinds: [39000, 39002], "#d": [channelId], limit: 2 },
-            { ids: [id], limit: 1 },
+            {
+              kinds: [39000, 39002],
+              "#d": [channelId],
+              limit: 2,
+              consistency: "strong",
+            },
+            { ids: [id], limit: 1, consistency: "strong" },
           ],
           { signal },
         );
@@ -100,7 +109,10 @@ export function createWorkSessions(
       }
       check();
       if (!retry) {
-        const events = await reader.read([{ ids: [id], limit: 1 }], { signal });
+        const events = await reader.read(
+          [{ ids: [id], limit: 1, consistency: "strong" }],
+          { signal },
+        );
         if (events.some((event) => event.id === id)) return;
         throw new Error(
           existing.error ?? "The operation could not be confirmed.",
@@ -251,6 +263,7 @@ export function createWorkSessions(
           try {
             const options = {
               signal: AbortSignal.any([signal, exact.signal]),
+              consistency: "strong" as const,
             };
             await (listed
               ? channels.refreshRoster?.(id, options)
@@ -261,7 +274,7 @@ export function createWorkSessions(
         })(),
       ]);
     }
-    if (!settled) channels.refreshList?.();
+    if (!settled) channels.refreshList?.({ consistency: "strong" });
     await wait;
   }
   async function refreshMembership(id: string) {
@@ -269,7 +282,15 @@ export function createWorkSessions(
       throw new Error("Channel membership is unavailable.");
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
     const events = await reader.read(
-      [{ kinds: [39002], authors: [relayAuthor], "#d": [id], limit: 1 }],
+      [
+        {
+          kinds: [39002],
+          authors: [relayAuthor],
+          "#d": [id],
+          limit: 1,
+          consistency: "strong",
+        },
+      ],
       { signal, fresh: true, priority: "foreground" },
     );
     const channel =
@@ -296,7 +317,15 @@ export function createWorkSessions(
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
     const limit = 500;
     const events = await discovery.read(
-      [{ kinds: [39002], authors: [relayAuthor], "#p": [pubkey], limit }],
+      [
+        {
+          kinds: [39002],
+          authors: [relayAuthor],
+          "#p": [pubkey],
+          limit,
+          consistency: "strong",
+        },
+      ],
       {
         signal: AbortSignal.any([signal, caller]),
         fresh: true,
@@ -323,7 +352,15 @@ export function createWorkSessions(
   async function listsMember(id: string, pubkey: string, caller: AbortSignal) {
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
     const events = await discovery.read(
-      [{ kinds: [39002], authors: [relayAuthor], "#d": [id], limit: 1 }],
+      [
+        {
+          kinds: [39002],
+          authors: [relayAuthor],
+          "#d": [id],
+          limit: 1,
+          consistency: "strong",
+        },
+      ],
       {
         signal: AbortSignal.any([signal, caller]),
         fresh: true,
@@ -463,7 +500,7 @@ export function createWorkSessions(
     ) {
       writer();
       identifier(id);
-      const name = title.trim();
+      const name = canonicalDetailsName(title);
       const about = description?.trim();
       if (!name || [...name].length > 120)
         throw new Error("Use a channel name between 1 and 120 characters.");

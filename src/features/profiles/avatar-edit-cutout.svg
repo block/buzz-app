@@ -1,0 +1,6 @@
+<!-- Buzz profile geometry: 192px avatar, 30px cutout at (165,165).
+     Cubic joins preserve the reference's rounded circle intersections. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <title>Profile avatar edit cutout</title>
+  <path fill="white" d="M 184.436 133.351 C 182.866 137.067 179.289 138.315 175.510 136.901 A 30 30 0 0 0 136.901 175.510 C 138.315 179.289 137.067 182.866 133.351 184.436 A 96 96 0 1 1 184.436 133.351 Z"/>
+</svg>

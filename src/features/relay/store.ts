@@ -5,6 +5,7 @@ import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import { ReadError, readErrorKind } from "./errors";
 import type {
   ChannelList,
+  ChannelReadOptions,
   ChannelMessage,
   ChannelQueries,
   ChannelWindow,
@@ -98,7 +99,7 @@ export function createChannelStore(
         restored?(events: readonly RelayEvent[]): void;
         /** Returns true when session post-subscribe catch-up owns this demand. */
         demand?(channelId: string): boolean;
-        rosterChanged?(): void;
+        rosterChanged?(strong?: boolean): void;
       })
     | null,
   directory: ProfileDirectory,
@@ -137,6 +138,7 @@ export function createChannelStore(
     epoch = 0,
     listBusy = false;
   let listAgain = false;
+  let strongListAgain = false;
   let listRetryAt = 0;
   type RosterRefresh = Readonly<{
     state: "idle" | "pending" | "verified" | "deferred" | "error";
@@ -974,11 +976,12 @@ export function createChannelStore(
   }
   /** Apply roster authority as soon as it succeeds; names are a separate,
    * optional read and cannot delay revocation or overwrite newer live grants. */
-  async function discover(force = false) {
+  async function discover(force = false, strong = false) {
     if (disposed || !transport || !discovery || options.cachedOnly) return;
     // Hints/establishment during a read require a later read. During a quota
     // pause they retain an obligation, not another request with a deadline.
     if (force) listAgain = true;
+    if (strong) strongListAgain = true;
     if (
       listBusy ||
       performance.now() < listRetryAt ||
@@ -988,10 +991,15 @@ export function createChannelStore(
     )
       return;
     listAgain = false;
+    // A post-write request queued behind an older pass must keep writer routing.
+    const consistency = strongListAgain
+      ? { consistency: "strong" as const }
+      : {};
+    strongListAgain = false;
     listRetryAt = 0;
     listBusy = true;
     rosterRefresh = Object.freeze({ state: "pending" });
-    transport.rosterChanged?.();
+    transport.rosterChanged?.(consistency.consistency === "strong");
     if (disposed) {
       listBusy = false;
       return;
@@ -1025,6 +1033,7 @@ export function createChannelStore(
           [
             {
               kinds: [39002],
+              ...consistency,
               "#p": [transport.viewer],
               limit: DISCOVERY_LIMIT,
               ...(cursor
@@ -1112,6 +1121,7 @@ export function createChannelStore(
             [
               {
                 kinds: [39002],
+                ...consistency,
                 authors: [transport.relayAuthor],
                 "#d": batch,
                 "#p": [transport.viewer],
@@ -1165,6 +1175,7 @@ export function createChannelStore(
           [
             {
               kinds: [39000],
+              ...consistency,
               "#d": wanted.slice(offset, offset + DISCOVERY_LIMIT),
               limit: DISCOVERY_LIMIT,
             },
@@ -1207,6 +1218,14 @@ export function createChannelStore(
         setList({ ...list, status: "error", error: describe(error) });
       }
     } finally {
+      // Failure or interruption has not fulfilled the writer requirement, even
+      // after roster authority landed. Restore it before a queued pass starts.
+      if (
+        !disposed &&
+        consistency.consistency === "strong" &&
+        outcome.state !== "verified"
+      )
+        strongListAgain = true;
       controllers.delete(controller);
       if (!disposed && readingRoster) {
         coverage = "partial";
@@ -1226,15 +1245,16 @@ export function createChannelStore(
   }
   /** Resolve only returned/demanded nonmember channels, through the verified reader.
    *
-   * Two properties here carry the create-channel path in work-sessions.ts
-   * `refresh`, which guards them with real-store tests in work-sessions.test.ts
-   * rather than through this store's own suite:
+   * Search, work-sessions.ts `refresh`, and session.ts membership hints rely on
+   * these properties. The create-channel path guards them with real-store tests
+   * in work-sessions.test.ts rather than through this store's own suite:
    * - The id filter keeps every channel the store does not yet authorize, so a
    *   just-created channel is confirmed by one exact `#d` read instead of the
    *   full viewer-roster rediscovery. Skipping such ids would send every create
-   *   back through the full pass. See "admits a created ... channel through the
-   *   store's exact read without rediscovering the roster". Ids the store
-   *   already authorizes stay skipped: a member addition to a joined channel is
+   *   back through the full pass. Session hints route held channels to the full
+   *   pass because this filter skips them (including unarchive triggers). See
+   *   "admits a created ... channel through the store's exact read without
+   *   rediscovering the roster". A member addition to a joined channel is
    *   confirmed by `refreshRoster` below, not by widening this filter.
    * - Events apply through `applyDiscovery`, which always commits the list as
    *   `ready`. Only resolve into a list discovery has already made ready; on an
@@ -1242,10 +1262,14 @@ export function createChannelStore(
    *   these channels and hide a failed initial discovery. See "creates a channel
    *   during initial discovery without committing a list of only that channel";
    *   its check that every ready snapshot carries the first page's channel is
-   *   the canonical regression test. */
+   *   the canonical regression test.
+   * - Every call is a fresh read that the reader never merges with an identical
+   *   read in flight. The session coalesces hints across deliveries and skips
+   *   ids it is already confirming; a full pass that starts later retires
+   *   those confirmations, so a delayed grant cannot outlive the complete roster. */
   async function resolve(
     channelIds: readonly string[],
-    settings?: ReadOptions,
+    settings?: ChannelReadOptions,
   ) {
     if (disposed || !transport || !discovery || options.cachedOnly)
       throw new Error("Relay is unavailable");
@@ -1265,12 +1289,18 @@ export function createChannelStore(
         [
           {
             kinds: [39000],
+            ...(settings?.consistency
+              ? { consistency: settings.consistency }
+              : {}),
             authors: [transport.relayAuthor],
             "#d": ids,
             limit: ids.length + 1,
           },
           {
             kinds: [39002],
+            ...(settings?.consistency
+              ? { consistency: settings.consistency }
+              : {}),
             authors: [transport.relayAuthor],
             "#d": ids,
             "#p": [transport.viewer],
@@ -1377,7 +1407,10 @@ export function createChannelStore(
    * - The read is viewer-scoped (`#p`), so the relay never answers with a roster
    *   this viewer is absent from. An omitted roster changes nothing: revocation
    *   by omission stays with the complete viewer-roster pass and live traffic. */
-  async function refreshRoster(channelId: string, settings?: ReadOptions) {
+  async function refreshRoster(
+    channelId: string,
+    settings?: ChannelReadOptions,
+  ) {
     if (disposed || !transport || !discovery || options.cachedOnly)
       throw new Error("Relay is unavailable");
     if (list.status !== "ready")
@@ -1388,6 +1421,9 @@ export function createChannelStore(
       [
         {
           kinds: [39002],
+          ...(settings?.consistency
+            ? { consistency: settings.consistency }
+            : {}),
           authors: [transport.relayAuthor],
           "#d": [channelId],
           "#p": [transport.viewer],
@@ -1548,9 +1584,10 @@ export function createChannelStore(
       if (!persistence?.readStartup) void discover();
       else void restore().then(() => discover());
     },
-    refreshList() {
-      if (!persistence?.readStartup) void discover(true);
-      else void restore().then(() => discover(true));
+    refreshList(settings?: Pick<ChannelReadOptions, "consistency">) {
+      const strong = settings?.consistency === "strong";
+      if (!persistence?.readStartup) void discover(true, strong);
+      else void restore().then(() => discover(true, strong));
     },
     /** Background roster warm. The caller supplies preferred ids (e.g. starred);
      * the rest follow by recency of their retained head, never-fetched last. */
@@ -1987,6 +2024,11 @@ export function createChannelStore(
   return {
     queries,
     roster: () => rosterRefresh,
+    /** Preserve a retired exact confirmation's routing without scheduling work.
+     * The next refresh/Retry owns dispatch and the existing cooldown. */
+    requireStrongListRead() {
+      if (!disposed) strongListAgain = true;
+    },
     retryList() {
       if (rosterRefresh.state === "error" || rosterRefresh.state === "deferred")
         void discover(true);

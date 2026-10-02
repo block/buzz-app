@@ -33,7 +33,12 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 // Real browser HTTP -> production broker. Ephemeral key; upstream I/O is entirely local.
-async function harness(respond, capabilities = {}, relayUrl = fixtureRelayUrl) {
+async function harness(
+  respond,
+  capabilities = {},
+  relayUrl = fixtureRelayUrl,
+  builderlab = {},
+) {
   const key = new Uint8Array(32);
   key[31] = 7;
   const viewer = getPublicKey(key);
@@ -51,6 +56,7 @@ async function harness(respond, capabilities = {}, relayUrl = fixtureRelayUrl) {
   });
   const plugin = relayBrokerPlugin({
     relayUrl,
+    builderlab,
     communityAliases: fixtureAliases,
     identity: () => key,
     socketFactory: socket.factory,
@@ -125,6 +131,70 @@ async function harness(respond, capabilities = {}, relayUrl = fixtureRelayUrl) {
   };
 }
 const filters = [{ kinds: [0], limit: 1 }];
+
+test.each([
+  [202, { status: "aborted" }],
+  [409, { error: { code: "must_archive" } }],
+])(
+  "Builderlab HTTP forwards structured deletion status %s",
+  async (status, result) => {
+    let openLogin;
+    const loginOpened = new Promise((resolve) => {
+      openLogin = resolve;
+    });
+    const request = {
+      community_id: "11111111-1111-4111-8111-111111111111",
+      host: "north.communities.buzz.xyz",
+      request_id: "22222222-2222-4222-8222-222222222222",
+      acknowledgement_version: 1,
+    };
+    const upstream = [];
+    const h = await harness(() => Response.json([]), {}, fixtureRelayUrl, {
+      open: async (url) => openLogin(url),
+      fetch: async (url, init) => {
+        const path = new URL(url).pathname;
+        if (path.endsWith("/v1/auth/login/exchange"))
+          return Response.json({
+            session_credential: "fixture-only",
+            expires_at: "2030",
+          });
+        if (path.endsWith("/v1/auth/me"))
+          return Response.json({
+            email: "fixture@example.com",
+            expires_at: "2030",
+          });
+        if (path.endsWith("/v1/buzz/communities/delete")) {
+          upstream.push(JSON.parse(init.body));
+          return Response.json({ ...request, ...result }, { status });
+        }
+        throw new Error(`Unexpected fixture request: ${path}`);
+      },
+    });
+    try {
+      const login = fetch(`${h.base}/api/builderlab/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const opened = new URL(await loginOpened);
+      const callback = opened.searchParams.get("returnTo");
+      expect(callback).toBeTruthy();
+      expect((await fetch(`${callback}?code=fixture`)).status).toBe(200);
+      expect((await login).status).toBe(200);
+      const response = await fetch(`${h.base}/api/builderlab/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual({ ...request, ...result });
+      expect(upstream).toEqual([request]);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
 const success = (call) =>
   Response.json(
     call.url.endsWith("/events")
@@ -954,6 +1024,27 @@ test("local capacity is explicitly unsent, not relay quota; unknown upstream pub
     await uncertain.close();
   }
 }, 10000);
+
+test("strong channel confirmation filters reach the upstream query unchanged", async () => {
+  const h = await harness(() => Response.json([]));
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const filters = [
+      {
+        kinds: [39002],
+        "#d": ["11111111-1111-4111-8111-111111111111"],
+        limit: 1,
+        consistency: "strong",
+      },
+    ];
+    await transport.query(filters);
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0].url).toBe(`${fixtureRelayUrl}/query`);
+    expect(h.calls[0].body).toEqual(filters);
+  } finally {
+    await h.close();
+  }
+});
 
 // Reader-to-host priority propagation control contributed by Brain.
 test("reader and transport start foreground work without waiting for background completion", async () => {
@@ -2490,6 +2581,21 @@ test("lifecycle uses dedicated shape-limited host routes, never the message writ
       400,
     );
     expect(h.publications).toHaveLength(1);
+    const unarchive = {
+      ...template,
+      kind: 9002,
+      tags: [
+        ["h", id],
+        ["archived", "false"],
+      ],
+    };
+    expect((await h.post("sign", unarchive)).status).toBe(400);
+    const restore = await transport.channelLifecycle.sign(unarchive, signal);
+    expect(verifyEvent(restore)).toBe(true);
+    expect(restore).toMatchObject(unarchive);
+    expect((await h.post("publish", restore)).status).toBe(400);
+    await transport.channelLifecycle.publish(restore, signal);
+    expect(h.publications).toHaveLength(2);
   } finally {
     live?.dispose();
     await h.close();
@@ -2858,9 +2964,14 @@ test("details routes are narrow, require the live owner, and do not widen lifecy
       { ...template, kind: 9001 },
       { ...template, content: "extra" },
       { ...template, tags: [...template.tags, ["archived", "true"]] },
+      ...["0", "-1", "1.5", "2147483648"].map((ttl) => ({
+        ...template,
+        tags: [...template.tags, ["ttl", ttl]],
+      })),
+      { ...template, tags: [...template.tags, ["ttl", "60"], ["ttl", "60"]] },
       {
         ...template,
-        tags: [...template.tags.slice(0, 3), ["visibility", "open"]],
+        tags: [...template.tags.slice(0, 3), ["visibility", "public"]],
       },
       { ...template, tags: [template.tags[0], ["topic", "x"]] },
       {
@@ -2883,12 +2994,33 @@ test("details routes are narrow, require the live owner, and do not widen lifecy
     live = await openBrokerSocket(transport);
     await transport.channelDetails.publish(event, signal);
     expect(h.publications).toHaveLength(1);
+    for (const ttl of ["604800", ""]) {
+      const change = { ...template, tags: [...template.tags, ["ttl", ttl]] };
+      expect((await h.post("sign", change)).status).toBe(400);
+      expect((await h.post("channel-lifecycle-sign", change)).status).toBe(400);
+      const signed = await transport.channelDetails.sign(change, signal);
+      expect(signed).toMatchObject(change);
+      await transport.channelDetails.publish(signed, signal);
+    }
+    const reopening = {
+      ...template,
+      tags: [...template.tags.slice(0, 3), ["visibility", "open"]],
+    };
+    expect((await h.post("sign", reopening)).status).toBe(400);
+    expect((await h.post("channel-lifecycle-sign", reopening)).status).toBe(
+      400,
+    );
+    const reopened = await transport.channelDetails.sign(reopening, signal);
+    expect(reopened).toMatchObject(reopening);
+    expect((await h.post("publish", reopened)).status).toBe(400);
+    await transport.channelDetails.publish(reopened, signal);
+    expect(h.publications).toHaveLength(4);
     const foreign = finalizeEvent(
       structuredClone(template),
       new Uint8Array(32).fill(5),
     );
     expect((await h.post("channel-details-publish", foreign)).status).toBe(400);
-    expect(h.publications).toHaveLength(1);
+    expect(h.publications).toHaveLength(4);
   } finally {
     live?.dispose();
     await h.close();

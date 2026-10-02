@@ -86,6 +86,7 @@ export function createChannelDetails({
     const events = await reader.read(
       [39000, 39001, 39002].map((kind) => ({
         kinds: [kind],
+        consistency: "strong" as const,
         authors: [relayAuthor],
         "#d": [id],
         limit: 1,
@@ -110,7 +111,8 @@ export function createChannelDetails({
     if (
       details.name !== draft.name ||
       details.description !== draft.description ||
-      details.visibility !== draft.visibility
+      details.visibility !== draft.visibility ||
+      details.ttlSeconds !== draft.ttlSeconds
     )
       throw new Error(uncertain);
     attempts.delete(id);
@@ -178,14 +180,9 @@ export function createChannelDetails({
                 throw new Error(
                   "Channel details changed. Reload details before saving your edits.",
                 );
-              if (
-                details.visibility === "private" &&
-                draft.visibility !== "private"
-              )
-                throw new Error("Private channels cannot be made public here.");
             };
             await authorize();
-            const template = detailsTemplate(id, draft);
+            const template = detailsTemplate(id, draft, base);
             const signed = await writer.sign(structuredClone(template), signal);
             signal.throwIfAborted();
             if (

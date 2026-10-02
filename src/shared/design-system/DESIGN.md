@@ -16,6 +16,10 @@ Tailwind utilities include `bg-surface-panel`, `text-standard`,
 `border-prominent` and `bg-affordance-subtle-hover`. Text and border registrations
 stay in separate namespaces so they cannot accidentally share a value.
 
+Primary reading text and icons inheriting its color use `text-standard`: #0F0F0F
+in light mode and #FFFFFF in dark mode. Secondary and disabled roles keep their
+existing colors; prominent control fills and focus boundaries remain unchanged.
+
 Components choose roles, not palette steps. The palette is an implementation
 detail, even when a role uses the same step in both themes. Add a role only for
 an actual use, document it in the registry and measure its intended pairings.
@@ -417,9 +421,9 @@ show these contracts and their compositions.
 ## Compositions
 
 PanelHeader owns one consistent header frame: leading `navigation`, title/icon,
-and trailing `actions`. Use a toolbar IconButton with ArrowLeft for a local back
-action and X for closing the panel. The default 2.5rem (40px at the default root size)
-minimum height aligns conversation,
+and trailing `actions`. `PanelHeaderLabel` supplies the smaller tab-aligned
+label role; omit its optional icon for image and video detail titles. Use a toolbar IconButton with ArrowLeft for a local back
+action and X for closing the panel. The default 2.5rem (40px at the default root size) minimum height aligns conversation,
 thread, profile, tabbed workspace, and Todos headers. The compact variant shares
 this height. Headers use 0.25rem inline padding (matching the centered 2rem controls’
 block inset), 1rem identity icons, and
@@ -427,6 +431,9 @@ block inset), 1rem identity icons, and
 tabs use 1rem icons or fill avatars and 0.5rem leading padding.
 Header spacing, icons, and controls scale with rem; separators remain
 1px hairlines. Titles and actions may wrap when their content needs more room.
+Static identities use PanelHeaderLabel to share navigation tabs’ icon slot,
+regular title weight, and leading inset without adding a tab stop. Terminal context
+can follow the label; Inbox and Bestie use the same composition.
 Navigation state, focus restoration, and content transitions belong to the host.
 
 Composer pickers reuse PopoverPopup and anchor above the whole composer with a
@@ -460,7 +467,11 @@ title. Group the title and optional description with `--space-2` (8px), beside
 the close button so its hit area does not enlarge the text gap. The body owns
 vertical padding matching the dialog's horizontal padding: `--space-6` (24px),
 or `--space-4` (16px) at the compact breakpoint. Do not add an outer flex gap
-on top of that body padding.
+on top of that body padding. Create/Edit channel forms opt into
+`headerGap="compact"` for a 12px heading-to-body gap at every breakpoint;
+other dialog compositions retain their default spacing. Their privacy confirmation
+steps also opt into `footerGap="compact"` for 8px between the final checkbox row
+and the actions; returning to the form restores the normal body-bottom padding.
 For a bounded dialog with fixed controls above a list, use `height="stable"`
 with `bodyLayout="flex"`. The body becomes a non-scrolling flex column; the
 feature supplies a `flex: 1; min-height: 0` composition with fixed controls and
@@ -473,6 +484,17 @@ The shared Dialog uses state opacity and settling transform tokens for a centere
 keep the controlled component mounted while setting `open={false}` for an exit.
 Reduced motion, keyboard navigation, and Escape dismissal are immediate. Pass
 `motion="none"` for frequently used surfaces such as the search palette.
+Channel Create/Edit privacy confirmation opts into a keyed `step` inside that same
+modal. The complete surface crossfades over 200ms with 4px blur: the form grows to
+1.05 while confirmation grows from 0.95 to 1; returning reverses those positions.
+This explicitly requested, bounded dialog transition is an exception to the
+no-blur rule below, not a new default for dialogs. One stable Base UI title and
+description label the modal; outgoing content is inert and hidden from assistive
+technology. Reduced motion, keyboard navigation and `motion="none"` swap steps
+immediately. The caller still owns draft state and focus between steps; no second
+modal, backdrop or write owner is introduced. This opt-in is for content-sized,
+centered dialogs; expanded, stable-height and side-sheet compositions are unchanged.
+
 
 Use Accordion for collapsible sections. Form sections pass `keepMounted` so
 collapsing them preserves local input state; leave the default for static content.
@@ -482,7 +504,10 @@ form one stack; avoid inserting form-section gaps between individual rows.
 
 Use Tooltip for short hints on labelled controls; use PreviewCard for richer
 content. Tooltip owns its description link and inherits placement, focus and
-Escape behavior from Base UI. Overlay layers keep menus and hints above dialogs.
+Escape behavior from Base UI. For asynchronous action feedback (such as copying a
+channel ID), control `open` / `onOpenChange` and set `closeOnClick={false}` so the
+initiating click does not dismiss its result. Defaults retain ordinary hint behavior.
+Overlay layers keep menus and hints above dialogs.
 Hints use text-caption (12px / 16px), with space-1 vertical and space-2 horizontal
 padding. Pointer entry uses the shared state duration (150ms), fading from a
 0.97 scale, 2px downward offset and 2px blur; exit reverses it with the fast
@@ -509,12 +534,10 @@ remain above the stack. Content updates do not restart expiry; timeout changes d
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
 Route navigation uses NavigationItem with aria-current instead. Tabs can also
 compose NavigationItem through the `navigation` variant: these retain tab
-semantics, use 12rem widths with ellipsis and a subtle selected fill, accept
-avatars/icons, and place a sibling close
-button over reserved trailing space. Navigation tab strips scroll horizontally with a
-thin native scrollbar. The main
-channel header uses the same control with a single non-closable tab with
-`showSelection={false}` (no selection or hover fill); channel
+semantics, use 12rem widths with ellipsis and a subtle selected fill, accept avatars/icons, and place a sibling close
+button over reserved trailing space. Tab close icons use 1rem artwork to match
+container header actions while retaining their compact hit areas. Close buttons stay visible on the active tab; inactive tabs reveal them on hover or keyboard focus. Touch devices keep close buttons visible. Navigation tab strips scroll only horizontally. Their rounded thumb uses the sidebar’s quiet scrollbar role, with a 3px visible thumb in the header’s 4px bottom inset. The tab row keeps its vertical position as overflow starts or stops. It appears only while the strip is hovered; touch devices retain the thumb without requiring hover. The main
+channel header uses the same control with a single non-closable tab with `showSelection={false}` (no selection or hover fill); channel
 actions remain in the header action slot. The settings launcher uses
 `data-highlight-expanded="false"` to preserve disclosure semantics without a
 sticky pressed treatment; the selected tab owns the open-state indicator.
@@ -845,15 +868,17 @@ around it locally.
 
 ## Icons
 
-Phosphor is the only general icon family. Import named icons from `icons/index.ts`,
+Tabler is the only general icon family. Import named icons from `icons/index.ts`,
 which re-exports individual upstream modules. Add exports as needed; no approval list.
 SVG-only widgets use individual assets through `icons/svg.ts`. Do not import the
-upstream packages elsewhere or reintroduce other icon libraries. All six native weights
-remain designer choices: no size-to-weight or selection-to-fill rules. For chat and
-conversation metaphors, prefer the rounded `ChatCircle` family (including `ChatsCircle`)
-over square or teardrop variants; choose the matching dots, text, or slash variant when
-the meaning requires it. Keep accessible names on controls and decorative artwork hidden
-from assistive technology.
+upstream packages elsewhere or reintroduce other icon libraries. Outline icons use
+Tabler’s default stroke width of 2; explicit `strokeWidth` and filled exports remain
+designer choices, with no size-to-stroke or selection-to-fill rules. Existing bold
+uses have `strokeWidth={2.5}`; video play/pause controls use explicit filled icons.
+Keep the public gateway names stable. For chat and conversation metaphors, use
+`ChatCircleIcon` / `ChatsCircleIcon` (Tabler’s MessageCircle / Messages), choosing
+the variant that matches the meaning. Keep accessible names on controls and
+decorative artwork hidden from assistive technology.
 
 OneDrive is a designer-approved custom brand mark: its complete outline is recreated on
 Phosphor’s square canvas, uses the same current-color and sizing behavior, and stays in
@@ -863,7 +888,7 @@ the shared icon gateway. It does not permit another general icon library.
 
 Mention and media pickers opt into `SearchField variant="capsule"`. Its shared
 `search-field.css` recipe also styles Emoji Mart inside its shadow root: body-sm
-typography, pill radius, standard panel fill, Phosphor icons, and a 32px clear
+typography, pill radius, standard panel fill, Tabler icons, and a 32px clear
 action. Other SearchField callers retain the default field treatment. Scrolling
 picker results use the opt-in `buzz-thin-scrollbar` native scrollbar recipe.
 

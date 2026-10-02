@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
@@ -105,6 +106,23 @@ test("channel members opens from the header, fits each viewport, and returns key
     await expect(dialog).toHaveCount(0);
     await expect(trigger).toBeFocused();
   }
+  await page.setViewportSize({ width: 1440, height: 850 });
+  await trigger.click();
+  await expect(
+    page.getByRole("dialog", { name: "Channel members" }),
+  ).toBeVisible();
+  // Model navigation arriving while the modal is open, not a pointer through its backdrop.
+  await page
+    .locator('button[data-channel-id="beta"]')
+    .evaluate((node) => node.click());
+  await expect(
+    page.getByRole("dialog", { name: "Channel members" }),
+  ).toHaveCount(0);
+  await page.locator('button[data-channel-id="alpha"]').click();
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await expect(
+    page.getByRole("dialog", { name: "Channel members" }),
+  ).toHaveCount(0);
 });
 
 // Native history traversal/reload plus the real channel tab owner cannot be
@@ -130,9 +148,7 @@ test("Members has a reloadable history visit without replacing channel tabs or d
   const entry = () => page.evaluate(() => history.state.buzzNavigationV1.entry);
   await expect(composer).toBeVisible();
   await composer.fill("Keep this draft");
-  await conversation
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   const settings = page
     .locator("[data-panel-workspace]")
     .getByRole("tab", { name: "Channel settings", exact: true });

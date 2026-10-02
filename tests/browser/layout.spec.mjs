@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import {
   openPage,
   pageChoices,
@@ -632,6 +633,9 @@ companionTest(
     await expect(launch).toHaveCount(0);
     await expect(companion).toHaveCount(0);
     await expect(enabled).toBeFocused();
+    // The closing dock is already aria-hidden, but still narrows Settings.
+    // Wait for its removal before the next click can race the layout expansion.
+    await expect(page.locator("[data-panel-dock]")).toHaveCount(0);
     await enabled.click();
     await expect(launch).toBeVisible();
     await expect(companion).toHaveCount(0);
@@ -868,7 +872,7 @@ todosOverlapTest(
     await link(page, app, "https://github.com/block/buzz/pull/7");
     await toggle.click();
     await stacked(linked);
-    await button(page, "Channel settings").click();
+    await openChannelDetails(page);
     await expect(settings).toBeVisible();
     await expect(todos).toHaveCount(0); // Settings intentionally retires the drawer.
     await button(page, "Close Channel settings tab").click();
@@ -923,9 +927,7 @@ companionReadingTest(
       await expect(
         button(page, "Close Companion fixture panel"),
       ).toBeInViewport();
-      await page
-        .getByRole("button", { name: "Channel settings", exact: true })
-        .evaluate((element) => element.click());
+      await openChannelDetails(page, { programmatic: true });
       const settings = page.getByRole("complementary", {
         name: "Channel settings",
         exact: true,

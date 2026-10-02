@@ -35,7 +35,11 @@ import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
-import type { ChannelMessage, Profile } from "../relay/contracts";
+import type {
+  ChannelMessage,
+  ChannelSummary,
+  Profile,
+} from "../relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
@@ -472,6 +476,34 @@ it("autofocuses each selected conversation once without stealing focus on update
     h.retarget({ channelId: "keyboard-navigation" });
     expect(h.input()).toHaveFocus();
   } finally {
+    other.remove();
+  }
+});
+
+it("defers initial focus until an inert startup ancestor is revealed", async () => {
+  document.body.setAttribute("inert", "");
+  try {
+    const h = mount({ autoFocus: true });
+    expect(h.input()).not.toHaveFocus();
+    document.body.removeAttribute("inert");
+    await waitFor(() => expect(h.input()).toHaveFocus());
+  } finally {
+    document.body.removeAttribute("inert");
+  }
+});
+
+it("does not reclaim startup focus after another control takes it", async () => {
+  document.body.setAttribute("inert", "");
+  const other = document.createElement("button");
+  document.body.append(other);
+  try {
+    const h = mount({ autoFocus: true });
+    other.focus();
+    document.body.removeAttribute("inert");
+    await waitFor(() => expect(other).toHaveFocus());
+    expect(h.input()).not.toHaveFocus();
+  } finally {
+    document.body.removeAttribute("inert");
     other.remove();
   }
 });
@@ -2713,6 +2745,51 @@ it("does not reopen a target with an unresolved edit after closing it", () => {
   fireEvent.keyDown(h.input(), { key: "ArrowUp" });
   expect(h.input()).toHaveValue("");
   expect(screen.queryByText("Editing message")).not.toBeInTheDocument();
+});
+
+it("keeps the draft but blocks new messages while archived, then re-enables it on restore", async () => {
+  const h = mount();
+  let channel: ChannelSummary = { id: "channel", name: "General" };
+  let list = { status: "ready" as const, channels: [channel] };
+  const listeners = new Set<() => void>();
+  h.retarget({
+    session: {
+      ...h.session,
+      channels: {
+        ...h.session.channels,
+        get: () => channel,
+        list: () => list,
+        subscribeList: (listener) => {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
+      },
+    },
+  });
+  h.fill("Draft survives archive");
+  const archive = (archived: true | undefined) =>
+    act(() => {
+      channel = {
+        id: "channel",
+        name: "General",
+        ...(archived ? { archived } : {}),
+      };
+      list = { ...list, channels: [channel] };
+      for (const listener of listeners) listener();
+    });
+  archive(true);
+  expect(h.input()).toHaveAttribute("aria-disabled", "true");
+  expect(h.input()).toHaveValue("Draft survives archive");
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  h.submit();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  archive(undefined);
+  expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
+  expect(h.input()).toHaveValue("Draft survives archive");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
 });
 
 it.each(["archived", "readOnly"] as const)(

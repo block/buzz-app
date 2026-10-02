@@ -10,19 +10,29 @@ type NoticeData = {
 };
 
 /** One host-owned stack. Base UI owns announcements, focus and expiry. */
-export function ToastProvider({ children }: { children: ReactNode }) {
+export function ToastProvider({
+  children,
+  portalContainer,
+}: {
+  children: ReactNode;
+  portalContainer?: HTMLElement | undefined;
+}) {
   return (
     <BaseToast.Provider limit={Infinity}>
       {children}
-      <ToastViewport />
+      <ToastViewport portalContainer={portalContainer} />
     </BaseToast.Provider>
   );
 }
 
-function ToastViewport() {
+function ToastViewport({
+  portalContainer,
+}: {
+  portalContainer?: HTMLElement | undefined;
+}) {
   const { toasts } = BaseToast.useToastManager<NoticeData>();
   return (
-    <BaseToast.Portal>
+    <BaseToast.Portal container={portalContainer}>
       <BaseToast.Viewport
         data-buzz-ui=""
         className="buzz-toast-viewport"

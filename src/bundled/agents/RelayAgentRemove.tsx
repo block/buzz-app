@@ -70,13 +70,13 @@ export function RelayAgentRemove({
           }
         >
           <ul className="m-0 flex list-disc flex-col gap-1 pl-5 text-body-sm text-secondary">
-            <li>Removes the agent from every channel it belongs to.</li>
-            <li>Deletes your saved record of this agent in this community.</li>
             <li>
               Archives the agent so it no longer appears in member lists or
               mention suggestions. This needs you to own its profile or
               administer this community.
             </li>
+            <li>Deletes your saved record of this agent in this community.</li>
+            <li>Tries to remove the agent from every channel it belongs to.</li>
           </ul>
         </AlertDialog>
       )}

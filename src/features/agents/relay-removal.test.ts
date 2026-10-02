@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, expect, it } from "vitest";
+import { PublishRejected } from "../relay/outbox";
 import { createRelaySession } from "../relay/session";
 import { archiveRelay, keypair, signed, type Key } from "../relay/testing";
 import { removeRelayAgent } from "./relay-removal";
@@ -51,10 +52,10 @@ function setup(owner: Key = viewer) {
 }
 const coordinate = () => `30177:${viewer.pubkey}:${agent.pubkey}`;
 
-it("removes channel memberships, deletes the owner record, then archives", async () => {
+it("archives, deletes the owner record, then removes channel memberships", async () => {
   const { fixture, instance, remove } = setup();
   await remove();
-  expect(fixture.published.map((event) => event.kind)).toEqual([9001, 5, 9035]);
+  expect(fixture.published.map((event) => event.kind)).toEqual([9035, 5, 9001]);
   const deletion = fixture.published[1];
   expect(deletion?.pubkey).toBe(viewer.pubkey);
   expect(deletion?.content).toBe("");
@@ -69,25 +70,48 @@ it("removes channel memberships, deletes the owner record, then archives", async
   expect(instance.session.outbox?.snapshot()).toEqual([]);
 });
 
-it("without an archive consent path still removes channels and the record", async () => {
+it("without an archive consent path still deletes the record and removes channels", async () => {
   const { fixture, remove } = setup(stranger);
   await remove();
-  expect(fixture.published.map((event) => event.kind)).toEqual([9001, 5]);
+  expect(fixture.published.map((event) => event.kind)).toEqual([5, 9001]);
   expect(fixture.deleted).toEqual(new Set([coordinate()]));
   expect(fixture.archived.has(agent.pubkey)).toBe(false);
 });
 
-it("a refused step stops the later steps and a retry finishes them", async () => {
+it("a refused archive stops the later steps and a retry finishes them", async () => {
   const { fixture, remove } = setup();
-  fixture.removal.fail = new Error("restricted: not authorized");
+  fixture.script.fail = new PublishRejected("restricted: not authorized");
   await expect(remove()).rejects.toThrow("restricted: not authorized");
   expect(fixture.published).toEqual([]);
-  expect(fixture.deleted.size).toBe(0);
   expect(fixture.archived.has(agent.pubkey)).toBe(false);
+  delete fixture.script.fail;
+  await remove();
+  expect(fixture.published.map((event) => event.kind)).toEqual([9035, 5, 9001]);
+});
+
+it("a refused record deletion fails Remove; the retry does not archive again", async () => {
+  const { fixture, remove } = setup();
+  fixture.removal.fail = new Error("restricted: not authorized");
+  fixture.removal.failKind = 5;
+  await expect(remove()).rejects.toThrow("restricted: not authorized");
+  expect(fixture.published.map((event) => event.kind)).toEqual([9035]);
+  expect(fixture.deleted.size).toBe(0);
   delete fixture.removal.fail;
   await remove();
-  expect(fixture.published.map((event) => event.kind)).toEqual([9001, 5, 9035]);
+  expect(fixture.published.map((event) => event.kind)).toEqual([9035, 5, 9001]);
+  expect(fixture.deleted).toEqual(new Set([coordinate()]));
+});
+
+it("a refused channel removal does not fail Remove or leave outbox work", async () => {
+  const { fixture, instance, remove } = setup();
+  fixture.removal.fail = new Error("restricted: not authorized");
+  fixture.removal.failKind = 9001;
+  await remove();
+  expect(fixture.published.map((event) => event.kind)).toEqual([9035, 5]);
   expect(fixture.archived.has(agent.pubkey)).toBe(true);
+  expect(fixture.deleted).toEqual(new Set([coordinate()]));
+  expect(Object.values(fixture.channels).flat()).toContain(agent.pubkey);
+  expect(instance.session.outbox?.snapshot()).toEqual([]);
 });
 
 it("a cancelled removal signs and publishes nothing", async () => {

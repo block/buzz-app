@@ -75,6 +75,9 @@ export function UnifiedInventory({
   // Hide confirmed removals at once; the refreshed reads then agree. A removal
   // is per community, so the key includes the destination.
   const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
+  // Archive is the first removal step and hides the row. Keep a started
+  // removal's card until it finishes, so its later steps and errors stay visible.
+  const [held, setHeld] = useState<ReadonlySet<string>>(new Set());
   const {
     communityIdentities,
     profiles: sourceProfiles,
@@ -119,9 +122,10 @@ export function UnifiedInventory({
   );
   // Apply archive evidence after all discovery sources join. Keep local controls.
   for (const row of rows.values()) {
+    const key = `${destination} ${row.pubkey}`;
     if (
-      (archives.state(row.pubkey) === "archived" ||
-        removed.has(`${destination} ${row.pubkey}`)) &&
+      ((archives.state(row.pubkey) === "archived" && !held.has(key)) ||
+        removed.has(key)) &&
       !row.localIdentity
     )
       rows.delete(row.pubkey);
@@ -133,9 +137,13 @@ export function UnifiedInventory({
     viewer &&
     connection.session.outbox?.supports(5)
       ? async (pubkey: string, signal: AbortSignal) => {
+          const key = `${destination} ${pubkey}`;
+          setHeld((saved) => new Set([...saved, key]));
+          // A failed removal stays held: the card shows the error and Retry.
           await removeRelayAgent(connection.session, viewer, pubkey, signal);
-          setRemoved(
-            (saved) => new Set([...saved, `${destination} ${pubkey}`]),
+          setRemoved((saved) => new Set([...saved, key]));
+          setHeld(
+            (saved) => new Set([...saved].filter((item) => item !== key)),
           );
           void library.refresh();
           setRefresh((value) => value + 1);

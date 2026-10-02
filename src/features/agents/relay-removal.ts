@@ -6,25 +6,48 @@ type RemovalSession = Pick<
   "outbox" | "channels" | "workSessions" | "archives"
 >;
 
-/** Remove a relay-only agent from this community: channels, then the owner's
- * kind 30177 record, then the NIP-IA archive when a consent path exists. The
- * archive runs last because it hides the inventory row. Every step is
- * idempotent, so a failure leaves Remove retryable. */
+/** Remove a relay-only agent from this community: archive its identity when a
+ * consent path exists, delete the owner's kind 30177 record, then try to
+ * remove it from its channels. Archive and record deletion must succeed; a
+ * refusal stops the later steps and Remove stays retryable. Channel removal is
+ * best effort: its failure does not fail the removal. */
 export async function removeRelayAgent(
   session: RemovalSession,
   viewer: string,
   pubkey: string,
   signal: AbortSignal,
 ): Promise<void> {
-  // Check consent before any write. No path (for example, an agent that never
-  // published a profile) still removes the record and channel memberships.
-  const consent = session.archives.writable
-    ? await session.archives.consent(pubkey, signal)
-    : null;
-  signal.throwIfAborted();
-  await removeAgentFromChannels(session, pubkey, signal);
+  // A retry after a later step failed does not archive again.
+  if (session.archives.state(pubkey) !== "archived") {
+    // No consent path (for example, an agent that never published a profile)
+    // still removes the record and channel memberships.
+    const consent = session.archives.writable
+      ? await session.archives.consent(pubkey, signal)
+      : null;
+    signal.throwIfAborted();
+    if (consent) await session.archives.request("archive", pubkey, signal);
+  }
   await deleteAgentRecord(session, viewer, pubkey, signal);
-  if (consent) await session.archives.request("archive", pubkey, signal);
+  try {
+    await removeAgentFromChannels(session, pubkey, signal);
+  } catch (error) {
+    signal.throwIfAborted();
+    // Best effort: leave no failed channel removals in the outbox to retry.
+    const outbox = session.outbox;
+    await Promise.all(
+      (outbox?.snapshot() ?? [])
+        .filter(
+          ({ event, delivery }) =>
+            delivery !== "sending" &&
+            event.kind === 9001 &&
+            event.tags.some(
+              ([name, value]) => name === "p" && value === pubkey,
+            ),
+        )
+        .map(({ event }) => outbox?.dismiss(event.id)),
+    );
+    console.warn("Agent channel removal was not confirmed", error);
+  }
 }
 
 /** NIP-09 coordinate deletion of the viewer's own kind 30177 agent record. */

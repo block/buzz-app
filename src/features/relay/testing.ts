@@ -166,7 +166,13 @@ export function archiveRelay(
   const script: { hold?: Promise<void>; fail?: Error; apply: boolean } = {
     apply: true,
   };
-  const removal: { hold?: Promise<void>; fail?: Error; apply: boolean } = {
+  /** `failKind` limits `fail` to one writer kind, such as 5 or 9001. */
+  const removal: {
+    hold?: Promise<void>;
+    fail?: Error;
+    failKind?: number;
+    apply: boolean;
+  } = {
     apply: true,
   };
   let time = 1;
@@ -240,7 +246,11 @@ export function archiveRelay(
       },
       async publish(event) {
         await removal.hold;
-        if (removal.fail) throw removal.fail;
+        if (
+          removal.fail &&
+          (removal.failKind === undefined || removal.failKind === event.kind)
+        )
+          throw removal.fail;
         published.push(event);
         if (!removal.apply) return;
         if (event.kind === 5) {

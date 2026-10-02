@@ -277,7 +277,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     exact: true,
   });
   const singleLineTrigger = singleLine.getByRole("button", {
-    name: "Expand Reviewed",
+    name: "Expand Review comment",
     exact: true,
   });
   const wideViewport = page.viewportSize();

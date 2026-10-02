@@ -613,6 +613,14 @@ call a delegate publication method. Uploads, media, Git authentication and live
 AUTH continue to use their existing transport owners; the delegate supplies only
 the event signature where those owners already require one.
 
+Request-owned signing passes its bounded `AbortSignal` through the shared binder,
+which checks cancellation before delegation and after a delayed result returns;
+the writer then cannot publish a result that was cancelled while signing. The
+socket-owned live AUTH handshake keeps its existing connection-generation fence
+after signing rather than inventing a separate request cancellation owner.
+Presence uses its existing bounded signal. Purpose-bound native commands retain
+their own pre/post checks; Tauri IPC itself remains non-abortable.
+
 Raw Schnorr digest proofs remain separate local capabilities: NIP-OA owner
 authorization, harness-log authorization and community-setup authorization are
 served by the broker's local `createLocalSigningCapabilities`, not by the event

@@ -50,6 +50,7 @@ fn agent(workspace: &Path) -> Agent {
         auth_tag: Some(crate::secret::test_attestation(PUB)),
         imported: json!({"record":{"respond_to":"owner-only","parallelism":2,"effort_level":"high"}}),
         extra: BTreeMap::new(),
+        plugin: None,
     }
 }
 #[test]
@@ -382,6 +383,7 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
         workspace: a.workspace.clone(),
         harness: a.harness.clone(),
         environment: BTreeMap::new(),
+        plugin: None,
     };
     let saved = controller.save(&a.id, 1, edit).unwrap();
     assert_eq!(saved.agents[0].revision, 2);
@@ -466,6 +468,7 @@ fn new_records_launch_preference_is_independent_of_start_and_stop() {
         workspace: a.workspace.clone(),
         harness: a.harness.clone(),
         environment: BTreeMap::new(),
+        plugin: None,
     };
     let auth = crate::secret::test_attestation(prepared.key.pubkey());
     controller.create(&prepared, edit, &auth).unwrap();
@@ -1170,6 +1173,7 @@ fn shared_cache_spawn_capture_disconnect_snapshot_and_private_temp_cleanup() {
             ..a.harness.clone()
         },
         environment: BTreeMap::new(),
+        plugin: None,
     };
     controller.save(&a.id, 1, edit).unwrap();
     assert!(controller
@@ -1649,6 +1653,7 @@ fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets(
                 override_provider.map(str::to_owned),
             ),
         ]),
+        plugin: None,
     };
     let context = controller.draft_goose_model_context(edit(None)).unwrap();
     assert_eq!(context.command, goose);
@@ -1734,6 +1739,7 @@ fn bundled_goose_launch_and_model_lookup_share_the_verified_sidecar() {
         workspace: saved.workspace.clone(),
         harness: saved.harness.clone(),
         environment: BTreeMap::new(),
+        plugin: None,
     };
     let context = controller
         .goose_model_context(&saved.id, saved.revision, edit())
@@ -1988,6 +1994,7 @@ fn pi_and_goose_saved_environment_overrides_reach_the_listener_last() {
                         .iter()
                         .map(|(k, v): (&String, &String)| (k.clone(), Some(v.clone())))
                         .collect(),
+                    plugin: None,
                 },
             )
             .unwrap();
@@ -2117,6 +2124,7 @@ fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
         workspace: a.workspace.clone(),
         harness: a.harness.clone(),
         environment: BTreeMap::new(),
+        plugin: None,
     };
     let context = controller.pi_model_context(&a.id, 1, edit.clone()).unwrap();
     assert_eq!(context.args, a.harness.args[1..]);

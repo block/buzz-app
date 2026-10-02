@@ -25,8 +25,10 @@ pub use supervisor::dispatch as dispatch_agent_supervisor;
 
 pub use agent_defaults::{AgentDefaultsEdit, AgentDefaultsView};
 pub use bundle::RuntimeBundle;
-pub use config::{AgentEdit, AgentView, ControlSnapshot, HarnessEdit, ProcessStatus};
-pub use create::{CreationProfile, NewAgent};
+pub use config::{
+    AgentEdit, AgentView, ControlSnapshot, HarnessEdit, PluginRuntime, ProcessStatus,
+};
+pub use create::{CreationProfile, NewAgent, PluginIdentity};
 pub use credentials::PlatformCredentials;
 pub use defaults::{build_defaults, BuildDefaults};
 pub use import::{

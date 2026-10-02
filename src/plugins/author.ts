@@ -55,6 +55,22 @@ export type {
 } from "../features/shortcuts/service";
 
 export type {
+  AgentTypes,
+  AgentType,
+  AgentFilter,
+  AgentIdentity,
+  AgentDelivery,
+  AgentConfigProps,
+  AgentActivity,
+  RegisteredAgentType,
+} from "../features/agent-types/service";
+export type {
+  AgentEventTemplate,
+  PublishedAgentEvent,
+} from "../features/agents/control";
+export type { LiveBatch } from "../features/relay/incoming";
+
+export type {
   UnreadCapability,
   UnreadSnapshot,
   ThreadActivityItem,

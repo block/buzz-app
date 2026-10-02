@@ -68,7 +68,8 @@ export function AgentCard({
     identities.length === 1 ? identities[0]?.pubkey : undefined,
   );
   const managed = editable.length === 1 ? editable[0] : undefined;
-  const status = managed?.status;
+  // A plugin agent publishes no presence, so there is nothing to wait for.
+  const status = managed?.plugin ? undefined : managed?.status;
   const settled =
     status === "running" ? presence === "online" : presence !== "online";
   useEffect(() => {

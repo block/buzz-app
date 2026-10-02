@@ -5,12 +5,14 @@ export const inject = [
   "pages",
   "relay",
   "agentControl",
+  "agentTypes",
   "navigation",
   "communityReader",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   const relay = ctx.relay;
   const control = ctx.agentControl;
+  const agentTypes = ctx.agentTypes;
   const communities = ctx.communityReader;
   ctx.pages.register({
     id: "agents",
@@ -27,6 +29,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         {...props}
         relay={relay}
         control={control}
+        agentTypes={agentTypes}
         open={ctx.navigation.open}
         communities={communities}
       />

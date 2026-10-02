@@ -7,8 +7,15 @@ import {
   type CloneSettings,
   type AgentView,
 } from "../../features/agents/control";
+import type { AgentTypes } from "../../features/agent-types/service";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Select } from "../../shared/design-system/ui/Select";
 import { AgentSettingsFields } from "./AgentSettingsFields";
+import {
+  AgentTypeFields,
+  agentTypeError,
+  useAgentTypes,
+} from "./AgentTypeFields";
 import {
   agentDraft,
   agentEdit,
@@ -49,6 +56,7 @@ type CreatePhase = "creating" | "starting" | "publishing" | "checking";
 
 export function AgentCreateDialog({
   control,
+  agentTypes,
   state,
   destination,
   owner,
@@ -58,6 +66,8 @@ export function AgentCreateDialog({
   onOpenHarnesses,
 }: {
   control: AgentControl;
+  /** Agent types from plugins. Choosing one replaces the harness settings. */
+  agentTypes?: AgentTypes | undefined;
   onOpenHarnesses?: (() => void) | undefined;
   state: AgentControlState;
   destination: string;
@@ -80,6 +90,8 @@ export function AgentCreateDialog({
         };
     return { ...initial, environment: { BUZZ_ACP_AGENTS: "10" } };
   });
+  const types = useAgentTypes(agentTypes);
+  const chosen = types.find((type) => type.key === draft.plugin?.type);
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState<AgentView | null>(null);
   const [nextStep, setNextStep] = useState<"start" | "profile">("start");
@@ -98,8 +110,11 @@ export function AgentCreateDialog({
     state.data?.createAvailable &&
     control.create
   );
+  // A plugin agent runs in the app; only a harness needs the bundled runtime.
   const runtimeBlocked =
-    !state.data?.runtimeAvailable && (!saved || nextStep === "start");
+    !draft.plugin &&
+    !state.data?.runtimeAvailable &&
+    (!saved || nextStep === "start");
   const busy = phase !== null;
   const blocked = busy || state.busy || state.status !== "ready";
   const create = async () => {
@@ -117,6 +132,8 @@ export function AgentCreateDialog({
       if (!agent) {
         let edit: ReturnType<typeof agentEdit>;
         try {
+          const invalid = agentTypeError(draft, types);
+          if (invalid) throw new Error(invalid);
           edit = agentEdit(draft);
         } catch (problem) {
           if (mounted.current)
@@ -251,19 +268,84 @@ export function AgentCreateDialog({
               void create();
             }}
           >
-            <AgentSettingsFields
-              draft={draft}
-              control={control}
-              state={state}
-              disabled={blocked || !!saved}
-              onOpenHarnesses={onOpenHarnesses}
-              discardEdits={dirty}
-              onChange={(patch) => {
-                setDraft({ ...draft, ...patch });
-                setDirty(true);
-                setError(undefined);
-              }}
-            />
+            {(types.length > 0 || draft.plugin) && (
+              <Select
+                label="Agent type"
+                variant="field"
+                disabled={blocked || !!saved}
+                value={draft.plugin?.type ?? ""}
+                description={
+                  draft.plugin
+                    ? (chosen?.description ??
+                      "Runs inside this app while it is open.")
+                    : "Runs as a process on this computer."
+                }
+                groups={[
+                  {
+                    label: "",
+                    options: [
+                      { value: "", label: "Harness" },
+                      ...types.map((type) => ({
+                        value: type.key,
+                        label: type.title,
+                      })),
+                      ...(draft.plugin && !chosen
+                        ? [
+                            {
+                              value: draft.plugin.type,
+                              label: draft.plugin.type,
+                              disabled: true,
+                            },
+                          ]
+                        : []),
+                    ],
+                  },
+                ]}
+                onValueChange={(key) => {
+                  const type = types.find((type) => type.key === key);
+                  const { plugin: _, ...harness } = draft;
+                  setDraft(
+                    type
+                      ? {
+                          ...harness,
+                          plugin: {
+                            type: type.key,
+                            config: structuredClone(type.defaults),
+                          },
+                        }
+                      : harness,
+                  );
+                  setDirty(true);
+                  setError(undefined);
+                }}
+              />
+            )}
+            {draft.plugin ? (
+              <AgentTypeFields
+                draft={draft}
+                types={types}
+                disabled={blocked || !!saved}
+                onChange={(patch) => {
+                  setDraft({ ...draft, ...patch });
+                  setDirty(true);
+                  setError(undefined);
+                }}
+              />
+            ) : (
+              <AgentSettingsFields
+                draft={draft}
+                control={control}
+                state={state}
+                disabled={blocked || !!saved}
+                onOpenHarnesses={onOpenHarnesses}
+                discardEdits={dirty}
+                onChange={(patch) => {
+                  setDraft({ ...draft, ...patch });
+                  setDirty(true);
+                  setError(undefined);
+                }}
+              />
+            )}
             {source?.harness.environmentKeys.length ? (
               <p role="status" className="text-body-sm text-secondary">
                 Re-enter environment values for{" "}

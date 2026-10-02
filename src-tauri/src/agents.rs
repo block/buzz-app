@@ -921,7 +921,13 @@ pub(crate) async fn agent_control_action(
     replay_floor: Option<u64>,
 ) -> Result<Snapshot, String> {
     let owner = state.inner().clone();
-    if matches!(action, Action::Stop) {
+    let target = id.clone();
+    // A plugin agent has no process: Start only enables it, with no key or runtime.
+    let in_app = run(owner.clone(), move |host| {
+        host.controller.is_plugin(&target)
+    })
+    .await?;
+    if matches!(action, Action::Stop) || in_app {
         return run(owner, move |host| host.action(&id, action)).await;
     }
     start(owner, id, action, false, replay_floor, None).await
@@ -1349,6 +1355,58 @@ async fn publish_acquired(
         host.snapshot()
     })
     .await
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PluginEvent {
+    kind: u16,
+    content: String,
+    #[serde(default)]
+    tags: Vec<Vec<String>>,
+}
+/// Signs a plugin-supplied event as an enabled plugin agent and posts it to that
+/// agent's community. The key stays native; the controller bounds what is signed.
+#[tauri::command]
+pub(crate) async fn agent_identity_publish(
+    state: tauri::State<'_, AgentHost>,
+    id: String,
+    event: PluginEvent,
+) -> Result<serde_json::Value, String> {
+    let owner = state.inner().clone();
+    let target = id.clone();
+    let (identity, credentials) = run(owner.clone(), move |host| {
+        Ok((
+            host.controller.plugin_identity(&target)?,
+            host.credentials.clone(),
+        ))
+    })
+    .await?;
+    let (identity, key) = tauri::async_runtime::spawn_blocking(move || {
+        credentials.retry();
+        credentials
+            .read(&identity.credential_id, &identity.pubkey)
+            .map(|key| (identity, key))
+    })
+    .await
+    .map_err(|_| "Native credential operation failed")??;
+    let key = key.ok_or("Agent key unavailable")?;
+    let signed = identity.event(&key, event.kind, event.content, event.tags)?;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|_| "Agent client unavailable")?;
+    // Stop or delete while the key was being read must win over this send.
+    let pubkey = identity.pubkey.clone();
+    run(owner, move |host| {
+        (host.controller.plugin_identity(&id)?.pubkey == pubkey)
+            .then_some(())
+            .ok_or_else(|| "Agent identity changed".into())
+    })
+    .await?;
+    profile_http::publish_event(&client, &identity, &key, &signed).await?;
+    Ok(signed)
 }
 
 mod profile_http;

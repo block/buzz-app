@@ -57,6 +57,7 @@ impl NewAgent {
             start_on_app_launch: Some(false),
             credential_id: self.id.clone(),
             auth_tag: Some(auth.into()),
+            plugin: None,
             imported: Value::Null,
             extra: BTreeMap::from([("nativeCreated".into(), Value::Bool(true))]),
         };
@@ -154,6 +155,34 @@ impl CreationProfile {
     pub fn authenticate(&self, key: &Secret, body: &[u8]) -> Result<Value> {
         if key.pubkey() != self.pubkey {
             return Err("Profile identity changed".into());
+        }
+        key.profile_auth(&self.url, body)
+    }
+}
+/// Native-only signing input for a plugin agent, never serialized across IPC.
+pub struct PluginIdentity {
+    pub credential_id: String,
+    pub pubkey: String,
+    pub url: String,
+    pub auth: String,
+}
+impl PluginIdentity {
+    /// Signs a plugin-supplied message, edit, reaction or deletion as the agent.
+    pub fn event(
+        &self,
+        key: &Secret,
+        kind: u16,
+        content: String,
+        tags: Vec<Vec<String>>,
+    ) -> Result<Value> {
+        if key.pubkey() != self.pubkey {
+            return Err("Agent identity changed".into());
+        }
+        key.plugin_event(kind, content, tags, &self.auth)
+    }
+    pub fn authenticate(&self, key: &Secret, body: &[u8]) -> Result<Value> {
+        if key.pubkey() != self.pubkey {
+            return Err("Agent identity changed".into());
         }
         key.profile_auth(&self.url, body)
     }

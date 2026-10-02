@@ -461,6 +461,28 @@ are macOS's only entries. On Windows the shell tool needs Git Bash from Git for
 Windows, or a `BUZZ_SHELL`/`GIT_BASH` override under Advanced → Environment.
 Settings says **Shell setup not verified**; Buzz does not check it before Start.
 
+## Plugin agents
+
+An agent record may carry `plugin: { type, config }`. Such an agent is run by the
+app through a plugin's agent type rather than by a harness process; see "Plugin
+agent types" in `plugin-architecture.md` for the plugin contract. For native this
+means:
+
+- The record is created by the same create path, with the same key custody and
+  owner attestation. Its workspace, harness and environment must be empty, the
+  type string is `pluginId/typeId`, and the config is opaque JSON of at most 64 KB.
+  The type cannot change after creation.
+- Start, Stop and Restart only set `enabled`. No process is spawned, no key is
+  handed to a child, and the snapshot reports an enabled plugin agent as `running`
+  at its saved revision. `enabled` persists across app restarts. The agent is
+  excluded from app-launch process starts and from mention wake.
+- `agent_identity_publish(id, { kind, content, tags })` signs one event as an
+  enabled plugin agent and posts it to `{relay https origin}/events` with NIP-98 and
+  the `x-auth-tag` header, as profile publication does. It signs kinds 9, 40003,
+  7 and 5 only, bounds content and tags, replaces any supplied `auth` tag with the saved
+  attestation, re-checks that the agent is still enabled before sending, and returns
+  the signed event only after the relay's receipt names its id.
+
 ## Ownership and handoff
 
 - `features/agents/control.ts`: camelCase DTOs and app-owned observable projection.

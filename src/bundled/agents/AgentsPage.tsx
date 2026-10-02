@@ -18,6 +18,7 @@ import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { AgentLibrary } from "./AgentLibrary";
 import { Button } from "../../shared/design-system/ui/Button";
+import type { AgentTypes } from "../../features/agent-types/service";
 import { AgentCard } from "./AgentCard";
 import { AgentControlPanel } from "./AgentControlPanel";
 import { ManagedAgentActions } from "./ManagedAgentActions";
@@ -27,12 +28,14 @@ const noCommunities = { subscribe: () => () => {}, snapshot: () => undefined };
 export function AgentsPage({
   relay,
   control,
+  agentTypes,
   navigation,
   open,
   communities,
 }: PageProps & {
   relay: RelayData;
   control?: AgentControl;
+  agentTypes?: AgentTypes;
   open?: (
     target: OpenTarget,
     options?: { replace?: boolean },
@@ -113,6 +116,7 @@ export function AgentsPage({
               {control ? (
                 <AgentControlPanel
                   control={control}
+                  agentTypes={agentTypes}
                   editTarget={editTarget}
                   onOpenHarnesses={
                     open

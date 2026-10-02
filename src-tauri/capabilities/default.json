@@ -45,6 +45,7 @@
     "allow-agent-control-create-authorize",
     "allow-agent-control-create-commit",
     "allow-agent-control-creation-profile",
+    "allow-agent-identity-publish",
     "allow-agent-control-snapshot",
     "allow-agent-control-log-challenge",
     "allow-agent-control-read-log",

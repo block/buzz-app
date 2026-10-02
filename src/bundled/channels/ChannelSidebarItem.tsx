@@ -183,7 +183,11 @@ function ChannelSidebarItemCore({
       dmVisualSpacing={channel.channelType === "dm"}
       icon={
         channel.channelType === "dm" ? (
-          <DmTypingBadge session={session} channelId={channel.id}>
+          <DmTypingBadge
+            session={session}
+            channelId={channel.id}
+            agents={agents}
+          >
             {channel.participants?.length === 1 ? (
               <span className={styles.dmAvatar} data-dm-identity="">
                 <Avatar

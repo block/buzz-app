@@ -215,7 +215,8 @@ it.each([
 
 it("shows known agents typing in the channel or its threads as working", () => {
   const agent = "b".repeat(64),
-    human = "c".repeat(64);
+    human = "c".repeat(64),
+    hinted = "e".repeat(64);
   const listeners = new Set<() => void>();
   let typing: readonly {
     channelId: string;
@@ -223,7 +224,12 @@ it("shows known agents typing in the channel or its threads as working", () => {
     pubkey: string;
   }[] = [];
   const library = { identities: [{ pubkey: agent }] };
-  const state = owner(new Map([[agent, { name: "Pinky" }]]));
+  const state = owner(
+    new Map<string, Profile>([
+      [agent, { name: "Pinky" }],
+      [hinted, { name: "Brain", isAgent: true }],
+    ]),
+  );
   const session = {
     ...state.session,
     typing: {
@@ -243,15 +249,34 @@ it("shows known agents typing in the channel or its threads as working", () => {
       typing = next;
       for (const listener of listeners) listener();
     });
-  render(<ChannelSidebarItem {...itemProps(session, false)} />);
+  const view = render(<ChannelSidebarItem {...itemProps(session, false)} />);
   set([{ channelId: "alpha", pubkey: human }]);
   expect(document.querySelector("[data-channel-working]")).toBeNull();
   set([{ channelId: "alpha", threadRootId: "d".repeat(64), pubkey: agent }]);
   expect(
     screen.getByRole("img", { name: "Pinky working in Alpha" }),
   ).toBeInTheDocument();
+  set([{ channelId: "alpha", pubkey: hinted }]);
+  expect(
+    screen.getByRole("img", { name: "Brain working in Alpha" }),
+  ).toBeInTheDocument();
   set([{ channelId: "beta", pubkey: agent }]);
   expect(document.querySelector("[data-channel-working]")).toBeNull();
+  // A working agent in its DM keeps the avatar instead of also showing typing.
+  view.rerender(
+    <ChannelSidebarItem
+      {...itemProps(session, false, {
+        id: "beta",
+        name: "Pinky",
+        channelType: "dm",
+        participants: [agent],
+      })}
+    />,
+  );
+  expect(
+    screen.getByRole("img", { name: "Pinky working in Pinky" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: /typing/ })).toBeNull();
 });
 
 it("layers the working indicator above unread at the same position", () => {

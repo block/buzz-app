@@ -82,6 +82,9 @@ it("edits deliberately, cancels every field, and sends all fields only on Save",
     />,
   );
   await user.click(await screen.findByRole("button", { name: "Edit details" }));
+  expect(screen.getByRole("textbox", { name: "Name" })).not.toHaveAttribute(
+    "autocomplete",
+  );
   await user.clear(screen.getByRole("textbox", { name: "Name" }));
   await user.type(screen.getByRole("textbox", { name: "Name" }), "Renamed");
   await user.clear(screen.getByRole("textbox", { name: "Description" }));
@@ -352,19 +355,21 @@ it("keeps details readable without editing authority or host support", async () 
   );
   expect(screen.getByText(channel.description)).toBeVisible();
   expect(screen.getByText("Public")).toBeVisible();
-  const editor = screen.getByRole("region", {
-    name: "Edit channel details",
+  const editor = screen.getByRole("complementary", {
+    name: "Channel settings",
     hidden: true,
   });
   expect(editor).toHaveAttribute("aria-busy", "true");
   await act(async () => loaded.resolve({ ...base, canEdit: false }));
   expect(editor).toHaveAttribute("aria-busy", "false");
-  expect(editor).toBeEmptyDOMElement();
+  expect(
+    screen.queryByRole("region", { name: "Edit channel details" }),
+  ).not.toBeInTheDocument();
   expect(
     screen.queryByText(/Only current channel owners/),
   ).not.toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: "Edit details" }),
+    screen.queryByRole("button", { name: /^Edit / }),
   ).not.toBeInTheDocument();
   rerender(
     <ChannelSettingsPanel
@@ -394,7 +399,7 @@ it("keeps details readable without editing authority or host support", async () 
   ).toBeVisible();
 });
 
-it("orders metadata, Canvas, and actions and dismisses each edit layer with Escape", async () => {
+it("orders metadata before actions and dismisses each edit layer with Escape", async () => {
   const h = harness();
   const user = userEvent.setup();
   const close = vi.fn();
@@ -403,17 +408,16 @@ it("orders metadata, Canvas, and actions and dismisses each edit layer with Esca
       scope="community:viewer"
       channel={channel}
       details={h.capability}
-      openCanvas={() => {}}
       setupTools={<button type="button">Leave channel</button>}
       close={close}
     >
       Diagnostics
     </ChannelSettingsPanel>,
   );
-  const edit = await screen.findByRole("button", { name: "Edit details" });
-  const canvas = screen.getByRole("button", { name: "Canvas" });
+  const edit = await screen.findByRole("button", { name: "Edit description" });
+  const leave = screen.getByRole("button", { name: "Leave channel" });
   expect(
-    screen.getByText(channel.description).compareDocumentPosition(canvas) &
+    screen.getByText(channel.description).compareDocumentPosition(leave) &
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
   expect(screen.getByRole("tab", { name: "Channel settings" })).toHaveFocus();
@@ -422,9 +426,15 @@ it("orders metadata, Canvas, and actions and dismisses each edit layer with Esca
     screen.getByRole("button", { name: "Close Channel settings tab" }),
   ).toHaveFocus();
   await user.tab();
-  expect(canvas).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: "Edit channel name" }),
+  ).toHaveFocus();
   await user.tab();
   expect(edit).toHaveFocus();
+  await user.tab();
+  expect(screen.getByRole("button", { name: "Edit visibility" })).toHaveFocus();
+  await user.tab();
+  expect(screen.getByRole("button", { name: "Copy channel id" })).toHaveFocus();
   await user.tab();
   expect(screen.getByRole("button", { name: "Leave channel" })).toHaveFocus();
   await user.click(edit);
@@ -432,12 +442,14 @@ it("orders metadata, Canvas, and actions and dismisses each edit layer with Esca
     screen.getByRole("dialog", { name: "Edit channel details" }),
   ).toBeVisible();
   await waitFor(() =>
-    expect(screen.getByRole("textbox", { name: "Name" })).toHaveFocus(),
+    expect(screen.getByRole("textbox", { name: "Description" })).toHaveFocus(),
   );
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(close).not.toHaveBeenCalled();
-  expect(screen.getByRole("button", { name: "Edit details" })).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: "Edit description" }),
+  ).toHaveFocus();
   await user.keyboard("{Escape}");
   expect(close).toHaveBeenCalledOnce();
 });
@@ -512,7 +524,9 @@ it.each(["save", "check"] as const)(
         Diagnostics
       </ChannelSettingsPanel>,
     );
-    const edit = await screen.findByRole("button", { name: "Edit details" });
+    const edit = await screen.findByRole("button", {
+      name: "Edit description",
+    });
     expect(edit).toBeEnabled();
     expect(edit).not.toHaveAttribute("aria-busy", "true");
     await user.click(edit);
@@ -528,10 +542,12 @@ it.each(["save", "check"] as const)(
     await user.click(action);
     try {
       expect(h[operation]).toHaveBeenCalledOnce();
-      expect(edit).toHaveAccessibleName("Edit details");
+      expect(edit).toHaveAccessibleName("Edit description");
       expect(edit).toBeDisabled();
       expect(edit).toHaveAttribute("aria-busy", "true");
-      expect(edit.querySelector(".buzz-button-spinner")).toBeInTheDocument();
+      expect(
+        edit.querySelector(".motion-safe\\:animate-spin"),
+      ).toBeInTheDocument();
       expect(action).toHaveAttribute("aria-busy", "true");
       expect(
         screen.queryByText(/Saving channel details/),
@@ -568,12 +584,14 @@ it.each(["save", "check"] as const)(
     expect(edit).toHaveFocus();
     expect(edit).toBeEnabled();
     expect(edit).not.toHaveAttribute("aria-busy", "true");
-    expect(edit.querySelector(".buzz-button-spinner")).not.toBeInTheDocument();
+    expect(
+      edit.querySelector(".motion-safe\\:animate-spin"),
+    ).not.toBeInTheDocument();
     expect(h[operation]).toHaveBeenCalledOnce();
     if (operation === "check") expect(h.save).not.toHaveBeenCalled();
   },
 );
-it("a save that becomes uncertain reopens in check-only recovery", async () => {
+it("a save that becomes uncertain reopens through a settings row in check-only recovery", async () => {
   const h = harness();
   const user = userEvent.setup();
   const draft = { ...base, name: "Pending name" };
@@ -582,13 +600,18 @@ it("a save that becomes uncertain reopens in check-only recovery", async () => {
     throw new Error("The change may have been saved.");
   });
   render(
-    <ChannelDetailsEditor
+    <ChannelSettingsPanel
       scope="community:viewer"
-      capability={h.capability}
       channel={channel}
-    />,
+      details={h.capability}
+      close={() => {}}
+    >
+      Diagnostics
+    </ChannelSettingsPanel>,
   );
-  await user.click(await screen.findByRole("button", { name: "Edit details" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Edit description" }),
+  );
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
     target: { value: draft.name },
   });
@@ -599,7 +622,7 @@ it("a save that becomes uncertain reopens in check-only recovery", async () => {
   await user.click(
     screen.getByRole("button", { name: "Close edit channel details" }),
   );
-  await user.click(screen.getByRole("button", { name: "Edit details" }));
+  await user.click(screen.getByRole("button", { name: "Edit visibility" }));
   expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(draft.name);
   expect(
     screen.queryByRole("button", { name: "Save changes" }),
@@ -1546,4 +1569,90 @@ it("protects retained text after a failed authority reload", async () => {
   expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
     "Alpha draft",
   );
+});
+
+it.each(["description", "visibility", "channel name"])(
+  "opens the full editor from the %s action and returns focus without saving",
+  async (field) => {
+    const h = harness();
+    const user = userEvent.setup();
+    render(
+      <ChannelSettingsPanel
+        scope="community:viewer"
+        channel={channel}
+        details={h.capability}
+        close={() => {}}
+      >
+        Diagnostics
+      </ChannelSettingsPanel>,
+    );
+    const row = await screen.findByRole("button", { name: `Edit ${field}` });
+    expect(row).toHaveAttribute("aria-haspopup", "dialog");
+    expect(row).not.toHaveTextContent("Edit");
+    expect(row.querySelector("svg")?.parentElement).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(row.querySelector("svg")).toHaveAttribute(
+      "width",
+      field === "channel name" ? "1rem" : "0.875rem",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Edit details" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Channel type")).not.toBeInTheDocument();
+    row.focus();
+    await user.keyboard("{Enter}");
+    const focusName = field === "description" ? "Description" : "Name";
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: focusName })).toHaveFocus(),
+    );
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      channel.name,
+    );
+    expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue(
+      channel.description,
+    );
+    await user.type(screen.getByRole("textbox", { name: "Name" }), " draft");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(row).toHaveFocus());
+    await user.keyboard(" ");
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: focusName })).toHaveFocus(),
+    );
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      channel.name,
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(row).toHaveFocus());
+    await user.click(screen.getByRole("button", { name: "Edit channel name" }));
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Name" })).toHaveFocus(),
+    );
+    expect(h.save).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  { readOnly: true as const },
+  { cached: true as const },
+  { archived: true as const },
+  { channelType: "dm" as const },
+  { channelType: "session" as const },
+])("omits inline edit actions for ineligible channels %j", (flags) => {
+  const h = harness();
+  render(
+    <ChannelSettingsPanel
+      scope="community:viewer"
+      channel={{ ...channel, ...flags }}
+      details={h.capability}
+      close={() => {}}
+    >
+      Diagnostics
+    </ChannelSettingsPanel>,
+  );
+  expect(
+    screen.queryByRole("button", { name: /^Edit / }),
+  ).not.toBeInTheDocument();
+  expect(h.load).not.toHaveBeenCalled();
 });

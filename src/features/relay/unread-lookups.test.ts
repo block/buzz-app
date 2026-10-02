@@ -204,3 +204,103 @@ it("lookup results survive a full-window reset and refresh without asking again"
   expect(attention()).toMatchObject({ category: "thread", unread: true });
   expect(lookups()).toBe(count);
 });
+
+it("Inbox-only demand resolves direct conversation participation without counting lookup witnesses", async () => {
+  const { owner, store, reader, lookups } = await setup();
+  const parent = event(peer, 9, 10, []);
+  const mine = reply(viewer, 11, parent);
+  const sibling = reply(peer, 20, parent);
+  const nestedParent = reply(peer, 21, parent);
+  const nested = reply(peer, 22, nestedParent);
+  store.push(parent, mine, nestedParent);
+  owner.accept([sibling, nested]);
+  const published: string[][] = [];
+  const stop = owner.capability.subscribeInbox(() => {
+    published.push(
+      owner.capability.inbox().items.flatMap((item) => item.messageIds),
+    );
+  });
+  try {
+    expect(owner.capability.inbox().items).toEqual([]);
+    await vi.waitFor(() => {
+      const items = owner.capability.inbox().items;
+      expect(items).toHaveLength(1);
+      expect(items[0]).toMatchObject({
+        id: `c0:${parent.id}`,
+        messageId: sibling.id,
+        messageIds: [sibling.id],
+        rootId: parent.id,
+        thread: true,
+        unreadCount: 1,
+        target: { kind: "message", channelId: "c0", messageId: sibling.id },
+      });
+    });
+    expect(published).toContainEqual([sibling.id]);
+    expect(lookups()).toBeGreaterThan(0);
+    expect(
+      reader.read.mock.calls.some(([[filter]]) =>
+        filter?.authors?.includes(viewer),
+      ),
+    ).toBe(true);
+    // A fetched parent is structural, not a counted message eligible for a
+    // root-scoped manual action. The existing message fallback is actionable.
+    const item = owner.capability.inbox().items[0];
+    assert(item);
+    expect(item.readThrough).toEqual([
+      {
+        target: { kind: "thread", channelId: "c0", rootId: parent.id },
+        messageId: sibling.id,
+      },
+    ]);
+    await owner.capability.markUnreadLocal(item.target);
+    expect(owner.capability.inbox().items[0]?.manual).toBe(true);
+    await owner.capability.clearUnreadLocal(item.target);
+    expect(owner.capability.inbox().items[0]).toMatchObject({
+      unreadCount: 1,
+      manual: false,
+    });
+    // Fresh counted root evidence can safely promote the context-menu target.
+    owner.accept([parent]);
+    expect(owner.capability.inbox().items[0]?.target).toEqual({
+      kind: "thread",
+      channelId: "c0",
+      rootId: parent.id,
+    });
+  } finally {
+    stop();
+  }
+});
+
+it("Inbox retains a relevant direct reply as thread activity when the root cannot be fetched", async () => {
+  const { owner, store } = await setup();
+  const root = event(peer, 9, 10, []);
+  const parent = reply(viewer, 11, root);
+  const response = event(peer, 9, 20, [
+    ["e", root.id, "", "root"],
+    ["e", parent.id, "", "reply"],
+  ]);
+  store.push(parent); // Root genuinely unavailable, not another counted row.
+  owner.accept([response]);
+  const stop = owner.capability.subscribeInbox(() => {});
+  try {
+    await vi.waitFor(() =>
+      expect(owner.capability.inbox().items).toHaveLength(1),
+    );
+    const item = owner.capability.inbox().items[0];
+    assert(item);
+    expect(item).toMatchObject({
+      id: `c0:${response.id}`,
+      messageIds: [response.id],
+      thread: true,
+      unreadCount: 1,
+    });
+    expect(item.rootId).toBeUndefined();
+    expect(item.target).toEqual({
+      kind: "message",
+      channelId: "c0",
+      messageId: response.id,
+    });
+  } finally {
+    stop();
+  }
+});

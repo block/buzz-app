@@ -14,7 +14,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, assert, expect, it, vi } from "vitest";
-import { useState, useSyncExternalStore } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { createRelaySession } from "../../features/relay/session";
 import { connectBrokerTransport } from "../../features/relay/transport";
 import type { RelayData } from "../../features/relay/service";
@@ -46,6 +46,7 @@ import { CreateChannelDialog } from "../channels/CreateChannelDialog";
 import { TemplateEditor } from "./TemplateEditor";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { SaveAsTemplate } from "./TemplateSettings";
+import { ChannelHeaderMenu } from "../channels/ChannelHeaderMenu";
 import { MentionPicker } from "../mentions/MentionPicker";
 import { MentionCompletion } from "../mentions/MentionCompletion";
 import type { CompletionResult } from "../../features/conversation/contracts";
@@ -89,6 +90,7 @@ function harness(
   beforeNativeRead?: () => Promise<void>,
   beforePublish?: (event: RelayEvent) => Promise<void>,
   afterPublish?: (event: RelayEvent) => Promise<void>,
+  beforeCanvasRead?: () => Promise<void>,
 ) {
   const viewer = keypair(),
     relay = keypair();
@@ -177,6 +179,8 @@ function harness(
         },
       },
       query: async (filters) => {
+        if (filters.some((filter) => filter.kinds?.includes(40100)))
+          await beforeCanvasRead?.();
         if (
           filters.some((filter) =>
             filter.kinds?.some((kind) => [39000, 39002].includes(kind)),
@@ -1767,6 +1771,127 @@ it("template replacement dismisses only its confirmation and preserves setup unt
     expect(close).not.toHaveBeenCalled();
     expect(test.published).toEqual([]);
   } finally {
+    test.dispose();
+  }
+});
+
+function HeaderTemplateMenu({
+  test,
+  registry,
+}: {
+  test: ReturnType<typeof harness>;
+  registry: ReturnType<typeof providerFixture>;
+}) {
+  const entries = useSyncExternalStore(
+    registry.providers.subscribe,
+    registry.providers.snapshot,
+  );
+  const trigger = useRef<HTMLButtonElement>(null);
+  return (
+    <ChannelHeaderMenu
+      channel={{ id: "11111111-1111-4111-8111-111111111111", name: "Copy me" }}
+      session={test.owner.session}
+      providers={registry.providers}
+      templateProvider={entries[0]}
+      trigger={trigger}
+      openDetails={() => {}}
+      openCanvas={() => {}}
+    />
+  );
+}
+
+it("keeps failed template reads retryable in the header and opens the existing dialog only after success", async () => {
+  const read = vi
+    .fn(async () => {})
+    .mockRejectedValueOnce(new Error("Canvas unavailable"));
+  const test = harness(
+      undefined,
+      undefined,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      read,
+    ),
+    registry = providerFixture(),
+    user = userEvent.setup();
+  try {
+    render(<HeaderTemplateMenu test={test} registry={registry} />);
+    const trigger = screen.getByRole("button", { name: "Channel actions" });
+    await user.click(trigger);
+    const copy = await screen.findByRole("menuitem", {
+      name: "Save as template…",
+    });
+    await waitFor(() =>
+      expect(copy).not.toHaveAttribute("aria-disabled", "true"),
+    );
+    await user.click(copy);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Canvas unavailable",
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(copy);
+    await screen.findByRole("dialog", { name: "Channel template" });
+    expect(read).toHaveBeenCalledTimes(2);
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(test.published).toEqual([]);
+  } finally {
+    cleanup();
+    test.dispose();
+  }
+});
+
+it("retires an in-flight header template copy when its optional provider is disabled", async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const read = vi.fn(async () => {
+    await held;
+  });
+  const test = harness(
+      undefined,
+      undefined,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      read,
+    ),
+    registry = providerFixture(),
+    user = userEvent.setup();
+  try {
+    render(<HeaderTemplateMenu test={test} registry={registry} />);
+    await user.click(screen.getByRole("button", { name: "Channel actions" }));
+    const copy = await screen.findByRole("menuitem", {
+      name: "Save as template…",
+    });
+    await waitFor(() =>
+      expect(copy).not.toHaveAttribute("aria-disabled", "true"),
+    );
+    await user.click(copy);
+    await waitFor(() => expect(read).toHaveBeenCalledOnce());
+    expect(copy).toHaveAttribute("aria-disabled", "true");
+    act(() => registry.toggle(false));
+    await act(async () => {
+      release();
+      await held;
+    });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: "Save as template…" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "View channel details" }),
+    ).toBeVisible();
+    expect(test.published).toEqual([]);
+  } finally {
+    release();
+    cleanup();
     test.dispose();
   }
 });

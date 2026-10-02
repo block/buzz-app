@@ -15,7 +15,8 @@ import {
   panelTabId,
   type PanelOpening,
 } from "./useChannelTabState";
-import { ChannelMembersButton } from "./ChannelMembersDialog";
+import { ChannelMembersDialog } from "./ChannelMembersDialog";
+import { UsersIcon } from "../../shared/design-system/icons";
 import { newSessionParent } from "../../features/channel-navigation/routes";
 import { personalGroups } from "../../features/channel-templates/setup";
 import type { TemplateProviders } from "../../features/channel-templates/provider";
@@ -29,6 +30,7 @@ import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useChannelPanels } from "./useChannelPanels";
+import { ChannelHeaderMenu } from "./ChannelHeaderMenu";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
 import { ChannelLifecycleActions } from "./ChannelLifecycleActions";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -222,8 +224,14 @@ function ChannelWorkspace({
     groupEntry?.record.value.type === "groups"
       ? groupEntry.record.value
       : undefined;
-  const [canvasOpen, setCanvasOpen] = useState(false);
+  const [canvasOrigin, setCanvasOrigin] = useState<{
+    channelId: string;
+    navigation: PageNavigation | undefined;
+  }>();
   const canvasTrigger = useRef<HTMLButtonElement>(null);
+  const [membersChannel, setMembersChannel] = useState<string>();
+  const membersTrigger = useRef<HTMLButtonElement>(null);
+  const membersHeaderTrigger = useRef<HTMLButtonElement>(null);
   const [kitError, setKitError] = useState("");
   useEffect(() => {
     void queries.emoji.ensure();
@@ -432,7 +440,10 @@ function ChannelWorkspace({
   const membersRequested =
     navigation?.target.kind === "conversation" &&
     navigation.target.panel === "members";
-  const membersOpen = membersRequested && current?.channelType !== "session";
+  const membersOpen =
+    (navigator ? membersRequested : membersChannel === current?.id) &&
+    !!current &&
+    current.channelType !== "session";
   useLayoutEffect(() => {
     // Sessions have no Members surface. Canonicalize an old/handwritten route
     // before a child reader can complete it, retaining its exact message address.
@@ -450,6 +461,39 @@ function ChannelWorkspace({
     }
   }, [cached, current, navigation]);
   const currentId = current?.id;
+  const canvasOpen =
+    !!canvasOrigin &&
+    canvasOrigin.channelId === currentId &&
+    canvasOrigin.navigation === navigation &&
+    !navigation?.signal.aborted;
+  useEffect(() => {
+    if (!canvasOpen) setCanvasOrigin(undefined);
+  }, [canvasOpen]);
+  useEffect(() => {
+    setMembersChannel((id) => (id === currentId ? id : undefined));
+  }, [currentId]);
+  const setMembersOpen = (open: boolean) => {
+    if (!navigator) {
+      setMembersChannel(open ? currentId : undefined);
+      return;
+    }
+    if (
+      !navigation ||
+      navigation.signal.aborted ||
+      navigation.target.kind !== "conversation" ||
+      navigation.target.channelId !== currentId ||
+      navigator.snapshot().entry.id !== navigation.entryId
+    )
+      return;
+    // A profile keeps this conversation; a DM already owns a different visit.
+    // Modal cleanup must not overwrite that destination or its exact address.
+    const { panel: _panel, ...target } = navigation.target;
+    void navigator.open(open ? { ...target, panel: "members" } : target);
+  };
+  const openMembers = (trigger: HTMLButtonElement) => {
+    membersTrigger.current = trigger;
+    setMembersOpen(true);
+  };
   const committedVisit = useRef<{
     currentId: string | undefined;
     queries: RelaySession;
@@ -1061,21 +1105,6 @@ function ChannelWorkspace({
         : undefined,
     [scope, viewer, current, showingThread],
   );
-  const setMembersOpen = (open: boolean) => {
-    if (
-      !navigator ||
-      !navigation ||
-      navigation.signal.aborted ||
-      navigation.target.kind !== "conversation" ||
-      navigation.target.channelId !== currentId ||
-      navigator.snapshot().entry.id !== navigation.entryId
-    )
-      return;
-    // A profile panel keeps this conversation; a DM handoff owns a different
-    // visit. Never let modal cleanup overwrite that destination.
-    const { panel: _panel, ...target } = navigation.target;
-    void navigator.open(open ? { ...target, panel: "members" } : target);
-  };
   const drawer = useChannelPanels(
     panels,
     drawerContext,
@@ -1270,22 +1299,22 @@ function ChannelWorkspace({
         )
         ?.focus({ preventScroll: true });
   }, [settingsFocus, split.ref]);
+  const openCanvas = (trigger: HTMLButtonElement) => {
+    canvasTrigger.current = trigger;
+    if (currentId && !navigation?.signal.aborted)
+      setCanvasOrigin({ channelId: currentId, navigation });
+  };
   const settingsContent = (
     <ChannelSettingsPanel
       scope={scope}
-      canvas={queries.canvas}
-      canvasOpen={canvasOpen}
-      openCanvas={(trigger) => {
-        canvasTrigger.current = trigger;
-        setCanvasOpen(true);
-      }}
+      openMembers={openMembers}
       key={settings?.id}
       setupTools={
         current && (
           <div style={{ display: "grid", gap: "var(--space-3)" }}>
             {templateProvider && (
               <OwnedContribution
-                key={current.id}
+                key={`template:${current.id}`}
                 entry={templateProvider}
                 registry={providers}
               >
@@ -1396,6 +1425,27 @@ function ChannelWorkspace({
   );
   const workspace = (
     <div ref={split.ref} style={split.style} className={styles.board}>
+      {current && membersOpen && (
+        <ChannelMembersDialog
+          key={current.id}
+          session={queries}
+          channelId={current.id}
+          control={agentControl}
+          close={() => setMembersOpen(false)}
+          trigger={
+            membersTrigger.current?.isConnected
+              ? membersTrigger
+              : membersHeaderTrigger
+          }
+          canOpenLink={canOpenLink}
+          onOpenLink={(url, returnFocus) => openLink(url, false, returnFocus)}
+          onOpenConversation={
+            navigator && viewer
+              ? (id) => openLink(`buzz://channel/${encodeURIComponent(id)}`)
+              : undefined
+          }
+        />
+      )}
       {current && !current.readOnly && canvasOpen && (
         <ChannelCanvasDialog
           key={`${scope}:${current.id}`}
@@ -1403,7 +1453,9 @@ function ChannelWorkspace({
           scope={scope}
           channelId={current.id}
           open={canvasOpen}
-          onOpenChange={setCanvasOpen}
+          onOpenChange={(open) => {
+            if (!open) setCanvasOrigin(undefined);
+          }}
           finalFocus={canvasTrigger}
         />
       )}
@@ -1488,52 +1540,32 @@ function ChannelWorkspace({
                   actions={
                     <>
                       {current && (
-                        <ChannelMembersButton
-                          key={current.id}
-                          session={queries}
-                          channelId={current.id}
-                          control={agentControl}
-                          presentation={
-                            navigator
-                              ? {
-                                  open: membersOpen,
-                                  onOpenChange: setMembersOpen,
-                                }
-                              : undefined
-                          }
-                          canOpenLink={canOpenLink}
-                          onOpenLink={(url, returnFocus) =>
-                            openLink(url, false, returnFocus)
-                          }
-                          onOpenConversation={
-                            navigator && viewer
-                              ? (id) =>
-                                  openLink(
-                                    `buzz://channel/${encodeURIComponent(id)}`,
-                                  )
-                              : undefined
-                          }
+                        <IconButton
+                          size="sm"
+                          aria-label="Channel members"
+                          title="Channel members"
+                          aria-haspopup="dialog"
+                          ref={membersHeaderTrigger}
+                          aria-expanded={membersOpen}
+                          onClick={(event) => openMembers(event.currentTarget)}
+                          icon={<UsersIcon size="1rem" aria-hidden="true" />}
                         />
                       )}
                       {drawer.launchers}
-                      <IconButton
-                        ref={settingsTrigger}
-                        size="toolbar"
-                        aria-label="Channel settings"
-                        data-highlight-expanded="false"
-                        title="Channel settings"
-                        aria-expanded={showingSettings}
-                        onClick={() => {
-                          if (showingSettings) closeSettings();
-                          else {
-                            drawer.close();
-                            requestSettingsFocus((value) => value + 1);
-                            setSettings({
-                              channelId: currentId,
-                            });
-                          }
+                      <ChannelHeaderMenu
+                        key={`channel-actions:${currentId ?? "empty"}`}
+                        channel={current}
+                        session={queries}
+                        origin={navigation?.signal}
+                        providers={providers}
+                        templateProvider={templateProvider}
+                        trigger={settingsTrigger}
+                        openDetails={() => {
+                          drawer.close();
+                          requestSettingsFocus((value) => value + 1);
+                          setSettings({ channelId: currentId });
                         }}
-                        icon={<GearIcon size="1rem" aria-hidden="true" />}
+                        openCanvas={openCanvas}
                       />
                       {current && (
                         <IconButton

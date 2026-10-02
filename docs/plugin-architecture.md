@@ -135,8 +135,20 @@ personal groups and the existing + creation buttons, independently of this plugi
 Hosted communities (`block.hosted-communities`) is a Block-specific bundled plugin
 under Settings → Communities. It manages Block-hosted relays through a Builderlab
 account: browser sign-in, binding the local Buzz identity (a locally signed kind
-24243 challenge), and create/archive/unarchive/transfer. Joining stays in the
-existing Add a community dialog; the card only copies the new relay address. Its
+24243 challenge), and create/archive/unarchive/transfer. A server-declared,
+default-off capability also exposes owner deletion for archived communities. The
+card persists the bound four-field request before admission. A fresh request can
+terminate on a known structured pre-admission code and HTTP status pair;
+ambiguous first responses stay pending until an explicit same-UUID delete replay.
+Only a tuple-bound non-aborted 202 confirms progress; an aborted 202 ends recovery
+without claiming deletion. The card displays valid server quota when available;
+without it, Create remains available and the server enforces its owner limit.
+`can_create: false` alone disables Create; usage is informational and is never
+estimated from visible rows. One origin-wide pending slot is
+re-read and verified before dispatch; browser local storage has no atomic compare-and-set,
+so exactly simultaneous contexts remain a documented client-side race;
+it never signs deletion or infers acceptance from a missing list row. Joining
+stays in the existing Add a community dialog; the card only copies the new relay address. Its
 `/api/builderlab/*` routes live in the development broker (`dev/builderlab.mjs`),
 which keeps the session credential and signing key in Node. Packaged builds ship no
 broker, so this plugin cannot sign in or manage communities there until a native
@@ -238,7 +250,7 @@ quotes and fenced examples are not tasks in this view. Doing and checkbox edits
 change one source byte; additions insert below the heading without rewriting other
 content.
 Duplicate Todos sections block editing until corrected in Canvas. Disabling removes
-the convenience UI, not the saved list: Channel settings → Canvas remains editable.
+the convenience UI, not the saved list: Channel actions → View canvas remains editable.
 
 An optional terminal suffix records assignment as ordinary Markdown:
 ` · Assignee: [Display name](nostr:npub…)`, using a full valid npub, not the abbreviated

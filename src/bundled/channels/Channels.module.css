@@ -579,6 +579,53 @@
   text-align: center;
   overflow-wrap: anywhere;
 }
+.settingsTitle {
+  max-width: 100%;
+}
+.settingsTitleAction {
+  display: inline-block;
+  max-width: 100%;
+  /* Reserve both sides equally; only the trailing space contains artwork. */
+  padding: 0 calc(var(--space-4) + var(--space-2));
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+/* A zero-width inline anchor follows the final text line, not the block edge. */
+.settingsTitlePencil {
+  display: inline-block;
+  position: relative;
+  width: 0;
+  height: 1em;
+  vertical-align: middle;
+  opacity: 0;
+  transform: translateX(calc(-1 * var(--space-1)));
+  transition:
+    opacity var(--duration-state) var(--easing-state),
+    transform var(--duration-state) var(--easing-state);
+}
+.settingsTitlePencil > svg {
+  position: absolute;
+  inset-inline-start: var(--space-2);
+  top: 50%;
+  transform: translateY(-50%);
+}
+.settingsTitleAction[aria-busy="true"] .settingsTitlePencil,
+.settingsTitleAction:hover .settingsTitlePencil,
+.settingsTitleAction:focus-visible .settingsTitlePencil {
+  opacity: 1;
+  transform: translateX(0);
+}
+@media (hover: none) {
+  .settingsTitlePencil {
+    opacity: 1;
+    transform: none;
+  }
+}
 .settingsIcon {
   display: grid;
   place-items: center;
@@ -593,7 +640,82 @@
   border-radius: var(--radius-card);
 }
 .settingsDetails > div {
+  position: relative;
   padding: var(--space-4);
+}
+.settingsDetails > div:first-child {
+  border-start-start-radius: inherit;
+  border-start-end-radius: inherit;
+}
+.settingsDetails > div:last-child {
+  border-end-start-radius: inherit;
+  border-end-end-radius: inherit;
+}
+.settingsDetails > div:has(.settingsDetailAction:hover) {
+  background: var(--affordance-panel-hover);
+}
+.settingsDetails > div:has(.settingsDetailAction:active) {
+  background: var(--affordance-subtle-pressed);
+}
+.settingsDetailAction {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.settingsDetailLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.settingsDetailIcon {
+  display: inline-flex;
+  color: var(--text-subtle);
+  opacity: 0;
+  transform: translateX(calc(-1 * var(--space-1)));
+  transition:
+    opacity var(--duration-state) var(--easing-state),
+    transform var(--duration-state) var(--easing-state);
+}
+.settingsDetailAction[aria-busy="true"] .settingsDetailIcon,
+.settingsDetailAction:hover .settingsDetailIcon,
+.settingsDetailAction:focus-visible .settingsDetailIcon {
+  opacity: 1;
+  transform: translateX(0);
+}
+@media (hover: none) {
+  .settingsDetailIcon {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settingsTitlePencil,
+  .settingsTitleAction:hover .settingsTitlePencil,
+  .settingsTitleAction:focus-visible .settingsTitlePencil,
+  .settingsDetailIcon,
+  .settingsDetailAction:hover .settingsDetailIcon,
+  .settingsDetailAction:focus-visible .settingsDetailIcon {
+    transform: none;
+    transition: none;
+  }
+}
+.settingsDetailAction:focus-visible {
+  outline: none;
+}
+.settingsDetailAction::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
 }
 .settingsDetails > div + div {
   border-top: 1px solid var(--border-standard);
@@ -604,39 +726,6 @@
 }
 .settingsId {
   overflow-wrap: anywhere;
-}
-.settingsCanvas {
-  width: 100%;
-  padding: var(--space-4);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-card);
-  background: transparent;
-  color: var(--text-standard);
-  font: inherit;
-  text-align: start;
-  cursor: pointer;
-  transition: background-color var(--duration-state) var(--easing-state);
-}
-/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules global selector constrains the shared row description for ellipsis. */
-.settingsCanvas :global(.buzz-choice-row-description) {
-  min-width: 0;
-}
-.settingsCanvasPreview {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.settingsCanvas:hover {
-  background: var(--affordance-panel-hover);
-}
-.settingsCanvas:active {
-  background: var(--affordance-subtle-pressed);
-}
-@media (prefers-reduced-motion: reduce) {
-  .settingsCanvas {
-    transition: none;
-  }
 }
 .settingsDiagnostics > summary {
   cursor: pointer;

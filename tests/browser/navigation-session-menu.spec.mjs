@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -122,9 +123,7 @@ test.describe("menu placement lifetime", () => {
     const beta = sidebar.locator('[data-channel-id="beta"]');
     const menu = page.getByRole("menu", { name: "Actions for Beta" });
     await expect(work.locator('[data-channel-id="beta"]')).toBeVisible();
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .click();
+    await openChannelDetails(page);
     await page.getByText("Diagnostics", { exact: true }).click();
     const refresh = page.getByRole("button", {
       name: "Refresh groups and stars",

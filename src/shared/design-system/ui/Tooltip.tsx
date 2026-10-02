@@ -13,19 +13,27 @@ export function Tooltip({
   children,
   content,
   delay = 0,
+  closeOnClick = true,
   disableHoverablePopup = false,
   side = "top",
+  open: controlledOpen,
+  onOpenChange,
 }: {
   children: ReactElement<
     Pick<AriaAttributes, "aria-describedby" | "aria-expanded">
   >;
   content: ReactNode;
   delay?: number;
+  closeOnClick?: boolean;
   disableHoverablePopup?: boolean;
   side?: "top" | "right";
+  /** Action feedback may open a hint after an asynchronous result. */
+  open?: boolean;
+  onOpenChange?(open: boolean): void;
 }) {
   const id = useId();
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = controlledOpen ?? localOpen;
   const expanded =
     children.props["aria-expanded"] === true ||
     children.props["aria-expanded"] === "true";
@@ -36,12 +44,16 @@ export function Tooltip({
   return (
     <BaseTooltip.Root
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={(next) => {
+        setLocalOpen(next);
+        onOpenChange?.(next);
+      }}
       disabled={expanded}
       disableHoverablePopup={disableHoverablePopup}
     >
       <BaseTooltip.Trigger
         delay={delay}
+        closeOnClick={closeOnClick}
         // Base UI merges render-element props last. Put the combined link on
         // that element so its original description cannot replace the hint.
         render={cloneElement(children, { "aria-describedby": describedBy })}

@@ -20,7 +20,9 @@ import type { SidebarPreferences } from "../relay/sidebar-preferences";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { ChannelList } from "../relay/contracts";
 import type { Navigation } from "../navigation/controller";
-import type { ReactNode } from "react";
+import { createRef, type ReactNode } from "react";
+import userEvent from "@testing-library/user-event";
+import { ChannelHeaderMenu } from "../../bundled/channels/ChannelHeaderMenu";
 import { ChannelSidebar } from "./ChannelSidebar";
 import { ChannelNavigationProvider } from "./ChannelNavigationState";
 import styles from "../../bundled/channels/Channels.module.css";
@@ -150,7 +152,9 @@ function fixture(
     disconnect() {},
     async clearCache() {},
   } satisfies RelayData;
-  const navigator = { open: vi.fn() } as unknown as Navigation;
+  const navigator = {
+    open: vi.fn().mockResolvedValue({ status: "opened" }),
+  } as unknown as Navigation;
   const view = (
     id: string,
     sessionsEnabled = true,
@@ -558,4 +562,60 @@ it("hides old trial rooms using signed expiry metadata while keeping ordinary pr
   expect(
     screen.queryByRole("button", { name: `huddle-${legacy.slice(0, 8)}` }),
   ).toBeNull();
+});
+
+it("rejects a deferred header Create section after its navigation origin retires", async () => {
+  const preferences = createSidebarPreferencesStore(
+    async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: [],
+    }),
+    true,
+    vi.fn(async () => ({ sections: [], assignments: {} })),
+    vi.fn(async () => []),
+  );
+  await preferences.queries.ensure();
+  const h = fixture(preferences.queries);
+  const origin = new AbortController();
+  const user = userEvent.setup();
+  render(
+    h.view(
+      "alpha",
+      true,
+      <ChannelHeaderMenu
+        channel={h.list.channels[0]}
+        session={h.session}
+        origin={origin.signal}
+        providers={providers}
+        templateProvider={undefined}
+        trigger={createRef<HTMLButtonElement>()}
+        openDetails={() => {}}
+        openCanvas={() => {}}
+      />,
+    ),
+  );
+  await user.click(screen.getByRole("button", { name: "Channel actions" }));
+  await user.hover(
+    await screen.findByRole("menuitem", { name: "Move channel" }),
+  );
+  const create = await screen.findByRole("menuitem", { name: "Create new…" });
+  // Hold only the deferred handoff after the menu is ready, not a timing delay.
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frames.push(callback);
+    return frames.length;
+  });
+  fireEvent.click(create);
+  expect(frames.length).toBeGreaterThan(0);
+  act(() => {
+    origin.abort();
+    for (const frame of frames.splice(0)) frame(0);
+  });
+  expect(
+    screen.queryByRole("dialog", { name: "Create new section" }),
+  ).not.toBeInTheDocument();
+  expect(preferences.queries.snapshot().data?.sections).toEqual([]);
+  preferences.dispose();
 });

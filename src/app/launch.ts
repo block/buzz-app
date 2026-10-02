@@ -16,9 +16,11 @@ let revision = 0;
 const fallbackStartedAt = performance.now();
 
 function revealRoot() {
-  const root = document.getElementById("root");
-  root?.removeAttribute("inert");
-  root?.removeAttribute("aria-hidden");
+  for (const id of ["root", "buzz-toast-root"]) {
+    const root = document.getElementById(id);
+    root?.removeAttribute("inert");
+    root?.removeAttribute("aria-hidden");
+  }
 }
 
 function startedAt() {

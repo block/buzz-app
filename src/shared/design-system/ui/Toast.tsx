@@ -22,7 +22,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 function ToastViewport() {
   const { toasts } = BaseToast.useToastManager<NoticeData>();
   return (
-    <BaseToast.Portal>
+    <BaseToast.Portal
+      container={document.getElementById("buzz-toast-root") ?? undefined}
+    >
       <BaseToast.Viewport
         data-buzz-ui=""
         className="buzz-toast-viewport"

@@ -19,6 +19,30 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("keeps startup notices inside the inert toast host", () => {
+  const host = document.createElement("div");
+  host.id = "buzz-toast-root";
+  host.setAttribute("inert", "");
+  host.setAttribute("aria-hidden", "true");
+  document.body.append(host);
+  try {
+    render(
+      <ToastProvider>
+        <ToastNotice title="Ready to update" onDismiss={() => {}}>
+          <Button>Update now</Button>
+        </ToastNotice>
+      </ToastProvider>,
+    );
+    expect(host).toContainElement(
+      screen.getByRole("button", { name: "Update now", hidden: true }),
+    );
+    expect(screen.queryByRole("button", { name: "Update now" })).toBeNull();
+  } finally {
+    cleanup();
+    host.remove();
+  }
+});
+
 it("StrictMode and rerenders keep one notice and the latest action; cleanup is not dismissal", async () => {
   const oldRetry = vi.fn();
   const retry = vi.fn();

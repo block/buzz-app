@@ -1692,6 +1692,9 @@ export const test = base.extend({
             const root = document.getElementById("root");
             root?.removeAttribute("inert");
             root?.removeAttribute("aria-hidden");
+            const toastRoot = document.getElementById("buzz-toast-root");
+            toastRoot?.removeAttribute("inert");
+            toastRoot?.removeAttribute("aria-hidden");
             observer.disconnect();
           });
           observer.observe(document, { childList: true, subtree: true });

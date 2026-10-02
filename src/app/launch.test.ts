@@ -12,7 +12,7 @@ beforeEach(() => {
     return 0;
   });
   document.body.innerHTML =
-    '<div id="buzz-launch"><img src="/buzz-loading-mark.svg"></div><div id="root" inert aria-hidden="true"></div>';
+    '<div id="buzz-launch"><img src="/buzz-loading-mark.svg"></div><div id="root" inert aria-hidden="true"></div><div id="buzz-toast-root" inert aria-hidden="true"></div>';
   const element = document.getElementById("buzz-launch");
   if (!element) throw new Error("Missing launch fixture");
   launch = element;
@@ -45,6 +45,12 @@ it("finishes the first cycle before fading when content is ready early", async (
   expect(launch.isConnected).toBe(false);
   expect(document.getElementById("root")).not.toHaveAttribute("inert");
   expect(document.getElementById("root")).not.toHaveAttribute("aria-hidden");
+  expect(document.getElementById("buzz-toast-root")).not.toHaveAttribute(
+    "inert",
+  );
+  expect(document.getElementById("buzz-toast-root")).not.toHaveAttribute(
+    "aria-hidden",
+  );
 });
 
 it("keeps looping while content is pending, then finishes the current cycle", async () => {

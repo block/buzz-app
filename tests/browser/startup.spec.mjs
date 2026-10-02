@@ -387,6 +387,11 @@ test("launch waits for the initial sidebar and message history before revealing 
     await expect(launch).toBeVisible();
     await expect(page.locator("#root")).toHaveAttribute("inert", "");
     await expect(page.locator("#root")).toHaveAttribute("aria-hidden", "true");
+    await expect(page.locator("#buzz-toast-root")).toHaveAttribute("inert", "");
+    await expect(page.locator("#buzz-toast-root")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
     await expect(
       page.locator('[aria-label="Channel sidebar"][data-buzz-launch-pending]'),
     ).toBeAttached();
@@ -410,6 +415,10 @@ test("launch waits for the initial sidebar and message history before revealing 
     await expect(launch).toHaveCount(0);
     await expect(page.locator("#root")).not.toHaveAttribute("inert");
     await expect(page.locator("#root")).not.toHaveAttribute("aria-hidden");
+    await expect(page.locator("#buzz-toast-root")).not.toHaveAttribute("inert");
+    await expect(page.locator("#buzz-toast-root")).not.toHaveAttribute(
+      "aria-hidden",
+    );
   } finally {
     app.relay.releaseUnread();
     head.release();

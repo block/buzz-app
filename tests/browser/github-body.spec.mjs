@@ -62,6 +62,10 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
     "https://api.github.com/repos/block/buzz-app/pulls/327",
     (route) => route.fulfill({ json: details }),
   );
+  await page.route(
+    /https:\/\/api\.github\.com\/repos\/.*\/(?:comments|reviews)\?/,
+    (route) => route.fulfill({ json: [] }),
+  );
   for (const [url, path, contentType] of [
     [before, videoPath, "video/mp4"],
     [after, videoPath, "video/mp4"],
@@ -110,6 +114,9 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
     name: "GitHub",
     exact: true,
   });
+  await panel
+    .getByRole("button", { name: "Expand Description", exact: true })
+    .click();
   await expect(
     panel.getByRole("heading", { name: "Before", exact: true }),
   ).toBeVisible();

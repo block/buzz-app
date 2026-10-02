@@ -17,6 +17,7 @@ import { loadGitHubDetails, type GitHubDetails } from "./data";
 import styles from "./GitHub.module.css";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import { GitHubBody } from "./GitHubBody";
+import { GitHubConversation } from "./GitHubConversation";
 import { GitHubChecks } from "./GitHubChecks";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 
@@ -293,12 +294,16 @@ function ObjectPanel({
               )}
             </dl>
           )}
-          {result.body && (
-            <GitHubBody
-              body={result.body}
-              bodyHtml={result.bodyHtml}
-              url={reference.url}
-            />
+          {reference.kind === "pull" ? (
+            <GitHubConversation details={result} url={reference.url} />
+          ) : (
+            result.body && (
+              <GitHubBody
+                body={result.body}
+                bodyHtml={result.bodyHtml}
+                url={reference.url}
+              />
+            )
           )}
         </>
       )}

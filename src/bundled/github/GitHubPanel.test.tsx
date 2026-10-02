@@ -188,13 +188,15 @@ it("links the author login to their external GitHub profile", async () => {
       close={() => {}}
     />,
   );
-  const author = await screen.findByRole("link", {
-    name: "tellaho",
-  });
+  const authors = await screen.findAllByRole("link", { name: "tellaho" });
+  const author = authors.find(
+    (link) => link.parentElement?.textContent === "by tellaho",
+  );
+  expect(authors).toHaveLength(2);
   expect(author).toHaveAttribute("href", "https://github.com/tellaho");
   expect(author).toHaveAttribute("target", "_blank");
   expect(author).toHaveAttribute("rel", "noreferrer");
-  expect(author.parentElement).toHaveTextContent("by tellaho");
+  expect(author?.parentElement).toHaveTextContent("by tellaho");
 });
 
 it.each([

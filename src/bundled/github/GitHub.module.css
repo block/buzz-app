@@ -282,3 +282,194 @@
   padding-top: var(--space-3);
   border-top: 1px solid var(--border-standard);
 }
+.conversation {
+  container-type: inline-size;
+  background: var(--surface-inset);
+  border-radius: var(--radius-row);
+  padding: var(--space-3);
+  margin-top: var(--space-5);
+}
+.conversationMessage {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: var(--space-2);
+}
+.featuredMessage {
+  padding: var(--space-4);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-row);
+  background: var(--surface-panel);
+}
+.quietMessage {
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  padding: var(--space-3) var(--space-4);
+}
+.messageAvatar {
+  position: relative;
+  z-index: 1;
+}
+.messageContent {
+  min-width: 0;
+}
+.messageMetadata {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  padding: 0 var(--space-2);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  overflow-wrap: anywhere;
+}
+.messageMetadata time {
+  color: var(--text-subtle);
+}
+.quietMessage .messageMetadata time {
+  margin-left: auto;
+}
+.messageLabel {
+  color: var(--text-subtle);
+}
+.messagePreview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-width: 0;
+}
+.previewText {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.thumbnails {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.thumbnail {
+  display: block;
+  position: relative;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  background: var(--surface-inset);
+}
+.thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.thumbnailCount {
+  position: absolute;
+  inset: auto 0 0 auto;
+  padding: var(--space-half) var(--space-1);
+  border-radius: var(--radius-control) 0 0 0;
+  background: var(--surface-panel);
+  color: var(--text-standard);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.messageBody {
+  padding: 0 var(--space-2);
+}
+@container (max-width: 24rem) {
+  .messagePreview {
+    flex-wrap: wrap;
+  }
+  .previewText {
+    flex-basis: 100%;
+  }
+  .thumbnails {
+    margin-left: auto;
+  }
+}
+.conversationNotice,
+.sourceStatus {
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  overflow-wrap: anywhere;
+}
+.conversationNotice {
+  margin: var(--space-3) var(--space-2);
+}
+.conversationTimeline {
+  display: grid;
+  gap: var(--space-2);
+  position: relative;
+}
+.conversationTimeline::before {
+  content: "";
+  position: absolute;
+  left: 1.75rem;
+  top: var(--space-4);
+  bottom: var(--space-4);
+  border-left: 1px solid var(--border-standard);
+}
+.conversationTimeline > .featuredMessage {
+  position: relative;
+}
+.standaloneThread {
+  padding: 0 var(--space-4) 0 var(--space-12);
+  min-width: 0;
+}
+.threadLabel {
+  overflow-wrap: anywhere;
+}
+.codeContext {
+  overflow-x: auto;
+  max-width: 100%;
+  padding: var(--space-2);
+  background: var(--surface-inset);
+  font-family: var(--font-system-mono);
+  font-size: var(--text-mono);
+  line-height: var(--text-mono--line-height);
+  letter-spacing: var(--text-mono--letter-spacing);
+  font-weight: var(--text-mono--font-weight);
+}
+.conversationSources {
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--border-standard);
+  padding-top: var(--space-2);
+}
+.sourceStatus {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+}
+.sourceStatus > :last-child {
+  margin-left: auto;
+}
+@container (max-width: 18rem) {
+  .conversationMessage {
+    display: block;
+  }
+  .featuredMessage {
+    padding: var(--space-2);
+  }
+  .quietMessage,
+  .standaloneThread {
+    padding: var(--space-2);
+  }
+  .messageAvatar {
+    margin: 0 var(--space-2) var(--space-2);
+  }
+  .conversationTimeline::before {
+    display: none;
+  }
+}

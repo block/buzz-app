@@ -9,6 +9,8 @@ export type GitHubDetails = {
   state: string;
   author: string;
   authorUrl?: string | undefined;
+  authorAvatar?: string | undefined;
+  createdAt?: string | undefined;
   headSha?: string | undefined;
   updatedAt?: string | undefined;
   facts: [
@@ -37,7 +39,8 @@ type ResponseData = {
   draft?: boolean;
   merged?: boolean;
   updated_at?: string;
-  user?: { login: string };
+  created_at?: string;
+  user?: { login: string; avatar_url?: string };
   owner?: { login: string };
   author?: { login: string };
   commit?: { message: string; author: { name: string } };
@@ -146,6 +149,17 @@ export async function loadGitHubDetails(
     authorUrl:
       accountLogin && /^[a-z0-9-]+$/i.test(accountLogin)
         ? `https://github.com/${encodeURIComponent(accountLogin)}`
+        : undefined,
+    authorAvatar:
+      data.user?.avatar_url &&
+      /^https:\/\/avatars\.githubusercontent\.com\//.test(data.user.avatar_url)
+        ? data.user.avatar_url
+        : undefined,
+    createdAt:
+      reference.kind === "pull" &&
+      data.created_at &&
+      Number.isFinite(Date.parse(data.created_at))
+        ? data.created_at
         : undefined,
     headSha: reference.kind === "pull" ? data.head?.sha : undefined,
     updatedAt:

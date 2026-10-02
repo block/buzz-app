@@ -4,6 +4,12 @@ import { end, settle } from "./timeline.mjs";
 import { apcaContrast, wcagRatio } from "../../scripts/design-system/apca.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
+test.beforeEach(async ({ page }) => {
+  await page.route(
+    /https:\/\/api\.github\.com\/repos\/.*\/(?:comments|reviews)\?/,
+    (route) => route.fulfill({ json: [] }),
+  );
+});
 const github = "https://github.com/block/buzz/pull/1";
 const ordinary = "https://example.test/external-link";
 const unsupported = "https://github.com/block/buzz/blob/main/README.md";
@@ -103,7 +109,11 @@ test("GitHub object identities have comparable visible artwork at one size", asy
     ["Commit", "https://github.com/block/buzz/commit/abcdef1"],
   ];
   await page.route("https://api.github.com/repos/block/buzz**", (route) =>
-    route.fulfill({ json: { title: "GitHub object", state: "open" } }),
+    route.fulfill({
+      json: /\/(?:comments|reviews)\?/.test(route.request().url())
+        ? []
+        : { title: "GitHub object", state: "open" },
+    }),
   );
   await page.goto(app.origin);
   await openMessages(page);
@@ -213,6 +223,7 @@ test("PR state, changes and branch links use shared roles in both themes", async
   const title = panel.getByRole("heading", { name: "A small improvement #1" });
   const byline = panel
     .getByRole("link", { name: "sample-author", exact: true })
+    .first()
     .locator("../..");
   const titleBox = await title.boundingBox();
   const bylineBox = await byline.boundingBox();
@@ -225,7 +236,7 @@ test("PR state, changes and branch links use shared roles in both themes", async
   expect(
     await popup(
       page,
-      panel.getByRole("link", { name: "sample-author", exact: true }),
+      panel.getByRole("link", { name: "sample-author", exact: true }).first(),
     ),
   ).toBe("https://github.com/sample-author");
   for (const [name, url] of [
@@ -287,7 +298,7 @@ test("PR state, changes and branch links use shared roles in both themes", async
       return result;
     });
     await expect(
-      panel.getByRole("link", { name: "sample-author", exact: true }),
+      panel.getByRole("link", { name: "sample-author", exact: true }).first(),
     ).toHaveCSS("color", colors.link);
     await expect(
       panel.getByRole("link", { name: "A small improvement #1" }),
@@ -584,6 +595,8 @@ test("PR check summaries expose counts and relative update time in the built pan
   const updatedAt = new Date(now.getTime() - 180_000).toISOString();
   await page.route("https://api.github.com/repos/block/buzz/**", (route) => {
     const url = new URL(route.request().url());
+    if (/\/(?:comments|reviews)$/.test(url.pathname))
+      return route.fulfill({ json: [] });
     const id = Number(
       url.pathname.match(/(?:pulls\/|commits\/head-)(\d+)/)?.[1],
     );

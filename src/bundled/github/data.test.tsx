@@ -141,3 +141,36 @@ it.each([
     ]);
   },
 );
+
+it("uses PR creation time for the description and keeps its avatar to the GitHub origin", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            title: "A PR",
+            user: {
+              login: "author",
+              avatar_url: "https://avatars.githubusercontent.com/u/1?v=4",
+            },
+            created_at: "2026-10-01T12:00:00Z",
+            updated_at: "2026-10-02T12:00:00Z",
+          }),
+        ),
+    ),
+  );
+  const reference = parseGitHubReference(
+    "https://github.com/sample/project/pull/1",
+  );
+  if (!reference) throw new Error("Missing test reference");
+  const details = await loadGitHubDetails(
+    reference,
+    new AbortController().signal,
+  );
+  expect(details).toMatchObject({
+    createdAt: "2026-10-01T12:00:00Z",
+    updatedAt: "2026-10-02T12:00:00Z",
+    authorAvatar: "https://avatars.githubusercontent.com/u/1?v=4",
+  });
+});

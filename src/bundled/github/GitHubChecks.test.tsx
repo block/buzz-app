@@ -25,7 +25,9 @@ it("renders PR details while checks load, then exposes counts by pointer and key
   vi.stubGlobal(
     "fetch",
     vi.fn((url: string) => {
-      if (url.includes("/pulls/")) return Promise.resolve(response(pull));
+      if (/\/(?:comments|reviews)\?/.test(url))
+        return Promise.resolve(response([]));
+      if (/\/pulls\/\d+$/.test(url)) return Promise.resolve(response(pull));
       if (url.includes("/check-runs?")) return pending;
       return Promise.resolve(
         response({ total_count: 0, state: "pending", statuses: [] }),
@@ -73,7 +75,9 @@ it("renders PR details while checks load, then exposes counts by pointer and key
 it("keeps PR details after a checks failure and allows a read-only retry", async () => {
   let fail = true;
   const fetch = vi.fn(async (url: string) => {
-    if (url.includes("/pulls/")) return response(pull);
+    if (/\/(?:comments|reviews)\?/.test(url))
+      return Promise.resolve(response([]));
+    if (/\/pulls\/\d+$/.test(url)) return response(pull);
     if (url.includes("/check-runs?"))
       return fail
         ? new Response(null, { status: 403 })
@@ -97,7 +101,7 @@ it("keeps PR details after a checks failure and allows a read-only retry", async
     "success",
   );
   expect(
-    fetch.mock.calls.filter(([url]) => url.includes("/pulls/")),
+    fetch.mock.calls.filter(([url]) => /\/pulls\/\d+$/.test(url)),
   ).toHaveLength(1);
 });
 it("aborts checks when the panel target changes and ignores the late old result", async () => {
@@ -109,7 +113,9 @@ it("aborts checks when the panel target changes and ignores the late old result"
   vi.stubGlobal(
     "fetch",
     vi.fn((url: string, options: RequestInit) => {
-      if (url.includes("/pulls/")) return Promise.resolve(response(pull));
+      if (/\/(?:comments|reviews)\?/.test(url))
+        return Promise.resolve(response([]));
+      if (/\/pulls\/\d+$/.test(url)) return Promise.resolve(response(pull));
       if (url.includes("/issues/"))
         return Promise.resolve(response({ title: "An issue" }));
       signals.push(options.signal as AbortSignal);
@@ -142,8 +148,12 @@ it("aborts checks when the panel target changes and ignores the late old result"
   expect(screen.queryByText("Last updated")).not.toBeInTheDocument();
 });
 it("shows honest missing-data rows without inventing a head check request", async () => {
-  const fetch = vi.fn(async () =>
-    response({ title: "Old PR", updated_at: "not-a-date" }),
+  const fetch = vi.fn(async (url: string) =>
+    response(
+      /\/(?:comments|reviews)\?/.test(url)
+        ? []
+        : { title: "Old PR", updated_at: "not-a-date" },
+    ),
   );
   vi.stubGlobal("fetch", fetch);
   render(<GitHubPanel target={target} close={() => {}} />);
@@ -152,5 +162,5 @@ it("shows honest missing-data rows without inventing a head check request", asyn
   expect(
     screen.queryByRole("button", { name: "Retry checks" }),
   ).not.toBeInTheDocument();
-  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledTimes(4);
 });

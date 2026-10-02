@@ -9,6 +9,9 @@ mod agent_models;
 mod agents;
 mod deep_links;
 mod dock;
+#[cfg(test)]
+#[path = "enterprise_auth_build.rs"]
+mod enterprise_auth_build;
 mod enterprise_login_gate;
 mod enterprise_relay_url;
 mod host_command;

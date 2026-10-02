@@ -3,12 +3,27 @@ use std::{sync::OnceLock, time::Duration};
 use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
+use url::Url;
 
 use crate::enterprise_relay_url::{
-    canonical_enterprise_relay_url, enterprise_relay_http_url, parse_enterprise_relay_allowlist,
+    canonical_enterprise_relay_url, parse_enterprise_relay_allowlist,
 };
 
 const MAX_DISCOVERY_BODY: usize = 128 * 1024;
+
+fn enterprise_relay_http_url(relay: &str) -> Result<Url, String> {
+    let mut url = Url::parse(relay).map_err(|_| "Invalid enterprise relay URL")?;
+    let scheme = match url.scheme() {
+        "wss" => "https",
+        "ws" => "http",
+        _ => return Err("Invalid enterprise relay URL".into()),
+    };
+    url.set_scheme(scheme)
+        .map_err(|_| "Could not normalize enterprise relay URL")?;
+    let path = format!("{}/info", url.path().trim_end_matches('/'));
+    url.set_path(&path);
+    Ok(url)
+}
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", tag = "status")]
@@ -198,5 +213,15 @@ mod tests {
         let trusted = parse_enterprise_relay_allowlist("https://EXAMPLE.com.").unwrap();
         assert!(trusted_relay_matches("https://example.com", &trusted).unwrap());
         assert!(trusted_relay_matches("wss://EXAMPLE.com:443/", &trusted).unwrap());
+    }
+
+    #[test]
+    fn maps_websocket_discovery_to_http_info() {
+        assert_eq!(
+            enterprise_relay_http_url("wss://relay.example/")
+                .unwrap()
+                .as_str(),
+            "https://relay.example/info"
+        );
     }
 }

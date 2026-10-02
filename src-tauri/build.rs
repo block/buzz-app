@@ -1,3 +1,5 @@
+#[path = "src/enterprise_auth_build.rs"]
+mod enterprise_auth_build;
 #[path = "src/enterprise_relay_url.rs"]
 mod enterprise_relay_url;
 
@@ -123,26 +125,18 @@ fn configure_enterprise_auth() {
     println!("cargo:rerun-if-env-changed={RELAYS}");
     println!("cargo:rerun-if-env-changed={ADAPTER}");
 
-    let relays = std::env::var(RELAYS)
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
-    let adapter = std::env::var(ADAPTER)
-        .ok()
-        .map(|value| value.trim().trim_end_matches('/').to_owned())
-        .filter(|value| !value.is_empty());
+    let relays = std::env::var(RELAYS).ok();
+    let adapter = std::env::var(ADAPTER).ok();
+    let configured = enterprise_auth_build::validate_enterprise_auth_build_config(
+        relays.as_deref(),
+        adapter.as_deref(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
 
-    if relays.is_some() && adapter.is_none() {
-        panic!("{ADAPTER} is required when {RELAYS} is configured");
-    }
-    if let Some(relays) = relays.as_deref() {
-        enterprise_relay_url::parse_enterprise_relay_allowlist(relays)
-            .unwrap_or_else(|_| panic!("{RELAYS} contains an unsupported or unsafe URL"));
+    if let Some(relays) = configured.relays.as_deref() {
         println!("cargo:rustc-env={RELAYS}={relays}");
     }
-    if let Some(adapter) = adapter.as_deref() {
-        enterprise_relay_url::validate_enterprise_adapter_url(adapter)
-            .unwrap_or_else(|_| panic!("{ADAPTER} contains an unsupported or unsafe URL"));
+    if let Some(adapter) = configured.adapter.as_deref() {
         println!("cargo:rustc-env={ADAPTER}={adapter}");
     }
 }

@@ -100,20 +100,6 @@ pub(crate) fn canonical_enterprise_relay_url(raw: &str) -> Result<String, String
     Ok(url.to_string())
 }
 
-pub(crate) fn enterprise_relay_http_url(relay: &str) -> Result<Url, String> {
-    let mut url = Url::parse(relay).map_err(|_| "Invalid enterprise relay URL")?;
-    let scheme = match url.scheme() {
-        "wss" => "https",
-        "ws" => "http",
-        _ => return Err("Invalid enterprise relay URL".into()),
-    };
-    url.set_scheme(scheme)
-        .map_err(|_| "Could not normalize enterprise relay URL")?;
-    let path = format!("{}/info", url.path().trim_end_matches('/'));
-    url.set_path(&path);
-    Ok(url)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,15 +168,5 @@ mod tests {
         ] {
             assert!(validate_enterprise_adapter_url(value).is_err(), "{value}");
         }
-    }
-
-    #[test]
-    fn maps_websocket_discovery_to_http_info() {
-        assert_eq!(
-            enterprise_relay_http_url("wss://relay.example/")
-                .unwrap()
-                .as_str(),
-            "https://relay.example/info"
-        );
     }
 }

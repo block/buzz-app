@@ -4,6 +4,7 @@ import { open, edge, settle } from "./timeline.mjs";
 // These journeys cover real document boot, IndexedDB reload, React session
 // replacement and DOM continuity. Failure/corruption matrices live in Vitest.
 test.use({
+  launchAnimation: true,
   productionBroker: true,
   pluginFixtures: true,
   savedSidebar: true,

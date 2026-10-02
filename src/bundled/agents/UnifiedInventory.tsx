@@ -73,8 +73,8 @@ export function UnifiedInventory({
       ? relayOrigin(connection.scope.slice(0, -(connection.viewer.length + 1)))
       : "";
   const [refresh, setRefresh] = useState(0);
-  // Hide confirmed removals at once; the refreshed reads then agree. A removal
-  // is per community, so the key includes the destination.
+  // Hide confirmed removals at once and for as long as this view lives. A
+  // removal is per community, so the key includes the destination.
   const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
   // Archive is the first removal step and hides the row. Keep a started
   // removal's card until it finishes, so its later steps and errors stay visible.
@@ -148,8 +148,9 @@ export function UnifiedInventory({
           setHeld(
             (saved) => new Set([...saved].filter((item) => item !== key)),
           );
+          // The removed set already hides the card. A community recheck here
+          // would show its status lines above the list and shift the page.
           void library.refresh();
-          setRefresh((value) => value + 1);
         }
       : undefined;
   const candidates = [...rows.keys()];

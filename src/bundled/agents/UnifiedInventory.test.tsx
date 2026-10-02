@@ -859,10 +859,19 @@ it("removes a relay-only agent after confirmation and keeps it on Cancel or fail
   expect(card).toBeInTheDocument();
 
   refuse = undefined;
+  const inventoryReads = () =>
+    vi
+      .mocked(communityApi.communityRequest)
+      .mock.calls.filter(([, route]) => route === "agent-inventory").length;
+  const reads = inventoryReads();
   fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
   dialog = await screen.findByRole("alertdialog");
   fireEvent.click(within(dialog).getByRole("button", { name: "Remove agent" }));
   await waitFor(() => expect(card).not.toBeInTheDocument());
+  // The confirmed removal hides the card by itself. A community recheck would
+  // add status lines above the list and shift it while the user watches.
+  expect(inventoryReads()).toBe(reads);
+  expect(screen.queryByText("Checking community inventory…")).toBeNull();
   expect(published.map(({ kind, tags }) => [kind, tags[0]])).toEqual([
     [5, ["a", `30177:${signer.pubkey}:${"cd".repeat(32)}`]],
   ]);

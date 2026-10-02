@@ -3,6 +3,14 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { EventData } from "../relay/events";
 import { createRelaySession } from "../relay/session";
+import {
+  keypair,
+  metadata,
+  roster,
+  scriptedTransport,
+  signed,
+} from "../relay/testing";
+import type { LiveCallbacks } from "../relay/live";
 import { useIncomingHuddle } from "./use-incoming";
 
 const parent = "00000000-0000-4000-8000-000000000001";
@@ -82,4 +90,75 @@ it("observes a private conversation's remote call, honors signed ends, expires, 
   unmount();
   expect(listeners.size).toBe(0);
   store.dispose();
+});
+
+it("uses verified live starts and ends after the initial discovery read fails", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  let live: LiveCallbacks | undefined;
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(48100)))
+        throw new Error("Discovery unavailable");
+      return [
+        roster(relay, parent, [viewer.pubkey]),
+        metadata(relay, parent, "Parent"),
+      ].filter((event) =>
+        filters.some((filter) => filter.kinds?.includes(event.kind)),
+      );
+    },
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  owner.session.channels.ensureList();
+  await vi.waitFor(() =>
+    expect(
+      owner.session.channels.get?.(parent)?.metadataPending,
+    ).toBeUndefined(),
+  );
+  await vi.waitFor(() =>
+    expect(owner.session.channels.list().channels).toHaveLength(1),
+  );
+  let view: ReturnType<typeof owner.session.observe> | undefined;
+  const session = {
+    ...owner.session,
+    observe: (...args: Parameters<typeof owner.session.observe>) => {
+      view = owner.session.observe(...args);
+      return view;
+    },
+  };
+  const { result, unmount } = renderHook(() =>
+    useIncomingHuddle(session, parent),
+  );
+  try {
+    await act(async () => {
+      await vi.waitFor(() => expect(view?.snapshot().status).toBe("error"));
+    });
+    expect(result.current).toBeUndefined();
+    const event = {
+      kind: 48100,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [["h", parent]],
+      content: JSON.stringify({ ephemeral_channel_id: room }),
+    };
+    act(() => live?.receive([signed(viewer, event)]));
+    expect(view?.snapshot().status).toBe("error");
+    expect(result.current?.id).toBe(room);
+    act(() =>
+      live?.receive([
+        signed(viewer, {
+          ...event,
+          kind: 48103,
+          created_at: event.created_at + 1,
+        }),
+      ]),
+    );
+    expect(result.current).toBeUndefined();
+  } finally {
+    unmount();
+    owner.dispose();
+  }
 });

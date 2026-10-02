@@ -22,9 +22,13 @@ export function useSearchMessages(
   scopedChannelId?: string,
 ) {
   const ordinaryChannel = useCallback(
-    (id: string) => {
+    (id: string, includePending = false) => {
       const channel = session.channels.get?.(id);
-      return !!channel && !channel.huddle;
+      return (
+        !!channel &&
+        !channel.huddle &&
+        (includePending || !channel.metadataPending)
+      );
     },
     [session],
   );
@@ -45,11 +49,14 @@ export function useSearchMessages(
       session.channels.subscribeList(() => {
         const previous = copied.current;
         if (!previous) return;
-        const messages = previous.messages.filter((message) =>
-          ordinaryChannel(message.channelId),
-        );
-        if (messages.length !== previous.messages.length)
-          replace({ ...previous, messages });
+        // Keep bounded search evidence so completed classification can reveal
+        // ordinary results, while render always checks the current destination.
+        replace({
+          ...previous,
+          messages: previous.messages.filter((message) =>
+            ordinaryChannel(message.channelId, true),
+          ),
+        });
       }),
     [session, replace, ordinaryChannel],
   );
@@ -81,7 +88,7 @@ export function useSearchMessages(
               destinations.length !== 1 ||
               !channelId ||
               (scopedChannelId && channelId !== scopedChannelId) ||
-              !ordinaryChannel(channelId)
+              !ordinaryChannel(channelId, true)
             )
               return [];
             // Search returns original indexed events, not an auxiliary edit fold.

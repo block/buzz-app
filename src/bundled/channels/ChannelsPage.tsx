@@ -339,7 +339,7 @@ function ChannelWorkspace({
     queries,
     list.status,
   ]);
-  const resolving =
+  const resolvingMembership =
     !!requestedChannel &&
     !joinedRequest &&
     !!queries.channels.resolve &&
@@ -361,9 +361,12 @@ function ChannelWorkspace({
       : (channels.find((channel) => channel.id === selected) ??
         channels.find((item) => item.channelType !== "session"));
   // Exact links and saved selections must respect the same Huddle-only entry point.
-  const current = requestedDestination?.huddle
-    ? undefined
-    : requestedDestination;
+  const resolving =
+    resolvingMembership || !!requestedDestination?.metadataPending;
+  const current =
+    requestedDestination?.huddle || requestedDestination?.metadataPending
+      ? undefined
+      : requestedDestination;
   // Sidebar routing can update the same mounted page. Keep its saved default
   // aligned with the resolved conversation, not only page-local clicks.
   useEffect(() => {

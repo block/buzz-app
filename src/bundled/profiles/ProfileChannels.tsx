@@ -32,6 +32,7 @@ export function ProfileChannels({
   ).filter(
     (channel) =>
       !channel.huddle &&
+      !channel.metadataPending &&
       !channel.archived &&
       !channel.hidden &&
       (channel.channelType === "stream" || channel.channelType === "forum") &&

@@ -351,6 +351,8 @@ it("reads rosters scoped to the viewer, then metadata only for unnamed channels"
   expect(
     queries.list().channels.map((channel) => channel.metadataPending),
   ).toEqual([true, true]);
+  expect(queries.get?.("a")?.metadataPending).toBe(true);
+  expect(queries.get?.("b")?.metadataPending).toBe(true);
   names.respond([metadata(relay, "a", "Alpha")]);
   await flush();
   expect(queries.list()).toMatchObject({
@@ -363,6 +365,8 @@ it("reads rosters scoped to the viewer, then metadata only for unnamed channels"
   expect(
     queries.list().channels.every((channel) => !channel.metadataPending),
   ).toBe(true);
+  expect(queries.get?.("a")?.metadataPending).toBeUndefined();
+  expect(queries.get?.("b")?.metadataPending).toBeUndefined();
   expect(queries.list().coverage).toBeUndefined();
   queries.prepare?.("a");
   next().respond(empty("a"));

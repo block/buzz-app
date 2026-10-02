@@ -192,6 +192,13 @@ export function createChannelStore(
       listeners.delete(callback);
     };
   }
+  function metadataPending(id: string) {
+    return discovery &&
+      !discovery.metadataVersion(id) &&
+      !checkedMetadata.has(id)
+      ? true
+      : undefined;
+  }
   function setList(next: ChannelList, discoveryChanged = false) {
     const previous = new Map(
       list.channels.map((channel) => [channel.id, channel]),
@@ -200,12 +207,7 @@ export function createChannelStore(
     for (const id of checkedMetadata)
       if (!retained.has(id)) checkedMetadata.delete(id);
     const channels = next.channels.map((channel) => {
-      const metadataPending =
-        discovery &&
-        !discovery.metadataVersion(channel.id) &&
-        !checkedMetadata.has(channel.id)
-          ? true
-          : undefined;
+      const pending = metadataPending(channel.id);
       const preview =
         messagePreview(windows.get(channel.id)?.snapshot.rows) ??
         tails.peek(channel.id)?.preview ??
@@ -214,7 +216,7 @@ export function createChannelStore(
       return old &&
         old.name === channel.name &&
         old.description === channel.description &&
-        old.metadataPending === metadataPending &&
+        old.metadataPending === pending &&
         old.visibility === channel.visibility &&
         old.preview === preview &&
         old.hidden === channel.hidden &&
@@ -235,7 +237,7 @@ export function createChannelStore(
           (id, index) => id === channel.participants?.[index],
         )
         ? old
-        : Object.freeze({ ...channel, metadataPending, preview });
+        : Object.freeze({ ...channel, metadataPending: pending, preview });
     });
     const sameChannels =
       channels.length === list.channels.length &&
@@ -1541,7 +1543,10 @@ export function createChannelStore(
   }
   const queries: ChannelQueries = Object.freeze({
     list: () => list,
-    get: (id: string) => discovery?.get(id),
+    get: (id: string) => {
+      const channel = discovery?.get(id);
+      return channel && { ...channel, metadataPending: metadataPending(id) };
+    },
     resolve,
     refreshRoster,
     subscribeList: (listener: Listener) => subscribe(listListeners, listener),

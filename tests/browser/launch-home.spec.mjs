@@ -267,3 +267,89 @@ test("launch retains plugin-configuration recovery without Home", async ({
     .click();
   await expect(messages(page)).toBeVisible();
 });
+
+for (const huddle of [false, true]) {
+  test(`exact destinations wait for classification (${huddle ? "Huddle" : "ordinary"})`, async ({
+    page,
+    app,
+  }) => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let held = false;
+    const reads = [];
+    await page.route("**/api/relay/**/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      reads.push(
+        ...filters.filter(
+          (filter) =>
+            filter.kinds?.includes(9) &&
+            filter["#h"]?.includes("alpha") &&
+            filter.top_level === true,
+        ),
+      );
+      if (filters.some((filter) => filter.kinds?.includes(39000))) {
+        held = true;
+        await gate;
+        const response = await route.fetch();
+        const events = await response.json();
+        await route.fulfill({
+          json: events.map((event) =>
+            huddle &&
+            event.kind === 39000 &&
+            event.tags.some(([key, value]) => key === "d" && value === "alpha")
+              ? app.channelMetadata("alpha", [
+                  ["name", "Alpha"],
+                  ["t", "stream"],
+                  ["private"],
+                  [
+                    "about",
+                    "Buzz Huddle (buzz.huddles/v1)\nparent:00000000-0000-4000-8000-000000000001",
+                  ],
+                ])
+              : event,
+          ),
+        });
+      } else await route.continue();
+    });
+    await page.goto(
+      address(app.origin, {
+        version: 1,
+        kind: "conversation",
+        channelId: "alpha",
+        scope: {
+          viewer: app.viewer,
+          communityOrigin: "https://primary.example",
+        },
+      }),
+    );
+    await expect.poll(() => held).toBe(true);
+    expect(
+      await page.evaluate(() => window.fixtureNavigation.snapshot().status),
+    ).toBe("opening");
+    await expect(page.getByRole("textbox", { name: /^Message #/ })).toHaveCount(
+      0,
+    );
+    expect(reads).toHaveLength(0);
+    release();
+    if (huddle) {
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.fixtureNavigation.snapshot().status),
+        )
+        .toBe("failed");
+      await expect(
+        page.getByRole("textbox", { name: /^Message #/ }),
+      ).toHaveCount(0);
+      expect(reads).toHaveLength(0);
+    } else {
+      await expect(messages(page)).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.fixtureNavigation.snapshot().status),
+        )
+        .toBe("opened");
+    }
+  });
+}

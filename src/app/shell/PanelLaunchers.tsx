@@ -13,10 +13,7 @@ export function PanelLaunchers({
   launch(panel: RegisteredPanel, trigger: HTMLButtonElement): void;
 }) {
   return panels
-    .filter(
-      (panel) =>
-        (panel.launcher || panel.toolbar) && panel.pluginId !== "buzz.bestie",
-    )
+    .filter((panel) => panel.launcher || panel.toolbar)
     .map((panel) =>
       panel.toolbar ? (
         <ToolbarBoundary

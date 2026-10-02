@@ -58,6 +58,7 @@ export function SearchResults({
       list.channels.filter(
         (channel) =>
           !channel.huddle &&
+          !channel.metadataPending &&
           (!channel.archived ||
             (!channel.readOnly &&
               (channel.channelType === "stream" ||

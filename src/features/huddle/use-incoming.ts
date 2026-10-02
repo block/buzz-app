@@ -24,13 +24,15 @@ export function useIncomingHuddle(
       clearTimeout(timer);
       const snapshot = view.snapshot();
       const now = Date.now() / 1000;
-      const room =
-        snapshot.status === "ready"
-          ? recentHuddles(snapshot.events, parent, session.relayAuthor).find(
-              (candidate) =>
-                candidate.startedAt <= now && candidate.startedAt + 3600 > now,
-            )
-          : undefined;
+      // A failed finite refresh does not invalidate verified live evidence.
+      const room = recentHuddles(
+        snapshot.events,
+        parent,
+        session.relayAuthor,
+      ).find(
+        (candidate) =>
+          candidate.startedAt <= now && candidate.startedAt + 3600 > now,
+      );
       setState({
         session,
         parent,

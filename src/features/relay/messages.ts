@@ -149,12 +149,11 @@ export function createMessages(
           ["h", channelId],
           ["buzz:sent-from-thread", thread.rootId, ...(label ? [label] : [])],
           // Sharing does not notify the original recipients again. Preserve display binding only.
-          ...referenceTags([
-            ...new Set([
-              ...(row.edited ? [] : row.mentions),
-              ...(row.mentionReferences ?? []),
-            ]),
-          ]),
+          ...referenceTags(
+            row.edited
+              ? []
+              : [...row.mentions, ...(row.mentionReferences ?? [])],
+          ),
           ...(row.emoji ?? []).map((emoji) => [
             "emoji",
             emoji.shortcode,

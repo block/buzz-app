@@ -1,4 +1,5 @@
 import { assert, expect, it, vi } from "vitest";
+import { profileMentionParts } from "../messages/profile-mentions";
 import { createMessages } from "./messages";
 import { createOutbox } from "./outbox";
 import { foldMessages } from "./fold";
@@ -168,5 +169,41 @@ it("omits the excerpt when the supplied root belongs to another conversation", (
   expect(outbox.snapshot()[0]?.event.tags).toContainEqual([
     "buzz:sent-from-thread",
     root.id,
+  ]);
+});
+
+it("does not restore display-only mention bindings when sharing an edited reply", () => {
+  const original = message(author, "channel", "Hello @Other", 2, [
+    ["e", root.id, "", "reply"],
+    ["mention", other.pubkey],
+  ]);
+  const edit = signed(author, {
+    kind: 40003,
+    created_at: 3,
+    content: "Edited @Other",
+    tags: [
+      ["e", original.id],
+      ["h", "channel"],
+    ],
+  });
+  const { messages, outbox } = setup([root, original, edit]);
+  const rows = foldMessages("channel", other.pubkey, [root, original, edit], {
+    includeReplies: true,
+  });
+  const row = rows.find((item) => item.id === original.id);
+  assert.exists(row);
+  const profiles = new Map([[other.pubkey, { name: "Other" }]]);
+  expect(row.mentionReferences).toEqual([other.pubkey]);
+  expect(profileMentionParts(row, profiles)).toEqual([
+    { text: "Edited @Other" },
+  ]);
+  messages.sendToChannel(row);
+  const event = outbox.snapshot()[0]?.event;
+  assert.exists(event);
+  const shared = foldMessages("channel", other.pubkey, [event])[0];
+  assert.exists(shared);
+  expect(shared.edited).toBeFalsy();
+  expect(profileMentionParts(shared, profiles)).toEqual([
+    { text: "Edited @Other" },
   ]);
 });

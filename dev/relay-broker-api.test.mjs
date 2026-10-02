@@ -1025,6 +1025,27 @@ test("local capacity is explicitly unsent, not relay quota; unknown upstream pub
   }
 }, 10000);
 
+test("strong channel confirmation filters reach the upstream query unchanged", async () => {
+  const h = await harness(() => Response.json([]));
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const filters = [
+      {
+        kinds: [39002],
+        "#d": ["11111111-1111-4111-8111-111111111111"],
+        limit: 1,
+        consistency: "strong",
+      },
+    ];
+    await transport.query(filters);
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0].url).toBe(`${fixtureRelayUrl}/query`);
+    expect(h.calls[0].body).toEqual(filters);
+  } finally {
+    await h.close();
+  }
+});
+
 // Reader-to-host priority propagation control contributed by Brain.
 test("reader and transport start foreground work without waiting for background completion", async () => {
   let release;

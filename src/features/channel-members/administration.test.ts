@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
-import type { RelayEvent } from "../relay/events";
+import type { ReadFilter, RelayEvent } from "../relay/events";
 import { PublishRejected } from "../relay/outbox";
 import { createRelaySession } from "../relay/session";
 import { matchesEvent } from "../relay/projection";
@@ -65,7 +65,9 @@ function harness(actor = "owner", role: string | undefined = "member") {
     ...roster(actor, role),
   ];
   let access = true;
-  const read = vi.fn(async (_filters?: unknown, _options?: unknown) => events);
+  const read = vi.fn(
+    async (_filters: readonly ReadFilter[], _options?: unknown) => events,
+  );
   const sign = vi.fn(async (template: EventTemplate) =>
     finalizeEvent(structuredClone(template), key),
   );
@@ -110,6 +112,22 @@ function harness(actor = "owner", role: string | undefined = "member") {
   };
 }
 
+it.each(["admin", "remove"] as const)(
+  "confirms %s while the replica retains the previous role",
+  async (role) => {
+    const h = harness();
+    const replica = h.events();
+    h.read.mockImplementation(async (filters) =>
+      filters.every((filter) => filter.consistency === "strong")
+        ? h.events()
+        : replica,
+    );
+    await h.owner.capability.run(id, { ...change, role });
+    expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+    expect(h.publish).toHaveBeenCalledOnce();
+  },
+);
+
 it.each(["admin", "member", "guest", "remove"] as const)(
   "confirms %s from exact fresh signed state, never acknowledgement alone",
   async (role) => {
@@ -123,6 +141,7 @@ it.each(["admin", "member", "guest", "remove"] as const)(
     expect(h.read.mock.calls[0]).toEqual([
       [39000, 39001, 39002].map((kind) => ({
         kinds: [kind],
+        consistency: "strong",
         authors: [author],
         "#d": [id],
         limit: 1,

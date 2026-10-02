@@ -875,7 +875,9 @@ test("Huddle chat expands beside the call and stays separate from Live transcrip
   await expect(composer).toHaveText("Follow up after this call");
   await composer.press("Enter");
   await expect(
-    panel.getByText("Follow up after this call", { exact: true }),
+    panel
+      .getByRole("log", { name: "Huddle messages" })
+      .getByText("Follow up after this call", { exact: true }),
   ).toBeVisible();
   await expect(composer).toHaveText("");
   const callBounds = await companion.getByRole("main").boundingBox();

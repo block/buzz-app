@@ -4,6 +4,7 @@ import type {
   ComposerCompletion,
 } from "../../features/conversation/contracts";
 import type { Contribution } from "../../plugins/contributions";
+import type { GifRequests } from "../../features/relay/gifs";
 import { EmojiPicker } from "../emoji/EmojiPicker";
 import { EmojiCompletion } from "../emoji/EmojiCompletion";
 import { emojiQuery } from "../emoji/emoji-query";
@@ -15,7 +16,7 @@ import { channelQuery } from "../channels/channel-query";
 import { ResourcePicker } from "../projects/ResourcePicker";
 
 /** Native companions reuse bundled tools only while their main-app contribution is enabled. */
-const tools: Record<string, ComposerTool> = {
+const tools = (gifRequests?: GifRequests): Record<string, ComposerTool> => ({
   "buzz.emoji/picker": {
     id: "picker",
     title: "Emoji",
@@ -23,6 +24,7 @@ const tools: Record<string, ComposerTool> = {
       <EmojiPicker
         session={session}
         scope={scope}
+        gifRequests={gifRequests}
         disabled={disabled}
         insert={insertText}
       />
@@ -55,7 +57,7 @@ const tools: Record<string, ComposerTool> = {
     title: "Issues and pull requests",
     component: ResourcePicker,
   },
-};
+});
 const completions: Record<string, ComposerCompletion> = {
   "buzz.emoji/typeahead": {
     id: "typeahead",
@@ -81,6 +83,7 @@ const completions: Record<string, ComposerCompletion> = {
 export function huddleComposerExtensions(enabled: {
   tools: readonly string[];
   completions: readonly string[];
+  gifRequests?: GifRequests;
 }): ConversationExtensions {
   function reader<T>(catalog: Record<string, T>, keys: readonly string[]) {
     const entries: Contribution<T>[] = keys.flatMap((key) =>
@@ -98,7 +101,7 @@ export function huddleComposerExtensions(enabled: {
     return { snapshot: () => entries, subscribe: () => () => {} };
   }
   return {
-    tools: reader(tools, enabled.tools),
+    tools: reader(tools(enabled.gifRequests), enabled.tools),
     completions: reader(completions, enabled.completions),
     inline: reader({}, []),
   };

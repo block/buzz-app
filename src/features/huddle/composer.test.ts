@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { communityFromScope } from "../relay/gifs";
+import { communityFromScope, relayGifRequests } from "../relay/gifs";
 import { createRelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import { createHuddleComposerOwner } from "./composer-owner";
@@ -11,6 +11,7 @@ const cleanup: (() => void)[] = [];
 afterEach(() => {
   for (const fn of cleanup.splice(0).reverse()) fn();
   localStorage.clear();
+  vi.restoreAllMocks();
 });
 function harness(legacy = false) {
   const store = createRelaySession(null);
@@ -37,11 +38,29 @@ function harness(legacy = false) {
     agentChoices: { ...store.session.agentChoices, refresh },
   };
   let verified = !legacy;
+  let emojiEnabled = true;
   const owner = createHuddleComposerOwner(
     session,
     room,
     parent,
-    undefined,
+    {
+      tools: {
+        snapshot: () =>
+          emojiEnabled
+            ? [
+                {
+                  key: "buzz.emoji/picker",
+                  id: "picker",
+                  title: "Emoji",
+                  pluginId: "buzz.emoji",
+                  revision: "bundled",
+                  component: () => null,
+                },
+              ]
+            : [],
+        subscribe: () => () => {},
+      },
+    },
     () => allowed,
     legacy ? () => verified : undefined,
   );
@@ -59,6 +78,9 @@ function harness(legacy = false) {
   };
   return {
     owner,
+    disableEmoji: () => {
+      emojiEnabled = false;
+    },
     verify: (value: boolean) => {
       verified = value;
       owner.refresh();
@@ -169,3 +191,79 @@ it("keeps the legacy composer disabled until parent verification and rechecks be
   );
   expect(h.send).toHaveBeenCalledTimes(1);
 });
+
+it("routes GIF discovery and search through the current room owner and enabled tool", async () => {
+  const supports = vi
+    .spyOn(relayGifRequests, "supports")
+    .mockResolvedValue(true);
+  const search = vi.spyOn(relayGifRequests, "search").mockResolvedValue([]);
+  const h = harness();
+  const { client } = await h.connect();
+  await expect(client.gifs.supports("https://untrusted.test")).resolves.toBe(
+    true,
+  );
+  await expect(
+    client.gifs.search("https://untrusted.test", "hello"),
+  ).resolves.toEqual([]);
+  expect(supports).toHaveBeenCalledWith(
+    "https://example.test",
+    expect.any(AbortSignal),
+  );
+  expect(search).toHaveBeenCalledWith(
+    "https://example.test",
+    "hello",
+    expect.any(AbortSignal),
+  );
+  await expect(
+    client.gifs.search("https://example.test", "x".repeat(257)),
+  ).rejects.toThrow("Invalid GIF search");
+  expect(search).toHaveBeenCalledTimes(1);
+  h.disableEmoji();
+  await expect(client.gifs.supports("https://example.test")).rejects.toThrow(
+    "unavailable",
+  );
+  expect(supports).toHaveBeenCalledTimes(1);
+  h.revoke();
+  await expect(
+    client.gifs.search("https://example.test", "hello"),
+  ).rejects.toThrow("no longer available");
+  expect(search).toHaveBeenCalledTimes(1);
+});
+
+it.each(["cancel", "close"])(
+  "cancels an owner GIF search on client %s and permits recovery",
+  async (action) => {
+    let signal: AbortSignal | undefined;
+    const search = vi
+      .spyOn(relayGifRequests, "search")
+      .mockImplementationOnce((_community, _query, pending) => {
+        signal = pending;
+        return new Promise((_resolve, reject) =>
+          pending?.addEventListener(
+            "abort",
+            () => reject(new Error("Aborted")),
+            { once: true },
+          ),
+        );
+      })
+      .mockResolvedValue([]);
+    const h = harness();
+    const { client } = await h.connect();
+    const controller = new AbortController();
+    const pending = client.gifs.search(
+      "https://example.test",
+      "hello",
+      controller.signal,
+    );
+    const rejected = expect(pending).rejects.toThrow();
+    await vi.waitFor(() => expect(search).toHaveBeenCalledTimes(1));
+    if (action === "cancel") controller.abort();
+    else client.dispose();
+    await rejected;
+    await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+    const next = action === "close" ? (await h.connect()).client : client;
+    await expect(
+      next.gifs.search("https://example.test", "again"),
+    ).resolves.toEqual([]);
+  },
+);

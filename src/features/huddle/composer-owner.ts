@@ -1,3 +1,4 @@
+import { communityFromScope, relayGifRequests } from "../relay/gifs";
 import { readView, writeView } from "../../shared/view-state";
 import type { RelaySession } from "../relay/session";
 import { canAddMembers } from "../channel-members/members";
@@ -122,6 +123,22 @@ export function createHuddleComposerOwner(
     check();
     signal.throwIfAborted();
     switch (request.op) {
+      case "gifSupport":
+      case "gifSearch": {
+        const community = communityFromScope(session.scope);
+        if (
+          !community ||
+          !extensions?.tools
+            .snapshot()
+            .some((tool) => tool.key === "buzz.emoji/picker")
+        )
+          throw new Error("GIF search is unavailable.");
+        if (request.op === "gifSupport")
+          return relayGifRequests.supports(community, signal);
+        if (typeof request.args !== "string" || request.args.length > 256)
+          throw new Error("Invalid GIF search.");
+        return relayGifRequests.search(community, request.args, signal);
+      }
       case "send": {
         check(true);
         const { text, draft, mentions, references, attachments } = request.args;

@@ -22,6 +22,8 @@ export type ComposerSnapshot = {
   completions: readonly string[];
 };
 export type ComposerOperations = {
+  gifSupport: { args: undefined; result: boolean };
+  gifSearch: { args: string; result: import("../relay/gifs").KlipyGif[] };
   send: {
     args: {
       text: string;

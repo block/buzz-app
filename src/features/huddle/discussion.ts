@@ -1,6 +1,6 @@
 import { huddleRoom } from "./lifecycle";
 import type { RelaySession } from "../relay/session";
-import type { Attachment } from "../relay/contracts";
+import type { Attachment, ChannelMessage } from "../relay/contracts";
 import type { Delivery } from "../relay/outbox";
 import { formatPublicKey } from "../../shared/identity/public-key";
 
@@ -29,6 +29,9 @@ export type HuddleDiscussion = {
     delivery: Delivery;
   }[];
 };
+
+const visibleMessages = (rows: readonly ChannelMessage[]) =>
+  rows.filter((row) => !row.membership && !row.huddle);
 
 /** One visible room reader. Delivery, membership and history remain session-owned. */
 export function createHuddleDiscussion(
@@ -126,11 +129,11 @@ export function createHuddleDiscussion(
     snapshot(): HuddleDiscussion {
       const window = session.channels.window(room);
       const profiles = session.profiles.snapshot();
+      const rows = visibleMessages(window.rows);
       return {
         version,
         historyLimited:
-          (window.rows.length >= 200 && window.hasMore) ||
-          window.rows.length > 200,
+          (rows.length >= 200 && window.hasMore) || rows.length > 200,
         status:
           error || window.status === "error"
             ? "error"
@@ -141,37 +144,34 @@ export function createHuddleDiscussion(
         writable: writable(),
         sending,
         sent,
-        hasMore: resolved && window.hasMore && window.rows.length < 200,
-        rows: (available() ? window.rows : [])
-          .slice(-200)
-          .filter((r) => !r.membership && !r.huddle)
-          .map((r) => {
-            const profile = profiles.get(r.authorId);
-            return {
-              id: r.id,
-              authorId: r.authorId,
-              channelId: room,
-              attachments: r.attachments.map((attachment) => ({
-                ...attachment,
-                source: session.media(attachment.url) ?? null,
-                previewSource: attachment.previewUrl
-                  ? (session.media(attachment.previewUrl) ?? null)
-                  : null,
-              })),
-              author: (
-                profile?.name ||
-                formatPublicKey(r.authorId) ||
-                "Participant"
-              ).slice(0, 1000),
-              picture: profile?.picture
-                ? (session.media(profile.picture) ?? null)
+        hasMore: resolved && window.hasMore && rows.length < 200,
+        rows: (available() ? rows : []).slice(-200).map((r) => {
+          const profile = profiles.get(r.authorId);
+          return {
+            id: r.id,
+            authorId: r.authorId,
+            channelId: room,
+            attachments: r.attachments.map((attachment) => ({
+              ...attachment,
+              source: session.media(attachment.url) ?? null,
+              previewSource: attachment.previewUrl
+                ? (session.media(attachment.previewUrl) ?? null)
                 : null,
-              text: r.content.slice(0, 16000),
-              time: r.createdAt,
-              delivery:
-                r.authorId === session.viewer ? (r.delivery ?? "seen") : "seen",
-            };
-          }),
+            })),
+            author: (
+              profile?.name ||
+              formatPublicKey(r.authorId) ||
+              "Participant"
+            ).slice(0, 1000),
+            picture: profile?.picture
+              ? (session.media(profile.picture) ?? null)
+              : null,
+            text: r.content.slice(0, 16000),
+            time: r.createdAt,
+            delivery:
+              r.authorId === session.viewer ? (r.delivery ?? "seen") : "seen",
+          };
+        }),
       };
     },
     async send(text: string) {
@@ -220,7 +220,10 @@ export function createHuddleDiscussion(
       void load();
     },
     older: () => {
-      if (available() && session.channels.window(room).rows.length < 200)
+      if (
+        available() &&
+        visibleMessages(session.channels.window(room).rows).length < 200
+      )
         session.channels.loadOlder(room);
     },
     dispose() {

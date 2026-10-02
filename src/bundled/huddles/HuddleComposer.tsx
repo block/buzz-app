@@ -27,8 +27,12 @@ function ConnectedComposer({
   const keys = JSON.stringify([data?.tools ?? [], data?.completions ?? []]);
   const extensions = useMemo(() => {
     const [tools, completions] = JSON.parse(keys) as [string[], string[]];
-    return huddleComposerExtensions({ tools, completions });
-  }, [keys]);
+    return huddleComposerExtensions({
+      tools,
+      completions,
+      gifRequests: client.gifs,
+    });
+  }, [keys, client]);
   if (error) return <p role="alert">{error}</p>;
   return session && data ? (
     <MessageComposer

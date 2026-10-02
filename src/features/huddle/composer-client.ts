@@ -1,3 +1,4 @@
+import type { GifRequests } from "../relay/gifs";
 import { readView } from "../../shared/view-state";
 import type { ComposerSession } from "../messages/composer-session";
 import { createNameProvider } from "../identity-names/directory";
@@ -282,6 +283,12 @@ export function createHuddleComposerClient(token: string) {
   );
   post({ kind: "hello", client });
   return {
+    gifs: {
+      supports: (_community, signal?: AbortSignal) =>
+        request("gifSupport", undefined, signal),
+      search: (_community, query, signal?: AbortSignal) =>
+        request("gifSearch", query, signal),
+    } satisfies GifRequests,
     subscribe,
     revision: () => revision,
     snapshot: () => ({ session, data, error }),

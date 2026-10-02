@@ -43,6 +43,8 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
     ): Promise<readonly RelayEvent[]> => [],
   );
   const ensure = vi.fn();
+  const loadOlder = vi.fn();
+  let hasMore = true;
   const session = {
     ...owner.session,
     viewer,
@@ -68,6 +70,7 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
       get: () => metadata,
       resolve: async () => {},
       ensure,
+      loadOlder,
       subscribeWindow: (_id: string, fn: () => void) => {
         listeners.add(fn);
         return () => {
@@ -79,7 +82,7 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
         status: "ready" as const,
         rows,
         loadingOlder: false,
-        hasMore: true,
+        hasMore,
         error: undefined,
       }),
     },
@@ -91,6 +94,10 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
     read,
     ensure,
     discussion,
+    loadOlder,
+    hasMore: (value: boolean) => {
+      hasMore = value;
+    },
     send,
     retry,
     dismiss,
@@ -391,6 +398,58 @@ it("preserves sent attachment metadata and resolved media in the window presenta
       "file",
       "image",
     ]);
+  } finally {
+    h.dispose();
+  }
+});
+
+it("counts visible messages before limiting history and keeps older paging available", async () => {
+  const h = harness();
+  const message = (i: number): ChannelMessage => ({
+    id: String(i),
+    channelId: "room",
+    authorId: "ab".repeat(32),
+    createdAt: i,
+    content: "message",
+    mentions: [],
+    attachments: [],
+    reactions: [],
+    participants: [],
+    replyCount: 0,
+  });
+  const notices = Array.from({ length: 200 }, (_, i) => ({
+    ...message(i),
+    membership: {
+      type: "member_joined" as const,
+      actor: "ab".repeat(32),
+      target: "ab".repeat(32),
+    },
+  }));
+  try {
+    await vi.waitFor(() => expect(h.discussion.snapshot().writable).toBe(true));
+    h.rows([...Array.from({ length: 199 }, (_, i) => message(i)), ...notices]);
+    expect(h.discussion.snapshot()).toMatchObject({
+      hasMore: true,
+      historyLimited: false,
+    });
+    expect(h.discussion.snapshot().rows).toHaveLength(199);
+    h.discussion.older();
+    expect(h.loadOlder).toHaveBeenCalledWith("room");
+    h.rows([...Array.from({ length: 201 }, (_, i) => message(i)), ...notices]);
+    expect(h.discussion.snapshot()).toMatchObject({
+      hasMore: false,
+      historyLimited: true,
+    });
+    expect(h.discussion.snapshot().rows).toHaveLength(200);
+    expect(h.discussion.snapshot().rows[0]?.id).toBe("1");
+    h.discussion.older();
+    expect(h.loadOlder).toHaveBeenCalledTimes(1);
+    h.rows([message(0), ...notices]);
+    h.hasMore(false);
+    expect(h.discussion.snapshot()).toMatchObject({
+      hasMore: false,
+      historyLimited: false,
+    });
   } finally {
     h.dispose();
   }

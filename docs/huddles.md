@@ -141,7 +141,9 @@ shadow or a close button. The same chat button closes it. The shared tabs separa
 the full regular rich-text composer, attachments, emoji, and mentions, with Enter
 to send and Shift+Enter for a new line. The detached window sends typed requests
 through a per-room capability to the main app, which retains upload preparation,
-membership checks, signing, and outbox admission. The tabs stay above the scrolling content. Thread uses
+membership checks, signing, and outbox admission. GIF discovery and search also
+run through this owner, using its community and the enabled emoji contribution;
+the companion has no direct relay HTTP permission. The tabs stay above the scrolling content. Thread uses
 the existing relay session for message history, sending, and failed-message
 Retry/Discard. Closing this panel or minimizing the window does not end audio or
 cancel an accepted message delivery. Text drafts survive tab changes and reopening. Attachment drafts survive tab changes,
@@ -159,7 +161,7 @@ Start/end events appear as cards in the parent conversation. Active cards show
 elapsed time beside the same avatar stack as the compact player, and one action:
 Join (or Open for your current call) while active, then View after ending. View
 opens the saved Huddle conversation in a side panel. Archived rooms remain
-read-only. The display is bounded to the latest 200 messages and says when history
+read-only. The display is bounded to the latest 200 visible messages (excluding membership and Huddle notices) and says when history
 is limited; it does not delete earlier messages.
 
 New rooms carry a parent marker in their relay-owned metadata. Marked rooms stay

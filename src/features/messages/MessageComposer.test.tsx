@@ -2979,6 +2979,39 @@ it("sends someone outside a DM as a reference without asking", async () => {
   expect(add).not.toHaveBeenCalled();
 });
 
+it("does not ask about outside recipients in a session media-comment composer", async () => {
+  // Media comments mount the composer with a thread root but without session
+  // mode, so the session rule must come from the channel type.
+  const h = mount({ threadRootId: "f".repeat(64) });
+  const add = vi.fn();
+  const channel = {
+    id: "channel",
+    channelType: "session",
+    members: [first.pubkey, second.pubkey],
+  };
+  const list = { status: "ready", channels: [channel] };
+  Object.assign(h.session, {
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add },
+    outbox: { ...h.session.outbox, supports: () => true },
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(second);
+  });
+  // The first person leaves the session after being named.
+  channel.members = [second.pubkey];
+  fireEvent.submit(screen.getByRole("form"));
+  await act(async () => {});
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(h.messages.reply).toHaveBeenCalledOnce();
+  expect(h.messages.reply.mock.calls[0]?.[3]).toEqual([
+    first.pubkey,
+    second.pubkey,
+  ]);
+  expect(add).not.toHaveBeenCalled();
+});
+
 for (const channelType of ["stream", "forum"] as const)
   it.each([undefined, "f".repeat(64)])(
     `keeps mixed nonmember mentions as references after Send anyway in ${channelType}, root=%s`,

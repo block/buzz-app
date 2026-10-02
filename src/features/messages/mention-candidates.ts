@@ -15,6 +15,18 @@ export function archivedMention(session: RelaySession, pubkey: string) {
   );
 }
 
+/**
+ * Whether a destination can name people outside it from the community
+ * directory. A session cannot: its mentions admit agents through the session
+ * choice policy. This follows the channel type, not composer props, because
+ * some session composers (media comments, edits) do not carry session mode.
+ */
+export function allowsOutsideMentions(
+  channel: Pick<ChannelSummary, "channelType"> | undefined,
+) {
+  return !!channel && channel.channelType !== "session";
+}
+
 /** Row detail for an outside choice. Nobody can be added to a DM. */
 export function outsideMentionDetail(
   channel: Pick<ChannelSummary, "channelType"> | undefined,
@@ -55,9 +67,7 @@ export function mentionCandidates(
             session.outbox?.supports(9000),
           )))
       choices.set(person.pubkey, { pubkey: person.pubkey, name: person.name });
-    // Every known destination can name outside people. Sessions pass
-    // inviteAgents: their mentions admit agents, so they use the agent list.
-    if (channel && !roster && !inviteAgents)
+    if (!roster && !inviteAgents && allowsOutsideMentions(channel))
       for (const person of directory) choices.set(person.pubkey, person);
     for (const pubkey of members)
       choices.set(pubkey, {

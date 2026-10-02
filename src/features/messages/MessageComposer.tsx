@@ -6,6 +6,7 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { SelectedMentionContext } from "./selected-mention-context";
 import { DraftMentionRoster } from "./draft-mention-roster";
 import {
+  allowsOutsideMentions,
   archivedMention,
   mentionCandidates,
   rememberMention,
@@ -641,7 +642,7 @@ function Composer({
         const channel = session.channels
           .list()
           .channels.find((item) => item.id === channelId);
-        if (channel?.members) {
+        if (channel?.members && allowsOutsideMentions(channel)) {
           const missing = captured.recipients.filter(
             (person) => !channel.members?.includes(person.pubkey),
           );

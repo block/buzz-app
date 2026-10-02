@@ -266,9 +266,14 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(dot(first)).toHaveCount(0);
   await expect(dot(other)).toBeVisible();
   await expect(other).toHaveAccessibleName(/Observed unread replies/); // No channel-wide shortcut.
+  // The close transition owns channel width; unread receipt does not mean its
+  // resulting Virtua remeasurement and native scrolling have finished.
   await page
     .getByRole("button", { name: "Close Thread tab", exact: true })
     .click();
+  await expect(
+    page.locator('[data-panel-dock][data-closing="true"]'),
+  ).toHaveCount(0);
   const own = app.reply(roots[0].id, true);
   // Barrier: the session has indexed the reply, so its unread effect is final.
   await expect
@@ -283,7 +288,28 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(first).toHaveAccessibleName("View thread: 23 replies");
   app.reply(roots[0].id);
   await expect(first).toHaveAccessibleName(/Observed unread replies/);
+  await virtuaIdle(page);
+  // Remeasurement while geometry settles may start another native scroll.
+  await expect(page.locator("[data-channel-timeline] ol")).toHaveCSS(
+    "pointer-events",
+    "auto",
+  );
+  const reopenAttempt = await page.evaluate(
+    () => window.fixtureNavigation.snapshot().attempt.id,
+  );
   await first.click();
+  await expect
+    .poll(() =>
+      page.evaluate((before) => {
+        const { status, entry, attempt } = window.fixtureNavigation.snapshot();
+        return {
+          status,
+          freshAttempt: attempt.id !== before,
+          messageId: entry.target.messageId,
+        };
+      }, reopenAttempt),
+    )
+    .toEqual({ status: "opened", freshAttempt: true, messageId: roots[0].id });
   await expect(
     panel.getByText("New peer reply", { exact: true }),
   ).toBeVisible();

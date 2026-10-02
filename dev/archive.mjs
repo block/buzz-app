@@ -83,7 +83,11 @@ export function openArchive(path = archivePath()) {
       "DELETE FROM archive_events WHERE seq IN (SELECT e.seq FROM archive_events e JOIN archive_subscriptions s ON s.viewer=e.viewer AND s.community=e.community AND s.name=e.subscription WHERE e.created <= ?-s.days*86400)",
       Math.floor(Date.now() / 1000),
     );
-    db.exec("PRAGMA incremental_vacuum(64)");
+    try {
+      db.exec("PRAGMA incremental_vacuum(64)");
+    } catch {
+      /* Expiry committed; optional maintenance retries on the next prune. */
+    }
     lastPrune = Date.now();
   };
   const settings = (viewer, community) => {
@@ -171,7 +175,9 @@ export function openArchive(path = archivePath()) {
           });
           // Deletion committed; maintenance must not report a false clear failure.
           try {
-            db.exec("PRAGMA incremental_vacuum");
+            db.exec(
+              "PRAGMA incremental_vacuum; PRAGMA wal_checkpoint(TRUNCATE)",
+            );
           } catch {
             /* prune retries maintenance */
           }

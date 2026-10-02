@@ -120,7 +120,7 @@ impl Store {
         }
         // Across inactive partitions too. Indexed expiry, enforced on every host operation.
         database(self.0.execute("DELETE FROM archive_events WHERE seq IN (SELECT e.seq FROM archive_events e JOIN archive_subscriptions s ON s.viewer=e.viewer AND s.community=e.community AND s.name=e.subscription WHERE e.created <= ?1-s.days*86400)",[now]))?;
-        self.vacuum(64)?;
+        let _ = self.vacuum(64);
         self.1 = now;
         Ok(())
     }
@@ -181,6 +181,9 @@ impl Store {
         // The delete has committed. Optional space reclamation cannot undo it
         // or truthfully turn this into a failed clear; prune will retry vacuum.
         let _ = self.vacuum(0);
+        // Move the shrunken database out of WAL before returning; an active
+        // reader may defer this, so reclamation cannot decide delete success.
+        let _ = self.0.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
         Ok(())
     }
     pub(super) fn agents(&self, viewer: &str, community: &str, kind: u16) -> Result<Vec<String>> {

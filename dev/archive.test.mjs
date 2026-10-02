@@ -1,5 +1,11 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -222,8 +228,13 @@ test("clear reclaims every free page from a multi-megabyte archive", () => {
     db = new DatabaseSync(file);
   for (let i = 0; i < 200; i++) h.ingest(event(i));
   // Inflate synthetic stored envelopes without weakening real ingest validation.
-  db.exec("UPDATE archive_events SET envelope=zeroblob(16000)");
+  db.exec(
+    "UPDATE archive_events SET envelope=zeroblob(16000); PRAGMA wal_checkpoint(TRUNCATE)",
+  );
+  const before = statSync(file).size;
   h.request({ action: "clear", kind: 24200 });
+  expect(statSync(file).size).toBeLessThan(before);
+  expect(statSync(`${file}-wal`).size).toBe(0);
   expect(db.prepare("PRAGMA freelist_count").get().freelist_count).toBe(0);
   expect(h.settings().bytes).toBe(0);
   db.close();

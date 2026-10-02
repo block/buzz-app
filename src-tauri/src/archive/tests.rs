@@ -381,8 +381,13 @@ fn quota_evicts_oldest_of_noisy_agent_before_other_agents_and_clear_reclaims_dis
     db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
     let before = std::fs::metadata(&path).unwrap().len();
     store.clear(&viewer, community, Some(24200)).unwrap();
-    db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
     assert!(std::fs::metadata(&path).unwrap().len() < before);
+    assert_eq!(
+        std::fs::metadata(path.with_extension("sqlite3-wal"))
+            .unwrap()
+            .len(),
+        0
+    );
     assert_eq!(store.settings(&viewer, community).unwrap()["bytes"], 0);
     let free: i64 = db
         .query_row("PRAGMA freelist_count", [], |r| r.get(0))

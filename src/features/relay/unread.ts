@@ -185,16 +185,24 @@ export function createUnread({
       const key = target && contextKey(target);
       return key !== demand.key ? [{ demand, target, key }] : [];
     });
-    if (changed.length) releaseInbox();
     // Release the whole changed set first: shared selectors must not temporarily
     // occupy both their old and new contexts at the retained-demand bound.
     for (const { demand } of changed) releaseDemand(demand);
     for (const { demand, target, key } of changed) {
-      if (target)
-        demand.lease = state.retain({
-          target,
-          message_ids: [demand.target.messageId],
-        });
+      if (target) {
+        const query = { target, message_ids: [demand.target.messageId] };
+        try {
+          demand.lease = state.retain(query);
+        } catch (error) {
+          if (
+            !(error instanceof Error) ||
+            error.message !== "Read context capacity reached"
+          )
+            throw error;
+          releaseInbox();
+          demand.lease = state.retain(query);
+        }
+      }
       demand.key = key;
     }
     reconcileInbox();

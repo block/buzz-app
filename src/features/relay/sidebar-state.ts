@@ -571,7 +571,6 @@ export function createSidebarState({
     attentionAbsent(channelId: string) {
       const row = allowed(channelId) ? rows.get(channelId) : undefined;
       return (
-        sync.status === "ready" &&
         !invalidated.has(channelId) &&
         !liveHints.get(channelId)?.unread &&
         row?.attention.status === "exact" &&

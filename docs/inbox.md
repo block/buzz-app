@@ -22,12 +22,15 @@ kinds follow the relay-advertised set (v1 currently 9, 40002, 45001, 45003, not
 40008). The relay's 30-day retention window governs verdicts; the client does not
 reconstruct its cutoff.
 
-Before folding, channels with proven-current exact-zero relay attention and no
-unread live hint contribute no candidates; queued, in-flight, failed or newer
-mid-request invalidations cannot prove absence, nor can a stale/error owner.
+Before folding, channels with exact-zero relay attention and no unread live hint
+contribute no candidates when their row request started after their last cache
+admission/invalidation. Queued, in-flight, failed or newer mid-request invalidations
+remain unproven. Refreshing, stale or error status alone does not revoke a row's
+proof or its leases; owner status still determines snapshot freshness.
 `subscribeInbox()` retains at most 100 candidate selectors while subscribed.
 Notification/message subscriptions have priority under the existing shared
-1,000-selector/context-lease bounds. Disposal releases Inbox demand. Reading
+1,000-selector/context-lease bounds, displacing Inbox leases only when admission
+would otherwise exceed capacity. Disposal releases Inbox demand. Reading
 `inbox()` never starts a request. Existing sidebar refresh, invalidation and
 lifecycle scheduling supply context answers; there is no new timer.
 

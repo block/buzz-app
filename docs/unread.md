@@ -291,13 +291,14 @@ Candidates use the advertised eligible kinds and relay retention window
 (current v1: 9/40002/45001/45003 and 30 days; 40008 is not counted).
 Read rows disappear. Counts and resume anchors describe the observed subset.
 
-Inbox subscriptions retain at most 100 selectors, yielding to notifications
-under the existing 1,000 shared bound. Missing/unknown/over-capacity answers stay
-visibly unresolved, never read/zero, without an error. Unavailable answers and
+Inbox subscriptions retain at most 100 selectors, yielding to notifications only
+when admission would exceed the existing 1,000 shared bound. Missing, unknown and
+over-capacity answers stay visibly unresolved, never read/zero, without an error. Unavailable answers and
 unaskable ancestry are skipped. Context failure is error/stale. Only proven-current
 exact-zero sidebar attention without an unread hint excludes a channel before
-folding; known outstanding invalidations prevent that proof. The shared
-fold and feed's pre-admission incomplete metadata preserve preview closure.
+folding; known outstanding invalidations prevent that proof, but a refresh or
+owner status change alone does not. Owner status controls snapshot freshness. The
+shared fold and feed's pre-admission incomplete metadata preserve preview closure.
 
 Inbox `readThrough` is thread-prefix-only, anchored on its newest admitted
 reply, never its root. An empty non-DM `readThrough` means no Inbox read action:

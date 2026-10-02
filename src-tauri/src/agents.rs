@@ -207,6 +207,11 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
                     value: "openai",
                     label: "OpenAI",
                 },
+                #[cfg(feature = "mesh")]
+                ProviderOption {
+                    value: "relay-mesh",
+                    label: "Shared compute",
+                },
             ][usize::from(cfg!(windows))..],
         },
         HarnessOption {
@@ -473,18 +478,25 @@ pub(crate) struct AgentHost(
     Arc<Mutex<Result<Host, String>>>,
     Arc<AtomicBool>,
     Arc<tokio::sync::Mutex<()>>,
+    Option<tauri::AppHandle>,
 );
 impl AgentHost {
     pub(crate) fn initialize(
         paths: Result<(PathBuf, PathBuf, PathBuf), String>,
         resources: Result<PathBuf, String>,
+        app: tauri::AppHandle,
     ) -> Self {
         let state = Arc::new(Mutex::new(Err(
             "Agent runtime is initializing; retry shortly".into(),
         )));
         let closed = Arc::new(AtomicBool::new(false));
         let admission = Arc::new(tokio::sync::Mutex::new(()));
-        let owner = Self(state.clone(), closed.clone(), admission.clone());
+        let owner = Self(
+            state.clone(),
+            closed.clone(),
+            admission.clone(),
+            Some(app.clone()),
+        );
         tauri::async_runtime::spawn(async move {
             let opened = tauri::async_runtime::spawn_blocking(move || {
                 let bundle = resources.and_then(RuntimeBundle::new);
@@ -506,7 +518,7 @@ impl AgentHost {
             if let Ok(mut state) = state.lock() {
                 *state = opened;
             }
-            Self(state, closed, admission).restore().await;
+            Self(state, closed, admission, Some(app)).restore().await;
         });
         owner
     }
@@ -1022,6 +1034,7 @@ async fn start_guarded(
             host.controller.record_error(&id, error.clone());
             return Err(error);
         }
+        let mesh_request = host.controller.mesh_request(&id)?;
         host.next_start = host
             .next_start
             .checked_add(1)
@@ -1037,10 +1050,10 @@ async fn start_guarded(
                 replay_floor,
             },
         );
-        Ok((request, ticket, host.credentials.clone()))
+        Ok((request, ticket, host.credentials.clone(), mesh_request))
     })
     .await?;
-    let ((credential, pubkey, revision, _workspace), ticket, credentials) = prepared;
+    let ((credential, pubkey, revision, _workspace), ticket, credentials, mesh_request) = prepared;
     // OS permission prompts never hold the controller. Stop/quit invalidate the
     // ticket while the OS owns its dialog; a late key cannot start a listener.
     let acquired = tauri::async_runtime::spawn_blocking(move || {
@@ -1066,6 +1079,19 @@ async fn start_guarded(
         })
         .await?;
     }
+    let mesh = if acquired.is_ok() {
+        match mesh_request {
+            Some(request) => match owner.3.as_ref() {
+                Some(app) => crate::mesh_compute::prepare_agent(app, request)
+                    .await
+                    .map(Some),
+                None => Err("Shared compute native host is unavailable".into()),
+            },
+            None => Ok(None),
+        }
+    } else {
+        Ok(None)
+    };
     run(owner, move |host| {
         let replay_floor = host.take_start(&id, ticket)?.replay_floor;
         let key = match acquired {
@@ -1082,10 +1108,29 @@ async fn start_guarded(
         // The OS credential prompt can outlast the agent (e.g. its listener
         // exited); eligibility must still hold right before Restart enables it.
         check_guard(host, &id, guard)?;
-        if let Err(error) =
-            host.controller
-                .action_with_key(&id, action, revision, &key, replay_floor)
-        {
+        let launch = match mesh {
+            Ok(launch) => launch,
+            Err(error) => {
+                host.controller.record_error(&id, error);
+                return host.snapshot();
+            }
+        };
+        let result = match launch {
+            Some(launch) => launch.with_current(|config| {
+                host.controller.action_with_mesh(
+                    &id,
+                    action,
+                    revision,
+                    &key,
+                    replay_floor,
+                    Some(config),
+                )
+            }),
+            None => host
+                .controller
+                .action_with_key(&id, action, revision, &key, replay_floor),
+        };
+        if let Err(error) = result {
             host.controller.record_error(&id, error);
         }
         host.snapshot()

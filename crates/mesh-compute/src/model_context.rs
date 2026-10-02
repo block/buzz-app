@@ -9,16 +9,17 @@ pub fn resolve(catalog: &Value, selected: &str) -> Result<(String, u64), String>
         .ok_or("Invalid Mesh model catalog")?;
     let auto = matches!(selected.trim(), "" | "auto" | "mesh");
     let id = if auto { "mesh" } else { selected.trim() };
-    let model = models
-        .iter()
-        .find(|model| model["id"].as_str() == Some(id))
-        .ok_or("Selected model is not advertised by the running Mesh node")?;
+    let model = models.iter().find(|model| model["id"].as_str() == Some(id));
+    if !auto && model.is_none() {
+        return Err("Selected model is not advertised by the running Mesh node".into());
+    }
     let context = |model: &Value| {
         model["metadata"]["context_length"]
             .as_u64()
             .filter(|n| *n > 0)
     };
-    let limit = context(model)
+    let limit = model
+        .and_then(context)
         .or_else(|| {
             auto.then(|| {
                 models
@@ -56,10 +57,14 @@ mod tests {
         )
         .is_err());
         assert!(resolve(&json!({}), "auto").is_err());
-        assert!(resolve(
-            &json!({"data":[{"id":"a","metadata":{"context_length":4096}}]}),
-            "auto"
-        )
-        .is_err());
+        // Mainline accepts the virtual route with just one concrete model.
+        assert_eq!(
+            resolve(
+                &json!({"data":[{"id":"a","metadata":{"context_length":4096}}]}),
+                "auto"
+            )
+            .unwrap(),
+            ("mesh".into(), 4096)
+        );
     }
 }

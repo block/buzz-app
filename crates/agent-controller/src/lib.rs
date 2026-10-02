@@ -38,4 +38,4 @@ pub use store::{ParkedIdentity, Store};
 type Result<T> = std::result::Result<T, String>;
 
 mod mesh;
-pub use mesh::MeshLaunch;
+pub use mesh::{MeshLaunch, MeshRequest};

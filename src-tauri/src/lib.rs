@@ -508,7 +508,11 @@ pub fn run() {
                 .resource_dir()
                 .map(|root| root.join("agent-runtime"))
                 .map_err(|_| "Could not resolve app runtime resources".to_owned());
-            app.manage(AgentHost::initialize(paths, resources));
+            app.manage(AgentHost::initialize(
+                paths,
+                resources,
+                app.handle().clone(),
+            ));
             Ok(())
         });
     #[cfg(target_os = "macos")]

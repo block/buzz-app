@@ -1,5 +1,7 @@
 //! App-owned Mesh lifetime. Plugins cannot supply keystore paths or admission policy.
 
+mod agent;
+pub(crate) use agent::prepare_agent;
 #[cfg(feature = "mesh")]
 mod discovery;
 #[cfg(feature = "mesh")]
@@ -77,16 +79,34 @@ pub async fn mesh_compute_start(
     identity: tauri::State<'_, crate::identity::IdentityHost>,
     lease: String,
 ) -> Result<(), String> {
-    let _guard = host
-        .preparing
-        .try_lock()
-        .map_err(|_| "Mesh start is already preparing")?;
+    start(host.inner(), identity.inner(), &lease).await
+}
+
+#[cfg(feature = "mesh")]
+async fn start(
+    host: &MeshHost,
+    identity: &crate::identity::IdentityHost,
+    lease: &str,
+) -> Result<(), String> {
+    let _guard = host.preparing.lock().await;
+    host.lease.community(lease)?;
+    if matches!(
+        host.lifecycle.phase(),
+        buzz_mesh_compute::lifecycle::Phase::Starting | buzz_mesh_compute::lifecycle::Phase::Ready
+    ) {
+        return Ok(());
+    }
     if host.lifecycle.phase() != buzz_mesh_compute::lifecycle::Phase::Stopped {
         return Err("Previous Mesh runtime shutdown is not confirmed".into());
     }
-    let community = host.lease.community(&lease)?;
-    let (mut owners, targets) = discovery::read(identity.inner(), &community).await?;
-    host.lease.with_current(&lease, |_| {
+    let community = host.lease.community(lease)?;
+    let (mut owners, targets) = discovery::read(identity, &community).await?;
+    if targets.is_empty() {
+        return Err(
+            "No live community member is sharing compute; start serving on a member first".into(),
+        );
+    }
+    host.lease.with_current(lease, |_| {
         let path = mesh_owner_path()?;
         let owner = buzz_mesh_compute::identity::ensure_owner_at(&path)
             .map_err(|error| error.to_string())?;

@@ -4,6 +4,15 @@ use std::sync::Mutex;
 #[derive(Default)]
 pub(super) struct Lease(Mutex<Option<(String, String)>>);
 impl Lease {
+    pub fn for_community(&self, community: &str) -> Result<String, String> {
+        let current = self.0.lock().map_err(|_| "Mesh selection unavailable")?;
+        current
+            .as_ref()
+            .filter(|(_, selected)| selected == community)
+            .map(|(id, _)| id.clone())
+            .ok_or_else(|| "Enable Shared compute in the agent’s community first".into())
+    }
+
     #[cfg(test)]
     pub fn select(&self, community: String) -> Result<String, String> {
         self.select_with(community, || {})
@@ -104,5 +113,27 @@ mod tests {
         assert_ne!(old, new);
         assert!(!lease.revoke(&old).unwrap());
         assert!(lease.community(&new).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod agent_selection_tests {
+    use super::*;
+    #[test]
+    fn agent_can_only_use_the_current_plugin_selection() {
+        let lease = Lease::default();
+        assert!(lease.for_community("https://one.example").is_err());
+        let selected = lease.select("https://one.example".into()).unwrap();
+        assert_eq!(
+            lease.for_community("https://one.example").unwrap(),
+            selected
+        );
+        assert!(lease.for_community("https://two.example").is_err());
+        lease.revoke(&selected).unwrap();
+        assert!(lease
+            .with_current(&selected, |_| -> Result<(), String> {
+                panic!("revoked selection cannot spawn")
+            })
+            .is_err());
     }
 }

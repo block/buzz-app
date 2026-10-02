@@ -1,6 +1,35 @@
 //! Native-only endpoint configuration for one saved Mesh agent start. Never persisted.
 use crate::{config::Agent, Result};
 
+/// Effective saved selectors for the native readiness check; contains no secrets.
+pub struct MeshRequest {
+    pub agent_id: String,
+    pub revision: u64,
+    pub relay: String,
+    pub model: String,
+}
+
+impl crate::Controller {
+    /// Resolve the same defaults and environment used at launch.
+    pub fn mesh_request(&self, id: &str) -> Result<Option<MeshRequest>> {
+        let agent = self.mesh_agent(id)?;
+        if agent.harness.provider != "relay-mesh" {
+            return Ok(None);
+        }
+        if agent.harness.command != "buzz-agent"
+            || !agent.imported["record"]["relay_mesh"].is_null()
+        {
+            return Err("Shared compute supports the local Buzz Agent harness".into());
+        }
+        Ok(Some(MeshRequest {
+            agent_id: agent.id,
+            revision: agent.revision,
+            relay: agent.relay_url,
+            model: agent.harness.model,
+        }))
+    }
+}
+
 /// Prepared after node readiness; the app, not an agent process, owns the node.
 pub struct MeshLaunch {
     agent_id: String,
@@ -36,6 +65,8 @@ impl MeshLaunch {
     }
 
     pub(crate) fn apply(&self, agent: &Agent) -> Result<Agent> {
+        let mut agent = agent.clone();
+        agent.harness = crate::build_defaults().resolve(&agent.harness, &agent.environment);
         if agent.id != self.agent_id
             || agent.revision != self.revision
             || agent.relay_url != self.relay

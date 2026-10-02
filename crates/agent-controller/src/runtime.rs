@@ -736,6 +736,17 @@ impl Controller {
         }
         self.snapshot()
     }
+    pub(crate) fn mesh_agent(&self, id: &str) -> Result<Agent> {
+        let agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|a| a.id == id)
+            .ok_or("Agent no longer exists")?;
+        let mut agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);
+        agent.harness = crate::build_defaults().resolve(&agent.harness, &agent.environment);
+        Ok(agent)
+    }
     pub fn credential_request(&self, id: &str) -> Result<(String, String, u64, Option<String>)> {
         let agent = self
             .store

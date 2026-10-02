@@ -37,6 +37,7 @@ impl AgentHost {
             }))),
             Arc::new(AtomicBool::new(false)),
             Arc::new(tokio::sync::Mutex::new(())),
+            None,
         )
     }
 }
@@ -423,11 +424,17 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(before["createAvailable"], true);
     // Windows omits Databricks, whose sign-in it refuses; Unix lists it first.
     let openai = json!({"value":"openai", "label":"OpenAI"});
-    let providers = if cfg!(windows) {
+    let mut providers = if cfg!(windows) {
         json!([openai])
     } else {
         json!([{"value":"databricks_v2", "label":"Databricks v2"}, openai])
     };
+    if cfg!(feature = "mesh") {
+        providers
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"value":"relay-mesh", "label":"Shared compute"}));
+    }
     assert_eq!(
         before["harnessOptions"][0],
         json!({

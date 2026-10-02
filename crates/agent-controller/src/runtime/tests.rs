@@ -2617,3 +2617,48 @@ fn mesh_output_budget_is_runtime_only_and_explicit_invalid_values_fail() {
         assert!(grant.apply(&saved).is_err());
     }
 }
+
+#[test]
+fn mesh_preflight_and_launch_resolve_the_same_environment_without_persistence() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut saved = agent(dir.path());
+    saved
+        .environment
+        .insert("BUZZ_AGENT_PROVIDER".into(), "relay-mesh".into());
+    saved
+        .environment
+        .insert("BUZZ_AGENT_MODEL".into(), "auto".into());
+    let root = dir.path().join("config");
+    let mut store = Store::open(root.clone()).unwrap();
+    store.insert(vec![saved.clone()]).unwrap();
+    let before = fs::read(root.join("agents.json")).unwrap();
+    let controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("fixture".into()),
+        dir.path().join("ownership"),
+    );
+    let request = controller.mesh_request(&saved.id).unwrap().unwrap();
+    assert_eq!(request.model, "auto");
+    assert_eq!(request.relay, saved.relay_url);
+    let config = crate::MeshLaunch::new(
+        request.agent_id,
+        request.revision,
+        request.relay,
+        "mesh".into(),
+        (19337, 65536),
+    )
+    .unwrap();
+    let runtime = config.apply(&saved).unwrap();
+    assert_eq!(runtime.harness.model, "mesh");
+    assert_eq!(runtime.environment["BUZZ_AGENT_PROVIDER"], "openai");
+    assert_eq!(
+        runtime.environment["OPENAI_COMPAT_BASE_URL"],
+        "http://127.0.0.1:19337/v1"
+    );
+    assert_eq!(fs::read(root.join("agents.json")).unwrap(), before);
+    saved
+        .environment
+        .insert("BUZZ_AGENT_PROVIDER".into(), "openai".into());
+    assert!(config.apply(&saved).is_err());
+}

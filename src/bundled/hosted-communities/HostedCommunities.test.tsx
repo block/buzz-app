@@ -1734,9 +1734,7 @@ it("explains when another context cleared the blocked slot before final confirma
   expect(stored.owner_pubkey).toBe(local);
   expect(deletionPosts()[0]?.[1]).toEqual(stored.request);
   await act(async () =>
-    admission.release(
-      Response.json(accepted(stored.request), { status: 202 }),
-    ),
+    admission.release(Response.json(accepted(stored.request), { status: 202 })),
   );
   expect(await screen.findByText("Deletion started")).toBeVisible();
   expect(deletionPosts()).toHaveLength(1);

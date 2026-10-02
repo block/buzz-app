@@ -35,6 +35,8 @@ import {
 } from "../../features/relay/testing";
 // @ts-expect-error Node host codec, with disposable test identities only.
 import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+// @ts-expect-error Node-only host module
+import { createLocalSigningDelegate } from "../../../dev/signing-delegate.mjs";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
 composerDOMFixture();
@@ -311,7 +313,14 @@ function fixture(
                 : {
                     sign: async (
                       intent: import("../../features/relay/read-state-host").ReadStateSigning,
-                    ) => signReadState(intent, viewer.secret),
+                      signal: AbortSignal,
+                    ) =>
+                      signReadState(
+                        intent,
+                        viewer.secret,
+                        createLocalSigningDelegate(viewer.secret),
+                        signal,
+                      ),
                     publish: async (event: RelayEvent) => {
                       events.push(event);
                     },

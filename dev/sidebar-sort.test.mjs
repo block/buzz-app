@@ -1,3 +1,4 @@
+import { createLocalSigningDelegate } from "./signing-delegate.mjs";
 import { expect, it, vi } from "vitest";
 import {
   finalizeEvent,
@@ -33,7 +34,7 @@ function harness() {
   };
 }
 const intent = { group: "section:work", mode: "recent", sectionIds: ["work"] };
-it("mutates only the selected register, imports recognized legacy modes, and encodes alpha as a tombstone", () => {
+it("mutates only the selected register, imports recognized legacy modes, and encodes alpha as a tombstone", async () => {
   const h = harness();
   const blob = {
     version: 1,
@@ -44,7 +45,14 @@ it("mutates only the selected register, imports recognized legacy modes, and enc
       future: "next-mode",
     },
   };
-  const draft = prepareSidebarSort([h.encrypt(blob)], intent, h.secret, 50_000);
+  const draft = await prepareSidebarSort(
+    [h.encrypt(blob)],
+    intent,
+    h.secret,
+    createLocalSigningDelegate(h.secret),
+    undefined,
+    50_000,
+  );
   expect(verifyEvent(draft.event)).toBe(true);
   expect(draft.event.created_at).toBe(101);
   const saved = h.decode(draft.event);
@@ -68,10 +76,12 @@ it("mutates only the selected register, imports recognized legacy modes, and enc
     channels: "recent",
     "section:work": "recent",
   });
-  const alpha = prepareSidebarSort(
+  const alpha = await prepareSidebarSort(
     [draft.event],
     { ...intent, mode: "alpha" },
     h.secret,
+    createLocalSigningDelegate(h.secret),
+    undefined,
     50_000,
   );
   const reset = h.decode(alpha.event);
@@ -87,8 +97,15 @@ it("mutates only the selected register, imports recognized legacy modes, and enc
   expect(reset.meta.g.channels).toEqual(saved.meta.g.channels);
   expect(alpha.event.created_at).toBe(102);
   expect(
-    prepareSidebarSort([alpha.event], { ...intent, mode: "alpha" }, h.secret)
-      .event,
+    (
+      await prepareSidebarSort(
+        [alpha.event],
+        { ...intent, mode: "alpha" },
+        h.secret,
+        createLocalSigningDelegate(h.secret),
+        undefined,
+      )
+    ).event,
   ).toBeUndefined();
 });
 it("rejects invalid intent before reading, and ambiguous/untrusted/invalid heads before publishing", async () => {
@@ -105,7 +122,14 @@ it("rejects invalid intent before reading, and ambiguous/untrusted/invalid heads
     { ...intent, extra: 1 },
   ]) {
     await expect(
-      mutateSidebarSort(invalid, h.secret, read, publish),
+      mutateSidebarSort(
+        invalid,
+        h.secret,
+        createLocalSigningDelegate(h.secret),
+        undefined,
+        read,
+        publish,
+      ),
     ).rejects.toThrow();
   }
   expect(read).not.toHaveBeenCalled();
@@ -121,7 +145,14 @@ it("rejects invalid intent before reading, and ambiguous/untrusted/invalid heads
     [h.encrypt({ version: 1, groups: {} }, { content: "not encrypted" })],
   ]) {
     await expect(
-      mutateSidebarSort(intent, h.secret, async () => heads, publish),
+      mutateSidebarSort(
+        intent,
+        h.secret,
+        createLocalSigningDelegate(h.secret),
+        undefined,
+        async () => heads,
+        publish,
+      ),
     ).rejects.toThrow();
   }
   expect(publish).not.toHaveBeenCalled();
@@ -138,21 +169,46 @@ it("confirms newer unrelated choices, rejects a replaced intent, and never seeds
       }),
     ];
   });
-  expect(await mutateSidebarSort(intent, h.secret, read, publish)).toEqual({
+  expect(
+    await mutateSidebarSort(
+      intent,
+      h.secret,
+      createLocalSigningDelegate(h.secret),
+      undefined,
+      read,
+      publish,
+    ),
+  ).toEqual({
     "section:work": "recent",
     forums: "recent",
   });
   expect(read).toHaveBeenCalledTimes(2);
-  await mutateSidebarSort(intent, h.secret, read, publish);
+  await mutateSidebarSort(
+    intent,
+    h.secret,
+    createLocalSigningDelegate(h.secret),
+    undefined,
+    read,
+    publish,
+  );
   expect(publish).toHaveBeenCalledOnce();
   heads = [];
   await expect(
-    mutateSidebarSort(intent, h.secret, read, async () => {}),
+    mutateSidebarSort(
+      intent,
+      h.secret,
+      createLocalSigningDelegate(h.secret),
+      undefined,
+      read,
+      async () => {},
+    ),
   ).rejects.toThrow("changed on another device");
   await expect(
     mutateSidebarSort(
       intent,
       h.secret,
+      createLocalSigningDelegate(h.secret),
+      undefined,
       async () => {
         throw new Error("offline");
       },
@@ -175,6 +231,8 @@ it("whole-blob LWW can lose an intervening other-section save while both mutatio
     const result = await mutateSidebarSort(
       { ...intent, group: "channels" },
       h.secret,
+      createLocalSigningDelegate(h.secret),
+      undefined,
       read,
       async (event) => {
         // Device B saves and confirms after A's read but before A publishes.
@@ -184,6 +242,8 @@ it("whole-blob LWW can lose an intervening other-section save while both mutatio
           mutateSidebarSort(
             { ...intent, group: "forums" },
             h.secret,
+            createLocalSigningDelegate(h.secret),
+            undefined,
             read,
             publish,
           ),
@@ -205,7 +265,7 @@ it("whole-blob LWW can lose an intervening other-section save while both mutatio
     clock.mockRestore();
   }
 });
-it("projection accepts full-length section keys, rejects over-budget data, and ignores unknown keys/modes", () => {
+it("projection accepts full-length section keys, rejects over-budget data, and ignores unknown keys/modes", async () => {
   const id = "x".repeat(256);
   expect(
     projectSidebarPreferences(
@@ -245,6 +305,8 @@ it("edits the authoritative metadata, preserves tombstones and confirms projecte
   const result = await mutateSidebarSort(
     { group: "channels", mode: "recent", sectionIds: [] },
     h.secret,
+    createLocalSigningDelegate(h.secret),
+    undefined,
     async () => [head],
     async (event) => {
       head = event;
@@ -262,6 +324,8 @@ it("edits the authoritative metadata, preserves tombstones and confirms projecte
     mutateSidebarSort(
       intent,
       h.secret,
+      createLocalSigningDelegate(h.secret),
+      undefined,
       async () => [h.encrypt({ version: 1, groups: {}, meta: { v: 2 } })],
       publish,
     ),

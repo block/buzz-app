@@ -10,6 +10,7 @@ import {
 import { SIDEBAR_HEAD_BYTES } from "./sidebar-preferences.mjs";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 import { prepareSidebarStar } from "./sidebar-stars.mjs";
+import { createLocalSigningDelegate } from "./signing-delegate.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 
@@ -117,7 +118,14 @@ it("real broker Star roundtrip signs scoped requests and confirms before project
     signal = new AbortController().signal;
   h.heads.set(
     "channel-stars",
-    prepareSidebarStar([], { channelId: "other", starred: true }, h.key).event,
+    (
+      await prepareSidebarStar(
+        [],
+        { channelId: "other", starred: true },
+        h.key,
+        createLocalSigningDelegate(h.key),
+      )
+    ).event,
   );
   expect(
     await h.transport.writeSidebarStar(

@@ -2,7 +2,6 @@ import { execFile } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { finalizeEvent } from "nostr-tools";
 import { parseGitRead, GIT_READ_BYTES } from "../src/features/projects/git.ts";
 
 const TEXT_BYTES = 1024 * 1024;
@@ -27,7 +26,7 @@ function git(args, cwd, signal, env = process.env) {
 
 /** Each demand uses an isolated bare repo, removed on success, failure or cancellation.
  * No checkout, hooks, submodules, user Git configuration, arbitrary URL or write RPC. */
-export async function readProjectGit({ input, relay, key, signal }) {
+export async function readProjectGit({ input, relay, signer, signal }) {
   const read = parseGitRead(input);
   const url = `${relay}/git/${read.owner}/${read.dtag}.git`;
   const origin = new URL(url);
@@ -39,7 +38,7 @@ export async function readProjectGit({ input, relay, key, signal }) {
     throw new Error("Invalid repository origin");
   const directory = await mkdtemp(join(tmpdir(), "buzz-project-read-"));
   try {
-    const auth = finalizeEvent(
+    const auth = await signer.signEvent(
       {
         kind: 27235,
         created_at: Math.floor(Date.now() / 1000),
@@ -49,8 +48,9 @@ export async function readProjectGit({ input, relay, key, signal }) {
           ["method", "GET"],
         ],
       },
-      key,
+      signal,
     );
+    signal.throwIfAborted();
     const settings = {
       "http.extraHeader": `Authorization: Nostr ${Buffer.from(JSON.stringify(auth)).toString("base64")}`,
       "http.followRedirects": "false",

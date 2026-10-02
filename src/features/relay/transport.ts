@@ -30,6 +30,16 @@ import {
 } from "./sidebar-preferences";
 import { createHostAdmission } from "./host-admission";
 import { relayOrigin } from "../communities/destination";
+import type { Signer } from "./signing-delegate";
+export {
+  bindSigningDelegate,
+  selectSigningDelegate,
+} from "./signing-delegate";
+export type {
+  Signer,
+  SigningDelegateFactory,
+  SigningDelegateScope,
+} from "./signing-delegate";
 import {
   admittedApiRequest,
   ApiPaused,
@@ -49,7 +59,7 @@ import {
 import { subscribeBrokerTraffic } from "./broker-live";
 import { PublishRejected } from "./outbox";
 import { httpReadError, ReadError } from "./errors";
-import type { EventTemplate, VerifiedEvent } from "nostr-tools";
+import type { EventTemplate } from "nostr-tools";
 import {
   createEventVerifier,
   eventDto,
@@ -168,17 +178,6 @@ export function mediaUrl(
   }
   return /^https:\/\//.test(url) ? url : undefined;
 }
-export interface Signer {
-  getPublicKey(): Promise<string>;
-  signEvent(event: EventTemplate): Promise<VerifiedEvent>;
-  /** Native hosts authenticate and send exact bytes without exposing credentials to JS. */
-  request?(url: string, body: string, signal?: AbortSignal): Promise<Response>;
-  /** Native hosts sign and send `PUT /upload` for these exact bytes. */
-  upload?(file: File, signal: AbortSignal): Promise<Response>;
-  /** Native hosts serve relay `/media/` URLs through an authenticated proxy. */
-  media?(url: string): string;
-}
-
 /** The host's explicit HTTP base wins; otherwise translate the ws(s) relay URL's scheme. */
 export function relayHttpBase(
   explicit: unknown,
@@ -1077,7 +1076,7 @@ export async function connectSignedTransport(
       try {
         traffic = subscribeRelayTraffic(
           httpOrigin.replace(/^http/, "ws"),
-          (event) => signer.signEvent(event),
+          (event, signal) => signer.signEvent(event, signal),
           viewer,
           measuredLive(httpOrigin, {
             ...callbacks,
@@ -1109,7 +1108,7 @@ export async function connectSignedTransport(
     media: (url, size) =>
       mediaUrl(url, signer.media?.bind(signer), httpOrigin, size),
     writer: {
-      sign: (event) => signer.signEvent(event),
+      sign: (event, signal) => signer.signEvent(event, signal),
       async publish(event, signal) {
         return acceptPublish(
           await signedPost(
@@ -1191,17 +1190,20 @@ async function signedPost(
     );
     if (signal?.aborted) throw signal.reason;
     const auth = await profiling.measureAsync("http.auth", id, () =>
-      signer.signEvent({
-        kind: 27235,
-        created_at: Math.floor(Date.now() / 1000),
-        content: "",
-        tags: [
-          ["u", url],
-          ["method", "POST"],
-          ["payload", payload],
-          ["nonce", crypto.randomUUID()],
-        ],
-      }),
+      signer.signEvent(
+        {
+          kind: 27235,
+          created_at: Math.floor(Date.now() / 1000),
+          content: "",
+          tags: [
+            ["u", url],
+            ["method", "POST"],
+            ["payload", payload],
+            ["nonce", crypto.randomUUID()],
+          ],
+        },
+        signal,
+      ),
     );
     if (signal?.aborted) throw signal.reason;
     // Preparation retains this principal. Dispatch rechecks capacity and any

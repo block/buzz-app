@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { createLocalSigningDelegate } from "./signing-delegate.mjs";
 import {
   finalizeEvent,
   generateSecretKey,
@@ -13,6 +14,7 @@ import {
 } from "./sidebar-preferences.mjs";
 
 const secret = generateSecretKey();
+const signer = createLocalSigningDelegate(secret);
 const id = "12345678-1234-1234-1234-123456789abc";
 const intent = { channelId: "alpha", createSection: { id, name: " Launch " } };
 function event(blob, coordinate = "channel-sections") {
@@ -39,14 +41,19 @@ function decode(record) {
     key.fill(0);
   }
 }
-it("creates and assigns together, imports legacy fields into registers and keeps retry idempotent", () => {
+it("creates and assigns together, imports legacy fields into registers and keeps retry idempotent", async () => {
   const blob = {
     version: 1,
     future: { enabled: true },
     sections: [{ id: "work", name: "Work", order: 3, future: "keep" }],
     assignments: { beta: "work", hidden: "missing" },
   };
-  const created = prepareSidebarAssignment([event(blob)], intent, secret);
+  const created = await prepareSidebarAssignment(
+    [event(blob)],
+    intent,
+    secret,
+    signer,
+  );
   const { meta, ...projection } = decode(created.event);
   expect(projection).toEqual({
     ...blob,
@@ -60,15 +67,17 @@ it("creates and assigns together, imports legacy fields into registers and keeps
   expect(meta.s[id].order[2]).toBe(4);
   expect(meta.a.alpha[2]).toBe(id);
   expect(
-    prepareSidebarAssignment([created.event], intent, secret).event,
+    (await prepareSidebarAssignment([created.event], intent, secret, signer))
+      .event,
   ).toBeUndefined();
-  expect(() =>
+  await expect(
     prepareSidebarAssignment(
       [created.event],
       { ...intent, createSection: { id, name: "Different" } },
       secret,
+      signer,
     ),
-  ).toThrow("changed");
+  ).rejects.toThrow("changed");
 });
 it.each([
   { ...intent, sectionId: "work" },
@@ -81,7 +90,7 @@ it.each([
 ])("rejects malformed create intent before writing: %j", (value) => {
   expect(() => assertSidebarAssignmentIntent(value)).toThrow("Invalid");
 });
-it("enforces section limits and refuses an invalid or unreadable current head", () => {
+it("enforces section limits and refuses an invalid or unreadable current head", async () => {
   const full = {
     version: 1,
     sections: Array.from({ length: 100 }, (_, i) => ({
@@ -91,20 +100,26 @@ it("enforces section limits and refuses an invalid or unreadable current head", 
     })),
     assignments: {},
   };
-  expect(() => prepareSidebarAssignment([event(full)], intent, secret)).toThrow(
-    "Unsupported",
-  );
-  expect(() =>
-    prepareSidebarAssignment([event({ ...full, version: 2 })], intent, secret),
-  ).toThrow("Unsupported");
+  await expect(
+    prepareSidebarAssignment([event(full)], intent, secret, signer),
+  ).rejects.toThrow("Unsupported");
+  await expect(
+    prepareSidebarAssignment(
+      [event({ ...full, version: 2 })],
+      intent,
+      secret,
+      signer,
+    ),
+  ).rejects.toThrow("Unsupported");
   const unreadable = event({ version: 1, sections: [], assignments: {} });
-  expect(() =>
+  await expect(
     prepareSidebarAssignment(
       [{ ...JSON.parse(JSON.stringify(unreadable)), content: "broken" }],
       intent,
       secret,
+      signer,
     ),
-  ).toThrow("Invalid");
+  ).rejects.toThrow("Invalid");
 });
 it("failed confirmation may follow publication; retry confirms the same section without another write", async () => {
   let head;
@@ -119,9 +134,16 @@ it("failed confirmation may follow publication; retry confirms the same section 
     head = value;
   };
   await expect(
-    mutateSidebarAssignment(intent, secret, read, publish),
+    mutateSidebarAssignment(intent, secret, signer, undefined, read, publish),
   ).rejects.toThrow("confirmation offline");
-  const groups = await mutateSidebarAssignment(intent, secret, read, publish);
+  const groups = await mutateSidebarAssignment(
+    intent,
+    secret,
+    signer,
+    undefined,
+    read,
+    publish,
+  );
   expect(groups.sections).toEqual([{ id, name: "Launch", order: 0 }]);
   expect(groups.assignments).toEqual({ alpha: id });
   expect(publications).toBe(1);
@@ -132,6 +154,8 @@ it("a failed initial read never seeds or publishes", async () => {
     mutateSidebarAssignment(
       intent,
       secret,
+      signer,
+      undefined,
       async () => {
         throw new Error("offline");
       },
@@ -143,7 +167,7 @@ it("a failed initial read never seeds or publishes", async () => {
   expect(publications).toBe(0);
 });
 
-it("decodes all encrypted preferences despite oversized deleted text without rewriting it", () => {
+it("decodes all encrypted preferences despite oversized deleted text without rewriting it", async () => {
   const reg = (value) => [100, "1111111111111111", value];
   const blob = {
     version: 1,
@@ -186,14 +210,14 @@ it("decodes all encrypted preferences despite oversized deleted text without rew
     muted: ["beta"],
     sort: { channels: "recent" },
   });
-  expect(() => prepareSidebarAssignment([head], intent, secret)).toThrow(
-    "Invalid sidebar register",
-  );
+  await expect(
+    prepareSidebarAssignment([head], intent, secret, signer),
+  ).rejects.toThrow("Invalid sidebar register");
   expect(decode(head)).toEqual(blob);
 });
 
-it("appends after the rounded order imported from a fractional legacy head", () => {
-  const created = prepareSidebarAssignment(
+it("appends after the rounded order imported from a fractional legacy head", async () => {
+  const created = await prepareSidebarAssignment(
     [
       event({
         version: 1,
@@ -203,6 +227,7 @@ it("appends after the rounded order imported from a fractional legacy head", () 
     ],
     intent,
     secret,
+    signer,
   );
   const saved = decode(created.event);
   expect(saved.sections).toEqual([
@@ -248,6 +273,8 @@ it.each([
     const groups = await mutateSidebarAssignment(
       { channelId: "alpha" },
       secret,
+      signer,
+      undefined,
       async () => [head],
       async (value) => {
         publications.push(value);

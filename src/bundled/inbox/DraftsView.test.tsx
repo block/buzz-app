@@ -40,6 +40,8 @@ import {
 } from "../../features/relay/testing";
 // @ts-expect-error Node host codec, with disposable test identities only.
 import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+// @ts-expect-error Node-only host module
+import { createLocalSigningDelegate } from "../../../dev/signing-delegate.mjs";
 
 vi.mock("./ChannelPreview", { spy: true });
 vi.mock("../../features/messages/ThreadPanel", { spy: true });
@@ -214,7 +216,14 @@ function fixture(
           decodeReadState(records, viewer.secret),
         sign: async (
           intent: import("../../features/relay/read-state-host").ReadStateSigning,
-        ) => signReadState(intent, viewer.secret),
+          signal: AbortSignal,
+        ) =>
+          signReadState(
+            intent,
+            viewer.secret,
+            createLocalSigningDelegate(viewer.secret),
+            signal,
+          ),
         publish: async (event: RelayEvent) => {
           events.push(event);
         },

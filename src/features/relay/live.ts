@@ -201,7 +201,7 @@ export const CHANNEL_KINDS = [
  * Recent replay is opportunistic: finite reads own catch-up and history bounds. */
 export function subscribeRelayTraffic(
   url: string,
-  sign: (event: EventTemplate) => Promise<VerifiedEvent>,
+  sign: (event: EventTemplate, signal?: AbortSignal) => Promise<VerifiedEvent>,
   viewer: string,
   callbacks: LiveCallbacks,
   socketFactory: (url: string) => WebSocket = (url) => new WebSocket(url),
@@ -882,12 +882,15 @@ export function subscribeRelayTraffic(
       const bounded = AbortSignal.any([signal, AbortSignal.timeout(10000)]);
       try {
         const event = eventDto(
-          await sign({
-            kind: 20001,
-            content: status,
-            tags: [],
-            created_at: Math.floor(Date.now() / 1000),
-          }),
+          await sign(
+            {
+              kind: 20001,
+              content: status,
+              tags: [],
+              created_at: Math.floor(Date.now() / 1000),
+            },
+            bounded,
+          ),
         );
         if (
           bounded.aborted ||

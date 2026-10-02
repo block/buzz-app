@@ -889,8 +889,14 @@ test.describe("thread activity", () => {
         element.getAnimations().map((animation) => animation.finished),
       );
     });
+    const typingIndicator = thread.getByRole("status", {
+      name: "Typing activity",
+    });
+    await expect(typingIndicator).toBeVisible();
     const entryBox = await entry.boundingBox(),
-      formBox = await form.boundingBox();
+      formBox = await form.boundingBox(),
+      typingBox = await typingIndicator.boundingBox();
+    expect(typingBox.y + typingBox.height).toBeLessThan(entryBox.y);
     expect(entryBox.y + entryBox.height).toBeLessThanOrEqual(formBox.y);
     expect(formBox.y - entryBox.y - entryBox.height).toBeCloseTo(4, 0);
     const inset = await entry.evaluate((element) =>
@@ -919,8 +925,15 @@ test.describe("thread activity", () => {
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
       .toBe(390);
+    await expect(typingIndicator).toBeVisible();
     const narrowEntry = await entry.boundingBox(),
-      narrowForm = await form.boundingBox();
+      narrowForm = await form.boundingBox(),
+      narrowTyping = await typingIndicator.boundingBox();
+    expect(narrowTyping.y + narrowTyping.height).toBeLessThan(narrowEntry.y);
+    expect(narrowTyping.x).toBeGreaterThanOrEqual(narrowForm.x);
+    expect(narrowTyping.x + narrowTyping.width).toBeLessThanOrEqual(
+      narrowForm.x + narrowForm.width,
+    );
     expect(narrowEntry.y + narrowEntry.height).toBeLessThanOrEqual(
       narrowForm.y,
     );
@@ -961,6 +974,15 @@ test.describe("thread activity", () => {
     const channelForm = await page
       .getByRole("form", { name: "Send a message to Alpha", exact: true })
       .boundingBox();
+    const channelTyping = page
+      .getByRole("form", { name: "Send a message to Alpha", exact: true })
+      .locator("..")
+      .getByRole("status", { name: "Typing activity" });
+    await expect(channelTyping).toBeVisible();
+    const channelTypingBox = await channelTyping.boundingBox();
+    expect(channelTypingBox.y + channelTypingBox.height).toBeLessThan(
+      channelBox.y,
+    );
     expect(channelBox.y + channelBox.height).toBeLessThanOrEqual(channelForm.y);
     await expect(marker).toHaveCount(0, { timeout: 10_000 });
     await expect(channelActivity(page)).toHaveCount(0);

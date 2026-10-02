@@ -210,8 +210,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
           <AgentWakeNotice control={services.agentControl} />
           <UpdateNotice updates={services.updates} />
           {client.enterprise &&
-            (!client.selected ||
-              client.enterprise.communityId === client.selected) && (
+            client.enterprise.communityId === client.selected && (
               <EnterpriseLoginDialog
                 communities={services.communities}
                 state={client.enterprise}

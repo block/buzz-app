@@ -287,12 +287,16 @@ Candidates reuse the verified session cache plus finite addressed feed, not the
 former dedicated unread history/participation repair. Only current context
 `unread` verdicts with direct/mention/conversation reason admit rows; manual
 marks overlay them without inventing relevance or erasing omitted marks.
-Kinds 9/40002/45001/45003 follow the relay's 30-day window; 40008 is not counted.
+Candidates use the advertised eligible kinds and relay retention window
+(current v1: 9/40002/45001/45003 and 30 days; 40008 is not counted).
 Read rows disappear. Counts and resume anchors describe the observed subset.
 
 Inbox subscriptions retain at most 100 selectors, yielding to notifications
-under the existing 1,000 shared bound. Unknown/unavailable/over-capacity stays
-visibly unresolved, never read/zero. Context failure is error/stale. The shared
+under the existing 1,000 shared bound. Missing/unknown/over-capacity answers stay
+visibly unresolved, never read/zero, without an error. Unavailable answers and
+unaskable ancestry are skipped. Context failure is error/stale. Only proven-current
+exact-zero sidebar attention without an unread hint excludes a channel before
+folding; known outstanding invalidations prevent that proof. The shared
 fold and feed's pre-admission incomplete metadata preserve preview closure.
 
 Inbox `readThrough` is thread-prefix-only, anchored on its newest admitted

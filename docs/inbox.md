@@ -18,19 +18,25 @@ Candidates come from the existing verified session cache (4,096 events / 8 MiB),
 including finite addressed feed results. Inbox adds no second event map and no
 all-channel history repair. Other session traffic can evict candidates. Cold
 coverage is smaller than main's former dedicated unread retention. Eligible
-kinds follow v1: 9, 40002, 45001, 45003, not 40008. The relay's 30-day retention
-window governs verdicts; the client does not reconstruct its cutoff.
+kinds follow the relay-advertised set (v1 currently 9, 40002, 45001, 45003, not
+40008). The relay's 30-day retention window governs verdicts; the client does not
+reconstruct its cutoff.
 
+Before folding, channels with proven-current exact-zero relay attention and no
+unread live hint contribute no candidates; queued, in-flight, failed or newer
+mid-request invalidations cannot prove absence, nor can a stale/error owner.
 `subscribeInbox()` retains at most 100 candidate selectors while subscribed.
 Notification/message subscriptions have priority under the existing shared
 1,000-selector/context-lease bounds. Disposal releases Inbox demand. Reading
 `inbox()` never starts a request. Existing sidebar refresh, invalidation and
 lifecycle scheduling supply context answers; there is no new timer.
 
-Unknown, unavailable, missing and over-capacity verdicts omit those rows but
-keep the snapshot unresolved (`freshness: stale` once otherwise observed), with
-an explanatory error. They never become read or an exact zero. Context request
-failure follows the context owner's `status: error`, `freshness: stale`; earlier
+Missing, unknown and over-capacity answers omit those rows and keep the snapshot
+unresolved (`freshness: stale` once otherwise observed), without an error.
+Unavailable message/context answers and unaskable ancestry (cycles, excessive
+depth or cross-channel parents) are skipped, not pending answers.
+Only error status carries an error. Unknown never becomes read or an exact zero.
+Context request failure follows the context owner's `status: error`, `freshness: stale`; earlier
 confirmed rows may remain stale, while a first failure has no rows. Unsupported
 or not-yet-requested state is idle/unknown. Ready/observed means the currently
 bounded candidates have resolved verdicts, not a complete historical Inbox.

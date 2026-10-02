@@ -59,6 +59,8 @@ export function createSidebarState({
     pending: 0,
   });
   const rows = new Map<string, ChannelReadSummary>();
+  // A response only discharges invalidations known before its request started.
+  const invalidated = new Map<string, number>();
   const operationErrors = new Map<string, string>();
   const contexts = new Map<string, ContextState>();
   // Applied operands outlive journal acknowledgement until each presentation
@@ -190,6 +192,8 @@ export function createSidebarState({
     if (!rows.has(row.channel_id) && rows.size >= MAX_CHANNELS)
       throw new Error("Sidebar exceeds channel capacity");
     rows.set(row.channel_id, row);
+    if ((invalidated.get(row.channel_id) ?? 0) <= watermark)
+      invalidated.delete(row.channel_id);
     const hint = liveHints.get(row.channel_id);
     if (
       hint &&
@@ -495,7 +499,13 @@ export function createSidebarState({
     return flushing;
   }
   function invalidate(channelId: string) {
-    if (closed || !api || !requested || !allowed(channelId)) return;
+    if (closed || !api || !allowed(channelId)) return;
+    if (invalidated.size >= MAX_CHANNELS && !invalidated.has(channelId)) {
+      fail(new Error("Sidebar invalidation capacity reached"));
+      return;
+    }
+    invalidated.set(channelId, ++revision);
+    if (!requested) return;
     if (dirty.size >= MAX_CHANNELS && !dirty.has(channelId)) {
       fail(new Error("Sidebar invalidation capacity reached"));
       return;
@@ -558,6 +568,16 @@ export function createSidebarState({
     context: (target: ContextQuery["target"]) =>
       allowed(target.channel_id) ? contexts.get(contextKey(target)) : undefined,
     journal,
+    attentionAbsent(channelId: string) {
+      const row = allowed(channelId) ? rows.get(channelId) : undefined;
+      return (
+        sync.status === "ready" &&
+        !invalidated.has(channelId) &&
+        !liveHints.get(channelId)?.unread &&
+        row?.attention.status === "exact" &&
+        row.attention.value === 0
+      );
+    },
     covered,
     liveHint: (channelId: string) =>
       allowed(channelId) ? liveHints.get(channelId) : undefined,
@@ -681,6 +701,8 @@ export function createSidebarState({
       active.abort();
       active = new AbortController();
       for (const id of rows.keys()) if (!allowed(id)) rows.delete(id);
+      for (const id of invalidated.keys())
+        if (!allowed(id)) invalidated.delete(id);
       for (const id of liveHints.keys()) if (!allowed(id)) liveHints.delete(id);
       for (const [id, entry] of applied)
         if (!allowed(readChannel(entry.read))) applied.delete(id);
@@ -698,6 +720,7 @@ export function createSidebarState({
       active.abort();
       active = new AbortController();
       rows.clear();
+      invalidated.clear();
       applied.clear();
       liveHints.clear();
       saving.clear();
@@ -723,6 +746,7 @@ export function createSidebarState({
       hostDocument?.removeEventListener("visibilitychange", activate);
       listeners.clear();
       rows.clear();
+      invalidated.clear();
       applied.clear();
       liveHints.clear();
       saving.clear();

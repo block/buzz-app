@@ -235,7 +235,6 @@ export function createUnread({
   const inboxDemand = new Map<string, ReturnType<typeof state.retain>>();
   let inboxDirty = true;
   let inboxSnapshot: InboxSnapshot | undefined;
-  const inboxKinds = [9, 40002, 45001, 45003];
   function candidates() {
     if (closed) return [];
     const all = evidence();
@@ -245,7 +244,9 @@ export function createUnread({
     );
     return channels
       .list()
-      .channels.filter(admitted)
+      .channels.filter(
+        (channel) => admitted(channel) && !state.attentionAbsent(channel.id),
+      )
       .flatMap((channel) => {
         const content = new Map(
           foldMessages(channel.id, "", folded, { includeReplies: true }).map(
@@ -256,7 +257,7 @@ export function createUnread({
           if (
             channelOf(message) !== channel.id ||
             message.pubkey === viewer ||
-            !inboxKinds.includes(message.kind) ||
+            !api?.eligibleKinds?.includes(message.kind) ||
             !content.has(message.id)
           )
             return [];
@@ -287,10 +288,10 @@ export function createUnread({
   function reconcileInbox() {
     if (!inboxListeners.size || closed) return;
     const wanted = candidates()
-      .slice(0, 100)
       .flatMap(({ message, target }) =>
         target ? [{ key: inboxKey(message.id, target), message, target }] : [],
-      );
+      )
+      .slice(0, 100);
     const keys = new Set(wanted.map(({ key }) => key));
     for (const [key, lease] of inboxDemand)
       if (!keys.has(key)) {
@@ -319,20 +320,14 @@ export function createUnread({
     let unresolved = false;
     for (const entry of candidates()) {
       const { message, target } = entry;
-      if (!target) {
-        unresolved = true;
-        continue;
-      }
+      if (!target) continue;
       const result = state.context(target);
+      if (result?.status === "unavailable") continue;
       const verdict =
         result?.status === "available"
           ? result.messages.find((m) => m.message_id === message.id)
           : undefined;
-      if (
-        !verdict ||
-        verdict.status === "unknown" ||
-        verdict.status === "unavailable"
-      ) {
+      if (!verdict || verdict.status === "unknown") {
         unresolved = true;
         continue;
       }
@@ -423,9 +418,7 @@ export function createUnread({
         : unresolved && freshness() === "observed"
           ? "stale"
           : freshness(),
-      error:
-        current.error ??
-        (unresolved ? "Inbox contexts unresolved or at capacity" : undefined),
+      ...(current.status === "error" ? { error: current.error } : {}),
     });
     if (
       !inboxSnapshot ||
@@ -966,7 +959,7 @@ export function createUnread({
               return (
                 name === "e" &&
                 original &&
-                inboxKinds.includes(original.kind) &&
+                api?.eligibleKinds?.includes(original.kind) &&
                 original.pubkey === edit.pubkey &&
                 !deleted(original)
               );
@@ -1005,13 +998,13 @@ export function createUnread({
       }
     },
     accept(events: readonly RelayEvent[]) {
-      reconcileDemand();
-      inboxDirty = true;
-      for (const listener of inboxListeners) notify(listener);
       for (const message of events) {
         const id = channelOf(message);
         if (id) state.invalidate(id);
       }
+      reconcileDemand();
+      inboxDirty = true;
+      for (const listener of inboxListeners) notify(listener);
     },
     purge() {
       epoch++;

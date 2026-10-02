@@ -22,7 +22,7 @@ export const sidebarRow = (
   archived: false,
   hidden: false,
   unread: { status: "exact", value: 0 },
-  attention: { status: "exact", value: 0 },
+  attention: { status: "unknown" },
   latest_message_id: null,
   latest_message_at: null,
   latest_message_complete: true,

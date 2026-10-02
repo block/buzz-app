@@ -11,7 +11,7 @@ import type { MessageReadState, UnreadReason } from "./sidebar-api";
 import type { InboxSnapshot } from "./inbox";
 import { keypair, message, metadata, roster, signed } from "./testing";
 import { matchesEvent } from "./projection";
-import type { LiveCallbacks } from "./live";
+import type { LiveCallbacks, LiveSnapshot } from "./live";
 import type { ReadFilter, RelayEvent } from "./events";
 const channel = "01234567-89ab-cdef-0123-456789abcdef";
 const other = "11234567-89ab-cdef-0123-456789abcdef";
@@ -61,8 +61,12 @@ function setup(initialGrant = true) {
     query,
     grant,
     unread,
-    emit: (events: readonly RelayEvent[], phase?: "live" | "replay") =>
-      live.receive(events, phase ? { phase, channelId: channel } : undefined),
+    live: (snapshot: LiveSnapshot) => live.state(snapshot),
+    emit: (
+      events: readonly RelayEvent[],
+      phase?: "live" | "replay",
+      channelId = channel,
+    ) => live.receive(events, phase ? { phase, channelId } : undefined),
     snapshot: () => unread.snapshot(target),
   };
 }
@@ -1669,8 +1673,29 @@ it("inbox groups a direct-message channel into one channel-target row with no pr
   });
 });
 
-it.each(["unknown", "unavailable", "context-unavailable"] as const)(
-  "inbox keeps an %s verdict visibly unresolved, never read or zero",
+it("inbox keeps an unknown verdict visibly unresolved, owed and not an error", async () => {
+  const h = setup();
+  const row = message(h.peer, channel, "mention", 12, [["p", h.viewer.pubkey]]);
+  h.emit([row]);
+  verdicts(h, [[row, "unknown"]]);
+  const snapshot = await inbox(h);
+  expect(h.bff.api.contexts).toHaveBeenCalled();
+  expect(snapshot).toMatchObject({
+    status: "ready",
+    freshness: "stale",
+    items: [],
+  });
+  // Unresolved is staleness only; error belongs to status "error".
+  expect(snapshot.error).toBeUndefined();
+  // Positive control: the same candidate settles once the relay answers.
+  verdicts(h, [[row, "unread:mention"]]);
+  const answered = await inbox(h);
+  expect(settled(answered)).toBe(true);
+  expect(answered.items.map((item) => item.messageId)).toEqual([row.id]);
+});
+
+it.each(["unavailable", "context-unavailable"] as const)(
+  "inbox treats an %s answer as final: no row, nothing owed",
   async (kind) => {
     const h = setup();
     const row = message(h.peer, channel, "mention", 12, [
@@ -1682,27 +1707,12 @@ it.each(["unknown", "unavailable", "context-unavailable"] as const)(
         account: sidebarAccount,
         contexts: queries.map(() => ({ status: "unavailable" as const })),
       }));
-    else verdicts(h, [[row, kind]]);
+    else verdicts(h, [[row, "unavailable"]]);
     const snapshot = await inbox(h);
     expect(h.bff.api.contexts).toHaveBeenCalled();
     expect(snapshot.items).toEqual([]);
-    expect(settled(snapshot)).toBe(false);
-    // Positive control: the same candidate settles once the relay answers.
-    h.bff.api.contexts.mockImplementation(async (queries) => ({
-      account: sidebarAccount,
-      contexts: queries.map((q) => ({
-        status: "available" as const,
-        through_timestamp: null,
-        messages: q.message_ids.map((id) => ({
-          message_id: id,
-          status: "unread" as const,
-          reason: "mention" as const,
-        })),
-      })),
-    }));
-    const answered = await inbox(h);
-    expect(settled(answered)).toBe(true);
-    expect(answered.items.map((item) => item.messageId)).toEqual([row.id]);
+    expect(settled(snapshot)).toBe(true);
+    expect(snapshot.error).toBeUndefined();
   },
 );
 
@@ -1964,3 +1974,578 @@ it.each(["clearCache", "dispose", "revoke-regrant"] as const)(
     expect(h.bff.api.write).not.toHaveBeenCalled();
   },
 );
+
+const demandedIds = (h: ReturnType<typeof setup>) =>
+  h.bff.api.contexts.mock.calls.flatMap(([queries]) =>
+    queries.flatMap((query) => query.message_ids),
+  );
+
+it("inbox: the viewer's own messages never take demand from a peer's mention", async () => {
+  const h = setup();
+  const mention = message(h.peer, channel, "older mention", 10, [
+    ["p", h.viewer.pubkey],
+  ]);
+  // Newer than the mention and enough to fill the 100-candidate cap alone.
+  const own = Array.from({ length: 100 }, (_, i) =>
+    message(h.viewer, channel, `mine ${i}`, 100 + i),
+  );
+  h.emit([mention, ...own]);
+  verdicts(h, [
+    [mention, "unread:mention"],
+    ...own.map((row) => [row, "not_counted"] as const),
+  ]);
+  const snapshot = await inbox(h);
+  expect(settled(snapshot)).toBe(true);
+  expect(snapshot.items.map((item) => item.messageId)).toEqual([mention.id]);
+  const demanded = demandedIds(h);
+  expect(demanded).toContain(mention.id);
+  for (const row of own) expect(demanded).not.toContain(row.id);
+});
+
+it("inbox: a local read hides the row before the relay verdict catches up", async () => {
+  const h = setup();
+  const parent = message(h.peer, channel, "parent", 10);
+  const reply = message(h.peer, channel, "reply", 11, [
+    ["e", parent.id, "", "root"],
+    ["e", parent.id, "", "reply"],
+  ]);
+  h.emit([parent, reply]);
+  verdicts(h, [
+    [parent, "read"],
+    [reply, "unread:conversation"],
+  ]);
+  const item = (await inbox(h)).items[0];
+  if (!item) throw new Error("Missing admitted thread row");
+  // Hold the write: until the relay applies it, only the local read can hide
+  // the row, and the fake relay still answers unread.
+  const held = deferredSidebar<void>();
+  const write = h.bff.api.write.getMockImplementation();
+  if (!write) throw new Error("Missing write fixture");
+  h.bff.api.write.mockImplementation(async (intents, signal) => {
+    await held.promise;
+    return write(intents, signal);
+  });
+  const reads = item.readThrough.map((step) =>
+    h.unread.markThrough(step.target, step.messageId),
+  );
+  try {
+    await vi.waitFor(() => expect(h.bff.api.write).toHaveBeenCalled());
+    await h.unread.refresh();
+    expect(h.bff.messages.get(reply.id)).toMatchObject({ status: "unread" });
+    expect(h.unread.inbox().items).toEqual([]);
+  } finally {
+    held.resolve();
+  }
+  verdicts(h, [[reply, "read"]]);
+  await Promise.all(reads);
+  expect((await inbox(h)).items).toEqual([]);
+});
+
+it("inbox releases a candidate's selector once it leaves, keeping the rest", async () => {
+  const h = setup();
+  const kept = message(h.peer, channel, "kept", 10, [["p", h.viewer.pubkey]]);
+  const gone = message(h.peer, channel, "deleted", 11, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([kept, gone]);
+  verdicts(h, [
+    [kept, "unread:mention"],
+    [gone, "unread:mention"],
+  ]);
+  expect((await inbox(h)).items).toHaveLength(2);
+  h.emit([
+    signed(h.peer, {
+      kind: 5,
+      created_at: 12,
+      content: "",
+      tags: [["e", gone.id]],
+    }),
+  ]);
+  h.bff.api.contexts.mockClear();
+  expect((await inbox(h)).items.map((item) => item.messageId)).toEqual([
+    kept.id,
+  ]);
+  const demanded = demandedIds(h);
+  // Positive control: the surviving candidate is still asked about.
+  expect(demanded).toContain(kept.id);
+  expect(demanded).not.toContain(gone.id);
+});
+
+it("inbox: a reply naming a root in another channel is skipped, not owed", async () => {
+  const h = setup();
+  h.grant(other, [h.viewer.pubkey, h.peer.pubkey]);
+  const foreignRoot = message(h.peer, other, "root elsewhere", 10);
+  const reply = message(h.peer, channel, "cross-channel reply", 11, [
+    ["e", foreignRoot.id, "", "root"],
+    ["e", foreignRoot.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([foreignRoot, reply]);
+  verdicts(h, [
+    [foreignRoot, "read"],
+    [reply, "unread:mention"],
+  ]);
+  const snapshot = await inbox(h);
+  expect(snapshot.items).toEqual([]);
+  expect(settled(snapshot)).toBe(true);
+});
+
+it("inbox: a message in a channel the viewer has not joined is no candidate", async () => {
+  const bff = sidebarFixture(),
+    viewer = keypair(),
+    peer = keypair();
+  const outside = message(peer, other, "public", 10, [["p", viewer.pubkey]]);
+  const list = {
+    status: "ready",
+    channels: [
+      { id: channel, cached: false, members: [viewer.pubkey] },
+      { id: other, cached: false, members: [peer.pubkey] },
+    ],
+  };
+  const owner = createUnread({
+    api: bff.api,
+    storage: bff.storage,
+    scope: "not-joined",
+    channels: {
+      list: () => list,
+      subscribeList: () => () => {},
+    } as unknown as Parameters<typeof createUnread>[0]["channels"],
+    viewer: viewer.pubkey,
+    reader: { read: async () => [] },
+    find: (id) => (id === outside.id ? outside : undefined),
+    evidence: () => [outside],
+  });
+  cleanups.push(owner.dispose);
+  bff.messages.set(outside.id, {
+    message_id: outside.id,
+    status: "unread",
+    reason: "mention",
+  });
+  const unread = owner.capability;
+  cleanups.push(unread.subscribeInbox(() => {}));
+  await unread.ensure();
+  await unread.refresh();
+  await vi.waitFor(() => expect(unread.inbox().status).toBe("ready"));
+  expect(unread.inbox()).toMatchObject({ freshness: "observed", items: [] });
+  expect(
+    bff.api.contexts.mock.calls.flatMap(([queries]) =>
+      queries.flatMap((query) => query.message_ids),
+    ),
+  ).not.toContain(outside.id);
+});
+
+const diffMessage = (
+  h: ReturnType<typeof setup>,
+  content: string,
+  created_at: number,
+) =>
+  signed(h.peer, {
+    kind: 40008,
+    content,
+    created_at,
+    tags: [
+      ["h", channel],
+      ["p", h.viewer.pubkey],
+    ],
+  });
+
+it("inbox candidates follow the relay's advertised kinds, not a client copy", async () => {
+  const h = setup();
+  // Advertise a set that differs from the four kinds the client used to copy.
+  (h.bff.api as { eligibleKinds: readonly number[] }).eligibleKinds = [40008];
+  const chat = message(h.peer, channel, "chat mention", 10, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const diff = diffMessage(h, "diff mention", 11);
+  h.emit([chat, diff]);
+  verdicts(h, [
+    [chat, "unread:mention"],
+    [diff, "unread:mention"],
+  ]);
+  const snapshot = await inbox(h);
+  expect(settled(snapshot)).toBe(true);
+  expect(snapshot.items.map((item) => item.messageId)).toEqual([diff.id]);
+  expect(demandedIds(h)).not.toContain(chat.id);
+});
+
+it("inbox: an unadvertised kind is no candidate, even with a mention verdict", async () => {
+  const h = setup();
+  const diff = diffMessage(h, "diff mention", 11);
+  h.emit([diff]);
+  verdicts(h, [[diff, "unread:mention"]]);
+  const snapshot = await inbox(h);
+  expect(settled(snapshot)).toBe(true);
+  expect(snapshot.items).toEqual([]);
+  expect(demandedIds(h)).not.toContain(diff.id);
+});
+
+it("inbox: unaskable ancestry never starves an askable mention of demand", async () => {
+  const h = setup();
+  h.grant(other, [h.viewer.pubkey, h.peer.pubkey]);
+  const foreignRoot = message(h.peer, other, "root elsewhere", 10);
+  const mention = message(h.peer, channel, "older mention", 11, [
+    ["p", h.viewer.pubkey],
+  ]);
+  // Newer than the mention and enough to fill the 100-candidate cap alone.
+  const unaskable = Array.from({ length: 100 }, (_, i) =>
+    message(h.peer, channel, `cross-channel ${i}`, 100 + i, [
+      ["e", foreignRoot.id, "", "root"],
+      ["e", foreignRoot.id, "", "reply"],
+      ["p", h.viewer.pubkey],
+    ]),
+  );
+  h.emit([foreignRoot, mention, ...unaskable]);
+  verdicts(h, [
+    [foreignRoot, "read"],
+    [mention, "unread:mention"],
+    ...unaskable.map((row) => [row, "unread:mention"] as const),
+  ]);
+  const snapshot = await inbox(h);
+  expect(snapshot.items.map((item) => item.messageId)).toEqual([mention.id]);
+  expect(settled(snapshot)).toBe(true);
+});
+
+// Eva 26afbef6: an answered row keeps its proof and verdict through events that
+// say nothing about it. Held responses keep a fast refetch from masking loss.
+function provenZero(h: ReturnType<typeof setup>) {
+  h.grant(other, [h.viewer.pubkey, h.peer.pubkey]);
+  h.bff.rows.set(
+    other,
+    sidebarRow(other, { attention: { status: "exact", value: 0 } }),
+  );
+  const mention = message(h.peer, channel, "older mention", 10, [
+    ["p", h.viewer.pubkey],
+  ]);
+  // Newer than the mention and enough to fill the 100-candidate cap alone.
+  const noise = Array.from({ length: 101 }, (_, i) =>
+    message(h.peer, other, `quiet ${i}`, 100 + i),
+  );
+  h.emit([mention, ...noise]);
+  verdicts(h, [[mention, "unread:mention"]]);
+  return { mention, noise };
+}
+it.each(["in-flight", "queued"] as const)(
+  "inbox: a sidebar refresh (%s) does not void a proven-zero channel or drop an answered row",
+  async (phase) => {
+    const h = setup();
+    const { mention, noise } = provenZero(h);
+    const settledSnapshot = await inbox(h);
+    expect(settled(settledSnapshot)).toBe(true);
+    expect(settledSnapshot.items.map((item) => item.messageId)).toEqual([
+      mention.id,
+    ]);
+    const held = deferredSidebar<void>(),
+      started = deferredSidebar<void>();
+    const sidebar = h.bff.api.sidebar.getMockImplementation();
+    if (!sidebar) throw new Error("Missing sidebar fixture");
+    h.bff.api.sidebar.mockImplementation(async (query, signal) => {
+      started.resolve();
+      await held.promise;
+      return sidebar(query, signal);
+    });
+    h.bff.api.contexts.mockClear();
+    const first = h.unread.refresh();
+    const refreshing =
+      phase === "queued" ? Promise.all([first, h.unread.refresh()]) : first;
+    try {
+      await started.promise;
+      expect(h.unread.inbox().status).toBe("loading");
+      expect(h.unread.inbox().items.map((item) => item.messageId)).toEqual([
+        mention.id,
+      ]);
+    } finally {
+      held.resolve();
+      await refreshing;
+    }
+    const demanded = demandedIds(h);
+    for (const row of noise) expect(demanded).not.toContain(row.id);
+  },
+);
+
+it("inbox: after live delivery breaks, an answered row keeps its verdict and the snapshot reads stale", async () => {
+  const h = setup();
+  const { mention, noise } = provenZero(h);
+  expect(settled(await inbox(h))).toBe(true);
+  h.bff.api.contexts.mockClear();
+  h.live({ status: "connected", routes: [] });
+  h.live({ status: "retrying", routes: [] });
+  await vi.waitFor(() =>
+    expect(h.unread.inbox()).toMatchObject({ freshness: "stale" }),
+  );
+  expect(h.unread.inbox().items.map((item) => item.messageId)).toEqual([
+    mention.id,
+  ]);
+  // The row read on recovery re-asks nothing for the proven-zero channel.
+  await h.unread.refresh();
+  const demanded = demandedIds(h);
+  for (const row of noise) expect(demanded).not.toContain(row.id);
+});
+
+it.each(["loading", "stale"] as const)(
+  "inbox: a mention cached while the owner is %s un-proves its zero channel",
+  async (phase) => {
+    const h = setup();
+    provenZero(h);
+    expect(settled(await inbox(h))).toBe(true);
+    const held = deferredSidebar<void>(),
+      started = deferredSidebar<void>();
+    let refreshing: Promise<void> | undefined;
+    const late = message(h.peer, other, "late mention", 500, [
+      ["p", h.viewer.pubkey],
+    ]);
+    try {
+      if (phase === "loading") {
+        const sidebar = h.bff.api.sidebar.getMockImplementation();
+        if (!sidebar) throw new Error("Missing sidebar fixture");
+        h.bff.api.sidebar.mockImplementation(async (query, signal) => {
+          started.resolve();
+          await held.promise;
+          return sidebar(query, signal);
+        });
+        refreshing = h.unread.refresh();
+        await started.promise;
+        expect(h.unread.inbox().status).toBe("loading");
+      } else {
+        h.live({ status: "connected", routes: [] });
+        h.live({ status: "retrying", routes: [] });
+        await vi.waitFor(() =>
+          expect(h.unread.inbox()).toMatchObject({ freshness: "stale" }),
+        );
+      }
+      verdicts(h, [[late, "unread:mention"]]);
+      h.emit([late]);
+    } finally {
+      held.resolve();
+      await refreshing;
+    }
+    // Keep the zero row: only the cached event can un-prove the channel.
+    await vi.waitFor(() =>
+      expect(h.unread.inbox().items.map((item) => item.messageId)).toContain(
+        late.id,
+      ),
+    );
+  },
+);
+
+// Eva 29becf88: the acceptance rule is a stable row, lease and verdict. A
+// same-channel re-ask is the context owner's channel refresh and is allowed.
+it.each(["same", "different"] as const)(
+  "inbox: notification demand that fits in a %s channel leaves the Inbox row and verdict alone",
+  async (where) => {
+    const h = setup();
+    const watchedChannel = where === "same" ? channel : other;
+    if (where === "different") h.grant(other, [h.viewer.pubkey, h.peer.pubkey]);
+    const mention = message(h.peer, channel, "mention", 10, [
+      ["p", h.viewer.pubkey],
+    ]);
+    const watched = message(h.peer, watchedChannel, "notified", 11);
+    h.emit([mention, watched]);
+    verdicts(h, [
+      [mention, "unread:mention"],
+      [watched, "read"],
+    ]);
+    expect((await inbox(h)).items.map((item) => item.messageId)).toEqual([
+      mention.id,
+    ]);
+    const verdict = h.unread.attention(channel, mention.id);
+    expect(verdict).toMatchObject({ status: "eligible" });
+    const held = deferredSidebar<void>(),
+      started = deferredSidebar<void>();
+    const contexts = h.bff.api.contexts.getMockImplementation();
+    if (!contexts) throw new Error("Missing contexts fixture");
+    h.bff.api.contexts.mockImplementation(async (queries, signal) => {
+      if (queries.some((query) => query.message_ids.includes(watched.id)))
+        started.resolve();
+      await held.promise;
+      return contexts(queries, signal);
+    });
+    h.bff.api.contexts.mockClear();
+    try {
+      cleanups.push(
+        h.unread.subscribe(
+          { kind: "message", channelId: watchedChannel, messageId: watched.id },
+          () => {},
+        ),
+      );
+      await started.promise;
+      expect(h.unread.inbox().items.map((item) => item.messageId)).toEqual([
+        mention.id,
+      ]);
+      // The verdict lives only while its lease does.
+      expect(h.unread.attention(channel, mention.id)).toEqual(verdict);
+      if (where === "different")
+        expect(demandedIds(h)).not.toContain(mention.id);
+    } finally {
+      held.resolve();
+    }
+  },
+);
+
+// Eva 17:27: notification demand retains first and releases Inbox only when
+// the context owner refuses for capacity.
+it("inbox: notification demand at context capacity takes the Inbox lease instead of failing", async () => {
+  const h = setup();
+  h.grant(other, [h.viewer.pubkey, h.peer.pubkey]);
+  const mention = message(h.peer, channel, "mention", 10, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const watched = message(h.peer, other, "notified", 11);
+  h.emit([mention, watched]);
+  verdicts(h, [
+    [mention, "unread:mention"],
+    [watched, "read"],
+  ]);
+  expect((await inbox(h)).items.map((item) => item.messageId)).toEqual([
+    mention.id,
+  ]);
+  const selected = {
+    kind: "message",
+    channelId: other,
+    messageId: watched.id,
+  } as const;
+  // The Inbox lease plus 999 notification leases fill the owner's bound.
+  for (let i = 0; i < 999; i++)
+    cleanups.push(h.unread.subscribe(selected, () => {}));
+  h.bff.api.contexts.mockClear();
+  // Retain-first refuses this one; the Inbox lease is released and retried.
+  cleanups.push(h.unread.subscribe(selected, () => {}));
+  // Control: the demand bound itself still refuses.
+  expect(() => h.unread.subscribe(selected, () => {})).toThrow("capacity");
+});
+
+// Named limit (Eva 31716927, documented in docs/inbox.md): the 100 questions
+// go to the newest foreign messages in channels not proven zero, so newer
+// chatter in a mention's own channel can take its lease. Honest, not hidden:
+// the snapshot reads stale. Removing it needs a relay listing, not a reorder.
+it("inbox limit: 100 newer foreign messages in a channel with attention push out an older mention", async () => {
+  const h = setup();
+  h.grant(other, [h.viewer.pubkey, h.peer.pubkey]);
+  h.bff.rows.set(
+    other,
+    sidebarRow(other, {
+      unread: { status: "exact", value: 101 },
+      attention: { status: "exact", value: 1 },
+    }),
+  );
+  const mention = message(h.peer, other, "older mention", 10, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const chatter = Array.from({ length: 100 }, (_, i) =>
+    message(h.peer, other, `chatter ${i}`, 100 + i),
+  );
+  h.emit([mention, ...chatter]);
+  verdicts(h, [[mention, "unread:mention"]]);
+  const snapshot = await inbox(h);
+  expect(snapshot.items).toEqual([]);
+  expect(snapshot).toMatchObject({ freshness: "stale" });
+  // Control: the mention was never asked; the chatter took every slot.
+  const demanded = demandedIds(h);
+  expect(demanded).not.toContain(mention.id);
+  for (const row of chatter) expect(demanded).toContain(row.id);
+});
+
+// Eva 17:27 rule: a zero row proves absence only if its request started after
+// the channel's last cached event. Until that row arrives, new evidence is asked.
+function holdSidebar(h: ReturnType<typeof setup>) {
+  const held = deferredSidebar<void>(),
+    started = deferredSidebar<void>();
+  const sidebar = h.bff.api.sidebar.getMockImplementation();
+  if (!sidebar) throw new Error("Missing sidebar fixture");
+  h.bff.api.sidebar.mockImplementation(async (query, signal) => {
+    started.resolve();
+    await held.promise;
+    return sidebar(query, signal);
+  });
+  return { held, started };
+}
+
+it.each(["live mention", "finite untagged reply"] as const)(
+  "inbox: a %s in a proven-zero channel is asked before its row is read again",
+  async (evidence) => {
+    const h = setup();
+    provenZero(h);
+    expect(settled(await inbox(h))).toBe(true);
+    const root = message(h.viewer, other, "my root", 400);
+    const late =
+      evidence === "live mention"
+        ? message(h.peer, other, "live mention", 500, [["p", h.viewer.pubkey]])
+        : message(h.peer, other, "untagged reply", 500, [
+            ["e", root.id, "", "root"],
+          ]);
+    if (evidence === "finite untagged reply") h.emit([root]);
+    verdicts(h, [
+      [root, "read"],
+      [
+        late,
+        evidence === "live mention" ? "unread:mention" : "unread:conversation",
+      ],
+    ]);
+    // Settle the root's own admission before holding the automatic read.
+    await h.unread.refresh();
+    const { held, started } = holdSidebar(h);
+    h.bff.api.contexts.mockClear();
+    try {
+      if (evidence === "live mention") h.emit([late], "live", other);
+      else h.emit([late]);
+      // The automatic targeted read has started and is held: the row the
+      // owner holds is still the old exact zero.
+      await started.promise;
+      await vi.waitFor(() =>
+        expect(h.unread.inbox().items.map((item) => item.messageId)).toContain(
+          late.id,
+        ),
+      );
+      expect(demandedIds(h)).toContain(late.id);
+    } finally {
+      held.resolve();
+    }
+  },
+);
+
+it("inbox: a failed sidebar read leaves new evidence unproven", async () => {
+  const h = setup();
+  provenZero(h);
+  expect(settled(await inbox(h))).toBe(true);
+  const failed = deferredSidebar<void>();
+  h.bff.api.sidebar.mockImplementation(async () => {
+    failed.resolve();
+    throw new Error("sidebar unavailable");
+  });
+  const late = message(h.peer, other, "late mention", 500, [
+    ["p", h.viewer.pubkey],
+  ]);
+  verdicts(h, [[late, "unread:mention"]]);
+  h.emit([late]);
+  await failed.promise;
+  await vi.waitFor(() =>
+    expect(h.unread.inbox().items.map((item) => item.messageId)).toContain(
+      late.id,
+    ),
+  );
+});
+
+// Rule 3: only exact zero prunes. A channel with attention keeps all of its
+// candidates, so the 101st is never asked and the snapshot cannot settle.
+it("inbox: 101 candidates in a channel with attention do not settle, even when every answer is read", async () => {
+  const h = setup();
+  h.grant(other, [h.viewer.pubkey, h.peer.pubkey]);
+  h.bff.rows.set(
+    other,
+    sidebarRow(other, { attention: { status: "at_least", value: 1 } }),
+  );
+  const rows = Array.from({ length: 101 }, (_, i) =>
+    message(h.peer, other, `row ${i}`, 100 + i),
+  );
+  h.emit(rows);
+  verdicts(
+    h,
+    rows.map((row) => [row, "read"] as const),
+  );
+  const snapshot = await inbox(h);
+  expect(snapshot.items).toEqual([]);
+  expect(settled(snapshot)).toBe(false);
+  const demanded = demandedIds(h);
+  // Control: the newest 100 were asked; the oldest was the one left out.
+  expect(demanded).not.toContain(rows[0]?.id);
+  for (const row of rows.slice(1)) expect(demanded).toContain(row.id);
+});

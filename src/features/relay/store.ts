@@ -1415,7 +1415,7 @@ export function createChannelStore(
       throw new Error("Relay is unavailable");
     if (list.status !== "ready")
       throw new Error("Channel list is not ready for a roster refresh");
-    if (!discovery.authorized(channelId)) return;
+    if (!discovery.authorized(channelId)) return false;
     const generation = epoch;
     const events = await transport.read(
       [
@@ -1452,6 +1452,13 @@ export function createChannelStore(
         "Channel roster refresh exceeded its read budget",
       );
     if (events.length) applyDiscovery(events);
+    const roster = events[0];
+    return (
+      !!roster &&
+      discovery.rosterVersions().get(channelId)?.id === roster.id &&
+      discovery.authorized(channelId) &&
+      !discovery.get(channelId)?.cached
+    );
   }
   const cachedResolutions = new Set<string>();
   function revalidateCached(channelId: string) {

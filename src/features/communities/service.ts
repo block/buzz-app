@@ -105,6 +105,11 @@ export function createCommunities(
   const enterpriseCommunities = new Set<string>();
   let enterpriseAuthEpoch = 0;
   let enterpriseClearInFlight: Promise<string[]> | undefined;
+  // The adapter refused the saved session. Until a login completes, checks
+  // treat it as gone without asking native, whose removal may still be
+  // waiting on secure storage and whose session check would revalidate the
+  // refused token over the network.
+  let enterpriseRefused = false;
   // Each session owns a scope so leaving can dispose exactly that one.
   const sessionScopes = new Map<string, Context>();
   const scopes: Context[] = [];
@@ -256,7 +261,7 @@ export function createCommunities(
       if (authEpoch !== enterpriseAuthEpoch)
         throw supersededEnterpriseCheckError();
       enterpriseCommunities.add(id);
-      if (await waitFor(enterpriseAuth.get(), signal)) {
+      if (!enterpriseRefused && (await waitFor(enterpriseAuth.get(), signal))) {
         if (authEpoch !== enterpriseAuthEpoch)
           throw supersededEnterpriseCheckError();
         clearEnterprisePrompt(id, promptVersion);
@@ -440,9 +445,9 @@ export function createCommunities(
         if (!disposed)
           update({ status: "unavailable", error: String(error) }, false);
       });
-  // The adapter refused the current session and the native owner has already
-  // forgotten it. A login that starts or finishes meanwhile is the recovery,
-  // so the prompt resets only if none did and no session remains.
+  // The adapter refused the current session. A login that starts or finishes
+  // meanwhile is the recovery; otherwise the prompt resets at once, without
+  // rechecking the refused session.
   if (enterpriseAuth)
     ctx.effect(() =>
       onEnterpriseSignInRequired(() => {
@@ -454,10 +459,8 @@ export function createCommunities(
           mark === enterpriseLoginMark() &&
           epoch === enterpriseAuthEpoch;
         if (!current()) return;
-        void (async () => {
-          if ((await enterpriseAuth.get()) || !current()) return;
-          await clearEnterpriseAuth(true);
-        })().catch((error) => {
+        enterpriseRefused = true;
+        clearEnterpriseAuth(true).catch((error) => {
           console.warn("Couldn't clear enterprise sign-in", error);
         });
       }),
@@ -527,6 +530,7 @@ export function createCommunities(
       if (disposed || enterpriseAttempt?.attemptId !== attempt.attemptId)
         return;
       enterpriseAttempt = undefined;
+      enterpriseRefused = false;
       // Retire every check that started before this login completed. A check
       // started while the browser was open must not republish required after
       // the successful attempt clears the prompt.

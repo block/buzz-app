@@ -14,6 +14,7 @@ import type { RelaySnapshot } from "../../features/relay/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import { inventoryIdentities, localSetups } from "./inventory-model";
 import { identityTiles } from "./identity-tiles";
+import type { ProfileResolver } from "./AgentCard";
 
 /** Discovery, saved metadata and execution are facts of one exact public key. */
 export function UnifiedInventory({
@@ -25,6 +26,8 @@ export function UnifiedInventory({
   duplicate,
   remove,
   importedId,
+  resolveProfile,
+  profileKeys,
   onUseHere,
   onImport,
 }: {
@@ -36,6 +39,8 @@ export function UnifiedInventory({
   duplicate?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
   importedId: string | null;
+  resolveProfile?: ProfileResolver | undefined;
+  profileKeys?: ReadonlySet<string> | undefined;
   onUseHere(
     pubkey: string,
     action: "use" | "clone",
@@ -154,6 +159,8 @@ export function UnifiedInventory({
       duplicate={duplicate}
       remove={remove}
       importedId={importedId}
+      resolveProfile={resolveProfile}
+      profileKeys={profileKeys}
       onUseHere={onUseHere}
       onImport={onImport}
     >

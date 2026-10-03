@@ -3,6 +3,7 @@ import { AgentsPage } from "./AgentsPage";
 import { editAgentRoute } from "./edit-route";
 export const inject = [
   "pages",
+  "panels",
   "relay",
   "agentControl",
   "navigation",
@@ -16,6 +17,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "agents",
     title: "Agents",
     layout: "workspace",
+    companion: true,
     primary: true,
     handlesNavigation: true,
     route: {
@@ -27,6 +29,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         {...props}
         relay={relay}
         control={control}
+        panels={ctx.panels}
         open={ctx.navigation.open}
         communities={communities}
       />

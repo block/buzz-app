@@ -199,7 +199,7 @@ function ProfileDetails({
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const presence = usePresenceStatus(session.presence, pubkey, true);
   const knownAgent = agentPubkeys.has(pubkey);
-  // Navigation carries appearance, not the evidence used by private controls.
+  // Navigation can conservatively identify an agent; it grants no private control.
   const displayAgent = knownAgent || agentHint;
   const ownership = useAgentOwnerEvidence(
     session,
@@ -281,7 +281,7 @@ function ProfileDetails({
   usePanelTabTitle(instanceId ? `${name} · Instance` : name, tabAvatar);
   // As in New message, a known agent needs this community's ready native control.
   const messageable = () =>
-    !agentPubkeys.has(pubkey) ||
+    !displayAgent ||
     session.agentChoices
       .snapshot()
       .identities.some((agent) => agent.managed && agent.pubkey === pubkey);

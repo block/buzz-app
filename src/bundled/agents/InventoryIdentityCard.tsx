@@ -11,6 +11,7 @@ import { communityMedia } from "../../features/profiles/avatar-upload";
 import { CaretDownIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard } from "./AgentCard";
+import type { ProfileResolver } from "./AgentCard";
 import { ManagedAgentActions } from "./ManagedAgentActions";
 import { localHereGroup, type inventoryDecision } from "./inventory-decisions";
 import { type AgentInventoryIdentity, localSetups } from "./inventory-model";
@@ -30,6 +31,8 @@ export function InventoryIdentityCard({
   duplicate,
   remove,
   importedId,
+  resolveProfile,
+  profileKeys,
   onUseHere,
   onImport,
   selectedSource,
@@ -48,6 +51,8 @@ export function InventoryIdentityCard({
   duplicate?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
   importedId: string | null;
+  resolveProfile?: ProfileResolver | undefined;
+  profileKeys?: ReadonlySet<string> | undefined;
   onUseHere(
     pubkey: string,
     action: "use" | "clone",
@@ -112,6 +117,9 @@ export function InventoryIdentityCard({
       identities={[{ pubkey: row.pubkey, name: row.displayName }]}
       session={session}
       editable={setups}
+      onViewProfile={
+        profileKeys?.has(row.pubkey) ? resolveProfile?.(row.pubkey) : undefined
+      }
       onEdit={setups.length ? edit : undefined}
       onDuplicate={setups.length ? duplicate : undefined}
       onDelete={setups.length ? remove : undefined}

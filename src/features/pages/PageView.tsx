@@ -58,6 +58,7 @@ function Failure({ message }: { message: string }) {
 export function PageView({
   page,
   companion,
+  companionOpening,
   navigation,
 }: { page: RegisteredPage } & PageProps) {
   return (
@@ -69,6 +70,7 @@ export function PageView({
       <PresentedPage
         page={page}
         companion={companion}
+        companionOpening={companionOpening}
         navigation={navigation}
       />
     </PageBoundary>
@@ -77,6 +79,7 @@ export function PageView({
 function PresentedPage({
   page,
   companion,
+  companionOpening,
   navigation,
 }: { page: RegisteredPage } & PageProps) {
   const Page = page.component;
@@ -84,5 +87,11 @@ function PresentedPage({
     // This effect lives INSIDE the boundary: failed rendering never acknowledges mount.
     if (!page.handlesNavigation) navigation?.complete({ status: "opened" });
   }, [page, navigation]);
-  return <Page companion={companion} navigation={navigation} />;
+  return (
+    <Page
+      companion={companion}
+      companionOpening={companionOpening}
+      navigation={navigation}
+    />
+  );
 }

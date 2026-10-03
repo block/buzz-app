@@ -228,7 +228,7 @@ function CommentActions({
         >
           {showCopyAction ? (
             <Button
-              variant="ghost"
+              variant="subtle"
               size="xs"
               loading={copying}
               onClick={() => void copy()}

@@ -256,7 +256,27 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   const commentActions = commentEvent.getByRole("button", {
     name: "Comment actions",
   });
+  const expectActionsCenteredUnderCarets = async () => {
+    for (const event of [commentEvent, longReview]) {
+      await expect
+        .poll(() =>
+          event.evaluate((node) => {
+            const caret = node
+              .querySelector('[class*="messageTrigger"] > svg')
+              .getBoundingClientRect();
+            const action = node
+              .querySelector('[aria-label="Comment actions"]')
+              .getBoundingClientRect();
+            return Math.abs(
+              caret.left + caret.width / 2 - (action.left + action.width / 2),
+            );
+          }),
+        )
+        .toBeLessThan(1);
+    }
+  };
   const actionSlot = commentActions.locator("..");
+  await expectActionsCenteredUnderCarets();
   await expect(actionSlot).toHaveAttribute("data-collapsed", "true");
   await page.mouse.move(0, 0);
   const fineHover = await page.evaluate(
@@ -317,6 +337,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     name: "Copy comment link",
     exact: true,
   });
+  await expect(copyAction).toHaveAttribute("data-variant", "subtle");
   const actionsBox = await copyAction.boundingBox();
   const bodyBox = await commentEvent
     .locator('[class*="messageBody"]')
@@ -618,6 +639,17 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     await expectCentered();
     await expectThumbnailsBelowExcerpt();
     await expectStationaryCarets();
+    await expectActionsCenteredUnderCarets();
+    await commentActions.hover();
+    await commentEvent.screenshot({
+      path: testInfo.outputPath(`comment-actions-centered-${mode}.png`),
+    });
+    await comment.click();
+    await panel.getByRole("heading").first().hover();
+    await commentEvent.screenshot({
+      path: testInfo.outputPath(`comment-copy-subtle-${mode}.png`),
+    });
+    await comment.click();
     await panel.getByRole("heading").first().hover();
     await panel.screenshot({
       path: testInfo.outputPath(`conversation-${mode}.png`),
@@ -741,9 +773,12 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await panel.screenshot({
     path: testInfo.outputPath("conversation-expanded-dark.png"),
   });
+  await comment.click();
+  await review.click();
   for (const width of [800, 480]) {
     await page.setViewportSize({ width, height: 950 });
     await expectReviewContained();
+    await expectActionsCenteredUnderCarets();
     await description.scrollIntoViewIfNeeded();
     await expectThumbnailsBelowExcerpt();
     await expectLayoutBasedThumbnails();
@@ -788,6 +823,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await description.scrollIntoViewIfNeeded();
   await expectThumbnailsBelowExcerpt();
   await expectStationaryCarets();
+  await expectActionsCenteredUnderCarets();
   const preview = description.locator("..").locator(":scope > span").last();
   expect((await preview.boundingBox()).width).toBeGreaterThan(100);
   expect(
@@ -814,6 +850,13 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   expect(
     await conversation.evaluate((node) => node.scrollWidth <= node.clientWidth),
   ).toBe(true);
+  await page
+    .locator(".buzz-toast-viewport")
+    .getByRole("button", { name: "Dismiss notification" })
+    .click();
+  await expect(
+    page.getByText("Comment link copied", { exact: true }),
+  ).toHaveCount(0);
   await commentEvent.screenshot({
     path: testInfo.outputPath("expanded-actions-narrow-200.png"),
   });
@@ -1199,14 +1242,18 @@ test("conversation history expands around merge without hiding approval-only mil
   );
   for (const width of [800, 480]) {
     await page.setViewportSize({ width, height: 950 });
-    expect(
-      await checks.evaluate((node) => node.scrollWidth <= node.clientWidth),
-    ).toBe(true);
-    expect(
-      await checkRows.evaluateAll((rows) =>
-        rows.every((node) => node.scrollWidth <= node.clientWidth),
-      ),
-    ).toBe(true);
+    await expect
+      .poll(() =>
+        checks.evaluate((node) => node.scrollWidth <= node.clientWidth),
+      )
+      .toBe(true);
+    await expect
+      .poll(() =>
+        checkRows.evaluateAll((rows) =>
+          rows.every((node) => node.scrollWidth <= node.clientWidth),
+        ),
+      )
+      .toBe(true);
     await checks.locator("[data-check-state]").scrollIntoViewIfNeeded();
     await panel.screenshot({
       path: testInfo.outputPath(`checks-${width}-200.png`),

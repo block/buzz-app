@@ -428,7 +428,8 @@
 .messageTrigger > svg {
   position: absolute;
   top: var(--space-1);
-  right: 0;
+  /* Center the 14px caret over the 20px action’s footprint. */
+  right: calc((var(--space-5) - 0.875rem) / 2);
   color: var(--text-subtle);
 }
 .messageLabel {

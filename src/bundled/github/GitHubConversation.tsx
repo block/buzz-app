@@ -542,7 +542,7 @@ function Conversation({
           No discussion comments or review summaries to show.
         </p>
       )}
-      {incomplete ? (
+      {incomplete && (
         <div className={styles.conversationSources}>
           <p className={styles.conversationNotice}>
             Loaded conversation only · some sources are incomplete.
@@ -550,10 +550,6 @@ function Conversation({
           <SourceStatus label="Discussion" source={discussion} />
           <SourceStatus label="Reviews" source={reviews} />
         </div>
-      ) : (
-        <p className={styles.conversationNotice}>
-          Conversation loaded · oldest first
-        </p>
       )}
     </section>
   );

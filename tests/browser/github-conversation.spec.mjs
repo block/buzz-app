@@ -119,9 +119,10 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     name: "Pull request conversation",
     exact: true,
   });
+  await expect(conversation).toBeVisible();
   await expect(
-    conversation.getByText("Conversation loaded · oldest first"),
-  ).toBeVisible();
+    conversation.getByText(/some sources are incomplete/),
+  ).toHaveCount(0);
   await expect(
     panel.getByRole("tab", { name: "Discussion", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
@@ -645,9 +646,10 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   });
   expect(Math.abs(enlargedCenters[0] - enlargedCenters[1])).toBeLessThan(1);
   await expect(singleLineTrigger).toBeAttached();
+  await expect(conversation).toBeVisible();
   await expect(
-    conversation.getByText("Conversation loaded · oldest first"),
-  ).toBeVisible();
+    conversation.getByText(/some sources are incomplete/),
+  ).toHaveCount(0);
   await description.scrollIntoViewIfNeeded();
   await expectThumbnailsBelowExcerpt();
   await expectStationaryCarets();
@@ -817,9 +819,10 @@ test("conversation history expands around merge without hiding approval-only mil
     name: "Pull request conversation",
     exact: true,
   });
+  await expect(conversation).toBeVisible();
   await expect(
-    conversation.getByText("Conversation loaded · oldest first"),
-  ).toBeVisible();
+    conversation.getByText(/some sources are incomplete/),
+  ).toHaveCount(0);
   const trigger = conversation.getByRole("button", {
     name: /^(Show|Hide) 5 earlier events$/,
   });
@@ -1041,11 +1044,15 @@ test("conversation history expands around merge without hiding approval-only mil
   await expect(approvalReference).toBeAttached();
   await end(page);
   await approvalReference.click();
+  await expect(conversation).toBeVisible();
   await expect(
-    conversation.getByText("Conversation loaded · oldest first"),
-  ).toBeVisible();
+    conversation.getByText(/some sources are incomplete/),
+  ).toHaveCount(0);
   await expect(approval).toBeVisible();
   await expect(merge).toBeVisible();
+  await expect(
+    conversation.getByText(/Conversation loaded|oldest first/),
+  ).toHaveCount(0);
   await expect(
     conversation.getByRole("button", { name: /earlier|after merge/ }),
   ).toHaveCount(0);

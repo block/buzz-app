@@ -177,7 +177,9 @@ it("shows honest missing-data rows without inventing a head check request", asyn
   render(<GitHubPanel target={target} close={() => {}} />);
   await screen.findByRole("heading", { name: "Old PR #1" });
   expect(screen.getAllByText("Unavailable")).toHaveLength(1);
-  await screen.findByText("Conversation loaded · oldest first");
+  await screen.findByText(
+    "No discussion comments or review summaries to show.",
+  );
   await userEvent.setup().click(screen.getByRole("tab", { name: "Checks" }));
   expect(screen.getAllByText("Unavailable")).toHaveLength(2);
   expect(
@@ -225,7 +227,9 @@ it("shows named rows with honest outcomes, descriptions and links without extra 
   });
   vi.stubGlobal("fetch", fetch);
   render(<GitHubPanel target={target} close={() => {}} />);
-  await screen.findByText("Conversation loaded · oldest first");
+  await screen.findByText(
+    "No discussion comments or review summaries to show.",
+  );
   expect(fetch).toHaveBeenCalledTimes(3);
   const user = userEvent.setup();
   await user.click(screen.getByRole("tab", { name: "Checks" }));

@@ -205,7 +205,11 @@ it("keeps paging available when a page contains only omitted reviews", async () 
   expect(screen.queryByText("inline-only")).not.toBeInTheDocument();
   expect(fetch).toHaveBeenCalledTimes(2);
   await userEvent.setup().click(more);
-  await screen.findByText("Conversation loaded · oldest first");
+  await waitFor(() =>
+    expect(
+      screen.queryByText(/some sources are incomplete/),
+    ).not.toBeInTheDocument(),
+  );
   const review = screen.getByRole("group", { name: "Review comment" });
   expect(within(review).getByText("summary-reviewer")).toBeVisible();
   await userEvent
@@ -231,7 +235,11 @@ it("shows honest empty copy when all submitted reviews are omitted", async () =>
     ),
   );
   render(<GitHubConversation details={details} url={url} />);
-  await screen.findByText("Conversation loaded · oldest first");
+  await waitFor(() =>
+    expect(
+      screen.queryByText(/some sources are incomplete/),
+    ).not.toBeInTheDocument(),
+  );
   expect(screen.getAllByRole("group")).toHaveLength(1);
   expect(
     screen.getByText("No discussion comments or review summaries to show."),
@@ -306,7 +314,9 @@ it("keeps source failures independent, retains pages during retry and fetches mo
   expect(
     screen.getAllByRole("button", { name: "Expand Comment" }),
   ).toHaveLength(2);
-  expect(screen.getByText("Conversation loaded · oldest first")).toBeVisible();
+  expect(
+    screen.queryByText(/some sources are incomplete/),
+  ).not.toBeInTheDocument();
   expect(
     fetch.mock.calls
       .map(([target]) => target)
@@ -345,7 +355,11 @@ it("fetches only discussion and reviews, keeps summary expansion independent and
   );
   vi.stubGlobal("fetch", fetch);
   render(<GitHubConversation details={details} url={url} />);
-  await screen.findByText("Conversation loaded · oldest first");
+  await waitFor(() =>
+    expect(
+      screen.queryByText(/some sources are incomplete/),
+    ).not.toBeInTheDocument(),
+  );
   expect(fetch.mock.calls.map(([target]) => target).sort()).toEqual([
     "https://api.github.com/repos/sample/project/issues/1/comments?per_page=30&page=1",
     "https://api.github.com/repos/sample/project/pulls/1/reviews?per_page=30&page=1",
@@ -398,8 +412,8 @@ it("aborts all old sources, ignores late results and resets pages and expansion 
   );
   await waitFor(() =>
     expect(
-      screen.getByText("Conversation loaded · oldest first"),
-    ).toBeVisible(),
+      screen.queryByText(/some sources are incomplete/),
+    ).not.toBeInTheDocument(),
   );
   expect(pending.every(({ signal }) => signal.aborted)).toBe(true);
   await act(async () => {
@@ -438,7 +452,11 @@ it("keeps description usable while held sources load and gives neutral empty cop
     screen.queryByRole("region", { name: "Discussion" }),
   ).not.toBeInTheDocument();
   expect(screen.queryByText("All pages loaded")).not.toBeInTheDocument();
-  expect(screen.getByText("Conversation loaded · oldest first")).toBeVisible();
+  expect(screen.queryByText(/Conversation loaded/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/oldest first/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByText(/some sources are incomplete/),
+  ).not.toBeInTheDocument();
 });
 
 it("keeps more-page loading explicit and ignores late page results after switching PRs", async () => {
@@ -487,8 +505,8 @@ it("keeps more-page loading explicit and ignores late page results after switchi
   );
   await waitFor(() =>
     expect(
-      screen.getByText("Conversation loaded · oldest first"),
-    ).toBeVisible(),
+      screen.queryByText(/some sources are incomplete/),
+    ).not.toBeInTheDocument(),
   );
   expect(signal?.aborted).toBe(true);
   await act(async () => finish(response([{ id: 21, body: "Stale page two" }])));
@@ -532,7 +550,11 @@ it("uses the opening avatar only, then verdict icons and shared feedback bubbles
   const { container } = render(
     <GitHubConversation details={details} url={url} />,
   );
-  await screen.findByText("Conversation loaded · oldest first");
+  await waitFor(() =>
+    expect(
+      screen.queryByText(/some sources are incomplete/),
+    ).not.toBeInTheDocument(),
+  );
   expect(container.querySelectorAll(".buzz-avatar")).toHaveLength(1);
   expect(
     screen
@@ -691,7 +713,11 @@ it("expands mixed history in place without fetching and keeps merge at the highe
       url={url}
     />,
   );
-  await screen.findByText("Conversation loaded · oldest first");
+  await waitFor(() =>
+    expect(
+      screen.queryByText(/some sources are incomplete/),
+    ).not.toBeInTheDocument(),
+  );
   const trigger = screen.getByRole("button", {
     name: "Show 4 earlier events",
   });
@@ -748,7 +774,11 @@ it("expands mixed history in place without fetching and keeps merge at the highe
   view.rerender(
     <GitHubConversation details={details} url={url.replace("/1", "/2")} />,
   );
-  await screen.findByText("Conversation loaded · oldest first");
+  await waitFor(() =>
+    expect(
+      screen.queryByText(/some sources are incomplete/),
+    ).not.toBeInTheDocument(),
+  );
   expect(
     screen.getByRole("button", { name: "Show 3 earlier comments" }),
   ).toHaveAttribute("aria-expanded", "false");
@@ -797,7 +827,11 @@ it("retains an expanded run and source recovery while another page appends a new
   expect(screen.getAllByRole("group", { name: "Comment" })).toHaveLength(2);
   fail = false;
   fireEvent.click(retry);
-  await screen.findByText("Conversation loaded · oldest first");
+  await waitFor(() =>
+    expect(
+      screen.queryByText(/some sources are incomplete/),
+    ).not.toBeInTheDocument(),
+  );
   expect(trigger).toHaveAttribute("aria-expanded", "true");
   const afterMerge = screen.getByRole("button", {
     name: "Show 1 event after merge",
@@ -1030,7 +1064,11 @@ it("uses singular event copy and restores the original verdict body on expansion
       url={url}
     />,
   );
-  await screen.findByText("Conversation loaded · oldest first");
+  await waitFor(() =>
+    expect(
+      screen.queryByText(/some sources are incomplete/),
+    ).not.toBeInTheDocument(),
+  );
   const trigger = screen.getByRole("button", { name: "Show 1 earlier event" });
   expect(trigger).toHaveTextContent("1 earlier event");
   expect(
@@ -1080,7 +1118,11 @@ it("renders a lone approval directly and expands post-merge follow-up without re
       url={url}
     />,
   );
-  await screen.findByText("Conversation loaded · oldest first");
+  await waitFor(() =>
+    expect(
+      screen.queryByText(/some sources are incomplete/),
+    ).not.toBeInTheDocument(),
+  );
   expect(screen.getByRole("group", { name: "Approved" })).toBeVisible();
   expect(
     screen.queryByRole("button", { name: /earlier/ }),

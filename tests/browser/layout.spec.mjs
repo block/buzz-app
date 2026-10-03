@@ -9,7 +9,14 @@ import {
 import { test, expect } from "./fixture.mjs";
 
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
-import { wheel, anchor, settle, upper, expectAnchor } from "./timeline.mjs";
+import {
+  wheel,
+  keyScroll,
+  anchor,
+  settle,
+  upper,
+  expectAnchor,
+} from "./timeline.mjs";
 
 // These layout/navigation journeys exercise the opt-in Bestie surface.
 test.beforeEach(async ({ page }) => {
@@ -1274,8 +1281,8 @@ for (const [control, key] of [
       );
       await expect(focused).toBeFocused();
       const before = await history.evaluate((element) => element.scrollTop);
-      await page.keyboard.press(key);
       if (!nativeScroll) {
+        await page.keyboard.press(key);
         await settle(page);
         expect(await history.evaluate((element) => element.scrollTop)).toBe(
           before,
@@ -1298,10 +1305,12 @@ for (const [control, key] of [
           .toBeLessThan(2);
         return;
       }
-      await expect
-        .poll(() => history.evaluate((element) => element.scrollTop))
-        .toBeLessThan(before - 80);
-      await settle(page);
+      // Linux WebKit can pause a keyboard scroll animation long enough to look
+      // settled. Capture the reading baseline only after its scrollend.
+      await keyScroll(page, key);
+      expect(
+        await history.evaluate((element) => element.scrollTop),
+      ).toBeLessThan(before - 80);
       const reading = await anchor(page);
       app.append("primary", "alpha", "Do not steal the reader's position");
       await expect(
@@ -1366,12 +1375,13 @@ for (const containment of ["auto", "contain"])
       await inner.evaluate((el, value) => {
         el.style.overscrollBehaviorY = value;
       }, containment);
-      await page.keyboard.press("PageUp");
       if (nativeScroll) {
-        await expect
-          .poll(() => history.evaluate((el) => el.scrollTop))
-          .toBeLessThan(before - 80);
-        await settle(page);
+        // The key propagates to the timeline; wait for that native scroll's
+        // scrollend before capturing the reading baseline.
+        await keyScroll(page, "PageUp");
+        expect(await history.evaluate((el) => el.scrollTop)).toBeLessThan(
+          before - 80,
+        );
         const reading = await anchor(page);
         app.append("primary", "alpha", "Keep the reader above the diff");
         await expect(
@@ -1380,6 +1390,7 @@ for (const containment of ["auto", "contain"])
         await settle(page);
         await expectAnchor(page, reading);
       } else {
+        await page.keyboard.press("PageUp");
         await settle(page);
         expect(await history.evaluate((el) => el.scrollTop)).toBe(before);
         // No outer scrollend will retire this key. A later real layout contraction

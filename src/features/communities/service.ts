@@ -31,6 +31,10 @@ export type EnterpriseLoginSnapshot = {
   errorKind?: "discovery" | "login";
   error?: string;
 };
+type EnterpriseCheck = {
+  authEpoch: number;
+  authRelevant: boolean;
+};
 export class EnterpriseLoginRequired extends Error {
   constructor(readonly communityId: string) {
     super("Enterprise sign-in is required for this community");
@@ -91,9 +95,10 @@ export function createCommunities(
   let enterpriseAttempt:
     | { communityId: string; attemptId: string; owner: string }
     | undefined;
-  const enterpriseCheckVersions = new Map<string, number>();
+  const enterprisePromptVersions = new Map<string, number>();
   const enterpriseChecksInFlight = new Set<string>();
   const enterpriseCommunities = new Set<string>();
+  let enterpriseAuthEpoch = 0;
   let enterpriseClearInFlight: Promise<string[]> | undefined;
   // Each session owns a scope so leaving can dispose exactly that one.
   const sessionScopes = new Map<string, Context>();
@@ -157,18 +162,18 @@ export function createCommunities(
       "Enterprise authentication check was superseded",
       "AbortError",
     );
-  const nextEnterpriseCheck = (communityId: string) => {
-    const version = (enterpriseCheckVersions.get(communityId) ?? 0) + 1;
-    enterpriseCheckVersions.set(communityId, version);
+  const nextEnterprisePrompt = (communityId: string) => {
+    const version = (enterprisePromptVersions.get(communityId) ?? 0) + 1;
+    enterprisePromptVersions.set(communityId, version);
     return version;
   };
-  const currentEnterpriseCheck = (communityId: string, version: number) =>
-    !disposed && enterpriseCheckVersions.get(communityId) === version;
+  const currentEnterprisePrompt = (communityId: string, version: number) =>
+    !disposed && enterprisePromptVersions.get(communityId) === version;
   const clearEnterprisePrompt = (communityId: string, version?: number) => {
     if (disposed) return;
     if (
       version !== undefined &&
-      enterpriseCheckVersions.get(communityId) !== version
+      enterprisePromptVersions.get(communityId) !== version
     )
       return;
     if (
@@ -184,7 +189,7 @@ export function createCommunities(
     error?: string,
     errorKind?: EnterpriseLoginSnapshot["errorKind"],
   ) => {
-    if (!currentEnterpriseCheck(communityId, version)) return;
+    if (!currentEnterprisePrompt(communityId, version)) return;
     // A gate check can finish while the browser attempt is open. Its result
     // must not replace the attempt's owned opening/error state.
     if (enterpriseAttempt?.communityId === communityId) return;
@@ -207,11 +212,15 @@ export function createCommunities(
     );
   };
   const retireEnterprisePrompt = (communityId: string) => {
-    nextEnterpriseCheck(communityId);
+    nextEnterprisePrompt(communityId);
     enterpriseChecksInFlight.delete(communityId);
     if (state.enterprise?.communityId === communityId)
       update({ enterprise: undefined }, false);
   };
+  const isSupersededEnterpriseCheck = (reason: unknown) =>
+    reason instanceof DOMException &&
+    reason.name === "AbortError" &&
+    reason.message === "Enterprise authentication check was superseded";
   const waitFor = <T>(operation: Promise<T>, signal: AbortSignal) => {
     signal.throwIfAborted();
     return new Promise<T>((resolve, reject) => {
@@ -226,34 +235,31 @@ export function createCommunities(
   async function requireEnterpriseLogin(
     id: string,
     signal: AbortSignal,
-  ): Promise<number | undefined> {
+  ): Promise<EnterpriseCheck | undefined> {
     if (disposed) throw disposedError();
     if (!enterpriseAuth || live || !baseConnect) return;
-    const version = nextEnterpriseCheck(id);
+    const promptVersion = nextEnterprisePrompt(id);
+    const authEpoch = enterpriseAuthEpoch;
     enterpriseChecksInFlight.add(id);
     let required = false;
     try {
       if (!(await waitFor(enterpriseAuth.gate(id), signal))) {
-        if (!currentEnterpriseCheck(id, version))
-          throw supersededEnterpriseCheckError();
         enterpriseCommunities.delete(id);
-        clearEnterprisePrompt(id, version);
-        return version;
+        clearEnterprisePrompt(id, promptVersion);
+        return { authEpoch, authRelevant: false };
       }
-      if (!currentEnterpriseCheck(id, version))
+      if (authEpoch !== enterpriseAuthEpoch)
         throw supersededEnterpriseCheckError();
       enterpriseCommunities.add(id);
       if (await waitFor(enterpriseAuth.get(), signal)) {
-        if (!currentEnterpriseCheck(id, version))
+        if (authEpoch !== enterpriseAuthEpoch)
           throw supersededEnterpriseCheckError();
-        clearEnterprisePrompt(id, version);
-        return version;
+        clearEnterprisePrompt(id, promptVersion);
+        return { authEpoch, authRelevant: true };
       }
-      if (!currentEnterpriseCheck(id, version))
-        throw supersededEnterpriseCheckError();
       required = true;
     } catch (reason) {
-      if (signal.aborted || !currentEnterpriseCheck(id, version)) throw reason;
+      if (signal.aborted || isSupersededEnterpriseCheck(reason)) throw reason;
       const error =
         reason instanceof EnterpriseDiscoveryError
           ? reason
@@ -261,27 +267,25 @@ export function createCommunities(
               reason instanceof Error ? reason.message : String(reason),
               { cause: reason },
             );
-      publishEnterprise(id, version, "error", error.message, "discovery");
+      publishEnterprise(id, promptVersion, "error", error.message, "discovery");
       throw error;
     } finally {
-      if (enterpriseCheckVersions.get(id) === version)
+      if (enterprisePromptVersions.get(id) === promptVersion)
         enterpriseChecksInFlight.delete(id);
     }
-    if (required) publishEnterprise(id, version, "required");
+    if (required) publishEnterprise(id, promptVersion, "required");
     throw new EnterpriseLoginRequired(id);
   }
   const connect = baseConnect
     ? async (id: string, signal: AbortSignal) => {
         if (disposed) throw disposedError();
-        const clear = enterpriseClearInFlight;
-        if (clear) await clear;
+        const check = await requireEnterpriseLogin(id, signal);
         if (disposed) throw disposedError();
-        const version = await requireEnterpriseLogin(id, signal);
-        if (disposed) throw disposedError();
-        if (version !== undefined && !currentEnterpriseCheck(id, version))
+        if (check?.authRelevant && check.authEpoch !== enterpriseAuthEpoch)
           throw supersededEnterpriseCheckError();
-        if (enterpriseClearInFlight) {
-          await enterpriseClearInFlight;
+        const clear = enterpriseClearInFlight;
+        if (check?.authRelevant && clear) {
+          await clear;
           throw supersededEnterpriseCheckError();
         }
         return baseConnect(id, signal);
@@ -478,7 +482,7 @@ export function createCommunities(
       owner,
     };
     enterpriseAttempt = attempt;
-    nextEnterpriseCheck(attempt.communityId);
+    nextEnterprisePrompt(attempt.communityId);
     update(
       {
         enterprise: {
@@ -508,7 +512,7 @@ export function createCommunities(
       enterpriseAttempt = undefined;
       publishEnterprise(
         attempt.communityId,
-        nextEnterpriseCheck(attempt.communityId),
+        nextEnterprisePrompt(attempt.communityId),
         "error",
         reason instanceof Error ? reason.message : String(reason),
         "login",
@@ -545,7 +549,7 @@ export function createCommunities(
           (owner !== "app" && attempt.owner !== owner)))
     )
       return Promise.resolve();
-    const version = nextEnterpriseCheck(target);
+    const version = nextEnterprisePrompt(target);
     let cancellation = Promise.resolve();
     if (attempt) {
       enterpriseAttempt = undefined;
@@ -578,20 +582,33 @@ export function createCommunities(
       return;
     }
     const operation = (async () => {
+      enterpriseAuthEpoch++;
+      const affectedCommunities = new Set(enterpriseCommunities);
       const attempt = enterpriseAttempt;
       if (attempt)
         await cancelEnterpriseLogin(attempt.communityId, attempt.owner);
-      // Fence checks already in flight before waiting on native storage. New
-      // connects wait on this operation through the wrapper above.
-      for (const communityId of enterpriseCheckVersions.keys())
+      // Fence prompts already in flight before waiting on native storage. An
+      // ordinary relay check may continue; auth-bearing checks are fenced by
+      // the epoch and by the clear promise in connect.
+      for (const communityId of enterprisePromptVersions.keys())
         retireEnterprisePrompt(communityId);
-      await enterpriseAuth.clear();
-      const retryCommunities = [...enterpriseCommunities];
+      let clearError: unknown;
+      let clearFailed = false;
+      try {
+        await enterpriseAuth.clear();
+      } catch (error) {
+        clearError = error;
+        clearFailed = true;
+      }
+      const retryCommunities = [
+        ...new Set([...affectedCommunities, ...enterpriseCommunities]),
+      ];
       for (const communityId of retryCommunities) {
         retireEnterprisePrompt(communityId);
         sessions.get(communityId)?.disconnect();
       }
       if (state.enterprise) update({ enterprise: undefined }, false);
+      if (clearFailed) throw clearError;
       return retryCommunities;
     })();
     enterpriseClearInFlight = operation;

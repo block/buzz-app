@@ -35,10 +35,6 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
       const url = new URL(route.request().url());
       requests.push(url.pathname);
       const common = { created_at: "2026-10-01T16:00:00Z" };
-      if (url.pathname.endsWith("/check-runs"))
-        return route.fulfill({ json: { total_count: 0, check_runs: [] } });
-      if (url.pathname.endsWith("/status"))
-        return route.fulfill({ json: { total_count: 0, statuses: [] } });
       const json = url.pathname.endsWith("/reviews")
         ? [
             {
@@ -136,9 +132,6 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     conversation.getByText(/some sources are incomplete/),
   ).toHaveCount(0);
   await expect(
-    panel.getByRole("tab", { name: "Discussion", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
-  await expect(
     conversation.getByText("inline-only", { exact: true }),
   ).toHaveCount(0);
   await expect(conversation.getByRole("group")).toHaveCount(5);
@@ -162,36 +155,14 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await expectReviewContained();
   await longReview.hover();
   await expectReviewContained();
+  await expect(panel.getByRole("tablist")).toHaveCount(0);
+  await expect(panel.getByRole("tabpanel", { hidden: true })).toHaveCount(0);
+  await expect(panel.locator("[data-check-state]")).toHaveCount(0);
   expect([...requests].sort()).toEqual([
     "/repos/sample/project/issues/1/comments",
     "/repos/sample/project/pulls/1",
     "/repos/sample/project/pulls/1/reviews",
   ]);
-  await panel.getByRole("tab", { name: "Checks", exact: true }).focus();
-  await page.keyboard.press("Enter");
-  await expect(panel.getByRole("tabpanel", { name: "Checks" })).toContainText(
-    "No checks",
-  );
-  expect([...requests].sort()).toEqual([
-    "/repos/sample/project/commits/head-sha/check-runs",
-    "/repos/sample/project/commits/head-sha/status",
-    "/repos/sample/project/issues/1/comments",
-    "/repos/sample/project/pulls/1",
-    "/repos/sample/project/pulls/1/reviews",
-  ]);
-  await page.keyboard.press("ArrowLeft");
-  await expect(
-    panel.getByRole("tab", { name: "Discussion", exact: true }),
-  ).toBeFocused();
-  await page.keyboard.press("Enter");
-  await expect(conversation).toBeVisible();
-  await panel.getByRole("tab", { name: "Checks", exact: true }).click();
-  await expect(panel.getByRole("tabpanel", { name: "Checks" })).toContainText(
-    "No checks",
-  );
-  await panel.getByRole("tab", { name: "Discussion", exact: true }).click();
-  await expect(conversation).toBeVisible();
-  expect(requests).toHaveLength(5);
   await expect(
     panel.locator("dt").filter({ hasText: /^Comments$/ }),
   ).toHaveCount(0);
@@ -368,7 +339,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
       `${target}#pullrequestreview-10`,
     ]);
   await expect(review).toHaveAttribute("aria-expanded", "false");
-  expect(requests).toHaveLength(5);
+  expect(requests).toHaveLength(3);
 
   await expect(description).toHaveCSS("font-size", "14px");
   await expect(
@@ -862,7 +833,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   });
 });
 
-// Browser-only: in-place group geometry, keyboard/touch disclosure, retained tab state and actual-app wiring.
+// Browser-only: in-place group geometry, keyboard/touch disclosure, actual-app wiring.
 // Ordering, decision boundaries, source failures and paging remain covered in Vitest.
 test("conversation history expands around merge without hiding approval-only milestones", async ({
   page,
@@ -948,60 +919,17 @@ test("conversation history expands around merge without hiding approval-only mil
                   user: { login: "contributor" },
                 },
               ]
-            : path.endsWith("/check-runs")
-              ? {
-                  total_count: 4,
-                  check_runs: [
-                    {
-                      name: "Unit tests",
-                      status: "completed",
-                      conclusion: "success",
-                      details_url:
-                        "https://github.com/sample/project/actions/runs/1",
-                      output: { title: "All 420 tests passed" },
-                    },
-                    {
-                      name: "Typecheck",
-                      status: "completed",
-                      conclusion: "failure",
-                      output: { title: "A type needs updating" },
-                    },
-                    {
-                      name: "Browser journeys / Chromium and WebKit at narrow and enlarged text sizes",
-                      status: "completed",
-                      conclusion: "success",
-                      output: { title: "Both browser engines passed" },
-                    },
-                    {
-                      name: "Optional deployment",
-                      status: "completed",
-                      conclusion: "skipped",
-                    },
-                  ],
-                }
-              : path.endsWith("/status")
-                ? {
-                    total_count: 1,
-                    statuses: [
-                      {
-                        context: "DCO",
-                        state: "success",
-                        description: "All commits signed off",
-                        target_url: "https://ci.example.test/dco/1",
-                      },
-                    ],
-                  }
-                : {
-                    title: "Make the conversation easier to follow",
-                    body: "A quieter history with decisions in view.",
-                    state: "closed",
-                    merged: true,
-                    merged_at: time(18),
-                    merged_by: { login: "maintainer" },
-                    user: { login: "author" },
-                    created_at: time(12),
-                    head: { sha: "head-sha" },
-                  },
+            : {
+                title: "Make the conversation easier to follow",
+                body: "A quieter history with decisions in view.",
+                state: "closed",
+                merged: true,
+                merged_at: time(18),
+                merged_by: { login: "maintainer" },
+                user: { login: "author" },
+                created_at: time(12),
+                head: { sha: "head-sha" },
+              },
       });
     },
   );
@@ -1122,52 +1050,6 @@ test("conversation history expands around merge without hiding approval-only mil
   await page.keyboard.press("Space");
   await expect(afterMerge).toHaveText(/1 message after merge/);
   await expect(conversation.getByRole("group")).toHaveCount(7);
-  await panel.getByRole("tab", { name: "Checks", exact: true }).click();
-  const checks = panel.getByRole("tabpanel", { name: "Checks" });
-  await expect(checks).toContainText("Some checks were not successful");
-  const checkRows = checks.getByRole("listitem");
-  await expect(checkRows).toHaveCount(5);
-  await expect(checkRows.filter({ hasText: "Passed" })).toHaveCount(3);
-  await expect(checkRows.first()).toContainText("Failed");
-  await expect(checkRows.nth(1)).toContainText("Skipped");
-  const successful = checks.getByRole("button", {
-    name: "3 successful checks",
-  });
-  await successful.focus();
-  await page.keyboard.press("Space");
-  await expect(successful).toHaveAttribute("aria-expanded", "false");
-  await expect(
-    checks.getByRole("link", { name: "Unit tests", exact: true }),
-  ).toBeHidden();
-  await page.keyboard.press("Enter");
-  await expect(successful).toHaveAttribute("aria-expanded", "true");
-  const unitLink = checks.getByRole("link", {
-    name: "Unit tests",
-    exact: true,
-  });
-  await expect(unitLink).toHaveAttribute(
-    "href",
-    "https://github.com/sample/project/actions/runs/1",
-  );
-  await unitLink.focus();
-  await expect(unitLink).toBeFocused();
-  await unitLink.blur();
-  for (const mode of ["light", "dark"]) {
-    await page.emulateMedia({ colorScheme: mode });
-    await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
-    await expect(checkRows.first().locator("svg")).toHaveCSS(
-      "color",
-      await checks
-        .locator('circle[data-check-category="failing"]')
-        .evaluate((node) => getComputedStyle(node).stroke),
-    );
-    await panel.screenshot({ path: testInfo.outputPath(`checks-${mode}.png`) });
-  }
-  await successful.tap();
-  await expect(successful).toHaveAttribute("aria-expanded", "false");
-  await panel.getByRole("tab", { name: "Discussion", exact: true }).click();
-  await expect(trigger).toHaveAttribute("aria-expanded", "true");
-  expect(requests).toHaveLength(5);
   await page.setViewportSize({ width: 800, height: 950 });
   await expectOrder();
   await panel.screenshot({
@@ -1222,48 +1104,7 @@ test("conversation history expands around merge without hiding approval-only mil
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(trigger).toBeFocused();
   await expect(conversation.getByRole("group")).toHaveCount(2);
-  expect(requests).toHaveLength(5);
-  await panel.getByRole("tab", { name: "Checks", exact: true }).click();
-  await expect(successful).toHaveAttribute("aria-expanded", "false");
-  await successful.tap();
-  await expect(checkRows).toHaveCount(5);
-  await page.evaluate(() => {
-    localStorage.setItem("buzz-font-scale.v1", "2");
-    window.dispatchEvent(
-      new StorageEvent("storage", {
-        key: "buzz-font-scale.v1",
-        storageArea: localStorage,
-      }),
-    );
-  });
-  await expect(checks.locator('[class*="checkSummaryLabel"]')).toHaveCSS(
-    "font-size",
-    "40px",
-  );
-  for (const width of [800, 480]) {
-    await page.setViewportSize({ width, height: 950 });
-    await expect
-      .poll(() =>
-        checks.evaluate((node) => node.scrollWidth <= node.clientWidth),
-      )
-      .toBe(true);
-    await expect
-      .poll(() =>
-        checkRows.evaluateAll((rows) =>
-          rows.every((node) => node.scrollWidth <= node.clientWidth),
-        ),
-      )
-      .toBe(true);
-    await checks.locator("[data-check-state]").scrollIntoViewIfNeeded();
-    await panel.screenshot({
-      path: testInfo.outputPath(`checks-${width}-200.png`),
-    });
-    await checkRows.last().scrollIntoViewIfNeeded();
-    await panel.screenshot({
-      path: testInfo.outputPath(`checks-rows-${width}-200.png`),
-    });
-  }
-  expect(requests).toHaveLength(5);
+  expect(requests).toHaveLength(3);
   // Approval-only is an ordinary milestone row, not a one-event disclosure.
   await page.evaluate(() => {
     localStorage.setItem("buzz-font-scale.v1", "1");

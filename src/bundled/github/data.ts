@@ -11,7 +11,6 @@ export type GitHubDetails = {
   authorUrl?: string | undefined;
   authorAvatar?: string | undefined;
   createdAt?: string | undefined;
-  headSha?: string | undefined;
   updatedAt?: string | undefined;
   mergedAt?: string | undefined;
   mergedBy?: string | undefined;
@@ -28,7 +27,6 @@ export type GitHubDetails = {
 };
 type BranchData = {
   label: string;
-  sha?: string;
   ref?: string;
   repo?: { full_name: string } | null;
 };
@@ -167,7 +165,6 @@ export async function loadGitHubDetails(
       Number.isFinite(Date.parse(data.created_at))
         ? data.created_at
         : undefined,
-    headSha: reference.kind === "pull" ? data.head?.sha : undefined,
     updatedAt:
       reference.kind === "pull" &&
       data.updated_at &&

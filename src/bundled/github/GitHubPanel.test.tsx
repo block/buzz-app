@@ -366,24 +366,21 @@ it.each([403, 404, 429, 500])(
   },
 );
 
-it("defers both checks requests until opened and retains pending checks and discussion across tab switches", async () => {
+it("renders the settled conversation directly without tabs, hidden checks or check requests", async () => {
   const pending: ((response: Response) => void)[] = [];
   const fetch = vi.fn((target: string) => {
-    if (target.includes("/commits/"))
-      return new Promise<Response>((resolve) => pending.push(resolve));
-    return Promise.resolve(
-      new Response(
-        JSON.stringify(
-          target.endsWith("/pulls/1")
-            ? {
-                title: "Lazy checks",
-                body: "Summary\n\n## Details",
-                head: { sha: "head-sha" },
-              }
-            : [],
+    if (target.endsWith("/pulls/1"))
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            title: "Discussion only",
+            body: "Summary\n\n## Details",
+            head: { sha: "head-sha" },
+            updated_at: "2026-10-02T23:57:00Z",
+          }),
         ),
-      ),
-    );
+      );
+    return new Promise<Response>((resolve) => pending.push(resolve));
   });
   vi.stubGlobal("fetch", fetch);
   render(
@@ -392,104 +389,37 @@ it("defers both checks requests until opened and retains pending checks and disc
       close={() => {}}
     />,
   );
-  await screen.findByRole("region", { name: "Pull request conversation" });
+  await waitFor(() => expect(pending).toHaveLength(2));
+  expect(
+    screen.getByRole("region", { name: "Pull request conversation" }),
+  ).toHaveTextContent(/some sources are incomplete/);
+  await act(async () => {
+    for (const resolve of pending) resolve(new Response("[]"));
+  });
   await waitFor(() =>
     expect(
       screen.queryByText(/some sources are incomplete/),
     ).not.toBeInTheDocument(),
   );
-  expect(fetch).toHaveBeenCalledTimes(3);
-  expect(screen.getByRole("tab", { name: "Discussion" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("tabpanel", { hidden: true }),
+  ).not.toBeInTheDocument();
   expect(
     screen.queryByText("Checks", { selector: "dt" }),
   ).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Expand Description" }));
-  fireEvent.click(screen.getByRole("tab", { name: "Checks" }));
-  await waitFor(() => expect(pending).toHaveLength(2));
-  expect(screen.getByRole("tabpanel", { name: "Checks" })).toHaveTextContent(
-    "Loading…",
-  );
   expect(
-    fetch.mock.calls
-      .slice(3)
-      .map(([target]) => target)
-      .sort(),
-  ).toEqual([
-    "https://api.github.com/repos/sample/project/commits/head-sha/check-runs?per_page=100&page=1&filter=latest",
-    "https://api.github.com/repos/sample/project/commits/head-sha/status?per_page=100&page=1",
+    screen.queryByText(/checks on the PR head commit/),
+  ).not.toBeInTheDocument();
+  expect(fetch.mock.calls.map(([target]) => target).sort()).toEqual([
+    "https://api.github.com/repos/sample/project/issues/1/comments?per_page=30&page=1",
+    "https://api.github.com/repos/sample/project/pulls/1",
+    "https://api.github.com/repos/sample/project/pulls/1/reviews?per_page=30&page=1",
   ]);
-  fireEvent.click(screen.getByRole("tab", { name: "Discussion" }));
+  expect(
+    screen.getByText("Last updated").parentElement?.querySelector("time"),
+  ).toHaveAttribute("datetime", "2026-10-02T23:57:00Z");
+  fireEvent.click(screen.getByRole("button", { name: "Expand Description" }));
   expect(screen.getByRole("heading", { name: "Details" })).toBeVisible();
-  await act(async () => {
-    pending[0]?.(
-      new Response(JSON.stringify({ total_count: 0, check_runs: [] })),
-    );
-    pending[1]?.(
-      new Response(JSON.stringify({ total_count: 0, statuses: [] })),
-    );
-  });
-  fireEvent.click(screen.getByRole("tab", { name: "Checks" }));
-  expect(screen.getByRole("tabpanel", { name: "Checks" })).toHaveTextContent(
-    "No checks",
-  );
-  expect(fetch).toHaveBeenCalledTimes(5);
-});
-
-it("aborts old checks and resets lazy tabs when the PR changes", async () => {
-  const signals: AbortSignal[] = [];
-  const fetch = vi.fn((target: string, options: RequestInit) => {
-    if (target.includes("/commits/")) {
-      signals.push(options.signal as AbortSignal);
-      return new Promise<Response>(() => {});
-    }
-    return Promise.resolve(
-      new Response(
-        JSON.stringify(
-          /\/pulls\/\d+$/.test(target)
-            ? {
-                title: target.endsWith("/1") ? "First PR" : "Second PR",
-                head: { sha: "head-sha" },
-              }
-            : [],
-        ),
-      ),
-    );
-  });
-  vi.stubGlobal("fetch", fetch);
-  const view = render(
-    <GitHubPanel
-      target="https://github.com/sample/project/pull/1"
-      close={() => {}}
-    />,
-  );
-  await screen.findByRole("region", { name: "Pull request conversation" });
-  await waitFor(() =>
-    expect(
-      screen.queryByText(/some sources are incomplete/),
-    ).not.toBeInTheDocument(),
-  );
-  fireEvent.click(screen.getByRole("tab", { name: "Checks" }));
-  await waitFor(() => expect(signals).toHaveLength(2));
-  view.rerender(
-    <GitHubPanel
-      target="https://github.com/sample/project/pull/2"
-      close={() => {}}
-    />,
-  );
-  await screen.findByRole("heading", { name: "Second PR #2" });
-  await screen.findByRole("region", { name: "Pull request conversation" });
-  await waitFor(() =>
-    expect(
-      screen.queryByText(/some sources are incomplete/),
-    ).not.toBeInTheDocument(),
-  );
-  expect(signals.every((signal) => signal.aborted)).toBe(true);
-  expect(screen.getByRole("tab", { name: "Discussion" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  expect(signals).toHaveLength(2);
+  expect(fetch).toHaveBeenCalledTimes(3);
 });

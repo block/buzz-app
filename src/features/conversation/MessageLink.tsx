@@ -15,7 +15,9 @@ import {
   MenuPopup,
   MenuLinkItem,
   MenuItem,
+  MenuIcon,
 } from "../../shared/design-system/ui/Menu";
+import { BrowserIcon, CopyIcon } from "../../shared/design-system/icons";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
 import type { RelaySession } from "../relay/session";
@@ -205,9 +207,15 @@ export function MessageLink({
               rel="noopener noreferrer"
               closeOnClick
             >
+              <MenuIcon>
+                <BrowserIcon size={16} />
+              </MenuIcon>
               Open in browser
             </MenuLinkItem>
             <MenuItem disabled={copying} onClick={() => void copy()}>
+              <MenuIcon>
+                <CopyIcon size={16} />
+              </MenuIcon>
               Copy link
             </MenuItem>
           </MenuPopup>

@@ -251,7 +251,11 @@ export function ResourcePicker({
             display: "flex",
           }}
           onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) return;
+            if (
+              event.nativeEvent.isComposing ||
+              event.nativeEvent.keyCode === 229
+            )
+              return;
             const fromSearch = event.target === searchInput.current;
             if (event.key === "Enter" && fromSearch) event.preventDefault();
             if (

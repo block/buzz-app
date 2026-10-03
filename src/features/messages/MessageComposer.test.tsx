@@ -3298,6 +3298,14 @@ describe("project resource picker", () => {
     ).toBeVisible();
     const choice = await screen.findByRole("button", { name: row });
     expect(choice).toHaveTextContent("Issue · Game repo");
+    // Synthetic coverage checks the guard, not native IME behavior.
+    const search = screen.getByRole("searchbox");
+    for (const composition of [{ isComposing: true }, { keyCode: 229 }]) {
+      fireEvent.keyDown(search, { key: "ArrowDown", ...composition });
+      expect(search).toHaveFocus();
+      fireEvent.keyDown(search, { key: "Enter", ...composition });
+      expect(p.validations).toHaveLength(0);
+    }
     // Keyboard: ArrowDown moves from search to the row; Enter in search chooses it.
     await p.h.user.keyboard("{ArrowDown}");
     expect(choice).toHaveFocus();

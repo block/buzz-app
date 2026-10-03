@@ -233,7 +233,6 @@ function CommentActions({
               loading={copying}
               onClick={() => void copy()}
             >
-              <LinkIcon aria-hidden="true" />
               Copy comment link
             </Button>
           ) : (

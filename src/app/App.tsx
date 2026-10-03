@@ -4,7 +4,6 @@ import { ChannelSidebar } from "../features/channel-navigation/ChannelSidebar";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Button } from "../shared/design-system/ui/Button";
-import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
 import { AgentWakeNotice } from "../features/agents/AgentWakeNotice";
 import { AgentUpdateReview } from "../bundled/agents/AgentUpdateReview";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
@@ -28,9 +27,9 @@ import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
-import type { EnterpriseLoginSnapshot } from "../features/communities/service";
 import { profileTarget } from "../features/profiles/target";
 import { setLaunchReady } from "./launch";
+import { EnterpriseLoginDialog } from "./EnterpriseLoginDialog";
 
 export function App({ services }: { services: AppServices }) {
   const identity = services.identity;
@@ -313,60 +312,5 @@ function ConnectedApp({ services }: { services: AppServices }) {
         </AppShell>
       </ChannelNavigationProvider>
     </ToastProvider>
-  );
-}
-
-function EnterpriseLoginDialog({
-  communities,
-  state,
-}: {
-  communities: AppServices["communities"];
-  state: EnterpriseLoginSnapshot;
-}) {
-  return (
-    <AlertDialog
-      title="Sign in to this community"
-      description="This trusted community requires enterprise sign-in before Buzz can connect."
-      onClose={() => communities.dismissEnterpriseLogin(state.communityId)}
-      actions={
-        <>
-          <Button
-            type="button"
-            onClick={
-              state.status === "opening"
-                ? () => communities.cancelEnterpriseLogin(state.communityId)
-                : () => communities.dismissEnterpriseLogin(state.communityId)
-            }
-          >
-            {state.status === "opening" ? "Cancel" : "Not now"}
-          </Button>
-          {state.status !== "opening" && (
-            <Button
-              type="button"
-              variant="prominent"
-              onClick={() =>
-                void (state.errorKind === "discovery"
-                  ? communities.retryEnterpriseGate(state.communityId)
-                  : communities.startEnterpriseLogin(state.communityId))
-              }
-            >
-              {state.errorKind === "discovery"
-                ? "Retry connection check"
-                : state.status === "error"
-                  ? "Retry sign-in"
-                  : "Sign in"}
-            </Button>
-          )}
-        </>
-      }
-    >
-      {state.status === "opening" ? (
-        <p role="status">A browser window is open for sign-in.</p>
-      ) : state.error ? (
-        <p role="alert">{state.error}</p>
-      ) : (
-        <p>Buzz will return here after the browser sign-in is complete.</p>
-      )}
-    </AlertDialog>
   );
 }

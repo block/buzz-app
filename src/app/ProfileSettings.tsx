@@ -440,45 +440,6 @@ export function ProfileSettings({
                 </SettingsGroup>
               </div>
             )}
-            {nativeIdentityEnabled() && (
-              <section
-                aria-labelledby="enterprise-access-settings-title"
-                className="mt-8"
-              >
-                <h3
-                  id="enterprise-access-settings-title"
-                  className="m-0 text-label-sm"
-                >
-                  Enterprise access
-                </h3>
-                <p className="mt-2 mb-4 text-body-sm text-muted">
-                  Clear the enterprise session saved on this device for the
-                  current adapter, identity, and Buzz build. This does not
-                  remove your Nostr identity, memberships, or access at the
-                  community.
-                </p>
-                <Button
-                  type="button"
-                  disabled={clearingEnterprise}
-                  loading={clearingEnterprise}
-                  onClick={() => void clearEnterpriseSession()}
-                >
-                  Clear enterprise sign-in
-                </Button>
-                {enterpriseClearStatus && (
-                  <p
-                    className="mt-3 text-body-sm"
-                    role={
-                      enterpriseClearStatus.kind === "error"
-                        ? "alert"
-                        : "status"
-                    }
-                  >
-                    {enterpriseClearStatus.message}
-                  </p>
-                )}
-              </section>
-            )}
             {copyStatus && (
               <ToastNotice
                 title={
@@ -493,6 +454,43 @@ export function ProfileSettings({
                 timeout={copyStatus.failed ? 0 : 5000}
                 onDismiss={() => setCopyStatus(null)}
               />
+            )}
+          </section>
+        )}
+        {client.viewer && nativeIdentityEnabled() && (
+          <section
+            aria-labelledby="enterprise-access-settings-title"
+            className="mt-8"
+          >
+            <h3
+              id="enterprise-access-settings-title"
+              className="m-0 text-label-sm"
+            >
+              Enterprise access
+            </h3>
+            <p className="mt-2 mb-4 text-body-sm text-muted">
+              Clear the enterprise session saved on this device for the current
+              adapter, identity, and Buzz build. This does not revoke remote
+              access or remove your Nostr identity, memberships, or access at
+              the community.
+            </p>
+            <Button
+              type="button"
+              disabled={clearingEnterprise}
+              loading={clearingEnterprise}
+              onClick={() => void clearEnterpriseSession()}
+            >
+              Clear enterprise sign-in
+            </Button>
+            {enterpriseClearStatus && (
+              <p
+                className="mt-3 text-body-sm"
+                role={
+                  enterpriseClearStatus.kind === "error" ? "alert" : "status"
+                }
+              >
+                {enterpriseClearStatus.message}
+              </p>
             )}
           </section>
         )}

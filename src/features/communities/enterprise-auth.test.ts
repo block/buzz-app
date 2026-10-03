@@ -148,6 +148,39 @@ it("fences a canceled browser result so it cannot acquire a session", async () =
   });
 });
 
+it("does not let another owner dismiss an active browser attempt", async () => {
+  const auth = authFixture();
+  const login = deferred<{ expiresAt: string }>();
+  auth.start.mockReturnValue(login.promise);
+  const { communities } = setup(auth);
+  await flush();
+  const community = "https://enterprise.test";
+  communities.joined(
+    { id: community, name: "Enterprise" },
+    { name: "Local", picture: "" },
+  );
+  await flush();
+  const starting = communities.startEnterpriseLogin(community, "owner-a");
+  await vi.waitFor(() => expect(auth.start).toHaveBeenCalledOnce());
+
+  communities.dismissEnterpriseLogin(community, "owner-b");
+  await communities.cancelEnterpriseLogin(community, "owner-b");
+  expect(auth.cancel).not.toHaveBeenCalled();
+  expect(communities.snapshot().enterprise).toMatchObject({
+    communityId: community,
+    status: "opening",
+  });
+
+  await communities.cancelEnterpriseLogin(community, "owner-a");
+  expect(auth.cancel).toHaveBeenCalledOnce();
+  login.resolve({ expiresAt: "2030-01-01T00:00:00Z" });
+  await starting;
+  expect(communities.snapshot().enterprise).toMatchObject({
+    communityId: community,
+    status: "required",
+  });
+});
+
 it("ignores a gate result retired by switching communities", async () => {
   const auth = authFixture();
   let release!: (required: boolean) => void;

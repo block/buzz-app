@@ -84,3 +84,29 @@ it("reports a local enterprise-session clear failure and remains retryable", asy
     screen.getByRole("button", { name: "Clear enterprise sign-in" }),
   ).toBeEnabled();
 });
+
+it("keeps local enterprise reset available when a community profile cannot load", async () => {
+  const clearEnterpriseAuth = vi.fn(async () => {});
+  const { service, state } = fixture(clearEnterpriseAuth);
+  service.connect = vi.fn(async () => {
+    throw new Error("Saved enterprise session unavailable");
+  });
+  const user = userEvent.setup();
+  render(
+    <ProfileSettings communities={service} community={state.memberships[0]} />,
+    { wrapper: ToastProvider },
+  );
+
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Saved enterprise session unavailable",
+    ),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Clear enterprise sign-in" }),
+  );
+  await waitFor(() => expect(clearEnterpriseAuth).toHaveBeenCalledOnce());
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Your profile in Community couldn’t be loaded",
+  );
+});

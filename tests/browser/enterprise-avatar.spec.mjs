@@ -20,7 +20,7 @@ test("enterprise avatar expiry closes its popup, preserves the draft, and keeps 
     buffer: artwork,
   });
 
-  const prompt = page.getByRole("dialog", {
+  const prompt = page.getByRole("alertdialog", {
     name: "Sign in to this community",
     exact: true,
   });
@@ -30,6 +30,12 @@ test("enterprise avatar expiry closes its popup, preserves the draft, and keeps 
   ).toHaveCount(0);
   await expect(prompt.getByRole("button", { name: "Not now" })).toBeFocused();
   await expect(prompt.getByRole("button", { name: "Sign in" })).toBeVisible();
+  await prompt.getByRole("button", { name: "Sign in" }).click();
+  await expect(prompt.getByRole("button", { name: "Cancel" })).toBeVisible();
+  await expect(page.getByLabel("Login starts")).toHaveText("1");
+  await prompt.getByRole("button", { name: "Cancel" }).click();
+  await expect(prompt.getByRole("button", { name: "Sign in" })).toBeVisible();
+  await expect(page.getByLabel("Login cancellations")).toHaveText("1");
   await prompt.getByRole("button", { name: "Not now" }).click();
   await expect(prompt).toHaveCount(0);
 
@@ -61,11 +67,14 @@ test("enterprise discovery failure closes its popup and keeps retry usable", asy
     buffer: artwork,
   });
 
-  const prompt = page.getByRole("dialog", {
-    name: "Connection check failed",
+  const prompt = page.getByRole("alertdialog", {
+    name: "Sign in to this community",
     exact: true,
   });
   await expect(prompt).toBeVisible();
+  await expect(prompt.getByRole("alert")).toHaveText(
+    "advertisement unavailable",
+  );
   await expect(
     page.getByRole("dialog", { name: "Edit avatar", exact: true }),
   ).toHaveCount(0);
@@ -74,6 +83,8 @@ test("enterprise discovery failure closes its popup and keeps retry usable", asy
     prompt.getByRole("button", { name: "Retry connection check" }),
   ).toBeVisible();
   await prompt.getByRole("button", { name: "Retry connection check" }).click();
+  await expect(prompt.getByRole("button", { name: "Sign in" })).toBeVisible();
+  await prompt.getByRole("button", { name: "Not now" }).click();
   await expect(prompt).toHaveCount(0);
 
   await page.getByRole("button", { name: "Edit avatar", exact: true }).click();

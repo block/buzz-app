@@ -191,9 +191,19 @@ it("does not inspect or admit after destination info resolves after unmount", as
 it("does not begin admission when an unmounted access gate resolves", async () => {
   const community = "https://enterprise.example";
   const gate = deferred<unknown>();
+  const calls: string[] = [];
   api.communityRequest.mockImplementation(
     async (_id: string, route: string) => {
-      if (route === "info") return { name: "Enterprise", policy: null };
+      calls.push(route);
+      if (route === "info")
+        return {
+          name: "Enterprise",
+          policy: {
+            version: "v1",
+            terms_markdown: "Terms",
+            age_attestation_required: true,
+          },
+        };
       throw new Error(`unexpected admission route: ${route}`);
     },
   );
@@ -223,6 +233,20 @@ it("does not begin admission when an unmounted access gate resolves", async () =
   await user.type(screen.getByLabelText("Relay URL"), community);
   await user.click(screen.getByRole("button", { name: "Continue" }));
   await screen.findByLabelText("Invite code (if required)");
+  await user.type(
+    screen.getByLabelText("Invite code (if required)"),
+    "invite-123",
+  );
+  await user.click(
+    screen.getByRole("checkbox", {
+      name: "I agree to this community’s Terms of Service and Privacy Notice.",
+    }),
+  );
+  await user.click(
+    screen.getByRole("checkbox", {
+      name: "I confirm that I am at least 18 years old.",
+    }),
+  );
   await user.click(screen.getByRole("button", { name: "Continue" }));
   await waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
 
@@ -235,15 +259,26 @@ it("does not begin admission when an unmounted access gate resolves", async () =
   expect(api.inspectProfile).not.toHaveBeenCalled();
   expect(api.publishProfile).not.toHaveBeenCalled();
   expect(communities.joined).not.toHaveBeenCalled();
+  expect(calls).toEqual(["info"]);
 });
 
-it("keeps admission side effects behind the gate after Not now", async () => {
+it("keeps invite admission behind the gate after Not now, then admits after recovery", async () => {
   const community = "https://enterprise.example";
   const calls: string[] = [];
   api.communityRequest.mockImplementation(
-    async (_id: string, route: string) => {
+    async (_id: string, route: string, _body?: unknown) => {
       calls.push(route);
-      if (route === "info") return { name: "Enterprise", policy: null };
+      if (route === "info")
+        return {
+          name: "Enterprise",
+          policy: {
+            version: "v1",
+            terms_markdown: "Terms",
+            age_attestation_required: false,
+          },
+        };
+      if (route === "accept-policy") return { receipt: "receipt-1" };
+      if (route === "claim") return { status: "joined" };
       throw new Error(`unexpected admission route: ${route}`);
     },
   );
@@ -252,10 +287,9 @@ it("keeps admission side effects behind the gate after Not now", async () => {
     existing: {},
     profile: { name: "", picture: "", about: "" },
   });
-  let attempts = 0;
+  let authenticated = false;
   const connect = vi.fn(async () => {
-    attempts += 1;
-    if (attempts === 1) throw new EnterpriseLoginRequired(community);
+    if (!authenticated) throw new EnterpriseLoginRequired(community);
     return {};
   });
   let state: Record<string, unknown> = {
@@ -289,14 +323,39 @@ it("keeps admission side effects behind the gate after Not now", async () => {
   await user.type(screen.getByLabelText("Relay URL"), community);
   await user.click(screen.getByRole("button", { name: "Continue" }));
   await screen.findByText(/requires enterprise sign-in/);
+  await user.type(
+    screen.getByLabelText("Invite code (if required)"),
+    "invite-123",
+  );
+  await user.click(
+    screen.getByRole("checkbox", {
+      name: "I agree to this community’s Terms of Service and Privacy Notice.",
+    }),
+  );
   await user.click(screen.getByRole("button", { name: "Not now" }));
   expect(calls).toEqual(["info"]);
   expect(api.inspectProfile).not.toHaveBeenCalled();
   expect(api.publishProfile).not.toHaveBeenCalled();
 
   await user.click(screen.getByRole("button", { name: "Continue" }));
-  await waitFor(() => expect(connect).toHaveBeenCalledTimes(3));
+  await waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
   expect(calls).toEqual(["info"]);
-  expect(api.inspectProfile).toHaveBeenCalledOnce();
+  expect(api.inspectProfile).not.toHaveBeenCalled();
+  expect(api.publishProfile).not.toHaveBeenCalled();
+
+  authenticated = true;
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await waitFor(() => expect(api.inspectProfile).toHaveBeenCalledOnce());
+  expect(calls).toEqual(["info", "accept-policy", "claim"]);
+  expect(api.communityRequest).toHaveBeenNthCalledWith(
+    2,
+    community,
+    "accept-policy",
+    { code: "invite-123", policy_version: "v1", age_confirmed: false },
+  );
+  expect(api.communityRequest).toHaveBeenNthCalledWith(3, community, "claim", {
+    code: "invite-123",
+    policy_receipt: "receipt-1",
+  });
   expect(api.publishProfile).not.toHaveBeenCalled();
 });

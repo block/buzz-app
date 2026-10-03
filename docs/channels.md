@@ -24,6 +24,14 @@ arbitrary file paths or application commands. Web keeps ordinary browser link
 behavior. Adding the native opener requires rebuilding/restarting desktop;
 frontend hot reload alone is not enough.
 
+HTTP(S) links rendered in messages expose **Open in browser** and **Copy link**
+on right-click or long-press, or with Shift+F10 / the Context Menu key while focused.
+**Open in browser** uses the same `_blank` fallback above without consulting pane
+handlers; both actions retain the original URL, including query and fragment.
+Normal and modified clicks are unchanged. Internal `buzz://` links and links outside
+message content retain their existing behavior. Copy failures show a dismissible
+notice and can be retried from the link menu.
+
 Settings independently enables/disables Channels and GitHub. Disabling GitHub
 removes its link handler and open panel; shared channel data remains available.
 Channels is required by the current host; optional page removal does not dispose

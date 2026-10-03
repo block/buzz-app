@@ -63,6 +63,42 @@ fn first_create_round_trips_and_a_second_writer_cannot_replace_it() {
 }
 
 #[test]
+fn replacement_is_explicit_and_serialized() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Memory::default();
+    add_entry(&store, root.path(), SERVICE, ACCOUNT, b"first").unwrap();
+    replace_entry(&store, root.path(), SERVICE, ACCOUNT, b"second").unwrap();
+    assert_eq!(store.read().unwrap().as_slice(), b"second");
+    assert_eq!(*store.writes.lock().unwrap(), 2);
+}
+
+#[test]
+fn conditional_delete_keeps_a_newer_credential() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Memory::default();
+    add_entry(&store, root.path(), SERVICE, ACCOUNT, b"first").unwrap();
+    assert_eq!(
+        delete_if_matches_entry(&store, root.path(), SERVICE, ACCOUNT, b"other"),
+        Ok(())
+    );
+    assert_eq!(store.read().unwrap().as_slice(), b"first");
+    delete_if_matches_entry(&store, root.path(), SERVICE, ACCOUNT, b"first").unwrap();
+    assert_eq!(store.read(), Err(Error::Absent));
+}
+
+#[test]
+fn replacement_does_not_upsert_after_a_read_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Memory::default();
+    *store.read_error.lock().unwrap() = Some(Error::Denied);
+    assert_eq!(
+        replace_entry(&store, root.path(), SERVICE, ACCOUNT, b"new"),
+        Err(Error::Denied)
+    );
+    assert_eq!(*store.writes.lock().unwrap(), 0);
+}
+
+#[test]
 fn add_holds_the_lock_through_the_fresh_read_and_write() {
     struct Probed<'a> {
         root: &'a Path,
@@ -196,6 +232,25 @@ fn error_mapping_is_typed_and_contains_no_backend_detail() {
         Error::Corrupt
     );
     assert_eq!(error(keyring::Error::Ambiguous(vec![])), Error::Corrupt);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_keychain_denials_are_sanitized() {
+    for code in [-128, -25293, -25308] {
+        assert_eq!(
+            error(keyring::Error::PlatformFailure(Box::new(
+                security_framework::base::Error::from_code(code),
+            ))),
+            Error::Denied
+        );
+    }
+    assert_eq!(
+        error(keyring::Error::PlatformFailure(Box::new(
+            security_framework::base::Error::from_code(-1),
+        ))),
+        Error::Unavailable
+    );
 }
 
 #[test]

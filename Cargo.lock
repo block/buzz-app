@@ -618,7 +618,7 @@ dependencies = [
  "libc",
  "nix 0.31.3",
  "secp256k1 0.31.1",
- "security-framework",
+ "security-framework 3.7.0",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -637,6 +637,7 @@ dependencies = [
  "dirs",
  "keyring",
  "nix 0.31.3",
+ "security-framework 3.7.0",
  "sha2 0.10.9",
  "tempfile",
  "zeroize",
@@ -646,6 +647,7 @@ dependencies = [
 name = "buzz-foundation"
 version = "0.0.0"
 dependencies = [
+ "axum",
  "base64 0.22.1",
  "bech32 0.11.1",
  "block2",
@@ -669,7 +671,7 @@ dependencies = [
  "portable-pty",
  "reqwest",
  "secp256k1 0.31.1",
- "security-framework",
+ "security-framework 3.7.0",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -682,6 +684,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-winrt-notification",
  "tempfile",
+ "time",
  "tokio",
  "url",
  "user-idle",
@@ -2840,6 +2843,8 @@ dependencies = [
  "log",
  "openssl",
  "secret-service",
+ "security-framework 2.11.1",
+ "security-framework 3.7.0",
  "windows-sys 0.60.2",
  "zeroize",
 ]
@@ -4382,7 +4387,7 @@ dependencies = [
  "openssl-probe",
  "rustls-pki-types",
  "schannel",
- "security-framework",
+ "security-framework 3.7.0",
 ]
 
 [[package]]
@@ -4410,7 +4415,7 @@ dependencies = [
  "rustls-native-certs",
  "rustls-platform-verifier-android",
  "rustls-webpki",
- "security-framework",
+ "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
  "windows-sys 0.59.0",
@@ -4578,6 +4583,19 @@ dependencies = [
  "serde",
  "sha2 0.10.9",
  "zbus 4.4.0",
+]
+
+[[package]]
+name = "security-framework"
+version = "2.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "897b2245f0b511c87893af39b033e5ca9cce68824c4d7e7630b5a1d339658d02"
+dependencies = [
+ "bitflags 2.13.1",
+ "core-foundation 0.9.4",
+ "core-foundation-sys",
+ "libc",
+ "security-framework-sys",
 ]
 
 [[package]]
@@ -7476,6 +7494,7 @@ version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
 dependencies = [
+ "serde",
  "zeroize_derive",
 ]
 

@@ -99,6 +99,7 @@ test("shared tokens reach app controls without history or chip overrides", async
         --border-standard: rgb(45, 67, 89);
         --radius-control: 13px;
         --radius-panel: 19px;
+        --radius-container: 17px;
         --layer-popover: 1234;
       }`,
     });
@@ -122,10 +123,7 @@ test("shared tokens reach app controls without history or chip overrides", async
         const surface = page.locator(`#probe-${name}`);
         await expect(surface).toHaveCSS("background-color", "rgb(23, 45, 67)");
         await expect(surface).toHaveCSS("border-top-color", "rgb(45, 67, 89)");
-        await expect(surface).toHaveCSS(
-          "border-radius",
-          name === "buzz-popover-popup" ? "19px" : "13px",
-        );
+        await expect(surface).toHaveCSS("border-radius", "17px");
         await expect(
           name === "buzz-popover-popup"
             ? page.locator("#probe-positioner")

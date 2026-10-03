@@ -4,6 +4,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { SidebarIcon } from "../../shared/design-system/icons";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { isTauri } from "@tauri-apps/api/core";
+import type { SettingsCards } from "../../features/settings/service";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { AccountActionsService } from "../../features/account-actions/service";
 import type { Communities } from "../../features/communities/service";
@@ -27,6 +28,7 @@ export function AppShell({
   workspace,
   sidebar,
   communities,
+  settingsCards,
   accountActions,
   onProfile,
   searchServices,
@@ -45,6 +47,7 @@ export function AppShell({
   workspace?: boolean;
   sidebar?: (pages: ReactNode) => ReactNode;
   communities: Communities;
+  settingsCards?: SettingsCards | undefined;
   accountActions: AccountActionsService;
   onProfile?: ((trigger: HTMLButtonElement) => void) | undefined;
   searchServices?: SearchServices;
@@ -166,7 +169,6 @@ export function AppShell({
               data-highlight-expanded="false"
               type="button"
               variant="ghost"
-              shape="round"
               aria-label={toggleLabel}
               aria-expanded={visibleSidebar}
               aria-controls="shell-navigation"
@@ -204,6 +206,7 @@ export function AppShell({
       <div className="flex min-h-0 flex-1">
         <CommunityRail
           communities={communities}
+          settingsCards={settingsCards}
           onSelect={onCommunitySelect}
           onOpenTarget={onOpenTarget}
         />

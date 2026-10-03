@@ -8,6 +8,7 @@ import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import { createRoot } from "react-dom/client";
 import { ChannelMembersButton } from "../../src/bundled/channels/ChannelMembersDialog";
 import { createRelaySession } from "../../src/features/relay/session";
+import { PublishRejected } from "../../src/features/relay/outbox";
 import { matchesEvent } from "../../src/features/relay/projection";
 import { bindNames } from "../../src/features/identity-names/service";
 import { createNameProvider } from "../../src/features/identity-names/directory";
@@ -20,6 +21,12 @@ import {
 } from "../../src/features/relay/testing";
 import "../../src/shared/styles/globals.css";
 
+const administration = new URLSearchParams(location.search).has(
+  "administration",
+);
+const rejectRemoval = new URLSearchParams(location.search).has(
+  "reject-removal",
+);
 const viewer = keypair();
 const relay = keypair();
 const person = keypair();
@@ -97,6 +104,7 @@ const managedProfiles = await Promise.all(
 );
 const members = [
   viewer.pubkey,
+  ...(administration ? [person.pubkey] : []),
   ...scrollMembers.map(({ key }) => key.pubkey),
   ...managed.map(({ key }) => key.pubkey),
 ];
@@ -139,7 +147,33 @@ const { session: sharedSession } = createRelaySession(
         await namesReady;
       }
       return [
-        roster(relay, channelId, members, clock),
+        ...(administration
+          ? [
+              signed(relay, {
+                kind: 39001,
+                created_at: clock,
+                content: "",
+                tags: [
+                  ["d", channelId],
+                  ["p", viewer.pubkey, "owner"],
+                ],
+              }),
+              signed(relay, {
+                kind: 39002,
+                created_at: clock,
+                content: "",
+                tags: [
+                  ["d", channelId],
+                  ...members.map((key) => [
+                    "p",
+                    key,
+                    "",
+                    key === viewer.pubkey ? "owner" : "member",
+                  ]),
+                ],
+              }),
+            ]
+          : [roster(relay, channelId, members, clock)]),
         signed(relay, {
           kind: 39000,
           content: "",
@@ -158,6 +192,22 @@ const { session: sharedSession } = createRelaySession(
         filters.some((filter) => matchesEvent(event, filter)),
       );
     },
+    ...(administration
+      ? {
+          memberAdministration: {
+            sign: async (template: import("nostr-tools").EventTemplate) =>
+              signed(viewer, template),
+            publish: async () => {
+              publishStarted();
+              await held;
+              if (rejectRemoval)
+                throw new PublishRejected("Permission changed");
+              members.splice(members.indexOf(person.pubkey), 1);
+              clock++;
+            },
+          },
+        }
+      : {}),
     writer: {
       kinds: [9000],
       sign: async (template) => signed(viewer, template),

@@ -52,8 +52,8 @@ features/projects/     entity route/data contracts and bounded Git read bridge
 bundled/agents/         local control UI and read-only current-Buzz library page
 features/agents/        app-owned control capability; separate session-owned library
 bundled/github/         builtin GitHub panel plugin
-bundled/bestie/         builtin Bestie page, companion panel and its snake launcher
-bundled/inbox/          builtin Inbox page, a placeholder until inbox content exists
+bundled/bestie/         builtin Bestie page
+bundled/inbox/          builtin Inbox page for unread conversations and mentions
 ```
 
 The host composes one channel sidebar beside independently mounted pages. It reuses
@@ -103,7 +103,22 @@ render failures and remounts on target or revision changes. Unloading a plugin
 removes its contributions and closes its panel. Other pages can use these same
 contracts with their own layout and local navigation.
 
-The initial distribution contains Channels, Inbox, Projects, Agents, GitHub, Bestie, Emoji, Mentions, Profiles, Terminal and Links. Projects
+### Bundled defaults
+
+All 21 plugins remain bundled. **Channels is the only required plugin.** Bestie,
+Todos, and Templates & teams are off by default. Feedback, Diff viewer, Identity
+Naming, Agent Activity, Terminal, Profiles, Links, Mentions, Emoji, GitHub, Inbox,
+Projects, Agents, Workflows, Sessions, Hosted communities, and Community admin are
+on by default, but optional. Both browser and native catalogs declare that policy.
+
+Saved enabled/disabled flags win over defaults (except required Channels). There
+is no migration or forced reset: a browser profile that previously saved its full
+plugin snapshot can retain Bestie enabled. Native profiles store per-plugin
+overrides. Default-on does not promise platform support: Terminal contributes UI
+only on macOS/Linux desktop; Hosted communities still requires its development
+broker backend. Disabling Community admin removes its Invite to community shortcut.
+
+Projects
 is enabled by default and owns versioned, validated entity page routes. It resolves
 signed metadata through the session reader and reports navigation completion only
 after destination content is presented. Git browsing uses a narrow host-owned,
@@ -337,10 +352,11 @@ while opening/closing to preserve page-local state. `PanelCard` and `PanelFrame`
 are ordinary shared components, not another registry.
 
 Only open intent crosses pages: the panel component can remount under a new page,
-so this mechanism does not promise persistent agent sessions or drafts. Bestie
-currently supplies art and truthful not-connected copy, with no send control or
-agent API. Both browser and Rust native/CLI catalogs list it as independently
-enabled by the normal bundled policy; saved disabled flags still win.
+so this mechanism does not promise persistent agent sessions or drafts. The bundled
+Bestie page currently supplies art and truthful not-connected copy, with no send
+control, agent API or top-bar launcher. Both browser and Rust native/CLI catalogs
+keep it bundled but off by default; saved enabled or disabled flags still win.
+Enable it under Settings → Plugins.
 
 `main.tsx` creates the shared services once; `app/App.tsx` owns startup screens,
 navigation, and built-in Settings. `app/services.ts` composes the core services.

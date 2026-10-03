@@ -276,7 +276,7 @@ sessionSidebar(
 );
 
 sessionSidebar(
-  "session rows use pill hovers and Channels opens the shared creation dialog",
+  "session rows use rounded hovers and Channels opens the shared creation dialog",
   async ({ page, app }) => {
     await page.goto(app.origin);
     await openPage(page, "Messages");
@@ -299,7 +299,7 @@ sessionSidebar(
     await expect(createContainer).toHaveCSS("opacity", "0");
     await summary.hover();
     await expect(createContainer).toHaveCSS("opacity", "1");
-    await expect(create).toHaveAttribute("data-icon-shape", "round");
+    await expect(create).toHaveAttribute("data-icon-shape", "control");
     const [summaryBox, createBox] = await Promise.all([
       summary.boundingBox(),
       create.boundingBox(),

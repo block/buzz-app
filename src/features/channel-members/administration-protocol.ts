@@ -18,6 +18,7 @@ export type MemberChange = Readonly<{
 export type MemberAuthority = Readonly<{
   roles: Readonly<Record<string, MemberRole>>;
   canManage: boolean;
+  canRemoveOwnedAgent: boolean;
 }>;
 const PUBKEY = /^[0-9a-f]{64}$/;
 
@@ -86,13 +87,15 @@ export function memberAuthority(
     throw new Error(
       "Member roles are inconsistent. Refresh members and roles.",
     );
+  const activeChannel =
+    type !== "dm" &&
+    archived !== "true" &&
+    !sessionMetadata(exactLifecycleTag(metadata, "about"));
   return Object.freeze({
     roles: Object.freeze(roles),
-    canManage:
-      type !== "dm" &&
-      archived !== "true" &&
-      elevated.has(viewer) &&
-      !sessionMetadata(exactLifecycleTag(metadata, "about")),
+    canManage: activeChannel && elevated.has(viewer),
+    canRemoveOwnedAgent:
+      activeChannel && !!roles[viewer] && roles[viewer] !== "unknown",
   });
 }
 
@@ -111,13 +114,34 @@ export function canManageMember(
   );
 }
 
+/** Ownership permits removal only; it never grants role-edit authority. */
+export function canRemoveMember(
+  state: MemberAuthority,
+  viewer: string,
+  key: string,
+  owner?: string,
+) {
+  return (
+    canManageMember(state, viewer, key) ||
+    (state.canRemoveOwnedAgent &&
+      owner === viewer &&
+      key !== viewer &&
+      !!state.roles[key] &&
+      state.roles[key] !== "owner" &&
+      state.roles[key] !== "unknown")
+  );
+}
+
 export function authorizeMemberChange(
   state: MemberAuthority,
   viewer: string,
   change: MemberChange,
+  owner?: string,
 ) {
   if (
-    !canManageMember(state, viewer, change.pubkey) ||
+    !(change.role === "remove"
+      ? canRemoveMember(state, viewer, change.pubkey, owner)
+      : canManageMember(state, viewer, change.pubkey)) ||
     state.roles[change.pubkey] !== change.expectedRole ||
     (change.role !== "remove" &&
       (change.expectedRole === change.role ||

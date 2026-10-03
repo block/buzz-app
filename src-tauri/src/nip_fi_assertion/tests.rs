@@ -789,3 +789,25 @@ fn relay_requirement_cache_expires_and_is_bounded() {
         MAX_REQUIREMENT_CACHE
     );
 }
+
+#[tokio::test]
+async fn an_expired_badge_deadline_stops_before_relay_discovery() {
+    let discovery = FixtureServer::spawn(FixtureReply::Discovery(required_document(
+        "https://ignored.example/v1/identity/assertions",
+    )))
+    .await;
+    let home = TempDir::new().unwrap();
+    let owner = owner(&home);
+    let assertions = fixture_assertions(owner, &discovery);
+    let identity = IdentityHost::fixture();
+    let url = Url::parse("wss://relay.example/query").unwrap();
+    let deadline = tokio::time::Instant::now() - Duration::from_secs(1);
+
+    let error = assertions
+        .get_until(&identity, &url, true, deadline)
+        .await
+        .unwrap_err();
+
+    assert_eq!(error, TIMED_OUT);
+    assert!(discovery.records().is_empty());
+}

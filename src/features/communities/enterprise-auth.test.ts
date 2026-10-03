@@ -1,7 +1,10 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
 import { flush } from "../relay/testing";
-import { noteEnterpriseDenial } from "../relay/enterprise-sign-in";
+import {
+  enterpriseLoginMark,
+  noteEnterpriseDenial,
+} from "../relay/enterprise-sign-in";
 import type { ReadTransport } from "../relay/transport";
 import { createCommunities, EnterpriseLoginRequired } from "./service";
 import type { EnterpriseAuth, EnterpriseAuthClient } from "./enterpriseAuthApi";
@@ -702,11 +705,15 @@ it("only a lost relay session clears enterprise sign-in and prompts again", asyn
   auth.get.mockResolvedValue(null);
   noteEnterpriseDenial(
     new Error("Relay badge was refused (401 invalid_proof)"),
+    enterpriseLoginMark(),
   );
-  noteEnterpriseDenial(new Error("Enterprise access to this relay was denied"));
+  noteEnterpriseDenial(
+    new Error("Enterprise access to this relay was denied"),
+    enterpriseLoginMark(),
+  );
   await flush();
   expect(auth.clear).not.toHaveBeenCalled();
-  noteEnterpriseDenial(new Error("Enterprise sign-in is required"));
+  noteEnterpriseDenial(signInRequired, enterpriseLoginMark());
   await flush();
   // The native owner already forgot exactly the refused session.
   expect(auth.clear).not.toHaveBeenCalled();
@@ -716,7 +723,9 @@ it("only a lost relay session clears enterprise sign-in and prompts again", asyn
   });
 });
 
-it("a sign-in denial released after a newer login leaves that login in place", async () => {
+const signInRequired = new Error("Enterprise sign-in is required");
+
+it("a second refusal of the old session leaves the login it started in place", async () => {
   const auth = authFixture();
   auth.get.mockResolvedValue({ expiresAt: "2030-01-01T00:00:00Z" });
   const { communities, connect } = setup(auth);
@@ -727,15 +736,77 @@ it("a sign-in denial released after a newer login leaves that login in place", a
   );
   await flush();
   expect(connect).toHaveBeenCalledOnce();
-  // The old session's denial is held while the listener checks the session.
-  const check = deferred<{ expiresAt: string } | null>();
-  auth.get.mockReturnValueOnce(check.promise);
-  noteEnterpriseDenial(new Error("Enterprise sign-in is required"));
+  // Two relay requests carry the old session; the first refusal removes it.
+  const oldRequests = enterpriseLoginMark();
+  auth.get.mockResolvedValue(null);
+  noteEnterpriseDenial(signInRequired, oldRequests);
   await flush();
-  // A new login succeeds before the held denial is released.
-  check.resolve({ expiresAt: "2030-02-01T00:00:00Z" });
+  expect(communities.snapshot().enterprise).toMatchObject({
+    status: "required",
+  });
+  const login = deferred<{ expiresAt: string }>();
+  auth.start.mockReturnValueOnce(login.promise);
+  void communities.startEnterpriseLogin();
   await flush();
+  // The second old refusal, and one from a request made while the browser
+  // is open, both arrive during the login.
+  noteEnterpriseDenial(signInRequired, oldRequests);
+  noteEnterpriseDenial(signInRequired, enterpriseLoginMark());
+  await flush();
+  expect(auth.cancel).not.toHaveBeenCalled();
+  expect(communities.snapshot().enterprise).toMatchObject({
+    status: "opening",
+  });
+  auth.get.mockResolvedValue({ expiresAt: "2030-02-01T00:00:00Z" });
+  login.resolve({ expiresAt: "2030-02-01T00:00:00Z" });
+  await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+  await flush();
+  expect(auth.cancel).not.toHaveBeenCalled();
   expect(auth.clear).not.toHaveBeenCalled();
   expect(communities.snapshot().enterprise).toBeUndefined();
-  expect(communities.relay.snapshot().status).toBe("ready");
+  expect(connect).toHaveBeenCalledTimes(2);
+});
+
+it("a refusal whose session check returns after a login started leaves it in place", async () => {
+  const auth = authFixture();
+  auth.get.mockResolvedValue({ expiresAt: "2030-01-01T00:00:00Z" });
+  const { communities, connect } = setup(auth);
+  await flush();
+  communities.joined(
+    { id: "https://enterprise.test", name: "Enterprise" },
+    { name: "Local", picture: "" },
+  );
+  await flush();
+  auth.get.mockResolvedValue(null);
+  noteEnterpriseDenial(signInRequired, enterpriseLoginMark());
+  await flush();
+  // Another refusal's session check reads no session but is held.
+  const check = deferred<EnterpriseAuth | null>();
+  auth.get.mockReturnValueOnce(check.promise);
+  noteEnterpriseDenial(signInRequired, enterpriseLoginMark());
+  await flush();
+  // A login starts and completes before that empty result reaches JS.
+  auth.get.mockResolvedValue({ expiresAt: "2030-02-01T00:00:00Z" });
+  await communities.startEnterpriseLogin();
+  await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+  check.resolve(null);
+  await flush();
+  expect(auth.cancel).not.toHaveBeenCalled();
+  expect(communities.snapshot().enterprise).toBeUndefined();
+  expect(connect).toHaveBeenCalledTimes(2);
+});
+
+it("ignores a sign-in denial of a request made before a login started", async () => {
+  const { onEnterpriseSignInRequired, noteEnterpriseLogin } = await import(
+    "../relay/enterprise-sign-in"
+  );
+  const listener = vi.fn();
+  const stop = onEnterpriseSignInRequired(listener);
+  const before = enterpriseLoginMark();
+  noteEnterpriseLogin();
+  noteEnterpriseDenial(signInRequired, before);
+  expect(listener).not.toHaveBeenCalled();
+  noteEnterpriseDenial(signInRequired, enterpriseLoginMark());
+  expect(listener).toHaveBeenCalledOnce();
+  stop();
 });

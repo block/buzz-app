@@ -171,11 +171,14 @@ protected HTTP require sign-in instead of falling back to an unbadged request.
 Frames are delivered only after JavaScript starts the socket, and every ended
 connection releases its native stream. Only 401
 `session_required`/`session_expired` clear the session and reopen sign-in, and
-only for the session that was refused, so a late refusal cannot undo a newer
-login. 403 `authorization_denied` keeps the session and stops that relay with
+only while the refused token is still the current session: a refusal of a
+session already removed or replaced is retried, and never cancels or undoes a
+newer login, including one still in the browser. 403 `authorization_denied` keeps the session and stops that relay with
 access denied. Every other refusal, and a malformed badge response, keeps the
-session, stops that relay and shows the error. Only 429, 503 and network
-failures use the bounded reconnect backoff.
+session, stops that relay and shows the error. Only 429, 503, network
+failures and a native connect that misses its 30 s bound (which covers secure
+storage, signing, the badge request and the handshake) use the bounded
+reconnect backoff.
 Windows/Linux custody, credential migration and release-signing acceptance remain
 separate limitations.
 

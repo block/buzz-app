@@ -47,7 +47,9 @@ where
 async fn open(request: Request) -> (RelaySockets, u64, mpsc::UnboundedReceiver<SocketEvent>) {
     let sockets = RelaySockets::default();
     let (events, received) = mpsc::unbounded_channel();
-    let stream = connect(request, CONNECT_DEADLINE).await.unwrap();
+    let stream = connect(request, tokio::time::Instant::now() + CONNECT_DEADLINE)
+        .await
+        .unwrap();
     let id = sockets.own(stream, move |event| {
         let _ = events.send(event);
     });
@@ -196,27 +198,30 @@ async fn a_wss_connect_without_a_default_provider_fails_cleanly_on_an_untrusted_
     let request = format!("wss://localhost:{port}")
         .into_client_request()
         .unwrap();
-    let error = connect(request, CONNECT_DEADLINE).await.unwrap_err();
+    let error = connect(request, tokio::time::Instant::now() + CONNECT_DEADLINE)
+        .await
+        .unwrap_err();
     assert_eq!(error, "Relay connection failed");
     // The relay saw the handshake fail, so the client checked the certificate.
     assert!(relay.await.unwrap(), "untrusted certificate was accepted");
 }
 
-#[tokio::test]
-async fn a_stalled_connect_fails_within_the_deadline() {
+#[tokio::test(start_paused = true)]
+async fn a_stalled_connect_fails_at_the_deadline() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://{}", listener.local_addr().unwrap());
-    // Accept TCP, then never answer the upgrade.
+    let (accepted, accepted_signal) = oneshot::channel();
     let relay = tokio::spawn(async move {
-        let held = listener.accept().await.unwrap();
-        tokio::time::sleep(Duration::from_secs(5)).await;
-        drop(held);
+        let (_held, _) = listener.accept().await.unwrap();
+        let _ = accepted.send(());
+        std::future::pending::<()>().await;
     });
-    let started = Instant::now();
-    let deadline = Duration::from_millis(300);
-    let result = connect(url.into_client_request().unwrap(), deadline).await;
-    assert!(result.is_err());
-    assert!(started.elapsed() < deadline + Duration::from_millis(500));
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    let connection = tokio::spawn(connect(url.into_client_request().unwrap(), deadline));
+
+    accepted_signal.await.unwrap();
+    tokio::time::advance(Duration::from_secs(1)).await;
+    assert!(connection.await.unwrap().is_err());
     relay.abort();
 }
 

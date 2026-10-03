@@ -210,9 +210,10 @@ export const BADGE_DENIED_CLOSE = 4901;
 /** Close code a socket reports when the adapter refuses the badge request
  * itself; the live connection stops retrying and shows the close reason. */
 export const BADGE_REFUSED_CLOSE = 4902;
-/** Bounds getting a socket open. The native socket may spend up to 15 s on the
- * relay badge request and 15 s on the handshake (`relay_socket.rs`), plus
- * signing the badge proof; NIP-42 authentication is timed from open. */
+/** Bounds getting a socket open. Native bounds its whole connect (saved
+ * session, proof signing, badge request, refusal handling and handshake) at
+ * 30 s (`nip_fi_assertion::DEADLINE`), so its final answer always arrives
+ * first; NIP-42 authentication is timed from open. */
 export const LIVE_SETUP_TIMEOUT = 35_000;
 const LIVE_AUTH_TIMEOUT = 10_000;
 

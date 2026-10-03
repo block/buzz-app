@@ -2,6 +2,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import {
   ENTERPRISE_ACCESS_DENIED,
   ENTERPRISE_BADGE_REFUSED,
+  enterpriseLoginMark,
   noteEnterpriseDenial,
 } from "./enterprise-sign-in";
 import {
@@ -75,6 +76,7 @@ export function nativeRelaySocket(
   let wire: { send(data: string): void; close(): void } | undefined;
   let rotation: ReturnType<typeof setTimeout> | undefined;
   let ended = false;
+  const mark = enterpriseLoginMark();
   const socket = {
     readyState: 0 as number,
     onopen: null as ((event: Event) => void) | null,
@@ -138,7 +140,7 @@ export function nativeRelaySocket(
   })().catch((error: unknown) => {
     // A retired socket's result belongs to a session that may be gone.
     if (ended) return;
-    noteEnterpriseDenial(error);
+    noteEnterpriseDenial(error, mark);
     const message = String(error instanceof Error ? error.message : error);
     if (message === ENTERPRISE_ACCESS_DENIED) end(BADGE_DENIED_CLOSE, true);
     else if (message.startsWith(ENTERPRISE_BADGE_REFUSED))

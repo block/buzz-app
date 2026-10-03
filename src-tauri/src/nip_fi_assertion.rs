@@ -41,6 +41,9 @@ const MAX_RESPONSE: usize = 16 * 1024;
 const MAX_ASSERTION_CACHE: usize = 128;
 const REQUIREMENT_CACHE_TTL: Duration = Duration::from_secs(30);
 const MAX_REQUIREMENT_CACHE: usize = 128;
+/// Bounds one native badge setup, including the WebSocket handshake.
+pub(crate) const DEADLINE: Duration = Duration::from_secs(30);
+pub(crate) const TIMED_OUT: &str = "Relay badge request timed out";
 const SESSION_CHANGED: &str = "BuilderLab session changed while requesting a relay badge; retry";
 
 type Result<T> = std::result::Result<T, String>;
@@ -215,11 +218,30 @@ impl RelayAssertions {
         url: &Url,
         fresh: bool,
     ) -> Result<Option<Assertion>> {
-        let Some(relay) = self.required_relay(url).await? else {
+        self.get_until(identity, url, fresh, tokio::time::Instant::now() + DEADLINE)
+            .await
+    }
+
+    /// Carries a caller's overall setup deadline through discovery, badge
+    /// issuance, refusal cleanup, and the eventual native socket handshake.
+    pub(crate) async fn get_until(
+        &self,
+        identity: &IdentityHost,
+        url: &Url,
+        fresh: bool,
+        deadline: tokio::time::Instant,
+    ) -> Result<Option<Assertion>> {
+        let Some(relay) = tokio::time::timeout_at(deadline, self.required_relay(url))
+            .await
+            .map_err(|_| TIMED_OUT.to_owned())??
+        else {
             return Ok(None);
         };
         for _ in 0..2 {
-            let Some(snapshot) = self.owner.session_snapshot().await? else {
+            let Some(snapshot) = tokio::time::timeout_at(deadline, self.owner.session_snapshot())
+                .await
+                .map_err(|_| TIMED_OUT.to_owned())??
+            else {
                 return Err(SIGN_IN_REQUIRED.into());
             };
             let session: [u8; 32] = Sha256::digest(snapshot.credential().as_bytes()).into();
@@ -235,17 +257,21 @@ impl RelayAssertions {
                 }
             }
             let endpoint = self.owner.endpoint(ASSERTION_PATH)?;
-            match issue(
-                &self.owner,
-                &snapshot,
-                client()?,
-                &endpoint,
-                identity,
-                &relay,
-                issued_at,
+            let issued = tokio::time::timeout_at(
+                deadline,
+                issue(
+                    &self.owner,
+                    &snapshot,
+                    client()?,
+                    &endpoint,
+                    identity,
+                    &relay,
+                    issued_at,
+                ),
             )
             .await
-            {
+            .map_err(|_| TIMED_OUT.to_owned())?;
+            match issued {
                 Ok(assertion) => {
                     let accepted_at = now()?;
                     match self.owner.admit(&snapshot, || {
@@ -275,11 +301,23 @@ impl RelayAssertions {
                         Some(Err(error)) => return Err(error),
                         Some(Ok(())) => {}
                     }
-                    match self.owner.reject_shared_session(&snapshot).await? {
-                        SharedSessionRejection::Superseded => continue,
-                        SharedSessionRejection::Removed | SharedSessionRejection::Retained => {
-                            return Err(SIGN_IN_REQUIRED.into());
+                    // Keep the owner's durable refusal cleanup running if the
+                    // caller's setup deadline expires while secure storage is
+                    // slow. The owner has already fenced this snapshot before
+                    // awaiting storage.
+                    let owner = self.owner.clone();
+                    let rejection =
+                        tokio::spawn(async move { owner.reject_shared_session(&snapshot).await });
+                    match tokio::time::timeout_at(deadline, rejection).await {
+                        Err(_) => return Err(SIGN_IN_REQUIRED.into()),
+                        Ok(Err(_)) => {
+                            return Err("Relay badge refusal could not be processed".into());
                         }
+                        Ok(Ok(Err(error))) => return Err(error),
+                        Ok(Ok(Ok(SharedSessionRejection::Superseded))) => continue,
+                        Ok(Ok(Ok(
+                            SharedSessionRejection::Removed | SharedSessionRejection::Retained,
+                        ))) => return Err(SIGN_IN_REQUIRED.into()),
                     }
                 }
                 Err(IssueFailure::Failed(error)) => {

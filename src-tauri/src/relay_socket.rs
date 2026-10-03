@@ -28,10 +28,11 @@ use url::Url;
 
 use crate::{
     identity::IdentityHost,
-    nip_fi_assertion::{RelayAssertions, HEADER},
+    nip_fi_assertion::{RelayAssertions, DEADLINE, HEADER},
 };
 
-/// Bounds the whole connect: DNS, TCP, TLS and the WebSocket upgrade.
+/// Bounds DNS, TCP, TLS and the WebSocket upgrade, within what is left of
+/// the badge's `DEADLINE`.
 const CONNECT_DEADLINE: Duration = Duration::from_secs(15);
 /// A send the relay does not accept in this long fails the connection.
 const SEND_DEADLINE: Duration = Duration::from_secs(10);
@@ -92,9 +93,9 @@ fn tls() -> Result<Connector> {
     Ok(Connector::Rustls(Arc::new(config)))
 }
 
-async fn connect(request: Request, deadline: Duration) -> Result<Stream> {
+async fn connect(request: Request, deadline: tokio::time::Instant) -> Result<Stream> {
     let connector = tls()?;
-    match tokio::time::timeout(
+    match tokio::time::timeout_at(
         deadline,
         tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector)),
     )
@@ -248,7 +249,13 @@ pub(crate) async fn relay_socket_connect(
     if url.scheme() != "wss" {
         return Ok(None);
     }
-    let Some(assertion) = assertions.get(identity.inner(), &url, true).await? else {
+    // One bound covers the badge and the handshake, so the final answer
+    // always reaches JavaScript before its own setup deadline.
+    let deadline = tokio::time::Instant::now() + DEADLINE;
+    let Some(assertion) = assertions
+        .get_until(identity.inner(), &url, true, deadline)
+        .await?
+    else {
         return Ok(None);
     };
     let mut request = url
@@ -259,7 +266,8 @@ pub(crate) async fn relay_socket_connect(
         HeaderValue::from_str(&assertion.header).map_err(|_| "Relay badge was invalid")?;
     badge.set_sensitive(true);
     request.headers_mut().insert(HEADER, badge);
-    let stream = connect(request, CONNECT_DEADLINE).await?;
+    let handshake = deadline.min(tokio::time::Instant::now() + CONNECT_DEADLINE);
+    let stream = connect(request, handshake).await?;
     let id = sockets.own(stream, move |event| {
         let _ = on_event.send(event);
     });

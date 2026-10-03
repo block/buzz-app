@@ -183,7 +183,7 @@ function CommentActions({
       <MenuIcon>
         <LinkIcon />
       </MenuIcon>
-      Copy comment link
+      Copy link
     </MenuItem>
   );
   return (
@@ -224,6 +224,7 @@ function CommentActions({
         <div
           className={styles.commentActions}
           data-collapsed={collapsed || undefined}
+          data-menu-action={!showCopyAction || undefined}
           data-menu-open={!!menu || undefined}
         >
           {showCopyAction ? (
@@ -233,7 +234,8 @@ function CommentActions({
               loading={copying}
               onClick={() => void copy()}
             >
-              Copy comment link
+              <LinkIcon size={14} aria-hidden="true" />
+              Copy link
             </Button>
           ) : (
             <MenuRoot
@@ -253,15 +255,12 @@ function CommentActions({
                   />
                 }
               />
-              <MenuPopup align="end" size="compact">
-                {item}
-              </MenuPopup>
+              <MenuPopup align="end">{item}</MenuPopup>
             </MenuRoot>
           )}
         </div>
       </ContextMenuTrigger>
       <MenuPopup
-        size="compact"
         anchor={anchor}
         finalFocus={() =>
           returnFocus.current?.isConnected ? returnFocus.current : false
@@ -555,11 +554,11 @@ function HistoryEvents({
       className={styles.historyReveal}
       inert={!present}
       aria-hidden={!present || undefined}
-      initial={instant ? false : { height: 0, opacity: 0 }}
+      initial={instant ? false : { height: 0, opacity: 0, overflow: "hidden" }}
       animate={{
         height: "auto",
         opacity: 1,
-        transitionEnd: { overflow: "visible" },
+        overflow: "visible",
       }}
       exit={{ height: 0, opacity: 0, overflow: "hidden" }}
       transition={{

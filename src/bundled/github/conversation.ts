@@ -229,9 +229,12 @@ export function groupConversationEvents(
   const latestDecisions = new Map<string, number>();
   const superseded = new Set<string>();
   for (const event of [...events].reverse()) {
+    // Dismissals are review history too; comments/unknown states never replace a verdict.
     if (
       event.kind !== "review" ||
-      !["APPROVED", "CHANGES_REQUESTED"].includes(event.message.state ?? "")
+      !["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(
+        event.message.state ?? "",
+      )
     )
       continue;
     const time = Date.parse(event.message.createdAt ?? "");

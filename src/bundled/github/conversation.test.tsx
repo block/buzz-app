@@ -627,7 +627,11 @@ it("folds only consecutive older comments, preserving decisions and the latest e
         state: "CHANGES_REQUESTED",
         createdAt: date(16),
       }),
-      entry(6, { state: "DISMISSED", createdAt: date(17) }),
+      entry(6, {
+        author: "dismissed-reviewer",
+        state: "DISMISSED",
+        createdAt: date(17),
+      }),
       entry(7, { state: "UNKNOWN", createdAt: date(18) }),
     ],
   );
@@ -921,7 +925,7 @@ it("keeps approval milestones on either side of folded conversation stretches", 
     [
       entry(1, { state: "APPROVED", createdAt: date(12) }),
       entry(4, { state: "APPROVED", createdAt: date(15) }),
-      entry(5, { state: "DISMISSED", createdAt: date(16) }),
+      entry(5, { state: "UNKNOWN", createdAt: date(16) }),
       entry(6, { state: "APPROVED", createdAt: date(17) }),
     ],
     { ...details, mergedAt: date(18) },
@@ -1043,7 +1047,138 @@ it("does not infer supersession from missing actors, missing times or tied times
   );
 });
 
-it("keeps dismissed and unknown reviews visible even before merge", () => {
+it.each([
+  "APPROVED",
+  "CHANGES_REQUESTED",
+  "COMMENTED",
+  "DISMISSED",
+  "PENDING",
+  "UNKNOWN",
+  undefined,
+])(
+  "accounts for %s reviews in pre-merge history without guessing unknown states",
+  (state) => {
+    const events = conversationEvents(
+      [entry(1, { createdAt: date(12) })],
+      [entry(2, { state, body: "Review summary", createdAt: date(13) })],
+      { ...details, mergedAt: date(17) },
+    );
+    const known = [
+      "APPROVED",
+      "CHANGES_REQUESTED",
+      "COMMENTED",
+      "DISMISSED",
+    ].includes(state ?? "");
+    expect(groupConversationEvents(events)).toEqual(
+      known
+        ? [
+            {
+              key: "discussion-1",
+              kind: "history",
+              events: events.slice(0, 2),
+            },
+            events[2],
+          ]
+        : events,
+    );
+  },
+);
+
+it.each(["APPROVED", "CHANGES_REQUESTED", "DISMISSED"])(
+  "folds a dismissed review superseded by %s from the same reviewer",
+  (state) => {
+    const events = conversationEvents(
+      [],
+      [
+        entry(1, {
+          author: "Reviewer",
+          state: "DISMISSED",
+          createdAt: date(12),
+        }),
+        entry(2, { author: "reviewer", state, createdAt: date(13) }),
+      ],
+    );
+    expect(groupConversationEvents(events)).toEqual([
+      { key: "review-1", kind: "history", events: [events[0]] },
+      events[1],
+    ]);
+  },
+);
+
+it.each(["APPROVED", "CHANGES_REQUESTED"])(
+  "folds an earlier %s when the same reviewer has a later dismissed review",
+  (state) => {
+    const events = conversationEvents(
+      [],
+      [
+        entry(1, { state, createdAt: date(12) }),
+        entry(2, { state: "DISMISSED", createdAt: date(13) }),
+      ],
+    );
+    expect(groupConversationEvents(events)).toEqual([
+      { key: "review-1", kind: "history", events: [events[0]] },
+      events[1],
+    ]);
+  },
+);
+
+it.each(["COMMENTED", "PENDING", "UNKNOWN", undefined])(
+  "does not infer dismissal supersession from a later %s review",
+  (state) => {
+    const events = conversationEvents(
+      [],
+      [
+        entry(1, { state: "DISMISSED", createdAt: date(12) }),
+        entry(2, { state, body: "Review summary", createdAt: date(13) }),
+      ],
+    );
+    expect(groupConversationEvents(events)).toEqual(events);
+  },
+);
+
+it("does not hide dismissals with missing times, tied times or unproven actors", () => {
+  for (const reviews of [
+    [
+      entry(1, { state: "DISMISSED", createdAt: undefined }),
+      entry(2, { state: "APPROVED", createdAt: date(13) }),
+    ],
+    [
+      entry(1, { state: "DISMISSED", createdAt: date(13) }),
+      entry(2, { state: "APPROVED", createdAt: date(13) }),
+    ],
+    [
+      entry(1, { author: "", state: "DISMISSED", createdAt: date(12) }),
+      entry(2, { author: "", state: "APPROVED", createdAt: date(13) }),
+    ],
+    [
+      entry(1, { state: "DISMISSED", createdAt: date(12) }),
+      entry(2, { author: "another", state: "APPROVED", createdAt: date(13) }),
+    ],
+  ]) {
+    const events = conversationEvents([], reviews);
+    expect(groupConversationEvents(events)).toEqual(events);
+  }
+  const events = conversationEvents(
+    [],
+    [entry(1, { state: "DISMISSED", createdAt: date(17) })],
+    { ...details, mergedAt: date(17) },
+  );
+  expect(groupConversationEvents(events)).toEqual(events);
+});
+
+it("keeps post-merge dismissed reviews and unknown states visible", () => {
+  const events = conversationEvents(
+    [],
+    [
+      entry(1, { state: "DISMISSED", createdAt: date(18) }),
+      entry(2, { state: "UNKNOWN", createdAt: date(19) }),
+    ],
+    { ...details, mergedAt: date(17) },
+  );
+  expect(groupConversationEvents(events)).toEqual(events);
+});
+
+it("folds a lone pre-merge dismissal but keeps unknown reviews visible", () => {
   const events = conversationEvents(
     [],
     [
@@ -1052,57 +1187,77 @@ it("keeps dismissed and unknown reviews visible even before merge", () => {
     ],
     { ...details, mergedAt: date(17) },
   );
-  expect(groupConversationEvents(events)).toEqual(events);
+  expect(groupConversationEvents(events)).toEqual([
+    { key: "review-1", kind: "history", events: [events[0]] },
+    ...events.slice(1),
+  ]);
 });
 
-it("uses singular message copy and restores the original verdict body on expansion", async () => {
-  const fetch = vi.fn(async (target: string) =>
-    response(
-      target.includes("/reviews?")
-        ? [
-            {
-              id: 1,
-              state: "CHANGES_REQUESTED",
-              submitted_at: date(13),
-              user: { login: "reviewer" },
-              body: "Please fix the boundary\n\n## Review detail",
-            },
-          ]
-        : [],
-    ),
-  );
-  vi.stubGlobal("fetch", fetch);
-  render(
-    <GitHubConversation
-      details={{ ...details, mergedAt: date(17) }}
-      url={url}
-    />,
-  );
-  await waitFor(() =>
+it.each(["CHANGES_REQUESTED", "DISMISSED"])(
+  "restores the original %s body on singular history expansion",
+  async (state) => {
+    const label =
+      state === "DISMISSED" ? "Review dismissed" : "Changes requested";
+    const user = userEvent.setup();
+    const write = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockResolvedValue();
+    const fetch = vi.fn(async (target: string) =>
+      response(
+        target.includes("/reviews?")
+          ? [
+              {
+                id: 1,
+                state,
+                submitted_at: date(13),
+                user: { login: "reviewer" },
+                body: "Please fix the boundary\n\n## Review detail",
+              },
+            ]
+          : [],
+      ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    render(
+      <ToastProvider>
+        <GitHubConversation
+          details={{ ...details, mergedAt: date(17) }}
+          url={url}
+        />
+      </ToastProvider>,
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/some sources are incomplete/),
+      ).not.toBeInTheDocument(),
+    );
+    const trigger = screen.getByRole("button", {
+      name: "Show 1 earlier message",
+    });
+    expect(trigger).toHaveTextContent("1 earlier message");
     expect(
-      screen.queryByText(/some sources are incomplete/),
-    ).not.toBeInTheDocument(),
-  );
-  const trigger = screen.getByRole("button", {
-    name: "Show 1 earlier message",
-  });
-  expect(trigger).toHaveTextContent("1 earlier message");
-  expect(
-    screen.queryByRole("group", { name: "Changes requested" }),
-  ).not.toBeInTheDocument();
-  const user = userEvent.setup();
-  await user.click(trigger);
-  const verdict = screen.getByRole("group", { name: "Changes requested" });
-  await waitFor(() =>
-    expect(within(verdict).getByText("reviewer")).toBeVisible(),
-  );
-  expect(verdict.querySelector("time")).toHaveAttribute("datetime", date(13));
-  await user.click(
-    within(verdict).getByRole("button", { name: "Expand Changes requested" }),
-  );
-  expect(screen.getByRole("heading", { name: "Review detail" })).toBeVisible();
-  expect(fetch).toHaveBeenCalledTimes(2);
-});
+      screen.queryByRole("group", { name: label }),
+    ).not.toBeInTheDocument();
+    await user.click(trigger);
+    const verdict = screen.getByRole("group", { name: label });
+    await waitFor(() =>
+      expect(within(verdict).getByText("reviewer")).toBeVisible(),
+    );
+    expect(verdict.querySelector("time")).toHaveAttribute("datetime", date(13));
+    await user.click(
+      within(verdict).getByRole("button", { name: `Expand ${label}` }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Review detail" }),
+    ).toBeVisible();
+    await user.click(
+      within(verdict).getByRole("button", { name: "Copy link" }),
+    );
+    expect(write).toHaveBeenCalledWith(`${url}#pullrequestreview-1`);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  },
+);
 
 it("renders a lone approval directly and expands post-merge follow-up without requests", async () => {
   const fetch = vi.fn(async (target: string) =>
@@ -1217,9 +1372,7 @@ it("copies a discussion permalink without toggling the accordion or fetching", a
   expect(actions).not.toHaveAttribute("title");
   expect(actions).not.toHaveAttribute("aria-describedby");
   await user.click(actions);
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Copy comment link" }),
-  );
+  await user.click(await screen.findByRole("menuitem", { name: "Copy link" }));
   await screen.findByText("Comment link copied");
   expect(write).toHaveBeenCalledWith(`${url}#issuecomment-43`);
   expect(disclosure).toHaveAttribute("aria-expanded", "false");
@@ -1228,9 +1381,7 @@ it("copies a discussion permalink without toggling the accordion or fetching", a
     within(message).queryByRole("button", { name: "Comment actions" }),
   ).toBeNull();
   expect(screen.getByRole("heading", { name: "Comment body" })).toBeVisible();
-  await user.click(
-    within(message).getByRole("button", { name: "Copy comment link" }),
-  );
+  await user.click(within(message).getByRole("button", { name: "Copy link" }));
   expect(screen.queryByRole("menu")).toBeNull();
   await waitFor(() => expect(write).toHaveBeenCalledTimes(2));
   expect(disclosure).toHaveAttribute("aria-expanded", "true");
@@ -1260,17 +1411,13 @@ it("shares review copying and retry feedback between right-click and button menu
     name: "Comment actions",
   });
   fireEvent.contextMenu(disclosure);
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Copy comment link" }),
-  );
+  await user.click(await screen.findByRole("menuitem", { name: "Copy link" }));
   await screen.findByText(
     "Couldn’t copy the link. Try again from the comment actions.",
   );
   expect(disclosure).toHaveAttribute("aria-expanded", "false");
   await user.click(actions);
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Copy comment link" }),
-  );
+  await user.click(await screen.findByRole("menuitem", { name: "Copy link" }));
   await screen.findByText("Comment link copied");
   expect(write).toHaveBeenCalledTimes(2);
   expect(write).toHaveBeenLastCalledWith(`${url}#pullrequestreview-42`);
@@ -1294,7 +1441,7 @@ it("retries failed direct copying from the expanded message", async () => {
   });
   await user.click(disclosure);
   const copy = within(message).getByRole("button", {
-    name: "Copy comment link",
+    name: "Copy link",
   });
   await user.click(copy);
   await screen.findByText(
@@ -1319,7 +1466,7 @@ it("opens both menus by keyboard and restores focus without changing disclosure"
   });
   disclosure.focus();
   await user.keyboard("{Shift>}{F10}{/Shift}");
-  await screen.findByRole("menuitem", { name: "Copy comment link" });
+  await screen.findByRole("menuitem", { name: "Copy link" });
   await user.keyboard("{Escape}");
   await waitFor(() => expect(disclosure).toHaveFocus());
   const actions = within(message).getByRole("button", {
@@ -1327,7 +1474,7 @@ it("opens both menus by keyboard and restores focus without changing disclosure"
   });
   actions.focus();
   await user.keyboard("{Enter}");
-  await screen.findByRole("menuitem", { name: "Copy comment link" });
+  await screen.findByRole("menuitem", { name: "Copy link" });
   await user.keyboard("{Escape}");
   await waitFor(() => expect(actions).toHaveFocus());
   expect(disclosure).toHaveAttribute("aria-expanded", "false");
@@ -1350,16 +1497,14 @@ it("prevents duplicate writes across both menus while the clipboard is pending",
     name: "Comment actions",
   });
   await user.click(actions);
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Copy comment link" }),
-  );
+  await user.click(await screen.findByRole("menuitem", { name: "Copy link" }));
   try {
     await waitFor(() => expect(write).toHaveBeenCalledTimes(1));
     fireEvent.contextMenu(
       within(message).getByRole("button", { name: "Expand Comment" }),
     );
     const item = await screen.findByRole("menuitem", {
-      name: "Copy comment link",
+      name: "Copy link",
     });
     expect(item).toHaveAttribute("aria-disabled", "true");
     await user.click(item);
@@ -1369,7 +1514,7 @@ it("prevents duplicate writes across both menus while the clipboard is pending",
       within(message).getByRole("button", { name: "Expand Comment" }),
     );
     const directCopy = within(message).getByRole("button", {
-      name: "Copy comment link",
+      name: "Copy link",
     });
     expect(directCopy).toHaveAttribute("aria-busy", "true");
     await user.click(directCopy);

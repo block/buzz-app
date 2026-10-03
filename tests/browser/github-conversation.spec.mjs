@@ -263,15 +263,16 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await commentActions.hover();
   await expect(commentActions).not.toHaveAttribute("aria-describedby");
   await commentActions.click();
+  await expect(page.getByRole("menu")).toHaveAttribute("data-size", "default");
   await expect(
-    page.getByRole("menuitem", { name: "Copy comment link", exact: true }),
+    page.getByRole("menuitem", { name: "Copy link", exact: true }),
   ).toBeVisible();
+  // Capture the shared menu after its real entrance transition has settled.
+  await expect(page.getByRole("menu")).toHaveCSS("filter", "blur(0px)");
   await panel.screenshot({
     path: testInfo.outputPath("comment-copy-menu.png"),
   });
-  await page
-    .getByRole("menuitem", { name: "Copy comment link", exact: true })
-    .click();
+  await page.getByRole("menuitem", { name: "Copy link", exact: true }).click();
   await expect(
     page.getByText("Comment link copied", { exact: true }),
   ).toBeVisible();
@@ -280,9 +281,8 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     .poll(() => page.evaluate(() => window.githubCopiedLinks))
     .toEqual([`${target}#issuecomment-20`]);
   await comment.click({ button: "right" });
-  await page
-    .getByRole("menuitem", { name: "Copy comment link", exact: true })
-    .click();
+  await expect(page.getByRole("menu")).toHaveAttribute("data-size", "default");
+  await page.getByRole("menuitem", { name: "Copy link", exact: true }).click();
   await expect(comment).toHaveAttribute("aria-expanded", "false");
   await expect
     .poll(() => page.evaluate(() => window.githubCopiedLinks))
@@ -290,7 +290,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await comment.focus();
   await page.keyboard.press("Shift+F10");
   const keyboardMenuItem = page.getByRole("menuitem", {
-    name: "Copy comment link",
+    name: "Copy link",
     exact: true,
   });
   await expect(keyboardMenuItem).toBeVisible();
@@ -305,10 +305,14 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   ).toBeVisible();
   await expect(commentActions).toHaveCount(0);
   const copyAction = commentEvent.getByRole("button", {
-    name: "Copy comment link",
+    name: "Copy link",
     exact: true,
   });
   await expect(copyAction).toHaveAttribute("data-variant", "subtle");
+  await expect(copyAction.locator("svg")).toHaveAttribute(
+    "aria-hidden",
+    "true",
+  );
   const actionsBox = await copyAction.boundingBox();
   const bodyBox = await commentEvent
     .locator('[class*="messageBody"]')
@@ -327,9 +331,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   });
   await reviewEvent.getByRole("button", { name: "Comment actions" }).focus();
   await page.keyboard.press("Enter");
-  await page
-    .getByRole("menuitem", { name: "Copy comment link", exact: true })
-    .click();
+  await page.getByRole("menuitem", { name: "Copy link", exact: true }).click();
   await expect
     .poll(() => page.evaluate(() => window.githubCopiedLinks))
     .toEqual([
@@ -736,6 +738,33 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await expect(
     approval.getByRole("button", { name: /Expand|Toggle/ }),
   ).toHaveCount(0);
+  const approvalActions = approval.getByRole("button", {
+    name: "Comment actions",
+  });
+  const approvalSlot = approvalActions.locator("..");
+  await page.mouse.move(0, 0);
+  await page.evaluate(() => document.activeElement?.blur());
+  if (fineHover) {
+    await expect(approvalSlot).toHaveCSS("opacity", "0");
+    await expect(approvalSlot).toHaveCSS("pointer-events", "none");
+    await approval.locator('[class*="messageMarker"]').hover();
+    await expect(approvalSlot).toHaveCSS("opacity", "1");
+    await page.mouse.move(0, 0);
+    await expect(approvalSlot).toHaveCSS("opacity", "0");
+  } else await expect(approvalSlot).toHaveCSS("opacity", "1");
+  await approvalActions.focus();
+  await expect(approvalSlot).toHaveCSS("opacity", "1");
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("menuitem", { name: "Copy link", exact: true }),
+  ).toBeVisible();
+  await page.mouse.move(0, 0);
+  await expect(approvalSlot).toHaveCSS("opacity", "1");
+  await page.keyboard.press("Escape");
+  await expect(approvalActions).toBeFocused();
+  await expect(approvalSlot).toHaveCSS("opacity", "1");
+  await page.evaluate(() => document.activeElement?.blur());
+  if (fineHover) await expect(approvalSlot).toHaveCSS("opacity", "0");
   await expect(approval.getByText("No message provided")).toHaveCount(0);
   await expect(approval).not.toContainText("loaded code threads");
   await expect(
@@ -840,6 +869,15 @@ test("conversation history expands around merge without hiding approval-only mil
   app,
 }, testInfo) => {
   const requests = [];
+  await page.addInitScript(() => {
+    window.githubCopiedLinks = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (value) => window.githubCopiedLinks.push(value),
+      },
+    });
+  });
   const time = (hour) => `2026-10-01T${hour}:00:00Z`;
   await page.route(
     "https://api.github.com/repos/sample/project/**",
@@ -889,6 +927,13 @@ test("conversation history expands around merge without hiding approval-only mil
                 body: "The revised layout is clear.",
                 submitted_at: time(14),
                 user: { login: "reviewer" },
+              },
+              {
+                id: 12,
+                state: "DISMISSED",
+                body: "",
+                submitted_at: "2026-10-01T16:30:00Z",
+                user: { login: "dismissed-reviewer" },
               },
               {
                 id: 11,
@@ -957,10 +1002,14 @@ test("conversation history expands around merge without hiding approval-only mil
     conversation.getByText(/some sources are incomplete/),
   ).toHaveCount(0);
   const trigger = conversation.getByRole("button", {
-    name: /^(Show|Hide) 5 earlier messages$/,
+    name: /^(Show|Hide) 6 earlier messages$/,
   });
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(trigger.locator("svg")).toHaveCount(1);
+  await expect(
+    trigger.locator('[class*="commentRunSummary"] > span'),
+  ).toHaveCSS("font-size", "12px");
+  await expect(trigger).toHaveCSS("font-size", "14px");
   await expect(conversation.getByRole("group")).toHaveCount(2);
   const afterMerge = conversation.getByRole("button", {
     name: /^(Show|Hide) 1 message after merge$/,
@@ -978,6 +1027,11 @@ test("conversation history expands around merge without hiding approval-only mil
     name: "Merged",
     exact: true,
   });
+  const dismissed = conversation.getByRole("group", {
+    name: "Review dismissed",
+    exact: true,
+  });
+  await expect(dismissed).toHaveCount(0);
   await expect(approval).toHaveCount(0);
   await expect(
     conversation.getByRole("group", { name: "Changes requested", exact: true }),
@@ -1014,10 +1068,10 @@ test("conversation history expands around merge without hiding approval-only mil
   await trigger.focus();
   await page.keyboard.press("Enter");
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
-  await expect(trigger).toHaveAccessibleName("Hide 5 earlier messages");
+  await expect(trigger).toHaveAccessibleName("Hide 6 earlier messages");
   await expect(trigger).toHaveText("Hide earlier messages");
   await expect(trigger).toBeFocused();
-  await expect(conversation.getByRole("group")).toHaveCount(7);
+  await expect(conversation.getByRole("group")).toHaveCount(8);
   const history = conversation.locator(
     `[id="${await trigger.getAttribute("aria-controls")}"]`,
   );
@@ -1028,6 +1082,14 @@ test("conversation history expands around merge without hiding approval-only mil
   await expect(
     conversation.getByRole("group", { name: "Review comment", exact: true }),
   ).toBeVisible();
+  await expect(dismissed).toBeVisible();
+  await expect(
+    dismissed.getByRole("link", { name: "dismissed-reviewer", exact: true }),
+  ).toHaveAttribute("href", "https://github.com/dismissed-reviewer");
+  await expect(dismissed.locator("time")).toHaveAttribute(
+    "datetime",
+    "2026-10-01T16:30:00Z",
+  );
   await expect(approval).toBeVisible();
   await expect(
     conversation.getByRole("group", { name: "Changes requested", exact: true }),
@@ -1040,7 +1102,7 @@ test("conversation history expands around merge without hiding approval-only mil
   await afterMerge.focus();
   await page.keyboard.press("Enter");
   await expect(afterMerge).toHaveText("Hide messages after merge");
-  await expect(conversation.getByRole("group")).toHaveCount(8);
+  await expect(conversation.getByRole("group")).toHaveCount(9);
   await expect(conversation.getByRole("group").last()).toContainText(
     "Thanks for shipping this.",
   );
@@ -1049,7 +1111,7 @@ test("conversation history expands around merge without hiding approval-only mil
   );
   await page.keyboard.press("Space");
   await expect(afterMerge).toHaveText(/1 message after merge/);
-  await expect(conversation.getByRole("group")).toHaveCount(7);
+  await expect(conversation.getByRole("group")).toHaveCount(8);
   await page.setViewportSize({ width: 800, height: 950 });
   await expectOrder();
   await panel.screenshot({
@@ -1058,8 +1120,11 @@ test("conversation history expands around merge without hiding approval-only mil
   await trigger.tap();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(conversation.getByRole("group")).toHaveCount(2);
-  await expect(trigger).toHaveAccessibleName("Show 5 earlier messages");
-  await expect(trigger).toContainText("5 earlier messages");
+  await expect(trigger).toHaveAccessibleName("Show 6 earlier messages");
+  await expect(trigger).toContainText("6 earlier messages");
+  // Hidden groups disappear from roles before the exit animation unmounts.
+  // Establish a fully closed baseline; reversal during exit is exercised below.
+  await expect(history).toHaveCount(0);
   // Normal pointer motion must expose intermediate heights and settle unclipped.
   await page.emulateMedia({ reducedMotion: "no-preference" });
   const motionFrames = await trigger.evaluate(async (button) => {
@@ -1094,7 +1159,7 @@ test("conversation history expands around merge without hiding approval-only mil
     button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
   });
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
-  await expect(conversation.getByRole("group")).toHaveCount(7);
+  await expect(conversation.getByRole("group")).toHaveCount(8);
   await expect
     .poll(() => history.evaluate((node) => node.style.height))
     .toBe("auto");
@@ -1105,6 +1170,20 @@ test("conversation history expands around merge without hiding approval-only mil
   await expect(trigger).toBeFocused();
   await expect(conversation.getByRole("group")).toHaveCount(2);
   expect(requests).toHaveLength(3);
+  // Exercise copying only after the geometry/motion sequence, so opening a menu
+  // cannot move focus/scroll while the motion baseline is being established.
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  await expect(dismissed).toBeVisible();
+  await dismissed.getByRole("button", { name: "Comment actions" }).click();
+  await page.getByRole("menuitem", { name: "Copy link", exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.githubCopiedLinks))
+    .toEqual([`${target}#pullrequestreview-12`]);
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  await trigger.focus();
+  await page.keyboard.press("Space");
+  await expect(history).toHaveCount(0);
   // Approval-only is an ordinary milestone row, not a one-event disclosure.
   await page.evaluate(() => {
     localStorage.setItem("buzz-font-scale.v1", "1");
@@ -1167,4 +1246,95 @@ test("conversation history expands around merge without hiding approval-only mil
     )
     .toBe("none");
   await panel.screenshot({ path: testInfo.outputPath("description-only.png") });
+});
+
+// Desktop-only CSS contract: touch coverage above deliberately keeps actions visible.
+test.describe("desktop comment actions", () => {
+  test.use({ hasTouch: false });
+  test("bodyless ellipsis follows whole-row hover, keyboard focus and open-menu state", async ({
+    page,
+    app,
+  }, testInfo) => {
+    await page.route(
+      "https://api.github.com/repos/sample/project/**",
+      (route) => {
+        const path = new URL(route.request().url()).pathname;
+        return route.fulfill({
+          json: path.endsWith("/reviews")
+            ? [
+                {
+                  id: 1,
+                  state: "APPROVED",
+                  submitted_at: "2026-10-01T16:00:00Z",
+                  user: { login: "reviewer" },
+                  body: "",
+                },
+              ]
+            : path.endsWith("/comments")
+              ? []
+              : {
+                  title: "Keep review actions quiet",
+                  body: "A small change.",
+                  state: "open",
+                  user: { login: "author" },
+                },
+        });
+      },
+    );
+    await page.goto(app.origin);
+    await openPage(page, "Messages");
+    await page
+      .getByRole("textbox", { name: "Message #Alpha", exact: true })
+      .waitFor();
+    await settle(page);
+    app.append("primary", "alpha", target);
+    const link = page.locator(`a[href="${target}"]`);
+    await expect(link).toBeAttached();
+    await end(page);
+    await link.click();
+    const panel = page.getByRole("complementary", {
+      name: "GitHub",
+      exact: true,
+    });
+    const row = panel.getByRole("group", { name: "Approved", exact: true });
+    await expect(row).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => matchMedia("(hover: hover) and (pointer: fine)").matches,
+      ),
+    ).toBe(true);
+    const action = row.getByRole("button", { name: "Comment actions" });
+    const slot = action.locator("..");
+    await page.mouse.move(0, 0);
+    await page.evaluate(() => document.activeElement?.blur());
+    await expect(slot).toHaveCSS("opacity", "0");
+    await expect(slot).toHaveCSS("pointer-events", "none");
+    await panel.screenshot({
+      path: testInfo.outputPath("desktop-actions-idle.png"),
+    });
+    await row.locator('[class*="messageMarker"]').hover();
+    await expect(slot).toHaveCSS("opacity", "1");
+    await expect(slot).toHaveCSS("pointer-events", "auto");
+    await panel.screenshot({
+      path: testInfo.outputPath("desktop-actions-hover.png"),
+    });
+    await page.mouse.move(0, 0);
+    await expect(slot).toHaveCSS("opacity", "0");
+    // Reach the visually hidden control with normal Tab order, not programmatic focus.
+    await row.getByRole("link", { name: "reviewer", exact: true }).focus();
+    await page.keyboard.press("Tab");
+    await expect(action).toBeFocused();
+    await expect(slot).toHaveCSS("opacity", "1");
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("menuitem", { name: "Copy link", exact: true }),
+    ).toBeVisible();
+    await page.mouse.move(0, 0);
+    await expect(slot).toHaveCSS("opacity", "1");
+    await page.keyboard.press("Escape");
+    await expect(action).toBeFocused();
+    await expect(slot).toHaveCSS("opacity", "1");
+    await page.evaluate(() => document.activeElement?.blur());
+    await expect(slot).toHaveCSS("opacity", "0");
+  });
 });

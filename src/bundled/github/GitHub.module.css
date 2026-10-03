@@ -427,12 +427,12 @@
   padding-right: var(--space-8);
 }
 @media (hover: hover) and (pointer: fine) {
-  .commentActions[data-collapsed] {
+  .commentActions[data-menu-action] {
     opacity: 0;
     pointer-events: none;
   }
-  .messageContent:hover > .commentActions,
-  .messageContent:focus-within > .commentActions,
+  .conversationMessage:hover .commentActions,
+  .conversationMessage:focus-within .commentActions,
   .commentActions[data-menu-open] {
     opacity: 1;
     pointer-events: auto;
@@ -581,6 +581,9 @@
 }
 .commentRunSummary > span {
   color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
 }
 .historyReveal {
   overflow: hidden;

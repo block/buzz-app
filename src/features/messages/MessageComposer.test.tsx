@@ -2210,7 +2210,7 @@ it("keeps inline recipient identity and source stable through directory collisio
 });
 
 it.each([false, true])(
-  "leaves removed-person rejection to the real session without enrolling anyone (mixed native=%s)",
+  "asks before mentioning a removed person in an untyped channel without enrolling anyone (mixed native=%s)",
   async (mixed) => {
     const viewer = keypair(),
       relay = keypair();
@@ -2266,12 +2266,17 @@ it.each([false, true])(
       members = [viewer.pubkey];
       time++;
       await act(refresh);
-      // An ordinary removed recipient must reject synchronously. Awaiting an
-      // async act here would hide a transient enrollment lock on the composer.
+      // An untyped channel is an ordinary channel: a removed recipient is now
+      // outside it, so the sender chooses. Nothing enrolls or sends meanwhile.
       h.submit();
-      expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "no longer a channel member",
+      expect(screen.getByRole("dialog")).toHaveTextContent(
+        mixed
+          ? "Honey, Honey are not in this channel."
+          : "Honey is not in this channel.",
+      );
+      await userEvent.setup().keyboard("{Escape}");
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
       );
       expect(h.input()).toHaveValue(draft);
       expect(sign).not.toHaveBeenCalled();
@@ -2953,6 +2958,72 @@ it("uses the full channel choice set for one selected chip and follows membershi
   );
   h.unmount();
   names.dispose();
+});
+
+it("sends someone outside a DM as a reference without asking", async () => {
+  const h = mount();
+  const add = vi.fn();
+  const list = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        channelType: "dm",
+        members: ["d".repeat(64), second.pubkey],
+        participants: [second.pubkey],
+      },
+    ],
+  };
+  Object.assign(h.session, {
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add },
+    // A writer that could add members still cannot add anyone to a DM.
+    outbox: { ...h.session.outbox, supports: () => true },
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(second);
+  });
+  fireEvent.submit(screen.getByRole("form"));
+  await act(async () => {});
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(h.messages.send).toHaveBeenCalledOnce();
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+  expect(add).not.toHaveBeenCalled();
+});
+
+it("does not ask about outside recipients in a session media-comment composer", async () => {
+  // Media comments mount the composer with a thread root but without session
+  // mode, so the session rule must come from the channel type.
+  const h = mount({ threadRootId: "f".repeat(64) });
+  const add = vi.fn();
+  const channel = {
+    id: "channel",
+    channelType: "session",
+    members: [first.pubkey, second.pubkey],
+  };
+  const list = { status: "ready", channels: [channel] };
+  Object.assign(h.session, {
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add },
+    outbox: { ...h.session.outbox, supports: () => true },
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(second);
+  });
+  // The first person leaves the session after being named.
+  channel.members = [second.pubkey];
+  fireEvent.submit(screen.getByRole("form"));
+  await act(async () => {});
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(h.messages.reply).toHaveBeenCalledOnce();
+  expect(h.messages.reply.mock.calls[0]?.[3]).toEqual([
+    first.pubkey,
+    second.pubkey,
+  ]);
+  expect(add).not.toHaveBeenCalled();
 });
 
 for (const channelType of ["stream", "forum"] as const)

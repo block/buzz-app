@@ -399,13 +399,26 @@ test.describe("signed newest-first Inbox windows", () => {
       detail.locator(`[data-message-id="${newest.id}"]`),
     ).toBeAttached();
     // The selected anchor survives a later arrival; no fresh click/reveal was requested.
-    const arrival = app.reply(root.id);
+    const seen = app.reply(root.id);
     await expect(
       detail.getByText("New peer reply", { exact: true }),
     ).toBeAttached();
     await expect(target).toBeInViewport();
+    // The open reader's dwell reads that arrival (docs/unread.md); wait for it
+    // rather than racing Close against it.
+    await expect
+      .poll(() =>
+        app.report.readWrites.some(({ intents, outcomes }) =>
+          intents.some(
+            (intent, i) =>
+              intent.message_id === seen.id && outcomes[i].status === "applied",
+          ),
+        ),
+      )
+      .toBe(true);
     await detail.getByRole("button", { name: "Close thread" }).click();
-    // The first visit read the thread; the arrival is a new unread row.
+    // An arrival after the visit is a new unread row.
+    const arrival = app.reply(root.id);
     const arrivalRow = inbox
       .getByRole("list", { name: "Inbox conversations" })
       .getByRole("listitem")

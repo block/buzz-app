@@ -770,11 +770,13 @@ it.each([false, true])(
     const dialog = await screen.findByRole("dialog", {
       name: `Remove ${agent ? "agent" : "member"} from channel`,
     });
-    expect(
-      within(dialog).getByRole("button", {
-        name: `Remove ${agent ? "agent" : "member"}`,
-      }),
-    ).toBeVisible();
+    await vi.waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", {
+          name: `Remove ${agent ? "agent" : "member"}`,
+        }),
+      ).toBeVisible(),
+    );
     expect(dialog).toHaveAccessibleDescription("Morgan");
     const avatar = required(
       dialog.querySelector(".buzz-dialog-description .buzz-avatar"),

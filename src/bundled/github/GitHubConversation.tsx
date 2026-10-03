@@ -1,5 +1,12 @@
 import { Collapsible } from "@base-ui/react/collapsible";
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  AnimatePresence,
+  motion,
+  useIsPresent,
+  usePresenceData,
+  useReducedMotion,
+} from "motion/react";
+import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -13,6 +20,8 @@ import { MediaAttachment } from "../../features/messages/MediaAttachment";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   CaretDownIcon,
+  CaretUpIcon,
+  DotsThreeIcon,
   GitMergeIcon,
   ChatCircleIcon,
   CheckCircleIcon,
@@ -358,7 +367,49 @@ function EventMessage({
   );
 }
 
+function HistoryEvents({
+  run,
+  url,
+  id,
+}: {
+  run: EventRun;
+  url: string;
+  id: string;
+}) {
+  const present = useIsPresent();
+  const instant = usePresenceData() === true;
+  return (
+    <motion.div
+      id={id}
+      className={styles.historyReveal}
+      inert={!present}
+      aria-hidden={!present || undefined}
+      initial={instant ? false : { height: 0, opacity: 0 }}
+      animate={{
+        height: "auto",
+        opacity: 1,
+        transitionEnd: { overflow: "visible" },
+      }}
+      exit={{ height: 0, opacity: 0, overflow: "hidden" }}
+      transition={{
+        duration: instant ? 0 : present ? 0.2 : 0.14,
+        ease: [0.23, 1, 0.32, 1],
+      }}
+    >
+      <div className={styles.commentRunEvents}>
+        {run.events.map((event) => (
+          <EventMessage key={event.key} event={event} url={url} />
+        ))}
+      </div>
+    </motion.div>
+  );
+}
+
 function History({ run, url }: { run: EventRun; url: string }) {
+  const [open, setOpen] = useState(false);
+  const [keyboardToggle, setKeyboardToggle] = useState(false);
+  const reduceMotion = useReducedMotion();
+  const id = useId();
   const label = run.events.every(
     (event) =>
       event.kind === "discussion" || event.message.state === "COMMENTED",
@@ -373,23 +424,43 @@ function History({ run, url }: { run: EventRun; url: string }) {
     ),
   ].join(", ");
   return (
-    <Collapsible.Root className={styles.commentRun} data-buzz-ui="">
+    <Collapsible.Root
+      className={styles.commentRun}
+      data-buzz-ui=""
+      open={open}
+      onOpenChange={setOpen}
+    >
       <Collapsible.Trigger
         className={`buzz-accordion-trigger text-body-sm ${styles.commentRunTrigger}`}
-        aria-label={`Show ${run.events.length} earlier ${label}`}
+        aria-label={`${open ? "Hide" : "Show"} ${run.events.length} earlier ${label}`}
+        aria-controls={open ? id : undefined}
+        onClick={(event) => setKeyboardToggle(event.detail === 0)}
       >
         <span className={styles.eventIcon} aria-hidden="true">
-          …
+          {open ? (
+            <CaretUpIcon size={20} />
+          ) : (
+            <DotsThreeIcon size={20} weight="bold" />
+          )}
         </span>
         <span className={styles.commentRunSummary}>
-          {run.events.length} earlier {label} <span>· {authors}</span>
+          {open ? (
+            <span>
+              Hide earlier {label === "comments" ? "comments" : "events"}
+            </span>
+          ) : (
+            <>
+              {run.events.length} earlier {label} <span>· {authors}</span>
+            </>
+          )}
         </span>
       </Collapsible.Trigger>
-      <Collapsible.Panel className={styles.commentRunEvents}>
-        {run.events.map((event) => (
-          <EventMessage key={event.key} event={event} url={url} />
-        ))}
-      </Collapsible.Panel>
+      <AnimatePresence
+        initial={false}
+        custom={!!reduceMotion || keyboardToggle}
+      >
+        {open && <HistoryEvents key="events" run={run} url={url} id={id} />}
+      </AnimatePresence>
     </Collapsible.Root>
   );
 }

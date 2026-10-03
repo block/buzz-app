@@ -806,9 +806,10 @@ test("superseded review history expands in place while merge and the newest even
     conversation.getByText("Conversation loaded · oldest first"),
   ).toBeVisible();
   const trigger = conversation.getByRole("button", {
-    name: "Show 5 earlier events",
+    name: /^(Show|Hide) 5 earlier events$/,
   });
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await expect(trigger.locator("svg")).toHaveCount(1);
   await expect(conversation.getByRole("group")).toHaveCount(3);
   await expect(conversation.getByRole("group").last()).toContainText(
     "Thanks for shipping this.",
@@ -850,7 +851,17 @@ test("superseded review history expands in place while merge and the newest even
   await trigger.focus();
   await page.keyboard.press("Enter");
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  await expect(trigger).toHaveAccessibleName("Hide 5 earlier events");
+  await expect(trigger).toHaveText("Hide earlier events");
+  await expect(trigger).toBeFocused();
   await expect(conversation.getByRole("group")).toHaveCount(8);
+  const history = conversation.locator(
+    `[id="${await trigger.getAttribute("aria-controls")}"]`,
+  );
+  await expect
+    .poll(() => history.evaluate((node) => node.style.height))
+    .toBe("auto");
+  await expect(history).toHaveCSS("overflow", "visible");
   await expect(
     conversation.getByRole("group", { name: "Review comment", exact: true }),
   ).toBeVisible();
@@ -903,6 +914,53 @@ test("superseded review history expands in place while merge and the newest even
   await trigger.tap();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(conversation.getByRole("group")).toHaveCount(3);
+  await expect(trigger).toHaveAccessibleName("Show 5 earlier events");
+  await expect(trigger).toContainText("5 earlier events");
+  // Normal pointer motion must expose intermediate heights and settle unclipped.
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const motionFrames = await trigger.evaluate(async (button) => {
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+    const samples = [];
+    for (let frame = 0; frame < 120; frame++) {
+      await new Promise(requestAnimationFrame);
+      const node = document.getElementById(
+        button.getAttribute("aria-controls"),
+      );
+      if (!node) continue;
+      samples.push({
+        height: node.getBoundingClientRect().height,
+        target: node.scrollHeight,
+      });
+      if (node.style.height === "auto") return samples;
+    }
+    throw new Error("History reveal did not settle");
+  });
+  expect(
+    motionFrames.some(({ height, target }) => height > 0 && height < target),
+  ).toBe(true);
+  await expect(history).toHaveCSS("overflow", "visible");
+  await expect(trigger).toHaveText("Hide earlier events");
+  await panel.screenshot({
+    path: testInfo.outputPath("history-motion-expanded.png"),
+  });
+  // Interrupt a pointer close with another pointer open in the same browser frame.
+  await trigger.evaluate(async (button) => {
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+    await new Promise(requestAnimationFrame);
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+  });
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  await expect(conversation.getByRole("group")).toHaveCount(8);
+  await expect
+    .poll(() => history.evaluate((node) => node.style.height))
+    .toBe("auto");
+  await expect(history).toHaveCSS("overflow", "visible");
+  await trigger.focus();
+  await page.keyboard.press("Space");
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await expect(trigger).toBeFocused();
+  await expect(conversation.getByRole("group")).toHaveCount(3);
+  expect(requests).toHaveLength(5);
   await panel.getByRole("tab", { name: "Checks", exact: true }).click();
   await expect(checkRows).toHaveCount(5);
   await page.evaluate(() => {

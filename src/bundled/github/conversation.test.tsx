@@ -709,6 +709,14 @@ it("expands mixed history in place without fetching and keeps merge at the highe
   trigger.focus();
   await user.keyboard("{Enter}");
   expect(trigger).toHaveAttribute("aria-expanded", "true");
+  expect(trigger).toHaveAccessibleName("Hide 4 earlier events");
+  expect(trigger).toHaveTextContent("Hide earlier events");
+  expect(trigger).not.toHaveTextContent("4 earlier events");
+  expect(trigger).not.toHaveTextContent("contributor");
+  expect(trigger).toHaveFocus();
+  expect(
+    document.getElementById(trigger.getAttribute("aria-controls") ?? ""),
+  ).toBeInTheDocument();
   expect(screen.getAllByRole("group", { name: "Comment" })).toHaveLength(2);
   expect(screen.getByRole("group", { name: "Review comment" })).toBeVisible();
   const approval = screen.getByRole("group", { name: "Approved" });
@@ -729,8 +737,14 @@ it("expands mixed history in place without fetching and keeps merge at the highe
     "Merged",
   ]);
   expect(fetch).toHaveBeenCalledTimes(2);
-  await user.click(trigger);
+  await user.keyboard(" ");
   expect(trigger).toHaveAttribute("aria-expanded", "false");
+  expect(trigger).toHaveAccessibleName("Show 4 earlier events");
+  expect(trigger).toHaveTextContent("4 earlier events");
+  expect(trigger).toHaveFocus();
+  expect(
+    screen.queryByRole("group", { name: "Approved" }),
+  ).not.toBeInTheDocument();
   view.rerender(
     <GitHubConversation details={details} url={url.replace("/1", "/2")} />,
   );
@@ -945,7 +959,9 @@ it("uses singular event copy and restores the original verdict body on expansion
   const user = userEvent.setup();
   await user.click(trigger);
   const verdict = screen.getByRole("group", { name: "Changes requested" });
-  expect(within(verdict).getByText("reviewer")).toBeVisible();
+  await waitFor(() =>
+    expect(within(verdict).getByText("reviewer")).toBeVisible(),
+  );
   expect(verdict.querySelector("time")).toHaveAttribute("datetime", date(13));
   await user.click(
     within(verdict).getByRole("button", { name: "Expand Changes requested" }),

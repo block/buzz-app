@@ -568,9 +568,13 @@
 .commentRunSummary > span {
   color: var(--text-subtle);
 }
+.historyReveal {
+  overflow: hidden;
+}
 .commentRunEvents {
   display: grid;
   gap: var(--space-3);
+  padding-top: var(--space-3);
 }
 
 .checksDescription {

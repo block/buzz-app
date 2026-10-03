@@ -144,22 +144,29 @@ connection releases its native stream. Only 401
 only while the refused token is still the current session: a refusal of a
 session already removed or replaced is retried, and never cancels or undoes a
 newer login, including one still in the browser. Native refuses the token in
-one step with the login state (so a session check running at the same moment
-cannot adopt it again) before it asks secure storage to remove it. Later
-session reads skip it, and a badge request that already read it checks again
-after signing, before sending it, and drops a badge that arrives after the
-refusal. A request already on the wire when the refusal lands is not recalled.
-The refusal is written to `enterprise-refused-sessions` in the app data
-directory before removal starts and taken out once removal succeeds, so a
-restart while removal waits or after it fails keeps the stored session refused
-until a later session check removes it or a new login replaces it (which also
-prunes the file). If the app data directory cannot be resolved, or that file
-cannot be read or decoded at startup, the stored session is not used until a
-new login. One case is not covered: if writing the refusal and removing the
+one short step with the login state (so a session check running at the same
+moment cannot adopt it again) before it asks secure storage to remove it.
+Every use of the token is admitted under the same lock as the refusal: a badge
+request or session check about to send it (checked after identity access and
+signing), and a badge being reused, cached or returned. Once the refusal
+returns, nothing new is admitted and no badge of that session is cached or
+returned; a request admitted just before it may still go out and finish, since
+admission comes before the request reaches the wire. The refusal is recorded in
+`enterprise-refused-sessions` in the app data directory, one file per refused
+token digest under the keychain service's directory, before removal starts. A
+record is taken out only once removal succeeds or a new login replaces that
+session, so a restart while removal waits or after it fails keeps the stored
+session refused, and other scopes and Buzz processes sharing the directory
+keep their records. If the app data directory cannot be resolved, or the
+records cannot be read at startup, stored sessions are not used until a new
+login in that scope, which means signing in again after every restart while
+the records stay unreadable. Not covered: if Buzz quits before the record is
+written (removal has not started then), or writing the record and removing the
 session from secure storage both fail and Buzz then restarts, the stored
 session reads as saved again and can be sent to the adapter. A removal that
-fails, or a refusal that cannot be written, is shown in the sign-in prompt
-when it settles, without delaying the prompt. While a sign-out is still
+fails, a refusal that cannot be recorded, or an outdated record that cannot be
+removed is shown in the sign-in prompt when it settles, without delaying the
+prompt. While a sign-out is still
 finishing, the prompt shows sign-in as waiting. When
 native reports sign-in required, the selected enterprise community shows
 sign-in without rechecking the refused session, rediscovering the relay or

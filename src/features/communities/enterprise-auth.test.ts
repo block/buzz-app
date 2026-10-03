@@ -961,12 +961,12 @@ it("a refusal shows a failed cleanup in the prompt when it settles", async () =>
     communityId: "https://enterprise.test",
     status: "required",
   });
-  cleanup.resolve({ retained: true, unrecorded: false });
+  cleanup.resolve({ retained: true, unrecorded: false, unpruned: false });
   await flush();
   expect(communities.snapshot().enterprise).toEqual({
     communityId: "https://enterprise.test",
     status: "required",
-    cleanup: { retained: true, unrecorded: false },
+    cleanup: { retained: true, unrecorded: false, unpruned: false },
   });
 });
 
@@ -987,7 +987,7 @@ it("a late cleanup result does not override a login that started since", async (
   await flush();
   void communities.startEnterpriseLogin("https://enterprise.test");
   await flush();
-  cleanup.resolve({ retained: true, unrecorded: true });
+  cleanup.resolve({ retained: true, unrecorded: true, unpruned: false });
   await flush();
   expect(communities.snapshot().enterprise).toEqual({
     communityId: "https://enterprise.test",

@@ -133,13 +133,23 @@ impl RelayAssertions {
             return Ok(None);
         };
         let session: [u8; 32] = Sha256::digest(saved.token().as_bytes()).into();
-        let admit = || !self.enterprise.refused(&saved);
         let now = now()?;
-        if !fresh && admit() {
-            if let Some(cached) = self.lock().get(&relay).filter(|cached| {
-                cached.session == session && cached.assertion.expires_at > now + REFRESH_MARGIN
-            }) {
-                return Ok(Some(cached.assertion.clone()));
+        if !fresh {
+            // Reusing a cached badge is a use of the session, admitted with
+            // the cache read as one step (see `EnterpriseAuthHost::admit`).
+            let reused = self.enterprise.admit(saved.token(), || {
+                self.lock()
+                    .get(&relay)
+                    .filter(|cached| {
+                        cached.session == session
+                            && cached.assertion.expires_at > now + REFRESH_MARGIN
+                    })
+                    .map(|cached| cached.assertion.clone())
+            });
+            match reused {
+                None => return Err(SESSION_REPLACED.into()),
+                Some(Some(assertion)) => return Ok(Some(assertion)),
+                Some(None) => {}
             }
         }
         let endpoint = Url::parse(&format!(
@@ -152,8 +162,8 @@ impl RelayAssertions {
             issue(
                 client()?,
                 &endpoint,
+                &self.enterprise,
                 saved.token(),
-                &admit,
                 identity,
                 &relay,
                 now,
@@ -161,14 +171,12 @@ impl RelayAssertions {
         )
         .await
         .map_err(timed_out)?;
-        // Refused while this request ran: it was not sent after the refusal,
-        // and a badge it returned is dropped. The request whose refusal it was
-        // asks for sign-in; this one is retried with whatever session is
+        // Refused while this request ran, possibly after it was admitted and
+        // sent: whatever it returned is dropped. The request whose refusal it
+        // was asks for sign-in; this one is retried with whatever session is
         // saved now.
-        if !admit() {
-            return Err(SESSION_REPLACED.into());
-        }
         let assertion = match issued {
+            Err(_) if self.enterprise.refused(&saved) => return Err(SESSION_REPLACED.into()),
             Ok(assertion) => assertion,
             Err(error) if error == SIGN_IN_REQUIRED => {
                 self.lock().remove(&relay);
@@ -176,13 +184,19 @@ impl RelayAssertions {
             }
             Err(error) => return Err(error),
         };
-        self.lock().insert(
-            relay,
-            Cached {
-                session,
-                assertion: assertion.clone(),
-            },
-        );
+        // Accepting the badge is admitted with its caching as one step, so a
+        // badge of a refused session is never cached or returned.
+        self.enterprise
+            .admit(saved.token(), || {
+                self.lock().insert(
+                    relay,
+                    Cached {
+                        session,
+                        assertion: assertion.clone(),
+                    },
+                );
+            })
+            .ok_or(SESSION_REPLACED)?;
         Ok(Some(assertion))
     }
 
@@ -217,11 +231,23 @@ impl RelayAssertions {
         url: &Url,
         request: reqwest::RequestBuilder,
     ) -> Result<reqwest::RequestBuilder> {
+        let Some(relay) = trusted_relay(url)? else {
+            return Ok(request);
+        };
+        let saved = self.enterprise.saved_session(identity);
+        self.attach_badge(identity, relay, saved, request).await
+    }
+
+    async fn attach_badge(
+        &self,
+        identity: &IdentityHost,
+        relay: String,
+        saved: impl Future<Output = Result<Option<SavedSession>>>,
+        request: reqwest::RequestBuilder,
+    ) -> Result<reqwest::RequestBuilder> {
+        let deadline = Instant::now() + DEADLINE;
         Ok(
-            match self
-                .get(identity, url, false, Instant::now() + DEADLINE)
-                .await?
-            {
+            match self.badge(identity, relay, saved, false, deadline).await? {
                 Some(assertion) => request.header(HEADER, assertion.header.as_str()),
                 None => request,
             },
@@ -277,8 +303,8 @@ fn denial(status: u16, code: &str) -> Option<&'static str> {
 async fn issue(
     http: &reqwest::Client,
     endpoint: &Url,
+    enterprise: &EnterpriseAuthHost,
     session: &str,
-    admit: &(dyn Fn() -> bool + Sync),
     identity: &IdentityHost,
     relay: &str,
     now: u64,
@@ -311,16 +337,17 @@ async fn issue(
             .encode(serde_json::to_vec(&proof).map_err(|_| "Could not encode relay badge proof")?)
     );
     // Identity access and signing can take a while; the session may have been
-    // refused meanwhile, and then it is not sent.
-    if !admit() {
-        return Err(SESSION_REPLACED.into());
-    }
-    let response = authorize(http.post(endpoint.clone()), session, &proof)
-        .header("Content-Type", "application/json")
-        .body(body)
-        .send()
-        .await
-        .map_err(|_| "Relay badge request failed")?;
+    // refused meanwhile, and then it is not sent. Admission creates the
+    // request; it goes out once awaited, after the lock is released.
+    let sending = enterprise
+        .admit(session, || {
+            authorize(http.post(endpoint.clone()), session, &proof)
+                .header("Content-Type", "application/json")
+                .body(body)
+                .send()
+        })
+        .ok_or(SESSION_REPLACED)?;
+    let response = sending.await.map_err(|_| "Relay badge request failed")?;
     let status = response.status().as_u16();
     // An oversized body carries no usable code, so the status alone decides.
     let bytes = read_bounded(response).await?.unwrap_or_default();

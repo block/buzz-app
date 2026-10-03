@@ -52,6 +52,7 @@ function Fixture() {
         releaseStart();
       },
       clear: async () => {},
+      cleanup: async () => null,
     };
     const transport: ReadTransport = {
       viewer,

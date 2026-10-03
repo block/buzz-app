@@ -3,9 +3,14 @@ import { communityDestination } from "./destination";
 
 export type EnterpriseAuth = { expiresAt: string };
 /** Removing a refused session did not fully succeed: secure storage still
- * holds it (`retained`), or its refusal could not be saved for after a
- * restart (`unrecorded`). */
-export type EnterpriseCleanup = { retained: boolean; unrecorded: boolean };
+ * holds it (`retained`), its refusal could not be saved for after a restart
+ * (`unrecorded`), or an outdated refusal record could not be removed
+ * (`unpruned`). */
+export type EnterpriseCleanup = {
+  retained: boolean;
+  unrecorded: boolean;
+  unpruned: boolean;
+};
 
 export type EnterpriseAuthClient = {
   gate(community: string): Promise<boolean>;
@@ -60,13 +65,17 @@ export function createEnterpriseAuthClient(): EnterpriseAuthClient {
     async cleanup() {
       const result = await invoke<unknown>("enterprise_auth_cleanup");
       if (result === null) return null;
-      const { retained, unrecorded } = (result ?? {}) as Record<
+      const { retained, unrecorded, unpruned } = (result ?? {}) as Record<
         string,
         unknown
       >;
-      if (typeof retained !== "boolean" || typeof unrecorded !== "boolean")
+      if (
+        typeof retained !== "boolean" ||
+        typeof unrecorded !== "boolean" ||
+        typeof unpruned !== "boolean"
+      )
         throw new Error("Enterprise authentication returned an invalid status");
-      return { retained, unrecorded };
+      return { retained, unrecorded, unpruned };
     },
   };
 }

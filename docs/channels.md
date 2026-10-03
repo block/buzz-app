@@ -888,7 +888,10 @@ Removal confirmation uses agent-specific title, action and explanation for an
 identity recognized as an agent by the member row; a Bot role alone does not
 identify an agent. For private channels only, the agent explanation combines the
 running-state distinction with the loss of channel read access. Public-channel
-copy does not claim read access is lost. This copy does not alter removal authority.
+copy does not claim read access is lost. Human-member copy warns that removal does
+not stop or remove their agents, and says they will need an invitation to rejoin
+only for private channels. These explanations do not infer current running state
+from presence or alter removal authority.
 Cancel, Close, Escape and backdrop dismissal return to the intact search/filter and
 focus Search; entering confirmation focuses Cancel. No second modal is stacked.
 Submitting returns to the list without a pending or success banner; the verified

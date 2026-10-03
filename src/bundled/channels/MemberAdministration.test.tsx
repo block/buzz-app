@@ -639,7 +639,7 @@ it("confirms removal and removes only the confirmed roster entry", async () => {
   expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
   expect(
     within(dialog).getByText(
-      "This does not stop or remove their agents. They may need an invitation to rejoin.",
+      "This does not stop or remove their agents. They’ll need an invitation to rejoin.",
       { exact: true },
     ),
   ).toBeInTheDocument();
@@ -784,7 +784,7 @@ it.each([false, true])(
     expect(dialog).toHaveTextContent(
       agent
         ? "Removing the agent does not stop it from running, but it will no longer be able to read this private channel. It can be added back later."
-        : "This does not stop or remove their agents. They may need an invitation to rejoin.",
+        : "This does not stop or remove their agents. They’ll need an invitation to rejoin.",
     );
     expect(t.publish).not.toHaveBeenCalled();
   },
@@ -833,7 +833,7 @@ it.each([false, true])(
   },
 );
 it.each([false, true])(
-  "does not claim read access is lost when removing a public-channel member (Agent: %s)",
+  "omits private-access and invitation warnings when removing a public-channel member (Agent: %s)",
   async (agent) => {
     const t = await setup(
       "owner",
@@ -854,11 +854,12 @@ it.each([false, true])(
       within(dialog).getByText(
         agent
           ? "Removing the agent does not stop it from running. It can be added back later."
-          : "This does not stop or remove their agents. They may need an invitation to rejoin.",
+          : "This does not stop or remove their agents.",
         { exact: true },
       ),
     ).toBeInTheDocument();
     expect(dialog).not.toHaveTextContent("private channel");
+    expect(dialog).not.toHaveTextContent("invitation");
     expect(t.publish).not.toHaveBeenCalled();
   },
 );

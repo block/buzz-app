@@ -151,6 +151,7 @@ it("removal validates every loaded author and conversation before queuing one de
     {
       ready: async () => {},
       recover: async () => {},
+      complete: async () => {},
       acknowledge: async () => {},
       supports: () => true,
       send,

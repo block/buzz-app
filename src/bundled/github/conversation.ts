@@ -213,22 +213,46 @@ export function conversationEvents(
   );
 }
 
-export type CommentRun = {
+export type EventRun = {
   key: string;
-  kind: "comments";
+  kind: "history";
   events: ConversationEvent[];
 };
 
-/** Keep decisions and the newest loaded event visible; fold only consecutive older comments. */
+/** Fold superseded decisions, not current verdicts; missing times or actors never imply supersession. */
 export function groupConversationEvents(
   events: ConversationEvent[],
-): (ConversationEvent | CommentRun)[] {
-  const grouped: (ConversationEvent | CommentRun)[] = [];
+): (ConversationEvent | EventRun)[] {
+  const merge = events.find((event) => event.kind === "merge");
+  const mergedAt = Date.parse(merge?.message.createdAt ?? "");
+  const latestDecisions = new Map<string, number>();
+  const superseded = new Set<string>();
+  for (const event of [...events].reverse()) {
+    if (
+      event.kind !== "review" ||
+      !["APPROVED", "CHANGES_REQUESTED"].includes(event.message.state ?? "")
+    )
+      continue;
+    const time = Date.parse(event.message.createdAt ?? "");
+    if (!Number.isFinite(time)) continue;
+    const author = event.message.author.toLowerCase();
+    if (
+      time < mergedAt ||
+      (author && time < (latestDecisions.get(author) ?? time))
+    )
+      superseded.add(event.key);
+    if (author)
+      latestDecisions.set(
+        author,
+        Math.max(time, latestDecisions.get(author) ?? time),
+      );
+  }
+  const grouped: (ConversationEvent | EventRun)[] = [];
   let run: ConversationEvent[] = [];
   const flush = () => {
     const first = run[0];
-    if (first && run.length > 1)
-      grouped.push({ key: first.key, kind: "comments", events: run });
+    if (first && (run.length > 1 || superseded.has(first.key)))
+      grouped.push({ key: first.key, kind: "history", events: run });
     else grouped.push(...run);
     run = [];
   };
@@ -236,7 +260,8 @@ export function groupConversationEvents(
     if (
       index < events.length - 1 &&
       (event.kind === "discussion" ||
-        (event.kind === "review" && event.message.state === "COMMENTED"))
+        (event.kind === "review" && event.message.state === "COMMENTED") ||
+        superseded.has(event.key))
     ) {
       run.push(event);
     } else {

@@ -669,7 +669,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
 
 // Browser-only: in-place group geometry, keyboard/touch disclosure, retained tab state and actual-app wiring.
 // Ordering, decision boundaries, source failures and paging remain covered in Vitest.
-test("earlier comment runs expand in place while decisions, merge and the newest event stay visible", async ({
+test("superseded review history expands in place while merge and the newest event stay visible", async ({
   page,
   app,
 }, testInfo) => {
@@ -683,6 +683,13 @@ test("earlier comment runs expand in place while decisions, merge and the newest
       return route.fulfill({
         json: path.endsWith("/reviews")
           ? [
+              {
+                id: 9,
+                state: "CHANGES_REQUESTED",
+                body: "Please preserve the retry action.",
+                submitted_at: time(12),
+                user: { login: "reviewer" },
+              },
               {
                 id: 10,
                 state: "COMMENTED",
@@ -760,10 +767,10 @@ test("earlier comment runs expand in place while decisions, merge and the newest
     conversation.getByText("Conversation loaded · oldest first"),
   ).toBeVisible();
   const trigger = conversation.getByRole("button", {
-    name: "Show 3 earlier comments",
+    name: "Show 5 earlier events",
   });
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
-  await expect(conversation.getByRole("group")).toHaveCount(4);
+  await expect(conversation.getByRole("group")).toHaveCount(3);
   await expect(conversation.getByRole("group").last()).toContainText(
     "Thanks for shipping this.",
   );
@@ -775,15 +782,16 @@ test("earlier comment runs expand in place while decisions, merge and the newest
     name: "Merged",
     exact: true,
   });
+  await expect(approval).toHaveCount(0);
+  await expect(
+    conversation.getByRole("group", { name: "Changes requested", exact: true }),
+  ).toHaveCount(0);
   await expect(merge.locator("time")).toHaveAttribute("datetime", time(18));
   await expect(
     merge.getByRole("link", { name: "maintainer", exact: true }),
   ).toHaveAttribute("href", "https://github.com/maintainer");
   const expectOrder = async () => {
     expect((await trigger.boundingBox()).y).toBeLessThan(
-      (await approval.boundingBox()).y,
-    );
-    expect((await approval.boundingBox()).y).toBeLessThan(
       (await merge.boundingBox()).y,
     );
     expect((await merge.boundingBox()).y).toBeLessThan(
@@ -799,15 +807,22 @@ test("earlier comment runs expand in place while decisions, merge and the newest
       path: testInfo.outputPath(`grouped-${mode}.png`),
     });
   }
-  const approvalBefore = await approval.boundingBox();
+  const mergeBefore = await merge.boundingBox();
   await trigger.focus();
   await page.keyboard.press("Enter");
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
-  await expect(conversation.getByRole("group")).toHaveCount(7);
+  await expect(conversation.getByRole("group")).toHaveCount(8);
   await expect(
     conversation.getByRole("group", { name: "Review comment", exact: true }),
   ).toBeVisible();
-  expect((await approval.boundingBox()).y).toBeGreaterThan(approvalBefore.y);
+  await expect(approval).toBeVisible();
+  await expect(
+    conversation.getByRole("group", { name: "Changes requested", exact: true }),
+  ).toBeVisible();
+  expect((await merge.boundingBox()).y).toBeGreaterThan(mergeBefore.y);
+  expect((await approval.boundingBox()).y).toBeLessThan(
+    (await merge.boundingBox()).y,
+  );
   await expectOrder();
   await panel.getByRole("tab", { name: "Checks", exact: true }).click();
   await expect(panel.getByRole("tabpanel", { name: "Checks" })).toContainText(
@@ -823,5 +838,5 @@ test("earlier comment runs expand in place while decisions, merge and the newest
   });
   await trigger.tap();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
-  await expect(conversation.getByRole("group")).toHaveCount(4);
+  await expect(conversation.getByRole("group")).toHaveCount(3);
 });

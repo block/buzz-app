@@ -7,7 +7,7 @@ import {
   groupConversationEvents,
   useConversationSource,
   type ConversationEvent,
-  type CommentRun,
+  type EventRun,
 } from "./conversation";
 import { MediaAttachment } from "../../features/messages/MediaAttachment";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -358,7 +358,15 @@ function EventMessage({
   );
 }
 
-function Comments({ run, url }: { run: CommentRun; url: string }) {
+function History({ run, url }: { run: EventRun; url: string }) {
+  const label = run.events.every(
+    (event) =>
+      event.kind === "discussion" || event.message.state === "COMMENTED",
+  )
+    ? "comments"
+    : run.events.length === 1
+      ? "event"
+      : "events";
   const authors = [
     ...new Set(
       run.events.map((event) => event.message.author || "Unknown author"),
@@ -368,13 +376,13 @@ function Comments({ run, url }: { run: CommentRun; url: string }) {
     <Collapsible.Root className={styles.commentRun} data-buzz-ui="">
       <Collapsible.Trigger
         className={`buzz-accordion-trigger text-body-sm ${styles.commentRunTrigger}`}
-        aria-label={`Show ${run.events.length} earlier comments`}
+        aria-label={`Show ${run.events.length} earlier ${label}`}
       >
         <span className={styles.eventIcon} aria-hidden="true">
           …
         </span>
         <span className={styles.commentRunSummary}>
-          {run.events.length} earlier comments <span>· {authors}</span>
+          {run.events.length} earlier {label} <span>· {authors}</span>
         </span>
       </Collapsible.Trigger>
       <Collapsible.Panel className={styles.commentRunEvents}>
@@ -447,8 +455,8 @@ function Conversation({
           fallback="No description provided"
         />
         {groupConversationEvents(events).map((event) =>
-          event.kind === "comments" ? (
-            <Comments key={event.key} run={event} url={url} />
+          event.kind === "history" ? (
+            <History key={event.key} run={event} url={url} />
           ) : (
             <EventMessage key={event.key} event={event} url={url} />
           ),

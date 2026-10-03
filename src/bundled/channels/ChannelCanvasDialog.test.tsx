@@ -31,6 +31,7 @@ const head = signed(key, {
   tags: [["h", channelId]],
 });
 function fixture(
+  presentation: "dialog" | "panel" = "dialog",
   configure?: (canvas: {
     available: boolean;
     read: ReturnType<typeof vi.fn>;
@@ -51,6 +52,7 @@ function fixture(
   const close = vi.fn();
   render(
     <ChannelCanvasDialog
+      presentation={presentation}
       canvas={canvas}
       profiles={profiles}
       scope={scope}
@@ -84,66 +86,75 @@ it("shows only Save normally and preserves the read revision on an edited save",
   expect(canvas.save).toHaveBeenCalledWith(channelId, "Edited", head.id);
 });
 
-it("keeps a restored conflict draft until explicit confirmed reload", async () => {
-  const user = userEvent.setup();
-  writeView(scope, `canvas-draft-v1:${channelId}`, {
-    content: "My unsaved work",
-    base: "a".repeat(64),
-  });
-  const { canvas } = fixture();
-  expect(await screen.findByRole("alert")).toHaveTextContent("Canvas changed");
-  const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
-  expect(text).toHaveValue("My unsaved work");
-  expect(screen.getByRole("button", { name: "Save Canvas" })).toBeDisabled();
-  const reload = screen.getByRole("button", { name: "Reload saved Canvas" });
-  for (const dismissal of ["backdrop", "escape", "close", "cancel"]) {
-    await user.click(reload);
-    const confirmation = screen.getByRole("dialog", {
-      name: "Reload saved Canvas?",
+it.each(["dialog", "panel"] as const)(
+  "keeps a restored conflict draft until explicit confirmed reload in %s",
+  async (presentation) => {
+    const user = userEvent.setup();
+    writeView(scope, `canvas-draft-v1:${channelId}`, {
+      content: "My unsaved work",
+      base: "a".repeat(64),
     });
-    await waitFor(() =>
-      expect(
-        within(confirmation).getByRole("button", { name: "Cancel" }),
-      ).toHaveFocus(),
+    const { canvas } = fixture(presentation);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Canvas changed",
     );
-    await user.click(
-      within(confirmation).getByText(
-        "Discard your draft and reload the saved Canvas?",
-      ),
-    );
-    expect(confirmation).toBeInTheDocument();
-    if (dismissal === "backdrop")
-      await user.click(
-        confirmation.parentElement?.querySelector(
-          ".buzz-dialog-backdrop",
-        ) as Element,
-      );
-    else if (dismissal === "escape") await user.keyboard("{Escape}");
-    else
-      await user.click(
-        within(confirmation).getByRole("button", {
-          name: dismissal === "close" ? "Close" : "Cancel",
-        }),
-      );
-    await waitFor(() => expect(confirmation).not.toBeInTheDocument());
-    expect(
-      screen.getByRole("dialog", { name: "Channel Canvas" }),
-    ).toBeInTheDocument();
-    // jsdom lacks focus({ preventScroll }) detection; browser coverage checks pointer return.
-    if (dismissal !== "backdrop")
-      await waitFor(() => expect(reload).toHaveFocus());
+    const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
     expect(text).toHaveValue("My unsaved work");
-    expect(canvas.read).toHaveBeenCalledTimes(1);
-  }
-  await user.click(reload);
-  await user.click(screen.getByRole("button", { name: "Discard and reload" }));
-  await waitFor(() => expect(text).toHaveValue("Saved"));
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "Reload saved Canvas" }),
-  ).not.toBeInTheDocument();
-  expect(canvas.save).not.toHaveBeenCalled();
-});
+    expect(screen.getByRole("button", { name: "Save Canvas" })).toBeDisabled();
+    const reload = screen.getByRole("button", { name: "Reload saved Canvas" });
+    for (const dismissal of ["backdrop", "escape", "close", "cancel"]) {
+      await user.click(reload);
+      const confirmation = screen.getByRole("dialog", {
+        name: "Reload saved Canvas?",
+      });
+      await waitFor(() =>
+        expect(
+          within(confirmation).getByRole("button", { name: "Cancel" }),
+        ).toHaveFocus(),
+      );
+      await user.click(
+        within(confirmation).getByText(
+          "Discard your draft and reload the saved Canvas?",
+        ),
+      );
+      expect(confirmation).toBeInTheDocument();
+      if (dismissal === "backdrop")
+        await user.click(
+          confirmation.parentElement?.querySelector(
+            ".buzz-dialog-backdrop",
+          ) as Element,
+        );
+      else if (dismissal === "escape") await user.keyboard("{Escape}");
+      else
+        await user.click(
+          within(confirmation).getByRole("button", {
+            name: dismissal === "close" ? "Close" : "Cancel",
+          }),
+        );
+      await waitFor(() => expect(confirmation).not.toBeInTheDocument());
+      expect(
+        screen.getByRole(presentation === "dialog" ? "dialog" : "region", {
+          name: "Channel Canvas",
+        }),
+      ).toBeInTheDocument();
+      // jsdom lacks focus({ preventScroll }) detection; browser coverage checks pointer return.
+      if (dismissal !== "backdrop")
+        await waitFor(() => expect(reload).toHaveFocus());
+      expect(text).toHaveValue("My unsaved work");
+      expect(canvas.read).toHaveBeenCalledTimes(1);
+    }
+    await user.click(reload);
+    await user.click(
+      screen.getByRole("button", { name: "Discard and reload" }),
+    );
+    await waitFor(() => expect(text).toHaveValue("Saved"));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reload saved Canvas" }),
+    ).not.toBeInTheDocument();
+    expect(canvas.save).not.toHaveBeenCalled();
+  },
+);
 
 it("retries a failed initial read without discarding the restored draft", async () => {
   const user = userEvent.setup();
@@ -312,7 +323,7 @@ async function openHistory(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getAllByRole("radio").at(-1) as HTMLElement);
 }
 function historyFixture() {
-  return fixture((canvas) => {
+  return fixture("dialog", (canvas) => {
     canvas.history.mockResolvedValue({
       revisions: [head, old],
       next: undefined,
@@ -450,7 +461,7 @@ it.each([
 });
 it("restores empty revisions but refuses current and oversized revisions", async () => {
   const user = userEvent.setup();
-  const { canvas } = fixture((canvas) => {
+  const { canvas } = fixture("dialog", (canvas) => {
     canvas.history.mockResolvedValue({
       revisions: [
         head,
@@ -489,7 +500,7 @@ it("restores empty revisions but refuses current and oversized revisions", async
 
 it("retries history failures, pages without losing selection and reconciles selection after restore", async () => {
   const user = userEvent.setup();
-  const { canvas } = fixture((canvas) => {
+  const { canvas } = fixture("dialog", (canvas) => {
     canvas.history.mockRejectedValueOnce(new Error("History offline"));
   });
   await waitFor(() =>

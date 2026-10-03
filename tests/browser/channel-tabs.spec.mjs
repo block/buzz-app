@@ -383,3 +383,53 @@ test("crowded tab strip scrolls only horizontally with Add tab fixed and a thin 
   await expect.poll(thumbColor).not.toBe("rgba(0, 0, 0, 0)");
   await page.screenshot({ path: testInfo.outputPath("crowded-tabs.png") });
 });
+
+// Real plugin registration, channel navigation and retained tab focus need app
+// wiring in both browsers. Save/conflict permutations belong to editor tests.
+test("Canvas opens once beside Thread and retains its channel draft", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const main = page.getByRole("article", { name: "Conversation", exact: true });
+  const row = main.locator("[data-message-id]").first();
+  await row.hover();
+  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  const workspace = page.locator("[data-panel-workspace]");
+  const thread = workspace.getByRole("tab", { name: "Thread", exact: true });
+  await expect(thread).toHaveAttribute("aria-selected", "true");
+  const launch = main.getByRole("button", { name: "Toggle channel canvas" });
+  await launch.click();
+  const canvas = workspace.getByRole("tab", { name: "Canvas", exact: true });
+  const text = workspace.getByRole("textbox", { name: "Canvas Markdown" });
+  await expect(canvas).toHaveAttribute("aria-selected", "true");
+  await expect(launch).toHaveAttribute("aria-pressed", "true");
+  await expect(text).toBeEnabled();
+  await text.fill("Channel-scoped draft");
+  await thread.click();
+  await expect(text).toBeHidden();
+  await expect(launch).toHaveAttribute("aria-pressed", "false");
+  await launch.click();
+  await expect(text).toHaveValue("Channel-scoped draft");
+  await launch.click();
+  await expect(canvas).toHaveCount(1);
+  await expect(canvas).toHaveAttribute("aria-selected", "true");
+  await workspace
+    .getByRole("button", { name: "Close Canvas tab", exact: true })
+    .click();
+  await expect(thread).toHaveAttribute("aria-selected", "true");
+  await main
+    .getByRole("button", { name: "Channel actions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "View canvas", exact: true })
+    .click();
+  await expect(text).toHaveValue("Channel-scoped draft");
+  await page.locator('button[data-channel-id="beta"]').click();
+  await launch.click();
+  await expect(text).toBeEnabled();
+  await expect(text).toHaveValue("");
+  await page.locator('button[data-channel-id="alpha"]').click();
+  await expect(canvas).toHaveAttribute("aria-selected", "true");
+  await expect(text).toHaveValue("Channel-scoped draft");
+});

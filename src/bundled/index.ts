@@ -1,3 +1,5 @@
+import canvasManifest from "./canvas/manifest.json";
+import * as canvas from "./canvas";
 import todosManifest from "./todos/manifest.json";
 import * as todos from "./todos";
 import diffsManifest from "./diffs/manifest.json";
@@ -43,6 +45,11 @@ import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...canvasManifest, apiVersion: 1 },
+    module: canvas,
+    enabledByDefault: true,
+  },
   {
     manifest: { ...feedbackManifest, apiVersion: 1 },
     module: feedback,

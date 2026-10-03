@@ -8,11 +8,12 @@ import type {
   ChannelReadOptions,
   ChannelMessage,
   ChannelQueries,
+  PublicChannelSearch,
   ChannelWindow,
 } from "./contracts";
-import { DiscoveryState } from "./discovery";
+import { DiscoveryState, metadataName, openMetadata } from "./discovery";
 import { foldMessages } from "./fold";
-import { eventDto, hasTag, tag, type RelayEvent } from "./events";
+import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
 import type { RelayReader, ReadOptions, Priority } from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
 import { parseWindow, windowFilter, type WindowCursor } from "./window";
@@ -74,6 +75,8 @@ export type ChannelStoreOptions = {
 const EMPTY_ROWS: readonly ChannelMessage[] = Object.freeze([]);
 /** Relay page size, separate from discovery's retained-entry budget. */
 const DISCOVERY_LIMIT = 500;
+// One page of public channel metadata for name search; matches resolve exactly.
+const PUBLIC_CHANNEL_PAGE = 500;
 /** Exact omission confirmations use the relay's explicit channel-ID cap. */
 const DISCOVERY_CONFIRM_LIMIT = 128;
 const UNAVAILABLE: ChannelList = Object.freeze({
@@ -1389,6 +1392,74 @@ export function createChannelStore(
         throw new Error("Channel metadata capacity unavailable");
     }
   }
+  /** Find active public channels the viewer has not joined, by name.
+   * The relay has no metadata text search, so this reads one bounded page of
+   * relay-signed 39000 metadata without applying it, matches names locally,
+   * and admits only the matches through `resolve`. Matches become readable
+   * previews through `get`; they never enter `list()`. */
+  async function searchPublic(
+    query: string,
+    settings?: ReadOptions & { limit?: number },
+  ): Promise<PublicChannelSearch> {
+    if (disposed || !transport || !discovery || options.cachedOnly)
+      throw new Error("Relay is unavailable");
+    const needle = query.trim().toLowerCase().replace(/^#/, "");
+    if (!needle) return { channels: [], partial: false };
+    if (list.status !== "ready")
+      throw new Error("Channel list is not ready for channel search");
+    const generation = epoch;
+    const events = await transport.read(
+      [
+        {
+          kinds: [39000],
+          authors: [transport.relayAuthor],
+          limit: PUBLIC_CHANNEL_PAGE,
+        },
+      ],
+      { ...settings, fresh: true },
+    );
+    settings?.signal?.throwIfAborted();
+    if (disposed || generation !== epoch)
+      throw new DOMException("Stale channel search", "AbortError");
+    const metadata = events.filter(
+      (event) => event.kind === 39000 && event.pubkey === transport.relayAuthor,
+    );
+    const latest = new Map<string, RelayEvent>();
+    for (const event of metadata) {
+      const id = tag(event, "d");
+      if (id) latest.set(id, newer(latest.get(id), event));
+    }
+    const candidates = [...latest.entries()]
+      .flatMap(([id, event]) => {
+        const name = metadataName(event);
+        return openMetadata(event) &&
+          !event.tags.some(
+            ([key, value]) => key === "archived" && value === "true",
+          ) &&
+          !discovery.authorized(id) &&
+          name?.toLowerCase().includes(needle)
+          ? [{ id, name }]
+          : [];
+      })
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+      .slice(0, settings?.limit ?? 8);
+    // Exact resolution, not this page, owns access: it re-reads the signed
+    // metadata and the viewer roster for each match before granting a preview.
+    if (candidates.length)
+      await resolve(
+        candidates.map(({ id }) => id),
+        settings,
+      );
+    return {
+      channels: candidates.flatMap(({ id }) => {
+        const channel = discovery.get(id);
+        return channel?.readOnly && !channel.archived && !channel.cached
+          ? [channel]
+          : [];
+      }),
+      partial: metadata.length >= PUBLIC_CHANNEL_PAGE,
+    };
+  }
   /** Re-read one authorized channel's relay-signed roster and merge it into the
    * ready list: one exact `#d` read of a single 39002, instead of the full
    * viewer-roster rediscovery, when an agent is added to a joined channel.
@@ -1559,6 +1630,7 @@ export function createChannelStore(
     list: () => list,
     get: (id: string) => discovery?.get(id),
     resolve,
+    searchPublic,
     refreshRoster,
     subscribeList: (listener: Listener) => subscribe(listListeners, listener),
     window: (channelId: string) =>

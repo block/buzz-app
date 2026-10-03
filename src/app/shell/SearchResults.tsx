@@ -7,6 +7,7 @@ import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { SearchDestination, SearchInputProps } from "./SearchChoices";
 import { SearchChoices } from "./SearchChoices";
+import { usePublicChannelSearch } from "./usePublicChannelSearch";
 import { useSearchMessages } from "./useSearchMessages";
 
 function conversationName(
@@ -67,6 +68,11 @@ export function SearchResults({
     [list.channels, scopedChannelId],
   );
   const search = useSearchMessages(session, query.trim(), scopedChannelId);
+  const publicChannels = usePublicChannelSearch(
+    session,
+    scopedChannelId ? "" : query.trim(),
+    list.status === "ready",
+  );
   const names = new Map(
     channels.map((channel) => [
       channel.id,
@@ -94,6 +100,13 @@ export function SearchResults({
   const matchingChannels = channels
     .filter((channel) => names.get(channel.id)?.toLowerCase().includes(needle))
     .slice(0, 8);
+  const joinedChannels = matchingChannels.filter(
+    (channel) => channel.channelType !== "dm",
+  );
+  // Joined matches lead; public channels the viewer has not joined fill the group.
+  const unjoinedChannels = publicChannels.channels
+    .filter((channel) => !joinedChannels.some(({ id }) => id === channel.id))
+    .slice(0, Math.max(0, 8 - joinedChannels.length));
   const conversationDestination = (
     channel: ChannelSummary,
   ): SearchDestination => ({
@@ -101,11 +114,13 @@ export function SearchResults({
     label: names.get(channel.id) ?? channel.name,
     detail: channel.archived
       ? "Archived channel"
-      : channel.channelType === "dm"
-        ? "Direct message"
-        : channel.channelType === "session"
-          ? "Session"
-          : "Conversation",
+      : channel.readOnly && !channel.cached
+        ? "Public channel · not joined"
+        : channel.channelType === "dm"
+          ? "Direct message"
+          : channel.channelType === "session"
+            ? "Session"
+            : "Conversation",
     icon: ChatCircleIcon,
     run: () => openConversation(channel.id),
   });
@@ -152,6 +167,12 @@ export function SearchResults({
         : scopedChannelId
           ? "Type to search messages in this conversation."
           : "Type to search messages in this community.";
+  // A retry removes its own focused button. Return focus to the combobox,
+  // which owns keyboard navigation, before the retry starts.
+  const retryFromInput = (retry: () => unknown) => () => {
+    input.current?.focus();
+    retry();
+  };
   return (
     <SearchChoices
       query={query}
@@ -204,9 +225,9 @@ export function SearchResults({
                   : []),
                 {
                   label: "Channels",
-                  destinations: matchingChannels
-                    .filter((channel) => channel.channelType !== "dm")
-                    .map(conversationDestination),
+                  destinations: [...joinedChannels, ...unjoinedChannels].map(
+                    conversationDestination,
+                  ),
                 },
                 {
                   label: "Direct messages",
@@ -219,7 +240,9 @@ export function SearchResults({
                   label: "Most relevant",
                   destinations: messages,
                   empty:
-                    matchingChannels.length || pages.length
+                    matchingChannels.length ||
+                    unjoinedChannels.length ||
+                    pages.length
                       ? undefined
                       : messageEmpty,
                 },
@@ -239,11 +262,11 @@ export function SearchResults({
             <Button
               size="sm"
               variant="ghost"
-              onClick={() =>
+              onClick={retryFromInput(() =>
                 session.channels.refreshList
                   ? session.channels.refreshList()
-                  : session.channels.ensureList()
-              }
+                  : session.channels.ensureList(),
+              )}
             >
               Retry conversations
             </Button>
@@ -252,10 +275,29 @@ export function SearchResults({
         {list.coverage === "partial" && (
           <p>Conversation names include only loaded joined conversations.</p>
         )}
+        {query.trim() && !scopedChannelId && publicChannels.partial && (
+          <p>Public channel results include only the first page of channels.</p>
+        )}
+        {!scopedChannelId && publicChannels.error && (
+          <div>
+            <p>{publicChannels.error}</p>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={retryFromInput(publicChannels.retry)}
+            >
+              Retry channels
+            </Button>
+          </div>
+        )}
         {search.error && (
           <div>
             <p>{search.error}</p>
-            <Button size="sm" variant="ghost" onClick={search.retry}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={retryFromInput(search.retry)}
+            >
               Retry messages
             </Button>
           </div>

@@ -3,7 +3,8 @@ import { attestedOwner } from "../agents/owner-attestation";
 import type { RelayReader } from "./reader";
 import type { RelayWriter } from "./transport";
 import { PublishRejected } from "./outbox";
-import { newer, type RelayEvent } from "./events";
+import { hasTag, newer, type RelayEvent } from "./events";
+import { openMetadata } from "./discovery";
 import {
   DM_VISIBILITY_KIND,
   exactLifecycleTag,
@@ -11,7 +12,7 @@ import {
   lifecycleRecord,
   lifecycleSettings,
   lifecycleTemplate,
-  type ChannelLifecycleAction,
+  type ChannelLifecycleCommand,
   type ChannelLifecycleSettings,
 } from "./channel-lifecycle-protocol";
 
@@ -37,7 +38,7 @@ export interface ChannelLifecycleCapability {
     signal?: AbortSignal,
   ): Promise<ChannelLifecycleSettings>;
   run(
-    action: ChannelLifecycleAction,
+    action: ChannelLifecycleCommand,
     channelId: string,
     signal?: AbortSignal,
   ): Promise<void>;
@@ -257,7 +258,7 @@ export function createChannelLifecycle({
       return owned((signal) => load(lifecycleChannelId(value), signal), signal);
     },
     async run(
-      action: ChannelLifecycleAction,
+      action: ChannelLifecycleCommand,
       value: string,
       caller?: AbortSignal,
     ) {
@@ -269,7 +270,30 @@ export function createChannelLifecycle({
       let publicationStarted = false;
       try {
         await owned(async (signal) => {
+          // Joining starts from a nonmember preview, so membership-based
+          // settings cannot authorize it. Fresh signed metadata must still
+          // say public; a current roster entry means there is nothing to send.
+          const joined = async () => {
+            const [metadata, roster] = await Promise.all([
+              read([39000], id, signal),
+              read([39002], id, signal, true),
+            ]);
+            const channel = lifecycleRecord(metadata, 39000, id, relayAuthor);
+            const membership = lifecycleRecord(roster, 39002, id, relayAuthor);
+            if (membership && hasTag(membership, "p", viewer)) {
+              acceptDiscovery(channel ? [channel, membership] : [membership]);
+              return true;
+            }
+            if (
+              !channel ||
+              !openMetadata(channel) ||
+              exactLifecycleTag(channel, "archived") === "true"
+            )
+              throw new Error("Only active public channels can be joined.");
+            return false;
+          };
           const authorize = async () => {
+            if (action === "join") return joined();
             const settings = await load(id, signal, action === "delete");
             if (action === "delete" && settings.deleteUnavailable)
               throw new Error(
@@ -289,7 +313,7 @@ export function createChannelLifecycle({
                   : "This action is no longer permitted. Refresh channel permissions.",
               );
           };
-          await authorize();
+          if (await authorize()) return;
           const template = lifecycleTemplate(action, id);
           const signed = await writer.sign(structuredClone(template), signal);
           signal.throwIfAborted();
@@ -302,7 +326,7 @@ export function createChannelLifecycle({
             getEventHash(signed) !== signed.id
           )
             throw new Error("Signer changed the channel lifecycle command");
-          await authorize();
+          if (await authorize()) return;
           signal.throwIfAborted();
           publicationStarted = true;
           await writer.publish(signed, signal);
@@ -324,6 +348,13 @@ export function createChannelLifecycle({
               });
             if (action === "hide") {
               if ((await readVisibility(signal, true)).includes(id)) return;
+            } else if (action === "join") {
+              const events = await read([39002], id, signal, true, true);
+              const roster = lifecycleRecord(events, 39002, id, relayAuthor);
+              if (roster && hasTag(roster, "p", viewer)) {
+                acceptDiscovery([roster]);
+                return;
+              }
             } else {
               const kind = action === "leave" ? 39002 : 39000;
               const events = await read(

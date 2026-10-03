@@ -12,6 +12,10 @@ import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AvatarEditor } from "./AvatarEditor";
 import { uploadAvatar } from "./avatar-upload";
+import {
+  EnterpriseDiscoveryError,
+  EnterpriseLoginRequired,
+} from "../communities/service";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 
 stubAvatarBrowserApis();
@@ -136,6 +140,44 @@ it("aborts a pending upload on close and ignores its late result even after reop
   });
   expect(screen.getByLabelText("Picture URL (optional)")).toHaveValue(original);
   expect(screen.getByLabelText("Draft picture")).toHaveTextContent(original);
+});
+
+it("closes for an enterprise prompt while retaining the editable draft", async () => {
+  vi.mocked(uploadAvatar).mockRejectedValueOnce(
+    new EnterpriseLoginRequired(community),
+  );
+  render(<Form />);
+  await open();
+  fireEvent.change(screen.getByLabelText("Picture URL (optional)"), {
+    target: { value: next },
+  });
+  upload();
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Edit avatar" }),
+    ).not.toBeInTheDocument(),
+  );
+  await open();
+  expect(screen.getByLabelText("Picture URL (optional)")).toHaveValue(next);
+});
+
+it("closes for an enterprise discovery error while retaining the editable draft", async () => {
+  vi.mocked(uploadAvatar).mockRejectedValueOnce(
+    new EnterpriseDiscoveryError("advertisement unavailable"),
+  );
+  render(<Form />);
+  await open();
+  fireEvent.change(screen.getByLabelText("Picture URL (optional)"), {
+    target: { value: next },
+  });
+  upload();
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Edit avatar" }),
+    ).not.toBeInTheDocument(),
+  );
+  await open();
+  expect(screen.getByLabelText("Picture URL (optional)")).toHaveValue(next);
 });
 
 it("retiring a community aborts its upload and cannot update the next editor", async () => {

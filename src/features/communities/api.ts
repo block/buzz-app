@@ -2,7 +2,10 @@ import { nativeIdentityEnabled } from "../identity/service";
 import { nativeCommunityRequest } from "./native-api";
 import { connectCommunityTransport, registerCommunity } from "./connection";
 import { settledRefusal, type SettledRefusal } from "./leave-protocol";
-import { registerBrokerCommunity } from "../relay/transport";
+import {
+  registerBrokerCommunity,
+  type ReadTransport,
+} from "../relay/transport";
 import type { RelaySession } from "../relay/session";
 import type { PersonalProfile } from "./service";
 export type CommunityInfo = {
@@ -49,7 +52,10 @@ export async function communityRequest<T>(
     );
   return result as T;
 }
-export async function inspectProfile(id: string, session?: RelaySession) {
+export async function inspectProfile(
+  id: string,
+  session?: RelaySession | ReadTransport,
+) {
   // Existing-community editors use the captured session so confirmed reads also
   // update its shared profile directory. Joining uses the selected host adapter.
   const transport =

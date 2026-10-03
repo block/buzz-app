@@ -1,5 +1,11 @@
 import { profileDefault } from "./profile-default";
-import { useEffect, useId, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -12,7 +18,12 @@ import {
   publishProfile,
   type CommunityInfo,
 } from "./api";
-import type { Communities, PersonalProfile } from "./service";
+import {
+  EnterpriseDiscoveryError,
+  EnterpriseLoginRequired,
+  type Communities,
+  type PersonalProfile,
+} from "./service";
 import { canSaveProfile, ProfileFields, profilesEqual } from "./ProfileFields";
 import { communityDestination, relayOrigin } from "./destination";
 import { nativeIdentityEnabled } from "../identity/service";
@@ -45,7 +56,11 @@ export function CommunityDialog({
   onJoined?: (id: string) => void;
 }) {
   const formId = useId();
-  const client = communities.snapshot();
+  const enterpriseOwner = useId();
+  const client = useSyncExternalStore(
+    communities.subscribe,
+    communities.snapshot,
+  );
   const unavailable =
     client.status !== "ready" || (mode === "join" && !client.relayAvailable);
   const [journal] = useState(() =>
@@ -82,12 +97,21 @@ export function CommunityDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(recovery.error);
   const mounted = useRef(true);
+  const operation = useRef(0);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      operation.current += 1;
     };
   }, []);
+  useEffect(
+    () => () => {
+      if (mode === "join" && id)
+        communities.dismissEnterpriseLogin?.(id, enterpriseOwner);
+    },
+    [communities, enterpriseOwner, id, mode],
+  );
   async function work(action: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -100,12 +124,22 @@ export function CommunityDialog({
       if (mounted.current) setBusy(false);
     }
   }
+  async function inspect(community: string) {
+    const transport = nativeIdentityEnabled()
+      ? await communities.connect(community, AbortSignal.timeout(12_000))
+      : undefined;
+    return inspectProfile(community, transport);
+  }
+  function closeDialog() {
+    operation.current += 1;
+    if (mode === "join" && id)
+      communities.dismissEnterpriseLogin?.(id, enterpriseOwner);
+    close();
+  }
   const policy = info?.policy;
   const allowed =
     (!policy?.age_attestation_required || adult) &&
     (!(policy?.terms_markdown || policy?.privacy_markdown) || agreed);
-  const current = (entry?: PendingJoin) =>
-    mounted.current && (!entry || journal?.current(entry));
   function showProfile(
     found: Awaited<ReturnType<typeof inspectProfile>>,
     pending?: PendingJoin,
@@ -118,18 +152,33 @@ export function CommunityDialog({
   }
   async function submit() {
     if (uploading || unavailable) return;
+    const generation = ++operation.current;
+    const current = (entry?: PendingJoin) =>
+      mounted.current &&
+      operation.current === generation &&
+      (!entry || journal?.current(entry));
     if (step === "destination") {
       await work(async () => {
         const next = communityDestination(relayOrigin(url));
         setDestination(next);
         const value = await communityRequest<CommunityInfo>(next.id, "info");
-        if (!mounted.current) return;
+        if (!current()) return;
         const pending = journal?.get(next.id);
         // Restoring an existing admitted profile is not a new join or policy acceptance.
-        const found = await inspectProfile(next.id).catch((reason: unknown) => {
+        let found: Awaited<ReturnType<typeof inspectProfile>> | undefined;
+        try {
+          found = await inspect(next.id);
+        } catch (reason) {
+          if (reason instanceof EnterpriseLoginRequired) {
+            if (current(pending)) {
+              setInfo(value);
+              setStep("access");
+            }
+            return;
+          }
+          if (reason instanceof EnterpriseDiscoveryError) throw reason;
           if (pending && readErrorKind(reason) !== "denied") throw reason;
-          return undefined;
-        });
+        }
         if (current(pending)) {
           setInfo(value);
           if (found && (found.exists || pending)) showProfile(found, pending);
@@ -139,11 +188,16 @@ export function CommunityDialog({
     } else if (step === "access") {
       if (!allowed) return;
       await work(async () => {
+        // The enterprise gate is an admission precondition. It must complete
+        // before a journal entry, policy acceptance, or invite claim exists.
+        if (nativeIdentityEnabled())
+          await communities.connect(id, AbortSignal.timeout(12_000));
+        if (!current()) return;
         const pending = journal?.get(id);
         if (pending) {
           // A lost claim response may already have admitted this identity, even
           // when its invite has since expired. Read before attempting another claim.
-          const found = await inspectProfile(id).catch((reason: unknown) => {
+          const found = await inspect(id).catch((reason: unknown) => {
             if (readErrorKind(reason) !== "denied") throw reason;
             return undefined;
           });
@@ -181,7 +235,7 @@ export function CommunityDialog({
             throw new Error("Membership was not confirmed");
         }
         if (!current(transaction)) return;
-        const found = await inspectProfile(id);
+        const found = await inspect(id);
         if (!current(transaction)) return;
         showProfile(found, transaction);
       });
@@ -192,8 +246,11 @@ export function CommunityDialog({
           communities.saveProfile({ ...profile, name: profile.name.trim() });
         else {
           if (!destination) throw new Error("Choose a community first");
+          if (nativeIdentityEnabled())
+            await communities.connect(id, AbortSignal.timeout(12_000));
+          if (!current()) return;
           const transaction = journal?.begin(id, profile);
-          const found = journal ? await inspectProfile(id) : original;
+          const found = journal ? await inspect(id) : original;
           if (!current(transaction)) return;
           const next =
             found?.exists && profilesEqual(profile, found.profile)
@@ -207,7 +264,7 @@ export function CommunityDialog({
             await publishProfile(id, next, found?.existing ?? {});
             if (!current(transaction)) return;
             // An accepted replaceable event may already be superseded.
-            const confirmed = await inspectProfile(id);
+            const confirmed = await inspect(id);
             if (!current(transaction)) return;
             if (!confirmed.exists || !profilesEqual(confirmed.profile, next))
               throw new Error(
@@ -231,7 +288,7 @@ export function CommunityDialog({
           if (transaction) journal?.finish(transaction);
           onJoined?.(id);
         }
-        close();
+        closeDialog();
       });
     }
   }
@@ -240,11 +297,16 @@ export function CommunityDialog({
     mode === "join" &&
     !!original?.exists &&
     profilesEqual(profile, original.profile);
+  const enterprise =
+    client.enterprise?.communityId === id &&
+    (!client.selected || client.selected !== id)
+      ? client.enterprise
+      : undefined;
   return (
     <Dialog
       open
       onOpenChange={(next) => {
-        if (!next) close();
+        if (!next) closeDialog();
       }}
       preventClose={busy}
       description={
@@ -258,7 +320,8 @@ export function CommunityDialog({
             type="button"
             disabled={busy || uploading}
             onClick={() => {
-              if (step === "destination" || mode === "profile") close();
+              operation.current += 1;
+              if (step === "destination" || mode === "profile") closeDialog();
               else {
                 setError("");
                 setStep(step === "profile" ? "access" : "destination");
@@ -280,6 +343,7 @@ export function CommunityDialog({
             disabled={
               busy ||
               uploading ||
+              enterprise?.status === "opening" ||
               (step === "access" && !allowed) ||
               (step === "profile" &&
                 (keepsProfile
@@ -319,6 +383,51 @@ export function CommunityDialog({
         {mode === "join" && step !== "destination" && destination && (
           <p className={styles.note}>Relay: {destination.url}</p>
         )}
+        {enterprise && (
+          <div className={styles.note} role="status">
+            <p>
+              This trusted community requires enterprise sign-in before Buzz can
+              continue.
+            </p>
+            {enterprise.error && <p role="alert">{enterprise.error}</p>}
+            {enterprise.status === "opening" ? (
+              <Button
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  communities.cancelEnterpriseLogin(id, enterpriseOwner)
+                }
+              >
+                Cancel sign-in
+              </Button>
+            ) : (
+              <div className="mt-3 flex gap-2">
+                <Button
+                  type="button"
+                  onClick={() =>
+                    void (enterprise.errorKind === "discovery"
+                      ? communities.retryEnterpriseGate(id)
+                      : communities.startEnterpriseLogin(id, enterpriseOwner))
+                  }
+                >
+                  {enterprise.errorKind === "discovery"
+                    ? "Retry connection check"
+                    : enterprise.status === "error"
+                      ? "Retry sign-in"
+                      : "Sign in"}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() =>
+                    communities.dismissEnterpriseLogin(id, enterpriseOwner)
+                  }
+                >
+                  Not now
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
         {unavailable ? (
           <p>
             {client.status === "loading"
@@ -346,6 +455,9 @@ export function CommunityDialog({
                   disabled={busy}
                   value={url}
                   onChange={(e) => {
+                    operation.current += 1;
+                    if (mode === "join" && id)
+                      communities.dismissEnterpriseLogin?.(id, enterpriseOwner);
                     setUrl(e.target.value);
                     setDestination(undefined);
                     setCode("");
@@ -431,6 +543,7 @@ export function CommunityDialog({
                 </p>
                 <ProfileFields
                   community={mode === "profile" ? undefined : id}
+                  connect={mode === "profile" ? undefined : communities.connect}
                   onBusyChange={setUploading}
                   profile={profile}
                   onChange={setProfile}

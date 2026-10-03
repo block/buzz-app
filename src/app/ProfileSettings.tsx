@@ -7,6 +7,7 @@ import { Button } from "../shared/design-system/ui/Button";
 import { Input } from "../shared/design-system/ui/Input";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { npubEncode } from "nostr-tools/nip19";
+import { nativeIdentityEnabled } from "../features/identity/service";
 import {
   useCallback,
   useEffect,
@@ -91,11 +92,28 @@ export function ProfileSettings({
     };
   }, []);
   const [error, setError] = useState("");
+  const [clearingEnterprise, setClearingEnterprise] = useState(false);
+  const [enterpriseClearStatus, setEnterpriseClearStatus] = useState<
+    { kind: "success" | "error"; message: string } | undefined
+  >();
   const [copyStatus, setCopyStatus] = useState<{
     message: string;
     failed: boolean;
   } | null>(null);
   const copyAttempt = useRef(0);
+  const inspectCommunity = useCallback(
+    async (id: string) => {
+      if (nativeIdentityEnabled()) {
+        const transport = await communities.connect(
+          id,
+          AbortSignal.timeout(12000),
+        );
+        return communityApi.inspectProfile(id, transport);
+      }
+      return communityApi.inspectProfile(id);
+    },
+    [communities],
+  );
   // loadAttempt is an explicit recovery trigger.
   useEffect(() => {
     void loadAttempt;
@@ -111,7 +129,7 @@ export function ProfileSettings({
     if (!client.relayAvailable) return;
     let current = true;
     setLoadStatus("loading");
-    void communityApi.inspectProfile(community.id).then(
+    void inspectCommunity(community.id).then(
       (result) => {
         if (!current) return;
         setLoaded(result);
@@ -126,7 +144,7 @@ export function ProfileSettings({
     return () => {
       current = false;
     };
-  }, [community, loadAttempt, client.relayAvailable]);
+  }, [community, inspectCommunity, loadAttempt, client.relayAvailable]);
   const persisted =
     community && loaded?.exists ? loaded.profile : client.profile;
   const profile = draft ?? persisted;
@@ -145,6 +163,28 @@ export function ProfileSettings({
           message: `Couldn’t copy ${label.toLowerCase()}. Select it and copy manually.`,
           failed: true,
         });
+    }
+  }
+  async function clearEnterpriseSession() {
+    if (clearingEnterprise) return;
+    setClearingEnterprise(true);
+    setEnterpriseClearStatus(undefined);
+    try {
+      await communities.clearEnterpriseAuth();
+      setEnterpriseClearStatus({
+        kind: "success",
+        message: "Enterprise sign-in was cleared on this device.",
+      });
+    } catch (reason) {
+      setEnterpriseClearStatus({
+        kind: "error",
+        message:
+          reason instanceof Error
+            ? reason.message
+            : "Enterprise sign-in could not be cleared. Try again.",
+      });
+    } finally {
+      setClearingEnterprise(false);
     }
   }
   return (
@@ -195,6 +235,9 @@ export function ProfileSettings({
                 value={profile.picture}
                 name={profile.name}
                 community={community?.id}
+                connect={
+                  nativeIdentityEnabled() ? communities.connect : undefined
+                }
                 disabled={saving}
                 onBusyChange={setUploading}
                 onChange={(picture) => {
@@ -240,7 +283,7 @@ export function ProfileSettings({
                 const inspect = (id: string) =>
                   session
                     ? communityApi.inspectProfile(id, session)
-                    : communityApi.inspectProfile(id);
+                    : inspectCommunity(id);
                 const saveGeneration = beginProfileSave(communities);
                 setSaving(true);
                 setSaved(false);
@@ -405,6 +448,43 @@ export function ProfileSettings({
                 timeout={copyStatus.failed ? 0 : 5000}
                 onDismiss={() => setCopyStatus(null)}
               />
+            )}
+          </section>
+        )}
+        {client.viewer && nativeIdentityEnabled() && (
+          <section
+            aria-labelledby="enterprise-access-settings-title"
+            className="mt-8"
+          >
+            <h3
+              id="enterprise-access-settings-title"
+              className="m-0 text-label-sm"
+            >
+              Enterprise access
+            </h3>
+            <p className="mt-2 mb-4 text-body-sm text-muted">
+              Clear the enterprise session saved on this device for the current
+              adapter, identity, and Buzz build. This does not revoke remote
+              access or remove your Nostr identity, memberships, or access at
+              the community.
+            </p>
+            <Button
+              type="button"
+              disabled={clearingEnterprise}
+              loading={clearingEnterprise}
+              onClick={() => void clearEnterpriseSession()}
+            >
+              Clear enterprise sign-in
+            </Button>
+            {enterpriseClearStatus && (
+              <p
+                className="mt-3 text-body-sm"
+                role={
+                  enterpriseClearStatus.kind === "error" ? "alert" : "status"
+                }
+              >
+                {enterpriseClearStatus.message}
+              </p>
             )}
           </section>
         )}

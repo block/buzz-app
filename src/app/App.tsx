@@ -24,6 +24,7 @@ import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
 import { profileTarget } from "../features/profiles/target";
 import { setLaunchReady } from "./launch";
+import { EnterpriseLoginDialog } from "./EnterpriseLoginDialog";
 
 export function App({ services }: { services: AppServices }) {
   const identity = services.identity;
@@ -207,6 +208,13 @@ function ConnectedApp({ services }: { services: AppServices }) {
         >
           <AgentWakeNotice control={services.agentControl} />
           <UpdateNotice updates={services.updates} />
+          {client.enterprise &&
+            client.enterprise.communityId === client.selected && (
+              <EnterpriseLoginDialog
+                communities={services.communities}
+                state={client.enterprise}
+              />
+            )}
           {startup === "recovery" && !settings ? (
             <RecoveryScreen plugins={plugins} />
           ) : (!route.state.ingress && route.failure) ||

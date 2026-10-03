@@ -5,6 +5,7 @@ import { avatarPictureError } from "../profiles/avatar-upload";
 import type { PersonalProfile } from "./service";
 import { PROFILE_ABOUT_MAX_LENGTH } from "./service";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
+import type { ReadTransport } from "../relay/transport";
 
 export function profilesEqual(left: PersonalProfile, right: PersonalProfile) {
   return (
@@ -29,6 +30,7 @@ export function ProfileFields({
   community,
   onBusyChange,
   showAvatar = true,
+  connect,
 }: {
   profile: PersonalProfile;
   onChange(profile: PersonalProfile): void;
@@ -36,6 +38,9 @@ export function ProfileFields({
   community?: string | undefined;
   onBusyChange?(busy: boolean): void;
   showAvatar?: boolean;
+  connect?:
+    | ((community: string, signal: AbortSignal) => Promise<ReadTransport>)
+    | undefined;
 }) {
   return (
     <div className="grid gap-4">
@@ -46,6 +51,7 @@ export function ProfileFields({
           community={community}
           disabled={disabled}
           onBusyChange={onBusyChange}
+          connect={connect}
           onChange={(picture) => onChange({ ...profile, picture })}
         />
       )}

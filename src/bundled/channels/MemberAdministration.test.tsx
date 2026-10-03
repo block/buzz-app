@@ -638,7 +638,11 @@ it("confirms removal and removes only the confirmed roster entry", async () => {
   expect(screen.getAllByRole("dialog")).toHaveLength(1);
   expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
   expect(
-    required(dialog.querySelector(".buzz-dialog-body")),
+    required(
+      dialog.querySelector(
+        '.buzz-dialog-step:not([aria-hidden="true"]) > .buzz-dialog-body',
+      ),
+    ),
   ).toBeEmptyDOMElement();
   expect(
     within(dialog).getByRole("button", { name: "Cancel" }),
@@ -782,7 +786,11 @@ it.each([false, true])(
     expect(avatar).toHaveAttribute("data-size", "small");
     expect(avatar).toHaveTextContent("M");
     expect(
-      required(dialog.querySelector(".buzz-dialog-body")),
+      required(
+        dialog.querySelector(
+          '.buzz-dialog-step:not([aria-hidden="true"]) > .buzz-dialog-body',
+        ),
+      ),
     ).toBeEmptyDOMElement();
     expect(t.publish).not.toHaveBeenCalled();
   },
@@ -849,7 +857,11 @@ it.each([false, true])(
     expect(t.session.channels.get?.(id)?.visibility).toBe("public");
     const dialog = await t.choose("Remove from channel");
     expect(
-      required(dialog.querySelector(".buzz-dialog-body")),
+      required(
+        dialog.querySelector(
+          '.buzz-dialog-step:not([aria-hidden="true"]) > .buzz-dialog-body',
+        ),
+      ),
     ).toBeEmptyDOMElement();
     expect(dialog).toHaveAccessibleDescription("Morgan");
     expect(
@@ -1711,7 +1723,11 @@ it.each(["bot", "member"])(
       name: "Remove agent from channel",
     });
     expect(
-      required(dialog.querySelector(".buzz-dialog-body")),
+      required(
+        dialog.querySelector(
+          '.buzz-dialog-step:not([aria-hidden="true"]) > .buzz-dialog-body',
+        ),
+      ),
     ).toBeEmptyDOMElement();
     expect(dialog).toHaveAccessibleDescription("Morgan");
     expect(

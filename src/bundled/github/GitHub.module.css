@@ -417,6 +417,10 @@
   justify-self: end;
   margin-top: 0;
 }
+.conversationMessage[data-single-line] .commentActions[data-menu-action] {
+  align-self: start;
+  top: calc(var(--space-1) - (var(--space-5) - 0.875rem) / 2);
+}
 .conversationMessage[data-bodyless] .commentActions {
   align-self: center;
 }

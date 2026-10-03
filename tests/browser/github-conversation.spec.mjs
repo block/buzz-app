@@ -469,6 +469,41 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await singleLineTrigger.click();
   await page.setViewportSize(wideViewport);
   await expect(singleLineTrigger).toHaveCount(0);
+  const expectSingleLineActionInCaretSlot = async () => {
+    await expect(singleLine).toHaveAttribute("data-single-line", "true");
+    await expect
+      .poll(() =>
+        conversation.evaluate((node) => {
+          const short = node.querySelector('[aria-label="Review comment"]');
+          const expandable = node.querySelector('[aria-label="Comment"]');
+          const header = (row) =>
+            row
+              .querySelector('[class*="messageHeader"]')
+              .getBoundingClientRect();
+          const action = short
+            .querySelector('[aria-label="Comment actions"]')
+            .getBoundingClientRect();
+          const caret = expandable
+            .querySelector('[class*="messageTrigger"] > svg')
+            .getBoundingClientRect();
+          return Math.max(
+            Math.abs(
+              header(short).right -
+                (action.left + action.width / 2) -
+                (header(expandable).right - (caret.left + caret.width / 2)),
+            ),
+            Math.abs(
+              action.top +
+                action.height / 2 -
+                header(short).top -
+                (caret.top + caret.height / 2 - header(expandable).top),
+            ),
+          );
+        }),
+      )
+      .toBeLessThan(1);
+  };
+  await expectSingleLineActionInCaretSlot();
   for (const mode of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: mode });
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
@@ -637,6 +672,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     await expectCentered();
     await expectThumbnailsBelowExcerpt();
     await expectStationaryCarets();
+    await expectSingleLineActionInCaretSlot();
     await expectActionsCenteredUnderCarets();
     await commentActions.hover();
     await commentEvent.screenshot({
@@ -1394,7 +1430,11 @@ test.describe("desktop comment actions", () => {
       const times = [...node.parentElement.querySelectorAll("time")].map(
         (time) => time.getBoundingClientRect().right,
       );
+      const metadata = node
+        .querySelector('[class*="messageMetadata"]')
+        .getBoundingClientRect();
       return {
+        metadata: { top: metadata.top, bottom: metadata.bottom },
         action: {
           left: action.left,
           right: action.right,
@@ -1408,8 +1448,9 @@ test.describe("desktop comment actions", () => {
     });
     expect(Math.abs(geometry.action.right - geometry.rowRight)).toBeLessThan(1);
     expect(geometry.action.left).toBeGreaterThanOrEqual(geometry.body.right);
-    expect(geometry.action.bottom).toBeGreaterThan(geometry.body.top);
-    expect(geometry.action.top).toBeLessThan(geometry.body.bottom);
+    const actionCenter = (geometry.action.top + geometry.action.bottom) / 2;
+    expect(actionCenter).toBeGreaterThanOrEqual(geometry.metadata.top);
+    expect(actionCenter).toBeLessThanOrEqual(geometry.metadata.bottom);
     expect(geometry.dateRag).toBeLessThan(1);
     await panel.screenshot({
       path: testInfo.outputPath("desktop-single-line-hover.png"),

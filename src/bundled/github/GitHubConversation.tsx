@@ -388,6 +388,7 @@ function Message({
       open={open}
       onOpenChange={setOpen}
       data-bodyless={!hasBody || undefined}
+      data-single-line={(hasBody && !expandable) || undefined}
     >
       <div className={styles.messageMarker}>
         {expandable ? (

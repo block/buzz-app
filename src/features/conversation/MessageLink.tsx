@@ -85,9 +85,11 @@ export function MessageLink({
   const [copying, setCopying] = useState(false);
   const busy = useRef(false);
   const [notice, setNotice] = useState<{ text: string; error: boolean }>();
+  if (!active && menuOpen) setMenuOpen(false);
+  if (!active && notice) setNotice(undefined);
   const external = /^https?:\/\//i.test(url);
   async function copy() {
-    if (busy.current) return;
+    if (!active || busy.current) return;
     busy.current = true;
     setCopying(true);
     setNotice(undefined);
@@ -178,7 +180,7 @@ export function MessageLink({
         {content}
       </span>
     );
-    if (interactive && external) {
+    if (active && interactive && external) {
       return (
         <ContextMenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
           <ContextMenuTrigger
@@ -248,7 +250,7 @@ export function MessageLink({
   const result = (
     <>
       {link}
-      {notice && (
+      {active && notice && (
         <ToastNotice
           title={notice.text}
           tone={notice.error ? "error" : "success"}

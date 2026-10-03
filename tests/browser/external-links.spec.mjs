@@ -131,6 +131,11 @@ test("message link context menus bypass the pane and return keyboard focus", asy
     name: "GitHub",
     exact: true,
   });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+  await page.screenshot({
+    path: testInfo.outputPath("link-before-menu-dark.png"),
+  });
   await anchor.click({ button: "right" });
   const menu = page.getByRole("menu");
   const external = menu.getByRole("menuitem", {

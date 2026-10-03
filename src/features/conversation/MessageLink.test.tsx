@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -15,6 +16,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { Contribution } from "../../plugins/contributions";
 import type { LinkRenderer } from "./contracts";
 import { MessageLink, resolveLink } from "./MessageLink";
+import { ConversationPresentation } from "./ConversationPresentation";
 
 afterEach(() => {
   cleanup();
@@ -208,4 +210,55 @@ it("preserves ordinary pane interception and modified or middle-click fallback",
     new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }),
   );
   expect(onOpenLink).not.toHaveBeenCalled();
+});
+
+it("retires an external menu when its retained conversation becomes inactive", async () => {
+  const onOpenLink = vi.fn(() => true);
+  const tree = (active: boolean) => (
+    <ConversationPresentation value={active}>
+      <MessageLink url={url} registry={undefined} onOpenLink={onOpenLink} />
+    </ConversationPresentation>
+  );
+  const view = render(tree(true));
+  fireEvent.contextMenu(screen.getByRole("link"));
+  await screen.findByRole("menu");
+  view.rerender(tree(false));
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  const anchor = screen.getByRole("link");
+  fireEvent.contextMenu(anchor);
+  fireEvent.keyDown(anchor, { key: "F10", shiftKey: true });
+  fireEvent.click(anchor);
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  expect(onOpenLink).not.toHaveBeenCalled();
+  view.rerender(tree(true));
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  fireEvent.contextMenu(screen.getByRole("link"));
+  await screen.findByRole("menu");
+});
+
+it("does not present or replay copy feedback completed in an inactive conversation", async () => {
+  const user = userEvent.setup();
+  let complete!: () => void;
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        complete = resolve;
+      }),
+  );
+  const tree = (active: boolean) => (
+    <ToastProvider>
+      <ConversationPresentation value={active}>
+        <MessageLink url={url} registry={undefined} onOpenLink={() => true} />
+      </ConversationPresentation>
+    </ToastProvider>
+  );
+  const view = render(tree(true));
+  fireEvent.contextMenu(screen.getByRole("link"));
+  await user.click(await screen.findByRole("menuitem", { name: "Copy link" }));
+  expect(write).toHaveBeenCalledWith(url);
+  view.rerender(tree(false));
+  await act(async () => complete());
+  expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
+  view.rerender(tree(true));
+  expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
 });

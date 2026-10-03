@@ -27,7 +27,8 @@ use crate::{
 
 /// Shown to JavaScript, which returns the person to enterprise sign-in.
 pub(crate) const SIGN_IN_REQUIRED: &str = "Enterprise sign-in is required";
-/// A refusal of a session that was already removed or replaced; retryable.
+/// A refusal of a session that was already refused, removed or replaced;
+/// retryable.
 const SESSION_REPLACED: &str = "Enterprise session changed during the relay badge request";
 /// Preparation (secure storage, signing) or the adapter did not answer in
 /// time; retryable.
@@ -132,8 +133,9 @@ impl RelayAssertions {
             return Ok(None);
         };
         let session: [u8; 32] = Sha256::digest(saved.token().as_bytes()).into();
+        let admit = || !self.enterprise.refused(&saved);
         let now = now()?;
-        if !fresh {
+        if !fresh && admit() {
             if let Some(cached) = self.lock().get(&relay).filter(|cached| {
                 cached.session == session && cached.assertion.expires_at > now + REFRESH_MARGIN
             }) {
@@ -147,10 +149,25 @@ impl RelayAssertions {
         .map_err(|_| "Enterprise authentication adapter is invalid")?;
         let issued = timeout_at(
             deadline,
-            issue(client()?, &endpoint, saved.token(), identity, &relay, now),
+            issue(
+                client()?,
+                &endpoint,
+                saved.token(),
+                &admit,
+                identity,
+                &relay,
+                now,
+            ),
         )
         .await
         .map_err(timed_out)?;
+        // Refused while this request ran: it was not sent after the refusal,
+        // and a badge it returned is dropped. The request whose refusal it was
+        // asks for sign-in; this one is retried with whatever session is
+        // saved now.
+        if !admit() {
+            return Err(SESSION_REPLACED.into());
+        }
         let assertion = match issued {
             Ok(assertion) => assertion,
             Err(error) if error == SIGN_IN_REQUIRED => {
@@ -185,11 +202,10 @@ impl RelayAssertions {
             Ok(Ok(Ok(Rejection::Superseded))) => SESSION_REPLACED.into(),
             Ok(Ok(Err(error))) => error,
             Ok(Err(_)) => "Enterprise secure storage could not be accessed".into(),
-            Ok(Ok(Ok(Rejection::Retained(error)))) => {
-                eprintln!("Refused enterprise session is no longer used but stays in secure storage: {error}");
+            // The sign-in prompt shows a failed removal from `cleanup`.
+            Ok(Ok(Ok(Rejection::Removed | Rejection::Retained))) | Err(_) => {
                 SIGN_IN_REQUIRED.into()
             }
-            Ok(Ok(Ok(Rejection::Removed))) | Err(_) => SIGN_IN_REQUIRED.into(),
         }
     }
 
@@ -262,6 +278,7 @@ async fn issue(
     http: &reqwest::Client,
     endpoint: &Url,
     session: &str,
+    admit: &(dyn Fn() -> bool + Sync),
     identity: &IdentityHost,
     relay: &str,
     now: u64,
@@ -293,6 +310,11 @@ async fn issue(
         STANDARD
             .encode(serde_json::to_vec(&proof).map_err(|_| "Could not encode relay badge proof")?)
     );
+    // Identity access and signing can take a while; the session may have been
+    // refused meanwhile, and then it is not sent.
+    if !admit() {
+        return Err(SESSION_REPLACED.into());
+    }
     let response = authorize(http.post(endpoint.clone()), session, &proof)
         .header("Content-Type", "application/json")
         .body(body)

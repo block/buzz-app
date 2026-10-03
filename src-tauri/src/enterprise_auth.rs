@@ -172,8 +172,9 @@ pub(crate) enum Rejection {
     /// The refused session was current and is now gone; sign-in is required.
     Removed,
     /// The refused session was current and is no longer used, but secure
-    /// storage could not remove it (the error); sign-in is required.
-    Retained(String),
+    /// storage could not remove it; sign-in is required, and `cleanup`
+    /// reports the failure.
+    Retained,
     /// The refused session was no longer current (already removed, or
     /// replaced by a newer login), so nothing was changed.
     Superseded,
@@ -236,45 +237,102 @@ struct ActiveLogin {
     cancel: oneshot::Sender<()>,
 }
 
-/// Sessions the adapter refused, by token digest. A refusal is recorded here
-/// before secure storage is asked to remove the session, and every reader
-/// skips a refused token, so nothing uses it while removal is slow or after
-/// removal fails. A refusal whose removal failed is `retained` and written to
-/// `path`, so after a restart the still-stored session stays refused; removal
-/// is retried when the session is next checked, and a new login replaces it.
-/// If that write fails too, a restart reads the session as saved again; its
-/// next use is refused by the adapter and handled the same way.
+/// Sessions the adapter refused, by token digest, and the outcome of removing
+/// them from secure storage.
+///
+/// A refusal is one step under the login state lock: the digest joins
+/// `tokens`, the login generation advances and the in-memory session is
+/// cleared, so a session check validating at the same moment cannot adopt the
+/// token again. Every reader skips a refused token. The digest is also written
+/// to `file` before secure storage is asked to remove the session, and taken
+/// out only once removal succeeds, so a restart while removal waits or after it
+/// fails keeps the stored session refused. Readers that already hold the token
+/// recheck it before sending it and before accepting what it returns.
+///
+/// If the refusal file cannot be resolved, read or decoded at startup, the
+/// stored session is not used (`distrust_stored`) until a new login replaces
+/// it. One case is not covered: if writing the refusal file and removing the
+/// session from secure storage both fail and Buzz then restarts, the stored
+/// session reads as saved again and can be sent to the adapter.
 #[derive(Default)]
 struct Refusals {
     tokens: HashSet<[u8; 32]>,
-    retained: HashSet<[u8; 32]>,
-    path: Option<PathBuf>,
+    /// Refusals that must stay in `file` until secure storage removes them.
+    recorded: HashSet<[u8; 32]>,
+    /// Refusals secure storage failed to remove.
+    kept: HashSet<[u8; 32]>,
+    /// Writing a refusal that still mattered to `file` failed.
+    unrecorded: bool,
+    distrust_stored: bool,
+    file: RefusalFile,
+}
+
+#[derive(Default)]
+enum RefusalFile {
+    /// Not configured (tests); nothing is persisted.
+    #[default]
+    Untracked,
+    At(PathBuf),
+    /// The app data directory could not be resolved.
+    Unavailable,
 }
 
 impl Refusals {
-    fn save(&self) -> Result<()> {
-        let Some(path) = &self.path else {
-            return Ok(());
+    fn save(&self) -> std::io::Result<()> {
+        let path = match &self.file {
+            RefusalFile::Untracked => return Ok(()),
+            RefusalFile::Unavailable => return Err(std::io::ErrorKind::NotFound.into()),
+            RefusalFile::At(path) => path,
         };
-        let saved = if self.retained.is_empty() {
-            std::fs::remove_file(path).or_else(|error| match error.kind() {
+        if self.recorded.is_empty() {
+            return std::fs::remove_file(path).or_else(|error| match error.kind() {
                 std::io::ErrorKind::NotFound => Ok(()),
                 _ => Err(error),
-            })
-        } else {
-            let lines: String = self
-                .retained
-                .iter()
-                .map(|digest| format!("{}\n", URL_SAFE_NO_PAD.encode(digest)))
-                .collect();
-            let temporary = path.with_extension("tmp");
-            path.parent()
-                .map_or(Ok(()), std::fs::create_dir_all)
-                .and_then(|()| std::fs::write(&temporary, lines))
-                .and_then(|()| std::fs::rename(&temporary, path))
-        };
-        saved.map_err(|_| "The refused enterprise session could not be recorded".to_owned())
+            });
+        }
+        let lines: String = self
+            .recorded
+            .iter()
+            .map(|digest| format!("{}\n", URL_SAFE_NO_PAD.encode(digest)))
+            .collect();
+        let temporary = path.with_extension("tmp");
+        path.parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&temporary, lines))
+            .and_then(|()| std::fs::rename(&temporary, path))
     }
+
+    /// Records the outcome of removing a refused session from secure storage.
+    fn settle(&mut self, digest: [u8; 32], removed: bool) {
+        if !removed {
+            self.kept.insert(digest);
+            return;
+        }
+        self.kept.remove(&digest);
+        if self.recorded.remove(&digest) {
+            let _ = self.save();
+        }
+        // Nothing still stored depends on an unwritten refusal.
+        if self.kept.is_empty() {
+            self.unrecorded = false;
+        }
+    }
+
+    fn cleanup(&self) -> Option<EnterpriseCleanup> {
+        (!self.kept.is_empty() || self.unrecorded).then_some(EnterpriseCleanup {
+            retained: !self.kept.is_empty(),
+            unrecorded: self.unrecorded,
+        })
+    }
+}
+
+/// A refused session's removal that did not fully succeed, without storage
+/// details: `retained` when secure storage still holds it, `unrecorded` when
+/// the refusal could not be saved for after a restart.
+#[derive(Debug, PartialEq, Serialize)]
+pub(crate) struct EnterpriseCleanup {
+    retained: bool,
+    unrecorded: bool,
 }
 
 fn token_digest(token: &str) -> [u8; 32] {
@@ -378,6 +436,9 @@ impl EnterpriseAuthHost {
             self.clear_memory(&scope, None);
             return Ok(None);
         };
+        if self.refusals().distrust_stored {
+            return Ok(None);
+        }
         if self.is_refused(&persisted.session.token) {
             self.remove_retained(&scope, persisted).await;
             return Ok(self.cached_info(&scope));
@@ -405,6 +466,10 @@ impl EnterpriseAuthHost {
                             expires_at: current.expires_at,
                         }));
                     }
+                } else if self.is_refused(&persisted.session.token) {
+                    // A refusal takes this lock too, so it lands wholly
+                    // before or after this check.
+                    return Ok(None);
                 } else {
                     self.remember(scope, persisted.session);
                 }
@@ -434,6 +499,7 @@ impl EnterpriseAuthHost {
                 raw: encode_session(&session)?,
                 session,
             }),
+            None if self.refusals().distrust_stored => None,
             None => self.read(&scope).await?,
         };
         Ok(persisted
@@ -448,23 +514,25 @@ impl EnterpriseAuthHost {
             .is_some_and(|current| current.token.as_str() != saved.token())
     }
 
+    /// Whether `saved` was refused since it was read. A request holding it
+    /// checks this before sending it and before accepting what it returned.
+    pub(crate) fn refused(&self, saved: &SavedSession) -> bool {
+        self.is_refused(saved.token())
+    }
+
     /// Forgets `saved` after the adapter said it is gone, but only while it
     /// is still the current session. The token itself is compared, not the
     /// login generation, which starting or canceling a login also advances.
-    /// The token is refused before secure storage is touched, so no reader
-    /// uses it while removal waits or after removal fails; a newer adopted
-    /// token is a different token and stays in use.
+    /// The token is refused before secure storage is touched, so later
+    /// reads skip it while removal waits or after removal fails, and requests
+    /// already holding it recheck before sending (see `Refusals`); a newer
+    /// adopted token is a different token and stays in use.
     pub(crate) async fn reject(&self, saved: SavedSession) -> Result<Rejection> {
         let SavedSession { scope, persisted } = saved;
         let token = persisted.session.token;
         let digest = token_digest(&token);
-        let cached = self
-            .cached(&scope)
-            .is_some_and(|current| current.token.as_str() == token.as_str());
-        self.refusals().tokens.insert(digest);
-        self.clear_memory(&scope, Some(&token));
-        // Readers that read the refused session before now must not cache it.
-        self.fence_generation()?;
+        let cached = self.is_cached(&scope, &token);
+        self.refuse(&scope, &token, digest)?;
         // Commits and clears hold this owner, so the session cannot change
         // between the comparison and the deletion.
         let _commit = self.commit.lock().await;
@@ -472,37 +540,83 @@ impl EnterpriseAuthHost {
             Ok(Some(stored)) if stored.session.token.as_str() == token.as_str() => {
                 self.delete_if_matches(&scope, stored.raw).await
             }
-            // Held only in memory, which is now cleared.
-            Ok(_) if cached && self.cached(&scope).is_none() => return Ok(Rejection::Removed),
-            // Already removed, or replaced by a newer login.
-            Ok(_) => return Ok(Rejection::Superseded),
+            Ok(_) => {
+                // Secure storage no longer holds the refused session.
+                self.refusals().settle(digest, true);
+                // Held only in memory, which is now cleared.
+                return Ok(if cached && self.cached(&scope).is_none() {
+                    Rejection::Removed
+                } else {
+                    // Already removed, or replaced by a newer login.
+                    Rejection::Superseded
+                });
+            }
             Err(error) => Err(error),
         };
-        let Err(error) = removal else {
-            return Ok(Rejection::Removed);
-        };
         let mut refusals = self.refusals();
-        refusals.retained.insert(digest);
-        Ok(Rejection::Retained(match refusals.save() {
-            Ok(()) => error,
-            Err(saving) => format!("{error}. {saving}, so it may be used again after a restart"),
-        }))
+        refusals.settle(digest, removal.is_ok());
+        Ok(match removal {
+            Ok(()) => Rejection::Removed,
+            Err(_) => Rejection::Retained,
+        })
     }
 
-    /// Keeps refusals whose secure-storage removal failed in `path` across
-    /// restarts.
+    /// Refuses `token` as one step under the login state lock, which
+    /// adoption also holds across its generation check and cache update, and
+    /// records the refusal for after a restart before anything awaits.
+    fn refuse(&self, scope: &Scope, token: &Zeroizing<String>, digest: [u8; 32]) -> Result<()> {
+        let mut state = self
+            .login
+            .lock()
+            .map_err(|_| "Enterprise authentication state is unavailable".to_owned())?;
+        let mut refusals = self.refusals();
+        refusals.tokens.insert(digest);
+        refusals.recorded.insert(digest);
+        if refusals.save().is_err() {
+            refusals.unrecorded = true;
+        }
+        drop(refusals);
+        Self::bump_generation(&mut state);
+        self.clear_memory(scope, Some(token));
+        Ok(())
+    }
+
+    /// The refused-session file, kept across restarts. When it cannot be read
+    /// or decoded, the stored session is not used until a new login.
     pub(crate) fn keep_refusals_at(&self, path: PathBuf) {
         let mut refusals = self.refusals();
-        if let Ok(saved) = std::fs::read_to_string(&path) {
-            let digests = saved
-                .lines()
-                .filter_map(|line| URL_SAFE_NO_PAD.decode(line).ok()?.try_into().ok());
-            for digest in digests {
-                refusals.tokens.insert(digest);
-                refusals.retained.insert(digest);
+        match std::fs::read_to_string(&path) {
+            Ok(saved) => {
+                let digests: Option<Vec<[u8; 32]>> = saved
+                    .lines()
+                    .map(|line| URL_SAFE_NO_PAD.decode(line).ok()?.try_into().ok())
+                    .collect();
+                match digests {
+                    Some(digests) => {
+                        refusals.tokens.extend(&digests);
+                        refusals.recorded.extend(digests);
+                    }
+                    None => refusals.distrust_stored = true,
+                }
             }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => refusals.distrust_stored = true,
         }
-        refusals.path = Some(path);
+        refusals.file = RefusalFile::At(path);
+    }
+
+    /// The app data directory is unavailable: refusals cannot be kept across
+    /// restarts, so the stored session is not used until a new login.
+    pub(crate) fn refusals_unavailable(&self) {
+        let mut refusals = self.refusals();
+        refusals.distrust_stored = true;
+        refusals.file = RefusalFile::Unavailable;
+    }
+
+    /// How removing refused sessions went, once removal in progress settles.
+    pub(crate) async fn cleanup(&self) -> Option<EnterpriseCleanup> {
+        let _commit = self.commit.lock().await;
+        self.refusals().cleanup()
     }
 
     fn refusals(&self) -> MutexGuard<'_, Refusals> {
@@ -518,15 +632,9 @@ impl EnterpriseAuthHost {
     /// Retries removing a refused session that secure storage kept.
     async fn remove_retained(&self, scope: &Scope, persisted: PersistedSession) {
         let _commit = self.commit.lock().await;
-        if self.delete_if_matches(scope, persisted.raw).await.is_ok() {
-            let mut refusals = self.refusals();
-            if refusals
-                .retained
-                .remove(&token_digest(&persisted.session.token))
-            {
-                let _ = refusals.save();
-            }
-        }
+        let removed = self.delete_if_matches(scope, persisted.raw).await.is_ok();
+        self.refusals()
+            .settle(token_digest(&persisted.session.token), removed);
     }
 
     fn cached_info(&self, scope: &Scope) -> Option<EnterpriseAuthInfo> {
@@ -642,7 +750,15 @@ impl EnterpriseAuthHost {
             return Ok(());
         };
         let storage = match self.read(&scope).await {
-            Ok(Some(persisted)) => self.delete_if_matches(&scope, persisted.raw).await,
+            Ok(Some(persisted)) => {
+                let digest = token_digest(&persisted.session.token);
+                let removed = self.delete_if_matches(&scope, persisted.raw).await;
+                let mut refusals = self.refusals();
+                if refusals.tokens.contains(&digest) {
+                    refusals.settle(digest, removed.is_ok());
+                }
+                removed
+            }
             Ok(None) => Ok(()),
             Err(error) => Err(error),
         };
@@ -789,6 +905,7 @@ impl EnterpriseAuthHost {
             if state.active.as_ref().is_some_and(|active| active.id == id) {
                 Self::bump_generation(&mut state);
                 self.remember(scope.clone(), session);
+                self.adopted();
                 true
             } else {
                 false
@@ -801,13 +918,35 @@ impl EnterpriseAuthHost {
         Ok(info)
     }
 
+    /// A new login replaced the stored session: earlier refusals no longer
+    /// match it, so their records and outcomes are pruned.
+    fn adopted(&self) {
+        let mut refusals = self.refusals();
+        refusals.recorded.clear();
+        refusals.kept.clear();
+        refusals.unrecorded = false;
+        refusals.distrust_stored = false;
+        let _ = refusals.save();
+    }
+
     fn remember(&self, scope: Scope, session: StoredSession) {
         if let Ok(mut stored) = self.session.lock() {
             *stored = Some((scope, session));
         }
     }
 
+    /// The in-memory session, unless it was refused.
     fn cached(&self, scope: &Scope) -> Option<StoredSession> {
+        self.cached_raw(scope)
+            .filter(|session| !self.is_refused(&session.token))
+    }
+
+    fn is_cached(&self, scope: &Scope, token: &str) -> bool {
+        self.cached_raw(scope)
+            .is_some_and(|session| session.token.as_str() == token)
+    }
+
+    fn cached_raw(&self, scope: &Scope) -> Option<StoredSession> {
         self.session.lock().ok().and_then(|stored| {
             stored
                 .as_ref()
@@ -898,6 +1037,15 @@ pub(crate) async fn clear_enterprise_auth(
     identity: State<'_, IdentityHost>,
 ) -> Result<()> {
     host.clear(identity.inner()).await
+}
+
+/// Waits for removal of a refused session in progress, then reports what
+/// did not succeed, if anything.
+#[tauri::command]
+pub(crate) async fn enterprise_auth_cleanup(
+    host: State<'_, EnterpriseAuthHost>,
+) -> Result<Option<EnterpriseCleanup>> {
+    Ok(host.cleanup().await)
 }
 
 struct CallbackState {
@@ -2159,7 +2307,7 @@ mod tests {
         let saved = host.saved_scope(scope.clone()).await.unwrap().unwrap();
         assert!(matches!(
             host.reject(saved).await.unwrap(),
-            Rejection::Retained(_)
+            Rejection::Retained
         ));
         assert!(host.saved_scope(scope.clone()).await.unwrap().is_none());
 
@@ -2191,6 +2339,155 @@ mod tests {
             StoreError::Absent
         );
         assert!(!refusals.exists());
+    }
+
+    fn refusal_fixture(token: &str) -> (Scope, Arc<FixtureStore>, Zeroizing<Vec<u8>>) {
+        let scope = scope_for_adapter(
+            "https://adapter.example",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        let store = Arc::new(FixtureStore::default());
+        let raw = encode_session(&StoredSession {
+            token: Zeroizing::new(token.into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        })
+        .unwrap();
+        store.replace(scope.service, &scope.account, &raw).unwrap();
+        (scope, store, raw)
+    }
+
+    #[tokio::test]
+    async fn a_refused_session_stays_refused_after_a_restart_while_removal_waits() {
+        let directory = tempfile::tempdir().unwrap();
+        let refusals = directory.path().join("enterprise-refused-sessions");
+        let (scope, store, _) = refusal_fixture("refused-session");
+        let (started, delete_started) = mpsc::channel();
+        let (release, release_delete) = mpsc::channel();
+        *store.delete_started.lock().unwrap() = Some(started);
+        *store.release_delete.lock().unwrap() = Some(release_delete);
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        host.keep_refusals_at(refusals.clone());
+        let saved = host.saved_scope(scope.clone()).await.unwrap().unwrap();
+        let rejection = tokio::spawn({
+            let host = host.clone();
+            async move { host.reject(saved).await }
+        });
+        tokio::task::spawn_blocking(move || delete_started.recv().unwrap())
+            .await
+            .unwrap();
+
+        // Buzz restarts while secure storage is still removing the session.
+        let restarted = EnterpriseAuthHost::with_store(store.clone());
+        restarted.keep_refusals_at(refusals.clone());
+        assert!(restarted
+            .saved_scope(scope.clone())
+            .await
+            .unwrap()
+            .is_none());
+
+        release.send(()).unwrap();
+        assert_eq!(rejection.await.unwrap().unwrap(), Rejection::Removed);
+        assert!(!refusals.exists());
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_refusal_file_keeps_the_stored_session_unused() {
+        let directory = tempfile::tempdir().unwrap();
+        let refusals = directory.path().join("enterprise-refused-sessions");
+        std::fs::write(&refusals, "not a refusal\n").unwrap();
+        let (scope, store, _) = refusal_fixture("stored-session");
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        host.keep_refusals_at(refusals.clone());
+        assert!(host.saved_scope(scope.clone()).await.unwrap().is_none());
+        let offline = test_http_client(Duration::from_millis(1));
+        assert!(host
+            .get_scope_with_client(scope.clone(), &offline)
+            .await
+            .unwrap()
+            .is_none());
+        // Secure storage keeps the session; only its use is withheld.
+        assert!(store.read(scope.service, &scope.account).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_session_check_cannot_restore_a_refused_session() {
+        let (scope, store, _) = refusal_fixture("refused-session");
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        // A validating session check adopts the token in the same instant
+        // the refusal is recorded, before secure storage is touched.
+        host.refusals()
+            .tokens
+            .insert(token_digest("refused-session"));
+        host.remember(
+            scope.clone(),
+            StoredSession {
+                token: Zeroizing::new("refused-session".into()),
+                expires_at: "2030-01-01T00:00:00Z".into(),
+            },
+        );
+        *store.delete_error.lock().unwrap() = Some(StoreError::Unavailable);
+        // A session check neither sends the refused token nor restores it.
+        let offline = test_http_client(Duration::from_millis(1));
+        assert!(host
+            .get_scope_with_client(scope.clone(), &offline)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(host.saved_scope(scope).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_session_check_held_across_a_refusal_does_not_adopt_it() {
+        let server = HeldSessionServer::spawn().await;
+        let scope = scope_for_adapter(
+            &server.base,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        let store = Arc::new(FixtureStore::default());
+        let raw = encode_session(&StoredSession {
+            token: Zeroizing::new("refused-session".into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        })
+        .unwrap();
+        store.replace(scope.service, &scope.account, &raw).unwrap();
+        *store.delete_error.lock().unwrap() = Some(StoreError::Unavailable);
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        let saved = host.saved_scope(scope.clone()).await.unwrap().unwrap();
+        let check = tokio::spawn({
+            let (host, scope) = (host.clone(), scope.clone());
+            async move { host.get_scope(scope).await }
+        });
+        server.first_started.notified().await;
+        assert_eq!(host.reject(saved).await.unwrap(), Rejection::Retained);
+        server.release_first.notify_one();
+        assert!(check.await.unwrap().unwrap().is_none());
+        assert!(host.cached_raw(&scope).is_none());
+        assert!(host.saved_scope(scope).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_failed_cleanup_is_reported_until_a_new_login() {
+        let (scope, store, _) = refusal_fixture("refused-session");
+        *store.delete_error.lock().unwrap() = Some(StoreError::Unavailable);
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        host.refusals_unavailable();
+        assert_eq!(host.cleanup().await, None);
+        // Before a login the stored session is not used at all, so read it
+        // the way a request that started earlier would have.
+        host.refusals().distrust_stored = false;
+        let saved = host.saved_scope(scope.clone()).await.unwrap().unwrap();
+        assert_eq!(host.reject(saved).await.unwrap(), Rejection::Retained);
+        assert_eq!(
+            host.cleanup().await,
+            Some(EnterpriseCleanup {
+                retained: true,
+                unrecorded: true,
+            })
+        );
+        host.adopted();
+        assert_eq!(host.cleanup().await, None);
     }
 
     #[tokio::test]

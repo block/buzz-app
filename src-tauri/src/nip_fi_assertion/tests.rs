@@ -41,6 +41,7 @@ async fn run(status: u16, body: serde_json::Value) -> Result<Assertion> {
         client().unwrap(),
         &endpoint,
         "session",
+        &|| true,
         &identity,
         RELAY,
         now().unwrap(),
@@ -63,6 +64,7 @@ async fn issues_badge_for_signer_pubkey_with_contract_headers() {
         client().unwrap(),
         &endpoint,
         "session",
+        &|| true,
         &identity,
         RELAY,
         now,
@@ -187,6 +189,7 @@ async fn issue_raw(response: Vec<u8>) -> Result<Assertion> {
         client().unwrap(),
         &endpoint,
         "session",
+        &|| true,
         &identity,
         RELAY,
         now().unwrap(),
@@ -270,6 +273,7 @@ async fn a_full_lifetime_badge_issued_after_the_request_started_is_accepted() {
         client().unwrap(),
         &endpoint,
         "session",
+        &|| true,
         &identity,
         RELAY,
         issued_at - 5,
@@ -396,4 +400,146 @@ async fn a_refused_session_that_storage_keeps_is_no_longer_used() {
         .await
         .unwrap()
         .is_none());
+}
+
+/// An assertion adapter that issues a valid badge for `pubkey`, counting the
+/// requests it receives. With `hold`, it signals `started` and waits for
+/// `release` before answering.
+struct IssuingAdapter {
+    base: String,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+    started: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+async fn issuing_adapter(pubkey: String, hold: bool) -> IssuingAdapter {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let (counted, signal, wait) = (calls.clone(), started.clone(), release.clone());
+    let router = Router::new().route(
+        ASSERTION_PATH,
+        post(move || {
+            let (counted, signal, wait, pubkey) = (
+                counted.clone(),
+                signal.clone(),
+                wait.clone(),
+                pubkey.clone(),
+            );
+            async move {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if hold {
+                    signal.notify_one();
+                    wait.notified().await;
+                }
+                axum::Json(serde_json::json!({
+                    "assertion": "abc.def",
+                    "nostr_pubkey": pubkey,
+                    "expires_at": now().unwrap() + 300,
+                }))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await });
+    IssuingAdapter {
+        base: format!("http://{address}"),
+        calls,
+        started,
+        release,
+    }
+}
+
+#[tokio::test]
+async fn a_session_refused_while_a_request_prepares_is_not_sent() {
+    let identity = IdentityHost::fixture();
+    let viewer = identity.viewer().await.unwrap();
+    let adapter = issuing_adapter(viewer.clone(), false).await;
+    let enterprise = EnterpriseAuthHost::with_saved(&adapter.base, &viewer, "old");
+    let assertions = RelayAssertions::new(enterprise.clone());
+    // This request has read the session and is still preparing (identity
+    // access, signing) when another request's refusal lands.
+    let preparing = enterprise.saved_at(&adapter.base, &viewer).await.unwrap();
+    let refused = enterprise.saved_at(&adapter.base, &viewer).await.unwrap();
+    assert_eq!(
+        enterprise.reject(refused).await.unwrap(),
+        Rejection::Removed
+    );
+    let error = assertions
+        .badge(
+            &identity,
+            RELAY.into(),
+            async { Ok(Some(preparing)) },
+            true,
+            Instant::now() + DEADLINE,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error, SESSION_REPLACED);
+    assert_eq!(adapter.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_badge_that_arrives_after_its_session_is_refused_is_dropped() {
+    let identity = IdentityHost::fixture();
+    let viewer = identity.viewer().await.unwrap();
+    let adapter = issuing_adapter(viewer.clone(), true).await;
+    let enterprise = EnterpriseAuthHost::with_saved(&adapter.base, &viewer, "old");
+    let assertions = RelayAssertions::new(enterprise.clone());
+    let saved = enterprise.saved_at(&adapter.base, &viewer).await.unwrap();
+    let refused = enterprise.saved_at(&adapter.base, &viewer).await.unwrap();
+    let request = {
+        let (assertions, identity) = (assertions.clone(), identity.clone());
+        tokio::spawn(async move {
+            assertions
+                .badge(
+                    &identity,
+                    RELAY.into(),
+                    async { Ok(Some(saved)) },
+                    true,
+                    Instant::now() + DEADLINE,
+                )
+                .await
+        })
+    };
+    // The adapter has the request; the refusal lands before its answer.
+    adapter.started.notified().await;
+    assert_eq!(
+        enterprise.reject(refused).await.unwrap(),
+        Rejection::Removed
+    );
+    adapter.release.notify_one();
+    assert_eq!(request.await.unwrap().unwrap_err(), SESSION_REPLACED);
+    assert!(assertions.lock().get(RELAY).is_none());
+}
+
+#[tokio::test]
+async fn relay_http_does_not_reuse_a_badge_of_a_refused_session() {
+    let identity = IdentityHost::fixture();
+    let viewer = identity.viewer().await.unwrap();
+    let adapter = issuing_adapter(viewer.clone(), false).await;
+    let enterprise = EnterpriseAuthHost::with_saved(&adapter.base, &viewer, "old");
+    let assertions = RelayAssertions::new(enterprise.clone());
+    // Relay HTTP and media (`attach`) reuse cached badges (`fresh` false).
+    let badge = |saved| {
+        assertions.badge(
+            &identity,
+            RELAY.into(),
+            async move { Ok(saved) },
+            false,
+            Instant::now() + DEADLINE,
+        )
+    };
+    let first = enterprise.saved_at(&adapter.base, &viewer).await;
+    assert!(badge(first).await.unwrap().is_some());
+    // A request reads the session, then another request's refusal lands.
+    let reading = enterprise.saved_at(&adapter.base, &viewer).await;
+    let refused = enterprise.saved_at(&adapter.base, &viewer).await.unwrap();
+    assert_eq!(
+        enterprise.reject(refused).await.unwrap(),
+        Rejection::Removed
+    );
+    assert_eq!(badge(reading).await.unwrap_err(), SESSION_REPLACED);
+    assert_eq!(adapter.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }

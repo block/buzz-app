@@ -59,8 +59,8 @@ use buzzodz_plugins::{
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use enterprise_auth::{
-    cancel_enterprise_auth_login, clear_enterprise_auth, get_enterprise_auth,
-    start_enterprise_auth_login, EnterpriseAuthHost,
+    cancel_enterprise_auth_login, clear_enterprise_auth, enterprise_auth_cleanup,
+    get_enterprise_auth, start_enterprise_auth_login, EnterpriseAuthHost,
 };
 use enterprise_login_gate::enterprise_login_gate;
 use harness_setup::{pi_install, HarnessSetup};
@@ -409,6 +409,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_socket_send,
         relay_socket_close,
         clear_enterprise_auth,
+        enterprise_auth_cleanup,
         enterprise_login_gate,
         relay_sign,
         relay_decode_read_state,
@@ -504,9 +505,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             deep_links::setup(app.handle());
-            if let Ok(root) = app.path().app_data_dir() {
-                app.state::<EnterpriseAuthHost>()
-                    .keep_refusals_at(root.join("enterprise-refused-sessions"));
+            let enterprise = app.state::<EnterpriseAuthHost>();
+            match app.path().app_data_dir() {
+                Ok(root) => enterprise.keep_refusals_at(root.join("enterprise-refused-sessions")),
+                Err(_) => enterprise.refusals_unavailable(),
             }
             // Only app-owned storage is created. Preview uses the OS-resolved legacy
             // parent, never a browser-supplied path or a different environment source.

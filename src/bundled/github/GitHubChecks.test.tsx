@@ -11,10 +11,12 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { GitHubPanel } from "./index";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 const target = "https://github.com/sample/project/pull/1";
 const pull = {
@@ -204,7 +206,9 @@ it("shows named rows with honest outcomes, descriptions and links without extra 
     });
   });
   vi.stubGlobal("fetch", fetch);
-  render(<GitHubPanel target={target} close={() => {}} />);
+  render(<GitHubPanel target={target} close={() => {}} />, {
+    wrapper: ToastProvider,
+  });
   await screen.findByRole("tab", { name: "Discussion" });
   expect(fetch).toHaveBeenCalledTimes(1);
   const user = userEvent.setup();
@@ -252,6 +256,7 @@ it("shows named rows with honest outcomes, descriptions and links without extra 
   expect(
     within(checks)
       .getAllByRole("button")
+      .filter((button) => !button.hasAttribute("aria-haspopup"))
       .map((button) => button.textContent),
   ).toEqual([
     "1 failing check",
@@ -260,6 +265,33 @@ it("shows named rows with honest outcomes, descriptions and links without extra 
     "1 neutral check",
     "1 successful check",
   ]);
+  // Safe modern and legacy destinations share the action; missing/unsafe URLs do not.
+  expect(
+    within(checks).getAllByRole("button", { name: /^Actions for / }),
+  ).toHaveLength(2);
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  for (const [name, url] of [
+    ["Unit tests", "https://github.com/sample/project/actions/runs/1"],
+    ["Build", "https://ci.example.test/build/1"],
+  ]) {
+    await user.click(
+      within(checks).getByRole("button", { name: `Actions for ${name}` }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Copy link" }),
+    );
+    await screen.findByText("Link copied");
+    expect(write).toHaveBeenLastCalledWith(url);
+    await user.click(
+      screen.getByRole("button", { name: "Dismiss notification" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("Link copied")).not.toBeInTheDocument(),
+    );
+  }
+  expect(
+    within(checks).getByRole("button", { name: "1 failing check" }),
+  ).toHaveAttribute("aria-expanded", "true");
   const successful = within(checks).getByRole("button", {
     name: "1 successful check",
   });
@@ -442,3 +474,75 @@ it.each([
     expect(fetch).toHaveBeenCalledTimes(1);
   },
 );
+
+it("allows clipboard retry, prevents duplicate pending writes and retires feedback with the PR", async () => {
+  const user = userEvent.setup();
+  let finish!: () => void;
+  const write = vi
+    .spyOn(navigator.clipboard, "writeText")
+    .mockRejectedValueOnce(new Error("denied"))
+    .mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+  const fetch = vi.fn(async (url: string) => {
+    if (/\/pulls\/\d+$/.test(url)) return response(pull);
+    return response(
+      url.includes("/check-runs?")
+        ? {
+            total_count: 1,
+            check_runs: [
+              {
+                name: "Unit tests",
+                status: "completed",
+                conclusion: "success",
+                details_url:
+                  "https://github.com/sample/project/actions/runs/1?view=logs#step:2",
+              },
+            ],
+          }
+        : { total_count: 0, statuses: [] },
+    );
+  });
+  vi.stubGlobal("fetch", fetch);
+  const view = render(<GitHubPanel target={target} close={() => {}} />, {
+    wrapper: ToastProvider,
+  });
+  await user.click(await screen.findByRole("tab", { name: "Checks" }));
+  const actions = await screen.findByRole("button", {
+    name: "Actions for Unit tests",
+  });
+  const open = async () => {
+    await user.click(actions);
+    return screen.findByRole("menuitem", { name: "Copy link" });
+  };
+  await user.click(await open());
+  const failure = "Couldn’t copy the link. Try again from the check actions.";
+  await screen.findByText(failure);
+  await user.click(await open());
+  await waitFor(() => expect(write).toHaveBeenCalledTimes(2));
+  expect(write).toHaveBeenLastCalledWith(
+    "https://github.com/sample/project/actions/runs/1?view=logs#step:2",
+  );
+  const pending = await open();
+  expect(pending).toHaveAttribute("aria-disabled", "true");
+  await user.click(pending);
+  expect(write).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText(failure)).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+  );
+  view.rerender(
+    <GitHubPanel
+      target="https://github.com/sample/project/pull/2"
+      close={() => {}}
+    />,
+  );
+  await screen.findByRole("tab", { name: "Discussion" });
+  await act(async () => finish());
+  expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
+  expect(fetch).toHaveBeenCalledTimes(4);
+});

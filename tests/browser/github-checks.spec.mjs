@@ -4,11 +4,19 @@ import { end, settle } from "./timeline.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
 // Real browser wiring: shared keyboard tabs, retained rendered description and
-// outcome disclosures, plugin navigation/reset. Result matrices stay in Vitest.
+// outcome disclosures, hover/focus menus and narrow reflow, plugin navigation/reset.
+// Clipboard results and source/URL matrices stay in Vitest.
 test("standalone PR checks load on activation, retain disclosures, and reset without changing other objects", async ({
   page,
   app,
 }) => {
+  await page.addInitScript(() => {
+    window.copiedCheckLinks = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (url) => window.copiedCheckLinks.push(url) },
+    });
+  });
   const requests = [];
   const targets = [
     "https://github.com/sample/project/pull/1",
@@ -26,7 +34,9 @@ test("standalone PR checks load on activation, retain disclosures, and reset wit
               total_count: 1,
               check_runs: [
                 {
-                  name: "Unit tests",
+                  name: path.includes("head-sha-long")
+                    ? `Unit tests / ${"long-check-name-".repeat(12)}`
+                    : "Unit tests",
                   status: "completed",
                   conclusion: "success",
                   details_url:
@@ -54,7 +64,9 @@ test("standalone PR checks load on activation, retain disclosures, and reset wit
                     : "Existing issue",
                 body: "Main description\n\n## Details",
                 body_html: "<p>Main description</p><h2>Details</h2>",
-                head: { sha: "head-sha" },
+                head: {
+                  sha: path.endsWith("/2") ? "head-sha-long" : "head-sha",
+                },
                 comments: 2,
               },
       });
@@ -102,6 +114,57 @@ test("standalone PR checks load on activation, retain disclosures, and reset wit
   const checks = panel.getByRole("tabpanel", { name: "Checks", exact: true });
   await expect(checks).toContainText("Some checks were not successful");
   await expect(checks.getByRole("listitem")).toHaveCount(2);
+  const spacing = await panel.locator('[class*="pullTabs"]').evaluate((n) => {
+    const tabs = n.querySelector('[role="tablist"]').getBoundingClientRect();
+    const previous = n.previousElementSibling.getBoundingClientRect();
+    const card = n.parentElement
+      .querySelector('[class*="checksCard"]')
+      .getBoundingClientRect();
+    return {
+      before: tabs.top - previous.bottom,
+      after: card.top - tabs.bottom,
+    };
+  });
+  expect(spacing.before).toBe(20);
+  expect(spacing.after).toBe(20);
+  const row = checks.getByRole("listitem").filter({ hasText: "Unit tests" });
+  const actions = row.getByRole("button", { name: "Actions for Unit tests" });
+  const actionSlot = actions.locator("..");
+  const rowLink = row.getByRole("link", { name: "Unit tests", exact: true });
+  await page.mouse.move(0, 0);
+  await expect(actionSlot).toHaveCSS("opacity", "0");
+  const before = await rowLink.boundingBox();
+  await row.hover();
+  await expect(actionSlot).toHaveCSS("opacity", "1");
+  expect(await rowLink.boundingBox()).toEqual(before);
+  await actions.click();
+  const item = page.getByRole("menuitem", { name: "Copy link", exact: true });
+  await expect(item).toBeVisible();
+  await expect(page.getByRole("menu")).toHaveAttribute("data-size", "default");
+  await page.mouse.move(0, 0);
+  await expect(actionSlot).toHaveCSS("opacity", "1");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(actions).toBeFocused();
+  await expect(actionSlot).toHaveCSS("opacity", "1");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("ArrowDown");
+  await expect(item).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Link copied", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.copiedCheckLinks)).toEqual([
+    "https://github.com/sample/project/actions/runs/1",
+  ]);
+  await page.getByRole("button", { name: "Dismiss notification" }).click();
+  await expect(
+    checks.getByRole("button", { name: "1 successful check", exact: true }),
+  ).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    checks.getByRole("button", { name: "Actions for Build" }),
+  ).toHaveCount(0);
+
+  // A long unbroken name plus 200% interface text must leave the menu reachable.
+  // Change the fixture response on the next PR rather than mutating rendered content.
   const successful = checks.getByRole("button", {
     name: "1 successful check",
     exact: true,
@@ -132,6 +195,51 @@ test("standalone PR checks load on activation, retain disclosures, and reset wit
   await checksTab.click();
   await expect(checks.getByRole("listitem")).toHaveCount(2);
   await expect(successful).toHaveAttribute("aria-expanded", "true");
+  await page.evaluate(() => {
+    localStorage.setItem("buzz-font-scale.v1", "2");
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "buzz-font-scale.v1",
+        storageArea: localStorage,
+      }),
+    );
+  });
+  await page.setViewportSize({ width: 480, height: 950 });
+  const longRow = checks
+    .getByRole("listitem")
+    .filter({ hasText: "long-check-name-" });
+  const longAction = longRow.getByRole("button", {
+    name: /^Actions for Unit tests/,
+  });
+  await longAction.scrollIntoViewIfNeeded();
+  await longAction.focus();
+  await expect(longAction.locator("..")).toHaveCSS("opacity", "1");
+  const bounds = await longRow.boundingBox();
+  const buttonBounds = await longAction.boundingBox();
+  expect(buttonBounds.x).toBeGreaterThanOrEqual(bounds.x);
+  expect(buttonBounds.x + buttonBounds.width).toBeLessThanOrEqual(
+    bounds.x + bounds.width + 1,
+  );
+  expect(
+    await longRow.evaluate((n) => n.scrollWidth - n.clientWidth),
+  ).toBeLessThanOrEqual(1);
+  await page.keyboard.press("Enter");
+  await expect(item).toBeVisible();
+  const menuBounds = await page.getByRole("menu").boundingBox();
+  expect(menuBounds.x).toBeGreaterThanOrEqual(0);
+  expect(menuBounds.x + menuBounds.width).toBeLessThanOrEqual(480);
+  await page.keyboard.press("Escape");
+  await expect(longAction).toBeFocused();
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await page.evaluate(() => {
+    localStorage.setItem("buzz-font-scale.v1", "1");
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "buzz-font-scale.v1",
+        storageArea: localStorage,
+      }),
+    );
+  });
   await link(targets[2]).click();
   await expect(
     panel.getByRole("heading", { name: "Existing issue", exact: true }),

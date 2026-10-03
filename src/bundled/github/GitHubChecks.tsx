@@ -1,14 +1,25 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CheckCircleIcon,
   CheckIcon,
   CircleDashedIcon,
+  DotsThreeIcon,
+  LinkIcon,
   WarningCircleIcon,
   XCircleIcon,
 } from "../../shared/design-system/icons/index";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+  MenuIcon,
+} from "../../shared/design-system/ui/Menu";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import {
   loadGitHubChecks,
   unavailableChecks,
@@ -50,6 +61,62 @@ const groups: { category: CheckDetail["category"]; label: string }[] = [
   { category: "neutral", label: "neutral" },
   { category: "successful", label: "successful" },
 ];
+
+function CheckActions({ url, name }: { url: string; name: string }) {
+  const [open, setOpen] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const busy = useRef(false);
+  const [notice, setNotice] = useState<{ text: string; error: boolean }>();
+  async function copy() {
+    if (busy.current) return;
+    busy.current = true;
+    setCopying(true);
+    setNotice(undefined);
+    try {
+      await navigator.clipboard.writeText(url);
+      setNotice({ text: "Link copied", error: false });
+    } catch {
+      setNotice({
+        text: "Couldn’t copy the link. Try again from the check actions.",
+        error: true,
+      });
+    } finally {
+      busy.current = false;
+      setCopying(false);
+    }
+  }
+  return (
+    <div className={styles.checkActions} data-menu-open={open || undefined}>
+      <MenuRoot open={open} onOpenChange={setOpen}>
+        <MenuTrigger
+          render={
+            <IconButton
+              aria-label={`Actions for ${name}`}
+              size="xs"
+              icon={<DotsThreeIcon />}
+            />
+          }
+        />
+        <MenuPopup align="end">
+          <MenuItem disabled={copying} onClick={() => void copy()}>
+            <MenuIcon>
+              <LinkIcon />
+            </MenuIcon>
+            Copy link
+          </MenuItem>
+        </MenuPopup>
+      </MenuRoot>
+      {notice && (
+        <ToastNotice
+          title={notice.text}
+          tone={notice.error ? "error" : "success"}
+          timeout={notice.error ? 0 : 4000}
+          onDismiss={() => setNotice(undefined)}
+        />
+      )}
+    </div>
+  );
+}
 
 export function GitHubChecks({
   repository,
@@ -195,6 +262,9 @@ export function GitHubChecks({
                             </p>
                           )}
                         </div>
+                        {check.url && (
+                          <CheckActions url={check.url} name={check.name} />
+                        )}
                       </li>
                     );
                   })}

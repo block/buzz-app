@@ -159,23 +159,25 @@ function PullContent({
   const [checksOpened, setChecksOpened] = useState(false);
   return (
     <>
-      <Tabs
-        variant="panel"
-        label="Pull request content"
-        value={tab}
-        items={[
-          {
-            value: "discussion",
-            label: "Discussion",
-            panelId: `${id}-discussion`,
-          },
-          { value: "checks", label: "Checks", panelId: `${id}-checks` },
-        ]}
-        onValueChange={(next) => {
-          setTab(next);
-          if (next === "checks") setChecksOpened(true);
-        }}
-      />
+      <div className={styles.pullTabs}>
+        <Tabs
+          variant="panel"
+          label="Pull request content"
+          value={tab}
+          items={[
+            {
+              value: "discussion",
+              label: "Discussion",
+              panelId: `${id}-discussion`,
+            },
+            { value: "checks", label: "Checks", panelId: `${id}-checks` },
+          ]}
+          onValueChange={(next) => {
+            setTab(next);
+            if (next === "checks") setChecksOpened(true);
+          }}
+        />
+      </div>
       {/* Retain loaded content and disclosures across tab switches, but mount checks only on demand. */}
       <div
         role="tabpanel"
@@ -200,7 +202,6 @@ function PullContent({
         hidden={tab !== "checks"}
         // biome-ignore lint/a11y/noNoninteractiveTabindex: tab panels are keyboard destinations linked by the shared tabs.
         tabIndex={0}
-        className={styles.checksPanel}
       >
         {checksOpened && (
           <GitHubChecks

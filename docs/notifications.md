@@ -55,10 +55,10 @@ checks, not that an OS banner was displayed or read.
   focus/reconnect and invalidation re-query that selector; only a resolved
   notification category is admitted. A proven irrelevant reply is dropped.
   The app-global binding starts the shared bounded unread observation even without Channels mounted.
-  Remote-capable hosts wait for the initial marker merge (bounded observation or
-  complete snapshot); local-only hosts wait only for local storage. Failed or
-  cancelled observation does not release alerts. Visibility is checked after UI
-  presentation, without publishing read intent.
+  Supported hosts wait for a ready relay-backed sidebar snapshot and a resolved
+  message context. Loading, failed or incomplete observation does not release
+  alerts; unsupported hosts cannot supply an authoritative notification category.
+  Visibility is checked after UI presentation, without publishing read intent.
 - Channel Mute/Unmute uses the session's confirmed, encrypted `channel-mutes`
   preference, independently of whether Channels is mounted. Muted channels suppress
   DM and participating-thread alerts; explicit mentions still pass the channel-mute

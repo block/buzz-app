@@ -284,7 +284,7 @@ compatible relay before enabling this client contract. The write body cap is
 
 ## Relay-authoritative Inbox surface
 
-See [Inbox](inbox.md) for the narrowed exported contract; no Inbox UI ships here.
+See [Inbox](inbox.md) for the bundled Inbox page and its narrowed exported contract.
 Candidates reuse the verified session cache plus finite addressed feed, not the
 former dedicated unread history/participation repair. Only current context
 `unread` verdicts with direct/mention/conversation reason admit rows; manual

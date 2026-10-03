@@ -46,7 +46,6 @@ import {
   SessionColumn,
   SessionHeading,
 } from "../../features/sessions/SessionPresentation";
-import { UnreadOptions } from "./UnreadBadge";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import {
   useCallback,
@@ -1362,7 +1361,6 @@ function ChannelWorkspace({
       details={queries.channelDetails}
       close={closeSettings}
     >
-      <UnreadOptions session={queries} channelId={current?.id} />
       <LiveStatus
         live={queries.live}
         channelId={current?.id}

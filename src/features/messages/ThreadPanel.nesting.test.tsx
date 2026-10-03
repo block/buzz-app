@@ -78,7 +78,7 @@ function row(id: string, replyParentId?: string): ChannelMessage {
     replyCount: 0,
   };
 }
-function setup(messageId = "root") {
+function setup(messageId = "root", unread?: RelaySession["unread"]) {
   let snapshot: ThreadSnapshot = {
     root: row("root"),
     replies: [
@@ -108,13 +108,12 @@ function setup(messageId = "root") {
     agentChoices: createAgentLibrary(undefined).queries,
     messages: { retry: () => {} },
     media: () => undefined,
-    unread: {
-      subscribe: () => () => {},
+    unread: unread ?? {
       snapshot: () => undefined,
       attention: () => ({ unread: false }),
     },
   } as unknown as RelaySession;
-  render(
+  const mounted = render(
     <ThreadPanel
       session={session}
       scope="test"
@@ -126,6 +125,7 @@ function setup(messageId = "root") {
     />,
   );
   return {
+    unmount: mounted.unmount,
     setRoot(root: ChannelMessage | undefined) {
       act(() => {
         snapshot = { ...snapshot, root };
@@ -348,6 +348,18 @@ for (const startsWithChild of [false, true])
         screen.getByRole("button", { name: "View 1 reply" }),
       ).toBeVisible();
   });
+
+it("keeps branch totals without deriving unread counts", () => {
+  const attention = vi.fn(() => ({ status: "unread", unread: true }));
+  const unread = {
+    attention,
+  } as unknown as RelaySession["unread"];
+  const h = setup("root", unread);
+  expect(screen.getByRole("button", { name: "View 2 replies" })).toBeVisible();
+  expect(attention).not.toHaveBeenCalled();
+  h.update([row("parent", "root"), row("replacement", "parent")]);
+  expect(screen.getByRole("button", { name: "View 1 reply" })).toBeVisible();
+});
 
 it("starts a nested branch with an author header even when the author matches its parent", () => {
   setup();

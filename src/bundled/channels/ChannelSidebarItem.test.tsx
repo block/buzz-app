@@ -25,16 +25,15 @@ function owner(profiles = new Map<string, Profile>()) {
   const listeners = new Set<() => void>();
   let snapshot: UnreadSnapshot = {
     target: { kind: "channel", channelId: "alpha" },
-    observedCount: 0,
-    attentionCount: 0,
-    coverage: "observed",
+    unread: { status: "exact", value: 0 },
+    attention: { status: "exact", value: 0 },
     freshness: "observed",
     manual: "none",
   };
   const activity = {
     channelId: "alpha",
     items: [],
-    coverage: "observed",
+    complete: true,
     freshness: "observed",
   };
   const session = {
@@ -78,7 +77,11 @@ function owner(profiles = new Map<string, Profile>()) {
     profiles,
     listeners,
     unread(count: number, attentionCount = 0) {
-      snapshot = { ...snapshot, observedCount: count, attentionCount };
+      snapshot = {
+        ...snapshot,
+        unread: { status: "exact", value: count },
+        attention: { status: "exact", value: attentionCount },
+      };
       for (const listener of listeners) listener();
     },
   };
@@ -318,7 +321,7 @@ it("keeps live unread updates and uses replacement session callbacks across row 
   view.rerender(<ChannelSidebarItem {...props} />);
   act(() => first.unread(2));
   expect(
-    screen.getByRole("img", { name: /2 observed unread/ }),
+    screen.getByRole("img", { name: /2 unread messages/ }),
   ).toBeInTheDocument();
   await user.click(row);
   expect(onSelect).toHaveBeenCalledWith("alpha");
@@ -340,11 +343,11 @@ it("keeps live unread updates and uses replacement session callbacks across row 
   ).toBeInTheDocument();
   expect(first.listeners.size).toBe(0);
   expect(
-    screen.queryByRole("img", { name: /observed unread/ }),
+    screen.queryByRole("img", { name: /unread messages/ }),
   ).not.toBeInTheDocument();
   act(() => second.unread(3));
   expect(
-    screen.getByRole("img", { name: /3 observed unread/ }),
+    screen.getByRole("img", { name: /3 unread messages/ }),
   ).toBeInTheDocument();
   await user.click(activeRow);
   expect(replacement).toHaveBeenCalledWith("alpha");

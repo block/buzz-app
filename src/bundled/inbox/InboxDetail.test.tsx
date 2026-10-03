@@ -24,15 +24,14 @@ import {
   roster,
   signed,
 } from "../../features/relay/testing";
-
 import {
-  readJournal,
-  type ReadJournal,
-} from "../../features/relay/read-state-storage";
-// @ts-expect-error Node host codec, with disposable test identities only.
-import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+  sidebarFixture,
+  sidebarRow,
+} from "../../features/relay/sidebar-testing";
 
 composerDOMFixture();
+// The sidebar API validates channel ids as UUIDs before any write.
+const ROOM = "00000000-0000-4000-8000-000000000001";
 const scrollDescriptor = Object.getOwnPropertyDescriptor(
   HTMLElement.prototype,
   "scrollIntoView",
@@ -115,7 +114,7 @@ async function fixture() {
     relay = keypair();
   const root = message(
     alice,
-    "room",
+    ROOM,
     "Selected addressed body\n\nhttps://fixture.test/video.mp4",
     20,
     [
@@ -124,11 +123,24 @@ async function fixture() {
     ],
   );
   const events = [
-    roster(relay, "room", [viewer.pubkey, alice.pubkey], 10),
-    metadata(relay, "room", "Room", 10),
+    roster(relay, ROOM, [viewer.pubkey, alice.pubkey], 10),
+    metadata(relay, ROOM, "Room", 10),
     root,
   ];
-  let journal: ReadJournal | undefined;
+  // The relay's verdict admits the addressed root; its read intents are the evidence.
+  const bff = sidebarFixture();
+  bff.rows.set(
+    ROOM,
+    sidebarRow(ROOM, {
+      name: "Room",
+      attention: { status: "exact", value: 1 },
+    }),
+  );
+  bff.messages.set(root.id, {
+    message_id: root.id,
+    status: "unread",
+    reason: "mention",
+  });
   let live!: LiveCallbacks;
   let auxiliary:
     | {
@@ -160,13 +172,7 @@ async function fixture() {
         );
       },
       media: (url) => url,
-      readState: {
-        decode: async (records) => decodeReadState(records, viewer.secret),
-        sign: async (intent) => signReadState(intent, viewer.secret),
-        publish: async (event) => {
-          events.push(event);
-        },
-      },
+      sidebarApi: bff.api,
       writer: {
         kinds: [9],
         sign: async (template) => signed(viewer, template),
@@ -179,14 +185,7 @@ async function fixture() {
     },
     {
       outboxStorage: { load: () => [], save: () => {} },
-      readStateStorage: {
-        async update(change) {
-          journal = readJournal(change(journal), viewer.pubkey);
-          return journal;
-        },
-        close() {},
-      },
-      readPublisherLock: async (_signal, work) => work(),
+      sidebarStorage: bff.storage,
     },
   );
   owners.push(owner);
@@ -196,6 +195,11 @@ async function fixture() {
   await waitFor(() =>
     expect(owner.session.channels.list().status).toBe("ready"),
   );
+  // Hold Inbox demand like the page does; owner disposal releases it.
+  owner.session.unread.subscribeInbox(() => {});
+  await waitFor(() =>
+    expect(owner.session.unread.inbox().items).toHaveLength(1),
+  );
   const item = owner.session.unread.inbox().items[0];
   if (!item) throw new Error("Missing addressed conversation");
   return {
@@ -203,14 +207,21 @@ async function fixture() {
     live,
     root,
     item,
-    journal: () => journal,
+    bff,
+    /** Read intents the relay received, in order. */
+    writes: () => bff.api.write.mock.calls.flatMap(([intents]) => intents),
+    /** Read intents committed locally: still pending, or already sent. */
+    intents: () => [
+      ...bff.api.write.mock.calls.flatMap(([intents]) => intents),
+      ...bff.journal().pending.map((entry) => entry.intent),
+    ],
     scope: { viewer: viewer.pubkey, communityOrigin: "https://relay.test" },
     hold(fail = false) {
       auxiliary = { gate: deferred(), started: deferred(), fail };
       return auxiliary;
     },
     revoke() {
-      const removed = roster(relay, "room", [alice.pubkey], 100);
+      const removed = roster(relay, ROOM, [alice.pubkey], 100);
       events[0] = removed;
       live.receive([removed]);
     },
@@ -238,7 +249,7 @@ function Visit({ h }: { h: Awaited<ReturnType<typeof fixture>> }) {
         <InboxDetail
           key={visit}
           item={h.item}
-          target={{ channelId: "room", messageId: h.root.id }}
+          target={{ channelId: ROOM, messageId: h.root.id }}
           session={h.session}
           scope={h.scope}
           navigator={navigator}
@@ -425,16 +436,15 @@ it("withholds first-incomplete admission and retires an admitted reader on actua
   }
 });
 
-it("does not earn read dwell while a retained reader is hidden", async () => {
+it("does not earn read dwell while a retained reader is hidden; shown, dwell reads the channel through the mention, covering older top-level unread", async () => {
   const h = await fixture();
   const { reader, row } = await opened(h);
   const sender = screen.getByRole("combobox", { name: "Sender" });
   act(() => sender.focus()); // Cancel the opening dwell before controlling time.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   act(() => (row as HTMLElement).focus());
-  const before = h.journal()?.state.frontiers;
   expect(h.session.unread.sync().capability).toBe("frontier-sync");
-  expect(before).toEqual({});
+  expect(h.intents()).toEqual([]);
   const gate = h.hold();
   let work!: Promise<void>;
   try {
@@ -447,7 +457,7 @@ it("does not earn read dwell while a retained reader is hidden", async () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
-    expect(h.journal()?.state.frontiers).toEqual(before);
+    expect(h.intents()).toEqual([]);
     await act(async () => {
       gate.gate.resolve();
       await work;
@@ -459,7 +469,13 @@ it("does not earn read dwell while a retained reader is hidden", async () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
-    expect(h.journal()?.state.frontiers[`msg:${h.root.id}`]).toBe(20);
+    expect(h.intents()).toEqual([
+      {
+        type: "mark_through",
+        target: { channel_id: ROOM },
+        message_id: h.root.id,
+      },
+    ]);
   } finally {
     gate.gate.resolve();
   }

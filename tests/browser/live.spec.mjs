@@ -1,5 +1,5 @@
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import {
   open,
   settle,
@@ -58,11 +58,13 @@ async function retryAfterCooldown(page, app, sent) {
 }
 async function ready(page, app) {
   await open(page, app);
-  await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+  await expect.poll(() => app.relay.hasRoute("primary", ids.alpha)).toBe(true);
   // The first head may already start after stream establishment; a duplicate
   // initial read is not required. Recovery below has its own positive gap control.
-  await expect.poll(() => heads(app, "alpha").length).toBeGreaterThanOrEqual(1);
-  await expect.poll(() => app.relay.hasRoute("primary", "beta")).toBe(true);
+  await expect
+    .poll(() => heads(app, ids.alpha).length)
+    .toBeGreaterThanOrEqual(1);
+  await expect.poll(() => app.relay.hasRoute("primary", ids.beta)).toBe(true);
   await expect(retry(page)).toHaveCount(0);
   await settle(page);
 }
@@ -89,7 +91,11 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
     };
   });
   await ready(page, app);
-  const live = app.append("primary", "alpha", "Policy-realistic live delivery");
+  const live = app.append(
+    "primary",
+    ids.alpha,
+    "Policy-realistic live delivery",
+  );
   await expect(
     history(page).locator(`[data-message-id="${live.id}"]`),
   ).toBeInViewport();
@@ -125,14 +131,14 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
   const globalRequests = app.relay.requests.filter(({ filters }) =>
     filters.every((filter) => !filter["#h"]),
   ).length;
-  app.relay.failRoute("primary", "alpha");
+  app.relay.failRoute("primary", ids.alpha);
   const missed = app.append(
     "primary",
-    "alpha",
+    ids.alpha,
     "Delivered by authoritative catch-up",
     false,
   );
-  app.relay.quotaNextHead("alpha", 2);
+  app.relay.quotaNextHead(ids.alpha, 2);
   // A sidebar preview may reach the shared broker before the selected head.
   // It must not consume the failure injected specifically for head catch-up.
   const previewStatus = await page.evaluate(async () => {
@@ -144,7 +150,7 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
       },
       body: JSON.stringify([
         {
-          "#h": ["alpha", "beta"],
+          "#h": [ids.alpha, ids.beta],
           include_aux: true,
           kinds: [40002, 9],
           limit: 500,
@@ -162,10 +168,10 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
       .getByRole("dialog", { name: "Live updates need attention", exact: true })
       .filter({ hasText: "rate-limited" }),
   ).toBeVisible();
-  const calls = heads(app, "alpha").length;
+  const calls = heads(app, ids.alpha).length;
   await retry(page).click();
   await retry(page).click();
-  expect(heads(app, "alpha")).toHaveLength(calls);
+  expect(heads(app, ids.alpha)).toHaveLength(calls);
   expect(app.relay.sockets).toHaveLength(socketCount);
   expect(
     app.relay.requests.filter(({ filters }) =>
@@ -173,9 +179,13 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
     ),
   ).toHaveLength(globalRequests);
   await expectAnchor(page, reading);
-  await retryAfterCooldown(page, app, () => heads(app, "alpha").length > calls);
+  await retryAfterCooldown(
+    page,
+    app,
+    () => heads(app, ids.alpha).length > calls,
+  );
   await expect(retry(page)).toHaveCount(0);
-  await expect.poll(() => heads(app, "alpha").length).toBe(calls + 1);
+  await expect.poll(() => heads(app, ids.alpha).length).toBe(calls + 1);
   await settle(page);
   await expectAnchor(page, reading);
   await expect(
@@ -185,7 +195,7 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
   await expect(
     history(page).locator(`[data-message-id="${missed.id}"]`),
   ).toBeInViewport();
-  const after = app.append("primary", "alpha", "Live delivery still active");
+  const after = app.append("primary", ids.alpha, "Live delivery still active");
   await expect(
     history(page).locator(`[data-message-id="${after.id}"]`),
   ).toBeInViewport();
@@ -208,15 +218,15 @@ test("post-reconnect finite catch-up keeps paged history, cursor and reading pos
   await settle(page);
   await expectAnchor(page, before);
   const reading = await upper(page);
-  const calls = heads(app, "alpha").length;
+  const calls = heads(app, ids.alpha).length;
   app.relay.disconnect("primary");
   const missed = app.append(
     "primary",
-    "alpha",
+    ids.alpha,
     "Reconnect gap repaired",
     false,
   );
-  await expect.poll(() => heads(app, "alpha").length).toBeGreaterThan(calls);
+  await expect.poll(() => heads(app, ids.alpha).length).toBeGreaterThan(calls);
   await expect(retry(page)).toHaveCount(0);
   await settle(page);
   await expectAnchor(page, reading);

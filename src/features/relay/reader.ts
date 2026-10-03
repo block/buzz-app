@@ -16,7 +16,6 @@ export type ReadOptions = {
 };
 /** Finite, verified event reads. No retained event cache or claim of live freshness. */
 export type RelayReader = {
-  readStateSnapshot?(options?: ReadOptions): Promise<readonly RelayEvent[]>;
   read(
     filters: readonly ReadFilter[],
     options?: ReadOptions,
@@ -37,7 +36,6 @@ type Job = {
   consumers: Set<Consumer>;
   timer: ReturnType<typeof setTimeout>;
   running: boolean;
-  snapshot: boolean;
 };
 const cancelled = () => new DOMException("Relay read cancelled", "AbortError");
 
@@ -140,21 +138,12 @@ export function createRelayReader(
       job.fetched = profiling.start("read.fetch", job.id);
       // Catch synchronous adapter failures as well as rejected promises.
       try {
-        if (job.snapshot && !transport.readStateSnapshot)
-          throw new Error("Read-state snapshots unavailable");
-        const query =
-          job.snapshot && transport.readStateSnapshot
-            ? transport.readStateSnapshot(
-                job.controller.signal,
-                job.id,
-                job.priority,
-              )
-            : transport.query(
-                job.filters,
-                job.controller.signal,
-                job.id,
-                job.priority,
-              );
+        const query = transport.query(
+          job.filters,
+          job.controller.signal,
+          job.id,
+          job.priority,
+        );
         void query
           .then(async (events) => {
             if (byteSize(events) > 8 * 1024 * 1024)
@@ -180,7 +169,6 @@ export function createRelayReader(
   function read(
     filters: readonly ReadFilter[],
     { signal, priority = "foreground", fresh = false }: ReadOptions = {},
-    snapshot = false,
   ) {
     if (closed || signal?.aborted) return Promise.reject(cancelled());
     if (!transport)
@@ -236,13 +224,6 @@ export function createRelayReader(
       return Promise.reject(error);
     }
     const requestFilters = JSON.parse(key);
-    if (snapshot) {
-      if (!transport.readStateSnapshot)
-        return Promise.reject(
-          new Error("Complete read-state snapshots unsupported"),
-        );
-      key = `read-state-snapshot:${key}`;
-    }
     if (fresh) key = `${key}:fresh:${++sequence}`;
     let job = jobs.get(key);
     if (!job) {
@@ -260,7 +241,6 @@ export function createRelayReader(
         controller: new AbortController(),
         consumers: new Set(),
         running: false,
-        snapshot,
         timer: setTimeout(
           () =>
             finish(
@@ -297,15 +277,7 @@ export function createRelayReader(
       pump();
     });
   }
-  const reader: RelayReader = Object.freeze({
-    read,
-    readStateSnapshot: (options?: ReadOptions) =>
-      read(
-        [{ kinds: [30078], authors: [transport?.viewer ?? ""], limit: 500 }],
-        options,
-        true,
-      ),
-  });
+  const reader: RelayReader = Object.freeze({ read });
   return {
     reader,
     /** Promote existing queued work without creating a consumer or a new deadline. */

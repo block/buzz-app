@@ -26,8 +26,7 @@ function setup({
   focused = true,
   settled = true,
   strict = false,
-  latestMessageId = undefined as string | undefined,
-  rootId = undefined as string | undefined,
+  displayed = true,
   focus = "element" as "element" | "composer" | "parent" | "outside" | "header",
 } = {}) {
   vi.useFakeTimers();
@@ -49,9 +48,9 @@ function setup({
   panel.append(header, element);
   document.body.append(panel, composer, parent, outside);
   ({ element, composer, parent, outside, header })[focus].focus();
-  vi.spyOn(element, "getClientRects").mockReturnValue([
-    new DOMRect(0, 0, 500, 500),
-  ] as unknown as DOMRectList);
+  vi.spyOn(element, "getClientRects").mockReturnValue(
+    (displayed ? [new DOMRect(0, 0, 500, 500)] : []) as unknown as DOMRectList,
+  );
   vi.spyOn(element, "getBoundingClientRect").mockReturnValue(
     new DOMRect(0, 0, 500, 500),
   );
@@ -84,7 +83,6 @@ function setup({
   const leases: {
     view: ReturnType<typeof vi.fn>;
     observe: ReturnType<typeof vi.fn>;
-    catchUp: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
   }[] = [];
   let observe = async () => {};
@@ -92,7 +90,6 @@ function setup({
     const lease = {
       view: vi.fn(),
       observe: vi.fn(() => observe()),
-      catchUp: vi.fn(async () => {}),
       dispose: vi.fn(),
     };
     leases.push(lease);
@@ -110,8 +107,6 @@ function setup({
       channelId: "room",
       scroller,
       settled: position,
-      latestMessageId,
-      rootId,
     },
     reactStrictMode: strict,
     wrapper: ({ children }: { children: ReactNode }) =>
@@ -151,8 +146,6 @@ function setup({
         channelId,
         scroller,
         settled: position,
-        latestMessageId,
-        rootId,
       }),
     unmount: view.unmount,
   };
@@ -267,6 +260,24 @@ it("focus moving from the list to its composer keeps reading; another surface's 
   h.composer.focus();
   vi.advanceTimersByTime(300);
   expect(h.leases.at(-1)?.observe).toHaveBeenCalledExactlyOnceWith(["next"]);
+});
+it("selecting a channel from the sidebar reads nothing until the timeline itself has focus", () => {
+  const h = setup({ focus: "outside" });
+  vi.advanceTimersByTime(1000);
+  h.retarget("next-room");
+  vi.advanceTimersByTime(1000);
+  expect(h.reading).not.toHaveBeenCalled();
+  // Positive arm: the same fully visible rows are read once focus arrives.
+  act(() => h.element.focus());
+  h.element.dispatchEvent(new Event("focusin"));
+  vi.advanceTimersByTime(300);
+  expect(h.leases.at(-1)?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+});
+it("a mounted timeline that is not displayed never reads, even with focus", () => {
+  const h = setup({ displayed: false });
+  h.element.dispatchEvent(new Event("scroll"));
+  vi.advanceTimersByTime(1000);
+  expect(h.reading).not.toHaveBeenCalled();
 });
 it("captures the cancellable lease before dwell and disposes it on hidden/unmount", () => {
   const h = setup();
@@ -406,35 +417,6 @@ function elementEvents(element: HTMLElement) {
   for (const name of ["scroll", "pointerdown", "keydown", "focusin"])
     element.dispatchEvent(new Event(name, { bubbles: true }));
 }
-
-it("bottom dwell catches up through the newest row, including a tall clipped row", async () => {
-  const h = setup({ latestMessageId: "bottom", rootId: "thread" });
-  h.setRows([row("bottom", -200, 500)]);
-  h.mutation();
-  await vi.advanceTimersByTimeAsync(299);
-  expect(h.leases.at(-1)?.catchUp).not.toHaveBeenCalled();
-  await vi.advanceTimersByTimeAsync(1);
-  expect(h.leases.at(-1)?.catchUp).toHaveBeenCalledExactlyOnceWith(
-    "bottom",
-    "thread",
-  );
-});
-it("a historical viewport or a bottom reached only at dwell end cannot catch up", async () => {
-  const h = setup({ latestMessageId: "visible" });
-  vi.spyOn(h.element, "scrollHeight", "get").mockReturnValue(1000);
-  vi.spyOn(h.element, "clientHeight", "get").mockReturnValue(500);
-  h.mutation();
-  await vi.advanceTimersByTimeAsync(299);
-  h.element.scrollTop = 500;
-  await vi.advanceTimersByTimeAsync(1);
-  expect(h.leases.at(-1)?.catchUp).not.toHaveBeenCalled();
-  h.mutation();
-  await vi.advanceTimersByTimeAsync(300);
-  expect(h.leases.at(-1)?.catchUp).toHaveBeenCalledExactlyOnceWith(
-    "visible",
-    undefined,
-  );
-});
 
 it("settled notification starts dwell without changed rows, focus or geometry", () => {
   const h = setup({ focus: "header", settled: false });

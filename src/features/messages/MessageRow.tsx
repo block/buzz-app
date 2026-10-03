@@ -1,3 +1,4 @@
+import { hasUnread } from "../relay/unread";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageLink } from "../conversation/MessageLink";
 import { MessageTimestamp } from "./MessageTimestamp";
@@ -193,11 +194,10 @@ export const MessageRow = memo(function MessageRow({
   const unreadLabel =
     threadUnread?.manual === "local-only"
       ? "Thread marked unread on this device only"
-      : threadUnread?.manual === "remote"
-        ? "Thread marked unread"
-        : (threadUnread?.observedCount ?? 0) > 0
-          ? `Observed unread replies${threadUnread?.freshness === "stale" ? "; may be out of date" : ""}. Not an exact total.`
-          : undefined;
+      : threadUnread &&
+          (threadUnread.unreadVisible ?? hasUnread(threadUnread.unread))
+        ? `${threadUnread.unread.status === "at_least" ? "At least " : ""}${threadUnread.unread.status === "unknown" ? "" : threadUnread.unread.value} unread replies${threadUnread.freshness === "stale" ? "; may be out of date" : ""}`
+        : undefined;
   const workingLabel = threadAgents.length
     ? `${threadAgents
         .map(({ pubkey, name }) => resolveName(pubkey, name))

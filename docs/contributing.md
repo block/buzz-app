@@ -372,6 +372,10 @@ the complete suite still runs with `pnpm test` / `just scan`:
   browsers and Linux libraries without per-job apt provisioning. Follow the
   [CI container guidance](https://playwright.dev/docs/ci#via-containers).
   Update both image references and digests when upgrading `@playwright/test`.
+  The WebKit page-error watcher (`tests/browser/page-errors.mjs`) also reads
+  Playwright's private `frame._eventEmitter` `"navigated"` event
+  (`newDocument.request._object`); if an upgrade changes it, WebKit browser
+  tests fail with a report naming it, and `committedNavigation` must be updated.
   Setup verifies installed Playwright against image metadata and launches the
   selected engine (both for measurements) before tests; it never downloads a
   missing browser. Hermit pins Node/pnpm through explicit `./bin/` entry points

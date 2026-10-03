@@ -288,24 +288,6 @@ function ThreadMessages({
     }
     return branches;
   }, [tree, snapshot.replies]);
-  const subscribeUnread = useCallback(
-    (listener: () => void) =>
-      session.unread.subscribe(
-        { kind: "thread", channelId, rootId: snapshot.root?.id ?? messageId },
-        listener,
-      ),
-    [session.unread, channelId, snapshot.root?.id, messageId],
-  );
-  const unreadSnapshot = useCallback(
-    () =>
-      session.unread.snapshot({
-        kind: "thread",
-        channelId,
-        rootId: snapshot.root?.id ?? messageId,
-      }),
-    [session.unread, channelId, snapshot.root?.id, messageId],
-  );
-  useSyncExternalStore(subscribeUnread, unreadSnapshot, unreadSnapshot);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [replyParent, setReplyParent] = useState<string>();
   const resolveName = useChannelIdentityNames(session, channelId);
@@ -776,12 +758,6 @@ function ThreadMessages({
         children?.length && !expanded.has(row.id) ? undefined : row;
       previousParent = parent;
       const descendants = branchReplies.get(row.id) ?? [];
-      const unreadCount = descendants.filter(
-        (reply) => session.unread.attention(channelId, reply.id).unread,
-      ).length;
-      const unreadLabel = unreadCount
-        ? `${unreadCount} new in available replies`
-        : undefined;
       const message = (
         <MessageRow
           extensions={extensions}
@@ -823,7 +799,7 @@ function ThreadMessages({
             message={message}
             hasReplies={!!children?.length}
             layout={continuation ? "continuation" : "thread"}
-            label={`View ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
+            label={`View ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}`}
             summary={
               <ReplySummary
                 count={descendants.length}
@@ -834,8 +810,6 @@ function ThreadMessages({
                 agentPubkeys={agentPubkeys}
                 resolveName={resolveName}
                 media={session.media}
-                unreadLabel={unreadLabel}
-                unreadCount={unreadCount}
               />
             }
             depth={depth}
@@ -905,18 +879,6 @@ function ThreadMessages({
         channelId={channelId}
         scroller={scroller}
         settled={readingSettled}
-        rootId={snapshot.root?.id}
-        // A visible exact reply can outlive its unavailable root. Until resolved,
-        // observe rows individually; an absent root must not mean channel catch-up.
-        latestMessageId={
-          snapshot.root
-            ? snapshot.replies.reduce<ChannelMessage | undefined>(
-                (latest, row) =>
-                  !latest || row.createdAt > latest.createdAt ? row : latest,
-                undefined,
-              )?.id
-            : undefined
-        }
       />
       <section
         ref={scroller}
@@ -926,19 +888,14 @@ function ThreadMessages({
         aria-busy={positioning}
         data-positioning={positioning || undefined}
         onScroll={(event) => {
-          if (!positioned.current) return;
+          if (!positioned.current || jumpingToLatest.current) return;
           const element = event.currentTarget;
-          if (olderAnchor.current) {
-            const anchor = olderAnchor.current;
-            const row = [
-              ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
-            ].find((row) => row.dataset.messageId === anchor.id);
-            if (row) anchor.top = row.getBoundingClientRect().top;
-          }
+          // While older history is pending, the reader may choose a different
+          // visible reply. Preserve that reply, not the offscreen original anchor.
+          if (olderAnchor.current) captureOlderAnchor(element);
           const bottom =
             element.scrollHeight - element.clientHeight - element.scrollTop <
             80;
-          if (jumpingToLatest.current) return;
           follow.current = bottom;
           setShowJumpToLatest(!bottom);
           if (bottom) setNewMessageCount(0);

@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({ productionBroker: true, savedSidebar: true, sortingSidebar: true });
@@ -120,7 +120,7 @@ test("section sort applies immediately, rolls back on failure, and persists retr
   const recentOrder = await order();
   // The row menu and section sort share one session preference owner. A mute
   // confirmation must not drop Recent, and later sorting must not drop mute.
-  const cedar = channels.locator('[data-channel-id="cedar"]');
+  const cedar = channels.locator(`[data-channel-id="${ids.cedar}"]`);
   await cedar.click({ button: "right" });
   const rowMenu = page.getByRole("menu", { name: "Actions for Cedar" });
   const muted = page.waitForResponse("**/sidebar-mute");
@@ -244,25 +244,22 @@ test("retires Recent failures on A–Z and recovers selected ordering on retry",
   page,
   app,
 }) => {
+  // Recent activity comes from the shared sidebar sync, which runs whatever the
+  // sort. Fail its traversal reads; targeted reads and writes pass through.
+  let failing = true;
   let attempts = 0;
-  let releaseFailure;
-  let failureGate = new Promise((resolve) => {
-    releaseFailure = resolve;
-  });
-  await page.route("**/channel-activity", async (route) => {
+  await page.route("**/sidebar-api", async (route) => {
+    const operation = route.request().postDataJSON();
+    if (!failing || operation.type !== "sidebar" || operation.query.channel_ids)
+      return route.continue();
     attempts++;
-    if (attempts <= 3) {
-      await failureGate;
-      app.report.sidebarActivityFailures ??= [];
-      app.report.sidebarActivityFailures.push(route.request().url());
-      await route.fulfill({
-        status: 502,
-        contentType: "application/json",
-        body: JSON.stringify({ error: "activity read failed" }),
-      });
-      return;
-    }
-    await route.fulfill({ response: await route.fetch() });
+    app.report.sidebarActivityFailures ??= [];
+    app.report.sidebarActivityFailures.push(route.request().url());
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "activity read failed" }),
+    });
   });
   await open(page, app);
   const channels = page.locator('[data-sidebar-section="channels"]');
@@ -270,6 +267,7 @@ test("retires Recent failures on A–Z and recovers selected ordering on retry",
   const order = () =>
     rows.evaluateAll((elements) => elements.map((el) => el.dataset.channelId));
   await expect(rows.first()).toBeVisible();
+  await expect.poll(() => attempts).toBeGreaterThan(0);
   const alphaOrder = await order();
   const menu = page.getByRole("menu", { name: "Sort", exact: true });
   async function openSort() {
@@ -294,53 +292,44 @@ test("retires Recent failures on A–Z and recovers selected ordering on retry",
   }
   const notifications = page.getByRole("region", { name: "App notifications" });
   const warning = notifications.getByText("Couldn’t refresh recent activity");
-  async function failRecent(expectedAttempts) {
-    failureGate = new Promise((resolve) => {
-      releaseFailure = resolve;
-    });
-    await setSort("Recent");
-    await expect.poll(() => attempts).toBe(expectedAttempts);
-    // Settle the save before rejecting history, so its publication cannot
-    // trigger an incidental retry and conceal the explicit recovery boundary.
-    releaseFailure();
-    await expect(warning).toBeVisible();
-  }
-  try {
-    await failRecent(1);
-    await expect(
-      notifications.getByText("Sections sorted by Recent may be out of date."),
-    ).toBeVisible();
-    await setSort("A–Z");
-    await expect(warning).toHaveCount(0);
-    await expect.poll(order).toEqual(alphaOrder);
 
-    await failRecent(2);
-    await notifications
-      .getByRole("button", { name: "Dismiss notification" })
-      .click();
-    await expect(warning).toHaveCount(0);
-    await setSort("A–Z");
-    await failRecent(3);
-    await openSort();
-    await expect(
-      menu.getByRole("menuitemradio", { name: "Recent" }),
-    ).toHaveAttribute("aria-checked", "true");
-    await page.keyboard.press("Escape");
-    await page.keyboard.press("Escape");
-    await notifications.getByRole("button", { name: "Retry" }).click();
-    await expect.poll(() => attempts).toBe(4);
-    await expect(warning).toHaveCount(0);
-    await expect
-      .poll(async () => (await order()).slice(0, 3))
-      .toEqual(["willow", "maple", "cedar"]);
-    await openSort();
-    await expect(
-      menu.getByRole("menuitemradio", { name: "Recent" }),
-    ).toHaveAttribute("aria-checked", "true");
-    expect(app.report.unexpected).toEqual([]);
-  } finally {
-    releaseFailure();
-  }
+  await setSort("Recent");
+  await expect(warning).toBeVisible();
+  await expect(
+    notifications.getByText("Sections sorted by Recent may be out of date."),
+  ).toBeVisible();
+  // The sync is still failing: A–Z retires the Recent-specific warning only.
+  await setSort("A–Z");
+  await expect(warning).toHaveCount(0);
+  await expect.poll(order).toEqual(alphaOrder);
+  await setSort("Recent");
+  await expect(warning).toBeVisible();
+
+  // Dismissal holds for the same failure, across sort changes.
+  await notifications
+    .getByRole("button", { name: "Dismiss notification" })
+    .click();
+  await expect(warning).toHaveCount(0);
+  await setSort("A–Z");
+  await setSort("Recent");
+  await expect(warning).toHaveCount(0);
+  // A fresh failed sync (window focus refreshes) reports again.
+  const beforeFocus = attempts;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => attempts).toBeGreaterThan(beforeFocus);
+  await expect(warning).toBeVisible();
+
+  failing = false;
+  await notifications.getByRole("button", { name: "Retry" }).click();
+  await expect(warning).toHaveCount(0);
+  await expect
+    .poll(async () => (await order()).slice(0, 3))
+    .toEqual([ids.willow, ids.maple, ids.cedar]);
+  await openSort();
+  await expect(
+    menu.getByRole("menuitemradio", { name: "Recent" }),
+  ).toHaveAttribute("aria-checked", "true");
+  expect(app.report.unexpected).toEqual([]);
 });
 
 // Cold-start paint is a composition contract: real saved sort, activity response,
@@ -380,7 +369,13 @@ test.describe("cold sidebar presentation", () => {
       await preferences;
       await route.fulfill({ response });
     });
-    await page.route("**/channel-activity", async (route) => {
+    // Recent order waits on the shared sidebar sync's first traversal page.
+    let gated = false;
+    await page.route("**/sidebar-api", async (route) => {
+      const operation = route.request().postDataJSON();
+      if (gated || operation.type !== "sidebar" || operation.query.channel_ids)
+        return route.continue();
+      gated = true;
       const response = await route.fetch();
       activityStarted();
       await activity;
@@ -415,10 +410,10 @@ test.describe("cold sidebar presentation", () => {
         await rows.evaluateAll((elements) =>
           elements.slice(0, 3).map((el) => el.dataset.channelId),
         ),
-      ).toEqual(["willow", "maple", "cedar"]);
+      ).toEqual([ids.willow, ids.maple, ids.cedar]);
       await expect(
         sidebar.locator(
-          '[data-sidebar-section="group:work"] [data-channel-id="beta"]',
+          `[data-sidebar-section="group:work"] [data-channel-id="${ids.beta}"]`,
         ),
       ).toBeVisible();
       await expect(sidebar.getByRole("status")).toHaveCount(0);
@@ -431,7 +426,7 @@ test.describe("cold sidebar presentation", () => {
       releaseActivity();
       // Remove the gates before resumed timers can start a fresh intercepted read.
       await page.unroute("**/sidebar-preferences");
-      await page.unroute("**/channel-activity");
+      await page.unroute("**/sidebar-api");
       await page.clock.resume();
     }
   });
@@ -517,13 +512,15 @@ test.describe("sorting with lifecycle visibility", () => {
       name: "Subscribed channels",
     });
     const channels = sidebar.locator('[data-sidebar-section="channels"]');
-    const ids = () =>
+    const rowIds = () =>
       channels
         .locator("[data-channel-id]")
         .evaluateAll((rows) => rows.map((row) => row.dataset.channelId));
     const archivedId = "11111111-1111-4111-8111-111111111111";
     const hiddenId = "22222222-2222-4222-8222-222222222222";
-    await expect.poll(ids).toEqual(["willow", "maple", "cedar", archivedId]);
+    await expect
+      .poll(rowIds)
+      .toEqual([ids.willow, ids.maple, ids.cedar, archivedId]);
     const channel = channels.locator(`[data-channel-id="${archivedId}"]`);
     await channel.click();
     const composer = page.getByRole("textbox", {
@@ -543,7 +540,7 @@ test.describe("sorting with lifecycle visibility", () => {
       .getByRole("button", { name: "Archive channel", exact: true })
       .click();
     await expect(archive).toHaveCount(0);
-    await expect.poll(ids).toEqual(["willow", "maple", "cedar"]);
+    await expect.poll(rowIds).toEqual([ids.willow, ids.maple, ids.cedar]);
     // Archive removes the sidebar row, not the selected conversation.
     await expect(page).toHaveURL(conversationUrl);
     await expect(composer).toBeVisible();
@@ -560,9 +557,9 @@ test.describe("sorting with lifecycle visibility", () => {
       .click();
     await expect(hide).toHaveCount(0);
     await expect(dm).toHaveCount(0);
-    await expect.poll(ids).toEqual(["willow", "maple", "cedar"]);
+    await expect.poll(rowIds).toEqual([ids.willow, ids.maple, ids.cedar]);
     await page.reload();
-    await expect.poll(ids).toEqual(["willow", "maple", "cedar"]);
+    await expect.poll(rowIds).toEqual([ids.willow, ids.maple, ids.cedar]);
     await expect(page).toHaveURL(conversationUrl);
     await expect(composer).toBeVisible();
     await expect(composer).toBeDisabled();

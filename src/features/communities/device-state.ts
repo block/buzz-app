@@ -2,7 +2,7 @@ import { forgetChannelSetups } from "../channel-templates/setup";
 import { forgetQuickReactions } from "../messages/quick-reactions";
 import { purgeOutboxStorage } from "../relay/outbox-storage";
 import { createHeadPersistence } from "../relay/persistence";
-import { purgeReadStateStorage } from "../relay/read-state-storage";
+import { purgeSidebarStorage } from "../relay/sidebar-journal";
 import { clearViewScope } from "../../shared/view-state";
 
 /** One piece of a left community's device state that could not be cleared. */
@@ -55,7 +55,7 @@ export async function purgeCommunityDeviceState(
       heads.close();
     }
   });
-  await attempt("read state", () => purgeReadStateStorage(scope));
+  await attempt("read state", () => purgeSidebarStorage(scope));
   await attempt("outbox", () => purgeOutboxStorage(scope));
   return failures;
 }

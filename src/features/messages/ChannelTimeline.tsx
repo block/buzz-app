@@ -373,7 +373,6 @@ function Timeline({
     channelId,
     scroller,
     settled,
-    latestMessageId: window.rows.filter((row) => !row.membership).at(-1)?.id,
   });
   const prepend =
     !!edges.current.first &&

@@ -1,5 +1,5 @@
 import { openPage, pageChoices } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 test.use({ pluginFixtures: true, historyCounts: { alpha: 1, beta: 0 } });
 
@@ -96,7 +96,7 @@ test("Messages default resolution returns opened to cold and warm callers withou
     });
     expect(result.result, mode).toEqual({ status: "opened" });
     expect(result.resolved.id, mode).toBe(result.visit);
-    expect(result.resolved.target.channelId, mode).toBe("alpha");
+    expect(result.resolved.target.channelId, mode).toBe(ids.alpha);
     await expect(
       page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
     ).toBeVisible();

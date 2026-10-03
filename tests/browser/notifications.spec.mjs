@@ -1,5 +1,6 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { end, open, settle } from "./timeline.mjs";
+import { readJournal } from "./reading.mjs";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 
 test.use({
@@ -63,7 +64,7 @@ async function ready(page, app) {
           session.live
             .snapshot()
             .routes.some(
-              (r) => r.channelId === "beta" && r.status === "live",
+              (r) => r.channelId === ids.beta && r.status === "live",
             ) && session.unread.sync().completeness === "snapshot"
         );
       }),
@@ -82,34 +83,88 @@ function liveMessage(
       content,
       created_at: Math.floor(Date.now() / 1000) - age,
       tags: [
-        ["h", "beta"],
+        ["h", ids.beta],
         ...(mentioned ? [["p", app.viewer]] : []),
         ...(replyTo ? [["e", replyTo, "", "reply"]] : []),
       ],
     },
     generateSecretKey(),
   );
-  app.histories.get("primary/beta").push(event);
+  app.histories.get(`primary/${ids.beta}`).push(event);
   app.relay.publish("primary", event);
   return event;
 }
 
-async function observed(page, id) {
+// Verified live receipt, recorded from the session's incoming stream. Install
+// before publishing; the stream is ordered, so a fresh receipt also proves that
+// every earlier row on it (including replays) was consumed.
+async function recordIncoming(page) {
+  await page.evaluate(() => {
+    window.incomingIds = [];
+    window.fixtureRelay
+      .snapshot()
+      .session.subscribeIncoming((batch) =>
+        window.incomingIds.push(...batch.map((item) => item.messageId)),
+      );
+  });
+}
+const received = (page, id) =>
+  expect
+    .poll(() => page.evaluate((id) => window.incomingIds.includes(id), id))
+    .toBe(true);
+// Attention is a pure selector over retained relay evidence; it answers only
+// while some consumer holds the message's context. Production notification
+// retention is proven by the OS-count journeys that take no lease here. This
+// helper is for rows production intentionally stops retaining (disabled
+// category, viewed, retired): the test owns one lease after verified receipt
+// and must dispose it.
+async function owned(page, id, expected) {
+  await received(page, id);
+  await page.evaluate((id) => {
+    window.testLeases ??= new Map();
+    window.testLeases.set(
+      id,
+      window.fixtureRelay
+        .snapshot()
+        .session.unread.subscribe(
+          { kind: "message", channelId: ids.beta, messageId: id },
+          () => {},
+        ),
+    );
+  }, id);
   await expect
     .poll(() =>
       page.evaluate(
         (id) =>
-          window.fixtureRelay.snapshot().session.unread.attention("beta", id)
+          window.fixtureRelay.snapshot().session.unread.attention(ids.beta, id)
+            .status,
+        id,
+      ),
+    )
+    .toBe(expected);
+  return () =>
+    page.evaluate((id) => {
+      window.testLeases.get(id)?.();
+      window.testLeases.delete(id);
+    }, id);
+}
+// Relay attention for a row production itself retains, such as a candidate
+// held for browser permission. Taking no lease keeps retention under test.
+async function retained(page, id) {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (id) =>
+          window.fixtureRelay.snapshot().session.unread.attention(ids.beta, id)
             .status,
         id,
       ),
     )
     .toBe("eligible");
-  // Fresh attention is installed in the same synchronous receive turn as
-  // notification admission. Run the actual presentation deadline and its
-  // immediate browser-permission continuation, rather than sleeping on wall time.
-  await page.clock.runFor(100);
 }
+// Run the presentation deadline and its immediate browser-permission
+// continuation, rather than sleeping on wall time.
+const presentation = (page) => page.clock.runFor(100);
 
 test("real live traffic alerts once; replay/reload stay quiet and choices persist", async ({
   page,
@@ -117,31 +172,24 @@ test("real live traffic alerts once; replay/reload stay quiet and choices persis
 }) => {
   await page.clock.install();
   await ready(page, app);
+  await recordIncoming(page);
   expect(await systemCount(page)).toBe(0);
   const row = liveMessage(app, "Fresh mention");
   await expect.poll(() => systemCount(page)).toBe(1);
   app.relay.publish("primary", row);
-  // The replay already has attention, so that alone is not a receive barrier.
   // A later fresh row on the same ordered stream proves replay consumption.
   const sentinel = liveMessage(app, "Replay consumption sentinel", {
     mentioned: false,
   });
-  await expect
-    .poll(() =>
-      page.evaluate(
-        (id) =>
-          window.fixtureRelay.snapshot().session.unread.attention("beta", id)
-            .status,
-        sentinel.id,
-      ),
-    )
-    .toBe("ineligible");
-  await page.clock.runFor(100);
+  await received(page, sentinel.id);
+  await presentation(page);
   expect(await systemCount(page)).toBe(1);
   await page.getByRole("switch", { name: "Mentions", exact: true }).uncheck();
   const muted = liveMessage(app, "Muted mention");
-  await observed(page, muted.id);
+  const releaseMuted = await owned(page, muted.id, "eligible");
+  await presentation(page);
   expect(await systemCount(page)).toBe(1);
+  await releaseMuted();
   await page.reload();
   await settings(page);
   await expect(
@@ -160,6 +208,7 @@ test("explicit Allow releases the first fresh alert; master off preserves catego
 }) => {
   await page.clock.install();
   await ready(page, app);
+  await recordIncoming(page);
   await page.evaluate(() => {
     window.Notification.permission = "default";
   });
@@ -167,7 +216,8 @@ test("explicit Allow releases the first fresh alert; master off preserves catego
     .getByRole("button", { name: "Check permission", exact: true })
     .click();
   const row = liveMessage(app, "Permission wait");
-  await observed(page, row.id);
+  await retained(page, row.id);
+  await presentation(page);
   expect(await systemCount(page)).toBe(0);
   expect(await page.evaluate(() => window.notificationRequests)).toBe(0);
   await page
@@ -185,8 +235,10 @@ test("explicit Allow releases the first fresh alert; master off preserves catego
     page.getByRole("switch", { name: "Mentions", exact: true }),
   ).not.toBeChecked();
   const muted = liveMessage(app, "Disabled category");
-  await observed(page, muted.id);
+  const releaseMuted = await owned(page, muted.id, "eligible");
+  await presentation(page);
   expect(await systemCount(page)).toBe(1);
+  await releaseMuted();
 });
 
 test("a fully visible incoming row stays quiet without publishing read intent", async ({
@@ -198,20 +250,21 @@ test("a fully visible incoming row stays quiet without publishing read intent", 
       kind: 9,
       content: "Following row",
       created_at: Math.floor(Date.now() / 1000) + 20,
-      tags: [["h", "beta"]],
+      tags: [["h", ids.beta]],
     },
     generateSecretKey(),
   );
   // Keep both rows wholly inside the viewport. A long virtualized history can
   // leave its last row fractionally clipped in WebKit, which is not "viewing".
-  app.histories.set("primary/beta", [following]);
+  app.histories.set(`primary/${ids.beta}`, [following]);
   await ready(page, app);
+  await recordIncoming(page);
   await page.evaluate(
     (viewer) =>
       window.fixtureNavigation.open({
         version: 1,
         kind: "conversation",
-        channelId: "beta",
+        channelId: ids.beta,
         scope: { viewer, communityOrigin: "https://primary.example" },
       }),
     app.viewer,
@@ -229,31 +282,36 @@ test("a fully visible incoming row stays quiet without publishing read intent", 
     .poll(() =>
       page.evaluate(
         (id) =>
-          window.fixtureRelay.snapshot().session.unread.attention("beta", id)
+          window.fixtureRelay.snapshot().session.unread.attention(ids.beta, id)
             .viewing,
         following.id,
       ),
     )
     .toBe(true);
   // Controlled policy/dwell ordering, not evidence about native frame scheduling.
-  // Exact-row navigation and reflow journeys below retain native rAF.
+  // The exact-row journeys below control reveal frames, then resume native rAF
+  // for their dwell and reflow checks.
   const base = Date.now();
   await page.clock.install({ time: base });
   await page.clock.pauseAt(base + 30_000);
-  const row = liveMessage(app, "Visible mention");
-  await observed(page, row.id);
+  // Live rows are newer than anything already read. `following` is dated
+  // +20 s and dwell may mark through it first, so date the mention after it.
+  const row = liveMessage(app, "Visible mention", { age: -21 });
+  const releaseVisible = await owned(page, row.id, "eligible");
+  await presentation(page);
   expect(await systemCount(page)).toBe(0);
   expect(
     await page.evaluate(
       (id) =>
-        window.fixtureRelay.snapshot().session.unread.attention("beta", id)
+        window.fixtureRelay.snapshot().session.unread.attention(ids.beta, id)
           .unread,
       row.id,
     ),
   ).toBe(true);
+  await releaseVisible();
   await page.clock.resume();
   // The paused clock also owned requestAnimationFrame, so the frames that
-  // re-pin the bottom after an append only ran inside observed()'s runFor.
+  // re-pin the bottom after an append only ran inside presentation()'s runFor.
   // Check the row's full visibility on the running clock, while it is mounted.
   await expect(history.locator(`[data-message-id="${row.id}"]`)).toBeInViewport(
     { ratio: 1 },
@@ -267,14 +325,14 @@ test("a fully visible incoming row stays quiet without publishing read intent", 
       window.fixtureNavigation.open({
         version: 1,
         kind: "conversation",
-        channelId: "beta",
+        channelId: ids.beta,
         scope: { viewer, communityOrigin: "https://primary.example" },
       }),
     app.viewer,
   );
   await settle(page);
   await history.focus();
-  liveMessage(app, "Allowed visible mention");
+  liveMessage(app, "Allowed visible mention", { age: -22 });
   await expect.poll(() => systemCount(page)).toBe(1);
 });
 
@@ -286,28 +344,19 @@ for (const kind of ["mention", "thread reply"]) {
     // Only this geometry scenario needs an overflowing Beta history.
     if (kind === "mention") {
       for (let i = 0; i < 20; i++) {
-        app.append("primary", "beta", `Earlier message ${i}`, false, false);
+        app.append("primary", ids.beta, `Earlier message ${i}`, false, false);
       }
     }
     // Model a real prior contribution in relay history, not a client-side
     // participation/readiness override. The incoming reply itself has no p tag.
     const root =
       kind === "thread reply"
-        ? app.append("primary", "beta", "My prior thread", false)
+        ? app.append("primary", ids.beta, "My prior thread", false)
         : undefined;
     await ready(page, app);
-    if (root)
-      await expect
-        .poll(() =>
-          page.evaluate(
-            (id) =>
-              window.fixtureRelay
-                .snapshot()
-                .session.unread.attention("beta", id).status,
-            root.id,
-          ),
-        )
-        .toBe("ineligible"); // Own root is verified evidence, never an alert.
+    // The relay derives participation from the own root; the client holds no
+    // root evidence before this. The root itself must never alert.
+    expect(await systemCount(page)).toBe(0);
     const incoming = liveMessage(app, `Selected **${kind}**`, {
       mentioned: !root,
       replyTo: root?.id,
@@ -319,10 +368,19 @@ for (const kind of ["mention", "thread reply"]) {
     expect(await page.evaluate(() => window.notificationEvents[0].title)).toBe(
       `${incoming.pubkey.slice(0, 10)} ${root ? "replied" : "mentioned you"} in #Beta`,
     );
-    const before = app.report.readPublications.length;
-    const start = performance.now();
+    // A slow assertion can outlive the 300 ms reading dwell after reveal.
+    // Control that boundary, not wall-clock time spent polling from the runner.
+    await page.clock.pauseAt(new Date());
+    const before = app.report.readWrites.length;
     await page.evaluate(() => window.notificationEvents[0].onclick());
-    expect(app.report.readPublications.length).toBe(before);
+    expect(app.report.readWrites.length).toBe(before);
+    await expect
+      .poll(async () => {
+        // Exact reveal needs animation frames; stop advancing as soon as opened.
+        await page.clock.runFor(16);
+        return page.evaluate(() => window.fixtureNavigation.snapshot().status);
+      })
+      .toBe("opened");
     const surface = page.getByRole("region", {
       name: root ? "Thread messages" : "Channel message history",
       exact: true,
@@ -333,16 +391,8 @@ for (const kind of ["mention", "thread reply"]) {
     await expect(row.locator("strong").filter({ hasText: kind })).toHaveText(
       kind,
     );
-    await expect
-      .poll(() =>
-        page.evaluate(() => window.fixtureNavigation.snapshot().status),
-      )
-      .toBe("opened");
-    app.report.measurements.push({
-      mode: `live ${kind} click to exact conversation row`,
-      clickToOpenedMs: performance.now() - start,
-    });
-    expect(app.report.readPublications.length).toBe(before);
+    expect((await readJournal(page)).pending).toEqual([]);
+    expect(app.report.readWrites.length).toBe(before);
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();
@@ -364,15 +414,18 @@ for (const kind of ["mention", "thread reply"]) {
         app.report.queries.filter((q) => q.filter.depth_limit),
       ).toHaveLength(0);
     }
+    // Ordinary dwell and the later fractional reflow use the running clock.
+    await page.clock.resume();
     await expect
-      .poll(() => app.report.readPublications.length)
+      .poll(() => app.report.readWrites.length)
       .toBeGreaterThan(before);
     await expect
       .poll(() =>
         page.evaluate(
           (id) =>
-            window.fixtureRelay.snapshot().session.unread.attention("beta", id)
-              .unread,
+            window.fixtureRelay
+              .snapshot()
+              .session.unread.attention(ids.beta, id).unread,
           incoming.id,
         ),
       )

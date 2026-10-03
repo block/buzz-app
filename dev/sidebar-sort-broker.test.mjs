@@ -17,7 +17,6 @@ async function harness() {
     viewer = getPublicKey(key);
   let handler, queryFailure, publicationFailure;
   let conflict = false;
-  let activityEvents = [];
   const heads = new Map(),
     calls = [];
   const server = createServer((req, res) => {
@@ -52,7 +51,6 @@ async function harness() {
         return Response.json({ accepted: true, event_id: body.id });
       }
       if (queryFailure) return queryFailure;
-      if (body[0]["#h"]) return Response.json(activityEvents);
       const head = heads.get(body[0]["#d"][0]);
       return Response.json(head ? [head] : []);
     },
@@ -75,9 +73,6 @@ async function harness() {
   return {
     key,
     viewer,
-    setActivity(events) {
-      activityEvents = events;
-    },
     transport,
     calls,
     heads,
@@ -166,36 +161,6 @@ it.each(["query", "oversized", "publication", "receipt", "conflict"])(
       );
   },
 );
-
-it("activity uses the purpose-bound 128-channel broker route without widening generic query admission", async () => {
-  const h = await harness();
-  const ids = Array.from({ length: 128 }, (_, i) => `room-${i}`);
-  expect(
-    await h.transport.channelActivity(ids, new AbortController().signal),
-  ).toEqual([]);
-  const filters = h.calls[0].body;
-  expect(filters).toEqual(
-    ids.map((id) => ({
-      kinds: [9, 40002, 40008, 45001, 45003],
-      "#h": [id],
-      limit: 1,
-    })),
-  );
-  const before = h.calls.length;
-  for (const [route, body] of [
-    ["query", filters],
-    ["channel-activity", [...filters, filters[0]]],
-    ["channel-activity", [{ ...filters[0], limit: 2 }]],
-    ["channel-activity", [{ ...filters[0], kinds: [0] }]],
-    ["channel-activity", [{ ...filters[0], authors: [h.viewer] }]],
-  ])
-    expect((await h.post(body, undefined, route)).status).toBe(400);
-  expect(h.calls).toHaveLength(before);
-  h.setActivity([{ kind: 9, content: "unsigned" }]);
-  await expect(
-    h.transport.channelActivity(["room-0"], new AbortController().signal),
-  ).rejects.toThrow();
-});
 
 it("refuses invalid sort intent, excessive bodies and foreign origins before upstream access", async () => {
   const h = await harness();

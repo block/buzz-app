@@ -1,5 +1,5 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids, labelOf, uuid } from "./fixture.mjs";
 import { open, edge, settle } from "./timeline.mjs";
 
 // These journeys cover real document boot, IndexedDB reload, React session
@@ -41,7 +41,7 @@ test("reload restores the selected conversation/groups before handshake and upda
   page,
   app,
 }) => {
-  const beta = app.histories.get("primary/beta");
+  const beta = app.histories.get(`primary/${ids.beta}`);
   const last = beta.at(-1);
   beta[beta.length - 1] = app.sign({
     kind: 9,
@@ -75,7 +75,7 @@ test("reload restores the selected conversation/groups before handshake and upda
   await composer.fill("Keep this draft");
   await expect
     .poll(async () =>
-      (await cached(page)).heads.some((h) => h.channelId === "beta"),
+      (await cached(page)).heads.some((h) => h.channelId === ids.beta),
     )
     .toBe(true);
   await expect
@@ -156,8 +156,8 @@ test("reload restores the selected conversation/groups before handshake and upda
     });
     expect(frames.length).toBeGreaterThan(0);
     expect(frames.every(Boolean)).toBe(true);
-    await expect.poll(() => app.relay.hasRoute("primary", "beta")).toBe(true);
-    const live = app.append("primary", "beta", "Live after cached promotion");
+    await expect.poll(() => app.relay.hasRoute("primary", ids.beta)).toBe(true);
+    const live = app.append("primary", ids.beta, "Live after cached promotion");
     await expect(
       history.locator(`[data-message-id="${live.id}"]`),
     ).toBeVisible();
@@ -167,14 +167,14 @@ test("reload restores the selected conversation/groups before handshake and upda
     await settle(page);
     const olderReads = () =>
       app.report.queries.filter(
-        ({ filter }) => filter["#h"]?.includes("beta") && filter.before_id,
+        ({ filter }) => filter["#h"]?.includes(ids.beta) && filter.before_id,
       );
     const beforeOlder = olderReads().length;
     await edge(page, -1);
     await expect.poll(() => olderReads().length).toBeGreaterThan(beforeOlder);
     await expect.poll(() => app.pending.length).toBe(1);
     const older = app.pending.shift();
-    expect(older.channel).toBe("beta");
+    expect(older.channel).toBe(ids.beta);
     expect(
       older.events.some((event) =>
         event.content.startsWith("primary beta message 1\n"),
@@ -192,7 +192,7 @@ test("reload restores the selected conversation/groups before handshake and upda
     // A missed live event is learned only by the current session's explicit refresh.
     const missed = app.append(
       "primary",
-      "beta",
+      ids.beta,
       "Fetched by successor refresh",
       false,
     );
@@ -223,7 +223,7 @@ test("fresh roster omission removes cached conversation and its next-launch reco
   await open(page, app);
   await expect
     .poll(async () =>
-      (await cached(page)).heads.some((h) => h.channelId === "alpha"),
+      (await cached(page)).heads.some((h) => h.channelId === ids.alpha),
     )
     .toBe(true);
   const gate = held();
@@ -239,9 +239,11 @@ test("fresh roster omission removes cached conversation and its next-launch reco
     await expect(
       page.getByRole("region", { name: "Channel message history" }),
     ).toContainText("primary alpha message 0");
-    app.omitChannel("alpha");
+    app.omitChannel(ids.alpha);
     gate.release();
-    await expect(page.locator('[data-channel-id="alpha"]')).toHaveCount(0);
+    await expect(page.locator(`[data-channel-id="${ids.alpha}"]`)).toHaveCount(
+      0,
+    );
     await expect(
       page.getByText("primary alpha message 0", { exact: false }),
     ).toHaveCount(0);
@@ -249,11 +251,11 @@ test("fresh roster omission removes cached conversation and its next-launch reco
       .poll(async () => {
         const { heads, startup } = await cached(page);
         return (
-          heads.every((head) => head.channelId !== "alpha") &&
+          heads.every((head) => head.channelId !== ids.alpha) &&
           startup.every(
             (row) =>
               !(row.data.discovery?.events ?? []).some((event) =>
-                event.tags.some(([key, id]) => key === "d" && id === "alpha"),
+                event.tags.some(([key, id]) => key === "d" && id === ids.alpha),
               ),
           )
         );
@@ -271,7 +273,7 @@ test("offline reload remains readable and recovers in place on the browser onlin
   await open(page, app);
   await expect
     .poll(async () =>
-      (await cached(page)).heads.some((h) => h.channelId === "alpha"),
+      (await cached(page)).heads.some((h) => h.channelId === ids.alpha),
     )
     .toBe(true);
   await page.route("**/api/relay/*/session", async (route) => {
@@ -365,7 +367,7 @@ test("launch waits for the initial sidebar and message history before revealing 
   app,
 }) => {
   await page.clock.install();
-  app.relay.holdUnread();
+  app.relay.sidebarApi.hold();
   const head = held();
   let requested = false;
   await page.route("**/api/relay/**/query", async (route) => {
@@ -373,7 +375,7 @@ test("launch waits for the initial sidebar and message history before revealing 
       route
         .request()
         .postDataJSON()
-        .some((filter) => filter.top_level && filter["#h"]?.includes("alpha"))
+        .some((filter) => filter.top_level && filter["#h"]?.includes(ids.alpha))
     ) {
       requested = true;
       await head.promise;
@@ -397,7 +399,7 @@ test("launch waits for the initial sidebar and message history before revealing 
     await page.clock.runFor(1900);
     await expect(launch).toBeVisible();
 
-    app.relay.releaseUnread();
+    app.relay.sidebarApi.release();
     await expect.poll(() => requested).toBe(true);
     await expect(
       page.locator('[aria-label="Channel sidebar"][data-buzz-launch-pending]'),
@@ -425,7 +427,7 @@ test("launch waits for the initial sidebar and message history before revealing 
       "aria-hidden",
     );
   } finally {
-    app.relay.releaseUnread();
+    app.relay.sidebarApi.release();
     head.release();
   }
 });
@@ -437,7 +439,7 @@ test("cached workspace remains usable when live reconnect stalls", async ({
   await open(page, app);
   await expect
     .poll(async () =>
-      (await cached(page)).heads.some((head) => head.channelId === "alpha"),
+      (await cached(page)).heads.some((head) => head.channelId === ids.alpha),
     )
     .toBe(true);
   const connection = held();
@@ -523,12 +525,12 @@ test.describe("personal sidebar startup", () => {
 
 test.describe("populated device cache", () => {
   const channels = [
-    "alpha",
-    ...Array.from({ length: 63 }, (_, i) => `saved-${i}`),
+    ids.alpha,
+    ...Array.from({ length: 63 }, (_, i) => uuid(0x1000 + i)),
   ];
   test.use({
     channelIds: channels,
-    historyCounts: Object.fromEntries(channels.map((id) => [id, 20])),
+    historyCounts: Object.fromEntries(channels.map((id) => [labelOf(id), 20])),
   });
   test("selected conversation paints with 64 saved heads while handshake is held", async ({
     page,
@@ -749,7 +751,7 @@ test.describe("pending startup navigation", () => {
                 row.data.discovery.events = row.data.discovery.events.filter(
                   (event) =>
                     !event.tags.some(
-                      ([key, value]) => key === "d" && value === "beta",
+                      ([key, value]) => key === "d" && value === ids.beta,
                     ),
                 );
                 store.put(row);
@@ -782,7 +784,7 @@ test.describe("pending startup navigation", () => {
           .open({
             version: 1,
             kind: "conversation",
-            channelId: "beta",
+            channelId: ids.beta,
             scope: { viewer, communityOrigin: "https://primary.example" },
           })
           .then((result) => {

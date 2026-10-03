@@ -25,10 +25,13 @@ import type { RelaySnapshot, RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { ReadFilter, RelayEvent } from "../../features/relay/events";
 import { matchesEvent } from "../../features/relay/projection";
+import { threadBinding } from "../../features/relay/thread-window";
 import {
-  readJournal,
-  type ReadJournal,
-} from "../../features/relay/read-state-storage";
+  sidebarAccount,
+  sidebarFixture,
+  sidebarRow,
+} from "../../features/relay/sidebar-testing";
+import type { MessageReadState } from "../../features/relay/sidebar-api";
 import {
   bounds,
   keypair,
@@ -38,12 +41,13 @@ import {
   roster,
   signed,
 } from "../../features/relay/testing";
-// @ts-expect-error Node host codec, with disposable test identities only.
-import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
 
 vi.mock("./ChannelPreview", { spy: true });
 vi.mock("../../features/messages/ThreadPanel", { spy: true });
 
+// The sidebar API validates channel ids as UUIDs before any write.
+const ROOM = "00000000-0000-4000-8000-000000000001";
+const DM_ROOM = "00000000-0000-4000-8000-000000000002";
 const owners: ReturnType<typeof createRelaySession>[] = [];
 composerDOMFixture();
 beforeEach(() => localStorage.clear());
@@ -135,37 +139,153 @@ function fixture(
         .slice(0, filter.limit);
     return result.slice(0, filter.limit);
   };
-  let journal: ReadJournal | undefined;
+  const bff = sidebarFixture();
+  const origin = "https://relay.test";
   let saveFailure = false;
   let failThreadSave = false;
   let hold: Promise<void> | undefined;
   let saveStarted = false;
   let emit: (events: readonly RelayEvent[]) => void = () => {};
-  const roots = [message(viewer, "room", "Our discussion", 20)];
-  const mention = message(alice, "room", "Please review **this**", 21, [
+  const roots = [message(viewer, ROOM, "Our discussion", 20)];
+  const mention = message(alice, ROOM, "Please review **this**", 21, [
     ["p", viewer.pubkey],
   ]);
-  const reply = message(alice, "room", "A thread update", 22, [
+  const reply = message(alice, ROOM, "A thread update", 22, [
     ["e", roots[0]?.id ?? "", "", "reply"],
   ]);
   const events = [
-    roster(relayKey, "room", [viewer.pubkey, alice.pubkey], 10),
-    metadata(relayKey, "room", "Design", 10, [["t", "stream"]]),
+    roster(relayKey, ROOM, [viewer.pubkey, alice.pubkey], 10),
+    metadata(relayKey, ROOM, "Design", 10, [["t", "stream"]]),
     profile(alice, { name: "Alice" }),
     ...roots,
     mention,
     reply,
     ...(options.withDm
       ? [
-          roster(relayKey, "dm-room", [viewer.pubkey, alice.pubkey], 10),
-          metadata(relayKey, "dm-room", "Direct message", 10, [
+          roster(relayKey, DM_ROOM, [viewer.pubkey, alice.pubkey], 10),
+          metadata(relayKey, DM_ROOM, "Direct message", 10, [
             ["t", "dm"],
             ["hidden"],
           ]),
-          message(alice, "dm-room", "A direct reply", 23),
+          message(alice, DM_ROOM, "A direct reply", 23),
         ]
       : []),
   ];
+  // Relay verdict oracle: admission and reads are the relay's answer, not a
+  // client fold. Explicit `bff.messages` entries override it per message.
+  const attention = { status: "exact", value: 1 } as const;
+  const read = new Set<string>();
+  const channelOf = (event: RelayEvent) =>
+    event.tags.find(([key]) => key === "h")?.[1] ?? "";
+  const rootOf = (event: RelayEvent) =>
+    event.tags.find(
+      ([key, , , marker]) => key === "e" && marker === "root",
+    )?.[1] ??
+    event.tags.find(
+      ([key, , , marker]) => key === "e" && marker === "reply",
+    )?.[1];
+  const isDm = (channel: string) =>
+    events.some(
+      (event) =>
+        event.kind === 39000 &&
+        event.tags.some(([key, value]) => key === "d" && value === channel) &&
+        event.tags.some(([key, value]) => key === "t" && value === "dm"),
+    );
+  const verdict = (id: string): MessageReadState => {
+    const explicit = bff.messages.get(id);
+    if (explicit) return explicit;
+    const event = events.find((candidate) => candidate.id === id);
+    if (!event) return { message_id: id, status: "unknown" };
+    if (read.has(id)) return { message_id: id, status: "read" };
+    if (event.pubkey === viewer.pubkey)
+      return { message_id: id, status: "not_counted" };
+    const root = rootOf(event);
+    const reason = isDm(channelOf(event))
+      ? "direct"
+      : event.tags.some(
+            ([key, value]) => key === "p" && value === viewer.pubkey,
+          )
+        ? "mention"
+        : root &&
+            events.some(
+              (candidate) =>
+                candidate.id === root && candidate.pubkey === viewer.pubkey,
+            )
+          ? "conversation"
+          : null;
+    return reason
+      ? { message_id: id, status: "unread", reason }
+      : { message_id: id, status: "not_counted" };
+  };
+  const latest = (channel: string) => {
+    const newest = events
+      .filter(
+        (event) =>
+          bff.api.eligibleKinds.includes(event.kind) &&
+          channelOf(event) === channel,
+      )
+      .sort((a, b) => b.created_at - a.created_at || (b.id < a.id ? -1 : 1))[0];
+    return newest
+      ? { latest_message_id: newest.id, latest_message_at: newest.created_at }
+      : {};
+  };
+  bff.api.contexts.mockImplementation(async (queries) => ({
+    account: sidebarAccount,
+    contexts: queries.map((query) => ({
+      status: "available" as const,
+      through_timestamp: null,
+      messages: query.message_ids.map(verdict),
+    })),
+  }));
+  bff.api.sidebar.mockImplementation(async (query) => ({
+    account: sidebarAccount,
+    channels: [
+      ...new Set(
+        events
+          .filter((event) => event.kind === 39002)
+          .flatMap((event) =>
+            event.tags.filter(([key]) => key === "d").map(([, value]) => value),
+          ),
+      ),
+    ]
+      .filter(
+        (id): id is string =>
+          !!id && (!("channel_ids" in query) || query.channel_ids.includes(id)),
+      )
+      .map(
+        (id) =>
+          bff.rows.get(id) ??
+          sidebarRow(id, {
+            channel_type: isDm(id) ? "dm" : "stream",
+            attention,
+            ...latest(id),
+          }),
+      ),
+    next_cursor: null,
+  }));
+  bff.api.write.mockImplementation(async (intents) =>
+    intents.map((intent) => {
+      const through = events.find((event) => event.id === intent.message_id);
+      if (!through) return { status: "invalid" as const };
+      const channel =
+        intent.type === "mark_through"
+          ? intent.target.channel_id
+          : intent.channel_id;
+      const root =
+        intent.type === "mark_through" ? intent.target.root_id : undefined;
+      for (const event of events)
+        if (
+          event.kind === 9 &&
+          channelOf(event) === channel &&
+          (intent.type === "mark_channel_read" ||
+            (root ? rootOf(event) === root : !rootOf(event))) &&
+          (event.created_at < through.created_at ||
+            (event.created_at === through.created_at && event.id <= through.id))
+        )
+          read.add(event.id);
+      return { status: "applied" as const };
+    }),
+  );
   const owner = createRelaySession(
     {
       viewer: viewer.pubkey,
@@ -187,8 +307,31 @@ function fixture(
               throw new Error("history offline");
           }
         }
-        return filters.flatMap(answer);
+        // UUID channels take the strict thread window (thread-window.ts:14),
+        // which needs one relay-signed 39007 bound per filter.
+        const windows = await Promise.all(
+          filters
+            .filter((filter) => filter.thread_window)
+            .map(async (filter) =>
+              signed(relayKey, {
+                kind: 39007,
+                tags: [
+                  ["d", await threadBinding(filter, origin, viewer.pubkey)],
+                  ["h", filter["#h"]?.[0] ?? ""],
+                  ["e", filter["#e"]?.[0] ?? ""],
+                ],
+                content: JSON.stringify({
+                  version: 1,
+                  direction: "older",
+                  has_more: false,
+                  next_cursor: null,
+                }),
+              }),
+            ),
+        );
+        return [...filters.flatMap(answer), ...windows];
       },
+      scope: origin,
       media: () => undefined,
       ...(options.upload ? { uploadAttachment: options.upload } : {}),
       ...(options.withWriter
@@ -209,20 +352,11 @@ function fixture(
         emit = callbacks.receive;
         return { update() {}, retry() {}, dispose() {} };
       },
-      readState: {
-        decode: async (records: readonly RelayEvent[]) =>
-          decodeReadState(records, viewer.secret),
-        sign: async (
-          intent: import("../../features/relay/read-state-host").ReadStateSigning,
-        ) => signReadState(intent, viewer.secret),
-        publish: async (event: RelayEvent) => {
-          events.push(event);
-        },
-      },
+      sidebarApi: bff.api,
     },
     {
       outboxStorage: { load: () => [], save: () => {} },
-      readStateStorage: {
+      sidebarStorage: {
         async update(change) {
           if (hold) {
             saveStarted = true;
@@ -234,31 +368,31 @@ function fixture(
             saveFailure = false;
             throw new Error("disk full");
           }
-          const next = readJournal(change(journal), viewer.pubkey);
+          const current = bff.journal();
+          const next = change(current);
           if (
             failThreadSave &&
-            Object.keys(next.state.frontiers).some(
-              (key) =>
-                key.startsWith("thread:") &&
-                next.state.frontiers[key] !== journal?.state.frontiers[key],
+            next.pending.some(
+              ({ id, intent }) =>
+                intent.type === "mark_through" &&
+                intent.target.root_id &&
+                !current.pending.some((p) => p.id === id),
             )
           ) {
             failThreadSave = false;
             throw new Error("thread disk full");
           }
-          journal = next;
-          return journal;
+          return bff.storage.update(() => next);
         },
         close() {},
       },
-      readPublisherLock: async (_signal, work) => work(),
     },
   );
   owners.push(owner);
   emit(events);
   const scope = {
     viewer: viewer.pubkey,
-    communityOrigin: "https://relay.test",
+    communityOrigin: origin,
   };
   const observedSession = owner.session;
   let connection: RelaySnapshot = {
@@ -318,7 +452,7 @@ function fixture(
       const deletion = signed(viewer, {
         kind: 5,
         tags: [
-          ["h", "room"],
+          ["h", ROOM],
           ["e", root.id],
         ],
         content: "",
@@ -364,7 +498,11 @@ function fixture(
     mention,
     reply,
     open,
-    journal: () => journal,
+    /** Every read intent sent to the relay or queued for it. */
+    readIntents: () => [
+      ...bff.api.write.mock.calls.flatMap(([intents]) => intents),
+      ...bff.journal().pending.map(({ intent }) => intent),
+    ],
     view: (
       <StrictMode>
         <InboxPage
@@ -374,12 +512,12 @@ function fixture(
       </StrictMode>
     ),
     revokeRoom() {
-      emit([roster(relayKey, "room", [alice.pubkey], 100)]);
+      emit([roster(relayKey, ROOM, [alice.pubkey], 100)]);
     },
     restoreRoom() {
       const restored = roster(
         relayKey,
-        "room",
+        ROOM,
         [viewer.pubkey, alice.pubkey],
         101,
       );
@@ -387,7 +525,7 @@ function fixture(
       emit([restored, mention, reply, ...roots]);
     },
     renameRoom() {
-      const renamed = metadata(relayKey, "room", "Renamed", 99, [
+      const renamed = metadata(relayKey, ROOM, "Renamed", 99, [
         ["t", "stream"],
       ]);
       events.push(renamed);
@@ -428,7 +566,7 @@ async function chooseFilter(label: string, control = "Activity type") {
 it("Drafts shares the composer storage, gates origin navigation on current membership, and deletes only after consent", async () => {
   const h = fixture({ withWriter: true });
   const root = h.mention.id;
-  const key = `draft:room:thread:${root}`;
+  const key = `draft:${ROOM}:thread:${root}`;
   const saved = {
     text: "Draft reply @Alice",
     recipients: [
@@ -436,7 +574,7 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
     ],
   };
   writeView(h.owner.session.scope, key, saved);
-  writeView("other-scope", "draft:room", "Private other viewer draft");
+  writeView("other-scope", `draft:${ROOM}`, "Private other viewer draft");
   render(h.view);
   await screen.findByText("Please review this");
   await chooseFilter("Threads");
@@ -493,7 +631,7 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
       version: 1,
       kind: "conversation",
       scope: h.scope,
-      channelId: "room",
+      channelId: ROOM,
       messageId: root,
       threadRootId: root,
     }),
@@ -515,7 +653,7 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
     "Humans",
   );
   expect(screen.getByRole("checkbox", { name: "Unread only" })).toBeChecked();
-  expect(h.journal()?.state.frontiers).toEqual({});
+  expect(h.readIntents()).toEqual([]);
 });
 
 it("Drafts responds to same-window editor changes and disables composition if membership disappears", async () => {
@@ -525,7 +663,7 @@ it("Drafts responds to same-window editor changes and disables composition if me
   fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
   expect(screen.getByText("No drafts")).toBeVisible();
   act(() =>
-    writeView(h.owner.session.scope, "draft:room", {
+    writeView(h.owner.session.scope, `draft:${ROOM}`, {
       text: "Unsent message",
       recipients: [],
     }),
@@ -549,7 +687,7 @@ it("Drafts responds to same-window editor changes and disables composition if me
   expect(
     screen.getByRole("heading", { name: "Draft · Unavailable conversation" }),
   ).toBeInTheDocument();
-  expect(readView(h.owner.session.scope, "draft:room", "")).toMatchObject({
+  expect(readView(h.owner.session.scope, `draft:${ROOM}`, "")).toMatchObject({
     text: "Unsent message",
   });
   expect(h.open).not.toHaveBeenCalled();
@@ -557,14 +695,14 @@ it("Drafts responds to same-window editor changes and disables composition if me
   expect(
     screen.queryByRole("region", { name: "Draft detail" }),
   ).not.toBeInTheDocument();
-  expect(readView(h.owner.session.scope, "draft:room", "")).toMatchObject({
+  expect(readView(h.owner.session.scope, `draft:${ROOM}`, "")).toMatchObject({
     text: "Unsent message",
   });
 });
 
 it("a failed confirmed draft deletion keeps the original saved text and remains retryable", async () => {
   const h = fixture();
-  const key = "draft:room";
+  const key = `draft:${ROOM}`;
   writeView(h.owner.session.scope, key, "Do not discard me");
   render(h.view);
   await screen.findByText("Please review this");
@@ -592,25 +730,25 @@ it("a failed confirmed draft deletion keeps the original saved text and remains 
 
 it("a selected DM draft reads only its real window and preserves its scoped composer", async () => {
   const h = fixture({ withDm: true, withWriter: true });
-  writeView(h.owner.session.scope, "draft:dm-room", "DM draft body");
-  writeView(h.owner.session.scope, "draft:room", "Channel draft body");
+  writeView(h.owner.session.scope, `draft:${DM_ROOM}`, "DM draft body");
+  writeView(h.owner.session.scope, `draft:${ROOM}`, "Channel draft body");
   render(h.view);
   await screen.findByText("A direct reply");
   fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
-  expect(h.owner.session.channels.window("room").status).toBe("idle");
-  expect(h.owner.session.channels.window("dm-room").status).toBe("idle");
+  expect(h.owner.session.channels.window(ROOM).status).toBe("idle");
+  expect(h.owner.session.channels.window(DM_ROOM).status).toBe("idle");
   fireEvent.click(screen.getByRole("button", { name: "Open draft for Alice" }));
   const preview = () =>
     screen.getByRole("region", { name: "Conversation preview" });
   await waitFor(() =>
-    expect(h.owner.session.channels.window("dm-room").status).toBe("ready"),
+    expect(h.owner.session.channels.window(DM_ROOM).status).toBe("ready"),
   );
   expect(
     h.owner.session.channels
-      .window("dm-room")
+      .window(DM_ROOM)
       .rows.some((row) => row.content === "A direct reply"),
   ).toBe(true);
-  expect(h.owner.session.channels.window("room").status).toBe("idle");
+  expect(h.owner.session.channels.window(ROOM).status).toBe("idle");
   expect(
     within(preview()).getByRole("textbox", { name: "Message DM with Alice" }),
   ).toHaveValue("DM draft body");
@@ -619,7 +757,7 @@ it("a selected DM draft reads only its real window and preserves its scoped comp
     screen.getByRole("button", { name: "Open draft for #Design" }),
   );
   await waitFor(() =>
-    expect(h.owner.session.channels.window("room").status).toBe("ready"),
+    expect(h.owner.session.channels.window(ROOM).status).toBe("ready"),
   );
   expect(
     within(preview()).getByRole("textbox", { name: "Message #Design" }),
@@ -627,14 +765,14 @@ it("a selected DM draft reads only its real window and preserves its scoped comp
   expect(
     screen.queryByRole("textbox", { name: "Message DM with Alice" }),
   ).not.toBeInTheDocument();
-  expect(readView(h.owner.session.scope, "draft:dm-room", "")).toBe(
+  expect(readView(h.owner.session.scope, `draft:${DM_ROOM}`, "")).toBe(
     "DM draft body",
   );
 });
 
 it("a selected draft edits through the shared scoped composer without navigating or sending", async () => {
   const h = fixture({ withWriter: true });
-  const key = "draft:room";
+  const key = `draft:${ROOM}`;
   writeView(h.owner.session.scope, key, "First draft");
   render(h.view);
   await screen.findByText("Please review this");
@@ -651,12 +789,12 @@ it("a selected draft edits through the shared scoped composer without navigating
     }),
   );
   expect(h.open).not.toHaveBeenCalled();
-  expect(h.journal()?.state.frontiers).toEqual({});
+  expect(h.readIntents()).toEqual([]);
 });
 
 it("DM draft headings use exact roster participants and recover as profile evidence arrives", async () => {
   const h = fixture({ withDm: true, holdProfiles: true, withWriter: true });
-  const key = "draft:dm-room";
+  const key = `draft:${DM_ROOM}`;
   writeView(h.owner.session.scope, key, {
     text: "  hi\n  again ",
     recipients: [],
@@ -683,7 +821,7 @@ it("DM draft headings use exact roster participants and recover as profile evide
         within(detail()).getByRole("heading", { name: "Draft · DM to Alice" }),
       ).toBeInTheDocument(),
     );
-    expect(h.journal()?.state.frontiers).toEqual({});
+    expect(h.readIntents()).toEqual([]);
   } finally {
     h.releaseProfiles();
   }
@@ -693,7 +831,7 @@ it("holds selected history, surfaces failure, and retries to a genuinely empty c
   const h = fixture({ withDm: true, withWriter: true });
   writeView(
     h.owner.session.scope,
-    "draft:dm-room",
+    `draft:${DM_ROOM}`,
     "Keep while history recovers",
   );
   render(h.view);
@@ -704,15 +842,15 @@ it("holds selected history, surfaces failure, and retries to a genuinely empty c
     ).not.toBeInTheDocument(),
   );
   fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
-  const release = h.holdHistory("dm-room");
-  h.failHistory("dm-room");
+  const release = h.holdHistory(DM_ROOM);
+  h.failHistory(DM_ROOM);
   try {
     fireEvent.click(
       screen.getByRole("button", { name: "Open draft for Alice" }),
     );
-    await waitFor(() => expect(h.historyRequests).toContain("dm-room"));
+    await waitFor(() => expect(h.historyRequests).toContain(DM_ROOM));
     expect(screen.queryByText("No messages yet.")).not.toBeInTheDocument();
-    expect(h.owner.session.channels.window("dm-room").status).toBe("loading");
+    expect(h.owner.session.channels.window(DM_ROOM).status).toBe("loading");
     expect(screen.getAllByRole("textbox")).toHaveLength(1);
   } finally {
     await act(async () => release());
@@ -726,8 +864,8 @@ it("holds selected history, surfaces failure, and retries to a genuinely empty c
       .some((node) => node.textContent?.includes("history offline")),
   ).toBe(true);
   expect(screen.queryByText("Loading conversation…")).not.toBeInTheDocument();
-  act(() => h.deleteHistory("dm-room"));
-  h.recoverHistory("dm-room");
+  act(() => h.deleteHistory(DM_ROOM));
+  h.recoverHistory(DM_ROOM);
   fireEvent.click(screen.getByRole("button", { name: "Retry conversation" }));
   await screen.findByText("No messages yet.");
   expect(
@@ -740,22 +878,22 @@ it("holds selected history, surfaces failure, and retries to a genuinely empty c
 
 it("retargets a held DM history without leaking the old context or draft and sends only to the selected channel", async () => {
   const h = fixture({ withDm: true, withWriter: true });
-  writeView(h.owner.session.scope, "draft:dm-room", "Keep DM draft");
-  writeView(h.owner.session.scope, "draft:room", "Send this channel draft");
+  writeView(h.owner.session.scope, `draft:${DM_ROOM}`, "Keep DM draft");
+  writeView(h.owner.session.scope, `draft:${ROOM}`, "Send this channel draft");
   render(h.view);
   await screen.findByText("A direct reply");
   fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
-  const release = h.holdHistory("dm-room");
+  const release = h.holdHistory(DM_ROOM);
   try {
     fireEvent.click(
       screen.getByRole("button", { name: "Open draft for Alice" }),
     );
-    await waitFor(() => expect(h.historyRequests).toContain("dm-room"));
+    await waitFor(() => expect(h.historyRequests).toContain(DM_ROOM));
     fireEvent.click(
       screen.getByRole("button", { name: "Open draft for #Design" }),
     );
     await waitFor(() =>
-      expect(h.owner.session.channels.window("room").status).toBe("ready"),
+      expect(h.owner.session.channels.window(ROOM).status).toBe("ready"),
     );
     expect(
       screen.getByRole("textbox", { name: "Message #Design" }),
@@ -767,22 +905,22 @@ it("retargets a held DM history without leaking the old context or draft and sen
     await act(async () => release());
   }
   await waitFor(() =>
-    expect(h.owner.session.channels.window("dm-room").status).toBe("ready"),
+    expect(h.owner.session.channels.window(DM_ROOM).status).toBe("ready"),
   );
   expect(screen.getAllByRole("textbox")).toHaveLength(1);
   const detail = screen.getByRole("region", { name: "Draft detail" });
   expect(
     within(detail).getByRole("region", { name: "Channel message history" }),
-  ).toHaveAttribute("data-channel-timeline", "room");
+  ).toHaveAttribute("data-channel-timeline", ROOM);
   fireEvent.click(within(detail).getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(h.published).toHaveLength(1));
   expect(h.published[0]).toMatchObject({
     kind: 9,
     content: "Send this channel draft",
   });
-  expect(h.published[0]?.tags).toContainEqual(["h", "room"]);
+  expect(h.published[0]?.tags).toContainEqual(["h", ROOM]);
   expect(h.published[0]?.tags.some(([tag]) => tag === "e")).toBe(false);
-  expect(readView(h.owner.session.scope, "draft:dm-room", "")).toBe(
+  expect(readView(h.owner.session.scope, `draft:${DM_ROOM}`, "")).toBe(
     "Keep DM draft",
   );
 });
@@ -790,12 +928,12 @@ it("retargets a held DM history without leaking the old context or draft and sen
 it("renders an exact draft thread's real root and replies with one composer and sends to that root", async () => {
   const h = fixture({ withWriter: true });
   if (!h.root) throw new Error("Missing root");
-  const key = `draft:room:thread:${h.root.id}`;
+  const key = `draft:${ROOM}:thread:${h.root.id}`;
   writeView(h.owner.session.scope, key, "Thread draft to send");
   render(h.view);
   await screen.findByText("Please review this");
   fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
-  const release = h.holdHistory("room");
+  const release = h.holdHistory(ROOM);
   try {
     fireEvent.click(
       screen.getByRole("button", { name: "Open draft for #Design" }),
@@ -821,7 +959,7 @@ it("renders an exact draft thread's real root and replies with one composer and 
   expect(h.historyRequests).toHaveLength(0);
   fireEvent.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(h.published).toHaveLength(1));
-  expect(h.published[0]?.tags).toContainEqual(["h", "room"]);
+  expect(h.published[0]?.tags).toContainEqual(["h", ROOM]);
   expect(h.published[0]?.tags).toContainEqual(["e", h.root.id, "", "reply"]);
   expect(readView(h.owner.session.scope, key, "")).toMatchObject({ text: "" });
   await waitFor(() =>
@@ -834,7 +972,7 @@ it("renders an exact draft thread's real root and replies with one composer and 
 it("keeps the scoped draft but removes its thread composer and history when the root is deleted", async () => {
   const h = fixture({ withWriter: true });
   if (!h.root) throw new Error("Missing root");
-  const key = `draft:room:thread:${h.root.id}`;
+  const key = `draft:${ROOM}:thread:${h.root.id}`;
   writeView(h.owner.session.scope, key, "Do not retarget this reply");
   render(h.view);
   await screen.findByText("Please review this");
@@ -859,12 +997,12 @@ it("keeps the scoped draft but removes its thread composer and history when the 
 it("retries thread history failure without another composer and never rebinds a malformed saved thread coordinate", async () => {
   const h = fixture({ withWriter: true });
   if (!h.root) throw new Error("Missing root");
-  const key = `draft:room:thread:${h.root.id}`;
+  const key = `draft:${ROOM}:thread:${h.root.id}`;
   writeView(h.owner.session.scope, key, "Retry this thread draft");
   render(h.view);
   await screen.findByText("Please review this");
   fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
-  h.failHistory("room");
+  h.failHistory(ROOM);
   fireEvent.click(
     screen.getByRole("button", { name: "Open draft for #Design" }),
   );
@@ -872,7 +1010,7 @@ it("retries thread history failure without another composer and never rebinds a 
   expect(
     screen.queryByRole("textbox", { name: "Reply to thread" }),
   ).not.toBeInTheDocument();
-  h.recoverHistory("room");
+  h.recoverHistory(ROOM);
   fireEvent.click(retry);
   const composer = await screen.findByRole("textbox", {
     name: "Reply to thread",
@@ -887,7 +1025,7 @@ it("retries thread history failure without another composer and never rebinds a 
     writeView(h.owner.session.scope, key, "");
     writeView(
       h.owner.session.scope,
-      `draft:room:thread:${h.reply.id}`,
+      `draft:${ROOM}:thread:${h.reply.id}`,
       "Invalid coordinate draft",
     );
   });
@@ -899,14 +1037,14 @@ it("retries thread history failure without another composer and never rebinds a 
     screen.queryByRole("textbox", { name: "Reply to thread" }),
   ).not.toBeInTheDocument();
   expect(
-    readView(h.owner.session.scope, `draft:room:thread:${h.reply.id}`, ""),
+    readView(h.owner.session.scope, `draft:${ROOM}:thread:${h.reply.id}`, ""),
   ).toBe("Invalid coordinate draft");
   expect(h.published).toHaveLength(0);
 });
 
 it("sends a DM draft only to its restored destination through the session outbox", async () => {
   const h = fixture({ withDm: true, withWriter: true });
-  writeView(h.owner.session.scope, "draft:dm-room", "Only this DM");
+  writeView(h.owner.session.scope, `draft:${DM_ROOM}`, "Only this DM");
   render(h.view);
   await screen.findByText("A direct reply");
   fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
@@ -918,7 +1056,7 @@ it("sends a DM draft only to its restored destination through the session outbox
   fireEvent.click(within(detail).getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(h.published).toHaveLength(1));
   expect(h.published[0]).toMatchObject({ kind: 9, content: "Only this DM" });
-  expect(h.published[0]?.tags).toContainEqual(["h", "dm-room"]);
+  expect(h.published[0]?.tags).toContainEqual(["h", DM_ROOM]);
   expect(h.published[0]?.tags.some(([tag]) => tag === "e")).toBe(false);
 });
 
@@ -926,7 +1064,7 @@ it("meaningful Drafts survive 500 empty records and keep an emptied selected edi
   const h = fixture({ withWriter: true });
   for (let i = 0; i < 510; i++)
     writeView(h.owner.session.scope, `draft:empty-${i}`, { text: "  " });
-  writeView(h.owner.session.scope, "draft:room", {
+  writeView(h.owner.session.scope, `draft:${ROOM}`, {
     text: "Keep editing",
     recipients: [],
   });
@@ -942,7 +1080,7 @@ it("meaningful Drafts survive 500 empty records and keep an emptied selected edi
   fireEvent.change(editor, { target: { value: "" } });
   await waitFor(() =>
     expect(
-      readView(h.owner.session.scope, "draft:room", "missing"),
+      readView(h.owner.session.scope, `draft:${ROOM}`, "missing"),
     ).toMatchObject({ text: "" }),
   );
   expect(screen.getByRole("textbox", { name: "Message #Design" })).toBe(editor);
@@ -957,7 +1095,7 @@ it("meaningful Drafts survive 500 empty records and keep an emptied selected edi
 });
 it("hands keyboard focus into draft deletion and back on cancel without changing the saved draft", async () => {
   const h = fixture({ withWriter: true });
-  writeView(h.owner.session.scope, "draft:room", "Keep this draft");
+  writeView(h.owner.session.scope, `draft:${ROOM}`, "Keep this draft");
   render(h.view);
   await screen.findByText("Please review this");
   const user = userEvent.setup();
@@ -973,7 +1111,7 @@ it("hands keyboard focus into draft deletion and back on cancel without changing
   expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
   await user.keyboard("{Enter}");
   expect(screen.getByRole("button", { name: "Delete draft…" })).toHaveFocus();
-  expect(readView(h.owner.session.scope, "draft:room", "")).toBe(
+  expect(readView(h.owner.session.scope, `draft:${ROOM}`, "")).toBe(
     "Keep this draft",
   );
 });
@@ -989,23 +1127,23 @@ it("Delete draft clears exact ready attachments but preserves sibling channel an
       sha256: "a".repeat(64),
     }),
   });
-  const key = "draft:room";
+  const key = `draft:${ROOM}`;
   const root = h.root;
   if (!root) throw Error("Missing fixture root");
   writeView(h.owner.session.scope, key, "Discard this text");
-  writeView(h.owner.session.scope, "draft:dm-room", "Another draft");
+  writeView(h.owner.session.scope, `draft:${DM_ROOM}`, "Another draft");
   const exact = renderHook(() =>
     useAttachmentDraft(
       h.observedSession,
       `${h.owner.session.scope}:${key}`,
-      "room",
+      ROOM,
     ),
   );
   const sibling = renderHook(() =>
     useAttachmentDraft(
       h.observedSession,
-      `${h.owner.session.scope}:draft:room:thread:${root.id}`,
-      "room",
+      `${h.owner.session.scope}:draft:${ROOM}:thread:${root.id}`,
+      ROOM,
     ),
   );
   const file = new File(["note"], "note.txt", { type: "text/plain" });
@@ -1024,7 +1162,7 @@ it("Delete draft clears exact ready attachments but preserves sibling channel an
   expect(readView(h.owner.session.scope, key, "")).toBe("");
   expect(exact.result.current.items).toEqual([]);
   expect(sibling.result.current.items).toHaveLength(1);
-  expect(readView(h.owner.session.scope, "draft:dm-room", "")).toBe(
+  expect(readView(h.owner.session.scope, `draft:${DM_ROOM}`, "")).toBe(
     "Another draft",
   );
 });
@@ -1040,13 +1178,13 @@ it("a failed saved-text cleanup keeps its exact attachment draft for retry", asy
       sha256: "b".repeat(64),
     }),
   });
-  const key = "draft:room";
+  const key = `draft:${ROOM}`;
   writeView(h.owner.session.scope, key, "Keep this body");
   const files = renderHook(() =>
     useAttachmentDraft(
       h.observedSession,
       `${h.owner.session.scope}:${key}`,
-      "room",
+      ROOM,
     ),
   );
   act(() => files.result.current.store.add([new File(["keep"], "keep.txt")]));
@@ -1082,7 +1220,9 @@ it.each([false, true])(
   "retains accepted %s draft cleanup recovery without publishing twice, including reopen",
   async (thread) => {
     const h = fixture({ withWriter: true });
-    const key = thread ? `draft:room:thread:${h.mention.id}` : "draft:room";
+    const key = thread
+      ? `draft:${ROOM}:thread:${h.mention.id}`
+      : `draft:${ROOM}`;
     const storageKey = `buzz-view.v1:${JSON.stringify([h.owner.session.scope, key])}`;
     writeView(h.owner.session.scope, key, "Accepted body");
     render(h.view);
@@ -1092,6 +1232,12 @@ it.each([false, true])(
       screen.getByRole("button", { name: "Open draft for #Design" }),
     );
     await screen.findByRole("textbox");
+    // A thread composer sends only once its strict window has settled.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled(),
+    );
     const original = Storage.prototype.setItem;
     const fail = vi
       .spyOn(Storage.prototype, "setItem")
@@ -1154,7 +1300,7 @@ function replaceStoredDraft(scope: string, key: string, text: string) {
 it("reloads a clean selected editor with the row and requires a dirty conflict choice without remounting", async () => {
   const h = fixture({ withWriter: true });
   const scope = h.owner.session.scope,
-    key = "draft:room";
+    key = `draft:${ROOM}`;
   writeView(scope, key, "Original body");
   render(h.view);
   await screen.findByText("Please review this");
@@ -1207,7 +1353,7 @@ it("keeps a valid rich editor mounted across 128 KiB and reopens the saved docum
   expect(readComposerSnapshot(document)).toBeDefined();
   const rich = mentionDraft({ document });
   expect(JSON.stringify(rich).length).toBeLessThan(128 * 1024);
-  writeView(h.owner.session.scope, "draft:room", rich);
+  writeView(h.owner.session.scope, `draft:${ROOM}`, rich);
   render(h.view);
   await screen.findByText("Please review this");
   fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
@@ -1222,7 +1368,7 @@ it("keeps a valid rich editor mounted across 128 KiB and reopens the saved docum
     input.insertText(" plus twelve new letters");
   });
   expect(screen.getByRole("textbox")).toBe(input);
-  const saved = readView(h.owner.session.scope, "draft:room", rich);
+  const saved = readView(h.owner.session.scope, `draft:${ROOM}`, rich);
   expect(JSON.stringify(saved).length).toBeGreaterThan(128 * 1024);
   expect(readComposerSnapshot(saved.document)).toBeDefined();
   expect(mentionDraft(saved).text).toBe(`${rich.text} plus twelve new letters`);
@@ -1235,8 +1381,12 @@ it("keeps a valid rich editor mounted across 128 KiB and reopens the saved docum
 
 it("discloses records beyond the bounded preview without retiring a selected editor", async () => {
   const h = fixture({ withWriter: true });
-  const key = `buzz-view.v1:${JSON.stringify([h.owner.session.scope, "draft:room"])}`;
-  writeView(h.owner.session.scope, "draft:room", "Kept in the selected editor");
+  const key = `buzz-view.v1:${JSON.stringify([h.owner.session.scope, `draft:${ROOM}`])}`;
+  writeView(
+    h.owner.session.scope,
+    `draft:${ROOM}`,
+    "Kept in the selected editor",
+  );
   render(h.view);
   await screen.findByText("Please review this");
   fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
@@ -1276,10 +1426,10 @@ it.each(["channel", "thread", "unavailable"])(
     const h = fixture({ withWriter: true });
     const key =
       kind === "thread"
-        ? `draft:room:thread:${h.mention.id}`
+        ? `draft:${ROOM}:thread:${h.mention.id}`
         : kind === "unavailable"
           ? "draft:missing"
-          : "draft:room";
+          : `draft:${ROOM}`;
     writeView(h.owner.session.scope, key, "Keep my place");
     render(h.view);
     await screen.findByText("Please review this");
@@ -1303,8 +1453,8 @@ it.each(["delete", "send", "empty-close"])(
   "restores focus to a remaining row then Back to Inbox on %s",
   async (exit) => {
     const h = fixture({ withWriter: true, withDm: true });
-    writeView(h.owner.session.scope, "draft:room", "First draft");
-    writeView(h.owner.session.scope, "draft:dm-room", "Second draft");
+    writeView(h.owner.session.scope, `draft:${ROOM}`, "First draft");
+    writeView(h.owner.session.scope, `draft:${DM_ROOM}`, "Second draft");
     render(h.view);
     await screen.findByText("Please review this");
     const user = userEvent.setup();
@@ -1347,10 +1497,10 @@ it.each([false, true])(
     const h = fixture({ withWriter: true, withDm: true });
     writeView(
       h.owner.session.scope,
-      thread ? `draft:room:thread:${h.mention.id}` : "draft:room",
+      thread ? `draft:${ROOM}:thread:${h.mention.id}` : `draft:${ROOM}`,
       "First draft",
     );
-    writeView(h.owner.session.scope, "draft:dm-room", "Second draft");
+    writeView(h.owner.session.scope, `draft:${DM_ROOM}`, "Second draft");
     render(h.view);
     await screen.findByText("Please review this");
     const user = userEvent.setup();
@@ -1384,8 +1534,12 @@ it.each([false, true])(
 
 it("returns to the invoking row when Send saves a remembered-agent follow-up", async () => {
   const h = fixture({ withWriter: true, withDm: true, connected: true });
-  writeView(h.owner.session.scope, "draft:room", "First row, not the invoker");
-  writeView(h.owner.session.scope, "draft:dm-room", {
+  writeView(
+    h.owner.session.scope,
+    `draft:${ROOM}`,
+    "First row, not the invoker",
+  );
+  writeView(h.owner.session.scope, `draft:${DM_ROOM}`, {
     text: "@Alice Hello",
     recipients: [{ pubkey: h.alice.pubkey, name: "Alice", start: 0, end: 6 }],
   });
@@ -1415,7 +1569,9 @@ it("returns to the invoking row when Send saves a remembered-agent follow-up", a
   ).not.toBeInTheDocument();
   expect(row).toHaveFocus();
   expect(row).toHaveTextContent("@Alice");
-  expect(readView(h.owner.session.scope, "draft:dm-room", "")).toMatchObject({
-    text: "@Alice ",
-  });
+  expect(readView(h.owner.session.scope, `draft:${DM_ROOM}`, "")).toMatchObject(
+    {
+      text: "@Alice ",
+    },
+  );
 });

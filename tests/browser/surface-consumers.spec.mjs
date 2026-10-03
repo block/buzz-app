@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
 
 // Browser-only contract: actual app consumers, CSS Modules, inherited custom
@@ -6,8 +6,8 @@ import { openPage } from "./navigation.mjs";
 test.use({
   productionBroker: true,
   readState: true,
-  sessionChannels: ["alpha"],
-  sessionParents: { alpha: "11111111-1111-4111-8111-111111111111" },
+  sessionChannels: [ids.alpha],
+  sessionParents: { [ids.alpha]: "11111111-1111-4111-8111-111111111111" },
 });
 
 async function resolvedColor(locator, expression) {
@@ -128,7 +128,7 @@ for (const mode of ["light", "dark"]) {
     const sidebar = page.getByRole("navigation", {
       name: "Subscribed channels",
     });
-    const child = sidebar.locator('[data-channel-id="alpha"]');
+    const child = sidebar.locator(`[data-channel-id="${ids.alpha}"]`);
     const parent = sidebar.locator(
       '[data-channel-id="11111111-1111-4111-8111-111111111111"]',
     );

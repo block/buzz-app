@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open, settle, virtuaIdle, wheel } from "./timeline.mjs";
 
 test.use({
@@ -22,13 +22,13 @@ test("thread actions and growing reactions paint beyond the scroller without mov
   app,
 }) => {
   const root = app.histories
-    .get("primary/alpha")
+    .get(`primary/${ids.alpha}`)
     .find((event) => event.content === "Thread root 0");
   let last;
   for (let i = 0; i < 7; i++) {
     last = app.append(
       "primary",
-      "alpha",
+      ids.alpha,
       `Floating reply ${i}\n\nSecond paragraph\n\nThird paragraph`,
       false,
       i === 6,
@@ -138,7 +138,7 @@ test("timeline actions escape the top edge, track scrolling and preserve keyboar
 }) => {
   const target = app.append(
     "primary",
-    "alpha",
+    ids.alpha,
     "Floating timeline target\n\nMore text\n\nLast paragraph",
     false,
     true,
@@ -146,7 +146,7 @@ test("timeline actions escape the top edge, track scrolling and preserve keyboar
   for (let i = 0; i < 8; i++)
     app.append(
       "primary",
-      "alpha",
+      ids.alpha,
       `Following ${i}\n\nExtra space\n\nAnother paragraph\n\nLast paragraph`,
       false,
     );
@@ -239,7 +239,7 @@ test("keyboard search covers a toolbar under the pointer and restores its action
   app,
 }) => {
   await open(page, app);
-  const event = app.append("primary", "alpha", "Hovered Reply modal check");
+  const event = app.append("primary", ids.alpha, "Hovered Reply modal check");
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${event.id}"]`,
   );
@@ -301,7 +301,7 @@ test("menus and pickers retain actions, but modal dialogs cover them", async ({
   await open(page, app);
   const event = app.append(
     "primary",
-    "alpha",
+    ids.alpha,
     "Floating portal check",
     true,
     false,
@@ -363,7 +363,7 @@ test("menus and pickers retain actions, but modal dialogs cover them", async ({
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
   await shown(actions);
-  const own = app.append("primary", "alpha", "Delete confirmation check");
+  const own = app.append("primary", ids.alpha, "Delete confirmation check");
   const ownRow = page.locator(
     `[data-channel-timeline] [data-message-id="${own.id}"]`,
   );

@@ -1,5 +1,5 @@
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { wheel, open, settle, anchor, expectAnchor } from "./timeline.mjs";
 
 test.use({
@@ -62,9 +62,9 @@ sized(
 short(
   "short channel with tall messages opens at the actual bottom",
   async ({ page, app }) => {
-    expect(app.histories.get("primary/beta")).toHaveLength(1);
-    app.append("primary", "beta", "Tall message\n".repeat(70), false);
-    app.append("primary", "beta", "Last message\n".repeat(25), false);
+    expect(app.histories.get(`primary/${ids.beta}`)).toHaveLength(1);
+    app.append("primary", ids.beta, "Tall message\n".repeat(70), false);
+    app.append("primary", ids.beta, "Last message\n".repeat(25), false);
     await open(page, app);
     await bottom(page, app, "cold Alpha control");
     await select(page, "Beta");
@@ -120,7 +120,7 @@ for (const count of [1, 3, 5, 7, 9]) {
     `near-fit channel with ${count} mixed-height rows starts at bottom`,
     async ({ page, app }) => {
       await open(page, app);
-      expect(app.histories.get("primary/beta")).toHaveLength(count);
+      expect(app.histories.get(`primary/${ids.beta}`)).toHaveLength(count);
       await select(page, "Beta");
       await bottom(page, app, `cold ${count}-row Beta`);
       await select(page, "Alpha");

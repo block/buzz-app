@@ -145,8 +145,8 @@ it.each([false, true])(
       expect(q.list().channels[0]?.preview).toBe("Conversation preview");
       expect(
         owner.session.unread.snapshot({ kind: "channel", channelId: "a" })
-          .observedCount,
-      ).toBe(1);
+          .unread,
+      ).toEqual({ status: "unknown" });
       const moreNames = wire.next();
       expect(moreNames.filters[0]?.authors).toEqual([brain.pubkey]);
       moreNames.respond([profile(brain, { name: "Brain" })]);

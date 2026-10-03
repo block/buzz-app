@@ -1,6 +1,6 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({ productionBroker: true, savedSidebar: true });
@@ -20,7 +20,9 @@ async function openMove(page, row) {
   return menu;
 }
 const rowIn = (page, section) =>
-  page.locator(`[data-sidebar-section="${section}"] [data-channel-id="beta"]`);
+  page.locator(
+    `[data-sidebar-section="${section}"] [data-channel-id="${ids.beta}"]`,
+  );
 const sidebar = (page) =>
   page.getByRole("navigation", { name: "Subscribed channels" });
 // Hold a real pointer drag over a section header; the caller releases it.
@@ -134,12 +136,12 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
   await openMove(page, rowIn(page, "channels"));
   await menu.getByRole("menuitemradio", { name: "Work" }).click();
   await expect(beta).toBeFocused();
-  await expect(sidebar(page).locator('[data-channel-id="beta"]')).toHaveCount(
-    1,
-  );
+  await expect(
+    sidebar(page).locator(`[data-channel-id="${ids.beta}"]`),
+  ).toHaveCount(1);
   await saved(page, app, 2);
   expect(app.report.sidebarPublications[1].blob.assignments).toEqual({
-    beta: "work",
+    [ids.beta]: "work",
   });
   await page.reload();
   await expect(beta).toBeVisible();
@@ -170,9 +172,9 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
     await started.promise;
     await expect(menu).toHaveCount(0);
     await expect(beta).toHaveCount(0);
-    await expect(sidebar(page).locator('[data-channel-id="beta"]')).toHaveCount(
-      1,
-    );
+    await expect(
+      sidebar(page).locator(`[data-channel-id="${ids.beta}"]`),
+    ).toHaveCount(1);
     await expect(page.getByText(/Saving(?: sidebar changes)?…/)).toHaveCount(0);
   } finally {
     held.resolve();
@@ -278,7 +280,7 @@ test("dragging a channel between a group and Channels saves, reloads, and rolls 
   await expect(ungrouped).toHaveCount(0);
   await saved(page, app, 2);
   expect(app.report.sidebarPublications[1].blob.assignments).toEqual({
-    beta: "work",
+    [ids.beta]: "work",
   });
   await page.reload();
   await expect(beta).toBeVisible();
@@ -324,8 +326,8 @@ test("dragging a channel between a group and Channels saves, reloads, and rolls 
 // Sessions sit outside their channel's drag surface, as they sit outside its menu.
 const sessionParent = "11111111-1111-4111-8111-111111111111";
 const sessionSidebar = test.extend({
-  sessionChannels: ["alpha"],
-  sessionParents: { alpha: sessionParent },
+  sessionChannels: [ids.alpha],
+  sessionParents: { [ids.alpha]: sessionParent },
 });
 sessionSidebar(
   "dragging a session or a session draft leaves its channel in place, while the channel still moves",
@@ -337,7 +339,7 @@ sessionSidebar(
         `[data-sidebar-section="${section}"] [data-channel-id="${sessionParent}"]`,
       );
     const parent = parentIn("channels");
-    const child = sidebar(page).locator('[data-channel-id="alpha"]');
+    const child = sidebar(page).locator(`[data-channel-id="${ids.alpha}"]`);
     await expect(parent).toBeVisible();
     await expect(child).toBeVisible();
     await expect(
@@ -373,12 +375,12 @@ sessionSidebar(
     await expect(parent).toHaveCount(0);
     await expect(
       page.locator(
-        '[data-sidebar-section="group:work"] [data-channel-id="alpha"]',
+        `[data-sidebar-section="group:work"] [data-channel-id="${ids.alpha}"]`,
       ),
     ).toBeVisible();
     await saved(page, app, 1);
     expect(app.report.sidebarPublications[0].blob.assignments).toEqual({
-      beta: "work",
+      [ids.beta]: "work",
       [sessionParent]: "work",
     });
   },
@@ -473,7 +475,9 @@ test("optimistic Star moves close the menu before the write, roll back with visi
   ).toEqual(["channel-sections", "channel-stars"]);
   await page.reload();
   await expect(
-    page.locator('[data-sidebar-section="starred"] [data-channel-id="alpha"]'),
+    page.locator(
+      `[data-sidebar-section="starred"] [data-channel-id="${ids.alpha}"]`,
+    ),
   ).toBeVisible();
   await expect(rowIn(page, "channels")).toBeVisible();
   await expect(beta).toHaveCount(0);
@@ -489,11 +493,11 @@ test("optimistic Star moves close the menu before the write, roll back with visi
   await saved(page, app, 6);
   expect(app.report.sidebarPublications.at(-2)).toMatchObject({
     coordinate: "channel-sections",
-    blob: { assignments: { beta: "work" } },
+    blob: { assignments: { [ids.beta]: "work" } },
   });
   expect(app.report.sidebarPublications.at(-1)).toMatchObject({
     coordinate: "channel-stars",
-    blob: { channels: { beta: { starred: false } } },
+    blob: { channels: { [ids.beta]: { starred: false } } },
   });
   await openMove(page, beta);
   await menu
@@ -519,13 +523,13 @@ test("optimistic Star moves close the menu before the write, roll back with visi
   });
   expect(app.report.sidebarPublications.at(-1)).toMatchObject({
     coordinate: "channel-stars",
-    blob: { channels: { beta: { starred: false } } },
+    blob: { channels: { [ids.beta]: { starred: false } } },
   });
   await page.reload();
   await expect(rowIn(page, "channels")).toBeVisible();
-  await expect(sidebar(page).locator('[data-channel-id="beta"]')).toHaveCount(
-    1,
-  );
+  await expect(
+    sidebar(page).locator(`[data-channel-id="${ids.beta}"]`),
+  ).toHaveCount(1);
   await expect(beta).toHaveCount(0); // Never restore the remembered Work assignment.
 });
 
@@ -570,7 +574,7 @@ test("dismissing a failed move restores keyboard focus to its placement or a sur
 
   await failMove();
   // Upstream roster omission, not direct client-state injection.
-  app.omitChannel("beta");
+  app.omitChannel(ids.beta);
   await openChannelDetails(page);
   await page.getByText("Diagnostics", { exact: true }).click();
   await page
@@ -582,7 +586,7 @@ test("dismissing a failed move restores keyboard focus to its placement or a sur
     .click();
   await dismiss();
   await expect(
-    sidebar(page).locator('[data-channel-id="alpha"]'),
+    sidebar(page).locator(`[data-channel-id="${ids.alpha}"]`),
   ).toBeFocused();
   expect(app.report.sidebarPublications ?? []).toHaveLength(0);
 });
@@ -650,7 +654,7 @@ test("Create new supports cancel, moves before publication, and retries the same
       .locator("[data-sidebar-section]")
       .filter({ has: page.locator("summary", { hasText: /^Launch$/ }) });
     await expect(
-      createdGroup.locator('[data-channel-id="beta"]'),
+      createdGroup.locator(`[data-channel-id="${ids.beta}"]`),
     ).toBeFocused();
     sectionId = (await createdGroup.getAttribute("data-sidebar-section")).slice(
       "group:".length,
@@ -680,9 +684,9 @@ test("Create new supports cancel, moves before publication, and retries the same
   ).toHaveLength(1);
   await page.reload();
   await expect(destination).toBeVisible();
-  await expect(sidebar(page).locator('[data-channel-id="beta"]')).toHaveCount(
-    1,
-  );
+  await expect(
+    sidebar(page).locator(`[data-channel-id="${ids.beta}"]`),
+  ).toHaveCount(1);
   await sidebar(page).screenshot({
     path: testInfo.outputPath("created-section-reloaded.png"),
   });
@@ -700,7 +704,10 @@ test("Create new supports cancel, moves before publication, and retries the same
   try {
     await openMove(page, destination);
     await page.getByRole("menuitem", { name: "Create new…" }).click();
+    await expect(field).toBeFocused();
+    await expect(page.getByRole("menu")).toHaveCount(0);
     await field.fill("Follow-up");
+    await expect(field).toHaveValue("Follow-up");
     await dialog.getByRole("button", { name: "Create and move" }).click();
     await nextStarted.promise;
     const nextGroup = sidebar(page)
@@ -721,9 +728,9 @@ test("Create new supports cancel, moves before publication, and retries the same
       .click();
     await expect(beta).toBeFocused();
     await expect(followup).toHaveCount(0);
-    await expect(sidebar(page).locator('[data-channel-id="beta"]')).toHaveCount(
-      1,
-    );
+    await expect(
+      sidebar(page).locator(`[data-channel-id="${ids.beta}"]`),
+    ).toHaveCount(1);
     expect(app.report.sidebarPublications).toHaveLength(3);
   } finally {
     nextHeld.resolve();
@@ -823,14 +830,14 @@ test("Create new retains its draft when preferences fail before submission and r
       .filter({
         has: page.locator("summary", { hasText: /^Retained launch$/ }),
       })
-      .locator('[data-channel-id="beta"]');
+      .locator(`[data-channel-id="${ids.beta}"]`);
     await expect(destination).toBeFocused();
     await saved(page, app, 1);
     await page.reload();
     await expect(destination).toBeVisible();
-    await expect(sidebar(page).locator('[data-channel-id="beta"]')).toHaveCount(
-      1,
-    );
+    await expect(
+      sidebar(page).locator(`[data-channel-id="${ids.beta}"]`),
+    ).toHaveCount(1);
   } finally {
     held.resolve();
     await page.unroute("**/sidebar-preferences", failLegacy);
@@ -856,7 +863,7 @@ test("Projects → Messages keeps saved groups, selected channel, and scroll on 
   await expect(
     sidebar.locator("summary", { hasText: /Starred$/ }),
   ).toBeVisible();
-  await sidebar.locator('button[data-channel-id="beta"]').click();
+  await sidebar.locator(`button[data-channel-id="${ids.beta}"]`).click();
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
@@ -998,7 +1005,7 @@ test.describe("new personal schema", () => {
     await page.unroute("**/sidebar-preferences", failLegacy);
     await failure.getByRole("button", { name: "Retry", exact: true }).click();
     const alpha = page.locator(
-      '[data-sidebar-section="starred"] [data-channel-id="alpha"]',
+      `[data-sidebar-section="starred"] [data-channel-id="${ids.alpha}"]`,
     );
     // Retry removes the toast while the read is still loading. Restored stars
     // prove that the successful snapshot (and writable row wrapper) has rendered.

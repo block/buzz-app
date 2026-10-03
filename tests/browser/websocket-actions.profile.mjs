@@ -1,7 +1,8 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
+import { openPage } from "./navigation.mjs";
 
 // Full built app + real local broker, signing, session, IndexedDB and rendering.
 // Only upstream I/O is modeled: equal 40ms HTTP/EVENT service delay, no live data.
@@ -158,30 +159,34 @@ test("profiles primary actions through production broker and built app", async (
   });
   const start = performance.now();
   await page.goto(app.origin);
-  const messages = page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first();
-  await messages.waitFor();
+  await expect(
+    page.getByRole("button", { name: "Search Buzz", exact: true }),
+  ).toBeVisible();
   samples.push({
     action: "shell-navigation-upper-bound",
     ms: performance.now() - start,
   });
+  const opening = performance.now();
+  await openPage(page, "Messages");
+  await expect(
+    page
+      .locator('[aria-label="Channel message history"] [data-message-id]')
+      .first(),
+  ).toBeVisible();
   samples.push({
-    action: "cold-messages",
-    ms: await measure(
-      messages,
-      '[aria-label="Channel message history"] [data-message-id]',
-    ),
+    // Includes palette selection/automation, not the old button-to-frame metric.
+    action: "cold-messages-palette-upper-bound",
+    ms: performance.now() - opening,
   });
-  for (const channel of ["alpha", "beta"])
+  for (const channel of [ids.alpha, ids.beta])
     await expect.poll(() => app.relay.hasRoute("primary", channel)).toBe(true);
   await expect(
     page.getByRole("button", { name: "Retry live updates", exact: true }),
   ).toHaveCount(0);
   await settle(page, app);
   // Warm barrier is positive signed catch-up, not a sleep/request-count snapshot.
-  const marker = app.append("primary", "beta", "Profile warm barrier");
-  const beta = page.locator('button[data-channel-id="beta"]');
+  const marker = app.append("primary", ids.beta, "Profile warm barrier");
+  const beta = page.locator(`button[data-channel-id="${ids.beta}"]`);
   samples.push({
     action: "first-beta",
     ms: await measure(
@@ -190,7 +195,7 @@ test("profiles primary actions through production broker and built app", async (
     ),
   });
   await settle(page, app);
-  for (const channel of ["alpha", "beta", "alpha"]) {
+  for (const channel of [ids.alpha, ids.beta, ids.alpha]) {
     const id = app.histories.get(`primary/${channel}`).at(-1).id;
     samples.push({
       action: "warm-channel",
@@ -203,7 +208,7 @@ test("profiles primary actions through production broker and built app", async (
   }
   await settle(page, app);
   const root = app.histories
-    .get("primary/alpha")
+    .get(`primary/${ids.alpha}`)
     .find((row) => row.content === "Thread root 1");
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${root.id}"]`,
@@ -219,7 +224,7 @@ test("profiles primary actions through production broker and built app", async (
     });
     await page
       .getByRole("button", {
-        name: /^Close (?:thread|Thread tab)$/,
+        name: "Close Thread tab",
         exact: true,
       })
       .click();
@@ -257,7 +262,11 @@ test("profiles primary actions through production broker and built app", async (
       app.report.queries.some(({ filter }) => filter.ids?.includes(sent.id)),
     )
     .toBe(true);
-  await row.getByRole("button", { name: "Add reaction", exact: true }).click();
+  await row.hover();
+  await row
+    .getByRole("group", { name: "Message actions", exact: true })
+    .getByRole("button", { name: "Add reaction", exact: true })
+    .click();
   const search = page.locator('em-emoji-picker input[type="search"]');
   await search.fill("grinning");
   const emoji = page.getByRole("button", { name: "😀", exact: true });
@@ -308,13 +317,17 @@ test("profiles primary actions through production broker and built app", async (
     )
     .toBe(true);
   await page
-    .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })
+    .getByRole("button", { name: "Close Thread tab", exact: true })
     .click();
   const reconnectAt = performance.now();
   app.relay.disconnect("primary");
-  await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+  await expect.poll(() => app.relay.hasRoute("primary", ids.alpha)).toBe(true);
   // Fresh traffic proves recovery reached the browser, not merely a socket REQ.
-  const recovered = app.append("primary", "alpha", "Profile recovery barrier");
+  const recovered = app.append(
+    "primary",
+    ids.alpha,
+    "Profile recovery barrier",
+  );
   await expect(
     page.locator(`[data-channel-timeline] [data-message-id="${recovered.id}"]`),
   ).toBeVisible();
@@ -341,23 +354,24 @@ test("profiles primary actions through production broker and built app", async (
     )
     .toBe(true);
   await settle(page, app);
-  // Finite-fetch quiescence excludes reading dwell and the five-second sync
-  // timer. Establish the same explicit mark-through outcome on both arms, then
-  // observe durable reconciliation. This is outside the primary-action timings.
-  await openChannelDetails(page);
-  await page.getByText("Diagnostics", { exact: true }).click();
-  await page
-    .getByRole("button", {
-      name: "Mark read through loaded messages",
-      exact: true,
-    })
+  // Finite-fetch quiescence excludes reading dwell and periodic refresh.
+  // Establish a whole-channel cut through the real sidebar menu, then observe
+  // durable reconciliation. This is outside the primary-action timings, and is
+  // not comparable to the former loaded-prefix diagnostic boundary.
+  const alpha = page.locator(`button[data-channel-id="${ids.alpha}"]`);
+  await alpha.click({ button: "right" });
+  const readMenu = page.getByRole("menu", { name: "Actions for Alpha" });
+  const writesBeforeExplicitRead = app.report.readWrites.length;
+  await readMenu
+    .getByRole("menuitem", { name: "Mark as Read", exact: true })
     .click();
+  await expect(readMenu).toHaveCount(0);
   const readSyncAt = performance.now();
   await expect
     .poll(async () => {
       app.report.readJournals = await page.evaluate(async () => {
         const db = await new Promise((resolve, reject) => {
-          const request = indexedDB.open("buzz-read-state-v1");
+          const request = indexedDB.open("buzz-sidebar-v1");
           request.onsuccess = () => resolve(request.result);
           request.onerror = () => reject(request.error);
         });
@@ -375,14 +389,17 @@ test("profiles primary actions through production broker and built app", async (
         }
       });
       return (
-        app.report.readPublications.length > 0 &&
-        app.report.readJournals.some(
-          (journal) => journal.state.frontiers.alpha > 0,
-        ) &&
-        app.report.readJournals.every(
-          (journal) =>
-            journal.acceptedRevision === journal.revision && !journal.pending,
-        )
+        app.report.readWrites
+          .slice(writesBeforeExplicitRead)
+          .some(({ intents, outcomes }) =>
+            intents.some(
+              (intent, i) =>
+                intent.type === "mark_channel_read" &&
+                intent.channel_id === ids.alpha &&
+                outcomes[i].status === "applied",
+            ),
+          ) &&
+        app.report.readJournals.every((journal) => !journal.pending.length)
       );
     })
     .toBe(true);
@@ -409,6 +426,7 @@ test("profiles primary actions through production broker and built app", async (
       ms: entry.confirmed - entry.action,
     });
   }
+  await openChannelDetails(page);
   const diagnostics = page
     .locator("summary")
     .filter({ hasText: /^Relay timings$/ });
@@ -430,7 +448,7 @@ test("profiles primary actions through production broker and built app", async (
     receiptLane:
       "No live publication echo: receipt with finite-read reconciliation; concurrent thread history may confirm before the dedicated ID query",
     visible:
-      "Programmatic DOM click -> geometric intersection -> next animation frame; thread samples match the container containing text, not reply-row visibility; not native paint",
+      "Except cold-messages-palette-upper-bound (host-timed palette selection plus automation), programmatic DOM click -> geometric intersection -> next animation frame; thread samples match the container containing text, not reply-row visibility; not native paint",
     counts: {
       broker: app.report.brokerRequests.length,
       queryFilters: app.report.queries.length,

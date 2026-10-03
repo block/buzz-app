@@ -1,5 +1,5 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { generateSecretKey } from "nostr-tools";
 
@@ -16,7 +16,7 @@ const activity = (kind, messageId) => ({
   kind,
   seq: 1,
   timestamp: new Date().toISOString(),
-  channelId: "alpha",
+  channelId: ids.alpha,
   sessionId: "S",
   turnId: "focus-test",
   ...(messageId ? { payload: { triggeringEventIds: [messageId] } } : {}),
@@ -27,7 +27,7 @@ test("mark-read retains focus through a gated storage failure, working transitio
   app,
 }) => {
   await open(page, app);
-  const row = page.locator('button[data-channel-id="alpha"]');
+  const row = page.locator(`button[data-channel-id="${ids.alpha}"]`);
   const popup = page.getByRole("dialog", { name: "Activity in Alpha" });
   await expect(row.getByRole("img", { name: /unread threads?/ })).toBeVisible();
   await row.focus();
@@ -45,7 +45,7 @@ test("mark-read retains focus through a gated storage failure, working transitio
     const transaction = IDBDatabase.prototype.transaction;
     IDBDatabase.prototype.transaction = function (...args) {
       const tx = transaction.apply(this, args);
-      if (this.name === "buzz-read-state-v1" && args[1] === "readwrite") {
+      if (this.name === "buzz-sidebar-v1" && args[1] === "readwrite") {
         IDBDatabase.prototype.transaction = transaction;
         let held = true;
         const keepAlive = () => {
@@ -108,7 +108,7 @@ for (const destination of ["reply", "off-window root"]) {
     ).toHaveCount(0);
     const key = generateSecretKey();
     app.observer(activity("turn_started", target.id), key);
-    const row = page.locator('button[data-channel-id="alpha"]');
+    const row = page.locator(`button[data-channel-id="${ids.alpha}"]`);
     await expect(
       row.getByRole("img", { name: /working in Alpha/ }),
     ).toBeVisible();

@@ -1,6 +1,6 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 async function openLifecycle(page, app) {
   await page.goto(app.origin);
   await openPage(page, "Messages");
@@ -304,7 +304,11 @@ for (const action of ["archive", "hide"]) {
       action === "archive" ? "Archive channel" : "Hide conversation";
     test.use({
       lifecycleVisibility: {
-        archived: ["alpha", "beta", ...(action === "hide" ? [channel] : [])],
+        archived: [
+          ids.alpha,
+          ids.beta,
+          ...(action === "hide" ? [channel] : []),
+        ],
         hidden: action === "archive" ? [dm] : [],
       },
     });

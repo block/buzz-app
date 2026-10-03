@@ -22,17 +22,16 @@ function setup() {
   const set = (channelId: string, patch: Partial<UnreadSnapshot> = {}) => {
     snapshots.set(channelId, {
       target: { kind: "channel", channelId },
-      observedCount: 0,
-      attentionCount: 0,
+      unread: { status: "exact", value: 0 },
+      attention: { status: "exact", value: 0 },
       manual: "none",
-      coverage: "observed",
       freshness: "observed",
       ...patch,
     });
     for (const listener of listeners.get(channelId) ?? []) listener();
   };
   set("room");
-  set("other", { observedCount: 2 });
+  set("other", { unread: { status: "exact", value: 2 } });
   const saved = {
     operationId: "saved",
     durability: "saved",
@@ -80,13 +79,29 @@ function setup() {
 }
 
 it.each([
-  { observedCount: 3, manual: "none", name: "Mark as Read" },
-  { observedCount: 0, manual: "local-only", name: "Mark as Read" },
-  { observedCount: 0, manual: "remote", name: "Mark as Read" },
-  { observedCount: 0, manual: "none", name: "Mark as Unread" },
-  { observedCount: null, manual: "none", name: "Mark as Unread" },
+  {
+    unread: { status: "exact", value: 3 },
+    manual: "none",
+    name: "Mark as Read",
+  },
+  {
+    unread: { status: "exact", value: 0 },
+    manual: "local-only",
+    name: "Mark as Read",
+  },
+  {
+    unread: { status: "at_least", value: 1 },
+    manual: "none",
+    name: "Mark as Read",
+  },
+  {
+    unread: { status: "exact", value: 0 },
+    manual: "none",
+    name: "Mark as Unread",
+  },
+  { unread: { status: "unknown" }, manual: "none", name: "Mark as Unread" },
 ] as const)(
-  "offers only $name for count=$observedCount/manual=$manual",
+  "offers only $name for count=$unread/manual=$manual",
   async ({ name, ...snapshot }) => {
     const h = setup();
     h.set("room", snapshot);
@@ -120,7 +135,7 @@ it("updates an open menu from the domain snapshot, disables pending work and rel
     name: "Mark as Unread",
   });
   await waitFor(() => expect(initial).toBeVisible());
-  act(() => h.set("room", { observedCount: 1 }));
+  act(() => h.set("room", { unread: { status: "exact", value: 1 } }));
   expect(screen.getByRole("menuitem", { name: "Mark as Read" })).toBeVisible();
   act(() => h.set("room"));
   expect(

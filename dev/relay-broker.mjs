@@ -1,3 +1,8 @@
+import {
+  sidebarOperation,
+  sidebarResponse,
+  supportsSidebarApi,
+} from "../src/features/relay/sidebar-api.ts";
 import { getLogger } from "../src/features/developer/logging.ts";
 import { filterSummary, httpLabel } from "../src/features/developer/traffic.ts";
 
@@ -55,17 +60,6 @@ import {
 } from "../src/features/workflows/http.ts";
 import { decodeAgentObserver } from "./agent-observer.mjs";
 import { observerGeneration } from "../src/features/agents/observer.ts";
-import {
-  decodeReadState,
-  signReadState,
-  READ_STATE_DECODE_BYTES,
-} from "./read-state.mjs";
-import { READ_STATE_EVENT_BYTES } from "../src/features/relay/read-state-model.ts";
-import {
-  isReadSnapshotFilter,
-  readSnapshotText,
-  readSnapshotCommunity,
-} from "../src/features/relay/read-state-snapshot.ts";
 import { readRelayLibrary } from "../src/features/agents/relay-library.ts";
 import { eventDto } from "../src/features/relay/events.ts";
 import { readAgentLibrary } from "./agent-library.mjs";
@@ -135,6 +129,7 @@ function validProfilePicture(value) {
 const MAX_FILTERS = 4,
   MAX_LIMIT = 500,
   MAX_INFLIGHT = 6,
+  CHANNEL_KIT_DECODE_BYTES = 512 * 1024,
   UPSTREAM_TIMEOUT_MS = 20000,
   KEEPALIVE_MS = 60000;
 
@@ -295,11 +290,9 @@ async function relayAuthority(fetch, relay) {
     throw new Error("Relay did not advertise its identity");
   return {
     relayAuthor: author,
+    ...(supportsSidebarApi(nip11.buzz_v1) ? { buzz_v1: nip11.buzz_v1 } : {}),
     channelCreation:
       Array.isArray(nip11.supported_nips) && nip11.supported_nips.includes(29),
-    ...(readSnapshotCommunity(nip11.read_state_snapshot)
-      ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
-      : {}),
     // NIP-IA snapshots require the explicit relay signing identity. The NIP-11
     // contact-key fallback used by older channel reads cannot grant this authority.
     ...(nip11.self === author ? { archiveAuthority: author } : {}),
@@ -561,31 +554,6 @@ export function validAgentRemoval(event) {
     /^[0-9a-f]{64}$/.test(p[1]) &&
     clientId[0] === "client-id" &&
     uuid.test(clientId[1])
-  );
-}
-export function validChannelActivityFilters(filters) {
-  return (
-    Array.isArray(filters) &&
-    filters.length >= 1 &&
-    filters.length <= 128 &&
-    filters.every(
-      (filter) =>
-        filter &&
-        typeof filter === "object" &&
-        filter.limit === 1 &&
-        Array.isArray(filter.kinds) &&
-        filter.kinds.length === 5 &&
-        [9, 40002, 40008, 45001, 45003].every((kind) =>
-          filter.kinds.includes(kind),
-        ) &&
-        Array.isArray(filter["#h"]) &&
-        filter["#h"].length === 1 &&
-        typeof filter["#h"][0] === "string" &&
-        /^[a-zA-Z0-9_-]{1,128}$/.test(filter["#h"][0]) &&
-        Object.keys(filter).every((key) =>
-          ["kinds", "#h", "limit"].includes(key),
-        ),
-    )
   );
 }
 export function validFilters(filters) {
@@ -986,12 +954,10 @@ export function relayBrokerPlugin({
           if (
             [
               "/api/relay/sidebar-preferences",
-              "/api/relay/read-state-decode",
               "/api/relay/channel-kit-decode",
             ].includes(route) &&
             req.method === "POST"
           ) {
-            const readStateDecode = route === "/api/relay/read-state-decode";
             const kitDecode = route === "/api/relay/channel-kit-decode";
             if (sidebarUploads >= SIDEBAR_UPLOAD_SLOTS)
               return json(res, 429, { error: "Sidebar decoder is busy" });
@@ -1006,9 +972,7 @@ export function relayBrokerPlugin({
                 bytes += Buffer.byteLength(part);
                 if (
                   bytes >
-                  (readStateDecode || kitDecode
-                    ? READ_STATE_DECODE_BYTES
-                    : SIDEBAR_REQUEST_BYTES)
+                  (kitDecode ? CHANNEL_KIT_DECODE_BYTES : SIDEBAR_REQUEST_BYTES)
                 )
                   return json(res, 413, {
                     error: "Sidebar records exceed the decode budget",
@@ -1021,16 +985,12 @@ export function relayBrokerPlugin({
                 200,
                 kitDecode
                   ? decodeChannelKit(events, key, relay)
-                  : readStateDecode
-                    ? decodeReadState(events, key)
-                    : decodeSidebarPreferences(events, key),
+                  : decodeSidebarPreferences(events, key),
               );
             } catch {
               if (!res.destroyed)
                 return json(res, 400, {
-                  error: readStateDecode
-                    ? "Read state could not be decoded"
-                    : "Sidebar preferences could not be decoded",
+                  error: "Sidebar preferences could not be decoded",
                 });
             } finally {
               clearTimeout(deadline);
@@ -1488,10 +1448,8 @@ export function relayBrokerPlugin({
               attachmentUploads: true,
               sidebarPreferences: true,
               sidebarSortWrites: true,
-              channelActivity: true,
               sidebarMuteWrites: true,
               channelKit: true,
-              readState: true,
               sidebarPreferenceWrites: true,
               sidebarStarWrites: true,
               agentLibrary: true,
@@ -1985,7 +1943,7 @@ export function relayBrokerPlugin({
               "/api/relay/query",
               "/api/relay/agent-memories",
               "/api/relay/presence-snapshot",
-              "/api/relay/channel-activity",
+              "/api/relay/sidebar-api",
               "/api/relay/sign",
               "/api/relay/channel-details-sign",
               "/api/relay/channel-details-publish",
@@ -1996,9 +1954,7 @@ export function relayBrokerPlugin({
               "/api/relay/identity-archive-sign",
               "/api/relay/identity-archive-publish",
               "/api/relay/publish",
-              "/api/relay/read-state-sign",
               "/api/relay/channel-kit-prepare",
-              "/api/relay/read-state-publish",
               "/api/relay/profile",
               "/api/relay/direct-message",
               "/api/relay/authorize-agent",
@@ -2029,7 +1985,9 @@ export function relayBrokerPlugin({
               if (
                 presence
                   ? Buffer.byteLength(raw) > 20 * 1024
-                  : raw.length > 65536
+                  : route === "/api/relay/sidebar-api"
+                    ? Buffer.byteLength(raw) > 64 * 1024
+                    : raw.length > 65536
               )
                 return json(res, 413, { error: "Filter body too large" });
             }
@@ -2041,6 +1999,22 @@ export function relayBrokerPlugin({
             filters = JSON.parse(raw);
           } catch {
             return json(res, 400, { error: "Filter body is not JSON" });
+          }
+          let sidebar;
+          if (route === "/api/relay/sidebar-api") {
+            try {
+              sidebar = sidebarOperation(filters);
+            } catch {
+              return json(res, 400, {
+                error: "Invalid sidebar operation",
+                sent: false,
+              });
+            }
+            if (!supportsSidebarApi((await getAuthority(relay)).buzz_v1))
+              return json(res, 404, {
+                error: "Sidebar API unavailable",
+                sent: false,
+              });
           }
           let memoryAgent;
           if (memory) {
@@ -2271,9 +2245,6 @@ export function relayBrokerPlugin({
               });
             }
           }
-          const channelActivity = route === "/api/relay/channel-activity";
-          if (channelActivity && !validChannelActivityFilters(filters))
-            return json(res, 400, { error: "Activity filter rejected" });
           const profile = route === "/api/relay/profile";
           const directMessage = route === "/api/relay/direct-message";
           if (directMessage) {
@@ -2384,40 +2355,6 @@ export function relayBrokerPlugin({
                 }
               : { code: filters.code, policy_receipt: filters.policy_receipt };
           }
-          const readSigning = route === "/api/relay/read-state-sign";
-          const readPublishing = route === "/api/relay/read-state-publish";
-          if (readSigning || readPublishing) {
-            try {
-              if (readSigning)
-                return json(res, 200, signReadState(filters, key));
-              // A valid own signature alone is not permission to publish arbitrary kind-30078 data.
-              // Receive-only compatibility must not widen publication admission.
-              decodeReadState([filters], key, READ_STATE_EVENT_BYTES);
-            } catch {
-              return json(res, 400, {
-                error: "Read-state operation rejected",
-                sent: false,
-              });
-            }
-          }
-          const snapshot = isReadSnapshotFilter(filters, viewer);
-          if (
-            Array.isArray(filters) &&
-            filters.some(
-              (filter) =>
-                filter && Object.hasOwn(filter, "read_state_snapshot"),
-            ) &&
-            !snapshot
-          )
-            return json(res, 400, {
-              error: "Invalid read-state snapshot filter",
-              sent: false,
-            });
-          if (snapshot && !(await getAuthority(relay)).readStateCommunity)
-            return json(res, 400, {
-              error: "Complete read-state snapshots unsupported",
-              sent: false,
-            });
           const timings = [];
           const details =
             route === "/api/relay/channel-details-sign" ||
@@ -2598,13 +2535,11 @@ export function relayBrokerPlugin({
             !leave &&
             !gifs &&
             !workflowPath &&
-            !readPublishing &&
-            !snapshot &&
-            !channelActivity &&
+            !sidebar &&
             !validFilters(filters)
           )
             return json(res, 400, { error: "Read filter rejected" });
-          if (publishing || readPublishing) {
+          if (publishing) {
             const stream = streams.get(req.headers["x-buzz-live-id"]);
             // This route has already validated the signed event. Do not log its
             // content, tags, signature, or the browser's private stream handle.
@@ -2661,6 +2596,7 @@ export function relayBrokerPlugin({
           if (gifs && !gifSearchPath)
             return json(res, 404, { error: "GIF search is unavailable" });
           const upstreamPath =
+            sidebar?.path ??
             workflowPath ??
             (gifs
               ? gifSearchPath
@@ -2673,7 +2609,7 @@ export function relayBrokerPlugin({
                     : invite
                       ? "/api/invites"
                       : "/query");
-          const method = workflowPath ? "GET" : "POST";
+          const method = sidebar?.method ?? (workflowPath ? "GET" : "POST");
           const lane = admissions(relay, viewer).api;
           let releasePresence;
           if (presence) {
@@ -2691,7 +2627,11 @@ export function relayBrokerPlugin({
             });
           if (!presence) inflight++;
           try {
-            const body = workflowPath ? undefined : JSON.stringify(filters);
+            const body = sidebar
+              ? sidebar.body
+              : workflowPath
+                ? undefined
+                : JSON.stringify(filters);
             const admissionStart = performance.now();
             let connectsBefore, upstreamStart;
             let response;
@@ -2758,22 +2698,23 @@ export function relayBrokerPlugin({
                   lane,
                   request,
                   requestSignal,
-                  channelActivity ||
-                    (route === "/api/relay/query" &&
-                      req.headers["x-buzz-read-priority"] === "background")
+                  route === "/api/relay/query" &&
+                    req.headers["x-buzz-read-priority"] === "background"
                     ? "background"
                     : "foreground",
                   refusal,
+                  !!sidebar,
                 );
-            const text = memory
-              ? await memoryResponseText(response)
-              : presence
-                ? await presenceText(response)
-                : snapshot && response.ok
-                  ? await readSnapshotText(response)
-                  : workflowPath && response.ok
-                    ? await workflowReadText(response)
-                    : await response.text();
+            const text =
+              sidebar && response.ok
+                ? JSON.stringify(await sidebarResponse(response))
+                : memory
+                  ? await memoryResponseText(response)
+                  : presence
+                    ? await presenceText(response)
+                    : workflowPath && response.ok
+                      ? await workflowReadText(response)
+                      : await response.text();
             // The relay's own service time separates server work from network time.
             const relayMs = Number(
               response.headers.get("x-envoy-upstream-service-time"),
@@ -2800,6 +2741,13 @@ export function relayBrokerPlugin({
               if (reason) failure = { ...failure, error: reason };
               if (presence && failure.quota === "api")
                 lane.pause(failure.retryAfterMs);
+              if (sidebar && typeof body?.retryAfterMs === "number") {
+                failure = { ...failure, retryAfterMs: body.retryAfterMs };
+                res.setHeader(
+                  "Retry-After",
+                  String(Math.ceil(body.retryAfterMs / 1000)),
+                );
+              }
               return json(res, response.status, failure);
             }
             if (directMessage) {

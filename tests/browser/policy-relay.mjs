@@ -2,6 +2,414 @@ import { expect } from "@playwright/test";
 import { verifyEvent } from "nostr-tools";
 import { createHash } from "node:crypto";
 
+const ELIGIBLE = [9, 40002, 45001, 45003];
+export const buzzV1Discovery = Object.freeze({
+  version: 1,
+  base_path: "/buzz/v1",
+  retention_seconds: 2592000,
+  max_channels: 20,
+  max_intents: 100,
+  max_contexts: 20,
+  max_context_messages: 100,
+  max_thread_summaries: 5,
+  eligible_kinds: ELIGIBLE,
+});
+const exact = (value) => ({ status: "exact", value });
+const newest = (a, b) =>
+  b.created_at - a.created_at || a.id.localeCompare(b.id);
+
+/** A narrow `/buzz/v1` read model over the fixture's signed history. It follows
+ * docs/buzz-v1-read-state.md closely enough to drive the client; the relay's
+ * own test suites and a real-relay pass prove the contract, not this model. */
+function buzzV1({ viewer, report, rows, events }) {
+  // community -> channel -> { channel, cut, threads: Map<root, through> }
+  const frontiers = new Map();
+  // `channel/parent` keys whose conversation membership the relay cannot decide.
+  const unproved = new Set();
+  const staffDeleted = new Set(); // Deletions the relay honours via `deleted_at`.
+  report.readWrites = [];
+  report.sidebarReads = [];
+  report.sidebarHolds = [];
+  const state = (community, channel) => {
+    if (!frontiers.has(community)) frontiers.set(community, new Map());
+    const all = frontiers.get(community);
+    if (!all.has(channel))
+      all.set(channel, {
+        channel: null,
+        cut: null,
+        threads: new Map(),
+      });
+    return all.get(channel);
+  };
+  const max = (a, b) => (a === null ? b : Math.max(a, b));
+  const member = (community, channel) =>
+    rows(community).find((row) => row.channel_id === channel);
+  function history(community, channel) {
+    const all = new Map();
+    for (const event of events(community, channel))
+      if (event.tags.some(([k, v]) => k === "h" && v === channel))
+        all.set(event.id, event);
+    return all;
+  }
+  // NIP-10 as relay ingest and the app parse it: only a valid marked `reply`
+  // makes a reply; the last valid `root`/`reply` wins; reply-only roots at it.
+  function threadRef(event) {
+    let root, reply;
+    for (const [k, v, , marker] of event.tags) {
+      if (k !== "e" || !/^[0-9a-f]{64}$/i.test(v ?? "")) continue;
+      if (marker === "root") root = v.toLowerCase();
+      if (marker === "reply") reply = v.toLowerCase();
+    }
+    return reply ? { root: root ?? reply, parent: reply } : undefined;
+  }
+  // Canonical root, or `undefined` for top-level; `null` marks unresolved ancestry.
+  function rootOf(all, event) {
+    let current = event;
+    for (let depth = 0; depth < 32; depth++) {
+      const ref = threadRef(current);
+      if (!ref) return current === event ? undefined : current.id;
+      const parent = all.get(ref.root);
+      if (!parent) return null;
+      current = parent;
+    }
+    return null;
+  }
+  // Author-signed kind 5/9005, or a staff deletion the relay records.
+  const deletions = new WeakMap(); // One `author/id` set per history snapshot.
+  function deleted(all, event) {
+    if (staffDeleted.has(event.id)) return true;
+    if (!deletions.has(all)) {
+      const keys = new Set();
+      for (const row of all.values())
+        if (row.kind === 5 || row.kind === 9005)
+          for (const [k, v] of row.tags)
+            if (k === "e" && v) keys.add(`${row.pubkey}/${v.toLowerCase()}`);
+      deletions.set(all, keys);
+    }
+    return deletions.get(all).has(`${event.pubkey}/${event.id}`);
+  }
+  // Direct-parent membership in this channel: the viewer's live eligible
+  // message is the parent, or the viewer has a live reply to the same parent.
+  // `null` is undecided (the relay's lookup budget ran out).
+  function conversation(all, channel, parent) {
+    if (unproved.has(`${channel}/${parent}`)) return null;
+    const live = (row) =>
+      row.pubkey === viewer &&
+      ELIGIBLE.includes(row.kind) &&
+      !deleted(all, row);
+    const own = all.get(parent);
+    return (
+      (own !== undefined && live(own)) ||
+      [...all.values()].some(
+        (row) => live(row) && threadRef(row)?.parent === parent,
+      )
+    );
+  }
+  // Order (plan rev 3a): eligibility, then the read frontier, then relevance.
+  function classify(community, channel, all, event) {
+    if (
+      !ELIGIBLE.includes(event.kind) ||
+      event.pubkey === viewer ||
+      deleted(all, event)
+    )
+      return { counted: false };
+    const root = rootOf(all, event);
+    const frontier = state(community, channel);
+    const through =
+      root === undefined
+        ? frontier.channel
+        : max(frontier.threads.get(root) ?? null, frontier.cut);
+    if (through !== null && event.created_at <= through)
+      return { counted: true, root, unread: false };
+    const unread = { counted: true, root, unread: true };
+    const tag = (name, value) =>
+      event.tags.some(([k, v]) => k === name && v?.toLowerCase() === value);
+    if (member(community, channel)?.channel_type === "dm")
+      return { ...unread, reason: "direct" };
+    if (tag("p", viewer)) return { ...unread, reason: "mention" };
+    const broadcast = tag("broadcast", "1");
+    const parent = threadRef(event)?.parent;
+    if (!parent) return { ...unread, reason: broadcast ? "broadcast" : null };
+    const joined = conversation(all, channel, parent);
+    if (joined) return { ...unread, reason: "conversation" };
+    // Undecided broadcasts keep known counts: the named `broadcast` fallback.
+    if (broadcast) return { ...unread, reason: "broadcast" };
+    if (joined === null) return { ...unread, undecided: true };
+    return { counted: false }; // Proven outside the viewer's conversations.
+  }
+  const count = (known, uncertain) =>
+    uncertain
+      ? known
+        ? { status: "at_least", value: known }
+        : { status: "unknown" }
+      : exact(known);
+  function row(community, meta) {
+    const channel = meta.channel_id;
+    const all = history(community, channel);
+    const sorted = [...all.values()].toSorted(newest);
+    const latest = sorted.find((event) => ELIGIBLE.includes(event.kind));
+    let unread = 0,
+      attention = 0,
+      uncertain = false,
+      unresolved = false;
+    const threads = new Map();
+    for (const event of sorted) {
+      const result = classify(community, channel, all, event);
+      if (!result.counted || !result.unread) continue;
+      if (result.root === null) unresolved = true;
+      // An undecided reply stays out of every count and preview. Its group could
+      // be any thread once decided, so every count in the channel is a lower bound.
+      if (result.undecided) {
+        uncertain = true;
+        continue;
+      }
+      const item =
+        typeof result.root === "string" &&
+        (threads.get(result.root) ??
+          threads
+            .set(result.root, {
+              root_id: result.root,
+              unread: 0,
+              latest_reply_id: null,
+              latest_reply_at: null,
+            })
+            .get(result.root));
+      unread++;
+      if (result.reason !== null) attention++;
+      if (!item) continue;
+      item.unread++;
+      // Newest relevant reply: the preview is chosen after the filter.
+      item.latest_reply_id ??= event.id;
+      item.latest_reply_at ??= event.created_at;
+    }
+    const items = [...threads.values()].toSorted(
+      (a, b) =>
+        b.latest_reply_at - a.latest_reply_at ||
+        a.root_id.localeCompare(b.root_id),
+    );
+    return {
+      channel_id: channel,
+      name: meta.name,
+      channel_type: meta.channel_type,
+      archived: meta.archived ?? false,
+      hidden: meta.hidden ?? false,
+      unread: count(unread, uncertain),
+      attention: count(attention, uncertain),
+      latest_message_id: latest?.id ?? null,
+      latest_message_at: latest?.created_at ?? null,
+      latest_message_complete: true,
+      threads: {
+        items: items.slice(0, 5).map((item) => ({
+          root_id: item.root_id,
+          unread: count(item.unread, uncertain),
+          latest_reply_id: item.latest_reply_id,
+          latest_reply_at: item.latest_reply_at,
+        })),
+        complete: !unresolved && !uncertain && items.length <= 5,
+      },
+    };
+  }
+  const account = {
+    retention_seconds: 2592000,
+    cutoff_ms: 0,
+  };
+  function sidebar(community, params) {
+    const all = rows(community).toSorted((a, b) =>
+      a.channel_id.localeCompare(b.channel_id),
+    );
+    if (params.has("channel_ids")) {
+      expect([...params.keys()]).toEqual(["channel_ids"]);
+      const wanted = params.get("channel_ids").split(",");
+      expect(wanted.length).toBeGreaterThan(0);
+      expect(wanted.length).toBeLessThanOrEqual(20);
+      expect(new Set(wanted).size).toBe(wanted.length);
+      return {
+        account,
+        channels: all
+          .filter((meta) => wanted.includes(meta.channel_id))
+          .map((meta) => row(community, meta)),
+        next_cursor: null,
+      };
+    }
+    expect(params.get("limit")).toBe("20");
+    const cursor = params.get("cursor");
+    const page = all
+      .filter((meta) => cursor === null || meta.channel_id > cursor)
+      .slice(0, 21);
+    const channels = page.slice(0, 20).map((meta) => row(community, meta));
+    return {
+      account,
+      channels,
+      next_cursor: page.length > 20 ? channels.at(-1).channel_id : null,
+    };
+  }
+  function contexts(community, targets) {
+    expect(targets.length).toBeGreaterThan(0);
+    expect(targets.length).toBeLessThanOrEqual(20);
+    return {
+      account,
+      contexts: targets.map(({ target, message_ids }) => {
+        const channel = target.channel_id;
+        if (!member(community, channel)) return { status: "unavailable" };
+        const all = history(community, channel);
+        const frontier = state(community, channel);
+        return {
+          status: "available",
+          through_timestamp:
+            target.root_id === undefined
+              ? frontier.channel
+              : max(frontier.threads.get(target.root_id) ?? null, frontier.cut),
+          messages: message_ids.map((message_id) => {
+            const event = all.get(message_id);
+            if (!event || rootOf(all, event) !== target.root_id)
+              return { message_id, status: "unavailable" };
+            const result = classify(community, channel, all, event);
+            if (!result.counted) return { message_id, status: "not_counted" };
+            if (!result.unread) return { message_id, status: "read" };
+            if (result.undecided) return { message_id, status: "unknown" };
+            return { message_id, status: "unread", reason: result.reason };
+          }),
+        };
+      }),
+    };
+  }
+  function apply(community, intent) {
+    const channel =
+      intent.type === "mark_through"
+        ? intent.target.channel_id
+        : intent.channel_id;
+    if (!member(community, channel)) return { status: "blocked" };
+    const all = history(community, channel);
+    const anchor = all.get(intent.message_id);
+    if (!anchor) return { status: "blocked" };
+    if (!ELIGIBLE.includes(anchor.kind)) return { status: "invalid" };
+    const frontier = state(community, channel);
+    if (intent.type === "mark_channel_read") {
+      frontier.channel = max(frontier.channel, anchor.created_at);
+      frontier.cut = max(frontier.cut, anchor.created_at);
+      return { status: "applied" };
+    }
+    const root = rootOf(all, anchor);
+    if (root === null || root !== intent.target.root_id)
+      return { status: "invalid" };
+    if (root === undefined)
+      frontier.channel = max(frontier.channel, anchor.created_at);
+    else
+      frontier.threads.set(
+        root,
+        max(frontier.threads.get(root) ?? null, anchor.created_at),
+      );
+    return { status: "applied" };
+  }
+  let held = false;
+  const waiters = [];
+  const failures = [];
+  return {
+    /** Hold GET reads (sidebar pages and contexts); writes still pass. */
+    hold() {
+      held = true;
+    },
+    release() {
+      held = false;
+      for (const release of waiters.splice(0)) release();
+    },
+    /** Membership of `parent` in `channel` is undecided, like an exhausted
+     * relay lookup budget. Mentions, DMs and broadcasts are unaffected. */
+    unprove(channel, parent) {
+      unproved.add(`${channel}/${parent.toLowerCase()}`);
+    },
+    /** A staff deletion: the relay honours it through `deleted_at`. */
+    deleteAsStaff(id) {
+      staffDeleted.add(id.toLowerCase());
+    },
+    /** Next API response fails with this HTTP status (429/503 carry Retry-After). */
+    failNext(status) {
+      expect(status).toBeGreaterThanOrEqual(400);
+      failures.push(status);
+    },
+    frontier: (community, channel) => state(community, channel),
+    async fetch(community, url, init) {
+      const method = init?.method ?? "GET";
+      const auth = JSON.parse(
+        Buffer.from(init.headers.Authorization.slice(6), "base64").toString(),
+      );
+      expect(verifyEvent(auth)).toBe(true);
+      expect(auth.pubkey).toBe(viewer);
+      expect(auth.kind).toBe(27235);
+      expect(auth.tags).toContainEqual(["u", String(url)]);
+      expect(auth.tags).toContainEqual(["method", method]);
+      if (method === "POST")
+        expect(auth.tags).toContainEqual([
+          "payload",
+          createHash("sha256").update(init.body).digest("hex"),
+        ]);
+      else {
+        expect(init.body).toBeUndefined();
+        expect(auth.tags.some(([name]) => name === "payload")).toBe(false);
+      }
+      const { pathname, searchParams } = new URL(url);
+      const read = {
+        community,
+        method,
+        pathname,
+        params: Object.fromEntries(searchParams),
+        at: performance.now(),
+      };
+      report.sidebarReads.push(read);
+      if (held && method === "GET")
+        await new Promise((resolve, reject) => {
+          const hold = { pending: true, aborted: false };
+          report.sidebarHolds.push(hold);
+          const abort = () => {
+            hold.pending = false;
+            hold.aborted = true;
+            reject(init.signal.reason);
+          };
+          if (init.signal?.aborted) return abort();
+          init.signal?.addEventListener("abort", abort, { once: true });
+          waiters.push(() => {
+            hold.pending = false;
+            init.signal?.removeEventListener("abort", abort);
+            if (!hold.aborted) resolve();
+          });
+        });
+      if (failures.length) {
+        const status = failures.shift();
+        read.status = status;
+        return Response.json(
+          { error: { code: "temporarily_unavailable", request_id: "fixture" } },
+          {
+            status,
+            headers: [429, 503].includes(status) ? { "Retry-After": "1" } : {},
+          },
+        );
+      }
+      if (pathname === "/buzz/v1/me/sidebar" && method === "GET")
+        return Response.json(sidebar(community, searchParams));
+      expect(pathname).toBe("/buzz/v1/me/read-state");
+      if (method === "GET") {
+        expect([...searchParams.keys()]).toEqual(["targets"]);
+        return Response.json(
+          contexts(community, JSON.parse(searchParams.get("targets"))),
+        );
+      }
+      expect(method).toBe("POST");
+      const { intents, ...rest } = JSON.parse(init.body);
+      expect(rest).toEqual({});
+      expect(intents.length).toBeGreaterThan(0);
+      expect(intents.length).toBeLessThanOrEqual(100);
+      const outcomes = intents.map((intent) => apply(community, intent));
+      report.readWrites.push({
+        community,
+        intents,
+        outcomes,
+        at: performance.now(),
+      });
+      return Response.json({ outcomes, projection_status: "not_requested" });
+    },
+  };
+}
+
 /** Model the relay boundaries that matter to this journey, not a replacement
  * session: AUTH, explicit channel fan-out, EOSE, CLOSED and HTTP quota reasons.
  * The production broker owns all pacing, signing, SSE and retry controls. */
@@ -13,9 +421,11 @@ export function policyRelay({
   pending,
   discovery,
   acceptPublication,
+  readModel,
   latencyMs = 0,
   holdOlder = true,
 }) {
+  const sidebarApi = readModel && buzzV1({ viewer, report, ...readModel });
   const sockets = [];
   let presenceHeld = false;
   const presenceWaiters = [];
@@ -68,10 +478,6 @@ export function policyRelay({
   const heldEose = new Set();
   const pendingEose = [];
   const pendingProfiles = [];
-  const pendingUnread = [];
-  const unreadHolds = [];
-  report.unreadHolds = unreadHolds;
-  let heldUnread = false;
   const profileHolds = [];
   report.profileHolds = profileHolds;
   let heldAuthors = new Set();
@@ -129,13 +535,6 @@ export function policyRelay({
       heldAuthors.clear();
       for (const release of pendingProfiles.splice(0)) release();
     },
-    holdUnread() {
-      heldUnread = true;
-    },
-    releaseUnread() {
-      heldUnread = false;
-      for (const release of pendingUnread.splice(0)) release();
-    },
     holdEose(channel) {
       heldEose.add(channel);
     },
@@ -149,6 +548,8 @@ export function policyRelay({
           emit(item.socket, ["EOSE", item.id]);
       }
     },
+    /** The `/buzz/v1` model's hold/release/unprove/failNext/frontier controls. */
+    sidebarApi,
     sockets,
     requests,
     rejected,
@@ -179,11 +580,22 @@ export function policyRelay({
       try {
         if (latencyMs)
           await new Promise((resolve) => setTimeout(resolve, latencyMs));
+        // Consumer cancellation of a held read is normal, not a protocol fault.
+        if (sidebarApi && new URL(url).pathname.startsWith("/buzz/v1/"))
+          return sidebarApi
+            .fetch(communityOf(url), url, init)
+            .catch((error) => {
+              if (init?.signal?.aborted) throw error;
+              return fault(error);
+            });
         // NIP-11 is a public GET with no signed query body. The rail now reads
         // it for saved communities, including inactive ones.
         if (!init?.body) {
           expect(new URL(url).pathname).toBe("/");
-          return Response.json(discovery?.(communityOf(url)) ?? {});
+          return Response.json({
+            ...discovery?.(communityOf(url)),
+            ...(sidebarApi && { buzz_v1: buzzV1Discovery }),
+          });
         }
         expect(["/query", ...(acceptPublication ? ["/events"] : [])]).toContain(
           new URL(url).pathname,
@@ -204,25 +616,21 @@ export function policyRelay({
           acceptPublication(communityOf(url), filters);
           return Response.json({ accepted: true, event_id: filters.id });
         }
-        if (filters.length === 2 && filters[1].depth_limit) {
-          const [root, replies] = filters;
-          expect(root).toEqual({
-            ids: replies["#e"],
-            "#h": replies["#h"],
-            limit: 1,
+        if (filters.some((filter) => filter.thread_window)) {
+          expect(filters).toHaveLength(1);
+          const [replies] = filters;
+          expect(replies.thread_window).toBe(true);
+          expect(replies["#h"]).toHaveLength(1);
+          expect(replies["#e"]).toHaveLength(1);
+          expect(replies.depth_limit).toBe(100);
+          expect(replies.include_aux).toBe(true);
+          expect(replies.kinds.toSorted((a, b) => a - b)).toEqual([9, 40002]);
+          report.queries.push({
+            community: communityOf(url),
+            filter: replies,
+            at: performance.now(),
           });
-          expect(replies.kinds.toSorted((a, b) => a - b)).toEqual([
-            9, 40002, 40008,
-          ]);
-          for (const filter of filters)
-            report.queries.push({
-              community: communityOf(url),
-              filter,
-              at: performance.now(),
-            });
-          return Response.json(
-            filters.flatMap((filter) => answer(communityOf(url), filter)),
-          );
+          return Response.json(answer(communityOf(url), replies));
         }
         if (filters.length === 2 && filters[1].kinds?.includes(13534)) {
           // Identity archive consent: the target's profile plus the relay roster.
@@ -338,24 +746,18 @@ export function policyRelay({
             filters.flatMap((filter) => answer(community, filter)),
           );
         }
-        // Unread conversation lookup: missing parents by ID, and the viewer's
-        // replies to undecided parents in one channel.
-        if (
-          filters.every(
-            (filter) =>
-              [9, 40002, 40008].every((kind) => filter.kinds?.includes(kind)) &&
-              filter.include_aux &&
-              (filter.ids || (filter["#e"] && filter.authors)),
-          )
-        ) {
+        if (filters.length === 2 && filters[1].kinds?.includes(40003)) {
+          // An Activity preview read: the listed newest replies and their edits.
+          const ids = filters[0].ids;
+          expect(ids?.length).toBeGreaterThan(0);
+          expect(ids.length).toBeLessThanOrEqual(5);
+          expect(filters).toEqual([
+            { ids, limit: 5 },
+            { kinds: [40003], "#e": ids, limit: 500 },
+          ]);
           const community = communityOf(url);
-          for (const filter of filters) {
-            if (filter.authors) {
-              expect(filter.authors).toEqual([viewer]);
-              expect(filter["#h"]).toHaveLength(1);
-            } else expect(filter["#h"]).toBeUndefined();
+          for (const filter of filters)
             report.queries.push({ community, filter, at: performance.now() });
-          }
           return Response.json(
             filters.flatMap((filter) => answer(community, filter)),
           );
@@ -461,30 +863,6 @@ export function policyRelay({
           emptyRoster && filter.kinds?.includes(39002)
             ? []
             : answer(community, filter);
-        if (
-          heldUnread &&
-          filter.kinds?.includes(9) &&
-          filter["#h"]?.length &&
-          filter.top_level === undefined &&
-          filter.depth_limit === undefined &&
-          filter.until === undefined
-        )
-          return new Promise((resolve, reject) => {
-            const held = { pending: true, aborted: false };
-            unreadHolds.push(held);
-            const abort = () => {
-              held.pending = false;
-              held.aborted = true;
-              reject(init.signal.reason);
-            };
-            if (init.signal.aborted) return abort();
-            init.signal.addEventListener("abort", abort, { once: true });
-            pendingUnread.push(() => {
-              held.pending = false;
-              init.signal.removeEventListener("abort", abort);
-              if (!held.aborted) resolve(Response.json(result));
-            });
-          });
         if (
           filter.kinds?.includes(0) &&
           filter.authors?.some((id) => heldAuthors.has(id))

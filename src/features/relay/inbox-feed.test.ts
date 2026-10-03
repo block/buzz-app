@@ -5,6 +5,7 @@ import type { RelayEvent, ReadFilter } from "./events";
 import type { LiveCallbacks } from "./live";
 import { byteSize } from "./budget";
 import { createInboxFeed } from "./inbox-feed";
+import { sidebarFixture } from "./sidebar-testing";
 
 // General #e reads return an empty terminal page. The ordinary #p response is
 // still explicitly gated by each test; no incidental timer orders admission.
@@ -22,10 +23,47 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
+// Inbox admission is the relay's verdict. These cases exercise the feed's
+// closure and lifecycle, so the fake relay answers like the real one for every
+// event the session has seen: the viewer's own messages and any explicitly
+// excluded id are not counted, one addressed to the viewer is an unread
+// mention, and any other is unread without an Inbox reason. Admission itself
+// is pinned in unread.test.ts.
+// Relay contexts are acquired asynchronously and only under an Inbox
+// subscription, so row assertions follow an explicit settle() barrier.
 function setup() {
   const viewer = keypair(),
     relay = keypair(),
     alice = keypair();
+  const bff = sidebarFixture();
+  const seen = new Map<string, RelayEvent>();
+  const notCounted = new Set<string>();
+  const record = (events: readonly RelayEvent[]) => {
+    for (const event of events) seen.set(event.id, event);
+    return [...events];
+  };
+  bff.api.contexts.mockImplementation(async (queries) => ({
+    account: { retention_seconds: 2592000, cutoff_ms: 0 },
+    contexts: queries.map((q) => ({
+      status: "available" as const,
+      through_timestamp: null,
+      messages: q.message_ids.map((id) => {
+        const event = seen.get(id);
+        if (!event) return { message_id: id, status: "unknown" as const };
+        if (event.pubkey === viewer.pubkey || notCounted.has(id))
+          return { message_id: id, status: "not_counted" as const };
+        return event.tags.some(
+          ([name, value]) => name === "p" && value === viewer.pubkey,
+        )
+          ? {
+              message_id: id,
+              status: "unread" as const,
+              reason: "mention" as const,
+            }
+          : { message_id: id, status: "unread" as const, reason: null };
+      }),
+    })),
+  }));
   let live!: LiveCallbacks;
   const calls: {
     filters: readonly ReadFilter[];
@@ -37,23 +75,70 @@ function setup() {
     calls.push({ filters, pending });
     return pending.promise;
   });
-  const owner = createRelaySession({
-    viewer: viewer.pubkey,
-    relayAuthor: relay.pubkey,
-    query,
-    media: () => undefined,
-    subscribe(callbacks) {
-      live = callbacks;
-      return { update() {}, retry() {}, dispose() {} };
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      sidebarApi: bff.api,
+      // Recorded here, not inside the mock, so cases that replace the query
+      // implementation still give the relay fake every event it delivered.
+      query: (filters) => query(filters).then(record),
+      media: () => undefined,
+      subscribe(callbacks) {
+        live = {
+          ...callbacks,
+          receive: (events, options) =>
+            callbacks.receive(record(events), options),
+        };
+        return { update() {}, retry() {}, dispose() {} };
+      },
     },
-  });
+    { sidebarStorage: bff.storage },
+  );
   owners.push(owner);
   const admit = (members: string[], at = 10) =>
     live.receive([
       roster(relay, "room", members, at),
       metadata(relay, "room", "Room", at),
     ]);
-  return { ...owner, viewer, alice, relay, admit, calls, live, query };
+  // A visible Inbox holds one subscription; context acquisition runs under it.
+  let watching: (() => void) | undefined;
+  const watch = () => {
+    if (!watching) watching = owner.session.unread.subscribeInbox(() => {});
+  };
+  return {
+    ...owner,
+    viewer,
+    alice,
+    relay,
+    admit,
+    calls,
+    live,
+    query,
+    bff,
+    watch,
+    notCounted,
+  };
+}
+// Context-completion barrier: every named message reached the relay contexts
+// endpoint, every answer has resolved, and the Inbox is ready + observed (an
+// unresolved candidate keeps it stale). Lifecycle purges deliberately publish
+// stale until refresh, so the barrier requests one first.
+async function settle(h: ReturnType<typeof setup>, ...ids: string[]) {
+  h.watch();
+  await h.session.unread.refresh();
+  const contexts = h.bff.api.contexts.mock;
+  await vi.waitFor(async () => {
+    await Promise.allSettled(contexts.results.map(({ value }) => value));
+    const asked = contexts.calls.flatMap(([queries]) =>
+      queries.flatMap((query) => query.message_ids),
+    );
+    for (const id of ids) expect(asked).toContain(id);
+    expect(h.session.unread.inbox()).toMatchObject({
+      status: "ready",
+      freshness: "observed",
+    });
+  });
 }
 async function take(h: ReturnType<typeof setup>, kind: number) {
   await vi.waitFor(() =>
@@ -84,6 +169,7 @@ it("reads addressed history independently of the retained unread window, never a
     status: "ready",
     incomplete: [],
   });
+  await settle(h, addressed.id);
   // The session reconciles authorized history into shared unread evidence, not a shadow store.
   expect(h.session.unread.inbox().items.map((item) => item.messageId)).toEqual([
     addressed.id,
@@ -109,6 +195,7 @@ it("reconciles live addressed updates and drops membership-revoked history befor
   const first = addressed(h, "first", 20);
   mentions.resolve([first]);
   await work;
+  await settle(h, first.id);
   expect(rows(h).map((row) => row.messageId)).toEqual([first.id]);
   const updates: string[][] = [];
   h.session.unread.subscribeInbox(() =>
@@ -116,12 +203,18 @@ it("reconciles live addressed updates and drops membership-revoked history befor
   );
   const later = addressed(h, "later", 22);
   h.live.receive([later]);
+  await settle(h, later.id);
   expect(rows(h).map((row) => row.messageId)).toEqual([later.id, first.id]);
-  expect(updates).toEqual([[later.id, first.id]]);
+  expect(updates.at(-1)).toEqual([later.id, first.id]);
+  // Before its verdict lands the live row is absent, never misordered.
+  for (const update of updates)
+    expect([[first.id], [later.id, first.id]]).toContainEqual(update);
+  const before = updates.length;
   h.admit([h.alice.pubkey], 30);
   expect(rows(h)).toEqual([]);
-  // The revocation notification itself must already expose empty rows.
-  expect(updates).toEqual([[later.id, first.id], []]);
+  // Every notification from the revocation on must already expose empty rows.
+  expect(updates.length).toBeGreaterThan(before);
+  for (const update of updates.slice(before)) expect(update).toEqual([]);
   expect(h.session.inboxFeed.snapshot()).toMatchObject({
     status: "idle",
     incomplete: [],
@@ -132,6 +225,7 @@ it("cache clear fences late completions; fresh demand recovers", async () => {
   h.admit([h.viewer.pubkey]);
   const old = addressed(h, "old", 20);
   h.live.receive([old]);
+  await settle(h, old.id);
   expect(rows(h).map((row) => row.messageId)).toEqual([old.id]);
   const work = h.session.inboxFeed.ensure();
   const mentions = await take(h, 9);
@@ -143,6 +237,7 @@ it("cache clear fences late completions; fresh demand recovers", async () => {
     status: "idle",
     incomplete: [],
   });
+  await settle(h);
   expect(rows(h)).toEqual([]);
   expect(h.query).toHaveBeenCalledTimes(1);
   const again = h.session.inboxFeed.ensure();
@@ -195,6 +290,7 @@ it("complete initial roster remains lazy; first demand, invalidation and fresh d
   const issue = addressed(h, "historical mention", 15);
   gate.resolve([issue]);
   await first;
+  await settle(h, issue.id);
   expect(rows(h).map((row) => row.preview)).toContain("historical mention");
   const addressedReads = () =>
     h.query.mock.calls.filter(([filters]) =>
@@ -215,6 +311,7 @@ it("complete initial roster remains lazy; first demand, invalidation and fresh d
   fresh.resolve([issue]);
   await next;
   expect(h.session.inboxFeed.snapshot().status).toBe("ready");
+  await settle(h);
   expect(rows(h)).toEqual([]);
 });
 it("reconnect recovers demanded feed but never starts an unopened feed", async () => {
@@ -247,10 +344,12 @@ it("reconnect recovers demanded feed but never starts an unopened feed", async (
     roster(h.relay, "room", [h.viewer.pubkey, h.alice.pubkey], 10),
     metadata(h.relay, "room", "Room", 10),
   ]);
-  (await take(h, 9)).resolve([addressed(h, "reconnected mention", 30)]);
+  const reconnected = addressed(h, "reconnected mention", 30);
+  (await take(h, 9)).resolve([reconnected]);
   await vi.waitFor(() =>
     expect(h.session.inboxFeed.snapshot().status).toBe("ready"),
   );
+  await settle(h, reconnected.id);
   expect(rows(h).map((row) => row.preview)).toContain("reconnected mention");
 });
 it("finite completion merges concurrent live chat arrivals and author deletions", async () => {
@@ -264,6 +363,7 @@ it("finite completion merges concurrent live chat arrivals and author deletions"
   const mention = await take(h, 9);
   try {
     h.live.receive([live]);
+    await settle(h, live.id);
     expect(rows(h).map((row) => row.preview)).toContain("live");
     h.live.receive([
       signed(h.alice, {
@@ -277,12 +377,14 @@ it("finite completion merges concurrent live chat arrivals and author deletions"
     mention.resolve([old]);
   }
   await first;
+  await settle(h);
   expect(rows(h).map((row) => row.preview)).toEqual(["live"]);
   const again = h.session.inboxFeed.refresh();
   const stale = await take(h, 9);
   h.admit([h.alice.pubkey], 40);
   stale.resolve([old, live]);
   await again;
+  await settle(h);
   expect(rows(h)).toEqual([]);
 });
 it("71 admitted author deletions keep shared rows deleted without aborting a held finite attempt", async () => {
@@ -293,6 +395,7 @@ it("71 admitted author deletions keep shared rows deleted without aborting a hel
   );
   // Establish every target's actual row and shared reference admission first.
   h.live.receive(chats);
+  await settle(h, ...chats.map((chat) => chat.id));
   expect(
     rows(h)
       .map((row) => row.messageId)
@@ -325,6 +428,7 @@ it("71 admitted author deletions keep shared rows deleted without aborting a hel
     incomplete: [],
     error: undefined,
   });
+  await settle(h);
   expect(rows(h)).toEqual([]); // Late addressed history cannot resurrect them.
   expect(h.query).toHaveBeenCalledTimes(2);
   expect(h.query.mock.calls[1]?.[0]).toEqual([
@@ -352,8 +456,11 @@ it("channel feed history uses the shared fold: own/deleted rows stay absent and 
   const work = h.session.inboxFeed.ensure();
   (await take(h, 9)).resolve([reply, own]);
   await work;
-  expect(rows(h).map((row) => row.id)).toEqual([`room:${reply.id}`]);
+  await settle(h, reply.id);
+  // The signed root is the identity before and after the root itself arrives.
+  expect(rows(h).map((row) => row.id)).toEqual([`room:${root.id}`]);
   h.live.receive([root]);
+  await settle(h);
   expect(rows(h).map((row) => row.id)).toEqual([`room:${root.id}`]);
   h.live.receive([
     signed(h.alice, {
@@ -370,6 +477,7 @@ it("channel feed history uses the shared fold: own/deleted rows stay absent and 
   const refresh = h.session.inboxFeed.refresh();
   (await take(h, 9)).resolve([reply, own]);
   await refresh;
+  await settle(h);
   expect(rows(h)).toEqual([]);
 });
 
@@ -392,6 +500,7 @@ it("a live deletion arriving before a held finite result suppresses its late row
   ]);
   mention.resolve([chat]);
   await work;
+  await settle(h);
   expect(rows(h)).toEqual([]);
 });
 
@@ -410,6 +519,7 @@ it.each([false, true])(
       status: "ready",
       incomplete: [],
     });
+    await settle(h, mention.id);
     expect(unread.inbox().items.map((row) => row.messageId)).toEqual([
       mention.id,
     ]);
@@ -442,7 +552,7 @@ it.each([false, true])(
   },
 );
 
-it("joining after public pre-membership history needs fresh shared admission, not another feed read", async () => {
+it("after joining, the relay verdict admits public pre-membership history without another feed read or replay", async () => {
   const h = setup();
   h.live.receive([
     roster(h.relay, "room", [h.alice.pubkey], 10),
@@ -456,7 +566,15 @@ it("joining after public pre-membership history needs fresh shared admission, no
     status: "ready",
     incomplete: [],
   });
+  // Not a member: not a candidate, so no context demand, no row, and nothing
+  // holds the snapshot back from settling.
+  await settle(h);
   expect(rows(h)).toEqual([]);
+  expect(
+    h.bff.api.contexts.mock.calls.flatMap(([queries]) =>
+      queries.flatMap((query) => query.message_ids),
+    ),
+  ).not.toContain(chat.id);
   const reads = h.query.mock.calls.length;
   expect(reads).toBe(1);
   expect(h.query.mock.calls.some(([filters]) => filters[0]?.["#e"])).toBe(
@@ -467,13 +585,12 @@ it("joining after public pre-membership history needs fresh shared admission, no
     status: "ready",
     incomplete: [],
   });
-  // Unread never admitted the pre-membership chat. Joining alone cannot create
-  // a row or completeness obligation from that unretained evidence.
-  expect(rows(h)).toEqual([]);
+  // Joined: an ordinary candidate. The relay has no join floor, so its verdict
+  // decides, exactly as the sidebar badge does; no app-side join filter.
+  await settle(h, chat.id);
+  expect(rows(h).map((row) => row.messageId)).toEqual([chat.id]);
   await h.session.inboxFeed.ensure();
   expect(h.query).toHaveBeenCalledTimes(reads);
-  h.live.receive([chat]);
-  expect(rows(h).map((row) => row.messageId)).toEqual([chat.id]);
 });
 it("excludes nonchat and approvals from unread rows and completeness targets and coalesces one bounded chat request", async () => {
   const h = setup();
@@ -494,6 +611,10 @@ it("excludes nonchat and approvals from unread rows and completeness targets and
       ],
     }),
   );
+  // 45001/45003 follow v1's counted kinds; the relay's verdict excludes them.
+  for (const event of nonchat)
+    if (event.kind === 45001 || event.kind === 45003)
+      h.notCounted.add(event.id);
   const first = h.session.inboxFeed.ensure(),
     second = h.session.inboxFeed.refresh();
   (await take(h, 9)).resolve([chat, ...nonchat]);
@@ -502,6 +623,7 @@ it("excludes nonchat and approvals from unread rows and completeness targets and
   expect(h.query.mock.calls[1]?.[0]).toEqual([
     { kinds: [40003, 5, 9005], "#e": [chat.id], limit: 500 },
   ]);
+  await settle(h, chat.id);
   expect(rows(h).map((row) => row.messageId)).toEqual([chat.id]);
   expect(h.session.inboxFeed.snapshot()).toMatchObject({
     status: "ready",
@@ -510,6 +632,7 @@ it("excludes nonchat and approvals from unread rows and completeness targets and
   const before = h.session.unread.inbox();
   h.live.receive(nonchat);
   expect(h.session.unread.inbox()).toBe(before);
+  await settle(h);
   expect(rows(h).map((row) => row.messageId)).toEqual([chat.id]);
   expect(h.session.inboxFeed.snapshot()).toMatchObject({
     status: "ready",
@@ -532,11 +655,22 @@ it("first verified admission marks exact target incomplete before unread subscri
       status: h.session.inboxFeed.snapshot().status,
       incomplete: h.session.inboxFeed.snapshot().incomplete,
     });
+  // Hold the exact closure until the original's verdict lands, so the loading
+  // window this case pins is observable at all under async contexts.
+  const closure = deferred<RelayEvent[]>();
+  h.query.mockImplementation((filters: readonly ReadFilter[]) => {
+    if (filters[0]?.["#e"]) return closure.promise;
+    const pending = deferred<RelayEvent[]>();
+    h.calls.push({ filters, pending });
+    return pending.promise;
+  });
   const stop = h.session.unread.subscribeInbox(observe);
   const stopFeed = h.session.inboxFeed.subscribe(observe);
   try {
     const work = h.session.inboxFeed.ensure();
     (await take(h, 9)).resolve([old]);
+    await settle(h, old.id);
+    closure.resolve([]);
     await work;
     expect(sequence.filter(({ preview }) => preview === "OLD BODY")).toEqual(
       expect.arrayContaining([
@@ -603,6 +737,7 @@ it("settles a signed old addressed edit after 500 newer ordinary rows without op
   );
   addressedQuery.resolve([old]);
   await work;
+  await settle(h, old.id);
   expect(rows(h).map((item) => item.preview)).toEqual(["CURRENT BODY"]);
   expect(h.session.inboxFeed.snapshot()).toMatchObject({
     status: "ready",
@@ -674,6 +809,7 @@ it("keeps exact incomplete evidence across held edit and deletion reads, failed 
       status: "loading",
       incomplete: [old.id],
     });
+    await settle(h, old.id);
     expect(rows(h)[0]?.preview).toBe("OLD BODY"); // PR4 must show placeholder instead
     hold.resolve([edit]);
     await vi.waitFor(() => expect(rows(h)[0]?.preview).toBe("CURRENT BODY"));
@@ -744,6 +880,7 @@ it("tombstones a stored edit, then restores its original target body only after 
       return filter.until === undefined ? held : [];
     return [];
   });
+  h.watch();
   const work = h.session.inboxFeed.ensure();
   try {
     await vi.waitFor(() => expect(rows(h)[0]?.preview).toBe("superseded"));
@@ -767,6 +904,7 @@ it("access removal while pre-admission subscriber runs cannot admit the pending 
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);
   const target = addressed(h, "must not appear", 20);
+  h.watch();
   const stop = h.session.inboxFeed.subscribe(() => {
     if (h.session.inboxFeed.snapshot().incomplete.includes(target.id))
       h.admit([h.alice.pubkey], 30);
@@ -775,7 +913,14 @@ it("access removal while pre-admission subscriber runs cannot admit the pending 
     const work = h.session.inboxFeed.ensure();
     (await take(h, 9)).resolve([target]);
     await work;
+    await settle(h);
     expect(rows(h)).toEqual([]);
+    // Revoked before admission: never a candidate, so never a selector.
+    expect(
+      h.bff.api.contexts.mock.calls.flatMap(([queries]) =>
+        queries.flatMap((query) => query.message_ids),
+      ),
+    ).not.toContain(target.id);
     expect(h.session.inboxFeed.snapshot()).toMatchObject({
       status: "idle",
       incomplete: [],
@@ -807,6 +952,7 @@ it("a cache reset fences an old pending edit read and its late result", async ()
       expect(h.session.inboxFeed.snapshot().incomplete).toEqual([target.id]),
     );
     expect(h.session.inboxFeed.snapshot().status).toBe("loading");
+    await settle(h, target.id);
     expect(rows(h)[0]?.preview).toBe("old");
     await h.clearCache();
     release([
@@ -853,11 +999,13 @@ it("pending exact group member survives verified root regrouping and representat
     await vi.waitFor(() =>
       expect(h.session.inboxFeed.snapshot().incomplete).toEqual([reply.id]),
     );
+    await settle(h, reply.id);
     expect(rows(h)[0]).toMatchObject({
-      id: `room:${reply.id}`,
+      id: `room:${root.id}`,
       messageIds: [reply.id],
     });
     h.live.receive([root]);
+    await settle(h);
     expect(rows(h)[0]).toMatchObject({
       id: `room:${root.id}`,
       messageId: reply.id,
@@ -985,6 +1133,7 @@ it("a reentrant feed clear during exact pre-admission never publishes the old bo
     const work = feed.ensure();
     (await take(h, 9)).resolve([target]);
     await work;
+    await settle(h);
     expect(observed).not.toContain("never publish");
     expect(rows(h)).toEqual([]);
     expect(feed.snapshot()).toMatchObject({ status: "idle", incomplete: [] });
@@ -1033,6 +1182,7 @@ it.each(["disconnect", "unrelated revocation"] as const)(
     const first = feed.ensure();
     try {
       await vi.waitFor(() => expect(exactReads).toHaveLength(1));
+      await settle(h, old.id);
       expect(rows(h).map((row) => row.preview)).toContain("unsettled");
       if (change === "disconnect")
         h.live.state({ status: "retrying", routes: [] });
@@ -1114,6 +1264,7 @@ it("refresh checks a previously settled retained edit omitted after disconnect",
   const feed = h.session.inboxFeed;
   await feed.ensure();
   expect(feed.snapshot()).toMatchObject({ status: "ready", incomplete: [] });
+  await settle(h, target.id);
   expect(rows(h)[0]?.preview).toBe("deleted edit");
   h.live.state({ status: "retrying", routes: [] });
   h.live.state({ status: "connected", routes: [] });
@@ -1182,6 +1333,7 @@ it("a fully visibility-filtered auxiliary page is incomplete, not a false termin
       error:
         "Inbox message updates could not be verified for current access. Retry inbox.",
     });
+    await settle(h, target.id);
     expect(rows(h)[0]?.preview).toBe("original");
     expect(auxiliary).toHaveLength(1);
     // Existing shared admission can later supply the missing reference. Retry
@@ -1236,6 +1388,7 @@ it("a signed short-page walk settles edits and checks their deletion dependencie
     status: "ready",
     incomplete: [],
   });
+  await settle(h, target.id);
   expect(rows(h)[0]?.preview).toBe("revision 0");
   expect(
     h.query.mock.calls.some(
@@ -1349,6 +1502,7 @@ it("access purge drops denied obligations but retains the still-readable target"
     expect(feed.snapshot().incomplete).toEqual(
       expect.arrayContaining([kept.id, denied.id]),
     );
+    await settle(h, kept.id, denied.id);
     expect(rows(h)).toHaveLength(2);
     h.live.receive([roster(h.relay, "other", [], 30)]);
     held.resolve([]);
@@ -1395,6 +1549,7 @@ it.each(["revoke-regrant", "dispose"] as const)(
     const work = feed.ensure();
     try {
       await vi.waitFor(() => expect(reads).toBe(1));
+      await settle(h, target.id);
       expect(rows(h)[0]?.preview).toBe("original");
       if (change === "revoke-regrant") {
         h.admit([h.alice.pubkey], 30);
@@ -1402,6 +1557,8 @@ it.each(["revoke-regrant", "dispose"] as const)(
       } else await h[change]();
       held.resolve([edit]);
       await work;
+      // A closed session never settles; the regranted one must not re-admit.
+      if (change === "revoke-regrant") await settle(h);
       expect(rows(h)).toEqual([]);
       expect(feed.snapshot()).toMatchObject({
         status: "idle",
@@ -1456,6 +1613,7 @@ it("retained dependency closure checks only live author edits of the exact addre
     unrelatedEdit,
     deletion,
   ]);
+  await settle(h, target.id);
   expect(rows(h)[0]?.preview).toBe("newest edit");
   const filters: ReadFilter[] = [];
   h.query.mockImplementation(async ([filter]) => {

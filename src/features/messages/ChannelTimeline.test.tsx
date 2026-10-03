@@ -1183,7 +1183,6 @@ it("wires the shared reading hook to its owned scroller and settled position", (
   expect(useReading).toHaveBeenCalledWith({
     session: expect.any(Object),
     channelId: "channel",
-    latestMessageId: expect.any(String),
     scroller: expect.objectContaining({ current: expect.anything() }),
     settled: expect.objectContaining({ current: expect.any(Boolean) }),
   });

@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 
 test.use({
@@ -23,13 +23,13 @@ for (const direction of ["forward", "backward"]) {
     await page.mouse.move(0, 0);
     const before = app.append(
       "primary",
-      "alpha",
+      ids.alpha,
       "[Before](https://example.com/before)",
     );
-    const target = app.append("primary", "alpha", "Untouched continuation");
+    const target = app.append("primary", ids.alpha, "Untouched continuation");
     const after = app.append(
       "primary",
-      "alpha",
+      ids.alpha,
       "Following author",
       true,
       false,
@@ -97,7 +97,11 @@ test("message actions reveal, copy, restore focus and reply across responsive la
     });
   });
   await open(page, app);
-  const event = app.append("primary", "alpha", "Message actions browser check");
+  const event = app.append(
+    "primary",
+    ids.alpha,
+    "Message actions browser check",
+  );
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${event.id}"]`,
   );
@@ -135,7 +139,7 @@ test("message actions reveal, copy, restore focus and reply across responsive la
       .getByText("Link copied", { exact: true }),
   ).toBeVisible();
   const copiedLink = await page.evaluate(() => window.copiedMessages.at(-1));
-  expect(copiedLink).toBe(`buzz://message?channel=alpha&id=${event.id}`);
+  expect(copiedLink).toBe(`buzz://message?channel=${ids.alpha}&id=${event.id}`);
   await row.getByRole("button", { name: "Reply", exact: true }).click();
   const panel = page.getByRole("complementary", {
     name: "Thread",
@@ -253,7 +257,7 @@ test("message actions reveal, copy, restore focus and reply across responsive la
     panel.getByRole("textbox", { name: "Reply to thread", exact: true }),
   ).toBeFocused();
   await page
-    .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })
+    .getByRole("button", { name: "Close Thread tab", exact: true })
     .click();
   await expect(
     row.getByRole("button", { name: "Reply", exact: true }),
@@ -262,7 +266,7 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   // A broadcast reply must open its owning thread for composition, not reveal
   // the selected reply and steal focus back from the editor.
   const broadcast = app.histories
-    .get("primary/alpha")
+    .get(`primary/${ids.alpha}`)
     .find((item) => item.content === "Broadcast reply");
   if (!broadcast) throw new Error("Expected broadcast reply fixture");
   const broadcastRow = page.locator(
@@ -277,14 +281,14 @@ test("message actions reveal, copy, restore focus and reply across responsive la
     .click();
   await expect(replyBox).toBeFocused();
   await page
-    .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })
+    .getByRole("button", { name: "Close Thread tab", exact: true })
     .click();
   await broadcastRow.getByRole("button", { name: /^View thread:/ }).click();
   await expect(
     panel.locator(`[data-message-id="${broadcast.id}"]`),
   ).toBeFocused();
   await page
-    .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })
+    .getByRole("button", { name: "Close Thread tab", exact: true })
     .click();
   for (const width of [900, 603, 390]) {
     await page.setViewportSize({ width, height: 850 });
@@ -331,7 +335,7 @@ test("copied Buzz links and the desktop alias reveal their destination from a co
     });
   });
   await open(page, app);
-  const event = app.append("primary", "alpha", "Shared destination");
+  const event = app.append("primary", ids.alpha, "Shared destination");
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${event.id}"]`,
   );
@@ -343,7 +347,7 @@ test("copied Buzz links and the desktop alias reveal their destination from a co
       .getByText("Link copied", { exact: true }),
   ).toBeVisible();
   const copiedLink = await page.evaluate(() => window.copiedMessageLink);
-  expect(copiedLink).toBe(`buzz://message?channel=alpha&id=${event.id}`);
+  expect(copiedLink).toBe(`buzz://message?channel=${ids.alpha}&id=${event.id}`);
   const sharedConversation = page
     .getByRole("navigation", { name: "Subscribed channels" })
     .getByRole("button", { name: "Alice Fixture", exact: true });
@@ -354,9 +358,9 @@ test("copied Buzz links and the desktop alias reveal their destination from a co
   app.append(
     "primary",
     sharedChannel,
-    `${copiedLink}\n\n[Desktop alias](buzz://channel/alpha/${event.id})`,
+    `${copiedLink}\n\n[Desktop alias](buzz://channel/${ids.alpha}/${event.id})`,
   );
-  for (const href of [copiedLink, `buzz://channel/alpha/${event.id}`]) {
+  for (const href of [copiedLink, `buzz://channel/${ids.alpha}/${event.id}`]) {
     await sharedConversation.click();
     await page.locator(`[data-channel-timeline] a[href="${href}"]`).click();
     await expect(row).toBeVisible();
@@ -427,7 +431,7 @@ test.describe("touch", () => {
   test.use({ hasTouch: true, viewport: { width: 390, height: 850 } });
   test("opens the message menu without hover", async ({ page, app }) => {
     await open(page, app);
-    const event = app.append("primary", "alpha", "Touch menu check");
+    const event = app.append("primary", ids.alpha, "Touch menu check");
     const row = page.locator(
       `[data-channel-timeline] [data-message-id="${event.id}"]`,
     );
@@ -447,13 +451,13 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
 }) => {
   await page.setViewportSize({ width: 900, height: 950 });
   await open(page, app);
-  app.append("primary", "alpha", "Start a compact group");
+  app.append("primary", ids.alpha, "Start a compact group");
   const event = app.append(
     "primary",
-    "alpha",
+    ids.alpha,
     "Read [this reference](https://example.com/reference)",
   );
-  const next = app.append("primary", "alpha", "Next message");
+  const next = app.append("primary", ids.alpha, "Next message");
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${event.id}"]`,
   );

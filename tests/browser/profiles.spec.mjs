@@ -721,6 +721,9 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   await expect(profileTab).toBeFocused();
   await profileTab.press("Escape");
   await expect(members).toBeFocused();
+  // Closing retains the split until its transition finishes. Establish the
+  // final header geometry before clicking Members.
+  await expect(page.locator("[data-panel-dock][data-closing]")).toHaveCount(0);
   // Every row, including the viewer and protected identities, has one action
   // slot. Hover/focus only changes visibility, never row or profile geometry.
   await members.click();

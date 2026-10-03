@@ -52,6 +52,11 @@
   background: color-mix(in srgb, var(--text) 20%, transparent);
   background-clip: padding-box;
 }
+.feed > ol > li:has(:focus) > [data-message-id] {
+  /* Virtua hides items until their new index is measured. Keep focused content
+     visible; :focus-within excludes focused controls in a top-layer action bar. */
+  visibility: visible;
+}
 .feed ol {
   list-style: none;
   margin: 0;

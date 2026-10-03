@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 import { openPage } from "./navigation.mjs";
 
@@ -19,31 +19,35 @@ test("Draft and conversation previews share their frame and show real selected c
 }, testInfo) => {
   // A bounded, scrollable DM tail exercises bottom positioning. These rows are
   // signed upstream fixture data, not a client cache or live-account mutation.
+  const dmId = ids["dm-peer"];
   for (let index = 0; index < 16; index++)
-    app.append("primary", "dm-peer", `Context line ${index}`, false, false);
-  const root = app.histories.get("primary/alpha")[0].id;
+    app.append("primary", dmId, `Context line ${index}`, false, false);
+  const root = app.histories.get(`primary/${ids.alpha}`)[0].id;
   const scope = `https://primary.example:${app.viewer}`;
   const canonicalPosition = {
     offset: 0,
     bottom: false,
-    anchor: { id: app.histories.get("primary/dm-peer")[0].id, y: 0 },
+    anchor: { id: app.histories.get(`primary/${dmId}`)[0].id, y: 0 },
   };
   await page.addInitScript(
-    ({ scope, root, canonicalPosition }) => {
+    ({ scope, root, canonicalPosition, ids }) => {
       const save = (key, value) =>
         localStorage.setItem(
           `buzz-view.v1:${JSON.stringify([scope, key])}`,
           JSON.stringify(value),
         );
-      save("draft:dm-peer", { text: "  hello\nBlossom  ", recipients: [] });
-      save(`draft:alpha:thread:${root}`, {
+      save(`draft:${ids["dm-peer"]}`, {
+        text: "  hello\nBlossom  ",
+        recipients: [],
+      });
+      save(`draft:${ids.alpha}:thread:${root}`, {
         text: "Thread notes",
         recipients: [],
       });
-      save("draft:beta", { text: "Channel notes", recipients: [] });
-      save("scroll:dm-peer", canonicalPosition);
+      save(`draft:${ids.beta}`, { text: "Channel notes", recipients: [] });
+      save(`scroll:${ids["dm-peer"]}`, canonicalPosition);
     },
-    { scope, root, canonicalPosition },
+    { scope, root, canonicalPosition, ids },
   );
   await open(page, app);
   await page.getByRole("button", { name: "Inbox", exact: true }).click();
@@ -147,7 +151,7 @@ test("Draft and conversation previews share their frame and show real selected c
       await input.press("ControlOrMeta+End");
       await input.pressSequentially("!");
       await expect
-        .poll(async () => (await readDraft("draft:dm-peer")).text)
+        .poll(async () => (await readDraft(`draft:${dmId}`)).text)
         .toBe("  hello\nBlossom  !");
     }
     await page.screenshot({
@@ -206,7 +210,7 @@ test("Draft and conversation previews share their frame and show real selected c
       path: testInfo.outputPath(`thread-draft-${width}.png`),
     });
   }
-  expect(await readDraft("scroll:dm-peer")).toEqual(canonicalPosition);
+  expect(await readDraft(`scroll:${dmId}`)).toEqual(canonicalPosition);
   // Synthetic fixture publication exercises the real thread composer/outbox path.
   await detail.getByRole("button", { name: "Send message" }).click();
   await expect
@@ -216,9 +220,9 @@ test("Draft and conversation previews share their frame and show real selected c
     ({ event }) => event.kind === 9,
   ).event;
   expect(sent.content).toBe("Thread notes");
-  expect(sent.tags).toContainEqual(["h", "alpha"]);
+  expect(sent.tags).toContainEqual(["h", ids.alpha]);
   expect(sent.tags).toContainEqual(["e", root, "", "reply"]);
-  expect((await readDraft("draft:dm-peer")).text).toBe("  hello\nBlossom  !");
+  expect((await readDraft(`draft:${dmId}`)).text).toBe("  hello\nBlossom  !");
 });
 
 // Saved-root drafts share the strict window reader, but open its newest context,
@@ -230,7 +234,7 @@ test.describe("saved strict-window draft", () => {
     threadUnreadMentions: false,
     inboxDm: false,
     inboxThreadWindow: true,
-    channelIds: ["alpha", channel],
+    channelIds: [ids.alpha, channel],
     channelNames: { [channel]: "Window room" },
     historyCounts: { alpha: 1, [channel]: 0 },
   });
@@ -282,7 +286,7 @@ test("two pages coordinate a selected draft through actual storage events", asyn
   app,
 }) => {
   const scope = `https://primary.example:${app.viewer}`;
-  const key = `buzz-view.v1:${JSON.stringify([scope, "draft:beta"])}`;
+  const key = `buzz-view.v1:${JSON.stringify([scope, `draft:${ids.beta}`])}`;
   await open(page, app);
   await page.evaluate(
     (key) => localStorage.setItem(key, JSON.stringify("Original shared draft")),
@@ -374,20 +378,20 @@ test("keyboard draft retirement returns to its row, a remaining row, then Back t
   page,
   app,
 }) => {
-  const root = app.histories.get("primary/alpha")[0].id;
+  const root = app.histories.get(`primary/${ids.alpha}`)[0].id;
   const scope = `https://primary.example:${app.viewer}`;
   await page.addInitScript(
-    ({ scope, root }) => {
+    ({ scope, root, ids }) => {
       for (const [key, text] of [
-        ["draft:beta", "Channel draft"],
-        [`draft:alpha:thread:${root}`, "Thread draft"],
+        [`draft:${ids.beta}`, "Channel draft"],
+        [`draft:${ids.alpha}:thread:${root}`, "Thread draft"],
       ])
         localStorage.setItem(
           `buzz-view.v1:${JSON.stringify([scope, key])}`,
           JSON.stringify(text),
         );
     },
-    { scope, root },
+    { scope, root, ids },
   );
   await open(page, app);
   await openPage(page, "Inbox");

@@ -170,6 +170,7 @@ export function InboxView({
     channelId: string;
     messageId: string;
     rootId?: string;
+    item: InboxItem;
   }>();
   const invokingRow = useRef<HTMLButtonElement | null>(null);
   const fallbackRow = useRef<HTMLButtonElement | null>(null);
@@ -231,11 +232,16 @@ export function InboxView({
   );
   // A late verified root can legitimately regroup channel:reply into
   // channel:root. Keep the captured visit by exact key, never by a namesake.
-  const selected = items.find(
-    (item) =>
-      item.channelId === selectedTarget?.channelId &&
-      item.messageIds.includes(selectedTarget.messageId),
-  );
+  // Read coverage removes list rows, not the captured visit. The existing detail
+  // and readers own access, deletion and lifecycle presentation for that target.
+  const selected =
+    selectedTarget &&
+    (items.find(
+      (item) =>
+        item.channelId === selectedTarget.channelId &&
+        item.messageIds.includes(selectedTarget.messageId),
+    ) ??
+      selectedTarget.item);
   const selectedId = selected?.id;
   const [restoringFocus, setRestoringFocus] = useState(false);
   useEffect(() => {
@@ -251,12 +257,6 @@ export function InboxView({
     invokingRow.current = null;
     setRestoringFocus(false);
   }, [selectedTarget, restoringFocus, pending]);
-  useEffect(() => {
-    if (selectedTarget && !selected && inbox.status !== "loading") {
-      setRestoringFocus(true);
-      setSelectedTarget(undefined);
-    }
-  }, [selectedTarget, selected, inbox.status]);
   useEffect(() => {
     if (menu && !items.some((item) => item.id === menu.id)) setMenu(undefined);
   }, [items, menu]);
@@ -746,6 +746,7 @@ export function InboxView({
                               cancelRetry();
                               invokingRow.current = event.currentTarget;
                               setSelectedTarget({
+                                item,
                                 channelId: item.channelId,
                                 messageId: item.messageId,
                                 ...(item.rootId ? { rootId: item.rootId } : {}),

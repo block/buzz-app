@@ -49,11 +49,13 @@ function ActivityRow({
   session,
   agents,
   onOpen,
+  retain,
 }: {
   item: ThreadActivityItem;
   session: RelaySession;
   agents: readonly string[];
   onOpen(item: ThreadActivityItem): void;
+  retain(item: ThreadActivityItem): () => void;
 }) {
   const selection = useMemo(
     () => selectProfiles(session.profiles, [item.authorId]),
@@ -79,6 +81,7 @@ function ActivityRow({
     if (pending) return;
     setPending(true);
     setError(false);
+    const release = retain(item);
     try {
       await session.unread.markThrough(
         { kind: "thread", channelId: item.channelId, rootId: item.rootId },
@@ -88,6 +91,7 @@ function ActivityRow({
       setError(true);
     } finally {
       setPending(false);
+      release();
     }
   };
   return (
@@ -170,7 +174,21 @@ export function ChannelActivityPopover({
     [session, channelId],
   );
   const snapshot = useSyncExternalStore(subscribe, get, get);
-  const items = snapshot.items ?? [];
+  // The action owns its pending/error node even when optimistic read coverage
+  // removes the summary. This is UI lifetime only, never unread authority.
+  const [inFlight, setInFlight] = useState<readonly ThreadActivityItem[]>([]);
+  const retain = (item: ThreadActivityItem) => {
+    setInFlight((current) => [...current, item]);
+    return () =>
+      setInFlight((current) => current.filter((entry) => entry !== item));
+  };
+  const currentItems = snapshot.items ?? [];
+  const items = [
+    ...currentItems,
+    ...inFlight.filter(
+      (item) => !currentItems.some((entry) => entry.rootId === item.rootId),
+    ),
+  ];
   const activeAgents = agents ?? [];
   const agentIds = activeAgents.join(",");
   const [open, setOpen] = useState(false);
@@ -233,6 +251,7 @@ export function ChannelActivityPopover({
           }
         }
         setOpen(next);
+        if (next) void session.unread.loadActivity(channelId).catch(() => {});
         if (next) setNow(Date.now());
         if (next && items.length)
           void session.profiles
@@ -265,6 +284,11 @@ export function ChannelActivityPopover({
           <div className={styles.activityList}>
             {stale && (
               <p className={styles.activityStale}>May be out of date</p>
+            )}
+            {!snapshot.complete && (
+              <p className={styles.activityStale}>
+                More activity may be in this channel
+              </p>
             )}
             {activeAgents.length > 0 && (
               <section aria-label="Agents working now">
@@ -341,6 +365,7 @@ export function ChannelActivityPopover({
                     item={item}
                     session={session}
                     agents={activeAgents}
+                    retain={retain}
                     onOpen={(selected) => {
                       setOpen(false);
                       onOpenThread(selected);

@@ -16,13 +16,61 @@ import { platform, arch } from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { relayBrokerPlugin } from "../../dev/relay-broker.mjs";
-import { policyRelay } from "./policy-relay.mjs";
+import { isWorkflowDefinitionBatch } from "../../src/features/workflows/queries.ts";
+import { buzzV1Discovery, policyRelay } from "./policy-relay.mjs";
 import { buildApp } from "./build.mjs";
 import { fixtureBody } from "./fixture-body.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
-export const channels = ["alpha", "beta"];
+// Wire channel ids are UUIDs, as on the relay; specs keep readable labels.
+export const uuid = (n) =>
+  `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
+const labels = [
+  ...[
+    "alpha",
+    "beta",
+    "open",
+    "cedar",
+    "maple",
+    "willow",
+    "dm-peer",
+    "dm-group",
+  ],
+  ...Array.from({ length: 128 }, (_, i) => `dm-${String(i).padStart(3, "0")}`),
+  // Appended so earlier labels keep their UUIDs.
+  ...["dm-a", "dm-b", "dm-c", "dm-d", "dm-self"],
+  ...Array.from({ length: 12 }, (_, i) => `padding-${i}`),
+];
+export const ids = Object.freeze(
+  Object.fromEntries(labels.map((label, i) => [label, uuid(i + 1)])),
+);
+const labelById = new Map(labels.map((label) => [ids[label], label]));
+/** Readable label for content and names; unlabeled ids stand for themselves. */
+export const labelOf = (id) => labelById.get(id) ?? id;
+export const channels = [ids.alpha, ids.beta];
+/** Saved `/buzz/v1` journals ({pending, manual} per partition); none before first use. */
+export const sidebarJournals = (page) =>
+  page.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const request = indexedDB.open("buzz-sidebar-v1");
+        // Never create the app's database from a test probe.
+        request.onupgradeneeded = () => request.transaction.abort();
+        request.onerror = () =>
+          request.error?.name === "AbortError"
+            ? resolve([])
+            : reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          const tx = db.transaction("partitions", "readonly");
+          const read = tx.objectStore("partitions").getAll();
+          read.onsuccess = () => resolve(read.result);
+          read.onerror = () => reject(read.error);
+          tx.oncomplete = () => db.close();
+        };
+      }),
+  );
 export const historySize = 640;
 
 // The built app, React, services, verification, IndexedDB and Virtua stay real.
@@ -38,6 +86,7 @@ export const test = base.extend({
   threadUnreadMentions: [false, { option: true }],
   threadUnreadJoined: [false, { option: true }],
   threadUnreadOwnedRoot: [true, { option: true }],
+  threadUnreadOrdinaryNested: [false, { option: true }],
   exactMessages: [false, { option: true }],
   openSearch: [false, { option: true }],
   sessionChannels: [[], { option: true }],
@@ -67,6 +116,7 @@ export const test = base.extend({
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
   launchAnimation: [false, { option: true }],
+  // Keyed by label (or by id for unlabeled channels).
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
@@ -88,6 +138,7 @@ export const test = base.extend({
       threadUnreadMentions,
       threadUnreadJoined,
       threadUnreadOwnedRoot,
+      threadUnreadOrdinaryNested,
       exactMessages,
       openSearch,
       sessionChannels,
@@ -161,11 +212,7 @@ export const test = base.extend({
         ? [key(5), ...(dmLabels ? [key(6), key(7)] : [])]
         : [];
     const peerKey = peerKeys[0];
-    const communityIds = {
-      primary: "01234567-89ab-cdef-0123-456789abcdef",
-      secondary: "11234567-89ab-cdef-0123-456789abcdef",
-    };
-    const readEvents = new Map([
+    const sidebarEvents = new Map([
       ["primary", new Map()],
       ["secondary", new Map()],
     ]);
@@ -223,15 +270,15 @@ export const test = base.extend({
       : largeSidebar
         ? Array.from(
             { length: 128 },
-            (_, i) => `dm-${i.toString().padStart(3, "0")}`,
+            (_, i) => ids[`dm-${i.toString().padStart(3, "0")}`],
           )
         : dmLabels
-          ? ["dm-peer", "dm-group"]
+          ? [ids["dm-peer"], ids["dm-group"]]
           : inboxDm || inboxDmOldAnchor
-            ? ["dm-peer"]
+            ? [ids["dm-peer"]]
             : [];
     const personalChannel = "11111111-1111-4111-8111-111111111111";
-    const sortingIds = sortingSidebar ? ["cedar", "maple", "willow"] : [];
+    const sortingIds = sortingSidebar ? [ids.cedar, ids.maple, ids.willow] : [];
     const renamedChannels = new Map();
     const lifecycleRows = channelLifecycle
       ? [
@@ -263,7 +310,7 @@ export const test = base.extend({
     if (savedSidebar) {
       const key = nip44.v2.utils.getConversationKey(userKey, viewer);
       for (const community of ["primary", "secondary"]) {
-        const records = readEvents.get(community);
+        const records = sidebarEvents.get(community);
         for (const [coordinate, value] of [
           [
             "channel-sections",
@@ -288,14 +335,14 @@ export const test = base.extend({
                     ]
                   : []),
               ],
-              assignments: { beta: "work" },
+              assignments: { [ids.beta]: "work" },
             },
           ],
           [
             "channel-stars",
             {
               version: 1,
-              channels: { alpha: { starred: true, updatedAt: 1 } },
+              channels: { [ids.alpha]: { starred: true, updatedAt: 1 } },
             },
           ],
           ["channel-sort", { version: 1, groups: initialSidebarSort }],
@@ -333,7 +380,7 @@ export const test = base.extend({
             assignments: { [personalChannel]: "personal-work" },
           },
         };
-        readEvents.get(community).set(
+        sidebarEvents.get(community).set(
           coordinate,
           sign(
             30078,
@@ -351,6 +398,11 @@ export const test = base.extend({
       }
     }
     const hiddenChannels = new Set();
+    const nameOf = (id) =>
+      renamedChannels.get(id) ??
+      channelNames[id] ??
+      lifecycleRows.find((row) => row.id === id)?.name ??
+      (id === ids.alpha ? "Alpha" : id === ids.beta ? "Beta" : labelOf(id));
     const streams = new Map();
     const streamOwners = new Map();
     // Tall histories leave room above the older-page prefetch threshold, even
@@ -367,11 +419,11 @@ export const test = base.extend({
       for (const channel of channels)
         histories.set(
           `${community}/${channel}`,
-          Array.from({ length: historyCounts[channel] }, (_, i) =>
+          Array.from({ length: historyCounts[labelOf(channel)] }, (_, i) =>
             sign(
               9,
               [["h", channel]],
-              `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 5 : 1))}`,
+              `${community} ${labelOf(channel)} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 5 : 1))}`,
               readState ? peerKey : userKey,
               1700000100 + i,
             ),
@@ -387,7 +439,7 @@ export const test = base.extend({
           sign(
             9,
             [["h", id]],
-            `Activity in ${id}`,
+            `Activity in ${labelOf(id)}`,
             userKey,
             1700000200 + index,
           ),
@@ -397,7 +449,7 @@ export const test = base.extend({
     if (openSearch) {
       const root = sign(
         9,
-        [["h", "open"]],
+        [["h", ids.open]],
         "Public conversation root",
         userKey,
         1699999000,
@@ -405,24 +457,24 @@ export const test = base.extend({
       searchTarget = sign(
         9,
         [
-          ["h", "open"],
+          ["h", ids.open],
           ["e", root.id, "", "reply"],
         ],
         "crew-search exact public reply",
         userKey,
         1699999001,
       );
-      histories.set("primary/open", [root]);
+      histories.set(`primary/${ids.open}`, [root]);
       targetEvents.push(searchTarget);
     }
     let exact;
     if (exactMessages) {
-      const root = histories.get("primary/alpha")[2];
+      const root = histories.get(`primary/${ids.alpha}`)[2];
       const replies = Array.from({ length: 80 }, (_, i) =>
         sign(
           9,
           [
-            ["h", "alpha"],
+            ["h", ids.alpha],
             ["e", root.id, "", "reply"],
             ["p", getPublicKey(peerKey)],
           ],
@@ -436,7 +488,7 @@ export const test = base.extend({
         replies[replies.length - 1] = sign(
           9,
           [
-            ["h", "alpha"],
+            ["h", ids.alpha],
             ["e", root.id, "", "root"],
             ["e", replies.at(-2).id, "", "reply"],
             ["p", getPublicKey(peerKey)],
@@ -480,21 +532,26 @@ export const test = base.extend({
     }
     let inboxDmAnchor;
     if (inboxDmOldAnchor) {
+      // Addressed, so the #p feed lists it cold. An untagged DM sent before
+      // launch is not an Inbox candidate until the relay lists attention.
       inboxDmAnchor = sign(
         9,
-        [["h", "dm-peer"]],
+        [
+          ["h", ids["dm-peer"]],
+          ["p", viewer],
+        ],
         "Inbox old DM anchor",
         peerKey,
         1700000800,
       );
       histories
-        .get("primary/dm-peer")
+        .get(`primary/${ids["dm-peer"]}`)
         .push(
           inboxDmAnchor,
           ...Array.from({ length: 24 }, (_, index) =>
             sign(
               9,
-              [["h", "dm-peer"]],
+              [["h", ids["dm-peer"]]],
               `Recent DM ${index}`,
               userKey,
               1700000810 + index,
@@ -504,11 +561,11 @@ export const test = base.extend({
     }
     if (inboxDm)
       histories
-        .get("primary/dm-peer")
+        .get(`primary/${ids["dm-peer"]}`)
         .push(
           sign(
             9,
-            [["h", "dm-peer"]],
+            [["h", ids["dm-peer"]]],
             "Inbox DM fixture reply",
             peerKey,
             1700000900,
@@ -517,9 +574,9 @@ export const test = base.extend({
     if (sidebarUnread) {
       for (const id of Object.keys(dmMembers).length
         ? Object.keys(dmMembers)
-        : ["dm-030", "dm-090"])
+        : [ids["dm-030"], ids["dm-090"]])
         histories.set(`primary/${id}`, [
-          sign(9, [["h", id]], `Unread in ${id}`, peerKey, 1700000900),
+          sign(9, [["h", id]], `Unread in ${labelOf(id)}`, peerKey, 1700000900),
         ]);
     }
     // Opt-in upstream thread evidence: no client cache/read-state injection.
@@ -533,14 +590,14 @@ export const test = base.extend({
       ]);
     const threadSummaries = [];
     // Viewer replies older than the unread sample: the thread view and the
-    // conversation lookup return them, but channel unread evidence never does.
+    // relay's read model see them, but channel unread evidence never does.
     const displacedReplies = new Map();
     if (threadUnread) {
-      const history = histories.get("primary/alpha");
+      const history = histories.get(`primary/${ids.alpha}`);
       for (const [index, event] of history.slice(-2).entries()) {
         const root = sign(
           9,
-          [["h", "alpha"]],
+          [["h", ids.alpha]],
           `Thread root ${index}`,
           // The viewer owns the first thread, so its direct replies are the
           // viewer's conversation. The second is a peer thread: it counts only
@@ -554,7 +611,7 @@ export const test = base.extend({
           sign(
             9,
             [
-              ["h", "alpha"],
+              ["h", ids.alpha],
               ["e", root.id.toUpperCase(), "", "reply"],
               ...(threadUnreadMentions && index === 1 ? [["p", viewer]] : []),
             ],
@@ -563,12 +620,28 @@ export const test = base.extend({
             root.created_at + 10,
           ),
         ];
+        // Newest reply in the peer thread, nested under a peer reply: outside
+        // the viewer's conversations, so it never counts or previews.
+        if (threadUnreadOrdinaryNested && index === 1)
+          replies.push(
+            sign(
+              9,
+              [
+                ["h", ids.alpha],
+                ["e", root.id, "", "root"],
+                ["e", replies[0].id, "", "reply"],
+              ],
+              "Ordinary nested reply",
+              peerKey,
+              root.created_at + 12,
+            ),
+          );
         if (threadUnreadJoined && index === 1)
           displacedReplies.set(root.id, [
             sign(
               9,
               [
-                ["h", "alpha"],
+                ["h", ids.alpha],
                 ["e", root.id.toUpperCase(), "", "reply"],
               ],
               "Viewer reply",
@@ -581,7 +654,7 @@ export const test = base.extend({
           sign(
             39005,
             [
-              ["h", "alpha"],
+              ["h", ids.alpha],
               ["e", root.id],
               ["d", root.id],
             ],
@@ -594,12 +667,12 @@ export const test = base.extend({
       }
     }
     if (threadUnread) {
-      const history = histories.get("primary/alpha");
+      const history = histories.get(`primary/${ids.alpha}`);
       const root = history.at(-2);
       const broadcast = sign(
         9,
         [
-          ["h", "alpha"],
+          ["h", ids.alpha],
           ["e", root.id.toUpperCase(), "", "reply"],
           ["broadcast", "1"],
         ],
@@ -614,7 +687,7 @@ export const test = base.extend({
         sign(
           9,
           [
-            ["h", "alpha"],
+            ["h", ids.alpha],
             ["e", root.id.toUpperCase(), "", "root"],
             ["e", broadcast.id.toUpperCase(), "", "reply"],
             // Nested under the peer's reply, so only the mention makes it count.
@@ -629,7 +702,7 @@ export const test = base.extend({
         sign(
           39005,
           [
-            ["h", "alpha"],
+            ["h", ids.alpha],
             ["e", broadcast.id],
             ["d", broadcast.id],
           ],
@@ -642,9 +715,12 @@ export const test = base.extend({
     }
     let inboxWindow;
     if (inboxThreadWindow) {
-      const channelId = channels.find((id) => /^[0-9a-f-]{36}$/.test(id));
+      // Every fixture channel id is canonical here; the window owns the one
+      // the test added.
+      const named = new Set(Object.values(ids));
+      const channelId = channels.find((id) => !named.has(id));
       if (!channelId)
-        throw new Error("Inbox window needs a canonical fixture channel");
+        throw new Error("Inbox window needs its own fixture channel");
       const root = sign(
         9,
         [["h", channelId]],
@@ -673,14 +749,14 @@ export const test = base.extend({
     let presenceThread;
     if (presenceThreadAuthors) {
       const threadRoot = histories
-        .get("primary/alpha")
+        .get(`primary/${ids.alpha}`)
         .find((event) => event.content === "Thread root 0");
       if (!threadRoot) throw new Error("Presence thread requires threadUnread");
       const replies = Array.from({ length: presenceThreadAuthors }, (_, i) =>
         sign(
           9,
           [
-            ["h", "alpha"],
+            ["h", ids.alpha],
             ["e", threadRoot.id, "", "reply"],
           ],
           `Distinct author reply ${i}`,
@@ -692,9 +768,9 @@ export const test = base.extend({
       // The ordinary unread fixture also broadcasts one reply into the timeline.
       // This stress case owns exactly the distinct replies above, not that extra row.
       histories.set(
-        "primary/alpha",
+        `primary/${ids.alpha}`,
         histories
-          .get("primary/alpha")
+          .get(`primary/${ids.alpha}`)
           .filter(
             (event) =>
               !event.tags.some(
@@ -707,13 +783,13 @@ export const test = base.extend({
     }
     if (actionProfile) {
       const root = histories
-        .get("primary/alpha")
+        .get(`primary/${ids.alpha}`)
         .find((row) => row.content === "Thread root 1");
       targetEvents.push(
         sign(
           7,
           [
-            ["h", "alpha"],
+            ["h", ids.alpha],
             ["e", root.id],
           ],
           "👍",
@@ -757,7 +833,6 @@ export const test = base.extend({
       },
       queries: [],
       publications: [],
-      readPublications: [],
       sessions: [],
       streamConnections: [],
       streamInterests: [],
@@ -806,7 +881,7 @@ export const test = base.extend({
         return [];
       }
       if (personalSidebar && filter.ids)
-        return [...readEvents.get(community).values()].filter((event) =>
+        return [...sidebarEvents.get(community).values()].filter((event) =>
           filter.ids.includes(event.id),
         );
       if (filter.kinds?.includes(20001))
@@ -891,9 +966,9 @@ export const test = base.extend({
                   ])
                 : agentPeers && channels.includes(id)
                   ? participants.map((pubkey) => ["p", pubkey, "", "member"])
-                  : dmLabels && id === "dm-peer"
+                  : dmLabels && id === ids["dm-peer"]
                     ? [["p", participants[0], "", "member"]]
-                    : dmLabels && id === "dm-group"
+                    : dmLabels && id === ids["dm-group"]
                       ? participants.map((pubkey) => [
                           "p",
                           pubkey,
@@ -909,20 +984,14 @@ export const test = base.extend({
             ]),
           );
       if (filter.kinds?.includes(39000))
-        return [...rosterIds, ...(openSearch ? ["open"] : [])]
+        return [...rosterIds, ...(openSearch ? [ids.open] : [])]
           .filter((id) => !filter["#d"] || filter["#d"].includes(id))
           .map((id) =>
             sign(
               39000,
               [
                 ["d", id],
-                [
-                  "name",
-                  renamedChannels.get(id) ??
-                    channelNames[id] ??
-                    lifecycleRows.find((row) => row.id === id)?.name ??
-                    (id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id),
-                ],
+                ["name", nameOf(id)],
                 [
                   "t",
                   lifecycleRows.find((row) => row.id === id)?.type ??
@@ -954,16 +1023,7 @@ export const test = base.extend({
             ),
           );
       if (filter.kinds?.includes(30078)) {
-        const events = [...readEvents.get(community).values()];
-        if (readState && filter.read_state_snapshot === 1)
-          return {
-            read_state_snapshot: 1,
-            complete: true,
-            community_id: communityIds[community],
-            pubkey: viewer,
-            snapshot_id: "a".repeat(64),
-            events,
-          };
+        const events = [...sidebarEvents.get(community).values()];
         return events.filter(
           (event) =>
             event.tags.some(
@@ -1162,73 +1222,6 @@ export const test = base.extend({
             (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
           )
           .slice(0, filter.limit);
-      if (filter.thread_window) {
-        const channelId = filter["#h"][0],
-          rootId = filter["#e"][0];
-        const candidates = [
-          ...(histories.get(`${community}/${channelId}`) ?? []),
-          ...(community === "primary" ? (threadReplies.get(rootId) ?? []) : []),
-        ];
-        const rows = [
-          ...new Map(candidates.map((event) => [event.id, event])).values(),
-        ]
-          .filter(
-            (event) =>
-              filter.kinds.includes(event.kind) &&
-              event.tags.some(
-                ([k, v]) => k === "e" && v.toLowerCase() === rootId,
-              ) &&
-              (filter.until === undefined ||
-                event.created_at < filter.until ||
-                (event.created_at === filter.until &&
-                  event.id > filter.before_id)),
-          )
-          .toSorted(
-            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
-          );
-        const page = rows.slice(0, filter.limit),
-          last = page.at(-1);
-        const hasMore = rows.length > page.length;
-        const binding = createHash("sha256")
-          .update(
-            JSON.stringify([
-              "tw",
-              1,
-              "older",
-              `${community}.example`,
-              viewer,
-              channelId,
-              rootId,
-              filter.limit,
-              filter.depth_limit ?? 100,
-              [...new Set(filter.kinds)].sort((a, b) => a - b),
-              filter.until === undefined
-                ? null
-                : [filter.until, filter.before_id],
-              filter.include_aux ?? false,
-            ]),
-          )
-          .digest("hex");
-        return [
-          ...page,
-          sign(
-            39007,
-            [
-              ["d", `tw:1:${binding}`],
-              ["h", channelId],
-              ["e", rootId],
-            ],
-            JSON.stringify({
-              version: 1,
-              direction: "older",
-              has_more: hasMore,
-              next_cursor: hasMore
-                ? { created_at: last.created_at, id: last.id }
-                : null,
-            }),
-          ),
-        ];
-      }
       if (filter.depth_limit) {
         const rootId = filter["#e"]?.[0];
         const candidates = [
@@ -1246,20 +1239,39 @@ export const test = base.extend({
             refs.find((tag) => tag[3] === "reply");
           return root?.[1]?.toLowerCase() === rootId;
         });
-        const rows = [
+        const unique = [
           ...new Map(candidates.map((event) => [event.id, event])).values(),
-        ]
-          .filter(
-            (event) =>
-              filter.thread_cursor === undefined ||
-              event.created_at > filter.thread_cursor ||
-              (event.created_at === filter.thread_cursor &&
-                event.id > filter.thread_cursor_id),
-          )
-          .toSorted(
-            (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
-          )
-          .slice(0, filter.limit);
+        ];
+        const strictRows = filter.thread_window
+          ? unique
+              .filter(
+                (event) =>
+                  filter.kinds.includes(event.kind) &&
+                  (filter.until === undefined ||
+                    event.created_at < filter.until ||
+                    (event.created_at === filter.until &&
+                      event.id > filter.before_id)),
+              )
+              .toSorted(
+                (a, b) =>
+                  b.created_at - a.created_at || a.id.localeCompare(b.id),
+              )
+          : [];
+        const rows = filter.thread_window
+          ? strictRows.slice(0, filter.limit)
+          : unique
+              .filter(
+                (event) =>
+                  filter.thread_cursor === undefined ||
+                  event.created_at > filter.thread_cursor ||
+                  (event.created_at === filter.thread_cursor &&
+                    event.id > filter.thread_cursor_id),
+              )
+              .toSorted(
+                (a, b) =>
+                  a.created_at - b.created_at || a.id.localeCompare(b.id),
+              )
+              .slice(0, filter.limit);
         const ids = new Set(rows.map((event) => event.id));
         const aux = [];
         if (filter.include_aux && community === "primary")
@@ -1277,41 +1289,56 @@ export const test = base.extend({
                 ids.add(event.id);
               }
             }
+        if (filter.thread_window) {
+          // Model NIP-CW independently of the client verifier: signed bounds are
+          // bound to the upstream authority/viewer and exact requested window.
+          const binding =
+            "tw:1:" +
+            createHash("sha256")
+              .update(
+                JSON.stringify([
+                  "tw",
+                  1,
+                  "older",
+                  new URL(JSON.parse(fixtureAliases)[community]).host,
+                  viewer,
+                  filter["#h"][0],
+                  rootId,
+                  filter.limit,
+                  filter.depth_limit ?? 100,
+                  [...new Set(filter.kinds)].sort((a, b) => a - b),
+                  filter.until === undefined
+                    ? null
+                    : [filter.until, filter.before_id],
+                  filter.include_aux ?? false,
+                ]),
+              )
+              .digest("hex");
+          const hasMore = strictRows.length > rows.length;
+          const last = rows.at(-1);
+          return [
+            ...rows,
+            ...aux,
+            sign(
+              39007,
+              [
+                ["d", binding],
+                ["h", filter["#h"][0]],
+                ["e", rootId],
+              ],
+              JSON.stringify({
+                version: 1,
+                direction: "older",
+                has_more: hasMore,
+                next_cursor: hasMore
+                  ? { created_at: last.created_at, id: last.id }
+                  : null,
+              }),
+            ),
+          ];
+        }
         return [...rows, ...aux];
       }
-      // Unread conversation lookup: the viewer's replies to undecided parents.
-      if (
-        filter.kinds?.includes(9) &&
-        filter["#e"] &&
-        filter.authors?.length === 1 &&
-        filter.authors[0] === viewer
-      )
-        return (filter["#h"] ?? [])
-          .flatMap((channel) => histories.get(`${community}/${channel}`) ?? [])
-          .concat(
-            threadUnread && community === "primary"
-              ? [
-                  ...[...threadReplies.values()].flat(),
-                  ...[...displacedReplies.values()].flat(),
-                ]
-              : [],
-          )
-          .filter(
-            (event) =>
-              filter.kinds.includes(event.kind) &&
-              event.pubkey === viewer &&
-              event.tags.some(
-                ([key, value]) => key === "h" && filter["#h"]?.includes(value),
-              ) &&
-              event.tags.some(
-                ([key, value]) =>
-                  key === "e" && filter["#e"].includes(value?.toLowerCase()),
-              ),
-          )
-          .toSorted(
-            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
-          )
-          .slice(0, filter.limit);
       // Unread evidence is not a top-level window, even for a one-ID final batch.
       if (
         filter.kinds?.includes(9) &&
@@ -1321,7 +1348,7 @@ export const test = base.extend({
         return filter["#h"]
           .flatMap((channel) => [
             ...(histories.get(`${community}/${channel}`) ?? []),
-            ...(threadUnread && community === "primary" && channel === "alpha"
+            ...(threadUnread && community === "primary" && channel === ids.alpha
               ? [...threadReplies.values()].flat()
               : []),
           ])
@@ -1479,7 +1506,7 @@ export const test = base.extend({
             nip44.v2.utils.getConversationKey(userKey, viewer),
           ),
         );
-        readEvents.get(community).set(sidebarCoordinate, event);
+        sidebarEvents.get(community).set(sidebarCoordinate, event);
         report.sidebarPublications ??= [];
         report.sidebarPublications.push({
           community,
@@ -1489,23 +1516,8 @@ export const test = base.extend({
         });
         return;
       }
-      expect(event.tags).toContainEqual(["t", "read-state"]);
-      const blob = JSON.parse(
-        nip44.v2.decrypt(
-          event.content,
-          nip44.v2.utils.getConversationKey(userKey, viewer),
-        ),
-      );
-      const coordinate = event.tags.find(([key]) => key === "d")?.[1];
-      expect(coordinate).toMatch(/^read-state:[0-9a-f]{32}$/);
-      const previous = readEvents.get(community).get(coordinate);
-      if (
-        !previous ||
-        event.created_at > previous.created_at ||
-        (event.created_at === previous.created_at && event.id < previous.id)
-      )
-        readEvents.get(community).set(coordinate, event);
-      report.readPublications.push({ community, event, blob });
+      // Read state lives behind /buzz/v1; no 30078 read-state publication remains.
+      throw new Error(`Unexpected 30078 coordinate ${sidebarCoordinate}`);
     };
     const relay = productionBroker
       ? policyRelay({
@@ -1514,9 +1526,33 @@ export const test = base.extend({
           answer,
           report,
           pending,
-          // The production broker advertises read-state writes for every session,
-          // not only tests opting into complete snapshot reads.
+          // Sidebar preferences (mutes, sections, stars, sort) still publish 30078.
           acceptPublication: acceptReadPublication,
+          // Membership, not the local roster, authorizes /buzz/v1 rows; the
+          // model reads the same signed histories and thread replies.
+          readModel: {
+            rows: () =>
+              rosterIds.map((id) => ({
+                channel_id: id,
+                name: nameOf(id),
+                channel_type: dmIds.includes(id)
+                  ? "dm"
+                  : (lifecycleRows.find((row) => row.id === id)?.type ??
+                    "stream"),
+                archived: archivedIds.has(id),
+                hidden: hiddenChannels.has(id) || hiddenDmIds.has(id),
+              })),
+            events: (community, channel) => [
+              ...(histories.get(`${community}/${channel}`) ?? []),
+              ...(community === "primary"
+                ? [
+                    ...[...threadReplies.values()].flat(),
+                    ...[...displacedReplies.values()].flat(),
+                    ...targetEvents,
+                  ]
+                : []),
+            ],
+          },
           ...(actionProfile || channelLifecycle
             ? {
                 latencyMs: 40,
@@ -1548,19 +1584,7 @@ export const test = base.extend({
                 },
               }
             : {}),
-          discovery: (community) => ({
-            self: getPublicKey(relayKey),
-            ...(readState
-              ? {
-                  read_state_snapshot: {
-                    version: 1,
-                    community_id: communityIds[community],
-                    max_events: 4096,
-                    max_bytes: 8388608,
-                  },
-                }
-              : {}),
-          }),
+          discovery: () => ({ self: getPublicKey(relayKey) }),
         })
       : undefined;
     const middleware = async (request, response, next) => {
@@ -1713,7 +1737,9 @@ export const test = base.extend({
             `Unexpected fixture request: ${request.method} ${request.url}`,
           );
         expect(body.length).toBeGreaterThan(0);
-        expect(body.length).toBeLessThanOrEqual(3);
+        // Workflow definitions are the one sanctioned wide batch (see relay-broker).
+        if (!isWorkflowDefinitionBatch(body))
+          expect(body.length).toBeLessThanOrEqual(3);
         const filter = body[0];
         const result = [
           ...new Map(
@@ -1802,6 +1828,7 @@ export const test = base.extend({
                     : {
                         authority: async () => ({
                           relayAuthor: getPublicKey(relayKey),
+                          buzz_v1: buzzV1Discovery,
                         }),
                       }),
                   upstreamFetch: relay.fetch,
@@ -1827,6 +1854,10 @@ export const test = base.extend({
         report.unexpected.push(`Blocked WebSocket: ${socket.url()}`);
         socket.close();
       });
+      // Browser-evaluated spec closures name channels by the same `ids`.
+      await context.addInitScript((value) => {
+        globalThis.ids = value;
+      }, ids);
       watchedPages.push(watchPageErrors(page));
       report.errors = watchedPages[0].errors;
       const unexplainedPageErrors = () =>
@@ -1925,6 +1956,7 @@ export const test = base.extend({
           : undefined,
         pending,
         histories,
+        threadReplies, // Signed upstream data, like histories; never client read state.
         // Signed device-cache input for the startup scale journey; same modeled
         // wire responses as a real roster/head read, without visiting every row.
         startupCache() {
@@ -2048,7 +2080,7 @@ export const test = base.extend({
         },
         // Signed upstream-only simulations: never a browser publication or live relay.
         activity({
-          channel = "alpha",
+          channel = ids.alpha,
           root,
           author = 0,
           kind = 20002,
@@ -2096,7 +2128,7 @@ export const test = base.extend({
           const event = sign(
             5,
             [
-              ["h", "alpha"],
+              ["h", ids.alpha],
               ["e", target.id],
             ],
             "",
@@ -2195,6 +2227,7 @@ export const test = base.extend({
         ...(report.sidebarStarFailures ?? []),
         ...(report.sidebarAssignmentFailures ?? []),
         ...(report.sidebarPreferenceFailures ?? []),
+        ...(report.sidebarPermissionFailures ?? []),
         ...(report.startupFailures ?? []),
       ];
       const injectedSidebarFailure = (message, index) => {

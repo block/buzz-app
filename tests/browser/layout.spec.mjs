@@ -6,7 +6,7 @@ import {
   selectSettingsSection,
   settleShellToggle,
 } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { wheel, anchor, settle, upper, expectAnchor } from "./timeline.mjs";
@@ -91,7 +91,7 @@ async function link(page, app, target) {
   );
   // A return from a compose route can still be restoring the timeline.
   await settle(page);
-  app.append("primary", "alpha", `Please review ${target}`);
+  app.append("primary", ids.alpha, `Please review ${target}`);
   const trigger = page.getByRole("link", { name: target, exact: true });
   await expect(trigger).toBeVisible();
   await settle(page);
@@ -478,7 +478,7 @@ readingTest(
         .toBeLessThan(4);
     await settle(page);
     await expectBottom();
-    const received = app.append("primary", "alpha");
+    const received = app.append("primary", ids.alpha);
     await expect(
       page.locator(`[data-message-id="${received.id}"]`),
     ).toBeInViewport();
@@ -583,7 +583,7 @@ readingTest(
       .locator("[data-message-id]")
       .last()
       .getAttribute("data-message-id");
-    const message = app.append("primary", "alpha", `Keep focus on ${target}`);
+    const message = app.append("primary", ids.alpha, `Keep focus on ${target}`);
     const trigger = page.getByRole("link", { name: target, exact: true });
     await expect(trigger).toBeInViewport();
     await settle(page);
@@ -844,7 +844,7 @@ todosOverlapTest(
     };
     const openThread = async () => {
       const root = app.histories
-        .get("primary/alpha")
+        .get(`primary/${ids.alpha}`)
         .find((event) => event.content === "Thread root 0");
       await page
         .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
@@ -1140,7 +1140,7 @@ sidebarActions(
     });
     await companionLauncher(page, "Companion fixture").click();
     await expect(companion).toBeVisible();
-    const alpha = page.locator('button[data-channel-id="alpha"]');
+    const alpha = page.locator(`button[data-channel-id="${ids.alpha}"]`);
     for (const [index, action] of [
       "activity",
       "message",
@@ -1254,7 +1254,7 @@ for (const [control, key] of [
       const target = "https://example.com/keyboard-reading";
       const added = app.append(
         "primary",
-        "alpha",
+        ids.alpha,
         `Read ${target}`,
         true,
         false,
@@ -1282,7 +1282,7 @@ for (const [control, key] of [
         );
         const arrival = app.append(
           "primary",
-          "alpha",
+          ids.alpha,
           "Still following after a native no-op key",
         );
         await expect(
@@ -1303,7 +1303,7 @@ for (const [control, key] of [
         .toBeLessThan(before - 80);
       await settle(page);
       const reading = await anchor(page);
-      app.append("primary", "alpha", "Do not steal the reader's position");
+      app.append("primary", ids.alpha, "Do not steal the reader's position");
       await expect(
         history.locator("[data-jump-to-latest]"),
       ).toHaveAccessibleName(/new message/i);
@@ -1325,14 +1325,14 @@ for (const containment of ["auto", "contain"])
         "PageUp",
         containment,
       );
-      const historyEvents = app.histories.get("primary/alpha");
+      const historyEvents = app.histories.get(`primary/${ids.alpha}`);
       historyEvents.push(
         finalizeEvent(
           {
             kind: 40008,
             created_at: historyEvents.at(-1).created_at + 1,
             tags: [
-              ["h", "alpha"],
+              ["h", ids.alpha],
               ["file", "reading.txt"],
             ],
             content: "Raw, unparseable patch line\n".repeat(100),
@@ -1373,7 +1373,7 @@ for (const containment of ["auto", "contain"])
           .toBeLessThan(before - 80);
         await settle(page);
         const reading = await anchor(page);
-        app.append("primary", "alpha", "Keep the reader above the diff");
+        app.append("primary", ids.alpha, "Keep the reader above the diff");
         await expect(
           history.locator("[data-jump-to-latest]"),
         ).toHaveAccessibleName(/new message/i);
@@ -1394,7 +1394,7 @@ for (const containment of ["auto", "contain"])
         await settle(page);
         const arrival = app.append(
           "primary",
-          "alpha",
+          ids.alpha,
           "Still following after an unconsumed Page Up",
         );
         await expect(

@@ -1,5 +1,5 @@
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { anchor, expectAnchor, keyScroll, settle } from "./timeline.mjs";
 
 test.use({
@@ -69,7 +69,7 @@ test("Channels renders grouped history and live membership without turning activ
     contentType: "image/png",
   });
   // The real stream subscriber/filter/session must deliver additions and departures.
-  await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+  await expect.poll(() => app.relay.hasRoute("primary", ids.alpha)).toBe(true);
   app.membership("member_left", 0, 0);
   app.membership("member_left", 1, 1);
   await expect(groups).toHaveCount(2);
@@ -81,7 +81,7 @@ test("Channels renders grouped history and live membership without turning activ
   await expect(groups.last()).toContainText("Pinky was removed by you");
   app.membership("member_joined", 0, -1, true);
   // Place a genuine message after the forgery: seeing it proves the batch was processed.
-  const after = app.append("primary", "alpha", "After membership activity");
+  const after = app.append("primary", ids.alpha, "After membership activity");
   await expect(feed.locator(`[data-message-id="${after.id}"]`)).toBeVisible();
   await expect(groups).toHaveCount(3);
   // A normal message is a grouping barrier, never swallowed by an activity cohort.
@@ -111,9 +111,9 @@ keyboardTest(
     await page.goto(app.origin);
     await openPage(page, "Messages");
     // Unread evidence contributes to the accessible name; channel identity does not change.
-    const alpha = page.locator('button[data-channel-id="alpha"]');
+    const alpha = page.locator(`button[data-channel-id="${ids.alpha}"]`);
     await expect(alpha.getByRole("img")).toHaveAccessibleName(
-      /observed unread messages/,
+      / unread messages\./,
     );
     await alpha.click();
     const feed = page.getByRole("region", { name: "Channel message history" });
@@ -148,11 +148,13 @@ keyboardTest(
     expect(
       await page.evaluate(() => new Set(window.keyboardScrolls).size),
     ).toBeGreaterThan(1);
-    await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+    await expect
+      .poll(() => app.relay.hasRoute("primary", ids.alpha))
+      .toBe(true);
     app.membership("member_left", 0);
     const after = app.append(
       "primary",
-      "alpha",
+      ids.alpha,
       "Activity while reading above bottom",
     );
     await expect(
@@ -168,7 +170,7 @@ test("a restored membership anchor follows delayed group growth through resize a
   page,
   app,
 }) => {
-  const history = app.histories.get("primary/alpha");
+  const history = app.histories.get(`primary/${ids.alpha}`);
   const members = history.filter((event) => event.kind === 40099);
   // Keep a preceding message and later chats: the activity is an interior anchor.
   history.splice(0, history.length, history[0], ...members);
@@ -176,7 +178,7 @@ test("a restored membership anchor follows delayed group growth through resize a
   for (let i = 0; i < 12; i++)
     app.append(
       "primary",
-      "alpha",
+      ids.alpha,
       `Later chat ${i} ${"Long message. ".repeat(30)}`,
       false,
     );
@@ -192,7 +194,8 @@ test("a restored membership anchor follows delayed group growth through resize a
     const key = Object.keys(localStorage).find(
       (key) =>
         key.startsWith("buzz-view.v1:") &&
-        JSON.parse(key.slice("buzz-view.v1:".length))[1] === "scroll:alpha",
+        JSON.parse(key.slice("buzz-view.v1:".length))[1] ===
+          `scroll:${ids.alpha}`,
     );
     if (!key) throw new Error("Missing saved Alpha reading position");
     localStorage.setItem(
@@ -224,7 +227,7 @@ test("a restored membership anchor follows delayed group growth through resize a
   expect(preceding.row).toBeLessThan(0);
   expect(preceding.paragraph).toBeGreaterThan(0);
 
-  await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+  await expect.poll(() => app.relay.hasRoute("primary", ids.alpha)).toBe(true);
   history.push(delayed);
   app.relay.publish("primary", delayed);
   await expect(group).toHaveAttribute("data-message-id", delayed.id);
@@ -244,7 +247,8 @@ test("a restored membership anchor follows delayed group growth through resize a
     const key = Object.keys(localStorage).find(
       (key) =>
         key.startsWith("buzz-view.v1:") &&
-        JSON.parse(key.slice("buzz-view.v1:".length))[1] === "scroll:alpha",
+        JSON.parse(key.slice("buzz-view.v1:".length))[1] ===
+          `scroll:${ids.alpha}`,
     );
     return JSON.parse(localStorage.getItem(key));
   });

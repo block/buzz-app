@@ -219,7 +219,7 @@ describe("per-channel replay allowance", () => {
       message(author, "hot", `hot-${i}`, now - 1),
     );
   });
-  it("keeps quiet-channel unread evidence when another filter fills its replay allowance", async () => {
+  it("keeps quiet-channel replay evidence without fabricating client unread counts", async () => {
     vi.useFakeTimers({ now: now * 1000 });
     const h = setup([]);
     const relay = keypair(),
@@ -280,10 +280,16 @@ describe("per-channel replay allowance", () => {
       expect(delivered.size).toBe(501);
       expect(
         owner.session.unread.snapshot({ kind: "channel", channelId: "hot" }),
-      ).toMatchObject({ observedCount: 500, attentionCount: 0 });
+      ).toMatchObject({
+        unread: { status: "unknown" },
+        attention: { status: "unknown" },
+      });
       expect(
         owner.session.unread.snapshot({ kind: "channel", channelId: "quiet" }),
-      ).toMatchObject({ observedCount: 1, attentionCount: 1 });
+      ).toMatchObject({
+        unread: { status: "unknown" },
+        attention: { status: "unknown" },
+      });
       expect(incoming).not.toHaveBeenCalled();
       // Aggregate replay evidence stays conservative for every logical channel.
       expect(

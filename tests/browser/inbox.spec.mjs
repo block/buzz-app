@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { openPage } from "./navigation.mjs";
 
@@ -18,6 +18,9 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   app,
 }, testInfo) => {
   await open(page, app);
+  // A DM sent before launch is not an Inbox candidate until the relay lists
+  // attention (docs/inbox.md), so this one arrives while the session is live.
+  app.append("primary", ids["dm-peer"], "Live Inbox DM", true, false);
   const inboxButton = page.getByRole("button", { name: "Inbox", exact: true });
   await inboxButton.click();
   const inbox = page.getByRole("region", { name: "Inbox", exact: true });
@@ -54,7 +57,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   await expect(inbox.getByRole("button", { name: "Refresh" })).toHaveCount(0);
   await chooseFilter("DMs");
   await expect(rows).toHaveCount(1);
-  await expect(rows.first()).toContainText("Inbox DM fixture reply");
+  await expect(rows.first()).toContainText("Live Inbox DM");
   const dmSource = rows.first().locator("[data-inbox-source]");
   await expect(dmSource).toHaveText("DM · Alice Fixture");
   await expect(dmSource.locator("svg")).toHaveCount(0);
@@ -168,9 +171,6 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
     });
   }
   await page.setViewportSize({ width: 1280, height: 900 });
-  const expected = app.histories
-    .get("primary/alpha")
-    .find((event) => event.content === "Thread root 1");
   await mentionRow.getByRole("button", { name: /^Open / }).focus();
   await page.keyboard.press("Enter");
   const detail = inbox.getByRole("region", { name: "Inbox detail" });
@@ -214,27 +214,19 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   expect(inset.bottom - inset.threadBottom).toBeCloseTo(inset.padding, 0);
   await expect(inbox.getByText("Back to list")).toHaveCount(0);
   await expect(inbox.getByText("Open in channel")).toHaveCount(0);
-  await expect(mentionRow.getByRole("img", { name: "Unread" })).toHaveCount(0);
+  // Opening reads. The relay verdict removes the row; its captured visit stays.
+  await expect(mentionRow).toHaveCount(0);
+  await expect(rows).toHaveCount(1);
   // Available Inbox width, not the viewport, must collapse the selected panes:
   // the persistent sidebar leaves too little room at both 720px and 900px.
-  for (const [mode, width] of [
+  const narrow = [
     ["light", 720],
     ["dark", 900],
     ["dark", 390],
-  ]) {
-    await page.setViewportSize({ width, height: 900 });
-    await page.evaluate((mode) => {
-      document.documentElement.dataset.colorMode = mode;
-    }, mode);
-    await expect(
-      inbox.getByRole("list", { name: "Inbox conversations" }),
-    ).not.toBeVisible();
-    await expect(filter).not.toBeVisible();
-    const editor = detail.getByRole("textbox", { name: "Reply to thread" });
-    const close = detail.getByRole("button", { name: "Close thread" });
-    const send = detail.getByRole("button", { name: "Send message" });
+  ];
+  const fits = async (controls) => {
     const available = await inbox.boundingBox();
-    for (const control of [detail, thread, editor, close, send]) {
+    for (const control of controls) {
       await expect(control).toBeVisible();
       const box = await control.boundingBox();
       expect(box.x).toBeGreaterThanOrEqual(available.x);
@@ -245,6 +237,24 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
         available.y + available.height,
       );
     }
+  };
+  const close = detail.getByRole("button", { name: "Close thread" });
+  for (const [mode, width] of narrow) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate((mode) => {
+      document.documentElement.dataset.colorMode = mode;
+    }, mode);
+    await expect(
+      inbox.getByRole("list", { name: "Inbox conversations" }),
+    ).not.toBeVisible();
+    await expect(filter).not.toBeVisible();
+    await fits([
+      detail,
+      thread,
+      detail.getByRole("textbox", { name: "Reply to thread" }),
+      close,
+      detail.getByRole("button", { name: "Send message" }),
+    ]);
     expect(
       await inbox.evaluate(
         (element) => element.scrollWidth <= element.clientWidth,
@@ -253,81 +263,57 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
     await page.screenshot({
       path: testInfo.outputPath(`inbox-selected-${mode}-${width}.png`),
     });
-    await close.click();
-    await expect(detail).toHaveCount(0);
-    await expect(
-      mentionRow.getByRole("button", { name: /^Open / }),
-    ).toBeFocused();
-    for (const control of [
-      filter,
-      inbox.getByRole("combobox", { name: "Sender" }),
-    ]) {
-      await expect(control).toBeVisible();
-      const box = await control.boundingBox();
-      expect(box.x).toBeGreaterThanOrEqual(available.x);
-      expect(box.x + box.width).toBeLessThanOrEqual(
-        available.x + available.width,
-      );
-    }
-    await page.keyboard.press("Enter");
-    await expect(detail).toBeVisible();
-    await expect(
-      thread.getByText("Unread reply 1", { exact: true }),
-    ).toBeVisible();
+  }
+  // Back returns to the first row still listed: the opened one is read.
+  await close.click();
+  await expect(detail).toHaveCount(0);
+  const row = rows.filter({ hasText: "Broadcast reply" });
+  const opener = row.getByRole("button", { name: /^Open / });
+  await expect(opener).toBeFocused();
+  for (const [, width] of narrow.toReversed()) {
+    await page.setViewportSize({ width, height: 900 });
+    await fits([filter, inbox.getByRole("combobox", { name: "Sender" })]);
   }
   await page.setViewportSize({ width: 1280, height: 900 });
-  await expect(filter).toBeVisible();
-  await detail.getByRole("button", { name: "Open in channel" }).click();
-  const target = await page.evaluate(
-    () => history.state.buzzNavigationV1.entry.target,
-  );
-  expect(target.threadRootId).toBe(expected.id);
-  expect(target.messageId).toMatch(/^[a-f0-9]{64}$/);
-  await page.getByRole("button", { name: "Go back", exact: true }).click();
-  await expect(inbox).toBeVisible();
-  await chooseFilter("Mentions");
-  // Opening reads; right-click and keyboard still expose local unread.
-  const row = mentionRow;
+  // Every listed row is unread until the relay lists read rows: the menu's
+  // only action stays disabled and "Unread only" filters nothing.
   await expect(row.getByRole("button", { name: /^Actions for / })).toHaveCount(
     0,
   );
   await expect(
     row.getByRole("button", { name: /Mark as read|Mark unread/ }),
   ).toHaveCount(0);
-  await row.getByRole("button", { name: /^Open / }).click({ button: "right" });
+  await opener.click({ button: "right" });
   await expect(
     page.getByRole("menuitem", { name: "Mark as read" }),
   ).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitem", { name: "Mark unread" }),
+  ).toBeDisabled();
   await page.keyboard.press("Escape");
-  await row.getByRole("button", { name: /^Open / }).focus();
+  await opener.focus();
   await page.keyboard.press("Shift+F10");
-  let action = page.getByRole("menuitem", { name: "Mark unread" });
-  await expect(action).toBeVisible();
-  await expect(page.getByText("Mark unread on this device only.")).toHaveCount(
-    0,
-  );
-  await action.click();
-  await expect(row.getByRole("img", { name: "Unread" })).toBeVisible();
-  await row.getByRole("button", { name: /^Open / }).click({ button: "right" });
   await expect(
     page.getByRole("menuitem", { name: "Mark unread" }),
   ).toBeDisabled();
   await page.keyboard.press("Escape");
   await inbox.getByRole("checkbox", { name: "Unread only" }).check();
-  await expect(rows).toHaveCount(2);
-  await row.getByRole("button", { name: /^Open / }).click();
-  await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
-  await row.getByRole("button", { name: /^Open / }).click({ button: "right" });
-  action = page.getByRole("menuitem", { name: "Mark unread" });
-  await action.click();
-  await expect(row.getByRole("img", { name: "Unread" })).toBeVisible();
-  // A re-click does not undo the user's mark; a new visit after closing does.
-  await row.getByRole("button", { name: /^Open / }).click();
-  await expect(row.getByRole("img", { name: "Unread" })).toBeVisible();
-  await detail.getByRole("button", { name: "Close thread" }).click();
-  await expect(row.getByRole("button", { name: /^Open / })).toBeFocused();
-  await row.getByRole("button", { name: /^Open / }).click();
-  await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
+  await expect(rows).toHaveCount(1);
+  await opener.focus();
+  await page.keyboard.press("Enter");
+  await expect(thread.getByText("Broadcast reply")).toBeVisible();
+  await detail.getByRole("button", { name: "Open in channel" }).click();
+  const target = await page.evaluate(
+    () => history.state.buzzNavigationV1.entry.target,
+  );
+  expect(target.threadRootId).toBe(
+    app.histories
+      .get(`primary/${ids.alpha}`)
+      .find((event) => event.content === "Thread root 0").id,
+  );
+  expect(target.messageId).toMatch(/^[a-f0-9]{64}$/);
+  await page.getByRole("button", { name: "Go back", exact: true }).click();
+  await expect(inbox).toBeVisible();
   // The DM timeline and composer must occupy one vertical detail column.
   await chooseFilter("DMs");
   await rows
@@ -356,8 +342,8 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   );
   expect(geometry?.composer.left).toBeGreaterThanOrEqual(geometry.history.left);
   expect(geometry?.composer.right).toBeLessThanOrEqual(geometry.history.right);
-  // Unread-only now filters the read DM away. Closing leaves the pane clean;
-  // a separate keyboard case verifies fallback focus with another visible row.
+  // The read DM has left the list. Closing leaves the pane clean; a separate
+  // keyboard case verifies fallback focus with another visible row.
   await direct.getByRole("button", { name: "Close detail" }).click();
   await expect(detail).toHaveCount(0);
 });
@@ -371,7 +357,7 @@ test.describe("signed newest-first Inbox windows", () => {
     threadUnreadMentions: false,
     inboxDm: false,
     inboxThreadWindow: true,
-    channelIds: ["alpha", channel],
+    channelIds: [ids.alpha, channel],
     channelNames: { [channel]: "Window room" },
     historyCounts: { alpha: 1, [channel]: 0 },
   });
@@ -413,46 +399,50 @@ test.describe("signed newest-first Inbox windows", () => {
       detail.locator(`[data-message-id="${newest.id}"]`),
     ).toBeAttached();
     // The selected anchor survives a later arrival; no fresh click/reveal was requested.
-    const arrival = app.reply(root.id);
+    const seen = app.reply(root.id);
     await expect(
       detail.getByText("New peer reply", { exact: true }),
     ).toBeAttached();
     await expect(target).toBeInViewport();
+    // The open reader's dwell reads that arrival (docs/unread.md); wait for it
+    // rather than racing Close against it.
+    await expect
+      .poll(() =>
+        app.report.readWrites.some(({ intents, outcomes }) =>
+          intents.some(
+            (intent, i) =>
+              intent.message_id === seen.id && outcomes[i].status === "applied",
+          ),
+        ),
+      )
+      .toBe(true);
     await detail.getByRole("button", { name: "Close thread" }).click();
-    const readRow = inbox
+    // An arrival after the visit is a new unread row.
+    const arrival = app.reply(root.id);
+    const arrivalRow = inbox
       .getByRole("list", { name: "Inbox conversations" })
       .getByRole("listitem")
-      .filter({ hasText: "Window room" });
-    await readRow.getByRole("button", { name: /^Open / }).click();
+      .filter({ hasText: "New peer reply" });
+    await arrivalRow.getByRole("button", { name: /^Open / }).click();
+    await expect(arrivalRow).toHaveCount(0);
+    const current = detail.locator(`[data-message-id="${arrival.id}"]`);
+    await expect(current).toBeFocused();
+    // This removal is signed by the synthetic author and arrives through the
+    // actual shared relay stream. It cannot turn a vanished target into a tail reveal.
+    app.deleteInboxAnchor(arrival);
+    await expect(current).toHaveCount(0);
+    // Only Back closes a visit. The reader reports its own missing target and
+    // the captured origin still opens the conversation.
     await expect(
-      detail.getByRole("textbox", { name: "Reply to thread" }),
+      detail.getByText("Selected message unavailable."),
     ).toBeVisible();
+    await expect(target).toBeAttached();
     await detail.getByRole("button", { name: "Open in channel" }).click();
     const origin = await page.evaluate(
       () => history.state.buzzNavigationV1.entry.target,
     );
     expect(origin.channelId).toBe(channel);
     expect(origin.threadRootId).toBe(root.id);
-    await page.getByRole("button", { name: "Go back", exact: true }).click();
-    await expect(inbox).toBeVisible();
-    const again = inbox
-      .getByRole("list", { name: "Inbox conversations" })
-      .getByRole("listitem")
-      .filter({ hasText: "Window room" });
-    await again.getByRole("button", { name: /^Open / }).click();
-    const current = detail
-      .locator("[data-message-id]")
-      .filter({ hasText: "New peer reply" });
-    await expect(current).toBeFocused();
-    // This removal is signed by the synthetic author and arrives through the
-    // actual shared relay stream. It cannot turn a vanished target into a tail reveal.
-    app.deleteInboxAnchor(arrival);
-    await expect(current).toHaveCount(0);
-    // The unread owner retires this selected target; other participating
-    // replies can still keep the same conversation in the list.
-    await expect(detail).toHaveCount(0);
-    await expect(again).toHaveCount(1);
-    await expect(again).not.toContainText("New peer reply");
   });
 });
 
@@ -479,9 +469,6 @@ test.describe("DM exact opening outside the head", () => {
     );
     await expect(target).toBeInViewport();
     await expect(target).toBeFocused();
-    await expect(
-      detail.getByRole("complementary", { name: "Thread" }),
-    ).toBeVisible();
     await expect(detail.getByRole("form")).toHaveCount(1);
     await expect(detail.getByRole("button", { name: /^Close / })).toHaveCount(
       1,
@@ -489,40 +476,19 @@ test.describe("DM exact opening outside the head", () => {
     await expect
       .poll(() =>
         app.report.queries.some(
-          ({ filter }) => filter.top_level && filter["#h"]?.includes("dm-peer"),
+          ({ filter }) =>
+            filter.top_level && filter["#h"]?.includes(ids["dm-peer"]),
         ),
       )
       .toBe(true);
-    await expect
-      .poll(() =>
-        app.report.queries.some(({ filter }) =>
-          filter.ids?.includes(app.inboxDmAnchor.id),
-        ),
-      )
-      .toBe(true);
-    // The row now describes the newest read message, but clicking the already
-    // selected conversation must retain this exact reader and captured origin.
-    const selectedRow = inbox
-      .getByRole("list", { name: "Inbox conversations" })
-      .getByRole("listitem")
-      .filter({ has: page.locator('[aria-current="page"]') });
-    await expect(selectedRow).toContainText("Inbox DM fixture reply");
-    const retainedTarget = await target.elementHandle();
-    if (!retainedTarget) throw new Error("Missing exact DM target");
-    await selectedRow.getByRole("button", { name: /^Open / }).click();
-    expect(
-      await retainedTarget.evaluate((element) => element.isConnected),
-    ).toBe(true);
+    // The read removed the row; the visit keeps its exact message and origin.
+    await expect(row).toHaveCount(0);
     await expect(target).toBeInViewport();
-    await expect(
-      detail.getByRole("complementary", { name: "Thread" }),
-    ).toBeVisible();
-    await retainedTarget.dispose();
     await detail.getByRole("button", { name: "Open in channel" }).click();
     const origin = await page.evaluate(
       () => history.state.buzzNavigationV1.entry.target,
     );
-    expect(origin.channelId).toBe("dm-peer");
+    expect(origin.channelId).toBe(ids["dm-peer"]);
     expect(origin.messageId).toBe(app.inboxDmAnchor.id);
   });
 });
@@ -531,7 +497,7 @@ test.describe("DM exact opening outside the head", () => {
 // publication, including the inferred exact recipient and signed roster preflight.
 test.describe("Inbox session reply admission", () => {
   test.use({
-    sessionChannels: ["alpha"],
+    sessionChannels: [ids.alpha],
     agentPeers: true,
     inboxSessionAgent: true,
   });
@@ -558,7 +524,7 @@ test.describe("Inbox session reply admission", () => {
       }),
     ).toBeVisible();
     const root = app.histories
-      .get("primary/alpha")
+      .get(`primary/${ids.alpha}`)
       .find((event) => event.content === "Thread root 1");
     if (!root) throw new Error("Missing session root fixture");
     const roster = app
@@ -566,7 +532,9 @@ test.describe("Inbox session reply admission", () => {
       .discovery.find(
         (event) =>
           event.kind === 39002 &&
-          event.tags.some(([name, value]) => name === "d" && value === "alpha"),
+          event.tags.some(
+            ([name, value]) => name === "d" && value === ids.alpha,
+          ),
       );
     if (!roster) throw new Error("Missing verified session roster");
     const agents = roster.tags
@@ -584,7 +552,7 @@ test.describe("Inbox session reply admission", () => {
       ({ event }) => event?.kind === 9,
     )?.event;
     if (!sent) throw new Error("Missing signed session reply");
-    expect(sent.tags).toContainEqual(["h", "alpha"]);
+    expect(sent.tags).toContainEqual(["h", ids.alpha]);
     expect(sent.tags).toContainEqual(["e", root.id, "", "reply"]);
     expect(sent.tags.filter(([name]) => name === "p")).toEqual([
       ["p", agents[0]],
@@ -605,12 +573,9 @@ test("narrow selected detail keeps a rejected read save and its captured Retry v
     IDBObjectStore.prototype.put = function (value, ...args) {
       if (
         this.name === "partitions" &&
-        this.transaction.db.name === "buzz-read-state-v1"
+        this.transaction.db.name === "buzz-sidebar-v1"
       ) {
-        if (
-          window.inboxReadFailure.armed &&
-          Object.keys(value?.state?.frontiers ?? {}).length
-        ) {
+        if (window.inboxReadFailure.armed && value?.pending?.length) {
           window.inboxReadFailure.failures++;
           throw new Error("Synthetic read storage failure");
         }
@@ -663,11 +628,19 @@ test("narrow selected detail keeps a rejected read save and its captured Retry v
       window.inboxReadFailure.armed = false;
       return window.inboxReadFailure.saves;
     });
-    // Establish the already-spent exact reveal before moving to Retry.
+    // Establish the already-spent exact reveal before moving to Retry. Exact
+    // reveal acknowledges focus on its next frame; leaving sooner keeps it live
+    // and its next retry takes focus back from Close.
     const target = detail
       .locator("[data-message-id]")
       .filter({ hasText: "Unread reply 1" });
     await expect(target).toBeFocused();
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
     const retry = alert.getByRole("button", { name: "Retry inbox" });
     await retry.focus();
     await page.keyboard.press("Enter");
@@ -681,8 +654,15 @@ test("narrow selected detail keeps a rejected read save and its captured Retry v
     ).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(detail).toHaveCount(0);
-    await expect(row.getByRole("button", { name: /^Open / })).toBeFocused();
-    await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
+    // The saved read removed the row; Back falls to the first one still listed.
+    await expect(row).toHaveCount(0);
+    await expect(
+      inbox
+        .getByRole("list", { name: "Inbox conversations" })
+        .getByRole("listitem")
+        .first()
+        .getByRole("button", { name: /^Open / }),
+    ).toBeFocused();
   } finally {
     await page.evaluate(() => {
       window.inboxReadFailure.armed = false;
@@ -722,11 +702,11 @@ test("narrow incomplete preview receives keyboard focus once and Escape returns 
     await expect.poll(() => requested).toBe(true);
     const list = inbox.getByRole("list", { name: "Inbox conversations" });
     // Both mentioned groups are pending; either exact mounted row exercises
-    // the same placeholder focus contract, and neither changes order on error.
-    const row = list
-      .getByRole("listitem")
-      .filter({ hasText: "#Alpha" })
-      .first();
+    // the same placeholder focus contract. Each visit reads its row, so the
+    // first Escape lands on the other row and the second on the filter.
+    const rows = list.getByRole("listitem");
+    await expect(rows).toHaveCount(2);
+    const row = rows.first();
     await expect(row).toContainText("Preview updating…");
     const invoking = row.getByRole("button", { name: /^Open / });
     await invoking.focus();
@@ -739,8 +719,9 @@ test("narrow incomplete preview receives keyboard focus once and Escape returns 
     ).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(detail).toHaveCount(0);
+    await expect(rows).toHaveCount(1);
     await expect(invoking).toBeFocused();
-    // Reopening a failed placeholder is also a keyboard-accessible visit.
+    // Opening a failed placeholder is also a keyboard-accessible visit.
     release();
     await expect(row).toContainText("Preview unavailable. Retry inbox.");
     await page.keyboard.press("Enter");
@@ -751,7 +732,10 @@ test("narrow incomplete preview receives keyboard focus once and Escape returns 
     await expect(other).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(detail).toHaveCount(0);
-    await expect(invoking).toBeFocused();
+    await expect(rows).toHaveCount(0);
+    await expect(
+      inbox.getByRole("combobox", { name: "Activity type", exact: true }),
+    ).toBeFocused();
   } finally {
     release();
   }
@@ -765,6 +749,7 @@ test("an in-head DM keeps exact focus and Escape returns from an empty narrow li
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await open(page, app);
+  app.append("primary", ids["dm-peer"], "Live Inbox DM", true, false);
   await openPage(page, "Inbox");
   const inbox = page.getByRole("region", { name: "Inbox", exact: true });
   await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
@@ -776,12 +761,14 @@ test("an in-head DM keeps exact focus and Escape returns from an empty narrow li
       contentType: "video/mp4",
     }),
   );
+  // Our own undelivered message: the click reads through the newest message
+  // the sidebar knows, and a peer message it has not seen would stay unread.
   app.append(
     "primary",
-    "dm-peer",
+    ids["dm-peer"],
     "Inbox video",
     false,
-    false,
+    true,
     undefined,
     undefined,
     [["imeta", `url ${videoUrl}`, "m video/mp4"]],
@@ -792,36 +779,77 @@ test("an in-head DM keeps exact focus and Escape returns from an empty narrow li
   const list = inbox.getByRole("list", { name: "Inbox conversations" });
   const row = list.getByRole("listitem").first();
   await expect(list.getByRole("listitem")).toHaveCount(1);
-  await row.getByRole("button", { name: /^Open / }).click();
-  const detail = inbox.getByRole("region", { name: "Inbox detail" });
-  const target = detail
-    .locator("[data-message-id]")
-    .filter({ hasText: "Inbox DM fixture reply" });
-  await expect(target).toBeInViewport();
-  await expect(target).toBeFocused();
-  await expect(detail.getByRole("form")).toHaveCount(1);
-  const mediaOpener = detail.getByRole("button", {
-    name: "Open video fullscreen",
+  let release;
+  const historyHeld = new Promise((resolve) => {
+    release = resolve;
   });
-  await detail.locator("[data-video-preview]").hover();
-  await expect(mediaOpener).toHaveCSS("pointer-events", "auto");
-  await mediaOpener.click();
-  const media = page.getByRole("dialog", { name: "Video attachment" });
-  await expect(media).toBeVisible();
-  await media.getByRole("button", { name: "Close fullscreen viewer" }).focus();
-  await page.keyboard.press("Escape");
-  await expect(media).toHaveCount(0);
-  await expect(detail).toBeVisible();
-  await expect(mediaOpener).toBeFocused();
-  await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
-  await expect(list).not.toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(detail).toHaveCount(0);
-  await expect(list).toBeVisible();
-  await expect(list.getByRole("listitem")).toHaveCount(0);
-  await expect(
-    inbox.getByRole("combobox", { name: "Activity type", exact: true }),
-  ).toBeFocused();
+  let historyRequested = false;
+  await page.route("**/api/relay/primary/query", async (route) => {
+    if (
+      !route
+        .request()
+        .postDataJSON()
+        .some(
+          (filter) =>
+            filter.top_level && filter["#h"]?.includes(ids["dm-peer"]),
+        )
+    )
+      return route.continue();
+    historyRequested = true;
+    await historyHeld;
+    await route.continue();
+  });
+  try {
+    await row.getByRole("button", { name: /^Open / }).click();
+    const detail = inbox.getByRole("region", { name: "Inbox detail" });
+    const target = detail
+      .locator("[data-message-id]")
+      .filter({ hasText: "Live Inbox DM" });
+    await expect(target).toBeInViewport();
+    await expect(target).toBeFocused();
+    await expect.poll(() => historyRequested).toBe(true);
+    // Let the existing reveal verify its first focused frame before history
+    // inserts both before and after this live row. No elapsed-time race.
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    release();
+    await expect(
+      detail.getByText("Inbox DM fixture reply", { exact: true }),
+    ).toBeVisible();
+    await expect(detail.locator("[data-video-preview]")).toBeVisible();
+    await expect(target).toBeFocused();
+    await expect(detail.getByRole("form")).toHaveCount(1);
+    const mediaOpener = detail.getByRole("button", {
+      name: "Open video fullscreen",
+    });
+    await detail.locator("[data-video-preview]").hover();
+    await expect(mediaOpener).toHaveCSS("pointer-events", "auto");
+    await mediaOpener.click();
+    const media = page.getByRole("dialog", { name: "Video attachment" });
+    await expect(media).toBeVisible();
+    await media
+      .getByRole("button", { name: "Close fullscreen viewer" })
+      .focus();
+    await page.keyboard.press("Escape");
+    await expect(media).toHaveCount(0);
+    await expect(detail).toBeVisible();
+    await expect(mediaOpener).toBeFocused();
+    await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
+    await expect(list).not.toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(detail).toHaveCount(0);
+    await expect(list).toBeVisible();
+    await expect(list.getByRole("listitem")).toHaveCount(0);
+    await expect(
+      inbox.getByRole("combobox", { name: "Activity type", exact: true }),
+    ).toBeFocused();
+  } finally {
+    release();
+  }
 });
 
 // Browser-only: native keyboard focus transfer after Escape; jsdom cannot

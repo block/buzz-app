@@ -25,14 +25,18 @@ test("mouse presses do not pin the hover preview open", async () => {
         authorId: "alex",
         createdAt: 1,
         preview: "Please review the designs",
-        unreadCount: 1,
+        unread: { status: "exact", value: 1 },
       },
     ],
-    coverage: "observed",
+    complete: true,
     freshness: "observed",
   };
   const session = {
-    unread: { activity: () => snapshot, subscribeActivity: () => () => {} },
+    unread: {
+      loadActivity: vi.fn(async () => {}),
+      activity: () => snapshot,
+      subscribeActivity: () => () => {},
+    },
     profiles: {
       snapshot: () => new Map(),
       subscribe: () => () => {},
@@ -71,17 +75,21 @@ test("activity keeps profile loading lazy, explains stale results and opens the 
     authorId: "alex",
     createdAt: 1,
     preview: "Please review the designs",
-    unreadCount: 2,
+    unread: {
+      status: "at_least",
+      value: 2,
+    },
   };
   const snapshot: ThreadActivitySnapshot = {
     channelId: "studio",
     items: [item],
-    coverage: "observed",
+    complete: false,
     freshness: "stale",
   };
   const profiles = new Map([["alex", { name: "Alex" }]]);
   const ensure = vi.fn(async () => {});
   const open = vi.fn();
+  const hydrate = vi.fn(async () => {});
   const markThrough = vi
     .fn()
     .mockRejectedValueOnce(new Error("Storage unavailable"))
@@ -94,6 +102,7 @@ test("activity keeps profile loading lazy, explains stale results and opens the 
       activity: () => snapshot,
       subscribeActivity: () => () => {},
       markThrough,
+      loadActivity: hydrate,
     },
     profiles: { snapshot: () => profiles, subscribe: () => () => {}, ensure },
   } as unknown as RelaySession;
@@ -107,6 +116,7 @@ test("activity keeps profile loading lazy, explains stale results and opens the 
     />,
   );
   expect(ensure).not.toHaveBeenCalled();
+  expect(hydrate).not.toHaveBeenCalled();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   screen.getByRole("button", { name: "Activity" }).focus();
   await user.keyboard("{Enter}");
@@ -128,6 +138,10 @@ test("activity keeps profile loading lazy, explains stale results and opens the 
   ).not.toBeNull();
   expect(unreadRow).not.toHaveTextContent(/\bThread\b|2 unread/);
   expect(screen.getByText("May be out of date")).toBeVisible();
+  expect(
+    screen.getByText("More activity may be in this channel"),
+  ).toBeVisible();
+  expect(hydrate).toHaveBeenCalledExactlyOnceWith("studio");
   const markRead = screen.getByRole("button", {
     name: "Mark thread from Alex as read",
   });
@@ -167,7 +181,7 @@ test("working agents open their thread when linked, otherwise the conversation",
   const snapshot = {
     channelId: "studio",
     items: [],
-    coverage: "observed",
+    complete: true,
     freshness: "observed",
   };
   const startedAt = Date.now() - 125_000;
@@ -205,6 +219,7 @@ test("working agents open their thread when linked, otherwise the conversation",
       subscribe: () => () => {},
     },
     unread: {
+      loadActivity: vi.fn(async () => {}),
       activity: () => snapshot,
       subscribeActivity: () => () => {},
     },
@@ -297,6 +312,7 @@ test("a typing agent offers no activity view while Agent Activity is off", async
     unread: {
       activity: () => unread,
       subscribeActivity: () => () => {},
+      loadActivity: vi.fn(async () => {}),
     },
     profiles: { ensure: vi.fn(async () => {}) },
     media: vi.fn(),

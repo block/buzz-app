@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
 
 // Native inert/focus/caret, playback and body portals across broker reconnect
@@ -22,7 +22,7 @@ for (const scenario of [
     // Message images use AttachmentImage's external-link fallback in Inbox;
     // video reaches the real MediaAttachment portal/useModalBoundary owner.
     const root = app.histories
-      .get("primary/alpha")
+      .get(`primary/${ids.alpha}`)
       .find((event) => event.content === "Thread root 1");
     expect(root).toBeDefined();
     const videoUrl = "https://primary.example/media/inbox-revalidation.mp4";
@@ -60,7 +60,7 @@ for (const scenario of [
     );
     app.append(
       "primary",
-      "alpha",
+      ids.alpha,
       "Inbox revalidation video",
       false,
       false,
@@ -442,15 +442,13 @@ for (const scenario of [
 
         // Last: native Escape from the automatically focused placeholder must
         // reach detail dismissal while the closure is still held.
-        const selectedChoice = inbox
+        // The visit read its row, so Back falls to the first one still listed.
+        await expect(choice).toHaveCount(0);
+        const returningChoice = inbox
           .getByRole("list", { name: "Inbox conversations" })
-          .locator('[aria-current="page"]');
-        const description =
-          await selectedChoice.getAttribute("aria-describedby");
-        expect(description).toBeTruthy();
-        const returningChoice = inbox.locator(
-          `[aria-describedby="${description}"]`,
-        );
+          .getByRole("listitem")
+          .first()
+          .getByRole("button", { name: /^Open / });
         await editor.focus();
         heldClosure = escapeClosure;
         await reconnect();

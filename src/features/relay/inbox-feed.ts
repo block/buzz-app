@@ -32,7 +32,7 @@ export function createInboxFeed({
   viewer: string;
   channels: ChannelQueries;
   reader: RelayReader;
-  /** Private lookups in the existing bounded unread evidence owner. */
+  /** Private lookups in the existing bounded verified session cache. */
   retainedEvent: (id: string) => RelayEvent | undefined;
   retainedEditIds: (ids: readonly string[]) => readonly string[];
   /** Verified session admission calls prepare before publishing unread evidence. */

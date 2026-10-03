@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({ developmentReact: true });
@@ -22,7 +22,7 @@ test("channel thread hands off to a stable video viewer", async ({
   await open(page, app);
   const event = app.append(
     "primary",
-    "alpha",
+    ids.alpha,
     "Thread video",
     true,
     true,
@@ -81,7 +81,7 @@ test.describe("public channel preview", () => {
     const root = app.searchTarget.tags.find(([key]) => key === "e")[1];
     app.append(
       "primary",
-      "open",
+      ids.open,
       "Public thread video",
       false,
       false,

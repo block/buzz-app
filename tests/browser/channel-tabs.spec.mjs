@@ -1,5 +1,5 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { openPage } from "./navigation.mjs";
 
@@ -101,8 +101,8 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .fill("Alpha draft");
   await openChannelDetails(page);
-  await page.locator('button[data-channel-id="beta"]').click();
-  await page.locator('button[data-channel-id="alpha"]').click();
+  await page.locator(`button[data-channel-id="${ids.beta}"]`).click();
+  await page.locator(`button[data-channel-id="${ids.alpha}"]`).click();
   await expect(
     workspace.getByRole("tab", { name: "Channel settings", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
@@ -179,7 +179,9 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
         ({ event }) =>
           event.kind === 9 &&
           event.content === "DM from a tab" &&
-          event.tags.some(([key, value]) => key === "h" && value === "dm-peer"),
+          event.tags.some(
+            ([key, value]) => key === "h" && value === ids["dm-peer"],
+          ),
       ),
     )
     .toBe(true);
@@ -199,7 +201,7 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
         ({ event }) =>
           event.kind === 9 &&
           event.content === "Beta draft" &&
-          event.tags.some(([key, value]) => key === "h" && value === "beta"),
+          event.tags.some(([key, value]) => key === "h" && value === ids.beta),
       ),
     )
     .toBe(true);
@@ -226,12 +228,12 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
   await row.getByRole("button", { name: "Reply", exact: true }).click();
   await expect(reply).toBeFocused();
   await expect(reply).toHaveText("Beta reply draft");
-  await page.locator('button[data-channel-id="beta"]').click();
+  await page.locator(`button[data-channel-id="${ids.beta}"]`).click();
   await expect(
     main.getByRole("tab", { name: "Beta", exact: true }),
   ).toBeVisible();
   await expect(workspace).toHaveCount(0);
-  await page.locator('button[data-channel-id="alpha"]').click();
+  await page.locator(`button[data-channel-id="${ids.alpha}"]`).click();
   await expect(
     workspace.getByRole("tab", { name: "Thread · Beta", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
@@ -258,7 +260,7 @@ test("channel tab sets restore conversations and keep replies and sends scoped",
   await expect(workspace).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(betaComposer).toBeInViewport();
   await page.setViewportSize({ width: 1440, height: 950 });
-  app.omitChannel("beta");
+  app.omitChannel(ids.beta);
   await workspace
     .getByRole("tab", { name: "Channel settings", exact: true })
     .click();

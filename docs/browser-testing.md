@@ -262,6 +262,16 @@ The separate `channel-opening.test.ts` exercises catch-up ownership and terminal
 retry states through the production session. A held-response reproducer establishes
 a failure mechanism; it does not on its own identify a live incident's cause.
 
+The same file's 300-author thread journey measures `firstVisibleMs` and
+`newestWindowPaintMs` separately for cold and reopened views. Both open with ten
+newest replies and one strict-window request; reopening is sampled before older
+history is loaded into the shared verified cache. Afterwards, six user scrollback
+gestures demand the remaining history in 50-row requests and prove all 300 replies
+are retained. `demandedFullHistoryMs` includes automation round trips between those
+gestures; it is not a pure render benchmark or comparable to the former eager
+`fullTraversalPaintMs`. The dataset, both engines and opening watchdog remain;
+these thread timings are observations, not a new latency budget.
+
 ## DM label recovery
 
 `dm-labels.spec.mjs` builds the actual page and uses the production broker with

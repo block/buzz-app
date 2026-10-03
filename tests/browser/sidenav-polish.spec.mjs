@@ -1,6 +1,6 @@
 import { settleShellToggle } from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 
 import { open, wheel } from "./timeline.mjs";
 
@@ -745,7 +745,7 @@ test("channel name fades follow renames without resizing the sidebar", async ({
 }) => {
   await open(page, app);
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
-  const alpha = sidebar.locator('button[data-channel-id="alpha"]');
+  const alpha = sidebar.locator(`button[data-channel-id="${ids.alpha}"]`);
   const label = alpha.getByText("Alpha", { exact: true });
   const labelNode = await label.elementHandle();
   const originalWidth = await label.evaluate((element) => element.clientWidth);
@@ -764,7 +764,7 @@ test("channel name fades follow renames without resizing the sidebar", async ({
     ],
     ["Alpha", false],
   ]) {
-    app.renameChannel("alpha", name);
+    app.renameChannel(ids.alpha, name);
     await settings
       .getByRole("button", { name: "Refresh channels", exact: true })
       .click();
@@ -790,8 +790,8 @@ test("channel name fades follow renames without resizing the sidebar", async ({
 
 const fillSidebar = test.extend({
   dmLabels: true,
-  sessionChannels: ["alpha"],
-  sessionParents: { alpha: "11111111-1111-4111-8111-111111111111" },
+  sessionChannels: [ids.alpha],
+  sessionParents: { [ids.alpha]: "11111111-1111-4111-8111-111111111111" },
 });
 
 // Fill lives on the channel wrapper pseudo-element but directly on ordinary and

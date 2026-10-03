@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open, end, edge } from "./timeline.mjs";
 
 test.use({
@@ -15,7 +15,7 @@ test("Messages receives scoped typing through authenticated live traffic and exp
   await expect
     .poll(() =>
       app.report.liveRequests.some((r) =>
-        r.filters.some((filter) => filter["#h"]?.includes("alpha")),
+        r.filters.some((filter) => filter["#h"]?.includes(ids.alpha)),
       ),
     )
     .toBe(true);
@@ -51,7 +51,7 @@ test("Messages receives scoped typing through authenticated live traffic and exp
   ).toHaveCount(2);
   await end(page);
   const root = app.histories
-    .get("primary/alpha")
+    .get(`primary/${ids.alpha}`)
     .find((e) => e.content === "Thread root 0");
   await page
     .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
@@ -108,26 +108,40 @@ for (const scope of ["channel", "thread"]) {
     await expect
       .poll(() =>
         app.report.liveRequests.some((r) =>
-          r.filters.some((filter) => filter["#h"]?.includes("alpha")),
+          r.filters.some((filter) => filter["#h"]?.includes(ids.alpha)),
         ),
       )
       .toBe(true);
     const root = app.histories
-      .get("primary/alpha")
+      .get(`primary/${ids.alpha}`)
       .find((e) => e.content === "Thread root 0");
     if (scope === "thread") {
       // Seed enough signed upstream replies to exercise a genuinely scrolling thread.
-      for (let i = 0; i < 30; i++) app.reply(root.id);
+      for (let i = 0; i < 30; i++) app.reply(root.id, false, false);
       await page
         .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
         .getByRole("button", { name: /^View thread:/ })
         .click();
-      // One nested descendant is collapsed; the root plus 32 direct replies mount.
+      const threadHistory = page.getByRole("region", {
+        name: "Thread messages",
+        exact: true,
+      });
       await expect(
-        page
-          .getByRole("region", { name: "Thread messages", exact: true })
-          .locator("[data-message-id]"),
-      ).toHaveCount(33);
+        threadHistory.getByText("New peer reply", { exact: true }),
+      ).toHaveCount(10);
+      // Opening reads only the newest window. Demand older replies before
+      // measuring typing geometry; do not rely on live seeding or eager traversal.
+      await threadHistory.evaluate((element) => {
+        element.scrollTop = 0;
+        element.dispatchEvent(new Event("scroll"));
+      });
+      await threadHistory.hover();
+      await page.mouse.wheel(0, -300);
+      await expect(
+        threadHistory.getByText("Unread reply 0", { exact: true }),
+      ).toBeAttached();
+      // One nested descendant stays collapsed: root plus 32 direct replies.
+      await expect(threadHistory.locator("[data-message-id]")).toHaveCount(33);
     } else {
       await end(page);
     }
@@ -147,13 +161,15 @@ for (const scope of ["channel", "thread"]) {
         (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
       );
     if (scope === "thread") {
-      // Opening can race the final signed fixture replies under parallel load.
+      // Scrollback deliberately moved away from the tail.
       // Establish the bottom-reading precondition with real browser input before
       // capturing geometry; the assertions below verify typing keeps it there.
       // ThreadPanel re-pins only on a snapshot change, so a wheel that stopped
       // short would have no other way down: edge() waits for the gesture's
       // scrollend and asserts the bottom before the exact poll below.
-      await edge(page, 1, history);
+      // Point at message text: the hovered row's floating toolbar can cover
+      // the centre, and a wheel over it does not scroll the thread.
+      await edge(page, 1, history, { x: 100, y: 100 });
     }
     await expect.poll(gap).toBeLessThan(2);
     expect(

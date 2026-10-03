@@ -1,3 +1,5 @@
+import { sidebarJournals } from "./fixture.mjs";
+
 // Hold real focus outside reading surfaces while a journey establishes unread
 // state. Blur the target itself: the sidebar may still be inert while the search
 // palette closes, so redirecting focus to a sidebar button is not reliable.
@@ -23,19 +25,9 @@ export async function releaseReadingFocus(page) {
 
 // Observe the real durable result, never seed state or call an engine test hook.
 export async function readJournal(page) {
-  return page.evaluate(
-    () =>
-      new Promise((resolve, reject) => {
-        const request = indexedDB.open("buzz-read-state-v1", 1);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-          const db = request.result;
-          const tx = db.transaction("partitions", "readonly");
-          const read = tx.objectStore("partitions").getAll();
-          read.onsuccess = () => resolve(read.result[0]);
-          read.onerror = () => reject(read.error);
-          tx.oncomplete = () => db.close();
-        };
-      }),
-  );
+  const all = await sidebarJournals(page);
+  return {
+    pending: all.flatMap((journal) => journal.pending),
+    manual: all.flatMap((journal) => journal.manual),
+  };
 }

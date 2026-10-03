@@ -1,6 +1,6 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 
 const channelId = "11111111-1111-4111-8111-111111111111";
 const panelFor = (page) =>
@@ -139,7 +139,7 @@ test("management Leave restores focus on cancel, holds pending, and completes th
 test.describe("last visible channel", () => {
   test.use({
     lifecycleVisibility: {
-      archived: ["alpha", "beta"],
+      archived: [ids.alpha, ids.beta],
       hidden: ["22222222-2222-4222-8222-222222222222"],
     },
   });

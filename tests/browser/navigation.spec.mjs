@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
@@ -48,7 +48,7 @@ test("channel visits, toolbar, browser traversal and Settings sections share one
 }) => {
   await open(page, app);
   const alpha = await entry(page);
-  expect(alpha.target.channelId).toBe("alpha");
+  expect(alpha.target.channelId).toBe(ids.alpha);
   await button(page, "Beta").click();
   await expect(composer(page, "Beta")).toBeVisible();
   const beta = await entry(page);

@@ -1,4 +1,11 @@
 import {
+  createSidebarApi,
+  sidebarResponse,
+  supportsSidebarApi,
+  sidebarEligibleKinds,
+  type SidebarApi,
+} from "./sidebar-api";
+import {
   memoryResponseText,
   type MemoryReader,
   type MemoryListing,
@@ -12,12 +19,6 @@ import { workflowHost } from "../workflows/http";
 import { projectGitHost, type ProjectGit } from "../projects/git";
 import type { WorkflowHost } from "../workflows/host";
 import { readReceiptText } from "./receipt";
-import type { ReadStateHost, ReadStateSigning } from "./read-state-host";
-import {
-  parseReadSnapshot,
-  readSnapshotFilter,
-  readSnapshotText,
-} from "./read-state-snapshot";
 import type { AgentLibraryReader } from "../agents/library";
 import {
   projectSidebarPreferences,
@@ -97,15 +98,9 @@ export interface ReadTransport {
   /** Host-only decoder of the viewer's signed sidebar preference coordinates. */
   readonly decodeSidebarPreferences?: SidebarDecoder;
   readonly writeSidebarSort?: SidebarSortMutator;
-  readonly readState?: ReadStateHost;
+  readonly sidebarApi?: SidebarApi;
   readonly channelKit?: ChannelKitHost;
-  /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
-  readStateSnapshot?(
-    signal: AbortSignal,
-    requestId: string,
-    priority: "foreground" | "background",
-  ): Promise<RelayEvent[]>;
-  /** Demand-scoped verified ephemeral events on the session-owned socket. */
+  /** Incremental presence observation; does not establish snapshot completeness. */
   observePresence?(
     authors: readonly string[],
     receive: (event: RelayEvent) => void,
@@ -137,11 +132,6 @@ export interface ReadTransport {
   readonly relayAuthor: string;
   /** Explicit NIP-11 self from this community, never a contact-key fallback. */
   readonly archiveAuthority?: string;
-  /** Purpose-bound authoritative recency, verified and max 128 channel IDs. */
-  channelActivity?(
-    channelIds: readonly string[],
-    signal: AbortSignal,
-  ): Promise<RelayEvent[]>;
   query(
     filters: readonly ReadFilter[],
     signal?: AbortSignal,
@@ -384,7 +374,6 @@ export async function connectBrokerTransport(
     presence?: boolean;
     sidebarPreferences?: boolean;
     sidebarSortWrites?: boolean;
-    channelActivity?: boolean;
     sidebarMuteWrites?: boolean;
     channelKit?: boolean;
     sidebarPreferenceWrites?: boolean;
@@ -393,8 +382,7 @@ export async function connectBrokerTransport(
     agentMemories?: boolean;
     agentLogProof?: boolean;
     agentActivity?: boolean;
-    readState?: boolean;
-    readStateCommunity?: string;
+    buzz_v1?: unknown;
   };
   if (
     typeof session.viewer !== "string" ||
@@ -442,6 +430,35 @@ export async function connectBrokerTransport(
   });
   return {
     profiling,
+    ...(supportsSidebarApi(session.buzz_v1)
+      ? {
+          sidebarApi: createSidebarApi(async (operation, signal) => {
+            const response = await fetch(`${endpoint}/sidebar-api`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(operation),
+              signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+            });
+            if (!response.ok) {
+              const failure = await readApiFailure(response);
+              const retry = response.headers.get("Retry-After");
+              throw new ReadError(
+                response.status === 401 || response.status === 403
+                  ? "denied"
+                  : "unavailable",
+                failure.error,
+                response.status,
+                failure.retryAfterMs ??
+                  (retry && /^\d+$/.test(retry)
+                    ? Number(retry) * 1000
+                    : undefined),
+              );
+            }
+            return sidebarResponse(response);
+          }, sidebarEligibleKinds(session.buzz_v1)),
+        }
+      : {}),
     ...(session.attachmentUploads === true && session.relayUrl
       ? { uploadAttachment: brokerUpload(endpoint, session.relayUrl) }
       : {}),
@@ -691,88 +708,6 @@ export async function connectBrokerTransport(
           },
         }
       : {}),
-    ...(session.readState
-      ? {
-          readState: {
-            ...(session.readStateCommunity
-              ? { communityId: session.readStateCommunity }
-              : {}),
-            async decode(events: readonly RelayEvent[], signal: AbortSignal) {
-              const response = await fetch(`${endpoint}/read-state-decode`, {
-                method: "POST",
-                credentials: "same-origin",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(events),
-                signal,
-              });
-              if (!response.ok)
-                throw new Error(
-                  `Read-state decode failed (${response.status})`,
-                );
-              return response.json();
-            },
-            async sign(intent: ReadStateSigning, signal: AbortSignal) {
-              const response = await fetch(`${endpoint}/read-state-sign`, {
-                method: "POST",
-                credentials: "same-origin",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(intent),
-                signal,
-              });
-              if (!response.ok)
-                throw new Error(
-                  `Read-state signing failed (${response.status})`,
-                );
-              return eventDto(await response.json());
-            },
-            async publish(event: RelayEvent, signal: AbortSignal) {
-              const response = await fetch(`${endpoint}/read-state-publish`, {
-                method: "POST",
-                credentials: "same-origin",
-                headers: publicationHeaders(),
-                body: JSON.stringify(event),
-                signal,
-              });
-              await acceptPublish(response, event.id);
-            },
-          },
-        }
-      : {}),
-    ...(session.readStateCommunity
-      ? {
-          async readStateSnapshot(
-            signal: AbortSignal,
-            requestId: string,
-            priority: "foreground" | "background",
-          ) {
-            return measureQuery(endpoint, priority, async (sized) => {
-              const response = await fetch(`${endpoint}/query`, {
-                method: "POST",
-                credentials: "same-origin",
-                headers: {
-                  "Content-Type": "application/json",
-                  "X-Buzz-Read-Priority": priority,
-                },
-                body: JSON.stringify(
-                  readSnapshotFilter(session.viewer as string),
-                ),
-                signal,
-              });
-              if (!response.ok)
-                throw new Error(
-                  `Read-state snapshot failed (${response.status})`,
-                );
-              recordServerTiming(response, profiling, requestId);
-              return parseReadSnapshot(
-                JSON.parse(sized(await readSnapshotText(response))),
-                session.viewer as string,
-                session.readStateCommunity as string,
-                signal,
-              );
-            });
-          },
-        }
-      : {}),
     ...(session.sidebarSortWrites
       ? {
           async writeSidebarSort(group, mode, sectionIds, signal) {
@@ -911,36 +846,6 @@ export async function connectBrokerTransport(
               recordServerTiming(result, profiling, event.id);
               return acceptPublish(result, event.id);
             },
-          },
-        }
-      : {}),
-    ...(session.channelActivity
-      ? {
-          async channelActivity(channelIds, signal) {
-            return measureQuery(endpoint, "background", async (sized) => {
-              const result = await fetch(`${endpoint}/channel-activity`, {
-                method: "POST",
-                credentials: "same-origin",
-                headers: {
-                  "Content-Type": "application/json",
-                  "X-Buzz-Read-Priority": "background",
-                },
-                body: JSON.stringify(
-                  channelIds.map((channelId) => ({
-                    kinds: [9, 40002, 40008, 45001, 45003],
-                    "#h": [channelId],
-                    limit: 1,
-                  })),
-                ),
-                signal,
-              });
-              if (!result.ok) throw httpReadError(result.status);
-              return parseEvents(
-                JSON.parse(sized(await result.text())),
-                verify,
-                signal,
-              );
-            });
           },
         }
       : {}),

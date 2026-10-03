@@ -1,6 +1,6 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { fixtureRelayUrl } from "../relay-config.ts";
 
 test.use({
@@ -17,14 +17,14 @@ test("Canvas confirmation backdrop dismisses only the top layer and retains the 
   app,
 }, testInfo) => {
   await page.addInitScript(
-    ({ viewer, relay }) => {
+    ({ viewer, relay, channelId }) => {
       localStorage.setItem("buzz-appearance.v1", "dark");
       localStorage.setItem(
-        `buzz-view.v1:${JSON.stringify([`${relay}:${viewer}`, "canvas-draft-v1:alpha"])}`,
+        `buzz-view.v1:${JSON.stringify([`${relay}:${viewer}`, `canvas-draft-v1:${channelId}`])}`,
         JSON.stringify({ content: "Local draft", base: "a".repeat(64) }),
       );
     },
-    { viewer: app.viewer, relay: fixtureRelayUrl },
+    { viewer: app.viewer, relay: fixtureRelayUrl, channelId: ids.alpha },
   );
   await page.goto(app.origin);
   await openPage(page, "Messages");

@@ -1,10 +1,10 @@
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 
 const parent = "11111111-1111-4111-8111-111111111111";
 test.use({
-  sessionChannels: ["alpha"],
-  sessionParents: { alpha: parent },
+  sessionChannels: [ids.alpha],
+  sessionParents: { [ids.alpha]: parent },
   historyCounts: { alpha: 5, beta: 5 },
 });
 
@@ -17,7 +17,7 @@ test("global search opens a child session without changing collapsed sidebar lev
   await openPage(page, "Messages");
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const parentRow = page.locator(`button[data-channel-id="${parent}"]`);
-  const child = sidebar.locator('button[data-channel-id="alpha"]');
+  const child = sidebar.locator(`button[data-channel-id="${ids.alpha}"]`);
   const section = sidebar
     .locator("[data-sidebar-section]")
     .filter({ has: parentRow });

@@ -1,5 +1,5 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open, end, settle, wheel } from "./timeline.mjs";
 import {
   holdReadingFocus,
@@ -17,7 +17,7 @@ const thread = (page) =>
 const target = (app, id = app.exact.target.id) => ({
   version: 1,
   kind: "conversation",
-  channelId: "alpha",
+  channelId: ids.alpha,
   messageId: id,
   scope: {
     viewer: app.viewer,
@@ -31,7 +31,7 @@ async function openTarget(page, value) {
   return page.evaluate((value) => window.fixtureNavigation.open(value), value);
 }
 
-test("old root and reply beyond the first thread page open exactly; reclick and Back reveal again", async ({
+test("old root and reply open exactly in a bounded newest window; reclick and Back reveal again", async ({
   page,
   app,
 }) => {
@@ -43,10 +43,10 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
     ({ community, filter }) =>
       community === "primary" &&
       filter.top_level &&
-      filter["#h"].includes("alpha"),
+      filter["#h"].includes(ids.alpha),
   );
   expect(
-    app.histories.get("primary/alpha").at(-head.filter.limit).created_at,
+    app.histories.get(`primary/${ids.alpha}`).at(-head.filter.limit).created_at,
     "the exact reply predates the initial channel window",
   ).toBeGreaterThan(app.exact.target.created_at);
   // This navigation fixture deliberately registers a catch-all panel first.
@@ -85,7 +85,7 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
           exact: true,
         }),
       ).toHaveCount(0); // Edited-body names cannot inherit original signed recipients.
-      await expect(thread(page).locator("[data-message-id]")).toHaveCount(81);
+      await expect(thread(page).locator("[data-message-id]")).toHaveCount(11);
       await expect(
         page.getByRole("textbox", { name: "Reply to thread", exact: true }),
       ).toBeVisible();
@@ -95,11 +95,14 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
     initialHeadQueries,
   );
   expect(app.report.queries.some((q) => q.filter.depth_limit)).toBe(true);
-  expect(
-    app.report.queries.some((q) => q.filter.thread_cursor !== undefined),
-    "the exact reply requires a second thread page",
-  ).toBe(true);
-  expect(app.report.queries.filter((q) => q.filter.until)).toHaveLength(0);
+  const windows = app.report.queries.filter((q) => q.filter.depth_limit);
+  expect(windows.length).toBeGreaterThan(0);
+  for (const { filter } of windows) {
+    expect(filter.thread_window).toBe(true);
+    expect(filter.limit).toBe(10);
+    expect(filter.thread_cursor).toBeUndefined();
+    expect(filter.until).toBeUndefined();
+  }
   // Settings temporarily takes the rail without disposing the routed thread.
   const threadElement = page.locator('[aria-label="Thread"]');
   await threadElement.evaluate((element) => {
@@ -174,7 +177,7 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   await expect(thread(page)).toBeVisible();
   expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
   await page
-    .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })
+    .getByRole("button", { name: "Close Thread tab", exact: true })
     .click();
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
@@ -198,7 +201,7 @@ test("loaded virtual rows reveal per attempt without thread reads or live-update
     name: "Channel message history",
     exact: true,
   });
-  const id = app.histories.get("primary/alpha").at(-18).id;
+  const id = app.histories.get(`primary/${ids.alpha}`).at(-18).id;
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -233,7 +236,7 @@ test("loaded virtual rows reveal per attempt without thread reads or live-update
       ),
     )
     .toBeGreaterThan(80);
-  const first = app.append("primary", "alpha", "First detached arrival");
+  const first = app.append("primary", ids.alpha, "First detached arrival");
   const jump = history.locator("button[data-jump-to-latest]");
   await expect(jump).toHaveAccessibleName("1 new message");
   await jump.focus();
@@ -260,7 +263,7 @@ test("loaded virtual rows reveal per attempt without thread reads or live-update
     )
     .toBeGreaterThan(80);
   const detachedTop = await history.evaluate((element) => element.scrollTop);
-  app.append("primary", "alpha", "Second detached arrival");
+  app.append("primary", ids.alpha, "Second detached arrival");
   // A row can remeasure after newer reader input (for example, media loading).
   // Preserve the detached position through that measurement, not just the count
   // before Virtua has delivered it. Finish native wheel movement before taking
@@ -290,7 +293,7 @@ test("loaded virtual rows reveal per attempt without thread reads or live-update
   await expect(history.getByRole("button").and(jump)).toHaveCount(0);
   await expect(jump).toBeHidden();
   await composer.focus();
-  app.append("primary", "alpha", "Live after exact timeline reveal");
+  app.append("primary", ids.alpha, "Live after exact timeline reveal");
   await expect(history).toContainText("Live after exact timeline reveal");
   await expect(composer).toBeFocused();
 });
@@ -300,9 +303,9 @@ test("an accessible exact reply stays visible without its root or a thread compo
   app,
 }) => {
   app.histories.set(
-    "primary/alpha",
+    `primary/${ids.alpha}`,
     app.histories
-      .get("primary/alpha")
+      .get(`primary/${ids.alpha}`)
       .filter((event) => event.id !== app.exact.root.id),
   );
   await open(page, app);
@@ -358,7 +361,7 @@ for (const nested of [false, true])
             `[data-message-id="${app.exact.target.id}"]`,
           );
           const close = page.getByRole("button", {
-            name: /^Close (?:thread|Thread tab)$/,
+            name: "Close Thread tab",
             exact: true,
           });
           let originalRow;
@@ -384,7 +387,7 @@ for (const nested of [false, true])
           }
           try {
             await expect(thread(page).locator("[data-message-id]")).toHaveCount(
-              81,
+              11,
             );
             if (nested)
               await expect(
@@ -557,7 +560,7 @@ for (const selected of ["reply", "root"]) {
             const connection = window.fixtureRelay.snapshot();
             return (
               connection.status === "ready" &&
-              connection.session.channels.get("alpha")?.cached === true
+              connection.session.channels.get(ids.alpha)?.cached === true
             );
           }),
         )
@@ -593,21 +596,21 @@ test("post-success membership loss removes the thread and live updates do not sn
   expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
   const region = thread(page);
   const channelButton = page.getByRole("button", {
-    name: /^Close (?:thread|Thread tab)$/,
+    name: "Close Thread tab",
     exact: true,
   });
   await channelButton.focus();
   const before = await region.evaluate((element) => element.scrollTop);
   app.edit(
     "primary",
-    "alpha",
+    ids.alpha,
     { ...app.exact.target, created_at: app.exact.target.created_at + 10 },
     "Live edited exact reply",
   );
   await expect(region).toContainText("Live edited exact reply");
   await expect(channelButton).toBeFocused();
   expect(await region.evaluate((element) => element.scrollTop)).toBe(before);
-  app.omitChannel("alpha");
+  app.omitChannel(ids.alpha);
   await openChannelDetails(page);
   await page.getByText("Diagnostics", { exact: true }).click();
   await page
@@ -699,7 +702,7 @@ readingTest(
       expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
       await page
         .getByRole("button", {
-          name: /^Close (?:thread|Thread tab)$/,
+          name: "Close Thread tab",
           exact: true,
         })
         .click();
@@ -732,7 +735,7 @@ test.describe("fractional row geometry", () => {
       exact: true,
     });
     const row = history.locator(
-      `[data-message-id="${app.histories.get("primary/alpha").at(-1).id}"]`,
+      `[data-message-id="${app.histories.get(`primary/${ids.alpha}`).at(-1).id}"]`,
     );
     // Text scaling and wrapping can produce fractional heights. Make the next
     // measurement fractional explicitly, independent of platform font metrics.
@@ -788,23 +791,23 @@ readTest(
       await held;
       await route.continue().catch(() => {});
     });
-    const before = app.report.readPublications.length;
+    const before = app.report.readWrites.length;
     try {
       expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
       await seen;
-      expect(app.report.readPublications.length).toBe(before);
+      expect(app.report.readWrites.length).toBe(before);
       await expect(
         thread(page).locator(`[data-message-id="${app.exact.target.id}"]`),
       ).toBeFocused();
     } finally {
       release();
     }
-    await expect(thread(page).locator("[data-message-id]")).toHaveCount(81);
+    await expect(thread(page).locator("[data-message-id]")).toHaveCount(11);
     await expect(
       thread(page).locator(`[data-message-id="${app.exact.target.id}"]`),
     ).toBeFocused();
     await expect
-      .poll(() => app.report.readPublications.length)
+      .poll(() => app.report.readWrites.length)
       .toBeGreaterThan(before);
   },
 );
@@ -835,9 +838,9 @@ readTest(
       })
       .toBe("opened");
     expect(await opening).toEqual({ status: "opened" });
-    expect((await readJournal(page)).state.frontiers).toEqual({});
-    expect(app.report.readPublications).toEqual([]);
-    const before = app.report.readPublications.length;
+    expect((await readJournal(page)).pending).toEqual([]);
+    expect(app.report.readWrites).toEqual([]);
+    const before = app.report.readWrites.length;
     const row = page.locator(
       `[aria-label="Thread messages"] [data-message-id="${app.exact.target.id}"]`,
     );
@@ -860,8 +863,8 @@ readTest(
         .evaluate((element) => element.contains(document.activeElement)),
     ).toBe(false);
     await page.clock.runFor(10000);
-    expect((await readJournal(page)).state.frontiers).toEqual({});
-    expect(app.report.readPublications.length).toBe(before);
+    expect((await readJournal(page)).pending).toEqual([]);
+    expect(app.report.readWrites.length).toBe(before);
     await page
       .getByRole("button", { name: "Close Channel settings tab", exact: true })
       .click();
@@ -869,7 +872,7 @@ readTest(
     await expect(row).toBeFocused();
     await page.clock.resume();
     await expect
-      .poll(() => app.report.readPublications.length)
+      .poll(() => app.report.readWrites.length)
       .toBeGreaterThan(before);
   },
 );
@@ -880,7 +883,7 @@ traversalTest(
   async ({ page, app }) => {
     const child = app.append(
       "primary",
-      "alpha",
+      ids.alpha,
       "||REVEALED SPOILER TEXT||",
       false,
       false,
@@ -931,7 +934,7 @@ for (const movedFocus of [false, true])
     async ({ page, app }) => {
       const parent = app.append(
         "primary",
-        "alpha",
+        ids.alpha,
         "||PERSISTENT SPOILER||",
         false,
         true,
@@ -942,20 +945,20 @@ for (const movedFocus of [false, true])
         status: "opened",
       });
       const region = thread(page);
-      await expect(region.locator("[data-message-id]")).toHaveCount(82);
+      await expect(region.locator("[data-message-id]")).toHaveCount(11);
       await expect(region.getByText("Loading thread…")).toHaveCount(0);
       const row = region.locator(`[data-message-id="${parent.id}"]`);
       await row.getByRole("button", { name: "Reveal spoiler" }).click();
       const original = await row.elementHandle();
       const close = page.getByRole("button", {
-        name: /^Close (?:thread|Thread tab)$/,
+        name: "Close Thread tab",
         exact: true,
       });
       const focusTarget = movedFocus ? close : row;
       await focusTarget.focus();
       const child = app.append(
         "primary",
-        "alpha",
+        ids.alpha,
         "First live child",
         true,
         true,
@@ -999,10 +1002,32 @@ liveTest(
   "stream repair retains thread rows, reading position and composer focus after exact opening",
   async ({ page, app }) => {
     await open(page, app);
-    await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+    await expect
+      .poll(() => app.relay.hasRoute("primary", ids.alpha))
+      .toBe(true);
     expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
     const region = thread(page);
-    await expect(region.locator("[data-message-id]")).toHaveCount(81);
+    await expect(region.locator("[data-message-id]")).toHaveCount(11);
+    // Reconnect repairs the retained range, not all history. Demand both older
+    // pages through the panel before establishing the middle-history anchor.
+    for (const count of [61, 81]) {
+      await region.evaluate((element) => {
+        element.scrollTop = 0;
+        element.dispatchEvent(new Event("scroll"));
+      });
+      await region.hover();
+      await page.mouse.wheel(0, -300);
+      await expect(region.locator("[data-message-id]")).toHaveCount(count);
+    }
+    const older = app.report.queries.filter(
+      ({ filter }) => filter.thread_window && filter.until !== undefined,
+    );
+    expect(older).toHaveLength(2);
+    for (const { filter } of older) {
+      expect(filter.limit).toBe(50);
+      expect(filter.before_id).toEqual(expect.any(String));
+      expect(filter.thread_cursor).toBeUndefined();
+    }
     await expect(region.getByText("Loading thread…")).toHaveCount(0);
     const readingRow = region.locator(
       `[data-message-id="${app.exact.replies[40].id}"]`,
@@ -1068,7 +1093,7 @@ liveTest(
     await open(page, app);
     expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
     const region = thread(page);
-    await expect(region.locator("[data-message-id]")).toHaveCount(81);
+    await expect(region.locator("[data-message-id]")).toHaveCount(11);
     app.deleteTarget();
     await expect(
       region.locator(`[data-message-id="${app.exact.target.id}"]`),
@@ -1076,12 +1101,12 @@ liveTest(
     await expect(
       region.locator(`[data-message-id="${app.exact.root.id}"]`),
     ).toBeAttached();
-    await expect(region.locator("[data-message-id]")).toHaveCount(80);
+    await expect(region.locator("[data-message-id]")).toHaveCount(10);
     await expect(region).toBeFocused();
     await expect(region).toHaveAttribute("tabindex", "0");
     app.append(
       "primary",
-      "alpha",
+      ids.alpha,
       "Reply after selected deletion",
       true,
       true,

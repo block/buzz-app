@@ -1,5 +1,5 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 // Real app composition: context-menu dismissal must hand focus to the newly
@@ -17,8 +17,8 @@ test("channel context menu opens and resumes a session draft without a row menu 
     name: "Subscribed channels",
     includeHidden: true,
   });
-  const beta = sidebar.locator('[data-channel-id="beta"]');
-  const alpha = sidebar.locator('[data-channel-id="alpha"]');
+  const beta = sidebar.locator(`[data-channel-id="${ids.beta}"]`);
+  const alpha = sidebar.locator(`[data-channel-id="${ids.alpha}"]`);
   const menu = page.getByRole("menu", { name: "Actions for Beta" });
   const start = menu.getByRole("menuitem", {
     name: "New session",
@@ -120,9 +120,9 @@ test.describe("menu placement lifetime", () => {
     const starred = sidebar
       .locator("[data-sidebar-section]")
       .filter({ has: page.locator("summary", { hasText: /Starred$/ }) });
-    const beta = sidebar.locator('[data-channel-id="beta"]');
+    const beta = sidebar.locator(`[data-channel-id="${ids.beta}"]`);
     const menu = page.getByRole("menu", { name: "Actions for Beta" });
-    await expect(work.locator('[data-channel-id="beta"]')).toBeVisible();
+    await expect(work.locator(`[data-channel-id="${ids.beta}"]`)).toBeVisible();
     await openChannelDetails(page);
     await page.getByText("Diagnostics", { exact: true }).click();
     const refresh = page.getByRole("button", {
@@ -137,7 +137,7 @@ test.describe("menu placement lifetime", () => {
     const started = new Promise((resolve) => {
       requested = resolve;
     });
-    let stars = ["alpha", "beta"];
+    let stars = [ids.alpha, ids.beta];
     // Fake only the host decode response. No app hook or client state injection;
     // no account writes. The existing refresh/store subscription drives the UI.
     await page.route("**/sidebar-preferences", async (route) => {
@@ -146,7 +146,7 @@ test.describe("menu placement lifetime", () => {
       await route.fulfill({
         json: {
           sections: [{ id: "work", name: "Work", order: 0 }],
-          assignments: { beta: "work" },
+          assignments: { [ids.beta]: "work" },
           starred: stars,
           muted: [],
         },
@@ -159,12 +159,16 @@ test.describe("menu placement lifetime", () => {
       await beta.click({ button: "right" });
       await expect(menu).toBeVisible();
       release();
-      await expect(starred.locator('[data-channel-id="beta"]')).toBeVisible();
+      await expect(
+        starred.locator(`[data-channel-id="${ids.beta}"]`),
+      ).toBeVisible();
       await expect(menu).toHaveCount(0);
-      stars = ["alpha"];
+      stars = [ids.alpha];
       await expect(refresh).toBeEnabled();
       await refresh.click();
-      await expect(work.locator('[data-channel-id="beta"]')).toBeVisible();
+      await expect(
+        work.locator(`[data-channel-id="${ids.beta}"]`),
+      ).toBeVisible();
       await expect(menu).toHaveCount(0);
       await beta.focus();
       await page.keyboard.press("Shift+F10");

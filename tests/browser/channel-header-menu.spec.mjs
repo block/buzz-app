@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { openPage, selectSettingsSection } from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 
@@ -414,7 +414,7 @@ test.describe("sidebar actions in the header", () => {
   }) => {
     await page.goto(app.origin);
     await openPage(page, "Messages");
-    await page.locator('button[data-channel-id="beta"]').click();
+    await page.locator(`button[data-channel-id="${ids.beta}"]`).click();
     const trigger = page.getByRole("button", {
       name: "Channel actions",
       exact: true,
@@ -460,7 +460,7 @@ test.describe("sidebar actions in the header", () => {
     await expect(menu).toHaveCount(0);
     await expect(
       page.locator(
-        '[data-sidebar-section="starred"] button[data-channel-id="beta"]',
+        `[data-sidebar-section="starred"] button[data-channel-id="${ids.beta}"]`,
       ),
     ).toBeVisible();
     await expect(trigger).toBeFocused();
@@ -499,7 +499,7 @@ test.describe("dialog origin retirement", () => {
   async function start(page, app) {
     await page.goto(app.origin);
     await openPage(page, "Messages");
-    await page.locator('button[data-channel-id="beta"]').click();
+    await page.locator(`button[data-channel-id="${ids.beta}"]`).click();
     await expect(
       page.getByRole("tab", { name: "Beta", exact: true }),
     ).toBeVisible();

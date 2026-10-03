@@ -63,7 +63,7 @@ const test = base.extend({
     let backgroundReady = Promise.resolve(),
       releaseBackground = () => {};
     const publish = async (event) => {
-      // Only hold messages: presence/read-state writes must not replace the gate.
+      // Only hold messages: presence/preference writes must not replace the gate.
       if (hold && event.kind === 9)
         await new Promise((resolve) => {
           release = resolve;
@@ -255,8 +255,8 @@ const test = base.extend({
         holdDelivery: () => {
           hold = true;
         },
-        publishReadState: () =>
-          publish(sign(key, 30078, [["d", "fixture-read-state"]])),
+        publishPreference: () =>
+          publish(sign(key, 30078, [["d", "channel-stars"]])),
         confirm: () => {
           hold = false;
           release();
@@ -659,7 +659,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
     .toBe(3);
   await expect(sidebarDm).toBeVisible();
   // A concurrent non-message write must not replace the held message's gate.
-  await app.publishReadState();
+  await app.publishPreference();
   app.confirm();
   await expect(
     page.locator("[data-message-id]", { hasText: "Another message" }),

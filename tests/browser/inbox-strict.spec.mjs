@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { openPage } from "./navigation.mjs";
 
@@ -19,6 +19,8 @@ test("focuses an in-head DM after effect cleanup and setup replay", async ({
   app,
 }) => {
   await open(page, app);
+  // A DM sent before launch is not an Inbox candidate yet; this one is live.
+  app.append("primary", ids["dm-peer"], "Live Inbox DM", true, false);
   await openPage(page, "Inbox");
   const inbox = page.getByRole("region", { name: "Inbox", exact: true });
   await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
@@ -33,7 +35,7 @@ test("focuses an in-head DM after effect cleanup and setup replay", async ({
   const target = inbox
     .getByRole("region", { name: "Inbox detail" })
     .locator("[data-message-id]")
-    .filter({ hasText: "Inbox DM fixture reply" });
+    .filter({ hasText: "Live Inbox DM" });
   await expect(target).toBeInViewport();
   await expect(target).toBeFocused();
 });

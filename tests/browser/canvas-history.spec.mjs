@@ -1,6 +1,6 @@
 import { verifyEvent } from "nostr-tools";
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 
 test.use({
   sessionWriteKinds: [9, 9007, 40100],
@@ -17,13 +17,13 @@ test("Canvas history previews and restores without losing the editor draft", asy
   const old = app.sign({
     kind: 40100,
     content: "# Earlier notes",
-    tags: [["h", "alpha"]],
+    tags: [["h", ids.alpha]],
     created_at: 1700000000,
   });
   let head = app.sign({
     kind: 40100,
     content: "# Current notes",
-    tags: [["h", "alpha"]],
+    tags: [["h", ids.alpha]],
     created_at: 1700000001,
   });
   const events = [head, old];

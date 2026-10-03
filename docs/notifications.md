@@ -50,14 +50,15 @@ checks, not that an OS banner was displayed or read.
 - History, initial/reconnect replay and own messages stay quiet. Candidates older
   than two minutes (or over 30 seconds in the future) are ignored. Unknown read
   readiness waits; off/access loss cancels pending candidates. A reply whose
-  conversation lookup is pending (attention `pending: true`) is held as a
-  `thread` candidate and re-checked when the lookup decides it; it is dropped if
-  it turns out not to be the viewer's conversation. The app-global binding
-  starts the shared bounded unread observation even without Channels mounted.
-  Remote-capable hosts wait for the initial marker merge (bounded observation or
-  complete snapshot); local-only hosts wait only for local storage. Failed or
-  cancelled observation does not release alerts. Visibility is checked after UI
-  presentation, without publishing read intent.
+  authoritative context is unknown retains its message selector until the relay
+  classifies it or the original event becomes two minutes old. Existing refresh,
+  focus/reconnect and invalidation re-query that selector; only a resolved
+  notification category is admitted. A proven irrelevant reply is dropped.
+  The app-global binding starts the shared bounded unread observation even without Channels mounted.
+  Supported hosts wait for a ready relay-backed sidebar snapshot and a resolved
+  message context. Loading, failed or incomplete observation does not release
+  alerts; unsupported hosts cannot supply an authoritative notification category.
+  Visibility is checked after UI presentation, without publishing read intent.
 - Channel Mute/Unmute uses the session's confirmed, encrypted `channel-mutes`
   preference, independently of whether Channels is mounted. Muted channels suppress
   DM and participating-thread alerts; explicit mentions still pass the channel-mute

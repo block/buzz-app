@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 
@@ -17,7 +17,7 @@ test("manage a channel message, peer unread state, and its thread", async ({
 }) => {
   await open(page, app);
   const mention = `[@Morgarita](nostr:${npubEncode("b".repeat(64))})`;
-  const event = app.append("primary", "alpha", `${mention} whats your name`);
+  const event = app.append("primary", ids.alpha, `${mention} whats your name`);
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${event.id}"]`,
   );
@@ -86,7 +86,7 @@ test("manage a channel message, peer unread state, and its thread", async ({
   // Own messages are excluded from notification unread; use a peer row for the toggle.
   const peer = app.append(
     "primary",
-    "alpha",
+    ids.alpha,
     "Peer unread target",
     true,
     false,
@@ -95,22 +95,68 @@ test("manage a channel message, peer unread state, and its thread", async ({
     `[data-channel-timeline] [data-message-id="${peer.id}"]`,
   );
   await expect(peerRow).toBeVisible();
-  await peerRow.hover();
   const peerTrigger = peerRow.getByRole("button", {
     name: "More message actions",
   });
+  // A focused composer reads fully visible rows after 300 ms (docs/unread.md),
+  // which can land before the menu's status. Let it land, then take a manual
+  // unread: automatic reading never clears it, so the next label is stable.
+  await page
+    .getByRole("textbox", { name: "Message #Alpha", exact: true })
+    .focus();
+  await expect
+    .poll(() =>
+      app.report.readWrites.some(({ intents, outcomes }) =>
+        intents.some(
+          (intent, i) =>
+            intent.type === "mark_through" &&
+            intent.message_id === peer.id &&
+            outcomes[i].status === "applied",
+        ),
+      ),
+    )
+    .toBe(true);
+  await peerRow.hover();
   await peerTrigger.click();
-  const toggle = page.getByRole("menuitem", { name: /^Mark (read|unread)$/ });
-  const initial = await toggle.textContent();
-  await toggle.click();
+  await page
+    .getByRole("menuitem", { name: "Mark unread", exact: true })
+    .click();
+  await peerRow.hover();
+  await peerTrigger.click();
+  await page
+    .getByRole("menuitem", { name: "Mark read through here", exact: true })
+    .click();
+  await expect
+    .poll(() => app.report.readWrites.flatMap(({ intents }) => intents))
+    .toContainEqual({
+      type: "mark_through",
+      target: { channel_id: ids.alpha },
+      message_id: peer.id,
+    });
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
   await peerRow.hover();
   await peerTrigger.click();
-  await expect(toggle).toHaveText(
-    initial === "Mark read" ? "Mark unread" : "Mark read",
-  );
-  await toggle.click();
+  await page
+    .getByRole("menuitem", { name: "Mark unread", exact: true })
+    .click();
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await peerRow.hover();
+  await peerTrigger.click();
+  const forcedRead = page.getByRole("menuitem", {
+    name: "Mark read through here",
+    exact: true,
+  });
+  await expect(forcedRead).toBeVisible();
+  // Keyboard dismissal belongs to the opened popup, not its entrance frame.
+  const peerMenu = page.getByRole("menu");
+  await expect(peerMenu).toHaveAttribute("data-open", "");
+  await expect(peerMenu).not.toHaveAttribute("data-starting-style");
+  await expect
+    .poll(() => peerMenu.evaluate((element) => element.getAnimations().length))
+    .toBe(0);
+  await forcedRead.focus();
+  await forcedRead.press("Escape");
+  await expect(peerMenu).toHaveCount(0);
   await row.hover();
   await row.getByRole("button", { name: "Reply", exact: true }).click();
   const thread = page.getByRole("complementary", {
@@ -133,7 +179,7 @@ test("manage a channel message, peer unread state, and its thread", async ({
   await expect(root).toContainText("Edited from thread");
   await expect(row).toContainText("Edited from thread");
   await page
-    .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })
+    .getByRole("button", { name: "Close Thread tab", exact: true })
     .click();
   for (const width of [900, 390]) {
     await page.setViewportSize({ width, height: 850 });
@@ -188,7 +234,7 @@ test("deleting a thread reply returns focus to the surviving thread composer", a
   app,
 }) => {
   await open(page, app);
-  const root = app.append("primary", "alpha", "Thread deletion root");
+  const root = app.append("primary", ids.alpha, "Thread deletion root");
   const channelRow = page.locator(
     `[data-channel-timeline] [data-message-id="${root.id}"]`,
   );
@@ -201,7 +247,7 @@ test("deleting a thread reply returns focus to the surviving thread composer", a
   });
   const reply = app.append(
     "primary",
-    "alpha",
+    ids.alpha,
     "My thread reply",
     true,
     true,
@@ -267,7 +313,7 @@ test("DM menus edit own messages but never expose destructive actions for peers"
   await peerRow.hover();
   await peerRow.getByRole("button", { name: "More message actions" }).click();
   await expect(
-    page.getByRole("menuitem", { name: /^Mark (read|unread)$/ }),
+    page.getByRole("menuitem", { name: /^Mark (read through here|unread)$/ }),
   ).toBeVisible();
   await expect(
     page.getByRole("menuitem", { name: "Edit message", exact: true }),
@@ -289,7 +335,7 @@ test("saving an attachment caption preserves its original metadata through the b
   const link = `[report.pdf](<${url}>)`;
   const event = app.append(
     "primary",
-    "alpha",
+    ids.alpha,
     `Original caption\n\n${link}`,
     true,
     true,
@@ -359,7 +405,7 @@ test("media comment deletion keeps keyboard focus in its confirmation", async ({
   const url = "https://fixture.test/media/review.png";
   const root = app.append(
     "primary",
-    "alpha",
+    ids.alpha,
     `Review image\n\n${url}`,
     true,
     true,
@@ -369,7 +415,7 @@ test("media comment deletion keeps keyboard focus in its confirmation", async ({
   );
   const comment = app.append(
     "primary",
-    "alpha",
+    ids.alpha,
     "My review comment",
     true,
     true,

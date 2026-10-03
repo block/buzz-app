@@ -126,7 +126,13 @@ export async function expectAnchor(page, expected) {
     )
     .toBeLessThan(4);
 }
-export async function edge(page, direction, scroller = history(page)) {
+// `position` aims the pointer when something may cover the scroller's centre.
+export async function edge(
+  page,
+  direction,
+  scroller = history(page),
+  position,
+) {
   const distance = () =>
     scroller.evaluate(
       (element, direction) =>
@@ -135,7 +141,7 @@ export async function edge(page, direction, scroller = history(page)) {
           : element.scrollHeight - element.scrollTop - element.clientHeight,
       direction,
     );
-  await scroller.hover();
+  await scroller.hover({ position });
   // Send one real gesture for the actual distance, not an arbitrary 100,000px
   // overshoot. At the boundary, retain input so production can initiate paging.
   const remaining = await distance();

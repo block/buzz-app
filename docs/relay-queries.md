@@ -587,8 +587,9 @@ retain explicit extensions and pass `dev/vite-config.test.mjs`.
 
 The matched development frontend/broker publishes signed events on its
 existing authenticated live socket once the session subscribes. This includes
-messages, reactions, workflow commands and purpose-bound encrypted read-state
-writes admitted by the existing broker. The host still validates signature,
+messages, reactions and workflow commands admitted by the existing broker. Read
+state is not a Nostr publication: it goes over HTTPS to the relay's `/buzz/v1`
+sidebar API (see `docs/unread.md`). The host still validates signature,
 viewer, purpose, origin and community before sending. There is no second socket,
 outbox or reconnect replay. Publication and live REQ setup share WS admission;
 queued foreground publications precede bulk subscription setup.
@@ -616,8 +617,8 @@ command receipt text stays ephemeral; it is never journaled or replaced by an ec
   ordering, authorization and partial-failure behavior. The relay historical-query
   EOSE-on-error repair alone does not certify search or specialized reads.
 - **Setup profile publication** retains its separate `/profile` HTTP route; profile
-  inspection remains read-only and allocates no socket. `/publish` and
-  `/read-state-publish` require the live owner: absent, reconnecting or disposed
+  inspection remains read-only and allocates no socket. `/publish` requires the
+  live owner: absent, reconnecting or disposed
   owners never trigger upstream HTTP fallback. Missing identity is definite
   non-delivery. Frontend and broker versions must match; old brokers are not a
   supported compatibility path. The pre-existing direct signed adapter is unchanged.
@@ -630,8 +631,8 @@ command receipt text stays ephemeral; it is never journaled or replaced by an ec
 
 `live.test.ts`, `broker-live.test.ts` and `dev/relay-broker-live.test.mjs` cover
 AUTH/OK correlation, admission, bounded failures, no replay, in-place interests,
-owner fencing, real broker/session-outbox reconciliation, workflow receipts and
-encrypted read-state publication with ephemeral keys and injected sockets. These
+owner fencing, real broker/session-outbox reconciliation and workflow receipts
+with ephemeral keys and injected sockets. These
 are local protocol/integration fixtures, not deployed-relay or native acceptance.
 
 ### Upstream HTTP connections

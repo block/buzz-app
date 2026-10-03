@@ -1,5 +1,5 @@
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { connect } from "node:net";
 import { once } from "node:events";
 
@@ -76,8 +76,8 @@ test("the launched card works with an empty Channels roster", async ({
   expect(app.report.unexpected).toEqual([]);
   expect(app.report.queries).toEqual([]);
   // Model the empty roster before startup; leave query routing to the fixture.
-  app.omitChannel("alpha");
-  app.omitChannel("beta");
+  app.omitChannel(ids.alpha);
+  app.omitChannel(ids.beta);
   await page.goto(app.origin);
   await openPage(page, "Messages");
   await expect(

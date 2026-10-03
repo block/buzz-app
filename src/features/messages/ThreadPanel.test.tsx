@@ -443,7 +443,7 @@ it("keeps seeded rows usable but unread until the initial legacy walk settles", 
   const reading = vi.fn(() => ({
     view: vi.fn(),
     observe,
-    catchUp: vi.fn(async () => {}),
+
     dispose: vi.fn(),
   }));
   Object.assign(h.session.unread, {
@@ -510,7 +510,7 @@ it.each([false, true])(
     const reading = vi.fn(() => ({
       view: vi.fn(),
       observe,
-      catchUp: vi.fn(async () => {}),
+
       dispose: vi.fn(),
     }));
     Object.assign(h.session.unread, {
@@ -1034,7 +1034,7 @@ it("without close, the embedded thread keeps its reader but has no close header 
   expect(close).toHaveBeenCalledOnce();
 });
 
-it("observes a visible reply before its root resolves, then enables thread catch-up", async () => {
+it("observes a visible reply before its root resolves", async () => {
   vi.useFakeTimers();
   const h = messagesHarness();
   const reply = {
@@ -1047,10 +1047,6 @@ it("observes a visible reply before its root resolves, then enables thread catch
   h.snapshot.replies = [reply];
   h.resize(600);
   const observe = vi.fn(async () => {});
-  const catchUp = vi.fn(async (_id: string, rootId?: string) => {
-    if (!rootId)
-      throw new Error("A thread reply cannot advance the channel frontier");
-  });
   h.props.session = {
     ...h.session,
     unread: {
@@ -1059,7 +1055,7 @@ it("observes a visible reply before its root resolves, then enables thread catch
         ({ capability: "frontier-sync" }) as ReturnType<
           RelaySession["unread"]["sync"]
         >,
-      reading: () => ({ view() {}, observe, catchUp, dispose() {} }),
+      reading: () => ({ view() {}, observe, dispose() {} }),
     },
   };
   vi.spyOn(document, "hasFocus").mockReturnValue(true);
@@ -1076,12 +1072,6 @@ it("observes a visible reply before its root resolves, then enables thread catch
   expect(observe).not.toHaveBeenCalled();
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(observe).toHaveBeenCalledExactlyOnceWith([reply.id]);
-  expect(catchUp).not.toHaveBeenCalled();
-
-  h.snapshot.root = row;
-  h.render();
-  await act(() => vi.advanceTimersByTimeAsync(300));
-  expect(catchUp).toHaveBeenCalledExactlyOnceWith(reply.id, row.id);
 });
 
 it("inline Inbox reveal opts into exact reader and composes origin action without changing ordinary tab focus", () => {

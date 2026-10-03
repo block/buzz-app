@@ -1,5 +1,5 @@
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 
 test.use({
@@ -121,7 +121,7 @@ test.describe("quota retry without threshold-driven continuation", () => {
     ).toHaveCount(0);
     const olderAlpha = (filter) =>
       filter.until !== undefined &&
-      filter["#h"]?.includes("alpha") &&
+      filter["#h"]?.includes(ids.alpha) &&
       filter.kinds?.some((kind) => kind === 9 || kind === 40002);
     // Observe before broker admission: a bad retry may be rejected locally.
     // Unrelated background reads (including unread repair) must not count.
@@ -135,7 +135,7 @@ test.describe("quota retry without threshold-driven continuation", () => {
         if (filters.some(olderAlpha)) browserCursors.push(filters);
       }
     });
-    app.relay.quotaNextOlder("alpha", 0);
+    app.relay.quotaNextOlder(ids.alpha, 0);
     const cursors = () =>
       app.report.queries.filter(({ filter }) => olderAlpha(filter));
     await history(page).hover();

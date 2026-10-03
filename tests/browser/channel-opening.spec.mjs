@@ -1,6 +1,6 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { readFile } from "node:fs/promises";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({
@@ -38,8 +38,8 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
         filter.authors?.some((id) => app.participants.includes(id)),
     );
   app.relay.holdProfiles(app.participants);
-  app.relay.holdEose("alpha");
-  app.relay.holdEose("beta");
+  app.relay.holdEose(ids.alpha);
+  app.relay.holdEose(ids.beta);
   // Establish a cold target deterministically: let the actual label read own
   // the background slot before preferences release the roster warmer. Hold the
   // host decoder, not a reader slot; demand and all production owners stay real.
@@ -54,21 +54,21 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
   // missed message proves the catch-up reached the UI, not merely the broker.
   try {
     await open(page, app);
-    expect(heads(app, "alpha")).toHaveLength(1);
+    expect(heads(app, ids.alpha)).toHaveLength(1);
     const missed = Object.fromEntries(
-      ["alpha", "beta"].map((channel) => [
+      [ids.alpha, ids.beta].map((channel) => [
         channel,
         app.append("primary", channel, "Startup catch-up marker", false),
       ]),
     );
     // Alpha and Beta may share one wire and therefore one EOSE. Release both
     // holds; Alpha catches up, while the still-unopened Beta remains cold.
-    app.relay.releaseEose("alpha");
-    app.relay.releaseEose("beta");
+    app.relay.releaseEose(ids.alpha);
+    app.relay.releaseEose(ids.beta);
     await expect(
-      page.locator(`[data-message-id="${missed.alpha.id}"]`),
+      page.locator(`[data-message-id="${missed[ids.alpha].id}"]`),
     ).toBeVisible();
-    expect(heads(app, "alpha")).toHaveLength(2);
+    expect(heads(app, ids.alpha)).toHaveLength(2);
     await expect.poll(() => labelReads().length).toBe(1);
     expect(labelReads()[0].filter.authors).toHaveLength(500);
     expect(app.report.profileHolds.some((held) => held.pending)).toBe(true);
@@ -81,7 +81,7 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
     await decoded;
     // The actual label hook has >1,000 missing participants. Keep its profile
     // response held through cold opening; do not bypass that production caller.
-    expect(heads(app, "beta")).toHaveLength(0);
+    expect(heads(app, ids.beta)).toHaveLength(0);
     await page
       .getByRole("button", { name: "Beta", exact: true })
       .evaluate((button) => {
@@ -101,13 +101,13 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
       ),
       note: "Includes Playwright visibility assertion roundtrip; warm times use browser paint clock",
     });
-    expect(heads(app, "beta").length).toBeGreaterThan(0);
+    expect(heads(app, ids.beta).length).toBeGreaterThan(0);
     expect(app.report.profileHolds.some((held) => held.pending)).toBe(true);
     expect(app.report.profileHolds.some((held) => held.aborted)).toBe(false);
     await expect(
-      page.locator(`[data-message-id="${missed.beta.id}"]`),
+      page.locator(`[data-message-id="${missed[ids.beta].id}"]`),
     ).toBeVisible();
-    expect(heads(app, "beta")).toHaveLength(1);
+    expect(heads(app, ids.beta)).toHaveLength(1);
     const before = submittedHeads.length;
     const warmTimings = [];
     const targetMs = 100;
@@ -180,7 +180,7 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
           {
             name,
             ids: app.histories
-              .get(`primary/${name.toLowerCase()}`)
+              .get(`primary/${ids[name.toLowerCase()]}`)
               .map((event) => event.id),
           },
         );
@@ -222,8 +222,8 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
         .toBeLessThan(ceilingMs);
   } finally {
     preferences.resolve();
-    app.relay.releaseEose("alpha");
-    app.relay.releaseEose("beta");
+    app.relay.releaseEose(ids.alpha);
+    app.relay.releaseEose(ids.beta);
     app.relay.releaseProfiles();
     await page.unrouteAll({ behavior: "wait" });
   }
@@ -236,7 +236,7 @@ test.describe("large thread opening", () => {
     threadUnread: true,
     presenceThreadAuthors: 300,
   });
-  test("300-author thread opening retains bounded traversal and measures cold/reopened rendering", async ({
+  test("300-author thread measures bounded opening separately from demanded full history", async ({
     page,
     app,
   }) => {
@@ -250,13 +250,14 @@ test.describe("large thread opening", () => {
       exact: true,
     });
     for (const phase of ["cold", "reopened"]) {
+      const beforeQueries = app.report.queries.length;
       const timing = await trigger.evaluate(async (button) => {
         const start = performance.now();
         button.click();
         let firstPaint;
         await new Promise((resolve, reject) => {
           const deadline = setTimeout(
-            () => reject(new Error("thread did not finish traversal")),
+            () => reject(new Error("thread did not paint its newest window")),
             10000,
           );
           const check = () => {
@@ -279,7 +280,7 @@ test.describe("large thread opening", () => {
               firstPaint = performance.now() - start;
             if (
               !visible ||
-              rows.length !== 301 ||
+              rows.length !== 11 ||
               panel.textContent.includes("Loading thread…")
             )
               return requestAnimationFrame(check);
@@ -292,21 +293,66 @@ test.describe("large thread opening", () => {
         });
         return {
           firstVisibleMs: firstPaint,
-          fullTraversalPaintMs: performance.now() - start,
+          newestWindowPaintMs: performance.now() - start,
         };
       });
+      await expect(history.locator("[data-message-id]")).toHaveCount(11);
+      await expect(
+        history.getByText("Distinct author reply 299", { exact: true }),
+      ).toBeInViewport();
+      const windows = () =>
+        app.report.queries
+          .slice(beforeQueries)
+          .filter(({ filter }) => filter.thread_window);
+      expect(windows()).toHaveLength(1);
+      expect(windows()[0].filter.limit).toBe(10);
+      expect(windows()[0].filter.until).toBeUndefined();
       app.report.measurements.push({
         scenario: "300-author-thread",
         phase,
         ...timing,
       });
-      await expect(history.locator("[data-message-id]")).toHaveCount(301);
-      await expect(
-        history.getByText("Distinct author reply 299", { exact: true }),
-      ).toBeInViewport();
+      // Sample reopening before expanding shared verified history, so both
+      // opening phases measure the same bounded tail.
+      if (phase === "reopened") {
+        // Separate user-demand traversal from opening: this includes automation
+        // round trips between gestures, so it is not a pure render benchmark.
+        const scrollbackStart = await page.evaluate(() => performance.now());
+        for (const count of [61, 111, 161, 211, 261, 301]) {
+          await history.evaluate((element) => {
+            element.scrollTop = 0;
+            element.dispatchEvent(new Event("scroll"));
+          });
+          await history.hover();
+          await page.mouse.wheel(0, -300);
+          await expect(history.locator("[data-message-id]")).toHaveCount(count);
+        }
+        const fullHistoryPaint = await page.evaluate(
+          () =>
+            new Promise((resolve) => {
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => resolve(performance.now())),
+              );
+            }),
+        );
+        expect(windows()).toHaveLength(7);
+        for (const { filter } of windows().slice(1)) {
+          expect(filter.limit).toBe(50);
+          expect(filter.until).toEqual(expect.any(Number));
+          expect(filter.before_id).toEqual(expect.any(String));
+          expect(filter.thread_cursor).toBeUndefined();
+        }
+        await expect(
+          history.getByText("Distinct author reply 0", { exact: true }),
+        ).toBeAttached();
+        app.report.measurements.push({
+          scenario: "300-author-thread-scrollback",
+          demandedFullHistoryMs: fullHistoryPaint - scrollbackStart,
+        });
+      }
       await page
         .getByRole("button", {
-          name: /^Close (?:thread|Thread tab)$/,
+          name: "Close Thread tab",
           exact: true,
         })
         .click();

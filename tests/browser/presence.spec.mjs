@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 test.use({ productionBroker: true, readState: true });
 
@@ -8,8 +8,8 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
 }) => {
   app.relay.holdPresence();
   await open(page, app);
-  await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
-  await expect.poll(() => app.relay.hasRoute("primary", "beta")).toBe(true);
+  await expect.poll(() => app.relay.hasRoute("primary", ids.alpha)).toBe(true);
+  await expect.poll(() => app.relay.hasRoute("primary", ids.beta)).toBe(true);
   await expect(
     page.getByRole("button", { name: "Retry live updates", exact: true }),
   ).toHaveCount(0);
@@ -60,7 +60,7 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
     ).toBe(true);
     const live = app.append(
       "primary",
-      "alpha",
+      ids.alpha,
       "Incoming while presence is held",
     );
     await expect(page.locator(`[data-message-id="${live.id}"]`)).toBeVisible();
@@ -118,8 +118,8 @@ test("foreground send and cold channel entry remain available during a profile s
   });
   app.relay.holdPresence();
   await open(page, app);
-  await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
-  await expect.poll(() => app.relay.hasRoute("primary", "beta")).toBe(true);
+  await expect.poll(() => app.relay.hasRoute("primary", ids.alpha)).toBe(true);
+  await expect.poll(() => app.relay.hasRoute("primary", ids.beta)).toBe(true);
   await settle(page);
   try {
     await page
@@ -160,54 +160,58 @@ test("foreground send and cold channel entry remain available during a profile s
         ({ filter }) =>
           filter.kinds?.includes(9) &&
           filter.top_level === true &&
-          filter["#h"]?.includes("beta") &&
+          filter["#h"]?.includes(ids.beta) &&
           filter.until === undefined,
       );
     await expect.poll(() => preferencesPending).toBe(true);
     expect(betaHeads()).toHaveLength(0);
-    const visibleMs = await page.locator('[data-channel-id="beta"]').evaluate(
-      async (button, ids) => {
-        const start = performance.now();
-        button.click();
-        await new Promise((resolve, reject) => {
-          const deadline = setTimeout(
-            () => reject(new Error("cold channel did not paint")),
-            5000,
-          );
-          const check = () => {
-            const history = document.querySelector(
-              '[aria-label="Channel message history"]',
+    const visibleMs = await page
+      .locator(`[data-channel-id="${ids.beta}"]`)
+      .evaluate(
+        async (button, ids) => {
+          const start = performance.now();
+          button.click();
+          await new Promise((resolve, reject) => {
+            const deadline = setTimeout(
+              () => reject(new Error("cold channel did not paint")),
+              5000,
             );
-            const bounds = history?.getBoundingClientRect();
-            const visible =
-              bounds &&
-              [...history.querySelectorAll("[data-message-id]")].some((row) => {
-                const rect = row.getBoundingClientRect();
-                return (
-                  ids.includes(row.dataset.messageId) &&
-                  rect.height > 0 &&
-                  rect.bottom > bounds.top &&
-                  rect.top < bounds.bottom
+            const check = () => {
+              const history = document.querySelector(
+                '[aria-label="Channel message history"]',
+              );
+              const bounds = history?.getBoundingClientRect();
+              const visible =
+                bounds &&
+                [...history.querySelectorAll("[data-message-id]")].some(
+                  (row) => {
+                    const rect = row.getBoundingClientRect();
+                    return (
+                      ids.includes(row.dataset.messageId) &&
+                      rect.height > 0 &&
+                      rect.bottom > bounds.top &&
+                      rect.top < bounds.bottom
+                    );
+                  },
                 );
-              });
-            if (
-              !visible ||
-              !document.querySelector(
-                '[role="textbox"][aria-label="Message #Beta"]',
+              if (
+                !visible ||
+                !document.querySelector(
+                  '[role="textbox"][aria-label="Message #Beta"]',
+                )
               )
-            )
-              return requestAnimationFrame(check);
-            requestAnimationFrame(() => {
-              clearTimeout(deadline);
-              resolve();
-            });
-          };
-          requestAnimationFrame(check);
-        });
-        return performance.now() - start;
-      },
-      app.histories.get("primary/beta").map(({ id }) => id),
-    );
+                return requestAnimationFrame(check);
+              requestAnimationFrame(() => {
+                clearTimeout(deadline);
+                resolve();
+              });
+            };
+            requestAnimationFrame(check);
+          });
+          return performance.now() - start;
+        },
+        app.histories.get(`primary/${ids.beta}`).map(({ id }) => id),
+      );
     expect(betaHeads().length).toBeGreaterThan(0);
     // Closing the contextual profile may abort optional work; do not require
     // an unnecessary snapshot to survive navigation just to satisfy this test.
@@ -232,7 +236,7 @@ test.describe("human message bylines omit presence", () => {
     await settle(page);
     const timeline = page.locator("[data-channel-timeline]");
     const root = app.histories
-      .get("primary/alpha")
+      .get(`primary/${ids.alpha}`)
       .find((row) => row.content === "Thread root 0");
     await timeline
       .locator(`[data-message-id="${root.id}"]`)
@@ -375,8 +379,8 @@ test("presence becomes usable during held HTTP work and unfinished subscription 
   page,
   app,
 }) => {
-  app.relay.holdEose("alpha");
-  app.relay.holdUnread();
+  app.relay.holdEose(ids.alpha);
+  app.relay.sidebarApi.hold();
   const snapshotStart = Promise.withResolvers();
   await page.route("**/presence-snapshot", async (route) => {
     await snapshotStart.promise;
@@ -390,9 +394,11 @@ test("presence becomes usable during held HTTP work and unfinished subscription 
   try {
     await open(page, app);
     await expect
-      .poll(() => app.report.unreadHolds.some((hold) => hold.pending))
+      .poll(() => app.report.sidebarHolds.some((hold) => hold.pending))
       .toBe(true);
-    await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+    await expect
+      .poll(() => app.relay.hasRoute("primary", ids.alpha))
+      .toBe(true);
     await page
       .getByRole("button", { name: "View Alice Fixture profile", exact: true })
       .first()
@@ -407,13 +413,13 @@ test("presence becomes usable during held HTTP work and unfinished subscription 
         .getByRole("img", { name: "Alice Fixture avatar, online" })
         .first(),
     ).toBeVisible();
-    expect(app.report.unreadHolds.some((hold) => hold.pending)).toBe(true);
+    expect(app.report.sidebarHolds.some((hold) => hold.pending)).toBe(true);
     expect(
       app.report.wireFrames.some(
         ([kind, id]) =>
           kind === "EOSE" &&
           app.relay.requests.some(
-            (req) => req.id === id && req.routes.includes("alpha"),
+            (req) => req.id === id && req.routes.includes(ids.alpha),
           ),
       ),
     ).toBe(false);
@@ -430,7 +436,7 @@ test("presence becomes usable during held HTTP work and unfinished subscription 
         ),
       )
       .toBe(true);
-    expect(app.report.unreadHolds.some((hold) => hold.pending)).toBe(true);
+    expect(app.report.sidebarHolds.some((hold) => hold.pending)).toBe(true);
     expect(
       app.report.presencePublications.some(
         ({ event }) => event.content === "online",
@@ -438,8 +444,8 @@ test("presence becomes usable during held HTTP work and unfinished subscription 
     ).toBe(true);
   } finally {
     snapshotStart.resolve();
-    app.relay.releaseUnread();
-    app.relay.releaseEose("alpha");
+    app.relay.sidebarApi.release();
+    app.relay.releaseEose(ids.alpha);
   }
 });
 

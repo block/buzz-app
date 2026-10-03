@@ -143,16 +143,13 @@ it.each(["thread", "conversation"] as const)(
 );
 
 it.each(["thread", "conversation"] as const)(
-  "%s tabs hold an unread visit only while active and retain their content",
+  "%s tabs retain their content while inactive",
   (kind) => {
     const channel = { id: "beta", name: "Beta", members: ["viewer"] };
     const snapshot = { status: "ready", channels: [channel] };
-    const enterChannel = vi.fn(async () => {});
-    const leaveChannel = vi.fn();
     const session = {
       viewer: "viewer",
       channels: { list: () => snapshot, subscribeList: () => () => {} },
-      unread: { enterChannel, leaveChannel },
     } as unknown as RelaySession;
     const props = {
       tab: {
@@ -171,26 +168,28 @@ it.each(["thread", "conversation"] as const)(
     };
     const mounted = render(<ConversationTab {...props} active={false} />);
     const content = screen.getByLabelText("Conversation in Beta");
-    expect(enterChannel).not.toHaveBeenCalled();
     if (kind === "thread")
       expect(screen.getByText("Thread content")).toHaveAttribute(
         "data-active",
         "false",
       );
     mounted.rerender(<ConversationTab {...props} active />);
-    expect(enterChannel).toHaveBeenCalledExactlyOnceWith("beta");
     if (kind === "thread")
       expect(screen.getByText("Thread content")).toHaveAttribute(
         "data-active",
         "true",
       );
     mounted.rerender(<ConversationTab {...props} active={false} />);
-    expect(leaveChannel).toHaveBeenCalledExactlyOnceWith("beta");
     expect(screen.getByLabelText("Conversation in Beta")).toBe(content);
+    if (kind === "thread")
+      expect(screen.getByText("Thread content")).toHaveAttribute(
+        "data-active",
+        "false",
+      );
     mounted.rerender(<ConversationTab {...props} active />);
-    expect(enterChannel).toHaveBeenCalledTimes(2);
+    expect(screen.getByLabelText("Conversation in Beta")).toBe(content);
     mounted.unmount();
-    expect(leaveChannel).toHaveBeenCalledTimes(2);
+    expect(content).not.toBeInTheDocument();
   },
 );
 

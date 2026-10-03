@@ -6,6 +6,7 @@ import {
 } from "../../shared/design-system/icons";
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useState,
@@ -23,34 +24,6 @@ import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
 import { useAfterMessageMenuClose } from "./MessageActionBar";
 import { lastEditableMessage } from "./useMessageEdit";
 import styles from "./Messages.module.css";
-
-// A channel tab and its thread can coexist, but unread state owns one visit.
-const visits = new WeakMap<
-  RelaySession,
-  Map<string, { count: number; ready: Promise<void> }>
->();
-function enterVisit(session: RelaySession, channelId: string) {
-  let channels = visits.get(session);
-  if (!channels) {
-    channels = new Map();
-    visits.set(session, channels);
-  }
-  let visit = channels.get(channelId);
-  if (!visit) {
-    visit = { count: 0, ready: session.unread.enterChannel(channelId) };
-    channels.set(channelId, visit);
-  }
-  visit.count++;
-  return {
-    ready: visit.ready,
-    leave() {
-      if (--visit.count === 0) {
-        channels.delete(channelId);
-        session.unread.leaveChannel(channelId);
-      }
-    },
-  };
-}
 
 const emptyOperations: readonly OutgoingEvent[] = Object.freeze([]);
 const empty = () => emptyOperations;
@@ -146,32 +119,6 @@ export function MessageManagement({
     setNotice((current) =>
       current.visit === visit ? { ...current, error } : current,
     );
-  useEffect(() => {
-    const { session, visitChannelId } = visit;
-    let active = true;
-    const presence = visitChannelId
-      ? enterVisit(session, visitChannelId)
-      : undefined;
-    if (presence)
-      void presence.ready.catch((cause) => {
-        if (active)
-          setNotice((current) =>
-            current.visit === visit
-              ? {
-                  ...current,
-                  error:
-                    cause instanceof Error
-                      ? cause.message
-                      : "Could not restore unread state.",
-                }
-              : current,
-          );
-      });
-    return () => {
-      active = false;
-      presence?.leave();
-    };
-  }, [visit]);
   return (
     <Management.Provider
       value={{
@@ -225,7 +172,14 @@ export function MessageManagementItems({
     messageId: row.id,
   };
   useSyncExternalStore(
-    (listener) => session.unread.subscribe(target, listener),
+    useCallback(
+      (listener) =>
+        session.unread.subscribe(
+          { kind: "message", channelId: row.channelId, messageId: row.id },
+          listener,
+        ),
+      [session.unread, row.channelId, row.id],
+    ),
     () => session.unread.snapshot(target),
   );
   if (
@@ -304,8 +258,8 @@ export function MessageManagementItems({
           management.report(undefined);
           void (
             unread
-              ? session.unread.markMessageRead(row.channelId, row.id)
-              : session.unread.markMessageUnread(row.channelId, row.id)
+              ? session.unread.markThrough(target, row.id)
+              : session.unread.markUnreadLocal(target)
           ).catch((cause) =>
             management.report(
               cause instanceof Error
@@ -316,7 +270,7 @@ export function MessageManagementItems({
         }}
       >
         <MenuIcon>{unread ? <EnvelopeOpenIcon /> : <EnvelopeIcon />}</MenuIcon>
-        {unread ? "Mark read" : "Mark unread"}
+        {unread ? "Mark read through here" : "Mark unread"}
       </MenuItem>
     </>
   );

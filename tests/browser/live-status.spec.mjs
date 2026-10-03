@@ -1,6 +1,6 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 test.use({
   productionBroker: true,
   historyCounts: { alpha: 1, beta: 1 },
@@ -9,7 +9,7 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
   page,
   app,
 }) => {
-  app.relay.holdEose("beta");
+  app.relay.holdEose(ids.beta);
   await page.goto(app.origin);
   await page.evaluate(() => {
     window.__bannerSeen = [];
@@ -37,7 +37,7 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
   const warning = page
     .getByRole("dialog", { name: "Live updates need attention", exact: true })
     .filter({ hasText: "Only currently accessible messages remain readable." });
-  await expect.poll(() => app.relay.hasRoute("primary", "beta")).toBe(true);
+  await expect.poll(() => app.relay.hasRoute("primary", ids.beta)).toBe(true);
   await expect(warning).toHaveCount(0);
   const streams = () =>
     app.report.brokerRequests.filter((r) => r.url.endsWith("/stream")).length;
@@ -60,7 +60,7 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
     0,
   );
   expect(streams()).toBe(before);
-  app.relay.releaseEose("beta");
+  app.relay.releaseEose(ids.beta);
   await expect(warning).toHaveCount(0);
   for (const channel of ["Alpha", "Beta", "Alpha", "Beta"]) {
     await page.getByRole("button", { name: channel, exact: true }).click();
@@ -82,7 +82,7 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
   });
 });
 
-for (const target of ["alpha", "profiles"]) {
+for (const target of [ids.alpha, "profiles"]) {
   test(`quota recovery for ${target} stays quiet until attempts exhaust, and manual recovery waits for EOSE`, async ({
     page,
     app,

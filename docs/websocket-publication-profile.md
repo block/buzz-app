@@ -9,6 +9,11 @@ removed. Existing concurrency bounds, explicit server cooldowns, deadlines and
 reconnect backoff remain. There is no new socket, outbox, automatic publication
 replay or HTTP fallback for uncertain writes.
 
+**Superseded for read state:** encrypted 30078 read-state publication was later
+removed; read state now goes over HTTPS to the relay's `/buzz/v1` sidebar API
+([unread](unread.md)). The read-state columns and checks below describe the
+2026-09-20 measurement only.
+
 **This is development-host integration, not packaged-desktop support.** Both
 `just web` and `just desktop` use the development broker; packaged builds do not
 include it ([README](../README.md#relay-channels)). Frontend and broker must be
@@ -270,7 +275,9 @@ runs the transport profile, not this separate experiment.
 An attended local trial reported faster browsing, but also a
 `read-state-publish` 503 whose cause remains unresolved. Later successful read
 logs contained no publication attempt and do not establish recovery. Diagnose
-that failure before asserting publication reliability.
+that failure before asserting publication reliability. (Moot for read state
+after the `/buzz/v1` cutover removed `read-state-publish`; the cause was never
+diagnosed.)
 
 Hosted CI for `7bd31cb` and `0669b62` exposed test/fixture failures, not a
 merge-ready result ([earlier failing run](https://github.com/block/buzz-app/actions/runs/35520633342)).

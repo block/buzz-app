@@ -1,4 +1,4 @@
-import { test, expect, historySize } from "./fixture.mjs";
+import { test, expect, historySize, ids } from "./fixture.mjs";
 import { streamEvidence } from "./stream-evidence.mjs";
 
 import {
@@ -138,7 +138,7 @@ readingTest(
           const [scope, view] = JSON.parse(key.slice("buzz-view.v1:".length));
           return (
             scope.startsWith("https://primary.example:") &&
-            view === "scroll:alpha"
+            view === `scroll:${ids.alpha}`
           );
         });
         return key ? JSON.parse(localStorage.getItem(key)) : null;
@@ -161,8 +161,8 @@ readingTest(
       { community: "secondary", channels: [] },
     ]);
     expect(app.report.streamInterests).toEqual([
-      { community: "primary", channels: ["alpha", "beta"] },
-      { community: "secondary", channels: ["alpha", "beta"] },
+      { community: "primary", channels: [ids.alpha, ids.beta] },
+      { community: "secondary", channels: [ids.alpha, ids.beta] },
     ]);
     const savedOffset = await history(page).evaluate((el) => el.scrollTop);
     await page.reload();
@@ -180,7 +180,7 @@ readingTest(
     await expect(composer(page, "Alpha")).toHaveJSProperty("value", "A draft");
 
     await observeWork(page);
-    const held = app.append("primary", "alpha");
+    const held = app.append("primary", ids.alpha);
     // Positive receipt evidence before claiming that "no jump" means correctness.
     await expect(
       history(page).locator(`[data-message-id="${held.id}"]`),
@@ -206,7 +206,7 @@ readingTest(
       history(page).getByRole("button").and(jumpToLatest),
     ).toHaveCount(0);
     await expect(jumpToLatest).toBeHidden();
-    const followed = app.append("primary", "alpha");
+    const followed = app.append("primary", ids.alpha);
     await expect(
       history(page).locator(`[data-message-id="${followed.id}"]`),
     ).toBeInViewport();
@@ -308,7 +308,7 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
     );
     const pending = app.pending.shift();
     expect(pending.community).toBe("primary");
-    expect(pending.channel).toBe("alpha");
+    expect(pending.channel).toBe(ids.alpha);
     expect(pending.filter.until).toBeDefined();
     expect(pending.filter.before_id).toMatch(/^[a-f0-9]{64}$/);
     expect(pending.filter.limit).toBe(20);
@@ -343,7 +343,7 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
   expect(app.pending).toHaveLength(0);
 
   await edge(page, -1);
-  const first = app.histories.get("primary/alpha")[0];
+  const first = app.histories.get(`primary/${ids.alpha}`)[0];
   await expect(
     history(page).locator(`[data-message-id="${first.id}"]`),
   ).toBeInViewport();
@@ -392,7 +392,7 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
   const beforeAppendHeight = await history(page).evaluate(
     (element) => element.scrollHeight,
   );
-  const receipt = app.append("primary", "alpha");
+  const receipt = app.append("primary", ids.alpha);
   // The restored upper offset must still mean "do not follow". Receipt becomes
   // positively visible at the end of the retained-history traversal below.
   await expect
@@ -420,7 +420,7 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
   await expect(
     history(page).locator(`[data-message-id="${receipt.id}"]`),
   ).toBeInViewport();
-  for (const event of app.histories.get("primary/alpha"))
+  for (const event of app.histories.get(`primary/${ids.alpha}`))
     expect(seen.has(event.id), `retained ${event.content.split("\n")[0]}`).toBe(
       true,
     );
@@ -455,13 +455,13 @@ editTest(
     await end(page);
     await expectOutsidePrefetch(page);
     const queriesBefore = app.report.queries.length;
-    const event = app.append("primary", "alpha", "Short message before edit");
+    const event = app.append("primary", ids.alpha, "Short message before edit");
     const row = history(page).locator(`[data-message-id="${event.id}"]`);
     await expect(row).toBeInViewport();
     await settle(page);
     app.edit(
       "primary",
-      "alpha",
+      ids.alpha,
       event,
       "Live edit growing the last row. ".repeat(300),
     );
@@ -477,7 +477,7 @@ editTest(
     // Return to short content, then read above it; edits must not act like a send.
     app.edit(
       "primary",
-      "alpha",
+      ids.alpha,
       { ...event, created_at: event.created_at + 1 },
       "Short again",
     );
@@ -494,7 +494,7 @@ editTest(
     await expectOutsidePrefetch(page);
     app.edit(
       "primary",
-      "alpha",
+      ids.alpha,
       { ...event, created_at: event.created_at + 2 },
       "Growing while reading history. ".repeat(300),
     );
@@ -510,7 +510,7 @@ editTest(
       )?.dataset.messageId;
     });
     const previous = app.histories
-      .get("primary/alpha")
+      .get(`primary/${ids.alpha}`)
       .find((event) => event.id === previousId);
     expect(previous).toBeDefined();
     const previousRow = history(page).locator(
@@ -528,7 +528,7 @@ editTest(
     ).toBeLessThanOrEqual(0);
     app.edit(
       "primary",
-      "alpha",
+      ids.alpha,
       previous,
       `${previous.content}\n${"An expanded message above the reading anchor. ".repeat(50)}`,
     );
@@ -540,7 +540,7 @@ editTest(
     await expectAnchor(page, saved);
     app.edit(
       "primary",
-      "alpha",
+      ids.alpha,
       { ...previous, created_at: previous.created_at + 1 },
       previous.content,
     );

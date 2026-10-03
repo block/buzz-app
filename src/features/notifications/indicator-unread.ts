@@ -1,3 +1,4 @@
+import { hasUnread } from "../relay/unread";
 import type { Communities } from "../communities/service";
 import type { RelaySession } from "../relay/session";
 
@@ -10,17 +11,11 @@ export function bindUnreadIndicator(
   let session: RelaySession | undefined;
   let identity = "";
   let previous: boolean | undefined;
-  let stopRoster = () => {};
-  const channels = new Map<string, () => void>();
+  let stopUnread = () => {};
   const publish = (unread: boolean) => {
     if (unread === previous) return;
     previous = unread;
     project(unread);
-  };
-  const clear = () => {
-    stopRoster();
-    for (const stop of channels.values()) stop();
-    channels.clear();
   };
   const update = () => {
     if (closed) return;
@@ -35,51 +30,31 @@ export function bindUnreadIndicator(
         ? relay.session
         : undefined;
     if (session === owned && identity === next) return;
-    clear();
+    stopUnread();
     session = owned;
     identity = next;
     publish(false);
     if (!owned) return;
-    const viewer = client.viewer as string;
     const valid = () => !closed && session === owned && identity === next;
     const changed = () => {
       if (!valid()) return;
       publish(
-        [...channels.keys()].some((channelId) => {
+        owned.channels.list().channels.some((channel) => {
           const snapshot = owned.unread.snapshot({
             kind: "channel",
-            channelId,
+            channelId: channel.id,
           });
           return (
-            snapshot.manual !== "none" || (snapshot.observedCount ?? 0) > 0
+            snapshot.manual !== "none" ||
+            (snapshot.unreadVisible ?? hasUnread(snapshot.unread))
           );
         }),
       );
     };
-    const roster = () => {
-      if (!valid()) return;
-      const ids = new Set(
-        owned.channels
-          .list()
-          .channels.filter((channel) => channel.members?.includes(viewer))
-          .map((channel) => channel.id),
-      );
-      for (const [id, stop] of channels) {
-        if (ids.has(id)) continue;
-        stop();
-        channels.delete(id);
-      }
-      for (const channelId of ids) {
-        if (!channels.has(channelId))
-          channels.set(
-            channelId,
-            owned.unread.subscribe({ kind: "channel", channelId }, changed),
-          );
-      }
-      changed();
-    };
-    stopRoster = owned.channels.subscribeList(roster);
-    roster();
+    // One subscription covers every channel: the unread owner publishes on any
+    // count, mark or access change, and its snapshots already hide lost access.
+    stopUnread = owned.unread.subscribeSync(changed);
+    changed();
   };
   const stop = communities.subscribe(update);
   const stopRelay = communities.relay.subscribe(update);
@@ -89,7 +64,7 @@ export function bindUnreadIndicator(
     closed = true;
     stop();
     stopRelay();
-    clear();
+    stopUnread();
     session = undefined;
     publish(false);
   };

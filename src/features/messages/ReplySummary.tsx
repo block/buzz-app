@@ -11,7 +11,6 @@ export function ReplySummary({
   resolveName,
   media,
   unreadLabel,
-  unreadCount,
 }: {
   count: number;
   participants: readonly string[];
@@ -20,7 +19,6 @@ export function ReplySummary({
   resolveName(id: string, fallback: string): string;
   media(url: string, size?: "small"): string | undefined;
   unreadLabel?: string | undefined;
-  unreadCount?: number;
 }) {
   return (
     <>
@@ -61,9 +59,7 @@ export function ReplySummary({
       <span>
         {count} {count === 1 ? "reply" : "replies"}
       </span>
-      {unreadCount ? (
-        <span>({unreadCount} new)</span>
-      ) : unreadLabel ? (
+      {unreadLabel ? (
         <span
           className={styles.threadUnread}
           aria-hidden="true"

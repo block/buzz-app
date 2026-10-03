@@ -11,8 +11,6 @@ export function readingPositioned(element: HTMLElement | null) {
 type Reading = {
   session: RelaySession;
   channelId: string;
-  latestMessageId?: string | undefined;
-  rootId?: string | undefined;
   scroller: RefObject<HTMLElement | null>;
   settled: RefObject<boolean>;
 };
@@ -26,14 +24,7 @@ export function Reading(props: Reading) {
  * overscan. Call it inside the `MessageEditScope` this message list shares with
  * its composer, so focus in that composer counts and another surface's does not.
  */
-export function useReading({
-  session,
-  channelId,
-  latestMessageId,
-  rootId,
-  scroller,
-  settled,
-}: Reading) {
+export function useReading({ session, channelId, scroller, settled }: Reading) {
   const composer = useMessageEditScope()?.input;
   useEffect(() => {
     if (!scroller.current) return;
@@ -102,33 +93,11 @@ export function useReading({
         })
         .slice(0, 128);
     }
-    function bottomId() {
-      if (
-        !latestMessageId ||
-        element.scrollHeight - element.clientHeight - element.scrollTop > 1
-      )
-        return;
-      const viewport = element.getBoundingClientRect();
-      const row = [
-        ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
-      ].find((row) => row.dataset.messageId === latestMessageId);
-      const bounds = row?.getBoundingClientRect();
-      return bounds &&
-        bounds.height > 0 &&
-        bounds.width > 0 &&
-        bounds.bottom > Math.max(viewport.top, 0) &&
-        bounds.bottom <= Math.min(viewport.bottom, window.innerHeight) &&
-        bounds.left >= Math.max(viewport.left, 0) &&
-        bounds.right <= Math.min(viewport.right, window.innerWidth)
-        ? latestMessageId
-        : undefined;
-    }
     function schedule() {
       cancel();
       if (!active()) return;
       const ids = visibleIds();
-      const bottom = bottomId();
-      if (!ids.length && !bottom) return;
+      if (!ids.length) return;
       try {
         // Capture the lease BEFORE dwell: a newer manual action invalidates it.
         handle = session.unread.reading(channelId);
@@ -145,9 +114,8 @@ export function useReading({
         const visible = new Set(visibleIds());
         // A row appearing only at the end of the interval has not had a dwell.
         const remained = ids.filter((id) => visible.has(id));
-        const caughtUp = bottom && bottom === bottomId();
         if (
-          (remained.length || caughtUp) &&
+          remained.length &&
           session.unread.sync().capability === "frontier-sync" &&
           handle
         ) {
@@ -156,10 +124,8 @@ export function useReading({
           const observed = handle;
           handle = undefined;
           observing.add(observed);
-          void (async () => {
-            if (caughtUp) await observed.catchUp(bottom, rootId);
-            await observed.observe(remained);
-          })()
+          void observed
+            .observe(remained)
             .catch(() => {})
             .finally(() => {
               if (observing.delete(observed)) observed.dispose();
@@ -212,13 +178,5 @@ export function useReading({
       window.removeEventListener("focus", schedule);
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [
-    session,
-    channelId,
-    latestMessageId,
-    rootId,
-    scroller,
-    settled,
-    composer,
-  ]);
+  }, [session, channelId, scroller, settled, composer]);
 }

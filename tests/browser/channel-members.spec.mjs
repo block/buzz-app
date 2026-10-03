@@ -1,6 +1,6 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 
 test.use({ pluginFixtures: true });
 
@@ -113,12 +113,12 @@ test("channel members opens from the header, fits each viewport, and returns key
   ).toBeVisible();
   // Model navigation arriving while the modal is open, not a pointer through its backdrop.
   await page
-    .locator('button[data-channel-id="beta"]')
+    .locator(`button[data-channel-id="${ids.beta}"]`)
     .evaluate((node) => node.click());
   await expect(
     page.getByRole("dialog", { name: "Channel members" }),
   ).toHaveCount(0);
-  await page.locator('button[data-channel-id="alpha"]').click();
+  await page.locator(`button[data-channel-id="${ids.alpha}"]`).click();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(
     page.getByRole("dialog", { name: "Channel members" }),
@@ -218,7 +218,7 @@ test.describe("scoped Members history", () => {
       version: 1,
       kind: "conversation",
       scope: { viewer: app.viewer, communityOrigin: "https://primary.example" },
-      channelId: "alpha",
+      channelId: ids.alpha,
       messageId: app.exact.root.id,
       panel: "members",
     };
@@ -245,7 +245,7 @@ test.describe("scoped Members history", () => {
       .click();
     await expect(
       page.locator(
-        `[data-channel-timeline="alpha"] [data-message-id="${target.messageId}"]`,
+        `[data-channel-timeline="${ids.alpha}"] [data-message-id="${target.messageId}"]`,
       ),
     ).toBeFocused();
   });
@@ -259,7 +259,7 @@ test.describe("scoped Members history", () => {
       version: 1,
       kind: "conversation",
       scope: { viewer: app.viewer, communityOrigin: "https://primary.example" },
-      channelId: "alpha",
+      channelId: ids.alpha,
       messageId: app.exact.target.id,
       threadRootId: app.exact.root.id,
     };
@@ -321,7 +321,7 @@ test.describe("scoped Members history", () => {
 test.describe("Members on an unsupported session destination", () => {
   test.use({
     exactMessages: true,
-    sessionChannels: ["alpha"],
+    sessionChannels: [ids.alpha],
     historyCounts: { alpha: 3, beta: 0 },
   });
   test("discards the unavailable panel while preserving message focus and history", async ({
@@ -333,7 +333,7 @@ test.describe("Members on an unsupported session destination", () => {
     const target = {
       version: 1,
       kind: "conversation",
-      channelId: "alpha",
+      channelId: ids.alpha,
       scope: { viewer: app.viewer, communityOrigin: "https://primary.example" },
       messageId: app.exact.target.id,
     };

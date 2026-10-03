@@ -1,6 +1,6 @@
 import { expectTabler } from "./tabler.mjs";
 import { openPage } from "./navigation.mjs";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { end, settle } from "./timeline.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
@@ -49,7 +49,7 @@ test("unhandled links open externally and disabling GitHub restores the fallback
   );
   await page.goto(app.origin);
   await openMessages(page);
-  app.append("primary", "alpha", `${github} ${ordinary} ${unsupported}`);
+  app.append("primary", ids.alpha, `${github} ${ordinary} ${unsupported}`);
   await expect(link(page, github)).toBeAttached();
   await end(page);
   await link(page, github).click();
@@ -111,7 +111,11 @@ test("GitHub object identities use their intended artwork at one size", async ({
   );
   await page.goto(app.origin);
   await openMessages(page);
-  app.append("primary", "alpha", targets.map(([, target]) => target).join(" "));
+  app.append(
+    "primary",
+    ids.alpha,
+    targets.map(([, target]) => target).join(" "),
+  );
 
   const dimensions = [];
   const icons = [];

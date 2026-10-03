@@ -123,6 +123,53 @@ it("the fetch boundary preserves normalized quota hints and blocks later work wi
   expect(result.ok).toBe(true);
 });
 
+const accessory = (
+  lane: ReturnType<typeof createApiAdmission>,
+  status: number,
+  headers?: HeadersInit,
+) =>
+  admittedApiRequest(
+    lane,
+    async () =>
+      Response.json(
+        { error: { code: "temporarily_unavailable", request_id: "bounded" } },
+        { status, ...(headers ? { headers } : {}) },
+      ),
+    undefined,
+    "foreground",
+    undefined,
+    true,
+  );
+it.each([
+  [{ "Retry-After": "17" }, 17000],
+  [undefined, 60000],
+])(
+  "an accessory 503 keeps its retry evidence without pausing the shared lane: %o",
+  async (headers, retryAfterMs) => {
+    vi.useFakeTimers();
+    const lane = createApiAdmission();
+    const response = await accessory(lane, 503, headers);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ retryAfterMs });
+    const healthy = vi.fn(async () => new Response("[]"));
+    expect((await admittedApiRequest(lane, healthy)).ok).toBe(true);
+    expect(healthy).toHaveBeenCalledTimes(1);
+  },
+);
+it("an accessory 429 is the shared quota and pauses the lane for its Retry-After", async () => {
+  vi.useFakeTimers();
+  const lane = createApiAdmission();
+  const response = await accessory(lane, 429, { "Retry-After": "17" });
+  expect(await response.json()).toMatchObject({ retryAfterMs: 17000 });
+  const healthy = vi.fn(async () => new Response("[]"));
+  await expect(admittedApiRequest(lane, healthy)).rejects.toBeInstanceOf(
+    ApiPaused,
+  );
+  await vi.advanceTimersByTimeAsync(17000);
+  expect((await admittedApiRequest(lane, healthy)).ok).toBe(true);
+  expect(healthy).toHaveBeenCalledTimes(1);
+});
+
 it.each([
   ["rate-limited: quota exceeded", 61000],
   ["rate-limited: quota exceeded; retry in invalid", 61000],

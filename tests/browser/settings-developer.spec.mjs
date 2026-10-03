@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({
@@ -52,13 +52,13 @@ test.describe("client performance", () => {
     const beta = Promise.withResolvers();
     await page.route("**/query", async (route) => {
       const filters = route.request().postDataJSON() ?? [];
-      if (filters.some((filter) => filter["#h"]?.includes("beta")))
+      if (filters.some((filter) => filter["#h"]?.includes(ids.beta)))
         await beta.promise;
       await route.fallback();
     });
     await open(page, app);
     try {
-      await page.locator('[data-channel-id="beta"]').focus();
+      await page.locator(`[data-channel-id="${ids.beta}"]`).focus();
       await page.keyboard.press("Enter");
       await expect(
         page.getByRole("status").filter({ hasText: "Loading messages…" }),
@@ -70,7 +70,7 @@ test.describe("client performance", () => {
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();
     await expect(page.locator("[data-message-id]").first()).toBeVisible();
-    await page.locator('[data-channel-id="alpha"]').click();
+    await page.locator(`[data-channel-id="${ids.alpha}"]`).click();
     await expect(
       page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
     ).toBeVisible();
@@ -97,12 +97,12 @@ test.describe("client performance", () => {
     await expect(page.getByText(/^Server \d+$/)).toBeVisible();
     expect(exported.opens.slice(-2)).toEqual([
       expect.objectContaining({
-        channel: "beta",
+        channel: ids.beta.slice(0, 8),
         trigger: "keyboard",
         source: "network",
       }),
       expect.objectContaining({
-        channel: "alpha",
+        channel: ids.alpha.slice(0, 8),
         trigger: "click",
         source: "memory",
       }),

@@ -1,75 +1,169 @@
-# Inbox: in-progress port
+# Inbox: relay-authoritative exported surface
 
-Inbox is a bundled page (`buzz.inbox/inbox`) that opens recent conversations
-for the selected community. The stacked evidence, conversation UI and Drafts
-PRs are one user-approved Inbox launch batch; none should ship independently.
+Inbox is a bundled page (`buzz.inbox/inbox`) for the selected community. It uses
+`session.unread.inbox()` for rows and `session.inboxFeed` for bounded addressed
+history demand. Presentation, filtering and selection belong to the page;
+ordinary channel/thread reading retains its existing policy. No Inbox-owned
+session, parallel fold, composer, signing or persistence is added.
 
-## Evidence slice (stacked with Inbox UI)
+## One authority, bounded candidates
 
-PR3 added no Inbox UI. This page uses `session.unread.inbox()` as its single
-conversation projection and `session.inboxFeed` as bounded addressed history
-demand. These changes are one launch batch, not a separately shippable
-backend feature. Ordinary channel and thread readers, read-state storage and
-outbox retain their existing ownership. No projects, approvals or reminders.
+`session.unread.inbox()` is a stable snapshot projection. The relay context
+answer alone admits a verified candidate: it must currently be `unread` with
+reason `direct`, `mention`, or `conversation`. Broadcast-only and null-reason
+messages are excluded. Read/not-counted candidates disappear; there is no
+retained read-conversation archive, historical reason cache, client participation
+query, or relevance reconstruction. Signed ancestry supplies grouping, not
+eligibility. A reply with an absent root can still target that signed thread.
 
-## Conversation UI (PR4; Drafts in PR5)
+Candidates come from the existing verified session cache (4,096 events / 8 MiB),
+including finite addressed feed results. Inbox adds no second event map and no
+all-channel history repair. Other session traffic can evict candidates. Cold
+coverage is smaller than main's former dedicated unread retention. Eligible
+kinds follow the relay-advertised set (v1 currently 9, 40002, 45001, 45003, not
+40008). The relay's 30-day retention window governs verdicts; the client does not
+reconstruct its cutoff.
 
-Inbox now renders chat-only DMs, mentions and participating threads through
-`session.unread.inbox()`, with independent Activity type and Sender filters and
-an Unread only toggle. Sender classification uses `session.agentChoices` and
-cached/profile-backed identity evidence, never a new inventory or name heuristic.
-Rows retain exact IDs and current names while `inboxFeed.incomplete` marks only
-specific group members awaiting their stored edit/deletion closure. Those rows
-say “Preview updating…” or “Preview unavailable. Retry inbox.”; other rows stay
-usable and the detail does not reveal an incomplete body. A failed read exposes
-Retry above both panes, including narrow detail. This is a visible completeness
-warning, not a guarantee that the relay did not change after verification.
-Retry stays focusable while pending. Successful recovery returns focus to the
-visible detail Close control (or the Activity type filter with no detail) only
-if Retry still owned focus when its alert was removed; moving focus away is
-respected. Revalidation hides and disables an already-admitted reader and its
-composer without unmounting them; incomplete bodies remain outside the visible
-and accessibility trees, and hidden content cannot earn read dwell. Recovery
-preserves the visit and outside focus rather than replaying exact reveal. A
-conversation-scoped presentation flag dismisses its open media/link previews,
-source actions, and composer subdialogs; body portals cannot outlive withholding
-or reopen automatically afterward. The main editor/draft and uploads stay alive;
-unapplied link fields and unsubmitted report notes are discarded with their
-subdialogs. A submitted report retains its operation and outcome without reopening
-the modal; failure offers Review report after recovery. Pending send consent is
-cancelled without undoing already-dispatched work. First admission still waits for
-complete evidence, and lost access retires the reader. If withholding hides the focused reader control, visible Close owns
-the temporary focus; recovery restores the same valid control only while that
-handoff still owns focus. Moving elsewhere or deliberately blurring cancels it.
-Inline audio/video pauses while withheld and retains its position; recovery never
-resumes playback or replays an old pending seek. Explicit Play is required.
+Before folding, channels with exact-zero relay attention and no unread live hint
+contribute no candidates when their row request started after their last cache
+admission/invalidation. Queued, in-flight, failed or newer mid-request invalidations
+remain unproven. Refreshing, stale or error status alone does not revoke a row's
+proof or its leases; owner status still determines snapshot freshness.
+`subscribeInbox()` retains at most 100 candidate selectors while subscribed.
+An older mention can leave the Inbox once 100 newer foreign messages are cached
+in channels with attention.
+Notification/message subscriptions have priority under the existing shared
+1,000-selector/context-lease bounds, displacing Inbox leases only when admission
+would otherwise exceed capacity. Disposal releases Inbox demand. Reading
+`inbox()` never starts a request. Existing sidebar refresh, invalidation and
+lifecycle scheduling supply context answers; there is no new timer.
 
-Opening a row captures channel, message and optional thread root, then uses the
-existing channel window or an exact shared thread reader to reveal even an older
-target outside the newest bounded page. A late verified root can regroup a
-conversation without changing the captured visit or canonical origin. Reading
-is saved by the shared unread owner; failed actions retain their captured Retry
-unless the visit/access/session or a newer intent retires it. A DM Retry reuses
-the original channel cutoff and manual-clear keys, not the retry-time clock or
-later arrivals. Re-clicking the selected row preserves that visit and its retry,
-even if reading changed the row's representative. Closing a pending multi-step
-read lets its admitted save settle, then quietly cancels the remaining steps.
-Genuine storage/access failures remain visible, without reviving the cancelled
-Retry intent. Context menus allow device-local
-Mark unread. Focus returns to the invoking row, a surviving row, or the persistent
-Activity type filter on Close/Escape. Escape belongs to the detail, including in-head
-DMs and incomplete previews; a keyboard-opened incomplete preview focuses its
-visible Close control once per visit, without refocusing on placeholder updates.
-Portalled media and controls retain their own dismissal. DM timelines share the
-canonical reading/edit scope with their composer: a focused composer reads fully
-visible arrivals after the normal dwell, without widening the captured selection
-cutoff. Selected panes collapse by available Inbox width, including the sidebar's
-space. Row accessible descriptions reuse the visible safe preview or incomplete
-placeholder; Show more follows the filtered result count.
-`NavigationItem` owns selected styling and `aria-current`. No Inbox-owned session,
-parallel fold, composer or outbox.
+Missing, unknown and over-capacity answers omit those rows and keep the snapshot
+unresolved (`freshness: stale` once otherwise observed), without an error.
+Unavailable message/context answers and unaskable ancestry (cycles, excessive
+depth or cross-channel parents) are skipped, not pending answers.
+Only error status carries an error. Unknown never becomes read or an exact zero.
+Context request failure follows the context owner's `status: error`, `freshness: stale`; earlier
+confirmed rows may remain stale, while a first failure has no rows. Unsupported
+or not-yet-requested state is idle/unknown. Ready/observed means the currently
+bounded candidates have resolved verdicts, not a complete historical Inbox.
 
-## Drafts (PR5)
+## Rows and reads
+
+Rows group admitted DM messages by channel and other messages by signed thread
+root or standalone message. `messageIds` and `unreadCount` describe only the
+admitted, observed subset, not the relay's total conversation count.
+`messageId`/preview identify its oldest unread member; `latestMessageId` and
+`createdAt` describe its newest. The shared author edit/deletion fold supplies
+bodies. Own and deleted content is omitted.
+
+Manual journal marks overlay admitted rows only. A mark without a relay reason
+cannot materialize a row and is not erased when its row is omitted. Read intents
+use the existing saving/pending/applied coverage overlay and durable journal;
+saving is not proof that the relay applied the operation.
+
+`readThrough` contains only a thread-prefix step anchored on the newest admitted
+reply. A thread prefix never acknowledges its top-level root. A standalone
+top-level mention has an empty `readThrough`: **empty on a non-DM means no Inbox
+read action**. Never substitute a channel prefix or an exact-message receipt
+in that click action. This does not disable ordinary reader dwell: once a
+standalone mention is shown, focused and settled, the shared reader can advance
+the channel prefix through it, covering older top-level unread too.
+DM rows also have no steps; their separate explicit channel action can use
+`prepareChannelRead`. The page delegates these actions to the unread owner;
+opening Inbox alone does not mark rows read. Hosts without `frontier-sync`
+disable read mutations.
+
+`prepareChannelRead(channelId)` captures the sidebar's latest-message ID/time,
+current epoch and the manual-mark keys then present, once. Every invocation
+reuses those operands. A mark on a key absent at preparation survives retries;
+a re-mark on a frozen key is cleared by a subsequent invocation. There are no
+journal mark versions. A complete empty channel permits only a local clear;
+an unknown latest anchor rejects. Cache clear, disposal and access revocation
+invalidate captured actions. No click-clock cut is invented.
+`markChannelRead(id)` invokes that prepared action immediately.
+
+`revision()` is the local journal's successful-intent save counter, not the
+sidebar publication counter; reads, acknowledgements and sync refreshes do not
+advance it. `generation()` exposes the current unread lifecycle epoch.
+
+## Finite feed and preview completeness
+
+`session.inboxFeed` owns finite verified addressed history demand and exact
+incomplete-target metadata, not rows or unread authority. Its lazy query returns
+up to 50 kind-9/40002 addressed messages. General `#e` queries page signed
+40003 edits and 5/9005 deletions, then deletions of retained/returned author
+edits. Both stages must finish before the feed is ready; each is bounded by
+2,000 events / 4 MiB. Short authorized pages are not terminal; an empty page is.
+
+Exact target IDs become incomplete **before** verified messages are published
+to Inbox subscribers. Consumers must not show incomplete bodies as current.
+Failures retain obligations and offer retry, including failed targets outside
+the newest addressed page. This is not atomic content admission. Disconnect
+and unrelated revocation preserve obligations for retained readable targets;
+cache/session retirement clears them. Withheld auxiliary evidence fails the
+attempt rather than masquerading as exhausted history. No reference-resolution
+loop or participation repair is added.
+
+Current membership/access fences apply to all rows, reads and publications.
+Before joining, cached public messages create no demand or unresolved rows;
+after joining, their relay verdict decides admission without replay or a join floor.
+A finite feed completing does not imply context verdicts have completed. The
+page subscribes to both capabilities and must honor both statuses. Neither
+an empty list nor feed-ready establishes archive completeness.
+
+## Conversation presentation
+
+The page offers Activity type and Sender filters and an Unread only toggle.
+The projection remains unread-only even with that toggle off; it is not a read
+archive. “Unread only” is therefore inert, and the row menu's “Mark unread”
+action remains disabled: every admitted row is unread. Both controls remain
+visible pending the relay listing follow-up. Sender classification uses
+`session.agentChoices` and cached/profile identity evidence, never a parallel
+inventory or name heuristic.
+
+Opening a row captures its channel, message and optional thread root and uses
+an existing channel window or exact shared thread reader to reveal the target.
+The captured visit survives removal from the unread projection; it does not add
+a list row. Back/Close ends the visit. The existing detail handles unavailable
+channel access. Exact readers repair the selected target's edit/deletion evidence;
+channel windows repair only the bounded current head, not every retained older
+message. A captured target outside that head can keep older content until another
+read or live delivery returns its edit/deletion evidence. Readers handle deleted
+or unavailable targets from the evidence they obtain, not from removal of an
+Inbox row. Read retries are fenced by visit, access, membership,
+generation and successful local intent
+revision. A DM retry reuses its prepared sidebar anchor and manual-clear keys,
+not the retry-time clock or later arrivals. Manual unread remains device-local
+and cannot independently restore a dismissed row.
+
+`inboxFeed.incomplete` identifies exact group members awaiting edit/deletion
+closure. Those rows show “Preview updating…” or “Preview unavailable. Retry
+inbox.” rather than exposing an incomplete body. Retry is available above both
+panes. Revalidation withholds an admitted reader and its composer without
+unmounting them; hidden content cannot earn read dwell. The shared conversation
+presentation boundary dismisses media/link previews, source actions and composer
+subdialogs while preserving the main editor, draft and uploads. Inline audio
+and video pause; recovery requires explicit Play rather than resuming playback.
+Access loss retires the reader. Focus recovery respects focus moved elsewhere.
+
+This edit/deletion closure covers addressed targets only. An unaddressed DM or
+conversation reply can enter Inbox through unread evidence without a closure
+obligation. Its row can show pre-edit text after a reconnect until another read
+or live delivery returns the edit. Sidebar context refresh settles unread
+eligibility, not body freshness;
+a deleted original leaves the unread projection on a successful verdict refresh.
+Removing a row does not close its captured detail or establish that detail's body
+is current. Reconnect does not add a client-side content scan for these rows.
+
+Detail uses the existing reader/composer and canonical origin. Close/Escape
+returns focus to the invoking or surviving row, or the persistent Activity type
+filter. Portalled controls retain their own dismissal. Pane layout responds to
+available Inbox width. Row descriptions use safe previews or incomplete
+placeholders; Show more follows the filtered result count. `NavigationItem`
+owns selected styling and `aria-current`.
+
+## Drafts
 
 Drafts is a quiet Inbox header action. It lists only meaningful saved composer
 text in this viewer/community scope, up to 500 with explicit truncation; an
@@ -112,143 +206,18 @@ to the invoking draft row, another remaining row, or Back to Inbox; callbacks fr
 an earlier visit cannot retire a later selection. Failed Delete keeps its retryable
 confirmation focused. This is not a new persisted index or migration.
 
+## Validation scope
 
-## Ownership and limits
-
-`session.unread.inbox()` / `subscribeInbox()` own retained verified unread
-evidence and read actions. `session.inboxFeed` owns finite, verified addressed
-history demand and exact incomplete-target metadata, not a row cache. Finite
-results and live arrivals, edits and deletions use the existing session admission
-and shared unread fold, so own/deleted messages stay absent and unresolved roots
-never become duplicate conversations. Current membership gates the feed's
-completeness targets and unread's rows; joining alone does not materialize
-pre-membership history without fresh shared admission. Inbox renders those shared
-conversation rows directly; there is no second project/approval row merge or
-feed-owned reconciliation buffer and deletion-count abort. PR4 owns only
-presentation, filtering and selection. No parallel signing or persistence is
-added. Optional profile enrichment belongs to PR4; access, cache clear and
-session retirement fence these projections. Opening Inbox does not mark rows
-read; selecting an unread row does. Canonical Messages keeps its own reading
-behavior.
-
-DM read clears the channel through its newest retained evidence. Thread read
-advances the thread prefix, including earlier unshown replies, plus individually
-represented top-level mentions and local message marks, but not unrelated
-messages. Participation follows the shared unread owner's direct-parent policy,
-including its existing bounded lookups for replies whose membership is undecided.
-Fetched roots and participation witnesses remain structural, never extra Inbox rows.
-A lookup-only root uses the existing exact-message manual-unread target until counted
-root evidence arrives; its known root still supplies grouping and read-through.
-Relevant replies remain thread activity even when the root cannot be fetched.
-Multiple steps are not atomic: failures leave remaining evidence retryable. Manual unread is local to this device. Hosts without frontier-sync
-disable read mutations. Saved frontiers are not proof of remote reconciliation.
-
-This is **bounded recent evidence**, not a complete historical inbox. Unread
-retains at most 4,096 events / 8 MiB, observing up to 500 recent events per
-128-channel roster batch. A lazy addressed query returns up to 50 kind-9/40002
-messages. For those exact IDs and unresolved failed targets, general `#e`
-queries page signed kind-40003 edits and kind-5/9005 deletions, then deletions
-of the edits; `include_aux` on an ordinary `#p` query is not a supported relay
-contract. Both auxiliary stages must finish before the feed is ready. Retained
-unread evidence can be provisionally admitted between queries, but exact target
-IDs are marked incomplete **before** unread subscribers are notified. The
-consumer must not show their body as current while incomplete; failures retain
-that metadata and offer retry. This is a completeness signal, not atomic content
-admission or a second message fold. A target outside the latest 50 addressed
-rows is not discovered; if a failed target falls outside a later page its
-bounded auxiliary check still runs before its incomplete flag is cleared.
-Incomplete obligations survive disconnect and unrelated access revocation while
-the corresponding readable unread evidence survives; full cache/session retirement
-clears both. Tombstone checks include retained author edits even if a later relay
-query omits their soft-deleted rows. If reference visibility withholds an auxiliary
-event, the finite attempt stays failed/incomplete rather than treating the filtered
-page as exhausted history. Explicit Retry can settle it once existing shared
-readers have admitted the missing reference; Inbox adds no reference-resolution loop.
-Auxiliary reads cap retained results at 2,000 events / 4 MiB per stage; the shared reader
-keeps its existing per-request deadline and cancellation. Missing roots,
-participation or older activity can omit rows; an empty Inbox does not prove
-complete history. No polling, independent row source or channel window is
-opened for the feed. Access/cache/disconnect/disposal fence pending reads; local
-read intent remains with unread. Packaged/native acceptance and human visual
-feedback remain separate.
-
-Reminders and their NIP-ER lifecycle are **not included** in this change.
-The unfinished reminder prototype is preserved separately for later work,
-not shipped in the Inbox source or broker routes. Follow/mute Inbox policy,
-full backlog discovery and nonchat activity are outside this slice. Project and
-approval queries, grouping, routing and detail presentation are deliberately
-excluded rather than presented as partial parity. Native/ACP packaged acceptance and human visual feedback
-remain open. Do not treat this as the full OG Inbox port.
-
-## Split assertion ledger
-
-The #422 source's 2,073-line mounted file has 38 literal `it` blocks plus
-four parameterized groups (2 + 2 + 3 + 2 = 9 executions), totaling
-**47 executed cases**. Fourteen literal Drafts cases moved intact to PR5's
-`DraftsView.test.tsx`; PR4 owns the remaining 24 literal cases and all four
-parameterized core groups. The original 47 = 24 core literals +
-14 Drafts literals + 9 grouped core executions. PR4's 41 expanded test runs
-at its published head comprise those 33 original core cases plus eight new
-regressions. PR5 adds two Drafts deletion tests. PR3 retains the existing
-unread suite and feed integration cases with historical edit/first-admission
-safety regressions. `view-state.test.ts` adds five scoped enumeration and
-meaningful-cap tests; `attachment-draft.test.tsx` adds pending/ready cleanup
-regressions.
-The mixed filter case keeps its two selector assertions in PR4; its Drafts
-header-button assertion belongs to PR5's mounted Drafts suite. Source
-project/todo/sidebar navigation tests already on main are not copied here.
-
-Browser mapping: original case 1's chat/filter/context/read/reflow assertions
-remain in PR4; its Drafts switch/return fragment lives in PR5's Drafts view test.
-Original case 2 is PR5's real rich-editor/scroll/geometry/send journey. Original
-strict-window case keeps exact unread anchor/new arrival/canonical origin/deletion
-in PR4 and moves saved-root newest-context to PR5. Original old-DM, session
-recipient and narrow failed-save cases stay in PR4. That is the original seven
-browser cases split across PR4/PR5, plus PR4's new in-head focus and Escape
-focus cases and development-React StrictMode case. The joined stack runs eight
-cases in PR4 and two in PR5, each in Chromium and WebKit (20 executions total).
-The fixture uses per-test isolated synthetic identities/servers, preserving the
-base `sessionWriteKinds`, `dmMembers`, companion and stale-stream guards.
-
-## Verification status
-
-`inbox-feed.test.ts` exercises the real session reader/visibility/unread owners
-with signed ephemeral events, including the first-admission subscriber ordering,
-held edit and tombstone reads, failure/retry, reentrant access removal and cache
-reset, root regrouping, and an edited addressed target older than 500 ordinary
-messages. `unread.test.ts` retains the current main read/catch-up behavior and
-adds Inbox projection/read-state cases. Neither file establishes browser paint,
-real relay persistence or packaged/native acceptance. PR4's mounted real-session
-`InboxPage.test.tsx` covers filters, read/retry and pending row/detail evidence.
-`tests/browser/inbox.spec.mjs` uses the actual broker/browser in Chromium and
-WebKit for exact focus, viewport/scroll, responsive failure recovery, canonical
-origin and session-recipient publication. This is synthetic fixture evidence,
-not human live or packaged acceptance. `DraftsView.test.tsx`,
-`view-state.test.ts`, `attachment-draft.test.tsx` and
-`tests/browser/inbox-drafts.spec.mjs` cover Drafts storage, exact-root admission,
-scoped editing/deletion (including failed text and pending uploads), selected-only
-history, native editing, scroll and responsive geometry in both engines.
-
-### Review repairs, 2026-10-01
-
-The uncommitted repair tree based on `9d3d43cf` passed 561 focused tests across
-14 files, TypeScript, changed-file Biome, design checks and all 22 Inbox browser
-executions in Chromium/WebKit. The browser total is now 11 cases per engine:
-the prior ten plus one real two-page draft-storage journey. No cases were removed.
-Existing native-focus cases now also cover selected-row re-click, empty-filter
-focus fallback, and media Escape staying inside its portal before detail dismissal.
-State/failure permutations remain in mounted React or the relay owners' tests.
-
-The relay regressions failed before repair for both lifecycle paths, omitted
-retained edits and withheld auxiliary pages. Separate advancing count/byte-limit
-cases fail when their corresponding guard is removed. Mounted Drafts regressions
-failed before repair for channel/thread post-send cleanup, external replacement
-and a valid rich document crossing 128 KiB. The DM cutoff and cold Settings
-fallback tests also fail when their repairs are reverted. An independent review
-of the first dismissal fix caught a portal propagation defect; both browser engines
-reproduced it before the DOM-containment guard and passed afterward.
-
-Independent changed-path re-review found no remaining blockers in the repairs.
-These are local fixture/service results, not checks on pushed PR heads or a future
-merged tree. Human, live-relay and attended native/packaged acceptance remain open;
-no full scan or shipping-readiness attestation is implied.
+Colocated session tests cover verdict admission, local intent, bounded demand,
+thread-only actions, frozen retries and feed edit/deletion/lifecycle closure.
+They do not establish browser paint, real relay persistence, native acceptance
+or human approval. Browser/hosted checks remain with the integration owner.
+The incoming mounted `InboxPage.test.tsx` / `InboxDetail.test.tsx` and five
+`tests/browser/inbox*` specs require validation against this relay-authoritative
+contract; their presence is not evidence that the merged tests pass. Browser
+fixture evidence also does not establish live relay or packaged acceptance.
+`DraftsView.test.tsx`, `view-state.test.ts`, `attachment-draft.test.tsx` and
+`tests/browser/inbox-drafts.spec.mjs` cover the separately owned draft lifecycle;
+newly merged coverage needs validation on this integration snapshot.
+Reminders, follow/mute policy and full backlog discovery remain out of scope;
+this is not a full original Inbox port.

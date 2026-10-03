@@ -15,16 +15,21 @@ afterEach(cleanup);
 function unreadSession(observedCount: number | null) {
   const snapshot: UnreadSnapshot = {
     target: { kind: "channel", channelId: "session" },
-    observedCount,
-    attentionCount: observedCount === null ? null : 0,
-    coverage: observedCount === null ? "unknown" : "observed",
+    unread:
+      observedCount === null
+        ? { status: "unknown" }
+        : { status: "exact", value: observedCount },
+    attention:
+      observedCount === null
+        ? { status: "unknown" }
+        : { status: "exact", value: 0 },
     freshness: observedCount === null ? "unknown" : "observed",
     manual: "none",
   };
   const activity: ThreadActivitySnapshot = {
     channelId: "session",
     items: observedCount === null ? null : [],
-    coverage: observedCount === null ? "unknown" : "observed",
+    complete: observedCount !== null,
     freshness: observedCount === null ? "unknown" : "observed",
   };
   return {

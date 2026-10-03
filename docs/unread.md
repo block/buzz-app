@@ -1,12 +1,14 @@
 # Unread and read-state ownership
 
 `RelaySession.unread` is the shared capability. Plugins render its immutable
-selectors and submit reading intent; they do not maintain counters, sign markers,
-open sockets, or write persistence. `src/features/relay/unread.ts` owns bounded
-verified message evidence, `read-state.ts` owns durable intent and reconciliation,
-and the existing reader/live routes carry both. Disabling Channels does not erase
-accepted intent. `src/plugins/author.ts` exports the types through the existing
-host-matched author preview, not a cross-version SDK or plugin sandbox.
+selectors and submit reading intent; they do not maintain counters, sign
+requests, or write persistence. The relay's `/buzz/v1` sidebar API is the one
+read-state authority: `sidebar-api.ts` is the wire client, `sidebar-state.ts`
+owns the session projection and write flushing, `sidebar-journal.ts` owns the
+durable local journal, and `unread.ts` adapts them into selectors and intents.
+Disabling Channels does not erase saved intent. `src/plugins/author.ts` exports
+the types through the existing host-matched author preview, not a cross-version
+SDK or plugin sandbox.
 
 ## Consumer contract
 
@@ -34,107 +36,92 @@ and supply evidence before their rows become observable.
 
 Reusable `ChannelTimeline` and `ThreadPanel` own the standard observation policy:
 focused active reading surface, visible document, settled positioning, fully
-visible rows, and 300 ms dwell. Scroll/content/focus changes cancel/restart dwell. Owners explicitly wake the
-scheduler when positioning finishes, even if an empty history page changes no
-rows or geometry.
-The list and its own composer share a reading surface; focus anywhere in an open
-thread panel also qualifies, including its selected owning tab header. Inactive
-or hidden tab content and passive restoration do not qualify. Another pane, a
-dialog, background window, preload,
-and mounted virtualizer overscan do not qualify.
+visible rows, and 300 ms dwell. Scroll/content/focus changes cancel/restart dwell.
+The list, its own composer, its owning panel and its selected owning tab can earn
+dwell; a parent or sibling composer cannot. Hidden, inert and inactive retained
+content cannot read. Owner positioning completion wakes dwell even when rows and
+geometry did not change. Mounted virtualizer overscan, preload and sidebar
+selection are not reading. After dwell, each context (channel timeline or thread) sends one
+`mark_through` anchored on its **newest dwelled message**: the relay stores
+a frontier for dwell rather than individual receipts, so earlier messages in that context read
+too. Oversized rows that never fit fully are not auto-read.
 
-Away from the bottom, observations mark individual fully visible messages. At the
-physical bottom, 300 ms visibility of the newest message's bottom edge also earns
-catch-up (including a message taller than the viewport):
-
-- `activity:<channel>` uses the newest retained verified event timestamp at dwell
-  completion, including replies newer than the visible top-level head. It reads
-  ordinary top-level backlog only. It never acknowledges replies: replies that
-  count (see [Relevant replies](#relevant-replies)) are all attention, and stay
-  unread until read in their thread. Replies outside the viewer's conversations
-  do not count at all, so there is no reply activity to quiet. Mentions,
-  broadcasts, DMs and manual intent are not quieted. Participation discovered
-  later makes a reply relevant again, with its own unread state intact.
-- `thread-activity:<root>` acknowledges replies through the newest reply only in
-  that thread. A collapsed newest reply, or one outside the bottom viewport in a
-  branch-ordered thread, cannot earn catch-up; visible rows still read individually.
-- Both keys use verified event timestamps, never wall time. Neither enters generic
-  channel/thread inheritance or remote override baselines. Automatic catch-up does
-  not clear manual-unread intent and uses the same cancellable reading lease.
-
-This intentionally relaxes the old individual-row-only policy for ordinary
-backlog and the thread being read, without reading unopened threads' replies.
-
-- `observedCount` is `null` when unknown or denied, never a fabricated zero.
-  Otherwise it counts the bounded evidence currently known, excluding own messages,
-  auxiliary events, authorized deletions and replies outside the viewer's
-  conversations (see [Relevant replies](#relevant-replies)). It is **not an exact total or lower
-  bound**: missing markers/deletions can overcount; missing history can undercount.
-- `coverage` and `freshness` describe message evidence, separately from `sync()`.
-  Evidence is capped at 4,096 events / 8 MiB. Repair queries the membership roster
-  in sequential batches of at most 128 explicit channel IDs (the relay limit),
-  with up to 500 recent rows **per batch**, not a shared remainder or one head
-  request per sidebar row. A 278-channel roster therefore makes three reads.
-  Earlier results publish progressively and survive a later transport failure;
-  capacity overflow retains the existing visible error/clear policy and stops repair.
-  Querying every ID does not mean observing every channel: busy channels can still
-  consume their batch's sample, and missing thread roots can affect inherited markers.
-  Repair evidence does not seed channel windows, alter cursors, or mark messages read.
-- Initial marker/evidence observation and explicit evidence refresh are foreground
-  reads so optional profiles do not block them. Reconnect/periodic sync and marker
-  publication remain background. Each evidence batch gets its own queue-inclusive
-  10-second deadline **after** marker observation, rather than spending it waiting
-  for markers. Marker failure stays visible separately in `sync()` even when
-  evidence succeeds. Concurrent `ensure()` calls share active work; a failed attempt
-  needs explicit `refresh()` or reconnect, not an unlimited automatic retry loop.
-- `attentionCount` is a separate observed subset: DMs, mentions, broadcasts and
-  replies in the viewer's conversations. It does not trigger notifications or
-  implement mute policy.
-- `markThrough(target, messageId)` is explicit prefix intent through verified
-  evidence. It can mark unloaded earlier messages read; do not use it for viewport
-  observation. A channel prefix requires a top-level message, not a reply.
-- `markChannelRead(channelId)` captures the greater of invocation-time integer
-  seconds and the newest retained verified message timestamp (including replies),
-  then atomically advances the explicit channel frontier and clears the channel's
-  owned local manual-unread marks. It does not fetch history or select the row.
-  Pre-click history arriving later stays read; events beyond the cutoff remain
-  unread. Same-second arrivals are covered too. An ahead-of-time device clock is
-  sticky because frontier merges take the maximum: correcting that clock does not
-  rewind the cutoff. Automatic reading never uses this clock-based action.
-  Empty evidence still saves the click cutoff on frontier-capable hosts; other
-  hosts retain local-only clearing for the empty case. Success means local
-  durability; publication may still be pending.
-- `markAllChannelsRead()` snapshots selected channel cutoffs/evidence at sweep
-  invocation and reserves each channel's mutation order before newer manual
-  actions. It saves one channel at a time, so a slow first write cannot
-  acknowledge post-click activity in a later channel. It selects accessible
-  listed channels with retained unread evidence or a local mark, including thread
-  marks that the channel count does not show, so an already-read community costs no writes. One failing channel does not stop
-  the sweep; the first failure is rethrown afterwards. A channel whose grant is
-  revoked before its turn is skipped, not failed; like a grant that arrives
-  mid-sweep, it waits for the next explicit action. The community rail's
-  Mark all as read uses it for the selected community only.
+- `unread` and `attention` are relay `ReadCount`s: `exact`, `at_least` (a lower
+  bound, e.g. when participation could not be proven within the relay's budget)
+  or `unknown`. Unknown is never rendered as zero. Counts come only from relay
+  responses; live traffic invalidates a row and triggers a debounced (250 ms)
+  targeted refetch, never a local increment.
+- The roster is read in pages of 20 (`/buzz/v1/me/sidebar`), sequentially;
+  targeted refetches take at most 20 channel IDs and context reads at most 20
+  targets / 100 message IDs. A visible, requested session refreshes every 60 s and
+  on window focus/visibility. Each thread summary lists at most 5 threads.
+- `attention` is the directed subset: DMs, mentions, broadcasts and relevant
+  conversation replies (see below). Every server-counted reply is attention;
+  thread summaries therefore carry only `unread`. Attention alone does not
+  trigger notifications or implement mute policy.
+- `markThrough(target, messageId)` is explicit prefix intent through a loaded,
+  verified message in that target's context. It can mark unloaded earlier
+  messages read; viewport observation goes through `reading()` instead, so dwell
+  and lease rules apply. A channel prefix requires a top-level message, not a reply.
+- `markChannelRead(channelId)` anchors on the relay row's `latest_message_id`
+  when invoked and sends `mark_channel_read`: a fixed whole-channel cut covering
+  the timeline and every thread through that timestamp. Later arrivals remain
+  unread. It clears the channel's local manual-unread keys captured at invocation. With no latest
+  message and a complete row it clears only local marks; an incomplete row is an
+  error rather than an invented cut. It does not fetch history or select the row.
+- `markAllChannelsRead()` sweeps accessible listed channels with visible unread
+  evidence or a local mark. It captures every selected fixed cut and local clear
+  at invocation, before yielding; the journal then commits them one channel at
+  a time. Already-read channels cost no
+  writes. Losing access to any channel in the community while the sweep saves
+  cancels every channel not yet saved, not only the revoked one: the sweep
+  rejects with `Reading context changed`, those channels keep their unread
+  state and marks, and repeating the sweep clears them. Only when the revoked
+  channel is the last one unsaved is it simply skipped. Other failures do not
+  stop the sweep, and the first failure is rethrown afterwards. Newly granted
+  channels wait for the next action and cancel nothing. The community rail uses
+  this for the selected community only.
 - `markUnreadLocal(target)` is durable **on this browser profile/device only**.
   Automatic reading does not clear it. An explicit mark-through clears that
   target's local mark. `syncedManualUnread` is `false`.
-- `refresh()` retries evidence/marker observation; `retrySync()` refreshes markers
-  and retries pending publication. `ReadMutationResult.durability === "saved"`
-  means the local transaction committed, not that the relay accepted it.
+- The row menu's **Mark read through here** uses `markThrough` in the selected
+  message's context. It advances a prefix, not an exact-message receipt or a
+  loaded-subtree snapshot. **Mark unread** stores only that selected message's
+  device-local mark; it does not force descendants or the channel.
+- `refresh()` re-reads the sidebar; `retrySync()` flushes pending writes, then
+  refreshes. `ReadMutationResult.durability === "saved"` means the local journal
+  transaction committed, not that the relay accepted it. Saving, pending and
+  applied read intents can optimistically clear covered unread/attention styling
+  before local save or relay acknowledgement, including while offline; they do
+  not change the relay-derived counts. A failed local save or a `blocked`/`invalid`
+  relay outcome removes that intent's coverage, so unread styling can return.
+  Pending intent survives transport failures or `unknown` outcomes for retry;
+  applied coverage bridges acknowledgement until each surface receives applicable
+  relay evidence and reconciles its presentation.
 
-The sidebar separates ordinary unread from directed attention. Ordinary backlog
-or local manual intent strengthens the channel label; protected attention alone
-retains its dot without bolding a caught-up channel. DMs retain unread bolding.
-Ordinary unread renders no row marker. DMs, mentions, broadcasts, and
+The sidebar separates ordinary unread from directed attention. Any unread state,
+including activity that exists only in a relevant thread, strengthens the channel
+label. Ordinary unread renders no row marker. DMs, mentions, broadcasts, and
 relevant thread replies add one accent dot; non-DM row numerals are omitted and DM
-avatars are reserved for promoted offscreen cues. Thread activity reuses that dot:
-its hover/focus/click popover groups unread replies by canonical thread root and
-opens the existing thread panel, so overlapping priority and thread activity never
-produce duplicate dots. Merely revealing the popover does not acknowledge a reply.
+avatars are reserved for eligible one-to-one offscreen cues. Thread activity reuses that dot:
+its hover/focus/click popover lists the relay's bounded set of newest unread
+threads, dropping only those with exact-zero unread (unknown stays), and opens the
+existing thread panel, so overlapping priority and thread activity never produce duplicate dots. Each preview is the thread's
+newest relevant unread reply, with agent envelopes unwrapped
+and the author's edits applied as the relay returns them when the popover opens.
+That read is neither live nor unbounded, so a preview can differ from the timeline:
+an edit made or deleted while the popover is open shows on the next open, and the
+read takes the newest 500 edits across the listed replies, so a reply can show an
+older edit or its original text. The relay filters relevance before selecting
+previews and capping the list; an incomplete list stays marked incomplete.
+Merely revealing the popover does not acknowledge a reply.
 A local manual-unread mark strengthens the label without fabricating priority; the
-underlying observed count remains available.
-Channel Settings → Diagnostics exposes explicit actions and Unread status/retry. Unknown and
-observed-zero both omit unread styling; the API preserves the distinction. There is
-no notification, feed, or exact-count service here.
+underlying relay count remains available.
+The sidebar row menu offers **Mark as Unread** on read channels and **Mark as Read**
+on unread channels. The message menu offers **Mark unread** and **Mark read through here**
+for individual message contexts. Diagnostics has no read-state controls. Unknown and
+zero both omit unread styling; the API preserves the distinction. There is no
+notification or feed service here.
 
 When unread rows are outside the sidebar's scroll viewport, floating `N unread`
 buttons reveal the nearest destination in that direction. The number counts distinct
@@ -157,185 +144,169 @@ nearest row, retaining its ordinary focus preparation; it does not select the ch
 prefer a farther DM, or acknowledge any messages.
 
 Thread buttons keep the summary's total reply count and add a dot when the shared
-thread selector has observed unread replies or explicit thread-unread intent.
-Accessible names distinguish observed evidence, stale evidence and local-only
-intent; unknown/observed-zero omit the dot, not assert complete read history.
+thread selector has unread replies or explicit thread-unread intent. Accessible
+names distinguish counts (with "At least" for lower bounds), stale data and
+local-only intent; unknown and zero omit the dot.
 Each mounted button subscribes to its own thread, without fetching thread history.
-Hovering a button does not acknowledge replies. Opening the panel qualifies as
-reading while focus remains in it; viewport/bottom dwell supplies the intent.
-Unread ancestry uses the same canonical marked-reference parser as thread opening
-and row projection (case-insensitive hex, last valid marker wins). Resolution still
-requires bounded, retained same-channel message evidence; references alone do not
-grant access or trigger a read.
+Opening/hovering a button does not acknowledge replies; the existing focused
+viewport dwell in `ThreadPanel` supplies `mark_through` intent for the newest
+dwelled message in its context.
+The relay resolves thread ancestry for counts; the client resolves a dwelled
+message's context with the same canonical marked-reference parser as thread
+opening. References alone do not grant access or trigger a read.
 
 ## Relevant replies
 
-Every top-level message counts. A reply counts only when it is in one of the
-viewer's conversations, or it is a DM, mentions the viewer, or is broadcast to the
-channel. A conversation is the set of direct replies to one parent message. The
-viewer is part of it when the viewer wrote the parent or also replied to that
-parent. A nested thread under someone else's reply therefore stays quiet until the
-viewer posts in it or is mentioned there. Explicit per-message unread intent still
-applies to any reply. The same rule feeds channel and thread counts, thread
-activity, per-message attention and the `thread` notification category.
+An eligible peer reply counts only when it is in the viewer's conversation,
+mentions the viewer, is in a DM, or is broadcast. A conversation is the **direct
+parent**: the viewer wrote it or has a live eligible reply to that same parent
+in the same channel. Owning the structural root or replying elsewhere below it
+does not join every nested conversation. Deleted witnesses do not count; deleting
+the parent removes author proof but a surviving own reply still proves membership.
+Joining later can make older replies unread, subject to the horizon and frontier.
 
-Membership is checked in the reply's own channel, and lookups are keyed by
-channel and parent, so a reply in another channel that tags the same parent
-gets its own answer. It starts from retained
-evidence. When a reply is otherwise unread but its conversation is undecided
-(the parent is not loaded, or the viewer's own reply to it is not), a projection
-that evaluates the reply queues one relay lookup for that parent. The fetch runs
-in a microtask, at background priority, in batches of up to 50 parents from one
-channel:
+The relay decides this; the app has no membership lookup store. An unread context
+message carries `reason`: `direct` > `mention` > `conversation` > `broadcast`, or
+null for an ordinary top-level message. Notifications map the first three to
+Direct messages, Mentions, Thread replies; broadcast alone has no notification
+category. A reply proved outside the viewer's conversations is `not_counted`.
+Undecided replies are `unknown`, excluded from counts with honest lower bounds.
+A broadcast whose membership lookup times out remains unread with reason broadcast;
+a later context refresh can upgrade it to conversation.
 
-- the missing parents, and the replies' roots, by ID;
-- the viewer's replies in that channel that tag those parents (`#e`, `#h`,
-  `include_aux`, limit 500). `#e` also matches root tags, so a full page is
-  split and asked again; a full page for one parent pages back in time until
-  the viewer's direct reply appears (at most ten pages). Only replies whose
-  reply tag names the parent count, and deleted ones do not.
-
-While a lookup is queued or running, the reply is quiet and its attention is
-`unknown` with `pending: true`; a live notification for it waits instead of
-being dropped. A read reply is never looked up: it stays `unknown` but is not
-`pending`, because nothing would settle it. A failed batch keeps its parents
-pending and retries with backoff (1 s doubling to 60 s), so the same parent is
-never asked twice at once. A session reset or access change during a lookup
-discards its answer; parents the reset kept are asked again.
-
-Lookup results are kept apart from counted evidence, in a store bounded to
-4,096 decided parents and 1,024 fetched events. Fetched parents and roots are
-structure only: they give a reply its root for grouping and navigation, but
-they never count, never start another lookup (so a lookup cannot climb an old
-thread) and never fill the 4,096-event window. Whether the viewer wrote or
-answered a message does not change with the sample, so results survive the
-window's overflow reset and roster changes for still-accessible channels. A
-session reset clears them. Thread attention follows the direct parent, so a
-reply whose root could not be fetched still counts as the viewer's thread; it
-just cannot be grouped. A later reply of the viewer turns a negative result
-into membership, so it still counts after the window drops that reply. A
-positive result records one of the viewer's messages that made it as its
-witness (the viewer's own parent when there is one, since a later lookup reuses
-the cached parent; otherwise the newest reply), and whether the viewer has
-others. A later message does not replace the witness. When the viewer deletes
-the witness, even after the lookup, the membership ends, or the parent is asked
-again if there were others (the deleted message stays excluded and is dropped
-from the cache, so it is fetched again). Witnesses are kept (up to 4,096, not
-counted) so a deletion from another client still passes
-the target-visibility check after the window drops them. One witness per
-decided parent keeps every positive result inside that bound, however many
-replies one batch returns; evicting a witness forgets its lookup, which is
-asked again. Residuals: a direct reply older than 5,000 of the viewer's
-root-tag matches is not seen, and a single deletion event that names several
-of the viewer's messages is visible only if all of them are retained. Replies
-still require retained evidence of their own.
+Fresh live notification candidates retain their context while undecided. The
+existing visible 60-second refresh, focus/reconnect and channel invalidation
+re-query retained selectors; no new retry loop or historical notification source
+is introduced. Retention expires two minutes after the original event timestamp,
+including time spent waiting for classification. Plain live replies do not paint
+unread before the relay classifies them; speculative hints retire on lower-bound
+responses as well as exact responses.
 
 ## Explicit clearing matrix
 
-| Intent | Durable frontier | Local manual-unread clears |
+| Intent | Relay write | Local manual-unread clears |
 | --- | --- | --- |
-| Automatic visible dwell | Individual verified message | None |
-| Automatic bottom dwell | Ordinary channel activity or that thread’s replies through verified evidence | None |
-| `markThrough(target, messageId)` | Explicit verified target prefix | That target only |
-| `markChannelRead(channelId)` | Channel through max(click time, newest retained verified message) | Channel, retained messages, verified same-channel reply roots, and threads whose top-level root is retained |
-| Channel read with no evidence | Click time on frontier-capable hosts; none otherwise | Channel only |
+| Automatic visible dwell | `mark_through` newest dwelled message, per context | None |
+| `markThrough(target, messageId)` | `mark_through` that target through the message | That target |
+| `markChannelRead(channelId)` | `mark_channel_read` through the row's latest message | Captured channel keys |
+| Channel read with no messages | None | Captured channel keys |
+| Selected row read through here | `mark_through` in the row's context | Selected message mark |
+| Selected row unread | None | None (adds selected message mark) |
 | Mute/Unmute | None | None |
 
-Channel read does not clear other channels, unproven ancestry, or remote manual
-unread overrides. Bounded evidence cannot establish ownership of every historical
-local mark. The channel frontier and owned local clears commit in one transaction;
-storage failure changes neither, and disposal/cache clear or access revoke/regrant
-invalidates queued intent. Automatic dwell retains its existing cancellation rule
-for newer manual-unread intent.
+Every write anchors on a message ID; the relay derives the timestamp and rejects
+anchors outside the viewer's membership (`blocked`) or of an ineligible kind or
+wrong context (`invalid`). The action has already resolved once its intent was
+saved, so either outcome is recorded as the channel's `error` on the unread and
+thread-activity snapshots, which the bundled UI does not render; the channel is
+re-read, and its unread count returning is the feedback. Disposal, cache
+clear, or an access revoke/regrant of any channel in the community, invalidates
+all queued intent in that community, not only the affected channel's; a waiting
+explicit action rejects with `Reading context changed` and can be repeated.
+Automatic dwell leases are invalidated by a newer manual-unread action on the
+channel.
 
-## Durable sync and privacy
+## Durable sync
 
-The journal is separate from disposable message caches in `buzz-read-state-v1`,
-partitioned by relay/community scope and viewer. Leaving a community deletes that
-partition along with the community's other device state; other partitions are
-untouched. IndexedDB strict read/write
-transactions merge concurrent local windows; Web Locks serialize the publisher.
-Without host decoding the capability is `unsupported`; without safe serialized
-sign/publish it is `read-only`. Read sync requires `frontier-sync`. Local manual
-intent can still be saved independently of remote capability.
+The journal lives in IndexedDB `buzz-sidebar-v1`, store `partitions`, one
+`{pending, manual}` record per relay/community scope and viewer, separate from
+disposable message caches. Leaving a community clears that scope's pending and
+manual sets after disposing its session, retaining only an empty partition record;
+other community/viewer partitions are untouched. Strict read/write transactions merge concurrent windows.
+Intent is saved before sending; each flush sends captured batches of at most 100
+intents and removes exactly the acknowledged operations. Writes are idempotent
+frontier advances, so no publisher lock is needed: any window's flush (on
+enqueue, focus/visibility or the periodic refresh) delivers every pending intent,
+including one saved by a window that closed before sending. An `unknown` outcome
+keeps the intent for retry. The journal holds at most 1,000 pending and 1,000
+manual entries within 512 KiB. Exceeding that rejects the action: explicit read
+and unread actions show the error, while automatic reading stops saving without
+a notice.
 
-Signed kind-30078 NIP-RS blobs use self-encryption and a persisted random coordinate
-slot/client ID. The Node development broker or the packaged Tauri identity host
-owns the key and narrow codec. Native decode verifies own signed NIP-RS coordinates; native signing
-accepts only bounded read-state intent, and publication rechecks the signed event
-before sending it. Plugins receive no generic encryption or arbitrary-kind signing
-capability. Both transports use scoped NIP-98 for reads and writes.
+Manual unread is **local to this browser profile**; `syncedManualUnread` is
+`false`. The relay's advertised retention window (`retention_seconds` in NIP-11
+`buzz_v1`) bounds the messages it counts as unread evidence; saved frontiers are
+stored progress and are not bounded by that window.
 
-Accepted local intent is saved before signing; the exact signed event is saved
-before sending. Lost responses/readback retain that event identity for retry.
-`accepted` is a publish receipt, not observed coordinate state; `reconciled` also
-requires readback. A failed transaction is not acknowledged as saved. Timestamps
-are uint32 seconds; replaceable publication clocks advance monotonically with a
-bounded lead rather than running indefinitely into the future.
+Capability comes from the relay's NIP-11 `buzz_v1` descriptor. Only the exact
+supported version and bounds enable `frontier-sync`; otherwise the capability is
+`unsupported` and local manual intent still works. The Node development broker
+owns the key, NIP-98 signing and same-origin checks for `/api/relay/sidebar-api`;
+plugins receive no signing capability. Packaged builds do not include this
+development broker.
 
-Ordinary frontiers are **bounded recent hints, not everlasting read receipts**.
-The local state has a 96 KiB serialized-blob budget and wire publication a 40 KiB
-plaintext budget. Persisted local interaction order prioritizes newly read old
-history as well as current traffic. Only frontier-only hints can be pruned; older
-messages may look unread again. No synthetic channel prefix is introduced to fit.
-The automatic activity keys share these bounded-hint limits. Older clients can
-preserve/republish them but do not interpret their catch-up meaning; mixed-version
-sidebar behavior is not identical. No storage migration is required.
-Override groups, permanent clear floors, directly associated frontiers and possible
-inherited channel/thread frontiers are protected; capacity failure is visible,
-never floor truncation. Publication of any override-bearing state is deliberately
-blocked in this release. Remote registers can be reduced/displayed, but synchronized
-manual-unread and canonical override compaction are not enabled.
+## Bounds and failure semantics
 
-Marker discovery uses the relay's host-bound NIP-11 `read_state_snapshot` descriptor
-when available, independently of request parameters. The exact versioned query
-must return a complete own-author kind-30078 snapshot with matching community,
-valid signatures and unique coordinates. Ordinary capped arrays and live EOSE do
-not establish completeness. The snapshot proves one writer cut, not live freshness,
-message-history completeness, a CAS revision, or a global cryptographic community
-identity. Absent discovery permits only bounded ordinary marker observation.
+Collapsed reply branches show total replies, not aggregated unread counts.
+Message subscriptions retain their resolved context selectors until disposal.
+The session admits at most 1,000 context leases and 1,000 distinct message selectors
+across their contexts; a request exceeding either bound throws rather than
+partially admitting selectors. Disposing a lease releases its demand. Context
+reads batch at most 20 targets and 100 message IDs per request; these wire bounds
+are separate from the retained-demand limits.
 
-Resource bounds: 4,096 snapshot events / 8 MiB encoded event array; envelope stream
-is capped before parsing at 8 MiB + 4 KiB. Recognized read-state events can be up
-to 96 KiB **on receive**, accommodating older clients' original NIP-44 maximum
-plaintext (65,535 bytes → 87,472 base64 characters plus the signed envelope).
-The four-event decode batches fit the unchanged 512 KiB HTTP decode budget.
-New signing retains its stricter 40 KiB plaintext budget, and both signing and
-direct publication retain the 64 KiB event limit. The larger receive budget
-does not authorize republishing legacy records.
-Blobs remain capped at 10,000 keys. Unknown/undecryptable recognized
-coordinates fail marker loading rather than masquerading as empty state. Access
-revocation denies projections before any subscriber can inspect another one;
-durable account-owned intent survives without exposing revoked context projections.
+The journal coalesces dominated pending prefixes before sending. If a newer anchor
+covers an older pending prefix but the relay subsequently blocks the newer anchor
+(for example, unresolved ancestry), the older intent is no longer available as a
+fallback. The blocked outcome is recorded but not shown, as above; progress
+needs a refresh and a new action with a valid anchor, and the client does not
+manufacture progress from it.
+
+Deployment requires the compatible `/buzz/v1` extension, including five-thread
+summaries and fixed-anchor whole-channel reads. An older or absent descriptor
+leaves relay counts unknown; there is no legacy counting fallback. Deploy the
+compatible relay before enabling this client contract. The write body cap is
+256 KiB, route-local; context GETs retain their existing selector bounds.
 
 ## Verification
 
-- `read-state-model.test.ts`: protocol reduction and algebra.
-- `read-state-retention.test.ts`, `read-state.test.ts`: bounded growth, old-history
-  interaction order, restart, exact-event retry, durable mutation and floor safety.
-- `reader.test.ts` and history browser journeys: finite-read navigation admission,
-  preserved deadlines/cancellation, actual reload and dismissed navigation. Simulated
-  pagehide/pageshow tests establish handler behavior, not a full BFCache journey.
-  Live-stream reconnect during a delayed departing navigation is a separate
-  pre-existing host-lifecycle limitation; this is not a universal unload fence.
-- `unread-startup.test.ts`: production reader/session scheduling, large-roster
-  batching, progressive/partial failure, explicit/reconnect recovery and access/cache
-  fences; `read-state.test.ts` also checks both marker-discovery priority paths.
-- `unread.test.ts`: real session lifecycle, access, deletions, reading leases and
-  reverified disk-restore evidence without network content.
+- `sidebar-api.test.ts`, `sidebar-state.test.ts`, `sidebar-journal.test.ts`,
+  `sidebar-storage.test.ts`: wire validation, projection, flush/acknowledge, and
+  journal storage ownership.
+- `dev/sidebar-api-broker.test.mjs`: real local HTTP broker, NIP-11 discovery,
+  NIP-98 signing and operation validation.
+- `unread.test.ts`, `unread-message-actions.test.ts`, `unread-startup.test.ts`, `unread-invalidation.test.ts`: real
+  session lifecycle, access, reading leases, startup and live invalidation.
 - `use-reading.test.ts`, timeline/thread tests: dwell/geometry and owner wiring.
-- `dev/read-state-broker.test.mjs`: real local HTTP broker, NIP-11/NIP-98/NIP-44,
-  reader envelope verification, filter rejection and streamed body limits.
+- `dev/sidebar-api-live.test.mjs` (opt-in): production broker, transport and
+  sidebar state against a real relay, two sessions, lost acknowledgements.
 - `MessageRow.test.tsx`, `tests/browser/thread-unread.spec.mjs`: thread selector
-  presentation, unchanged summary counts, hover/keyboard-focus treatment, independent
-  thread reading, own/peer live arrivals and reload through the production broker.
-- `tests/browser/sidebar-unread.spec.mjs`: above/below destination counts and
-  priority, activity-only rows, no layout shift, resize/search/collapse, keyboard
-  continuation, manual intent, evidence refresh, session retargeting, and no
-  reading/selection from reveal. Focus retains existing channel preparation;
-  merely showing the indicators does not fetch channels.
+  presentation, unchanged summary counts, hover/keyboard-focus treatment,
+  independent thread reading and reload through the production broker.
+- `tests/browser/sidebar-unread.spec.mjs`: above/below destinations and priority,
+  activity-only rows, resize/search/collapse, keyboard continuation, manual intent,
+  paged roster reads, session retargeting, and no reading/selection from reveal.
 - `tests/browser/unread.spec.mjs`: production build/React/session/IndexedDB/broker,
-  observed sidebar → focused dwell → encrypted publication/readback, reload,
-  cancellation and explicit local-unread clearing with network content held.
-  Only upstream relay policy is modeled, with ephemeral identities. This does not
-  establish native GUI behavior or deployed relay compatibility.
+  sidebar → focused dwell → relay write, reload, cancellation, closed-window
+  delivery and explicit local-unread clearing with network content held.
+  The browser relay is a model (`tests/browser/policy-relay.mjs`); the relay's own
+  suites and the live driver prove the contract, not these journeys.
+
+## Relay-authoritative Inbox surface
+
+See [Inbox](inbox.md) for the bundled Inbox page and its narrowed exported contract.
+Candidates reuse the verified session cache plus finite addressed feed, not the
+former dedicated unread history/participation repair. Only current context
+`unread` verdicts with direct/mention/conversation reason admit rows; manual
+marks overlay them without inventing relevance or erasing omitted marks.
+Candidates use the advertised eligible kinds and relay retention window
+(current v1: 9/40002/45001/45003 and 30 days; 40008 is not counted).
+Read rows disappear. Counts and resume anchors describe the observed subset.
+
+Inbox subscriptions retain at most 100 selectors, yielding to notifications only
+when admission would exceed the existing 1,000 shared bound. Missing, unknown and
+over-capacity answers stay visibly unresolved, never read/zero, without an error. Unavailable answers and
+unaskable ancestry are skipped. Context failure is error/stale. Only proven-current
+exact-zero sidebar attention without an unread hint excludes a channel before
+folding; known outstanding invalidations prevent that proof, but a refresh or
+owner status change alone does not. Owner status controls snapshot freshness. The
+shared fold and feed's pre-admission incomplete metadata preserve preview closure.
+
+Inbox `readThrough` is thread-prefix-only, anchored on its newest admitted
+reply, never its root. An empty non-DM `readThrough` means no Inbox read action:
+a top-level mention does not silently become a channel-prefix write.
+`prepareChannelRead` freezes the relay latest ID/time, epoch, and current manual
+keys. Retries keep those operands: new keys survive, re-marks on frozen keys
+are cleared. `markChannelRead(id)` calls `prepareChannelRead(id)()`.
+`revision()` counts successful local intent saves, not sync publications;
+`generation()` is the lifecycle epoch. No extra read executor is exported.

@@ -1,4 +1,4 @@
-import { test, expect } from "./fixture.mjs";
+import { test, expect, ids } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 // Browser-only boundary: Base UI restores focus when a popup's exit
@@ -62,7 +62,7 @@ test("closing a menu keeps focus where the user moved it", async ({
       name: "Subscribed channels",
       includeHidden: true,
     })
-    .locator('[data-channel-id="beta"]');
+    .locator(`[data-channel-id="${ids.beta}"]`);
   const rowMenu = page.getByRole("menu", { name: "Actions for Beta" });
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",

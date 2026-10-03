@@ -17,6 +17,18 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   app,
 }, testInfo) => {
   const requests = [];
+  // Exercise browser menu wiring without writing to the machine's clipboard.
+  await page.addInitScript(() => {
+    window.githubCopiedLinks = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (value) => {
+          window.githubCopiedLinks.push(value);
+        },
+      },
+    });
+  });
   await page.route(
     "https://api.github.com/repos/sample/project/**",
     (route) => {
@@ -217,6 +229,95 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   expect((await comment.boundingBox()).y).toBeLessThan(
     (await review.boundingBox()).y,
   );
+  const commentEvent = conversation.getByRole("group", {
+    name: "Comment",
+    exact: true,
+  });
+  const commentActions = commentEvent.getByRole("button", {
+    name: "Comment actions",
+  });
+  const actionSlot = commentActions.locator("..");
+  await expect(actionSlot).toHaveAttribute("data-collapsed", "true");
+  await page.mouse.move(0, 0);
+  const fineHover = await page.evaluate(
+    () => matchMedia("(hover: hover) and (pointer: fine)").matches,
+  );
+  if (fineHover) await expect(actionSlot).toHaveCSS("opacity", "0");
+  else await expect(actionSlot).toHaveCSS("opacity", "1");
+  await comment.focus();
+  await expect(actionSlot).toHaveCSS("opacity", "1");
+  await comment.hover();
+  await commentActions.click();
+  await expect(
+    page.getByRole("menuitem", { name: "Copy comment link", exact: true }),
+  ).toBeVisible();
+  await panel.screenshot({
+    path: testInfo.outputPath("comment-copy-menu.png"),
+  });
+  await page
+    .getByRole("menuitem", { name: "Copy comment link", exact: true })
+    .click();
+  await expect(
+    page.getByText("Comment link copied", { exact: true }),
+  ).toBeVisible();
+  await expect(comment).toHaveAttribute("aria-expanded", "false");
+  await expect
+    .poll(() => page.evaluate(() => window.githubCopiedLinks))
+    .toEqual([`${target}#issuecomment-20`]);
+  await comment.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Copy comment link", exact: true })
+    .click();
+  await expect(comment).toHaveAttribute("aria-expanded", "false");
+  await expect
+    .poll(() => page.evaluate(() => window.githubCopiedLinks))
+    .toEqual([`${target}#issuecomment-20`, `${target}#issuecomment-20`]);
+  await comment.focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(
+    page.getByRole("menuitem", { name: "Copy comment link", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(comment).toBeFocused();
+  await comment.click();
+  await expect(
+    panel.getByRole("heading", { name: "Discussion details" }),
+  ).toBeVisible();
+  await expect(actionSlot).not.toHaveAttribute("data-collapsed");
+  const actionsBox = await commentActions.boundingBox();
+  const bodyBox = await commentEvent
+    .locator('[class*="messageBody"]')
+    .boundingBox();
+  expect(actionsBox.y).toBeGreaterThanOrEqual(bodyBox.y + bodyBox.height);
+  await panel.screenshot({
+    path: testInfo.outputPath("comment-expanded-actions.png"),
+  });
+  await commentActions.tap();
+  await page
+    .getByRole("menuitem", { name: "Copy comment link", exact: true })
+    .click();
+  await expect(comment).toHaveAttribute("aria-expanded", "true");
+  await comment.click();
+  const reviewEvent = conversation.getByRole("group", {
+    name: "Changes requested",
+    exact: true,
+  });
+  await reviewEvent.getByRole("button", { name: "Comment actions" }).focus();
+  await page.keyboard.press("Enter");
+  await page
+    .getByRole("menuitem", { name: "Copy comment link", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => window.githubCopiedLinks))
+    .toEqual([
+      `${target}#issuecomment-20`,
+      `${target}#issuecomment-20`,
+      `${target}#issuecomment-20`,
+      `${target}#pullrequestreview-10`,
+    ]);
+  await expect(review).toHaveAttribute("aria-expanded", "false");
+  expect(requests).toHaveLength(5);
+
   await expect(description).toHaveCSS("font-size", "14px");
   await expect(
     conversation.locator(
@@ -598,7 +699,9 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     name: "Approved",
     exact: true,
   });
-  await expect(approval.getByRole("button")).toHaveCount(0);
+  await expect(
+    approval.getByRole("button", { name: /Expand|Toggle/ }),
+  ).toHaveCount(0);
   await expect(approval.getByText("No message provided")).toHaveCount(0);
   await expect(approval).not.toContainText("loaded code threads");
   await expect(

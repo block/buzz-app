@@ -6,9 +6,26 @@ import {
   usePresenceData,
   useReducedMotion,
 } from "motion/react";
-import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import {
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+  MenuIcon,
+} from "../../shared/design-system/ui/Menu";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import {
   conversationEvents,
   groupConversationEvents,
@@ -22,6 +39,7 @@ import {
   CaretDownIcon,
   CaretUpIcon,
   DotsThreeIcon,
+  LinkIcon,
   GitMergeIcon,
   ChatCircleIcon,
   CheckCircleIcon,
@@ -124,9 +142,137 @@ function Thumbnails({ images, label }: { images: string[]; label: string }) {
   );
 }
 
+function CommentActions({
+  url,
+  collapsed,
+  children,
+}: {
+  url: string | undefined;
+  collapsed: boolean;
+  children: ReactNode;
+}) {
+  const [menu, setMenu] = useState<"button" | "context">();
+  const [anchor, setAnchor] = useState<HTMLElement>();
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const [copying, setCopying] = useState(false);
+  const busy = useRef(false);
+  const [notice, setNotice] = useState<{ text: string; error: boolean }>();
+  async function copy() {
+    if (!url || busy.current) return;
+    busy.current = true;
+    setCopying(true);
+    setNotice(undefined);
+    try {
+      await navigator.clipboard.writeText(url);
+      setNotice({ text: "Comment link copied", error: false });
+    } catch {
+      setNotice({
+        text: "Couldn’t copy the link. Try again from the comment menu.",
+        error: true,
+      });
+    } finally {
+      busy.current = false;
+      setCopying(false);
+    }
+  }
+  if (!url) return <div className={styles.messageContent}>{children}</div>;
+  const item = (
+    <MenuItem disabled={copying} onClick={() => void copy()}>
+      <MenuIcon>
+        <LinkIcon />
+      </MenuIcon>
+      Copy comment link
+    </MenuItem>
+  );
+  return (
+    <ContextMenuRoot
+      open={menu === "context"}
+      onOpenChange={(open) =>
+        setMenu((current) =>
+          open ? "context" : current === "context" ? undefined : current,
+        )
+      }
+    >
+      <ContextMenuTrigger
+        render={<div className={styles.messageContent} />}
+        onContextMenu={() => {
+          setAnchor(undefined);
+          returnFocus.current =
+            document.activeElement instanceof HTMLElement
+              ? document.activeElement
+              : null;
+        }}
+        onTouchStart={() => {
+          setAnchor(undefined);
+          returnFocus.current = null;
+        }}
+        onKeyDown={(event) => {
+          if (
+            event.key === "ContextMenu" ||
+            (event.shiftKey && event.key === "F10")
+          ) {
+            event.preventDefault();
+            returnFocus.current = event.target as HTMLElement;
+            setAnchor(event.currentTarget);
+            setMenu("context");
+          }
+        }}
+      >
+        {children}
+        <div
+          className={styles.commentActions}
+          data-collapsed={collapsed || undefined}
+          data-menu-open={!!menu || undefined}
+        >
+          <MenuRoot
+            open={menu === "button"}
+            onOpenChange={(open) =>
+              setMenu((current) =>
+                open ? "button" : current === "button" ? undefined : current,
+              )
+            }
+          >
+            <MenuTrigger
+              render={
+                <IconButton
+                  aria-label="Comment actions"
+                  title="Comment actions"
+                  size="sm"
+                  icon={<DotsThreeIcon />}
+                />
+              }
+            />
+            <MenuPopup align="end" size="compact">
+              {item}
+            </MenuPopup>
+          </MenuRoot>
+        </div>
+      </ContextMenuTrigger>
+      <MenuPopup
+        size="compact"
+        anchor={anchor}
+        finalFocus={() =>
+          returnFocus.current?.isConnected ? returnFocus.current : false
+        }
+      >
+        {item}
+      </MenuPopup>
+      {notice && (
+        <ToastNotice
+          title={notice.text}
+          tone={notice.error ? "error" : "success"}
+          timeout={notice.error ? 0 : 4000}
+          onDismiss={() => setNotice(undefined)}
+        />
+      )}
+    </ContextMenuRoot>
+  );
+}
+
 function Message({
   message,
   url,
+  commentUrl,
   label,
   kind = "comment",
   reviewState,
@@ -134,11 +280,13 @@ function Message({
 }: {
   message: ConversationMessage;
   url: string;
+  commentUrl?: string | undefined;
   label: string;
   kind?: "description" | "review" | "comment" | "merge";
   reviewState?: string | undefined;
   fallback?: string;
 }) {
+  const [open, setOpen] = useState(false);
   const preview = useMemo(
     () => bodyPreview(message.body, message.bodyHtml, url),
     [message.body, message.bodyHtml, url],
@@ -229,6 +377,8 @@ function Message({
       data-buzz-ui=""
       role="group"
       aria-label={label}
+      open={open}
+      onOpenChange={setOpen}
       data-bodyless={!hasBody || undefined}
     >
       <div className={styles.messageMarker}>
@@ -247,7 +397,7 @@ function Message({
           <span aria-hidden="true">{marker}</span>
         )}
       </div>
-      <div className={styles.messageContent}>
+      <CommentActions url={commentUrl} collapsed={expandable && !open}>
         <div className={styles.messageHeader} ref={header}>
           {canFitOnOneLine && hasBody && (
             <div className={styles.messageMeasure} aria-hidden="true" inert>
@@ -330,7 +480,7 @@ function Message({
             )}
           </Collapsible.Panel>
         )}
-      </div>
+      </CommentActions>
     </Collapsible.Root>
   );
 }
@@ -353,6 +503,11 @@ function EventMessage({
     <Message
       message={event.message}
       url={url}
+      commentUrl={
+        event.kind === "merge"
+          ? undefined
+          : `${url}#${event.kind === "review" ? "pullrequestreview" : "issuecomment"}-${event.message.id}`
+      }
       label={
         event.kind === "merge"
           ? "Merged"

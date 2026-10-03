@@ -19,6 +19,7 @@ import {
 } from "./conversation";
 import { GitHubConversation } from "./GitHubConversation";
 import type { GitHubDetails } from "./data";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 const url = "https://github.com/sample/project/pull/1";
 const details: GitHubDetails = {
   title: "A change",
@@ -45,6 +46,7 @@ const entry = (
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 it("loads credential-free bounded sources and honors paging without following external destinations", async () => {
@@ -295,7 +297,9 @@ it("keeps source failures independent, retains pages during retry and fetches mo
   failReviews = false;
   await user.click(screen.getByRole("button", { name: "Retry reviews" }));
   const approval = await screen.findByRole("group", { name: "Approved" });
-  expect(within(approval).queryByRole("button")).not.toBeInTheDocument();
+  expect(
+    within(approval).queryByRole("button", { name: /Expand|Toggle/ }),
+  ).not.toBeInTheDocument();
   expect(approval).not.toHaveTextContent("loaded code threads");
   await user.click(
     screen.getByRole("button", { name: "Load more discussion" }),
@@ -327,7 +331,7 @@ it("keeps source failures independent, retains pages during retry and fetches mo
       .filter((target) => target.includes("/issues/")),
   ).toHaveLength(3);
 });
-it("fetches only discussion and reviews, keeps summary expansion independent and bodyless reviews noninteractive", async () => {
+it("fetches only discussion and reviews, keeps summary expansion independent and bodyless reviews without disclosures", async () => {
   const fetch = vi.fn(async (target: string) =>
     response(
       target.includes("/reviews?")
@@ -369,7 +373,9 @@ it("fetches only discussion and reviews, keeps summary expansion independent and
     "https://api.github.com/repos/sample/project/pulls/1/reviews?per_page=30&page=1",
   ]);
   const emptyReview = screen.getByRole("group", { name: "Review dismissed" });
-  expect(within(emptyReview).queryByRole("button")).not.toBeInTheDocument();
+  expect(
+    within(emptyReview).queryByRole("button", { name: /Expand|Toggle/ }),
+  ).not.toBeInTheDocument();
   expect(emptyReview).toHaveAttribute("data-bodyless", "true");
   expect(emptyReview).not.toHaveTextContent("No message provided");
   expect(screen.queryByText(/code threads/i)).not.toBeInTheDocument();
@@ -1158,4 +1164,176 @@ it("renders a lone approval directly and expands post-merge follow-up without re
     screen.getByRole("heading", { name: "Follow-up detail" }),
   ).toBeVisible();
   expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+function copyFixture() {
+  const fetch = vi.fn(async (target: string) =>
+    response(
+      target.includes("/reviews?")
+        ? [
+            {
+              id: 42,
+              submitted_at: date(13),
+              state: "CHANGES_REQUESTED",
+              user: { login: "reviewer" },
+              body: "Review summary\n\n## Review body",
+            },
+          ]
+        : [
+            {
+              id: 43,
+              created_at: date(14),
+              user: { login: "contributor" },
+              body: "Discussion summary\n\n## Comment body",
+            },
+          ],
+    ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  render(
+    <ToastProvider>
+      <GitHubConversation details={details} url={url} />
+    </ToastProvider>,
+  );
+  return fetch;
+}
+
+it("copies a discussion permalink without toggling the accordion or fetching", async () => {
+  const user = userEvent.setup();
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  const fetch = copyFixture();
+  const message = await screen.findByRole("group", {
+    name: "Comment",
+  });
+  const disclosure = within(message).getByRole("button", {
+    name: "Expand Comment",
+  });
+  const actions = within(message).getByRole("button", {
+    name: "Comment actions",
+  });
+  expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  expect(actions.closest("[data-collapsed]")).not.toBeNull();
+  await user.click(actions);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Copy comment link" }),
+  );
+  await screen.findByText("Comment link copied");
+  expect(write).toHaveBeenCalledWith(`${url}#issuecomment-43`);
+  expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await user.click(disclosure);
+  expect(actions.closest("[data-collapsed]")).toBeNull();
+  expect(screen.getByRole("heading", { name: "Comment body" })).toBeVisible();
+  await user.click(actions);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Copy comment link" }),
+  );
+  await waitFor(() => expect(write).toHaveBeenCalledTimes(2));
+  expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(
+    within(screen.getByRole("group", { name: "Description" })).queryByRole(
+      "button",
+      { name: "Comment actions" },
+    ),
+  ).toBeNull();
+});
+
+it("shares review copying and retry feedback between right-click and button menus", async () => {
+  const user = userEvent.setup();
+  const write = vi
+    .spyOn(navigator.clipboard, "writeText")
+    .mockRejectedValueOnce(new Error("denied"))
+    .mockResolvedValueOnce();
+  copyFixture();
+  const message = await screen.findByRole("group", {
+    name: "Changes requested",
+  });
+  const disclosure = within(message).getByRole("button", {
+    name: "Expand Changes requested",
+  });
+  const actions = within(message).getByRole("button", {
+    name: "Comment actions",
+  });
+  fireEvent.contextMenu(disclosure);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Copy comment link" }),
+  );
+  await screen.findByText(
+    "Couldn’t copy the link. Try again from the comment menu.",
+  );
+  expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await user.click(actions);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Copy comment link" }),
+  );
+  await screen.findByText("Comment link copied");
+  expect(write).toHaveBeenCalledTimes(2);
+  expect(write).toHaveBeenLastCalledWith(`${url}#pullrequestreview-42`);
+  expect(
+    screen.queryByText(
+      "Couldn’t copy the link. Try again from the comment menu.",
+    ),
+  ).toBeNull();
+});
+
+it("opens both menus by keyboard and restores focus without changing disclosure", async () => {
+  const user = userEvent.setup();
+  copyFixture();
+  const message = await screen.findByRole("group", {
+    name: "Comment",
+  });
+  const disclosure = within(message).getByRole("button", {
+    name: "Expand Comment",
+  });
+  disclosure.focus();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  await screen.findByRole("menuitem", { name: "Copy comment link" });
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(disclosure).toHaveFocus());
+  const actions = within(message).getByRole("button", {
+    name: "Comment actions",
+  });
+  actions.focus();
+  await user.keyboard("{Enter}");
+  await screen.findByRole("menuitem", { name: "Copy comment link" });
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(actions).toHaveFocus());
+  expect(disclosure).toHaveAttribute("aria-expanded", "false");
+});
+
+it("prevents duplicate writes across both menus while the clipboard is pending", async () => {
+  const user = userEvent.setup();
+  let finish!: () => void;
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  copyFixture();
+  const message = await screen.findByRole("group", {
+    name: "Comment",
+  });
+  const actions = within(message).getByRole("button", {
+    name: "Comment actions",
+  });
+  await user.click(actions);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Copy comment link" }),
+  );
+  try {
+    await waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+    fireEvent.contextMenu(
+      within(message).getByRole("button", { name: "Expand Comment" }),
+    );
+    const item = await screen.findByRole("menuitem", {
+      name: "Copy comment link",
+    });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    await user.click(item);
+    expect(write).toHaveBeenCalledTimes(1);
+  } finally {
+    await act(async () => finish());
+  }
+  await screen.findByText("Comment link copied");
 });

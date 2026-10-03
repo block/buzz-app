@@ -344,10 +344,12 @@
 }
 .messageContent {
   position: relative;
+  display: grid;
   min-width: 0;
 }
 .messageHeader {
   position: relative;
+  grid-area: 1 / 1;
 }
 .messageMeasure {
   position: absolute;
@@ -419,6 +421,44 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.commentActions {
+  position: relative;
+  z-index: 1;
+  width: fit-content;
+  margin-top: var(--space-2);
+}
+.messageContent:has(> .commentActions[data-collapsed]) .previewText {
+  min-height: 2rem;
+  padding-right: var(--space-8);
+}
+.commentActions[data-collapsed] {
+  grid-area: 1 / 1;
+  align-self: end;
+  justify-self: end;
+  margin-top: 0;
+}
+.conversationMessage[data-bodyless] .commentActions {
+  grid-area: 1 / 1;
+  align-self: center;
+  justify-self: end;
+  margin-top: 0;
+}
+.conversationMessage[data-bodyless] .messageMetadata {
+  padding-right: var(--space-8);
+}
+@media (hover: hover) and (pointer: fine) {
+  .commentActions[data-collapsed] {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .messageContent:hover > .commentActions,
+  .messageContent:focus-within > .commentActions,
+  .commentActions[data-menu-open] {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .thumbnails {

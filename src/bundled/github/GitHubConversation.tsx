@@ -144,12 +144,10 @@ function Thumbnails({ images, label }: { images: string[]; label: string }) {
 
 function CommentActions({
   url,
-  collapsed,
   showCopyAction,
   children,
 }: {
   url: string | undefined;
-  collapsed: boolean;
   showCopyAction: boolean;
   children: ReactNode;
 }) {
@@ -223,7 +221,6 @@ function CommentActions({
         {children}
         <div
           className={styles.commentActions}
-          data-collapsed={collapsed || undefined}
           data-menu-action={!showCopyAction || undefined}
           data-menu-open={!!menu || undefined}
         >
@@ -410,8 +407,7 @@ function Message({
       </div>
       <CommentActions
         url={commentUrl}
-        collapsed={expandable && !open}
-        showCopyAction={hasBody && (!expandable || open)}
+        showCopyAction={hasBody && expandable && open}
       >
         <div className={styles.messageHeader} ref={header}>
           {canFitOnOneLine && hasBody && (

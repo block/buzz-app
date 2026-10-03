@@ -1367,7 +1367,7 @@ it("copies a discussion permalink without toggling the accordion or fetching", a
     name: "Comment actions",
   });
   expect(disclosure).toHaveAttribute("aria-expanded", "false");
-  expect(actions.closest("[data-collapsed]")).not.toBeNull();
+  expect(actions.closest("[data-menu-action]")).not.toBeNull();
   expect(actions).toHaveAttribute("data-icon-size", "xs");
   expect(actions).not.toHaveAttribute("title");
   expect(actions).not.toHaveAttribute("aria-describedby");

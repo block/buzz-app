@@ -135,6 +135,17 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     conversation.getByText("inline-only", { exact: true }),
   ).toHaveCount(0);
   await expect(conversation.getByRole("group")).toHaveCount(5);
+  const expectDateEdge = async () => {
+    await expect
+      .poll(() =>
+        conversation.locator("time").evaluateAll((nodes) => {
+          const edges = nodes.map((node) => node.getBoundingClientRect().right);
+          return Math.max(...edges) - Math.min(...edges);
+        }),
+      )
+      .toBeLessThan(1);
+  };
+  await expectDateEdge();
   const longReview = conversation.getByRole("group", {
     name: "Changes requested",
     exact: true,
@@ -248,7 +259,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   };
   const actionSlot = commentActions.locator("..");
   await expectActionsCenteredUnderCarets();
-  await expect(actionSlot).toHaveAttribute("data-collapsed", "true");
+  await expect(actionSlot).toHaveAttribute("data-menu-action", "true");
   await page.mouse.move(0, 0);
   const fineHover = await page.evaluate(
     () => matchMedia("(hover: hover) and (pointer: fine)").matches,
@@ -434,6 +445,19 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   });
   const wideViewport = page.viewportSize();
   await expect(singleLineTrigger).toHaveCount(0);
+  const singleLineActions = singleLine.getByRole("button", {
+    name: "Comment actions",
+  });
+  await expect(
+    singleLine.getByRole("button", { name: "Copy link" }),
+  ).toHaveCount(0);
+  await singleLineActions.click();
+  await expect(page.getByRole("menu")).toHaveAttribute("data-size", "default");
+  await page.getByRole("menuitem", { name: "Copy link", exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.githubCopiedLinks.at(-1)))
+    .toBe(`${target}#pullrequestreview-11`);
+  await expect(singleLineTrigger).toHaveCount(0);
   await page.setViewportSize({ width: 800, height: 950 });
   await expect(singleLineTrigger).toBeAttached();
   await singleLineTrigger.click();
@@ -566,6 +590,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
       expect(layout.excerptTop).toBeGreaterThanOrEqual(layout.timeBottom);
       expect(Math.abs(layout.timeRight - geometry.timeX)).toBeLessThan(1);
     }
+    await expectDateEdge();
     const descriptionTimeRight = await conversation
       .getByRole("group", { name: "Description", exact: true })
       .locator("time")
@@ -731,6 +756,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     ).toBeHidden();
   }
   expect(await timePositions()).toEqual(collapsedTimes);
+  await expectDateEdge();
   const approval = conversation.getByRole("group", {
     name: "Approved",
     exact: true,
@@ -778,6 +804,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   for (const width of [800, 480]) {
     await page.setViewportSize({ width, height: 950 });
     await expectReviewContained();
+    await expectDateEdge();
     await expectActionsCenteredUnderCarets();
     await description.scrollIntoViewIfNeeded();
     await expectThumbnailsBelowExcerpt();
@@ -816,6 +843,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   });
   expect(Math.abs(enlargedCenters[0] - enlargedCenters[1])).toBeLessThan(1);
   await expect(singleLineTrigger).toBeAttached();
+  await expectDateEdge();
   await expect(conversation).toBeVisible();
   await expect(
     conversation.getByText(/some sources are incomplete/),
@@ -1251,7 +1279,7 @@ test("conversation history expands around merge without hiding approval-only mil
 // Desktop-only CSS contract: touch coverage above deliberately keeps actions visible.
 test.describe("desktop comment actions", () => {
   test.use({ hasTouch: false });
-  test("bodyless ellipsis follows whole-row hover, keyboard focus and open-menu state", async ({
+  test("bodyless and one-line ellipsis follow whole-row hover, keyboard focus and open-menu state", async ({
     page,
     app,
   }, testInfo) => {
@@ -1271,10 +1299,18 @@ test.describe("desktop comment actions", () => {
                 },
               ]
             : path.endsWith("/comments")
-              ? []
+              ? [
+                  {
+                    id: 2,
+                    created_at: "2026-09-20T12:00:00Z",
+                    user: { login: "contributor" },
+                    body: "A short update.",
+                  },
+                ]
               : {
                   title: "Keep review actions quiet",
                   body: "A small change.",
+                  created_at: "2026-09-01T12:00:00Z",
                   state: "open",
                   user: { login: "author" },
                 },
@@ -1336,5 +1372,54 @@ test.describe("desktop comment actions", () => {
     await expect(slot).toHaveCSS("opacity", "1");
     await page.evaluate(() => document.activeElement?.blur());
     await expect(slot).toHaveCSS("opacity", "0");
+    const short = panel.getByRole("group", { name: "Comment", exact: true });
+    await expect(
+      short.getByRole("button", { name: /Expand|Toggle/ }),
+    ).toHaveCount(0);
+    await expect(short.getByRole("button", { name: "Copy link" })).toHaveCount(
+      0,
+    );
+    const shortAction = short.getByRole("button", { name: "Comment actions" });
+    await expect(shortAction.locator("..")).toHaveCSS("opacity", "0");
+    await short.locator('[class*="messageMarker"]').hover();
+    await expect(shortAction.locator("..")).toHaveCSS("opacity", "1");
+    const geometry = await short.evaluate((node) => {
+      const bodyNode = node.querySelector('[class*="messageBody"]');
+      const body = bodyNode.getBoundingClientRect();
+      const contentRight =
+        body.right - parseFloat(getComputedStyle(bodyNode).paddingRight);
+      const action = node
+        .querySelector('[aria-label="Comment actions"]')
+        .getBoundingClientRect();
+      const times = [...node.parentElement.querySelectorAll("time")].map(
+        (time) => time.getBoundingClientRect().right,
+      );
+      return {
+        action: {
+          left: action.left,
+          right: action.right,
+          top: action.top,
+          bottom: action.bottom,
+        },
+        body: { right: contentRight, top: body.top, bottom: body.bottom },
+        rowRight: node.getBoundingClientRect().right,
+        dateRag: Math.max(...times) - Math.min(...times),
+      };
+    });
+    expect(Math.abs(geometry.action.right - geometry.rowRight)).toBeLessThan(1);
+    expect(geometry.action.left).toBeGreaterThanOrEqual(geometry.body.right);
+    expect(geometry.action.bottom).toBeGreaterThan(geometry.body.top);
+    expect(geometry.action.top).toBeLessThan(geometry.body.bottom);
+    expect(geometry.dateRag).toBeLessThan(1);
+    await panel.screenshot({
+      path: testInfo.outputPath("desktop-single-line-hover.png"),
+    });
+    await shortAction.click();
+    await expect(page.getByRole("menu")).toHaveAttribute(
+      "data-size",
+      "default",
+    );
+    await page.keyboard.press("Escape");
+    await expect(shortAction).toBeFocused();
   });
 });

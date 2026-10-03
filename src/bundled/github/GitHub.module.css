@@ -411,20 +411,14 @@
   width: fit-content;
   margin-top: var(--space-2);
 }
-.commentActions[data-collapsed] {
+.commentActions[data-menu-action] {
   grid-area: 1 / 1;
   align-self: end;
   justify-self: end;
   margin-top: 0;
 }
 .conversationMessage[data-bodyless] .commentActions {
-  grid-area: 1 / 1;
   align-self: center;
-  justify-self: end;
-  margin-top: 0;
-}
-.conversationMessage[data-bodyless] .messageMetadata {
-  padding-right: var(--space-8);
 }
 @media (hover: hover) and (pointer: fine) {
   .commentActions[data-menu-action] {

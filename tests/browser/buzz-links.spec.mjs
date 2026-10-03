@@ -308,6 +308,33 @@ test("thread and detail tabs preserve drafts, scroll, focus and local-detail lif
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
+  // A retained callback must dispatch through this channel's current panel
+  // owner after retargeting, even when a parent update reuses the thread rows.
+  await expect.poll(() => app.relay.hasRoute("primary", "beta")).toBe(true);
+  const betaRoot = app.append("primary", "beta", "Beta callback root");
+  const betaRow = page.locator(
+    `[data-channel-timeline] [data-message-id="${betaRoot.id}"]`,
+  );
+  await betaRow.hover();
+  await betaRow.getByRole("button", { name: "Reply", exact: true }).click();
+  await expect(
+    thread.getByText("Beta callback root", { exact: true }),
+  ).toBeVisible();
+  await editor.fill("Keep Beta thread draft");
+  const parentUpdate = app.append("primary", "beta", "Beta parent update");
+  await expect(
+    page.locator(
+      `[data-channel-timeline] [data-message-id="${parentUpdate.id}"]`,
+    ),
+  ).toBeVisible();
+  await thread
+    .getByRole("button", { name: "View Fixture Reader profile", exact: true })
+    .click();
+  await expect(details).toHaveCount(1);
+  await expect(details).toHaveAttribute("aria-selected", "true");
+  await profileDraft.fill("Keep Beta detail state");
+  await threadTab.click();
+  await expect(editor).toHaveText("Keep Beta thread draft");
   await page.locator('button[data-channel-id="alpha"]').click();
   await expect(details).toHaveCount(1);
   await expect(threadTab).toHaveCount(1);

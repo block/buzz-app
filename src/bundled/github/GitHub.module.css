@@ -549,3 +549,26 @@
 .checksPanel {
   margin-top: var(--space-5);
 }
+
+.eventIcon[data-merged] {
+  color: var(--github-merged-text);
+}
+.commentRunTrigger {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: center;
+  width: 100%;
+  padding: var(--space-2) 0;
+  text-align: left;
+}
+.commentRunSummary {
+  overflow-wrap: anywhere;
+}
+.commentRunSummary > span {
+  color: var(--text-subtle);
+}
+.commentRunEvents {
+  display: grid;
+  gap: var(--space-3);
+}

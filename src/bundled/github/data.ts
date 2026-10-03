@@ -13,6 +13,9 @@ export type GitHubDetails = {
   createdAt?: string | undefined;
   headSha?: string | undefined;
   updatedAt?: string | undefined;
+  mergedAt?: string | undefined;
+  mergedBy?: string | undefined;
+  mergedByUrl?: string | undefined;
   facts: [
     string,
     (
@@ -38,6 +41,8 @@ type ResponseData = {
   state?: string;
   draft?: boolean;
   merged?: boolean;
+  merged_at?: string | null;
+  merged_by?: { login?: string } | null;
   updated_at?: string;
   created_at?: string;
   user?: { login: string; avatar_url?: string };
@@ -168,6 +173,18 @@ export async function loadGitHubDetails(
       data.updated_at &&
       Number.isFinite(Date.parse(data.updated_at))
         ? data.updated_at
+        : undefined,
+    mergedAt:
+      reference.kind === "pull" &&
+      data.merged &&
+      data.merged_at &&
+      Number.isFinite(Date.parse(data.merged_at))
+        ? data.merged_at
+        : undefined,
+    mergedBy: data.merged_by?.login,
+    mergedByUrl:
+      data.merged_by?.login && /^[a-z0-9-]+$/i.test(data.merged_by.login)
+        ? `https://github.com/${encodeURIComponent(data.merged_by.login)}`
         : undefined,
     facts,
   };

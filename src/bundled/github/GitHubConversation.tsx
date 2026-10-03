@@ -2,11 +2,18 @@ import { Collapsible } from "@base-ui/react/collapsible";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { conversationEvents, useConversationSource } from "./conversation";
+import {
+  conversationEvents,
+  groupConversationEvents,
+  useConversationSource,
+  type ConversationEvent,
+  type CommentRun,
+} from "./conversation";
 import { MediaAttachment } from "../../features/messages/MediaAttachment";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   CaretDownIcon,
+  GitMergeIcon,
   ChatCircleIcon,
   CheckCircleIcon,
   XCircleIcon,
@@ -119,7 +126,7 @@ function Message({
   message: ConversationMessage;
   url: string;
   label: string;
-  kind?: "description" | "review" | "comment";
+  kind?: "description" | "review" | "comment" | "merge";
   reviewState?: string | undefined;
   fallback?: string;
 }) {
@@ -184,15 +191,17 @@ function Message({
   }, [canFitOnOneLine, hasBody]);
   const expandable = !canFitOnOneLine || (hasBody && !fitsOnOneLine);
   const MarkerIcon =
-    kind === "review"
-      ? reviewState === "APPROVED"
-        ? CheckCircleIcon
-        : reviewState === "CHANGES_REQUESTED"
-          ? XCircleIcon
-          : reviewState === "DISMISSED"
-            ? XIcon
-            : ChatCircleIcon
-      : ChatCircleIcon;
+    kind === "merge"
+      ? GitMergeIcon
+      : kind === "review"
+        ? reviewState === "APPROVED"
+          ? CheckCircleIcon
+          : reviewState === "CHANGES_REQUESTED"
+            ? XCircleIcon
+            : reviewState === "DISMISSED"
+              ? XIcon
+              : ChatCircleIcon
+        : ChatCircleIcon;
   const marker =
     kind === "description" ? (
       <Avatar src={message.authorAvatar} alt="" fallback={message.author} />
@@ -200,6 +209,7 @@ function Message({
       <span
         className={styles.eventIcon}
         data-review-state={kind === "review" ? reviewState : undefined}
+        data-merged={kind === "merge" || undefined}
       >
         <MarkerIcon size={20} aria-hidden="true" />
       </span>
@@ -323,6 +333,59 @@ const reviewLabels: Record<string, string> = {
   DISMISSED: "Review dismissed",
 };
 
+function EventMessage({
+  event,
+  url,
+}: {
+  event: ConversationEvent;
+  url: string;
+}) {
+  return (
+    <Message
+      message={event.message}
+      url={url}
+      label={
+        event.kind === "merge"
+          ? "Merged"
+          : event.kind === "review"
+            ? (reviewLabels[event.message.state ?? ""] ?? "Reviewed")
+            : "Comment"
+      }
+      kind={event.kind === "discussion" ? "comment" : event.kind}
+      reviewState={event.message.state}
+      fallback={event.kind === "discussion" ? "No message provided" : ""}
+    />
+  );
+}
+
+function Comments({ run, url }: { run: CommentRun; url: string }) {
+  const authors = [
+    ...new Set(
+      run.events.map((event) => event.message.author || "Unknown author"),
+    ),
+  ].join(", ");
+  return (
+    <Collapsible.Root className={styles.commentRun} data-buzz-ui="">
+      <Collapsible.Trigger
+        className={`buzz-accordion-trigger text-body-sm ${styles.commentRunTrigger}`}
+        aria-label={`Show ${run.events.length} earlier comments`}
+      >
+        <span className={styles.eventIcon} aria-hidden="true">
+          …
+        </span>
+        <span className={styles.commentRunSummary}>
+          {run.events.length} earlier comments <span>· {authors}</span>
+        </span>
+      </Collapsible.Trigger>
+      <Collapsible.Panel className={styles.commentRunEvents}>
+        {run.events.map((event) => (
+          <EventMessage key={event.key} event={event} url={url} />
+        ))}
+      </Collapsible.Panel>
+    </Collapsible.Root>
+  );
+}
+
 function SourceStatus({
   label,
   source,
@@ -364,8 +427,8 @@ function Conversation({
   const discussion = useConversationSource(url, "discussion");
   const reviews = useConversationSource(url, "reviews");
   const events = useMemo(
-    () => conversationEvents(discussion.entries, reviews.entries),
-    [discussion.entries, reviews.entries],
+    () => conversationEvents(discussion.entries, reviews.entries, details),
+    [discussion.entries, reviews.entries, details],
   );
   const incomplete = [discussion, reviews].some(
     (source) => source.loading || source.error || source.next,
@@ -383,21 +446,13 @@ function Conversation({
           kind="description"
           fallback="No description provided"
         />
-        {events.map((event) => (
-          <Message
-            key={event.key}
-            message={event.message}
-            url={url}
-            label={
-              event.kind === "review"
-                ? (reviewLabels[event.message.state ?? ""] ?? "Reviewed")
-                : "Comment"
-            }
-            kind={event.kind === "review" ? "review" : "comment"}
-            reviewState={event.message.state}
-            fallback={event.kind === "review" ? "" : "No message provided"}
-          />
-        ))}
+        {groupConversationEvents(events).map((event) =>
+          event.kind === "comments" ? (
+            <Comments key={event.key} run={event} url={url} />
+          ) : (
+            <EventMessage key={event.key} event={event} url={url} />
+          ),
+        )}
       </div>
       {!events.length && !incomplete && (
         <p className={styles.conversationNotice}>

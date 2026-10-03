@@ -42,6 +42,8 @@ it("loads PR details and preserves merged state, branches, and change counts", a
         body_html: "<p>An independent panel contract.</p>",
         state: "closed",
         merged: true,
+        merged_at: "2026-10-02T12:00:00Z",
+        merged_by: { login: "maintainer" },
         user: { login: "author" },
         head: { label: "block:panels" },
         base: { label: "block:main" },
@@ -66,6 +68,9 @@ it("loads PR details and preserves merged state, branches, and change counts", a
   expect(data).toMatchObject({
     title: "Simplify panels",
     state: "Merged",
+    mergedAt: "2026-10-02T12:00:00Z",
+    mergedBy: "maintainer",
+    mergedByUrl: "https://github.com/maintainer",
     author: "author",
     body: "An independent panel contract.",
     bodyHtml: "<p>An independent panel contract.</p>",
@@ -189,3 +194,30 @@ it("keeps the comment count on issues, where no conversation is rendered", async
   const data = await loadGitHubDetails(issue, new AbortController().signal);
   expect(data.facts).toContainEqual(["Comments", 0]);
 });
+
+it.each([null, "bad", undefined])(
+  "does not invent a merge timestamp from unavailable merged_at: %s",
+  async (merged_at) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              merged: true,
+              merged_at,
+              updated_at: "2026-10-02T12:00:00Z",
+              merged_by: { login: "bad/profile" },
+            }),
+          ),
+      ),
+    );
+    const data = await loadGitHubDetails(
+      reference,
+      new AbortController().signal,
+    );
+    expect(data.state).toBe("Merged");
+    expect(data.mergedAt).toBeUndefined();
+    expect(data.mergedByUrl).toBeUndefined();
+  },
+);

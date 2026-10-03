@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { GitHubDetails } from "./data";
 import type { ConversationMessage } from "./GitHubConversation";
 
 export type ConversationEntry = ConversationMessage & {
@@ -8,7 +9,7 @@ export type ConversationEntry = ConversationMessage & {
 export type ConversationEvent = {
   key: string;
   message: ConversationEntry;
-  kind: "discussion" | "review";
+  kind: "discussion" | "review" | "merge";
 };
 export type ConversationSource = "discussion" | "reviews";
 const pageSize = 30;
@@ -167,8 +168,24 @@ function chronological(a: ConversationEntry, b: ConversationEntry) {
 export function conversationEvents(
   discussion: ConversationEntry[],
   reviews: ConversationEntry[],
+  details?: GitHubDetails,
 ): ConversationEvent[] {
   return [
+    ...(details?.mergedAt
+      ? [
+          {
+            key: "merge",
+            kind: "merge" as const,
+            message: {
+              id: 0,
+              author: details.mergedBy ?? "",
+              authorUrl: details.mergedByUrl,
+              createdAt: details.mergedAt,
+              body: "",
+            },
+          },
+        ]
+      : []),
     ...discussion.map(
       (message): ConversationEvent => ({
         key: `discussion-${message.id}`,
@@ -194,4 +211,39 @@ export function conversationEvents(
   ].sort(
     (a, b) => chronological(a.message, b.message) || a.key.localeCompare(b.key),
   );
+}
+
+export type CommentRun = {
+  key: string;
+  kind: "comments";
+  events: ConversationEvent[];
+};
+
+/** Keep decisions and the newest loaded event visible; fold only consecutive older comments. */
+export function groupConversationEvents(
+  events: ConversationEvent[],
+): (ConversationEvent | CommentRun)[] {
+  const grouped: (ConversationEvent | CommentRun)[] = [];
+  let run: ConversationEvent[] = [];
+  const flush = () => {
+    const first = run[0];
+    if (first && run.length > 1)
+      grouped.push({ key: first.key, kind: "comments", events: run });
+    else grouped.push(...run);
+    run = [];
+  };
+  events.forEach((event, index) => {
+    if (
+      index < events.length - 1 &&
+      (event.kind === "discussion" ||
+        (event.kind === "review" && event.message.state === "COMMENTED"))
+    ) {
+      run.push(event);
+    } else {
+      flush();
+      grouped.push(event);
+    }
+  });
+  flush();
+  return grouped;
 }

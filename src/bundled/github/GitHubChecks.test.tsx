@@ -34,6 +34,7 @@ it("renders PR details while checks load, then exposes counts by pointer and key
   vi.stubGlobal("fetch", fetch);
   render(<GitHubPanel target={target} close={() => {}} />);
   await screen.findByRole("heading", { name: "A small change #1" });
+  await userEvent.setup().click(screen.getByRole("tab", { name: "Checks" }));
   expect(screen.getByText("Loading…")).toBeVisible();
   expect(screen.getByText("3 minutes ago")).toHaveAttribute(
     "datetime",
@@ -55,7 +56,6 @@ it("renders PR details while checks load, then exposes counts by pointer and key
   const summary = await screen.findByText("Some not successful");
   expect(summary).toHaveAttribute("data-check-state", "failure");
   expect(summary.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
-  await screen.findByText("Conversation loaded · oldest first");
   expect(fetch.mock.calls.map(([url]) => url).sort()).toEqual([
     "https://api.github.com/repos/sample/project/commits/head-sha/check-runs?per_page=100&page=1&filter=latest",
     "https://api.github.com/repos/sample/project/commits/head-sha/status?per_page=100&page=1",
@@ -95,6 +95,8 @@ it("keeps PR details after a checks failure and allows a read-only retry", async
   });
   vi.stubGlobal("fetch", fetch);
   render(<GitHubPanel target={target} close={() => {}} />);
+  await screen.findByRole("tab", { name: "Checks" });
+  await userEvent.setup().click(screen.getByRole("tab", { name: "Checks" }));
   const retry = await screen.findByRole("button", { name: "Retry checks" });
   expect(
     screen.getByRole("heading", { name: "A small change #1" }),
@@ -131,6 +133,9 @@ it("aborts checks when the panel target changes and ignores the late old result"
     }),
   );
   const view = render(<GitHubPanel target={target} close={() => {}} />);
+  await userEvent
+    .setup()
+    .click(await screen.findByRole("tab", { name: "Checks" }));
   await screen.findByText("Loading…");
   view.rerender(
     <GitHubPanel
@@ -164,10 +169,12 @@ it("shows honest missing-data rows without inventing a head check request", asyn
   vi.stubGlobal("fetch", fetch);
   render(<GitHubPanel target={target} close={() => {}} />);
   await screen.findByRole("heading", { name: "Old PR #1" });
+  expect(screen.getAllByText("Unavailable")).toHaveLength(1);
+  await screen.findByText("Conversation loaded · oldest first");
+  await userEvent.setup().click(screen.getByRole("tab", { name: "Checks" }));
   expect(screen.getAllByText("Unavailable")).toHaveLength(2);
   expect(
     screen.queryByRole("button", { name: "Retry checks" }),
   ).not.toBeInTheDocument();
-  await screen.findByText("Conversation loaded · oldest first");
   expect(fetch).toHaveBeenCalledTimes(3);
 });

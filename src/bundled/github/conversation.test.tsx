@@ -13,6 +13,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   conversationEvents,
+  groupConversationEvents,
   loadConversationPage,
   type ConversationEntry,
 } from "./conversation";
@@ -572,4 +573,208 @@ it("uses the opening avatar only, then verdict icons and shared feedback bubbles
       name: "Expand Changes requested",
     }),
   ).toHaveAttribute("aria-expanded", "false");
+});
+
+it("folds only consecutive older comments, preserving decisions and the latest event", () => {
+  const events = conversationEvents(
+    [
+      entry(1, { createdAt: date(12) }),
+      entry(3, { createdAt: date(14) }),
+      entry(8, { createdAt: date(19) }),
+      entry(9, { createdAt: date(20) }),
+    ],
+    [
+      entry(2, { state: "COMMENTED", body: "A review", createdAt: date(13) }),
+      entry(4, { state: "APPROVED", createdAt: date(15) }),
+      entry(5, { state: "CHANGES_REQUESTED", createdAt: date(16) }),
+      entry(6, { state: "DISMISSED", createdAt: date(17) }),
+      entry(7, { state: "UNKNOWN", createdAt: date(18) }),
+    ],
+  );
+  const grouped = groupConversationEvents(events);
+  expect(grouped.map((event) => event.kind)).toEqual([
+    "comments",
+    "review",
+    "review",
+    "review",
+    "review",
+    "discussion",
+    "discussion",
+  ]);
+  expect(grouped[0]).toMatchObject({ events: events.slice(0, 3) });
+  expect(grouped.at(-1)).toBe(events.at(-1));
+  const comments = events.filter((event) => event.kind === "discussion");
+  expect(groupConversationEvents(comments)).toEqual([
+    { key: comments[0]?.key, kind: "comments", events: comments.slice(0, -1) },
+    comments.at(-1),
+  ]);
+  expect(groupConversationEvents([])).toEqual([]);
+  expect(groupConversationEvents(comments.slice(0, 1))).toEqual(
+    comments.slice(0, 1),
+  );
+});
+
+it("places merge at its real time rather than forcing it after post-merge comments", () => {
+  const events = conversationEvents(
+    [entry(1, { createdAt: date(13) }), entry(2, { createdAt: date(18) })],
+    [entry(3, { state: "APPROVED", createdAt: date(14) })],
+    {
+      ...details,
+      mergedAt: date(17),
+      mergedBy: "maintainer",
+      mergedByUrl: "https://github.com/maintainer",
+    },
+  );
+  expect(events.map((event) => event.key)).toEqual([
+    "discussion-1",
+    "review-3",
+    "merge",
+    "discussion-2",
+  ]);
+  expect(events[2]?.message).toMatchObject({
+    author: "maintainer",
+    createdAt: date(17),
+    authorUrl: "https://github.com/maintainer",
+  });
+  expect(conversationEvents([], [], details)).toEqual([]);
+  expect(
+    conversationEvents([entry(1)], [], { ...details, mergedAt: date(17) }).at(
+      -1,
+    )?.kind,
+  ).toBe("merge");
+});
+
+it("expands comment runs in place without fetching and keeps approval and merge at the higher level", async () => {
+  const fetch = vi.fn(async (target: string) =>
+    response(
+      target.includes("/reviews?")
+        ? [
+            {
+              id: 10,
+              state: "COMMENTED",
+              body: "Review summary",
+              user: { login: "reviewer" },
+              submitted_at: date(14),
+            },
+            {
+              id: 11,
+              state: "APPROVED",
+              body: "",
+              user: { login: "maintainer" },
+              submitted_at: date(16),
+            },
+          ]
+        : [
+            {
+              id: 20,
+              body: "First discussion",
+              user: { login: "contributor" },
+              created_at: date(13),
+            },
+            {
+              id: 21,
+              body: "Second discussion",
+              user: { login: "contributor" },
+              created_at: date(15),
+            },
+          ],
+    ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const view = render(
+    <GitHubConversation
+      details={{ ...details, mergedAt: date(17), mergedBy: "maintainer" }}
+      url={url}
+    />,
+  );
+  await screen.findByText("Conversation loaded · oldest first");
+  const trigger = screen.getByRole("button", {
+    name: "Show 3 earlier comments",
+  });
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  expect(
+    screen.queryByRole("group", { name: "Comment" }),
+  ).not.toBeInTheDocument();
+  const approval = screen.getByRole("group", { name: "Approved" });
+  const merge = screen.getByRole("group", { name: "Merged" });
+  expect(approval.parentElement).toBe(merge.parentElement);
+  expect(merge).toHaveAttribute("data-bodyless", "true");
+  expect(within(merge).queryByRole("button")).not.toBeInTheDocument();
+  const user = userEvent.setup();
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  expect(trigger).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getAllByRole("group", { name: "Comment" })).toHaveLength(2);
+  expect(screen.getByRole("group", { name: "Review comment" })).toBeVisible();
+  expect(
+    screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label")),
+  ).toEqual([
+    "Description",
+    "Comment",
+    "Review comment",
+    "Comment",
+    "Approved",
+    "Merged",
+  ]);
+  expect(fetch).toHaveBeenCalledTimes(2);
+  await user.click(trigger);
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  view.rerender(
+    <GitHubConversation details={details} url={url.replace("/1", "/2")} />,
+  );
+  await screen.findByText("Conversation loaded · oldest first");
+  expect(
+    screen.getByRole("button", { name: "Show 3 earlier comments" }),
+  ).toHaveAttribute("aria-expanded", "false");
+  expect(
+    screen.queryByRole("group", { name: "Merged" }),
+  ).not.toBeInTheDocument();
+});
+
+it("retains an expanded run and source recovery while another page appends a newer comment", async () => {
+  let fail = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (target: string) => {
+      if (target.includes("/reviews?")) return response([]);
+      if (target.includes("page=2"))
+        return fail
+          ? new Response(null, { status: 500 })
+          : response([{ id: 22, body: "Newest", created_at: date(19) }]);
+      return response(
+        [
+          { id: 20, body: "First", created_at: date(13) },
+          { id: 21, body: "Second", created_at: date(14) },
+        ],
+        {
+          link: '<https://api.github.com/repos/sample/project/issues/1/comments?per_page=30&page=2>; rel="next"',
+        },
+      );
+    }),
+  );
+  render(
+    <GitHubConversation
+      details={{ ...details, mergedAt: date(17) }}
+      url={url}
+    />,
+  );
+  const more = await screen.findByRole("button", {
+    name: "Load more discussion",
+  });
+  const trigger = screen.getByRole("button", {
+    name: "Show 2 earlier comments",
+  });
+  fireEvent.click(trigger);
+  fireEvent.click(more);
+  const retry = await screen.findByRole("button", { name: "Retry discussion" });
+  expect(trigger).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getAllByRole("group", { name: "Comment" })).toHaveLength(2);
+  fail = false;
+  fireEvent.click(retry);
+  await screen.findByText("Conversation loaded · oldest first");
+  expect(trigger).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getAllByRole("group").at(-1)).toHaveTextContent("Newest");
+  expect(screen.getAllByRole("group", { name: "Comment" })).toHaveLength(3);
 });

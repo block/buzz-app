@@ -150,6 +150,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await expect(
     panel.getByRole("tab", { name: "Discussion", exact: true }),
   ).toBeFocused();
+  await page.keyboard.press("Enter");
   await expect(conversation).toBeVisible();
   await panel.getByRole("tab", { name: "Checks", exact: true }).click();
   await expect(panel.getByRole("tabpanel", { name: "Checks" })).toContainText(
@@ -664,4 +665,163 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await panel.screenshot({
     path: testInfo.outputPath("conversation-narrow-200.png"),
   });
+});
+
+// Browser-only: in-place group geometry, keyboard/touch disclosure, retained tab state and actual-app wiring.
+// Ordering, decision boundaries, source failures and paging remain covered in Vitest.
+test("earlier comment runs expand in place while decisions, merge and the newest event stay visible", async ({
+  page,
+  app,
+}, testInfo) => {
+  const requests = [];
+  const time = (hour) => `2026-10-01T${hour}:00:00Z`;
+  await page.route(
+    "https://api.github.com/repos/sample/project/**",
+    (route) => {
+      const path = new URL(route.request().url()).pathname;
+      requests.push(path);
+      return route.fulfill({
+        json: path.endsWith("/reviews")
+          ? [
+              {
+                id: 10,
+                state: "COMMENTED",
+                body: "The revised layout is clear.",
+                submitted_at: time(14),
+                user: { login: "reviewer" },
+              },
+              {
+                id: 11,
+                state: "APPROVED",
+                body: "",
+                submitted_at: time(16),
+                user: { login: "maintainer" },
+              },
+            ]
+          : path.endsWith("/issues/1/comments")
+            ? [
+                {
+                  id: 20,
+                  body: "Thanks for the first pass.",
+                  created_at: time(13),
+                  user: { login: "contributor" },
+                },
+                {
+                  id: 21,
+                  body: "The final adjustment is ready.",
+                  created_at: time(15),
+                  user: { login: "contributor" },
+                },
+                {
+                  id: 22,
+                  body: "Thanks for shipping this.",
+                  created_at: time(19),
+                  user: { login: "contributor" },
+                },
+              ]
+            : path.endsWith("/check-runs")
+              ? { total_count: 0, check_runs: [] }
+              : path.endsWith("/status")
+                ? { total_count: 0, statuses: [] }
+                : {
+                    title: "Make the conversation easier to follow",
+                    body: "A quieter history with decisions in view.",
+                    state: "closed",
+                    merged: true,
+                    merged_at: time(18),
+                    merged_by: { login: "maintainer" },
+                    user: { login: "author" },
+                    created_at: time(12),
+                    head: { sha: "head-sha" },
+                  },
+      });
+    },
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Messages");
+  await page
+    .getByRole("textbox", { name: "Message #Alpha", exact: true })
+    .waitFor();
+  await settle(page);
+  app.append("primary", "alpha", target);
+  const link = page.locator(`a[href="${target}"]`);
+  await expect(link).toBeAttached();
+  await end(page);
+  await link.click();
+  const panel = page.getByRole("complementary", {
+    name: "GitHub",
+    exact: true,
+  });
+  const conversation = panel.getByRole("region", {
+    name: "Pull request conversation",
+    exact: true,
+  });
+  await expect(
+    conversation.getByText("Conversation loaded · oldest first"),
+  ).toBeVisible();
+  const trigger = conversation.getByRole("button", {
+    name: "Show 3 earlier comments",
+  });
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await expect(conversation.getByRole("group")).toHaveCount(4);
+  await expect(conversation.getByRole("group").last()).toContainText(
+    "Thanks for shipping this.",
+  );
+  const approval = conversation.getByRole("group", {
+    name: "Approved",
+    exact: true,
+  });
+  const merge = conversation.getByRole("group", {
+    name: "Merged",
+    exact: true,
+  });
+  await expect(merge.locator("time")).toHaveAttribute("datetime", time(18));
+  await expect(
+    merge.getByRole("link", { name: "maintainer", exact: true }),
+  ).toHaveAttribute("href", "https://github.com/maintainer");
+  const expectOrder = async () => {
+    expect((await trigger.boundingBox()).y).toBeLessThan(
+      (await approval.boundingBox()).y,
+    );
+    expect((await approval.boundingBox()).y).toBeLessThan(
+      (await merge.boundingBox()).y,
+    );
+    expect((await merge.boundingBox()).y).toBeLessThan(
+      (await conversation.getByRole("group").last().boundingBox()).y,
+    );
+  };
+  await expectOrder();
+  expect(requests).toHaveLength(3);
+  for (const mode of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: mode, reducedMotion: "reduce" });
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+    await panel.screenshot({
+      path: testInfo.outputPath(`grouped-${mode}.png`),
+    });
+  }
+  const approvalBefore = await approval.boundingBox();
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  await expect(conversation.getByRole("group")).toHaveCount(7);
+  await expect(
+    conversation.getByRole("group", { name: "Review comment", exact: true }),
+  ).toBeVisible();
+  expect((await approval.boundingBox()).y).toBeGreaterThan(approvalBefore.y);
+  await expectOrder();
+  await panel.getByRole("tab", { name: "Checks", exact: true }).click();
+  await expect(panel.getByRole("tabpanel", { name: "Checks" })).toContainText(
+    "No checks",
+  );
+  await panel.getByRole("tab", { name: "Discussion", exact: true }).click();
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  expect(requests).toHaveLength(5);
+  await page.setViewportSize({ width: 800, height: 950 });
+  await expectOrder();
+  await panel.screenshot({
+    path: testInfo.outputPath("grouped-expanded-narrow.png"),
+  });
+  await trigger.tap();
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await expect(conversation.getByRole("group")).toHaveCount(4);
 });

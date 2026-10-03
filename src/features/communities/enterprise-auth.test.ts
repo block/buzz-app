@@ -46,6 +46,14 @@ function authFixture(required = true) {
   } satisfies EnterpriseAuthClient;
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 afterEach(async () => {
   for (const root of roots.splice(0)) await root.fiber.dispose();
   vi.unstubAllGlobals();
@@ -251,6 +259,143 @@ it("keeps concurrent ordinary community connections independent", async () => {
   expect(communities.snapshot().enterprise).toBeUndefined();
 });
 
+it("retains healthy sessions across selection without reconnecting on return", async () => {
+  const auth = authFixture(false);
+  const { communities, connect } = setup(auth);
+  await flush();
+  communities.joined(
+    { id: "https://first-ordinary.test", name: "First" },
+    { name: "Local", picture: "" },
+  );
+  await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
+  await flush();
+  communities.joined(
+    { id: "https://second-ordinary.test", name: "Second" },
+    { name: "Local", picture: "" },
+  );
+  await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+  await flush();
+
+  communities.joined(
+    { id: "https://first-ordinary.test", name: "First" },
+    { name: "Local", picture: "" },
+  );
+  communities.select("https://first-ordinary.test");
+  communities.select("https://second-ordinary.test");
+  communities.select("https://first-ordinary.test");
+  await flush();
+
+  expect(connect).toHaveBeenCalledTimes(2);
+});
+
+it("cancels an enterprise attempt when joining another community", async () => {
+  const auth = authFixture();
+  auth.gate.mockImplementation((community) =>
+    community === "https://enterprise.test"
+      ? Promise.resolve(true)
+      : Promise.resolve(false),
+  );
+  const login = deferred<{ expiresAt: string }>();
+  auth.start.mockReturnValue(login.promise);
+  const { communities, connect } = setup(auth);
+  await flush();
+  communities.joined(
+    { id: "https://enterprise.test", name: "Enterprise" },
+    { name: "Local", picture: "" },
+  );
+  await vi.waitFor(() =>
+    expect(communities.snapshot().enterprise).toMatchObject({
+      communityId: "https://enterprise.test",
+      status: "required",
+    }),
+  );
+  const starting = communities.startEnterpriseLogin();
+  await vi.waitFor(() => expect(auth.start).toHaveBeenCalledOnce());
+
+  communities.joined(
+    { id: "https://ordinary.test", name: "Ordinary" },
+    { name: "Local", picture: "" },
+  );
+  await vi.waitFor(() =>
+    expect(auth.cancel).toHaveBeenCalledWith(expect.any(String)),
+  );
+  await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
+  login.resolve({ expiresAt: "2030-01-01T00:00:00Z" });
+  await starting;
+});
+
+it("fences a pre-login check after the browser attempt succeeds", async () => {
+  const auth = authFixture();
+  const stale = deferred<EnterpriseAuth | null>();
+  auth.get
+    .mockResolvedValueOnce(null)
+    .mockReturnValueOnce(stale.promise)
+    .mockResolvedValue({ expiresAt: "2030-01-01T00:00:00Z" });
+  const login = deferred<{ expiresAt: string }>();
+  auth.start.mockReturnValue(login.promise);
+  const { communities } = setup(auth);
+  await flush();
+  communities.joined(
+    { id: "https://enterprise.test", name: "Enterprise" },
+    { name: "Local", picture: "" },
+  );
+  await vi.waitFor(() =>
+    expect(communities.snapshot().enterprise).toMatchObject({
+      status: "required",
+    }),
+  );
+
+  const pending = communities.connect(
+    "https://enterprise.test",
+    new AbortController().signal,
+  );
+  await vi.waitFor(() => expect(auth.get).toHaveBeenCalledTimes(2));
+  const starting = communities.startEnterpriseLogin();
+  await vi.waitFor(() => expect(auth.start).toHaveBeenCalledOnce());
+  login.resolve({ expiresAt: "2030-01-01T00:00:00Z" });
+  await starting;
+  await vi.waitFor(() =>
+    expect(communities.snapshot().enterprise).toBeUndefined(),
+  );
+
+  stale.resolve(null);
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  expect(communities.snapshot().enterprise).toBeUndefined();
+});
+
+it("does not let a check that began before clear reconnect after clear", async () => {
+  const auth = authFixture();
+  const gate = deferred<boolean>();
+  auth.gate.mockReturnValue(gate.promise);
+  const { communities, connect } = setup(auth);
+  await flush();
+  const pending = communities.connect(
+    "https://enterprise.test",
+    new AbortController().signal,
+  );
+  await vi.waitFor(() => expect(auth.gate).toHaveBeenCalledOnce());
+
+  await communities.clearEnterpriseAuth();
+  gate.resolve(false);
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  expect(connect).not.toHaveBeenCalled();
+  expect(communities.snapshot().enterprise).toBeUndefined();
+});
+
+it("rejects direct connections after disposal", async () => {
+  const auth = authFixture(false);
+  const { communities, connect } = setup(auth);
+  await flush();
+  const root = roots.at(-1);
+  if (!root) throw new Error("missing test root");
+  await root.fiber.dispose();
+
+  await expect(
+    communities.connect("https://ordinary.test", new AbortController().signal),
+  ).rejects.toMatchObject({ name: "AbortError" });
+  expect(connect).not.toHaveBeenCalled();
+});
+
 it("classifies discovery failure separately and retries the check", async () => {
   const auth = authFixture();
   auth.gate.mockRejectedValueOnce(new Error("advertisement unavailable"));
@@ -360,4 +505,22 @@ it("clears only the shared enterprise session and requires a fresh login", async
     communityId: "https://enterprise.test",
     status: "required",
   });
+});
+
+it("releases an active enterprise session before retrying after clear", async () => {
+  const auth = authFixture();
+  auth.get.mockResolvedValue({ expiresAt: "2030-01-01T00:00:00Z" });
+  const { communities, connect } = setup(auth);
+  await flush();
+  communities.joined(
+    { id: "https://enterprise.test", name: "Enterprise" },
+    { name: "Local", picture: "" },
+  );
+  await vi.waitFor(() => expect(connect).toHaveBeenCalledOnce());
+  await flush();
+
+  await communities.clearEnterpriseAuth();
+  await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+  expect(auth.clear).toHaveBeenCalledOnce();
+  expect(communities.snapshot().enterprise).toBeUndefined();
 });

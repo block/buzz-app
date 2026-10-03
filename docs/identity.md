@@ -135,9 +135,11 @@ by this adapter. For relays on the build's trusted enterprise list, the native
 host obtains a NIP-FI assertion from the enterprise adapter (session in
 `Authorization: Bearer`, a host-signed NIP-98 proof in `Nostr-Authorization`)
 and sends it as `Nostr-Federated-Identity` on protected relay HTTP, upload and
-media requests. The live socket for those relays connects through the Tauri
-WebSocket plugin with the same header; the assertion crosses into JavaScript
-once per connect, while the session token stays native. Only 401
+media requests. The live socket for those relays is a native WebSocket
+(`relay_socket.rs`) that fetches a fresh assertion and sends the same header
+itself, so neither the assertion nor the session token reaches JavaScript.
+Frames are delivered only after JavaScript starts the socket, and every ended
+connection releases its native stream. Only 401
 `session_required`/`session_expired` clear the session and reopen sign-in; 403
 `authorization_denied` keeps the session and stops that relay with access
 denied; other refusals keep the session and use the bounded reconnect backoff.

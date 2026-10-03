@@ -22,6 +22,7 @@ mod identity;
 mod nip_fi_assertion;
 mod notifications;
 mod os_idle;
+mod relay_socket;
 use os_idle::get_os_idle_seconds;
 mod relay;
 use identity::{
@@ -65,8 +66,11 @@ use enterprise_login_gate::enterprise_login_gate;
 use harness_setup::{pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
 use host_request::plugin_host_request;
-use nip_fi_assertion::{relay_socket_badge, RelayAssertions};
+use nip_fi_assertion::RelayAssertions;
 use notifications::{notification_show, Notifications};
+use relay_socket::{
+    relay_socket_close, relay_socket_connect, relay_socket_send, relay_socket_start, RelaySockets,
+};
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -400,7 +404,10 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         get_enterprise_auth,
         start_enterprise_auth_login,
         cancel_enterprise_auth_login,
-        relay_socket_badge,
+        relay_socket_connect,
+        relay_socket_start,
+        relay_socket_send,
+        relay_socket_close,
         clear_enterprise_auth,
         enterprise_login_gate,
         relay_sign,
@@ -495,7 +502,6 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_websocket::init())
         .setup(|app| {
             deep_links::setup(app.handle());
             // Only app-owned storage is created. Preview uses the OS-resolved legacy
@@ -545,6 +551,7 @@ pub fn run() {
         .manage(IdentityHost::default())
         .manage(RelayAssertions::new(enterprise_auth.clone()))
         .manage(enterprise_auth)
+        .manage(RelaySockets::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())

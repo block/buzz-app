@@ -18,6 +18,7 @@ import { createRelaySession } from "./session";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
+  Channel: class {},
   isTauri: () => true,
   convertFileSrc: (path: string, protocol: string) =>
     `${protocol}://localhost/${encodeURIComponent(path)}`,
@@ -71,7 +72,7 @@ beforeEach(() => {
   vi.mocked(invoke).mockImplementation(async (command, args, options) => {
     if (command === "identity_restore") return viewer.pubkey;
     // Ordinary relays carry no badge and keep the webview socket.
-    if (command === "relay_socket_badge") return null;
+    if (command === "relay_socket_connect") return null;
     if (command === "relay_sign") {
       expect(
         Object.keys((args as { event: EventTemplate }).event).sort(),

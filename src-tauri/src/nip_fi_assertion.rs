@@ -304,33 +304,5 @@ fn client() -> Result<&'static reqwest::Client> {
         .map_err(|_| "Enterprise network client is unavailable".into())
 }
 
-/// Badge for the relay WebSocket handshake. Returns the header value and its
-/// expiry so the socket can rotate before the relay ends the connection.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SocketBadge {
-    header: String,
-    expires_at: u64,
-}
-
-#[tauri::command]
-pub(crate) async fn relay_socket_badge(
-    identity: tauri::State<'_, IdentityHost>,
-    assertions: tauri::State<'_, RelayAssertions>,
-    url: String,
-) -> Result<Option<SocketBadge>> {
-    let url = Url::parse(&url).map_err(|_| "Invalid relay URL")?;
-    if url.scheme() != "wss" {
-        return Ok(None);
-    }
-    Ok(assertions
-        .get(identity.inner(), &url, true)
-        .await?
-        .map(|assertion| SocketBadge {
-            header: assertion.header.as_str().to_owned(),
-            expires_at: assertion.expires_at,
-        }))
-}
-
 #[cfg(test)]
 mod tests;

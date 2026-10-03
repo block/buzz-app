@@ -656,6 +656,7 @@ dependencies = [
  "buzz-credential-store",
  "buzzodz-plugins",
  "futures-lite",
+ "futures-util",
  "getrandom 0.3.4",
  "gtk",
  "hmac",
@@ -682,11 +683,11 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
- "tauri-plugin-websocket",
  "tauri-winrt-notification",
  "tempfile",
  "time",
  "tokio",
+ "tokio-tungstenite",
  "url",
  "user-idle",
  "uuid",
@@ -5513,26 +5514,6 @@ dependencies = [
  "url",
  "windows-sys 0.60.2",
  "zip",
-]
-
-[[package]]
-name = "tauri-plugin-websocket"
-version = "2.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ca243c7f0bf935cd81123e07f82188ccb919b19fbfc74518b947eedc4619bbb"
-dependencies = [
- "futures-util",
- "http",
- "log",
- "rand 0.9.5",
- "rustls",
- "serde",
- "serde_json",
- "tauri",
- "tauri-plugin",
- "thiserror 2.0.20",
- "tokio",
- "tokio-tungstenite",
 ]
 
 [[package]]

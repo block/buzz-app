@@ -2,8 +2,13 @@ import { useEffect, useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
 
 /** Shared candidates only. Ordinary mentions observe legacy hints without loading
- * them; native inventory is still ensured through the app-owned controller. */
-export function useAgentChoices(session: RelaySession, includeLegacy = true) {
+ * them; native inventory is still ensured through the app-owned controller.
+ * Selectors that show `selectable` pass `archive` to demand archive evidence. */
+export function useAgentChoices(
+  session: RelaySession,
+  includeLegacy = true,
+  archive = false,
+) {
   const source = session.agentChoices;
   const choices = useSyncExternalStore(
     source.subscribe,
@@ -13,8 +18,9 @@ export function useAgentChoices(session: RelaySession, includeLegacy = true) {
   useEffect(() => {
     if (includeLegacy) return source.retain();
   }, [source, includeLegacy]);
+  const archiveIdle = archive && choices.archives.status === "idle";
   useEffect(() => {
-    if (choices.pending) source.ensure(includeLegacy);
-  }, [source, includeLegacy, choices.pending, choices]);
+    if (choices.pending || archiveIdle) source.ensure(includeLegacy, archive);
+  }, [source, includeLegacy, archive, archiveIdle, choices.pending, choices]);
   return choices;
 }

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { File as NodeFile } from "node:buffer";
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";
 import "@testing-library/jest-dom/vitest";
@@ -31,6 +32,7 @@ import { createAgentChoices } from "../agents/choices";
 import { createAgentControl, type AgentControl } from "../agents/control";
 import { controlFixture } from "../agents/control-testing";
 import type { OutgoingEvent } from "../relay/outbox";
+import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
@@ -302,7 +304,14 @@ function mount(
     };
   };
   bindChoices();
-  const tree = () => <MessageComposer {...props} />;
+  let presented = true;
+  const tree = () => (
+    <ConversationPresentation value={presented}>
+      <div hidden={!presented} inert={!presented}>
+        <MessageComposer {...props} />
+      </div>
+    </ConversationPresentation>
+  );
   const view = render(tree(), {
     reactStrictMode: true,
   });
@@ -312,6 +321,10 @@ function mount(
     ...view,
     input,
     messages,
+    present(active: boolean) {
+      presented = active;
+      view.rerender(tree());
+    },
     setRows(next: readonly ChannelMessage[]) {
       rows = next;
     },
@@ -1999,6 +2012,7 @@ it("keeps retry submission available while a new-session draft is locked", () =>
       submit,
     },
   });
+  expect(document.querySelector("[data-reserve-typing]")).toBeNull();
   expect(h.input()).toHaveAttribute("aria-disabled", "true");
   const send = screen.getByRole("button", { name: "Send message" });
   expect(send).toBeEnabled();
@@ -3028,7 +3042,7 @@ it.each(["close", "escape"])(
   },
 );
 
-it.each(["retry", "unmount", "retarget", "disabled"])(
+it.each(["retry", "unmount", "retarget", "disabled", "suspended"])(
   "waits for confirmed addition and handles %s without duplicate sends",
   async (outcome) => {
     const h = mount();
@@ -3068,8 +3082,17 @@ it.each(["retry", "unmount", "retarget", "disabled"])(
       if (outcome === "unmount") h.unmount();
       else if (outcome === "retarget") h.retarget({ channelId: "other" });
       else if (outcome === "disabled") h.retarget({ disabled: true });
+      else if (outcome === "suspended") {
+        h.present(false);
+        expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+      }
     } finally {
       await act(async () => release());
+    }
+    if (outcome === "suspended") {
+      h.present(true);
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+      expect(h.input()).toHaveValue("@Honey ");
     }
     expect(add).toHaveBeenCalledTimes(outcome === "retry" ? 2 : 1);
     expect(h.messages.send).toHaveBeenCalledTimes(outcome === "retry" ? 1 : 0);
@@ -3456,4 +3479,504 @@ it("keeps a composed message unchanged through caret keys at its end and refuses
   expect(h.input()).toHaveValue("Hello!\nworld");
   expect(h.input().innerHTML).toBe(html);
   expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("retires composer transients and revoked insert commands without replacing the editor or draft", async () => {
+  const h = mount();
+  h.fill("retained draft");
+  const editor = h.input();
+  const commands = h.commands();
+  fireEvent.click(screen.getByRole("button", { name: "Toggle formatting" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Link/ }));
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.getByRole("dialog")).toContainElement(
+      document.activeElement as HTMLElement,
+    ),
+  );
+  const focus = vi.spyOn(editor, "focus");
+  h.present(false);
+  expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "First Honey", hidden: true }),
+  ).toBeNull();
+  act(() => {
+    expect(commands.insertText("late picker selection")).toBe(false);
+  });
+  h.present(true);
+  act(() => {
+    expect(commands.insertText("retired command after recovery")).toBe(false);
+  });
+  expect(h.input()).toBe(editor);
+  expect(editor).toHaveValue("retained draft");
+  expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  await act(() => Promise.resolve());
+  expect(focus).not.toHaveBeenCalled();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("restores the retained editor when the Link dialog closes normally", async () => {
+  const h = mount();
+  const editor = h.input();
+  fireEvent.click(screen.getByRole("button", { name: "Toggle formatting" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Link/ }));
+  await waitFor(() =>
+    expect(screen.getByRole("dialog")).toContainElement(
+      document.activeElement as HTMLElement,
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(editor).toHaveFocus());
+  expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+});
+
+it("keeps a held upload and its editor alive while presentation is suspended", async () => {
+  const h = mount();
+  let finish!: (value: {
+    name: string;
+    url: string;
+    type: string;
+    size: number;
+    sha256: string;
+  }) => void;
+  const gate = new Promise<{
+    name: string;
+    url: string;
+    type: string;
+    size: number;
+    sha256: string;
+  }>((resolve) => {
+    finish = resolve;
+  });
+  let signal!: AbortSignal;
+  const upload = vi.fn(
+    (_file: File, _channel: string, current: AbortSignal) => {
+      signal = current;
+      return gate;
+    },
+  );
+  h.retarget({ session: { ...h.session, attachments: { upload } } });
+  const editor = h.input();
+  h.fill("kept with upload");
+  fireEvent.change(screen.getByLabelText("Choose attachments"), {
+    target: { files: [new NodeFile(["notes"], "notes.txt")] },
+  });
+  await waitFor(() => expect(upload).toHaveBeenCalledOnce());
+  try {
+    h.present(false);
+    expect(signal.aborted).toBe(false);
+    expect(editor.isConnected).toBe(true);
+    expect(editor).toHaveValue("kept with upload");
+  } finally {
+    await act(async () =>
+      finish({
+        name: "notes.txt",
+        url: "https://relay.test/media/notes.txt",
+        type: "text/plain",
+        size: 5,
+        sha256: "a".repeat(64),
+      }),
+    );
+  }
+  h.present(true);
+  expect(h.input()).toBe(editor);
+  expect(screen.getByRole("status")).toHaveTextContent("Ready");
+  expect(signal.aborted).toBe(false);
+  expect(upload).toHaveBeenCalledOnce();
+});
+
+it("dismisses completion observations without reopening them on recovery", async () => {
+  const h = mount();
+  act(() => h.input().focus());
+  h.fill("!query");
+  h.publish(h.completionRequests.length - 1, "Completed choice");
+  expect(screen.getByText("Completed choice")).toBeInTheDocument();
+  const editor = h.input();
+  h.present(false);
+  expect(document.body.textContent).not.toContain("Completed choice");
+  h.present(true);
+  expect(h.input()).toBe(editor);
+  expect(editor).toHaveValue("!query");
+  expect(document.body.textContent).not.toContain("Completed choice");
+});
+
+it.each([undefined, "root"])(
+  "notifies draft retirement only after accepted %s cleanup persists, retrying without Send",
+  async (threadRootId) => {
+    const retired = vi.fn();
+    const h = mount({
+      ...(threadRootId ? { threadRootId } : {}),
+      onDraftSaved: retired,
+    });
+    h.fill("Accepted once");
+    const key = threadRootId
+      ? `draft:channel:thread:${threadRootId}`
+      : "draft:channel";
+    const stored = `buzz-view.v1:${JSON.stringify(["scope", key])}`;
+    const setItem = Storage.prototype.setItem;
+    const fail = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, key, value) {
+        if (key === stored) throw Error("no space");
+        setItem.call(this, key, value);
+      });
+    try {
+      await h.user.click(screen.getByRole("button", { name: "Send message" }));
+      expect(h.onSend).toHaveBeenCalledOnce();
+      expect(retired).not.toHaveBeenCalled();
+      expect(h.input()).toHaveValue("");
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeDisabled();
+      fireEvent.submit(screen.getByRole("form"));
+      expect(
+        threadRootId ? h.messages.reply : h.messages.send,
+      ).toHaveBeenCalledOnce();
+    } finally {
+      fail.mockRestore();
+    }
+    await h.user.click(
+      screen.getByRole("button", { name: "Retry draft cleanup" }),
+    );
+    expect(retired).toHaveBeenCalledExactlyOnceWith(
+      threadRootId ? "reply-id" : "channel-id",
+    );
+    expect(h.onSend).toHaveBeenCalledOnce();
+    expect(readView("scope", key, "")).toMatchObject({ text: "" });
+  },
+);
+
+it.each([false, true])(
+  "allows successive sends with no saved revision while writes fail (remembered agent: %s)",
+  async (remembered) => {
+    const retired = vi.fn();
+    const h = mount({ onDraftSaved: retired });
+    h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+    const key = 'buzz-view.v1:["scope","draft:channel"]';
+    const original = Storage.prototype.setItem;
+    const fail = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, name, value) {
+        if (name === key) throw Error("full");
+        original.call(this, name, value);
+      });
+    try {
+      h.fill("First message");
+      if (remembered)
+        await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+      await h.user.click(screen.getByRole("button", { name: "Send message" }));
+      expect(h.messages.send).toHaveBeenCalledOnce();
+      expect(h.input()).toHaveValue(remembered ? "@Honey " : "");
+      expect(h.input()).not.toHaveAttribute("contenteditable", "false");
+      expect(
+        screen.queryByRole("button", { name: "Retry draft cleanup" }),
+      ).not.toBeInTheDocument();
+      expect(localStorage.getItem(key)).toBeNull();
+      expect(retired).toHaveBeenCalledTimes(remembered ? 0 : 1);
+      if (remembered) {
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "Could not save this draft",
+        );
+        expect(
+          screen.getByRole("button", { name: "Send message" }),
+        ).toBeEnabled();
+        // Keep the actual inline recipient while appending new work.
+        await h.user.keyboard("Second message");
+      } else h.fill("Second message");
+      await h.user.click(screen.getByRole("button", { name: "Send message" }));
+      expect(h.messages.send).toHaveBeenCalledTimes(2);
+      expect(h.messages.send.mock.calls[1]?.[1]).toContain("Second message");
+      expect(h.messages.send.mock.calls[1]?.[2]).toEqual(
+        remembered ? [first.pubkey] : [],
+      );
+      expect(localStorage.getItem(key)).toBeNull();
+      expect(retired).toHaveBeenCalledTimes(remembered ? 0 : 2);
+      // Failed absence-only cleanup must not leave a session recovery lock.
+      h.retarget({ channelId: "other" });
+      h.retarget({ channelId: "channel" });
+      h.fill("After remount");
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled();
+      expect(
+        screen.queryByRole("button", { name: "Retry draft cleanup" }),
+      ).not.toBeInTheDocument();
+    } finally {
+      fail.mockRestore();
+    }
+  },
+);
+
+it.each([false, true])(
+  "still saves the replacement of an absent draft when writes recover (remembered: %s)",
+  async (remembered) => {
+    const retired = vi.fn();
+    const h = mount({ onDraftSaved: retired });
+    h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+    const fail = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw Error("full");
+      });
+    try {
+      h.fill("Previously unsaved text");
+      if (remembered)
+        await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+      expect(
+        localStorage.getItem('buzz-view.v1:["scope","draft:channel"]'),
+      ).toBeNull();
+      h.messages.send.mockImplementationOnce(() => {
+        fail.mockRestore();
+        return "accepted";
+      });
+      await h.user.click(screen.getByRole("button", { name: "Send message" }));
+      expect(readView("scope", "draft:channel", "missing")).toMatchObject({
+        text: remembered ? "@Honey " : "",
+      });
+      expect(retired).toHaveBeenCalledExactlyOnceWith("accepted");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } finally {
+      fail.mockRestore();
+    }
+  },
+);
+
+it.each(["captured", "cleanup"])(
+  "retains accepted recovery when the %s saved revision is unreadable",
+  async (unreadable) => {
+    const key = 'buzz-view.v1:["scope","draft:channel"]';
+    let blocked = unreadable === "captured";
+    const getItem = Storage.prototype.getItem;
+    const read = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation(function (this: Storage, name) {
+        if (name === key && blocked) throw Error("unreadable");
+        return getItem.call(this, name);
+      });
+    const write = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw Error("full");
+      });
+    try {
+      const retired = vi.fn();
+      const h = mount({ onDraftSaved: retired });
+      h.fill("Accepted but storage cannot be verified");
+      h.messages.send.mockImplementationOnce(() => {
+        blocked = true;
+        return "accepted";
+      });
+      await h.user.click(screen.getByRole("button", { name: "Send message" }));
+      expect(h.messages.send).toHaveBeenCalledOnce();
+      expect(retired).not.toHaveBeenCalled();
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeDisabled();
+      await h.user.click(
+        screen.getByRole("button", { name: "Retry draft cleanup" }),
+      );
+      expect(
+        screen.getByRole("button", { name: "Retry draft cleanup" }),
+      ).toBeVisible();
+      expect(h.messages.send).toHaveBeenCalledOnce();
+    } finally {
+      read.mockRestore();
+      write.mockRestore();
+    }
+  },
+);
+
+it.each([false, true])(
+  "preserves a newer saved revision when accepted cleanup races a replacement (event: %s)",
+  async (notify) => {
+    const retired = vi.fn();
+    const h = mount({ onDraftSaved: retired });
+    h.fill("Send this body");
+    h.messages.send.mockImplementationOnce(() => {
+      const key = 'buzz-view.v1:["scope","draft:channel"]';
+      localStorage.setItem(key, JSON.stringify("Newer saved work"));
+      if (notify)
+        window.dispatchEvent(
+          new StorageEvent("storage", { storageArea: localStorage, key }),
+        );
+      return "accepted";
+    });
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    expect(h.onSend).toHaveBeenCalledExactlyOnceWith("accepted");
+    expect(retired).not.toHaveBeenCalled();
+    expect(readView("scope", "draft:channel", "")).toBe("Newer saved work");
+    expect(h.input()).toHaveValue("Newer saved work");
+  },
+);
+
+it("compares before local edits and Send even if the storage event has not arrived", async () => {
+  const h = mount();
+  h.fill("Local body");
+  localStorage.setItem(
+    'buzz-view.v1:["scope","draft:channel"]',
+    JSON.stringify("Saved elsewhere"),
+  );
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+  h.fill("Continue local edits");
+  expect(readView("scope", "draft:channel", "")).toBe("Saved elsewhere");
+  await h.user.click(screen.getByRole("button", { name: "Load saved draft" }));
+  expect(h.input()).toHaveValue("Saved elsewhere");
+});
+
+it("keeps the original draft after synchronous outbox rejection without a persistence callback", async () => {
+  const retired = vi.fn();
+  const h = mount({ onDraftSaved: retired });
+  h.fill("Rejected body");
+  h.messages.send.mockImplementationOnce(() => {
+    throw Error("outbox full");
+  });
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.onSend).not.toHaveBeenCalled();
+  expect(retired).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("Rejected body");
+  expect(readView("scope", "draft:channel", "")).toMatchObject({
+    text: "Rejected body",
+  });
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+});
+
+it("does not restore accepted cleanup over a replacement made while the composer was closed", async () => {
+  const h = mount();
+  h.fill("Already accepted");
+  const fail = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw Error("full");
+  });
+  try {
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(
+      screen.getByRole("button", { name: "Retry draft cleanup" }),
+    ).toBeVisible();
+  } finally {
+    fail.mockRestore();
+  }
+  const session = h.session;
+  h.unmount();
+  writeView("scope", "draft:channel", "A replacement draft");
+  const reopened = mount({ session });
+  expect(reopened.input()).toHaveValue("A replacement draft");
+  expect(
+    screen.queryByRole("button", { name: "Retry draft cleanup" }),
+  ).not.toBeInTheDocument();
+});
+
+it("leaves active message-edit content alone and reconciles the draft on return", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("An edit, not a draft");
+  act(() => writeView("scope", "draft:channel", "Draft saved elsewhere"));
+  expect(h.input()).toHaveValue("An edit, not a draft");
+  expect(readView("scope", "draft:channel", "")).toBe("Draft saved elsewhere");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
+  expect(h.input()).toHaveValue("Draft saved elsewhere");
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("does not apply ordinary draft reconciliation to submission-owned recovery", () => {
+  const submit = vi.fn();
+  const h = mount({
+    submission: {
+      draftKey: "session-retry",
+      recoveredDraft: { text: "Durable operation", recipients: [] },
+      locked: true,
+      disabled: false,
+      submit,
+    },
+  });
+  act(() => writeView("scope", "session-retry", "Disposable view state"));
+  expect(h.input()).toHaveValue("Durable operation");
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  expect(submit).toHaveBeenCalledExactlyOnceWith({
+    text: "Durable operation",
+    recipients: [],
+  });
+  expect(
+    screen.queryByRole("button", { name: "Load saved draft" }),
+  ).not.toBeInTheDocument();
+});
+
+it("rechecks the saved revision after held session admission before submitting", async () => {
+  const h = mount();
+  const channel = {
+    id: "channel",
+    channelType: "session",
+    members: [first.pubkey],
+  };
+  const list = { status: "ready", channels: [channel] };
+  const library = { status: "ready", identities: [first] };
+  let release = () => {};
+  const refreshMembership = vi.fn(
+    () =>
+      new Promise<typeof channel>((resolve) => {
+        release = () => resolve(channel);
+      }),
+  );
+  h.retarget({
+    sessionConversation: true,
+    session: {
+      ...h.session,
+      channels: { list: () => list, subscribeList: () => () => {} },
+      agentLibrary: {
+        snapshot: () => library,
+        subscribe: () => () => {},
+      },
+      workSessions: { refreshMembership, addAgents: vi.fn() },
+    } as unknown as RelaySession,
+  });
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  h.submit();
+  await waitFor(() => expect(refreshMembership).toHaveBeenCalledOnce());
+  try {
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    // Event delivery can lag a synchronous read in another page.
+    localStorage.setItem(
+      'buzz-view.v1:["scope","draft:channel"]',
+      JSON.stringify("New work during admission"),
+    );
+  } finally {
+    await act(async () => release());
+  }
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toHaveTextContent("changed elsewhere");
+  expect(readView("scope", "draft:channel", "")).toBe(
+    "New work during admission",
+  );
+});
+
+it("locks a nonempty remembered-agent follow-up until accepted draft cleanup succeeds", async () => {
+  const retired = vi.fn();
+  const h = mount({ onDraftSaved: retired });
+  vi.spyOn(h.session.profiles, "snapshot").mockReturnValue(
+    new Map([[first.pubkey, { name: "Honey", isAgent: true }]]),
+  );
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  const fail = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw Error("full");
+  });
+  try {
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.input()).toHaveValue("@Honey ");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    fireEvent.submit(screen.getByRole("form"));
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    expect(retired).not.toHaveBeenCalled();
+  } finally {
+    fail.mockRestore();
+  }
+  await h.user.click(
+    screen.getByRole("button", { name: "Retry draft cleanup" }),
+  );
+  expect(readView("scope", "draft:channel", "")).toMatchObject({
+    text: "@Honey ",
+  });
+  expect(retired).toHaveBeenCalledOnce();
+  expect(h.messages.send).toHaveBeenCalledOnce();
 });

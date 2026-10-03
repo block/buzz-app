@@ -515,12 +515,16 @@ it("does not consume a legacy group default while its required identity is still
 it("copies a complete managed lineup without an unused legacy warning", async () => {
   const test = harness(),
     user = userEvent.setup();
+  const read = vi.fn(test.owner.session.canvas.read);
   try {
     await test.owner.session.agentChoices.refresh();
     await test.owner.session.archives.ensure();
     render(
       <SaveAsTemplate
-        session={test.owner.session}
+        session={{
+          ...test.owner.session,
+          canvas: { ...test.owner.session.canvas, read },
+        }}
         channel={{
           id: "11111111-1111-4111-8111-111111111111",
           name: "Partial",
@@ -540,6 +544,9 @@ it("copies a complete managed lineup without an unused legacy warning", async ()
     expect(
       screen.queryByText(/Incomplete agent inventory/),
     ).not.toBeInTheDocument();
+    expect(read).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111", {
+      strong: false,
+    });
     expect(test.published).toEqual([]);
   } finally {
     cleanup();
@@ -1324,7 +1331,7 @@ it.each(["", "# Seed plan"])(
         );
         // Ordinary browsing still uses the lagging replica, not the writer.
         await expect(
-          test.owner.session.canvas.read(id),
+          test.owner.session.canvas.read(id, { strong: false }),
         ).resolves.toBeUndefined();
         expect(test.reads.at(-1)?.consistency).toBeUndefined();
       }

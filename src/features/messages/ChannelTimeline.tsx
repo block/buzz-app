@@ -126,6 +126,12 @@ export type ChannelTimelineProps = {
   onOpenLink(url: string): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
+  /** One inline exact visit: focus the verified mounted row, without a page navigation. */
+  inlineTarget?:
+    | Readonly<{ messageId: string; signal: AbortSignal }>
+    | undefined;
+  /** Draft context starts at the returned tail, never reads/writes canonical scroll. */
+  transient?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   onOpenThread?(
     messageId: string,
@@ -164,12 +170,16 @@ function Timeline({
   onOpenLink,
   canOpenLink,
   revealMessageId,
+  inlineTarget,
+  transient = false,
   navigation,
   onOpenThread,
   onOpenMediaReview,
 }: ChannelTimelineProps) {
   const [initialPosition] = useState(() =>
-    readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
+    transient
+      ? null
+      : readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
   );
   const savedPosition = useRef(initialPosition);
   const restoredAnchor = useRef<ReadingPosition["anchor"]>(undefined);
@@ -326,10 +336,12 @@ function Timeline({
       align: "end",
     });
   }, [rows.length]);
+  const inlineSignal = inlineTarget?.signal;
   const targetId =
-    navigation?.target.kind === "conversation"
+    inlineTarget?.messageId ??
+    (navigation?.target.kind === "conversation"
       ? navigation.target.messageId
-      : undefined;
+      : undefined);
   const targetIndex = rows.findIndex((row) => row.id === targetId);
   const prepareTarget = useCallback(() => {
     if (!handle.current) return;
@@ -351,7 +363,7 @@ function Timeline({
     ),
     settled,
     messageId: targetId,
-    signal: navigation?.signal,
+    signal: inlineSignal ?? navigation?.signal,
     ready: !!size.width && !!size.height && targetIndex >= 0,
     prepare: prepareTarget,
     complete: completeTarget,
@@ -404,7 +416,8 @@ function Timeline({
       upwardGesture.current = false;
       olderDemand.current = false;
       settled.current = false;
-      writeView(scope, `scroll:${channelId}`, savedPosition.current);
+      if (!transient)
+        writeView(scope, `scroll:${channelId}`, savedPosition.current);
       observer.disconnect();
       if (handle.current)
         geometry.set(
@@ -415,7 +428,7 @@ function Timeline({
         );
     };
     // Initial signature only; mutations invalidate the saved cache on remount.
-  }, [channelId, geometry, scope]);
+  }, [channelId, geometry, scope, transient]);
   // A reveal completes when its scroll runs. Until then it stays pending under
   // the intent that scheduled it: a row update that cancels its frame (an echo,
   // an edit, an older-history prepend) reschedules it, while any newer intent
@@ -457,12 +470,15 @@ function Timeline({
       arrivals > 0 &&
       previousIds.size > 0 &&
       !follow.current &&
-      (!targetId || exactRevealed.current === navigation?.signal)
+      (!targetId ||
+        exactRevealed.current === (inlineSignal ?? navigation?.signal))
     ) {
       setNewMessageCount((count) => count + arrivals);
     }
     if (
-      (targetId && navigation && exactRevealed.current !== navigation.signal) ||
+      (targetId &&
+        (inlineSignal || navigation) &&
+        exactRevealed.current !== (inlineSignal ?? navigation?.signal)) ||
       !size.width ||
       !size.height ||
       !rows.length ||
@@ -589,6 +605,7 @@ function Timeline({
     recordPosition,
     targetId,
     navigation,
+    inlineSignal,
     exactRevealed,
     updateJumpToLatest,
     revealMessageId,
@@ -727,12 +744,11 @@ function Timeline({
           </Button>
         ) : null}
       </div>
-      {showJumpToLatest && (
-        <JumpToLatestButton
-          newMessageCount={newMessageCount}
-          onClick={jumpToLatest}
-        />
-      )}
+      <JumpToLatestButton
+        visible={showJumpToLatest}
+        newMessageCount={newMessageCount}
+        onClick={jumpToLatest}
+      />
       {width > 0 && (
         <Virtualizer
           ref={handle}

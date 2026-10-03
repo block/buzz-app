@@ -144,8 +144,7 @@ export function authorizeMemberChange(
       : canManageMember(state, viewer, change.pubkey)) ||
     state.roles[change.pubkey] !== change.expectedRole ||
     (change.role !== "remove" &&
-      (change.expectedRole === "bot" ||
-        change.expectedRole === change.role ||
+      (change.expectedRole === change.role ||
         !editableMemberRoles.includes(change.role)))
   )
     throw new Error(

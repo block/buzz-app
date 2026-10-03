@@ -50,6 +50,19 @@ for (const kind of ["image", "video"]) {
     }
     for (const width of [320, 800, 1280]) {
       await page.setViewportSize({ width, height: 720 });
+      if (kind === "video") {
+        await page.evaluate(() =>
+          window.dispatchEvent(new Event("fixture-typing")),
+        );
+        const typing = dialog.getByRole("status", { name: "Typing activity" });
+        const frameOption = dialog.getByRole("checkbox", {
+          name: "Comment at current frame",
+        });
+        await expect(typing).toContainText("Alex is typing");
+        const typingBox = await typing.boundingBox();
+        const optionBox = await frameOption.boundingBox();
+        expect(typingBox.y).toBeGreaterThan(optionBox.y + optionBox.height);
+      }
       const control = dialog.getByRole("button", {
         name: kind === "image" ? /^Image zoom:/ : "Play video",
         exact: true,

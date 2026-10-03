@@ -1114,7 +1114,7 @@ it.each(["setup-needed", "unauthorized"])(
     else {
       expect(await screen.findByRole("alert")).toHaveTextContent(
         failure === "unauthorized"
-          ? "Your Builderlab session ended. Sign out, then sign in again."
+          ? "This Builderlab account can't manage Buzz identities right now. Try signing in again."
           : "Could not load the connected Buzz identity.",
       );
       expect(
@@ -1157,7 +1157,7 @@ it("does not offer Connect or stale owner actions on an initial unauthorized loa
   routes["/api/builderlab/list"] = () => ({ error: { code: "unauthorized" } });
   renderCard();
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Your Builderlab session ended. Sign out, then sign in again.",
+    "This Builderlab account can't manage Buzz identities right now. Try signing in again.",
   );
   expect(
     screen.queryByRole("button", { name: "Connect Buzz identity" }),
@@ -1195,7 +1195,7 @@ it("clears stale blocked-owner and deletion notices on unauthorized Refresh", as
   routes["/api/builderlab/list"] = () => ({ error: { code: "unauthorized" } });
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Your Builderlab session ended. Sign out, then sign in again.",
+    "This Builderlab account can't manage Buzz identities right now. Try signing in again.",
   );
   expect(screen.queryByText("Deletion started")).not.toBeInTheDocument();
   expect(screen.queryByText(/A deletion request from/)).not.toBeInTheDocument();
@@ -1720,11 +1720,89 @@ it("explains when another context cleared the blocked slot before final confirma
   fireEvent.click(
     within(dialog).getByRole("button", { name: "Start deletion" }),
   );
-  expect(within(dialog).getByRole("alert")).toHaveTextContent(
-    "Refresh and try again.",
-  );
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(/^Try again\.$/);
   expect(deletionPosts()).toHaveLength(0);
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
+  // The copy promises that pressing Start deletion again is enough.
+  const admission = hold();
+  routes["/api/builderlab/delete"] = admission.answer as Handler;
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Start deletion" }),
+  );
+  await waitFor(() => expect(deletionPosts()).toHaveLength(1));
+  const stored = JSON.parse(localStorage.getItem(DELETION_PENDING_KEY) ?? "");
+  expect(stored.owner_pubkey).toBe(local);
+  expect(deletionPosts()[0]?.[1]).toEqual(stored.request);
+  await act(async () =>
+    admission.release(Response.json(accepted(stored.request), { status: 202 })),
+  );
+  expect(await screen.findByText("Deletion started")).toBeVisible();
+  expect(deletionPosts()).toHaveLength(1);
+});
+
+it("explains a same-owner envelope saved for another origin without asking to switch identity", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  localStorage.setItem(
+    DELETION_PENDING_KEY,
+    JSON.stringify({
+      version: 1,
+      owner_pubkey: local,
+      backend_origin: "https://other.example",
+      request: {
+        community_id: archived.id,
+        host: archived.normalized_host,
+        request_id: "33333333-3333-4333-8333-333333333333",
+        acknowledgement_version: 1,
+      },
+    }),
+  );
+  const original = localStorage.getItem(DELETION_PENDING_KEY);
+  renderCard();
+  expect(
+    await screen.findByText(
+      "This identity has a deletion request saved from a different app address on this device. It can't be checked here, so contact support before starting another deletion.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.queryByText(/Switch to that Buzz identity/),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
+  expect(deletionPosts()).toHaveLength(0);
+});
+
+it("explains a same-owner other-origin slot occupied at final confirmation", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  renderCard();
+  const dialog = await openDeletion();
+  fireEvent.change(within(dialog).getByLabelText("Type the exact host"), {
+    target: { value: archived.normalized_host },
+  });
+  fireEvent.click(
+    within(dialog).getByRole("checkbox", {
+      name: /I understand this cannot be canceled/,
+    }),
+  );
+  const original = JSON.stringify({
+    version: 1,
+    owner_pubkey: local,
+    backend_origin: "https://other.example",
+    request: {
+      community_id: archived.id,
+      host: archived.normalized_host,
+      request_id: "33333333-3333-4333-8333-333333333333",
+      acknowledgement_version: 1,
+    },
+  });
+  localStorage.setItem(DELETION_PENDING_KEY, original);
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Start deletion" }),
+  );
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "Deletion was not sent. This identity has a deletion request saved from a different app address on this device. Contact support before starting another deletion.",
+  );
+  expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
+  expect(deletionPosts()).toHaveLength(0);
 });
 
 it("keeps and retries the same UUID after a wrong-status pre-admission rejection", async () => {

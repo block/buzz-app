@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import {
-  cleanup,
   act,
+  cleanup,
   fireEvent,
   render as rtlRender,
   screen,
@@ -16,6 +16,7 @@ import {
   type ComponentProps,
   type ReactNode,
 } from "react";
+import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { useKeyboardFocusVisibility } from "../../shared/design-system/useKeyboardFocusVisibility";
 const render = (ui: ReactElement) => rtlRender(ui, { wrapper: ToastProvider });
@@ -302,3 +303,62 @@ it.each([false, true])(
     ).toBeTruthy();
   },
 );
+
+it("retires the native top-layer bar and its open menu with the source", async () => {
+  vi.stubGlobal("matchMedia", () => ({
+    matches: true,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const show = vi.fn(function (this: HTMLElement) {
+      this.style.display = "block";
+    }),
+    hide = vi.fn(function (this: HTMLElement) {
+      this.style.display = "";
+    });
+  HTMLElement.prototype.showPopover = show;
+  HTMLElement.prototype.hidePopover = hide;
+  function Visit({ active }: { active: boolean }) {
+    const row = useRef<HTMLDivElement>(null);
+    return (
+      <ConversationPresentation value={active}>
+        <div ref={row} data-testid="row" hidden={!active} inert={!active}>
+          <MessageActionBar rowRef={row} copyText={() => "Source"} />
+        </div>
+      </ConversationPresentation>
+    );
+  }
+  try {
+    const view = render(<Visit active />);
+    fireEvent.pointerEnter(screen.getByTestId("row"));
+    // The first interaction now mounts lazy controls. jsdom has no real hover;
+    // opening their menu supplies the floating owner's retained-open evidence.
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "More message actions",
+        hidden: true,
+      }),
+    );
+    expect(await screen.findByRole("menu")).toBeTruthy();
+    expect(show).toHaveBeenCalled();
+    view.rerender(<Visit active={false} />);
+    expect(document.body.querySelector('[role="menu"]')).toBeNull();
+    expect(document.body.querySelector('[popover="manual"]')).toBeNull();
+    expect(hide).toHaveBeenCalled();
+    view.rerender(<Visit active />);
+    await act(() => Promise.resolve());
+    expect(document.body.querySelector('[role="menu"]')).toBeNull();
+  } finally {
+    cleanup();
+    Reflect.deleteProperty(HTMLElement.prototype, "showPopover");
+    Reflect.deleteProperty(HTMLElement.prototype, "hidePopover");
+    vi.unstubAllGlobals();
+  }
+});

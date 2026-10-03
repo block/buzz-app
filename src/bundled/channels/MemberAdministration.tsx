@@ -174,7 +174,6 @@ export function MemberRow({
         <>
           <MenuSeparator />
           {canEdit &&
-            role !== "bot" &&
             editableMemberRoles
               // Guest assignment is hidden until its permission contract is settled.
               .filter((next) => next !== role && next !== "guest")
@@ -183,7 +182,7 @@ export function MemberRow({
                   Make {next}
                 </MenuItem>
               ))}
-          {canEdit && role !== "bot" && <MenuSeparator />}
+          {canEdit && <MenuSeparator />}
           {canRemove && (
             <MenuItem tone="danger" onClick={() => choose("remove")}>
               Remove from channel

@@ -614,6 +614,95 @@ test("hosted deletion reload keeps the UUID until an enabled manual replay", asy
   ).toBeNull();
 });
 
+test("hosted deletion keeps a foreign owner's full npub inside the dialog and notice", async ({
+  page,
+  app,
+}) => {
+  const owner = "a".repeat(64);
+  const community = {
+    id: "11111111-1111-4111-8111-111111111111",
+    name: "north",
+    normalized_host: "North.communities.buzz.xyz",
+    archived_at: "2026-09-24",
+  };
+  const deletes = [];
+  await page.route("**/api/relay/identity", (route) =>
+    route.fulfill({ json: { viewer: owner } }),
+  );
+  await page.route("**/api/builderlab/**", async (route) => {
+    const action = new URL(route.request().url()).pathname.split("/").at(-1);
+    if (action === "auth")
+      return route.fulfill({
+        json: {
+          auth: {
+            email: "owner@example.com",
+            expiresAt: "2030",
+            capabilities: { can_delete_buzz_communities: true },
+          },
+        },
+      });
+    if (action === "identity")
+      return route.fulfill({ json: { identity: { pubkey_hex: owner } } });
+    if (action === "list")
+      return route.fulfill({
+        json: {
+          communities: [community],
+          quota_used: 1,
+          quota_limit: 5,
+          can_create: true,
+        },
+      });
+    if (action === "delete") deletes.push(route.request().postDataJSON());
+    return route.fulfill({ status: 404, json: { error: "unexpected" } });
+  });
+  const contained = (locator) =>
+    locator.evaluate((node) => node.scrollWidth <= node.clientWidth);
+
+  await page.goto(app.origin);
+  await button(page, "Your profile").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await button(page, "Hosted communities").click();
+  await button(page, "Delete").click();
+  const dialog = page.getByRole("dialog", { name: /Permanently delete north/ });
+  await dialog
+    .getByLabel("Type the exact host")
+    .fill(community.normalized_host);
+  await dialog
+    .getByRole("checkbox", { name: /I understand this cannot be canceled/ })
+    .check();
+  // Another tab claims the slot while this dialog is open.
+  await page.evaluate(
+    (community) =>
+      localStorage.setItem(
+        "buzz.hosted-community-deletion.v1",
+        JSON.stringify({
+          version: 1,
+          owner_pubkey: "b".repeat(64),
+          backend_origin: window.location.origin,
+          request: {
+            community_id: community.id,
+            host: community.normalized_host,
+            request_id: "33333333-3333-4333-8333-333333333333",
+            acknowledgement_version: 1,
+          },
+        }),
+      ),
+    community,
+  );
+  await dialog.getByRole("button", { name: "Start deletion" }).click();
+  const alert = dialog.getByRole("alert");
+  await expect(alert).toContainText("is already pending on this device");
+  expect(await contained(dialog)).toBe(true);
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  // The global paragraph rule already wraps this notice; this guards regressions.
+  const notice = page
+    .getByRole("status")
+    .filter({ hasText: "is still pending" });
+  await expect(notice).toBeVisible();
+  expect(await contained(notice)).toBe(true);
+  expect(deletes).toHaveLength(0);
+});
+
 test("Settings loads and publishes the selected community profile", async ({
   page,
   app,

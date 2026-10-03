@@ -728,7 +728,7 @@ it("changes an existing Guest to Member only after explicit confirmation", async
   expect(t.publish).toHaveBeenCalledOnce();
 });
 it.each([false, true])(
-  "groups Bot by identity while retaining its accessible role and removal-only policy (Agent: %s)",
+  "groups Bot by identity while retaining its accessible role and explicit role controls (Agent: %s)",
   async (agent) => {
     const t = await setup("owner", "bot", true, undefined, agent);
     const row = screen.getByRole("button", { name: /Open profile for Morgan/ });
@@ -760,9 +760,8 @@ it.each([false, true])(
     expect(
       await screen.findByRole("menuitem", { name: "Remove from channel" }),
     ).toBeVisible();
-    expect(
-      screen.queryByRole("menuitem", { name: /Make / }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Make admin" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Make member" })).toBeVisible();
     expect(t.publish).not.toHaveBeenCalled();
     await t.user.click(
       screen.getByRole("menuitem", { name: "Remove from channel" }),
@@ -1794,5 +1793,33 @@ it.each(["other", "invalid"] as const)(
     expect(
       screen.queryByRole("menuitem", { name: /^Make / }),
     ).not.toBeInTheDocument();
+  },
+);
+
+it.each(["owner", "admin"])(
+  "lets %s explicitly promote a bot while preserving verified agent identity",
+  async (actor) => {
+    const t = await setup(actor, "bot", true, undefined, true);
+    const dialog = await t.choose("Make admin");
+    expect(dialog).toHaveTextContent("from bot to admin");
+    expect(t.publish).not.toHaveBeenCalled();
+    await t.user.click(
+      within(dialog).getByRole("button", { name: "Make admin" }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        t.session.memberAdministration.snapshot(id).operation?.status,
+      ).toBe("confirmed"),
+    );
+    expect(
+      screen.queryByText("Member change confirmed."),
+    ).not.toBeInTheDocument();
+    const row = screen.getByRole("button", { name: /Open profile for Morgan/ });
+    expect(row.closest("section")).toHaveAttribute("aria-label", "Admins");
+    expect(
+      row.closest("li")?.querySelector('[data-avatar-shape="squircle"]'),
+    ).toBeInTheDocument();
+    expect(row).toHaveAccessibleName(/, admin$/);
+    expect(t.publish).toHaveBeenCalledOnce();
   },
 );

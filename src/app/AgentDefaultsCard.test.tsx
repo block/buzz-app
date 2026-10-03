@@ -455,6 +455,9 @@ it.each([
     });
     await control.refresh();
     const card = await screen.findByRole("region", { name: "Agent defaults" });
+    await user.click(
+      within(card).getByRole("button", { name: "Add environment variable" }),
+    );
     for (const [key, value] of Object.entries(environment)) {
       await user.type(within(card).getByLabelText("Name"), key);
       if (value) await user.type(within(card).getByLabelText("Value"), value);
@@ -542,6 +545,9 @@ it.each([
     await control.refresh();
     const card = await screen.findByRole("region", { name: "Agent defaults" });
     if (draft) {
+      await user.click(
+        within(card).getByRole("button", { name: "Add environment variable" }),
+      );
       await user.type(within(card).getByLabelText("Name"), draft.key);
       if (draft.value)
         await user.type(within(card).getByLabelText("Value"), draft.value);
@@ -910,8 +916,18 @@ it("discard clears unfinished environment inputs as well as the saved draft", as
   const { control } = setup();
   await control.refresh();
   const card = await screen.findByRole("region", { name: "Agent defaults" });
+  const add = within(card).getByRole("button", {
+    name: "Add environment variable",
+  });
+  expect(add).toHaveAttribute("aria-expanded", "false");
+  expect(within(card).getByLabelText("Name")).not.toBeVisible();
+  await user.click(add);
   await user.type(within(card).getByLabelText("Name"), "UNSAVED_TOKEN");
   await user.type(within(card).getByLabelText("Value"), "unfinished-secret");
+  await user.click(add);
+  await user.click(add);
+  expect(within(card).getByLabelText("Name")).toHaveValue("UNSAVED_TOKEN");
+  expect(within(card).getByLabelText("Value")).toHaveValue("unfinished-secret");
   expect(within(card).getByRole("button", { name: "Discard" })).toBeVisible();
   await user.type(
     within(card).getByRole("textbox", { name: "Custom default model ID" }),
@@ -955,9 +971,13 @@ it("changing the default harness keeps provider, clears model and effort, and sa
     within(card).getByRole("combobox", { name: "Default model" }),
   ).toHaveTextContent("Not set");
   expect(within(card).getByLabelText("Default effort")).toHaveValue("");
+  await user.click(
+    within(card).getByRole("button", { name: "Add environment variable" }),
+  );
   await user.type(within(card).getByLabelText("Name"), "NEW_KEY");
   await user.type(within(card).getByLabelText("Value"), "secret-value");
   await user.click(within(card).getByRole("button", { name: "Add variable" }));
+  expect(within(card).getByLabelText("Name")).toHaveFocus();
   await user.click(
     within(card).getByRole("button", { name: "Remove SAVED_TOKEN" }),
   );

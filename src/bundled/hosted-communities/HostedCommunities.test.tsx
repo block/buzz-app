@@ -789,3 +789,41 @@ it("keeps a failed copy handoff for another address when a community is archived
     screen.getByRole("button", { name: "Try copying again" }),
   ).toBeEnabled();
 });
+
+it("only presents an empty hosted collection after a successful read", async () => {
+  let release!: (value: unknown) => void;
+  const list = new Promise((resolve) => {
+    release = resolve;
+  });
+  routes["/api/builderlab/list"] = () => list;
+  renderCard();
+  try {
+    await waitFor(() =>
+      expect(calls.some(([url]) => url === "/api/builderlab/list")).toBe(true),
+    );
+    expect(
+      screen.queryByRole("heading", { name: "No hosted communities yet" }),
+    ).toBeNull();
+  } finally {
+    release({ communities: [] });
+  }
+  expect(
+    await screen.findByRole("heading", {
+      name: "No hosted communities yet",
+      level: 4,
+    }),
+  ).toBeVisible();
+});
+
+it("keeps a failed hosted collection read separate from an empty result", async () => {
+  routes["/api/builderlab/list"] = () => ({
+    error: { message: "List unavailable" },
+  });
+  renderCard();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "List unavailable",
+  );
+  expect(
+    screen.queryByRole("heading", { name: "No hosted communities yet" }),
+  ).toBeNull();
+});

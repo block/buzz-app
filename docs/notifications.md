@@ -18,12 +18,15 @@ Windows toast is built with silent audio (`sound(None)`), Linux Notify sends
 the standard `suppress-sound` hint, and the macOS backend never sets a sound
 name. Because a submission can resolve after state has moved on, the audio
 decision stays under revalidation until the platform resolves it: any interval
-of Sound turned off, alerts or the category disabled, or revoked
-access/eligibility cancels the sound for good (without affecting the banner),
+of Sound turned off, the category set to Silent, alerts or the category disabled,
+or revoked access/eligibility cancels the sound for good (without affecting the banner),
 and the sound also requires the same live account generation and currently
 allowed, eligible, Sound-enabled state when the submission is accepted.
-Settings offers per-category sound selection with an in-app preview; the
-Sound switch turns playback off without disabling alerts.
+Selecting a different sound in Settings previews it immediately; loading or
+restoring settings never plays a preview. Silent stops the current preview. The
+Sound switch turns playback off without disabling alerts. Each category also offers
+Silent, which is saved like other sound choices and suppresses that category’s
+audio without changing its desktop alerts. Silent has no audio preview.
 
 ```ts
 export const inject = ["notifications"];

@@ -184,7 +184,7 @@
     display: flex;
     flex-shrink: 0;
   }
-  /* Proposed compact row treatment: full labels remain in the popup and hint. */
+  /* Row choices retain a visible boundary; full labels stay in the popup and hint. */
   .buzz-select[data-variant="compact"] {
     display: grid;
     min-width: 0;
@@ -192,12 +192,6 @@
   .buzz-select[data-variant="compact"] .buzz-button {
     min-width: 0;
     max-width: 100%;
-    color: var(--text-subtle);
-  }
-  .buzz-select[data-variant="compact"]
-    .buzz-button:is(:hover, :active, [aria-expanded="true"]):not(
-      [data-disabled]
-    ) {
     color: var(--text-standard);
   }
   .buzz-select[data-variant="compact"] .buzz-button:disabled {

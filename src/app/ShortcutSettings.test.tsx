@@ -175,21 +175,19 @@ it("lists live host and plugin shortcuts without search or intro text and follow
         apple
       />,
     );
+    expect(
+      screen.getByRole("heading", { name: "Shortcuts", level: 2 }),
+    ).toBeVisible();
     const groups = screen
-      .getAllByRole("heading", { level: 2 })
+      .getAllByRole("heading", { level: 3 })
       .map((heading) => heading.textContent);
-    expect(groups).toEqual([
-      "Shortcuts",
-      "Buzz",
-      "Shortcut counter",
-      "Terminal",
-    ]);
+    expect(groups).toEqual(["Buzz", "Shortcut counter", "Terminal"]);
     expect(
       screen
         .getAllByRole("article")
         .map(
           (article) =>
-            within(article).getByRole("heading", { level: 3 }).textContent,
+            within(article).getByRole("heading", { level: 4 }).textContent,
         ),
     ).toEqual([
       "Increase interface size",
@@ -199,13 +197,11 @@ it("lists live host and plugin shortcuts without search or intro text and follow
       "Increment shortcut counter",
       "Toggle channel terminal",
     ]);
-    // Chips show the first alias with glyphs; the label reads as words.
+    // One capsule shows the whole first alias; the label reads as words.
     const grow = row("Increase interface size");
     expect(within(grow).getByText("Command =")).toHaveClass("sr-only");
-    const chips = grow.querySelectorAll("kbd kbd");
-    expect([...chips].map((chip) => chip.textContent)).toEqual(["⌘", "="]);
-    expect(chips[0]?.parentElement).toHaveAttribute("aria-hidden", "true");
-    expect(grow.querySelector("[data-design-pass='pending']")).toHaveAttribute(
+    expect(within(grow).getByText("⌘=")).toHaveAttribute("aria-hidden", "true");
+    expect(grow.querySelector(".buzz-keyboard-shortcut")).toHaveAttribute(
       "data-binding",
       "⌘=",
     );
@@ -277,7 +273,7 @@ it("presents actual host registrations in navigation, interface sizing, search/s
         .getAllByRole("article")
         .map(
           (article) =>
-            within(article).getByRole("heading", { level: 3 }).textContent,
+            within(article).getByRole("heading", { level: 4 }).textContent,
         ),
     ).toEqual([
       "Home",
@@ -331,7 +327,7 @@ it("orders plugin rows by metadata then contribution key without merging duplica
         .getAllByRole("article")
         .map(
           (article) =>
-            within(article).getByRole("heading", { level: 3 }).textContent,
+            within(article).getByRole("heading", { level: 4 }).textContent,
         ),
     ).toEqual([
       "Increase interface size",
@@ -734,7 +730,7 @@ it("stores Option and Shift chords as the composed key on Apple platforms (known
     fireEvent.keyDown(capture(terminal), { key: "˚", altKey: true });
     expect(within(row(terminal)).getByText("Option ˚")).toBeInTheDocument();
     expect(
-      row(terminal).querySelector("[data-design-pass='pending']"),
+      row(terminal).querySelector(".buzz-keyboard-shortcut"),
     ).toHaveAttribute("data-binding", "⌥˚");
     expect(h.bindings.resolve("buzz.terminal/toggle")).toEqual([
       { key: "˚", alt: true },
@@ -885,15 +881,9 @@ it("keeps the host group distinct from a plugin whose manifest id is buzz", asyn
     );
     expect(
       screen
-        .getAllByRole("heading", { level: 2 })
+        .getAllByRole("heading", { level: 3 })
         .map((heading) => heading.textContent),
-    ).toEqual([
-      "Shortcuts",
-      "Buzz",
-      "Buzz plugin",
-      "Shortcut counter",
-      "Terminal",
-    ]);
+    ).toEqual(["Buzz", "Buzz plugin", "Shortcut counter", "Terminal"]);
     expect(row("Ping")).toBeInTheDocument();
     expect(error).not.toHaveBeenCalled();
   } finally {

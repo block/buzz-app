@@ -64,3 +64,11 @@ it("playback restarts a cached bundled clip", () => {
     ),
   );
 });
+
+it("Silent is valid and never creates or plays an audio asset", () => {
+  const audio = vi.fn();
+  vi.stubGlobal("Audio", audio);
+  expect(isSoundName("silent")).toBe(true);
+  expect(playNotificationSound("silent")).toBeNull();
+  expect(audio).not.toHaveBeenCalled();
+});

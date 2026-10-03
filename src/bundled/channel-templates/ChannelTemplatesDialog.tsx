@@ -15,9 +15,12 @@ import {
   type Team,
   type Template,
 } from "../../features/channel-templates/model";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { SquaresFourIcon, UsersIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
+import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Input } from "../../shared/design-system/ui/Input";
 import { AgentSelection, TemplateFields } from "./TemplateFields";
 import styles from "../channels/ChannelTemplates.module.css";
@@ -49,6 +52,7 @@ export function ChannelTemplatesDialog({
     };
   }, []);
   const state = useSyncExternalStore(kit.subscribe, kit.snapshot);
+  const [library, setLibrary] = useState<"template" | "team">("template");
   const [draft, setDraft] = useState<Team | Template>();
   const [base, setBase] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -57,6 +61,16 @@ export function ChannelTemplatesDialog({
     value: Team | Template;
     eventId: string;
   }>();
+  const nameInput = useRef<HTMLInputElement>(null);
+  const newButton = useRef<HTMLButtonElement>(null);
+  const previousDraft = useRef(draft);
+  useLayoutEffect(() => {
+    if (draft?.id !== previousDraft.current?.id) {
+      if (draft) nameInput.current?.focus();
+      else newButton.current?.focus();
+    }
+    previousDraft.current = draft;
+  }, [draft]);
   const cancelDelete = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (open) {
@@ -83,6 +97,7 @@ export function ChannelTemplatesDialog({
     setError("");
     try {
       await kit.save(value, expected, deleted);
+      if (value.type !== "groups") setLibrary(value.type);
       setDraft(undefined);
       setBase(undefined);
     } catch (reason) {
@@ -98,19 +113,35 @@ export function ChannelTemplatesDialog({
       onOpenChange={onOpenChange}
       preventClose={busy}
       title={
-        draft
-          ? draft.type === "team"
-            ? "Saved team"
-            : "Channel template"
-          : "Templates & teams"
+        draft ? `${base ? "Edit" : "New"} ${draft.type}` : "Templates & teams"
+      }
+      description={
+        draft?.type === "team"
+          ? "Choose agents to reuse together in future channels. This team is private to you in this community."
+          : draft
+            ? "Save a starting setup for future channels. Applying a template copies it once; existing channels stay unchanged."
+            : "Private to you in this community. Templates save a channel’s starting setup; teams save a reusable group of agents."
       }
       closeLabel="Close templates"
+      leadingActions={
+        !draft && kit.available ? (
+          <Button
+            variant="ghost"
+            loading={state.status === "loading"}
+            disabled={busy}
+            onClick={() => void kit.refresh()}
+          >
+            Refresh
+          </Button>
+        ) : undefined
+      }
       actions={
         draft ? (
           <>
             <Button
               disabled={busy}
               onClick={() => {
+                setLibrary(draft.type);
                 setDraft(undefined);
                 setError("");
               }}
@@ -126,14 +157,38 @@ export function ChannelTemplatesDialog({
               Save {draft.type}
             </Button>
           </>
-        ) : undefined
+        ) : (
+          <Button
+            ref={newButton}
+            variant="prominent"
+            disabled={busy || !kit.available || state.status !== "ready"}
+            onClick={() => {
+              setDraft(
+                library === "template"
+                  ? {
+                      type: "template",
+                      id: crypto.randomUUID(),
+                      name: "",
+                      description: "",
+                      ...emptyLineup(),
+                    }
+                  : {
+                      type: "team",
+                      id: crypto.randomUUID(),
+                      name: "",
+                      agents: [],
+                    },
+              );
+              setBase(undefined);
+              setError("");
+            }}
+          >
+            New {library}
+          </Button>
+        )
       }
     >
       <div className={styles.stack} inert={busy}>
-        <p className="text-secondary">
-          Private to you in this community. Saved teams stay reusable; applying
-          a template copies its starting setup once.
-        </p>
         {notice && <p role="status">{notice}</p>}
         {error && (
           <p role="alert" className={styles.error}>
@@ -152,6 +207,7 @@ export function ChannelTemplatesDialog({
           <>
             <Field label="Name">
               <Input
+                ref={nameInput}
                 maxLength={120}
                 value={draft.name}
                 onChange={(e) => setDraft({ ...draft, name: e.target.value })}
@@ -166,7 +222,10 @@ export function ChannelTemplatesDialog({
               />
             ) : (
               <>
-                <Field label="Description">
+                <Field
+                  label="Description"
+                  description="Optional. A short reminder of what this template is for."
+                >
                   <Input
                     maxLength={1000}
                     value={draft.description}
@@ -176,6 +235,7 @@ export function ChannelTemplatesDialog({
                   />
                 </Field>
                 <TemplateFields
+                  key={draft.id}
                   session={session}
                   value={draft}
                   onChange={(value) => setDraft({ ...draft, ...value })}
@@ -184,59 +244,31 @@ export function ChannelTemplatesDialog({
                 />
               </>
             )}
-            <p className="text-secondary">
-              Edits affect future channels only. Concurrent saves are checked,
-              not locked across devices.
-            </p>
           </>
         ) : (
-          <>
-            <div className={styles.actions}>
-              <Button
-                disabled={!kit.available || state.status !== "ready"}
-                onClick={() => {
-                  setDraft({
-                    type: "template",
-                    id: crypto.randomUUID(),
-                    name: "",
-                    description: "",
-                    ...emptyLineup(),
-                  });
-                  setBase(undefined);
-                }}
-              >
-                New template
-              </Button>
-              <Button
-                disabled={!kit.available || state.status !== "ready"}
-                onClick={() => {
-                  setDraft({
-                    type: "team",
-                    id: crypto.randomUUID(),
-                    name: "",
-                    agents: [],
-                  });
-                  setBase(undefined);
-                }}
-              >
-                New team
-              </Button>
-              <Button onClick={() => void kit.refresh()}>Refresh</Button>
-            </div>
-            {(["template", "team"] as const).map((type) => (
-              <section key={type} className={styles.list}>
-                <h3>{type === "team" ? "Saved teams" : "Channel templates"}</h3>
-                {state.entries
-                  .filter(
-                    (e) => !e.record.deleted && e.record.value.type === type,
-                  )
-                  .map((entry) => {
+          <Tabs
+            label="Template library"
+            variant="panel"
+            value={library}
+            onValueChange={setLibrary}
+            items={[
+              { value: "template", label: "Templates" },
+              { value: "team", label: "Teams" },
+            ]}
+            renderPanel={(type) => {
+              const entries = state.entries.filter(
+                (entry) =>
+                  !entry.record.deleted && entry.record.value.type === type,
+              );
+              return entries.length ? (
+                <ul className={styles.list}>
+                  {entries.map((entry) => {
                     const value = entry.record.value;
                     if (value.type === "groups") return null;
                     return (
-                      <div key={value.id} className={styles.row}>
+                      <li key={value.id} className={styles.row}>
                         <Button variant="ghost" onClick={() => edit(entry)}>
-                          {value.name}
+                          <span className={styles.entryName}>{value.name}</span>
                         </Button>
                         <Button
                           variant="ghost"
@@ -246,12 +278,23 @@ export function ChannelTemplatesDialog({
                         >
                           Delete
                         </Button>
-                      </div>
+                      </li>
                     );
                   })}
-              </section>
-            ))}
-          </>
+                </ul>
+              ) : state.status === "ready" ? (
+                <EmptyState
+                  icon={type === "team" ? <UsersIcon /> : <SquaresFourIcon />}
+                  title={`No ${type === "team" ? "teams" : "templates"} yet`}
+                  description={
+                    type === "team"
+                      ? "Save a group of agents to reuse in your channel templates."
+                      : "Save teams, individual agents, or a starting Canvas for new channels."
+                  }
+                />
+              ) : null;
+            }}
+          />
         )}
       </div>
       <Dialog
@@ -262,6 +305,7 @@ export function ChannelTemplatesDialog({
         dismissOnOutsideClick
         initialFocus={cancelDelete}
         title={`Delete “${deleting?.value.name ?? ""}”?`}
+        description="Existing channels stay unchanged. Templates or group defaults that use this item will need a replacement."
         actions={
           <>
             <Button ref={cancelDelete} onClick={() => setDeleting(undefined)}>
@@ -280,8 +324,7 @@ export function ChannelTemplatesDialog({
           </>
         }
       >
-        Existing channels stay unchanged. References in templates and group
-        defaults will need replacement.
+        {null}
       </Dialog>
     </Dialog>
   );

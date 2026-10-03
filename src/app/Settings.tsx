@@ -1,3 +1,4 @@
+import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
@@ -131,7 +132,7 @@ export function Settings({
             ...communityCards.map((card) => ({
               id: card.key,
               label: card.title,
-              icon: ChatCircleIcon,
+              icon: card.icon ?? ChatCircleIcon,
             })),
           ]
         : [],
@@ -144,7 +145,7 @@ export function Settings({
         ? administrationCards.map((card) => ({
             id: card.key,
             label: card.title,
-            icon: UsersIcon,
+            icon: card.icon ?? UsersIcon,
           }))
         : []),
       ...(!selectedCommunity ? personalProfile : []),
@@ -152,7 +153,7 @@ export function Settings({
         group.cards.map((card) => ({
           id: card.key,
           label: card.title,
-          icon: ChatCircleIcon,
+          icon: card.icon ?? ChatCircleIcon,
         })),
       ),
       ...appSettingsSections,
@@ -230,39 +231,48 @@ export function Settings({
               )}
               {selectedCommunity && administrationCards.length > 0 && (
                 <NavigationSection label="Administration">
-                  {administrationCards.map((card) => (
-                    <NavigationItem
-                      label={card.title}
-                      icon={<UsersIcon aria-hidden="true" size={18} />}
-                      selected={selected === card.key}
-                      type="button"
-                      key={card.key}
-                      aria-current={selected === card.key ? "page" : undefined}
-                      onClick={(event) => {
-                        event.currentTarget.focus();
-                        if (onSection) onSection(card.key);
-                        else setSelected(card.key);
-                      }}
-                    />
-                  ))}
+                  {administrationCards.map(
+                    ({ icon: Icon = UsersIcon, ...card }) => (
+                      <NavigationItem
+                        label={card.title}
+                        icon={<Icon aria-hidden="true" size={18} />}
+                        selected={selected === card.key}
+                        type="button"
+                        key={card.key}
+                        aria-current={
+                          selected === card.key ? "page" : undefined
+                        }
+                        onClick={(event) => {
+                          event.currentTarget.focus();
+                          if (onSection) onSection(card.key);
+                          else setSelected(card.key);
+                        }}
+                      />
+                    ),
+                  )}
                 </NavigationSection>
               )}
               {contributedGroups.map((group) => (
                 <NavigationSection key={group.label} label={group.label}>
-                  {group.cards.map((card) => (
-                    <NavigationItem
-                      label={card.title}
-                      selected={selected === card.key}
-                      type="button"
-                      key={card.key}
-                      aria-current={selected === card.key ? "page" : undefined}
-                      onClick={(event) => {
-                        event.currentTarget.focus();
-                        if (onSection) onSection(card.key);
-                        else setSelected(card.key);
-                      }}
-                    />
-                  ))}
+                  {group.cards.map(
+                    ({ icon: Icon = ChatCircleIcon, ...card }) => (
+                      <NavigationItem
+                        label={card.title}
+                        icon={<Icon aria-hidden="true" size={18} />}
+                        selected={selected === card.key}
+                        type="button"
+                        key={card.key}
+                        aria-current={
+                          selected === card.key ? "page" : undefined
+                        }
+                        onClick={(event) => {
+                          event.currentTarget.focus();
+                          if (onSection) onSection(card.key);
+                          else setSelected(card.key);
+                        }}
+                      />
+                    ),
+                  )}
                 </NavigationSection>
               ))}
               <NavigationSection label="App">
@@ -303,7 +313,7 @@ export function Settings({
               )}
             </nav>
           </aside>
-          <div className={styles.detail}>
+          <div className={`${styles.detail} buzz-settings-page`}>
             {navigationPane && <h1 className="sr-only">Settings</h1>}
             <div hidden={selected !== "notifications"}>
               <NotificationSettings
@@ -457,7 +467,7 @@ export function Settings({
                       />
                     )}
                   </div>
-                  <div className="divide-y divide-line">
+                  <SettingsGroup>
                     {catalog?.plugins.map((plugin) => {
                       const id = plugin.manifest.id;
                       const running = activation[id];
@@ -535,7 +545,7 @@ export function Settings({
                         </article>
                       );
                     })}
-                  </div>
+                  </SettingsGroup>
                 </div>
               </section>
             </div>

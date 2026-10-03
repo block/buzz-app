@@ -19,6 +19,7 @@ type Props = {
   name: string;
   community?: string | undefined;
   shape?: "circle" | "squircle";
+  size?: "compact" | "default";
   disabled?: boolean;
   onChange(value: string): void;
   onBusyChange?: ((busy: boolean) => void) | undefined;
@@ -38,7 +39,9 @@ export function AvatarEditor(props: Props) {
   }, [open]);
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
-      <div className="relative mx-auto size-36 shrink-0">
+      <div
+        className={`relative mx-auto shrink-0 ${props.size === "compact" ? "size-20" : "size-36"}`}
+      >
         <Avatar
           src={preview}
           alt="Avatar"

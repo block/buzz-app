@@ -1482,7 +1482,8 @@
     .buzz-preference-row-trailing:has(
         button:not([role="switch"]):not([role="checkbox"])
       ),
-    .buzz-preference-row-trailing:has([role="combobox"]) {
+    .buzz-preference-row-trailing:has([role="combobox"]),
+    .buzz-preference-row-trailing:has([role="radiogroup"]) {
       grid-column: 1 / -1;
       justify-content: flex-start;
     }
@@ -1491,7 +1492,9 @@
         button:not([role="switch"]):not([role="checkbox"])
       ),
     .buzz-preference-row[data-has-icon]
-      > .buzz-preference-row-trailing:has([role="combobox"]) {
+      > .buzz-preference-row-trailing:has([role="combobox"]),
+    .buzz-preference-row[data-has-icon]
+      > .buzz-preference-row-trailing:has([role="radiogroup"]) {
       grid-column: 2 / -1;
     }
   }

@@ -1,0 +1,71 @@
+@reference "../shared/styles/globals.css";
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
+  gap: var(--space-6);
+  margin: 0;
+  padding-block: var(--space-2);
+}
+.metricsHeader [data-inline] {
+  flex-wrap: wrap;
+}
+.metricsHeader [data-inline] > :first-child {
+  flex-basis: 12rem;
+}
+.metricsHeader [data-inline] > :last-child {
+  min-width: 0;
+  flex-shrink: 1;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+.actions > button {
+  max-inline-size: 100%;
+  white-space: normal;
+  overflow-wrap: normal;
+}
+.loadRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+}
+.loadBar {
+  grid-column: 1 / -1;
+  display: flex;
+  block-size: var(--space-3);
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--surface-inset);
+}
+.loadDetail {
+  grid-column: 1 / -1;
+}
+.history {
+  overflow-x: auto;
+}
+.history table {
+  width: 100%;
+  min-width: 24rem;
+  border-collapse: collapse;
+}
+.history th {
+  @apply text-label-sm;
+  color: var(--text-subtle);
+}
+.history :is(th, td) {
+  padding: var(--space-3) var(--space-2);
+  text-align: end;
+}
+.history :is(th, td):first-child {
+  text-align: start;
+  padding-inline-start: 0;
+}
+.history tr + tr,
+.history tbody tr:first-child {
+  border-block-start: 1px solid var(--border-standard);
+}

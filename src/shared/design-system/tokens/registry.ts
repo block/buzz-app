@@ -1293,6 +1293,12 @@ export const RADII = [
     use: "Inputs and compact icon controls. Text buttons use radius-capsule.",
   },
   {
+    token: "radius-card",
+    variable: "--radius-card",
+    value: "16px",
+    use: "Settings groups, empty states, and elevated menus or popovers.",
+  },
+  {
     token: "radius-panel",
     variable: "--radius-panel",
     value: "24px",

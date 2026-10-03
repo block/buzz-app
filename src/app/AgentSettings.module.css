@@ -1,20 +1,15 @@
-.card {
+.harnessActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
   min-width: 0;
-  padding: var(--space-5);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-card);
-  background: var(--surface-inset);
+  max-width: 100%;
 }
 
-/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules targets the shared select inside Agent defaults. */
-.defaultsCard :global(.buzz-select-trigger) {
-  --border: var(--border-standard);
-  background: var(--surface-panel);
-}
-
-/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules preserves the shared select focus state. */
-.defaultsCard :global(.buzz-select-trigger:is(:focus, [data-popup-open])) {
-  --border: var(--border-prominent);
+.harnessActions > button {
+  max-width: 100%;
+  white-space: normal;
 }
 
 .rows {

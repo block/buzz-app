@@ -95,7 +95,7 @@ export function Select({
             render={(props) => (
               <Button
                 {...props}
-                variant="ghost"
+                variant={variant === "compact" ? "outline" : "ghost"}
                 size={variant === "compact" ? "sm" : "md"}
               >
                 <BaseSelect.Value

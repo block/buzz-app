@@ -11,6 +11,7 @@ import { EmojiPicker } from "./EmojiPicker";
 import { CustomEmoji } from "./CustomEmoji";
 import { copyEmoji } from "./copy-emoji";
 import { CustomEmojiSettings } from "./CustomEmojiSettings";
+import { SmileyIcon } from "../../shared/design-system/icons";
 
 export const inject = ["conversation"];
 const entries = (content: InlineContent) =>
@@ -26,6 +27,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     scope.settingsCards.register({
       id: "custom-emoji",
       title: "Custom emoji",
+      icon: SmileyIcon,
       component: ({ active }) => (
         <CustomEmojiSettings relay={relay} active={active} />
       ),

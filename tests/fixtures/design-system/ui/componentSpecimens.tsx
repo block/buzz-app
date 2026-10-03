@@ -1,3 +1,5 @@
+import { SettingsGroup } from "../../../../src/shared/design-system/ui/SettingsGroup";
+import { EmptyState } from "../../../../src/shared/design-system/ui/EmptyState";
 import { ExamplePreview } from "./ExamplePreview";
 import { Calendar } from "../../../../src/shared/design-system/ui/Calendar";
 import { FieldButton } from "../../../../src/shared/design-system/ui/FieldButton";
@@ -47,9 +49,21 @@ import {
   HashIcon,
   ChatCircleIcon,
   PlusIcon,
+  SmileyIcon,
+  SquaresFourIcon,
 } from "../../../../src/shared/design-system/icons/index";
 import type { ReactNode } from "react";
 import { useId, useState } from "react";
+import {
+  ThemePicker,
+  type ThemeMode,
+} from "../../../../src/shared/design-system/ui/ThemePicker";
+import { KeyboardShortcut } from "../../../../src/shared/design-system/ui/KeyboardShortcut";
+
+function ThemePickerSpecimen() {
+  const [value, setValue] = useState<ThemeMode>("system");
+  return <ThemePicker value={value} onValueChange={setValue} />;
+}
 import { Switch } from "../../../../src/shared/design-system/ui/Switch";
 import { PreferenceRow } from "../../../../src/shared/design-system/ui/PreferenceRow";
 import { SwitchPreferenceRow } from "../../../../src/shared/design-system/ui/SwitchPreferenceRow";
@@ -1793,6 +1807,43 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   select: SelectExamples,
   combobox: ComboboxExamples,
   switch: SwitchSpecimen,
+  "settings-group": () => (
+    <div className="grid gap-8">
+      <div>
+        <InlineHeader title="Notifications" />
+        <SettingsGroup>
+          <SwitchPreferenceRow label="Desktop alerts" defaultChecked />
+          <SwitchPreferenceRow
+            label="Sound"
+            description="Choose a sound to preview it."
+            defaultChecked
+          />
+          <PreferenceRow
+            title="Direct messages"
+            trailing={<Button size="sm">Flutter</Button>}
+          />
+        </SettingsGroup>
+      </div>
+      <div>
+        <InlineHeader title="Profile" />
+        <SettingsGroup layout="form">
+          <Field label="Display name">
+            <Input defaultValue="Alex" />
+          </Field>
+          <div className="flex justify-end">
+            <Button>Save profile</Button>
+          </div>
+        </SettingsGroup>
+      </div>
+    </div>
+  ),
+  "theme-picker": ThemePickerSpecimen,
+  "keyboard-shortcut": () => (
+    <div className="flex flex-wrap gap-3">
+      <KeyboardShortcut text="⇧⌘K" label="Shift Command K" />
+      <KeyboardShortcut text="Ctrl+Shift+K" label="Control Shift K" />
+    </div>
+  ),
   "preference-row": SwitchSpecimen,
   accordion: () => (
     <SpecimenFrame
@@ -1898,6 +1949,38 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
         ]}
       />
     </SpecimenFrame>
+  ),
+  "empty-state": () => (
+    <div className="grid gap-8">
+      <SpecimenFrame
+        code={`<EmptyState
+  icon={<SmileyIcon />}
+  title="No emojis yet"
+  description="Add a custom emoji to use in messages and reactions."
+  action={<Button>Add emoji</Button>}
+/>`}
+      >
+        <EmptyState
+          icon={<SmileyIcon />}
+          title="No emojis yet"
+          description="Add a custom emoji to use in messages and reactions."
+          action={<Button>Add emoji</Button>}
+        />
+      </SpecimenFrame>
+      <SpecimenFrame
+        code={`<EmptyState
+  icon={<SquaresFourIcon />}
+  title="No templates yet"
+  description="Save a starting setup to reuse in new channels."
+/>`}
+      >
+        <EmptyState
+          icon={<SquaresFourIcon />}
+          title="No templates yet"
+          description="Save a starting setup to reuse in new channels."
+        />
+      </SpecimenFrame>
+    </div>
   ),
   header: () => (
     <SpecimenFrame

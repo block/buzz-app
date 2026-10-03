@@ -116,10 +116,12 @@ agent execution remain future shared capabilities.
 
 ### Optional channel templates and Settings cards
 
-`ctx.settingsCards.register({ id, title, component })` contributes a card under
+`ctx.settingsCards.register({ id, title, icon, component })` contributes a card under
 Settings → Messages, not a new route. Adding `group` instead gives the card its own
 Settings destination under that labelled navigation group; its section id is the
-contribution key (`plugin/card`) and disappears with the plugin. Cards receive `active()` and use ordinary
+contribution key (`plugin/card`) and disappears with the plugin. The optional `icon`
+uses the shared design-system icon gateway; the host supplies a fallback when omitted.
+Cards receive `active()` and use ordinary
 session capabilities through injection. Host boundaries isolate rendering errors;
 exact registration identity and mounted lifetime revoke callbacks on removal.
 

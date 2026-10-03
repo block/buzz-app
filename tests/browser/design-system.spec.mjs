@@ -1,4 +1,5 @@
 import { test, expect } from "./fixture.mjs";
+import { chooseColorMode } from "./navigation.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
 
@@ -7,7 +8,7 @@ test.use({ historyCounts: { alpha: 1, beta: 0 } });
 test("shared tokens reach app controls without history or chip overrides", async ({
   page,
   app,
-}) => {
+}, info) => {
   await page.goto(app.origin);
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
@@ -15,15 +16,15 @@ test("shared tokens reach app controls without history or chip overrides", async
   await page
     .getByRole("button", { name: "Increase interface size", exact: true })
     .click();
-  const reset = page.getByRole("button", {
-    name: "Reset interface size",
+  const increase = page.getByRole("button", {
+    name: "Increase interface size",
     exact: true,
   });
-  await expect(reset).toBeVisible();
+  await expect(increase).toBeVisible();
 
   // Clone the actual shared control into diagnostic feature containers. This
   // isolates their CSS contract without fabricating network/history failures.
-  await reset.evaluate((button) => {
+  await increase.evaluate((button) => {
     const selectors = [];
     const collect = (rules) => {
       for (const rule of rules) {
@@ -83,7 +84,7 @@ test("shared tokens reach app controls without history or chip overrides", async
   });
 
   for (const mode of ["Light", "Dark"]) {
-    await page.getByRole("radio", { name: mode, exact: true }).check();
+    await chooseColorMode(page, mode);
     await expect(page.locator("body")).toHaveCSS("scrollbar-width", "thin");
     await expect(page.locator("body")).toHaveCSS(
       "scrollbar-color",
@@ -96,15 +97,17 @@ test("shared tokens reach app controls without history or chip overrides", async
         --text-label-sm: 19px;
         --space-4: 29px;
         --surface-popover: rgb(23, 45, 67);
+        --surface-elevated-glass: rgba(23, 45, 67, 0.92);
         --border-standard: rgb(45, 67, 89);
         --radius-control: 13px;
         --radius-panel: 19px;
+        --radius-card: 17px;
         --layer-popover: 1234;
       }`,
     });
     try {
       for (const control of [
-        reset,
+        increase,
         page.locator("#probe-edge"),
         page.locator("#probe-threadHistoryControls"),
         page.locator("#probe-mediaReviewUnavailable"),
@@ -120,12 +123,13 @@ test("shared tokens reach app controls without history or chip overrides", async
       );
       for (const name of ["buzz-popover-popup", "popup"]) {
         const surface = page.locator(`#probe-${name}`);
-        await expect(surface).toHaveCSS("background-color", "rgb(23, 45, 67)");
-        await expect(surface).toHaveCSS("border-top-color", "rgb(45, 67, 89)");
         await expect(surface).toHaveCSS(
-          "border-radius",
-          name === "buzz-popover-popup" ? "19px" : "13px",
+          "background-color",
+          "rgba(23, 45, 67, 0.92)",
         );
+        await expect(surface).toHaveCSS("backdrop-filter", "blur(8px)");
+        await expect(surface).toHaveCSS("border-top-color", "rgb(45, 67, 89)");
+        await expect(surface).toHaveCSS("border-radius", "17px");
         await expect(
           name === "buzz-popover-popup"
             ? page.locator("#probe-positioner")
@@ -135,5 +139,18 @@ test("shared tokens reach app controls without history or chip overrides", async
     } finally {
       await override.evaluate((node) => node.remove());
     }
+    await page
+      .getByRole("button", { name: "Your profile", exact: true })
+      .click();
+    const menu = page.getByRole("menu");
+    await expect(menu).toBeVisible();
+    await expect(menu).toHaveCSS("opacity", "1");
+    await expect(menu).toHaveCSS("backdrop-filter", "blur(8px)");
+    await expect(menu).toHaveCSS(
+      "background-color",
+      mode === "Light" ? "rgba(255, 255, 255, 0.9)" : "rgba(40, 40, 40, 0.9)",
+    );
+    await page.screenshot({ path: info.outputPath(`popover-${mode}.png`) });
+    await page.keyboard.press("Escape");
   }
 });

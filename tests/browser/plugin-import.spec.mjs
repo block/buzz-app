@@ -1,4 +1,4 @@
-import { selectSettingsSection } from "./navigation.mjs";
+import { chooseColorMode, selectSettingsSection } from "./navigation.mjs";
 import { openPage, pageChoices } from "./navigation.mjs";
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
@@ -165,8 +165,35 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
         section.evaluate((root, scale) => {
           const failures = [];
           const bounds = root.getBoundingClientRect();
+          for (const label of root.querySelectorAll(
+            ".buzz-choice-label, .buzz-field-label, .buzz-content-header-title",
+          )) {
+            const text = document.createRange();
+            text.selectNodeContents(label);
+            for (const line of text.getClientRects()) {
+              if (line.left < bounds.left || line.right > bounds.right)
+                failures.push(
+                  `${label.textContent}: setting label overflows section`,
+                );
+            }
+          }
           for (const button of root.querySelectorAll("button.buzz-button")) {
             const box = button.getBoundingClientRect();
+            if (button.closest(".buzz-empty-state")) {
+              const label = button.querySelector(".buzz-button-label");
+              const context = document.createElement("canvas").getContext("2d");
+              context.font = getComputedStyle(label).font;
+              if (
+                (label.textContent.match(/\S+/g) ?? []).some(
+                  (word) =>
+                    context.measureText(word).width >
+                    label.getBoundingClientRect().width,
+                )
+              )
+                failures.push(
+                  `${button.textContent}: action words break apart`,
+                );
+            }
             // Shared controls retain their authored 32px small or 40px default
             // minimum at 100%; enlarged labels may grow.
             const minimum = button.dataset.size === "sm" ? 32 : 40;
@@ -185,18 +212,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
                   `${button.textContent}: content overflows button`,
                 );
             }
-            const actions = button.closest('[aria-label="Load plugins"]');
-            if (actions) {
-              const viewport = actions.getBoundingClientRect();
-              if (
-                getComputedStyle(actions).overflowX !== "auto" ||
-                viewport.left < bounds.left ||
-                viewport.right > bounds.right
-              )
-                failures.push(
-                  "Plugin actions lack contained horizontal scrolling",
-                );
-            } else if (box.left < bounds.left || box.right > bounds.right)
+            if (box.left < bounds.left || box.right > bounds.right)
               failures.push(`${button.textContent}: button overflows section`);
           }
           return failures;
@@ -224,7 +240,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
         name: "Appearance",
         exact: true,
       });
-      await appearance.getByRole("radio", { name: mode, exact: true }).check();
+      await chooseColorMode(page, mode);
       await expect(appearance.getByRole("button")).toHaveCount(
         scale === 100 ? 2 : 3,
       );
@@ -279,45 +295,23 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       await expect(button(page, "Load from Git")).toBeVisible();
       await checkButtons(plugins, scale);
       if (scale === 200 && width === 320) {
-        // Labels stay single-line; the parent makes oversized actions reachable.
-        const lines = await button(page, "Load from folder").evaluate(
-          (button) => {
-            const walker = document.createTreeWalker(
-              button,
-              NodeFilter.SHOW_TEXT,
-            );
-            const tops = new Set();
-            while (walker.nextNode()) {
-              const range = document.createRange();
-              range.selectNodeContents(walker.currentNode);
-              for (const line of range.getClientRects()) tops.add(line.top);
-            }
-            return tops.size;
-          },
-        );
-        expect(lines).toBe(1);
+        // Setup-card actions wrap inside the card instead of scrolling sideways.
         const actions = plugins.getByRole("group", { name: "Load plugins" });
         await expect
           .poll(() =>
-            actions.evaluate((node) => node.scrollWidth > node.clientWidth),
+            actions.evaluate((root) => {
+              const bounds = root.getBoundingClientRect();
+              return (
+                root.scrollWidth <= root.clientWidth &&
+                [...root.querySelectorAll("button")].every((button) => {
+                  const box = button.getBoundingClientRect();
+                  return box.left >= bounds.left && box.right <= bounds.right;
+                })
+              );
+            }),
           )
           .toBe(true);
-        for (const edge of ["start", "end"]) {
-          const issues = await actions.evaluate((node, edge) => {
-            node.scrollLeft = edge === "start" ? 0 : node.scrollWidth;
-            const bounds = node.getBoundingClientRect();
-            return [...node.querySelectorAll("button")].flatMap((button) => {
-              const box = button.getBoundingClientRect();
-              const reachable =
-                edge === "start"
-                  ? box.left >= bounds.left - 1
-                  : box.right <= bounds.right + 1;
-              return reachable ? [] : [button.textContent];
-            });
-          }, edge);
-          expect(issues).toEqual([]);
-        }
-        // Keyboard focus must also reach the later action inside the scroller.
+        // Both wrapped actions remain keyboard reachable.
         await button(page, "Load from folder").focus();
         await page.keyboard.press("Tab");
         await expect(button(page, "Load from Git")).toBeFocused();
@@ -326,9 +320,6 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
           page.getByRole("textbox", { name: "Git or GitHub repository" }),
         ).toBeVisible();
         await button(page, "Load from Git").click();
-        await actions.evaluate((node) => {
-          node.scrollLeft = 0;
-        });
       }
       await page.screenshot({
         path: info.outputPath(`settings-buttons-${scale}-${width}.png`),

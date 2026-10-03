@@ -714,8 +714,13 @@ it.each(["member", "guest", "bot", "admin", "owner"])(
       filters.some((filter) => filter.kinds?.includes(0)),
     );
     expect(ownershipReads).toHaveLength(
-      actor === "owner" || actor === "admin" ? 0 : 2,
+      actor === "owner" || actor === "admin" ? 0 : 1,
     );
+    expect(
+      h.read.mock.calls.filter(([filters]) =>
+        filters.some((filter) => filter.kinds?.includes(39002)),
+      ),
+    ).toHaveLength(3); // Two fresh preflights and final roster readback.
     for (const [filters, options] of ownershipReads) {
       expect(filters).toEqual([
         { kinds: [0], authors: [target], limit: 1, consistency: "strong" },
@@ -794,39 +799,77 @@ it.each([
   );
   expect(h.sign).not.toHaveBeenCalled();
 });
-it.each([
-  "changed owner",
-  "missing",
-  "older",
-  "actor left",
-  "target promoted",
-  "access lost",
-])("rechecks %s before publishing an owned-agent removal", async (failure) => {
+it.each(["actor left", "target promoted", "access lost"])(
+  "rechecks %s before publishing an owned-agent removal",
+  async (failure) => {
+    const h = ownedAgent();
+    h.sign.mockImplementationOnce(async (template) => {
+      if (failure === "actor left")
+        h.setEvents(
+          h.events().map((e) =>
+            e.kind === 39002
+              ? h.record(39002, [
+                  ["d", id],
+                  ["p", target, "", "bot"],
+                ])
+              : e,
+          ),
+        );
+      if (failure === "target promoted") h.setRoles("member", "owner");
+      if (failure === "access lost") h.deny();
+      return finalizeEvent(template, key);
+    });
+    await h.owner.capability.run(id, removeAgent);
+    expect(h.sign).toHaveBeenCalledOnce();
+    expect(h.publish).not.toHaveBeenCalled();
+  },
+);
+it("reuses verified ownership only within the removal attempt", async () => {
   const h = ownedAgent();
+  const read = required(h.read.getMockImplementation());
   h.sign.mockImplementationOnce(async (template) => {
-    if (failure === "changed owner")
-      h.setProfiles([agentProfile(relayKey, 201)]);
-    if (failure === "missing") h.setProfiles([]);
-    if (failure === "older") h.setProfiles([agentProfile(key, 199)]);
-    if (failure === "actor left")
-      h.setEvents(
-        h.events().map((e) =>
-          e.kind === 39002
-            ? h.record(39002, [
-                ["d", id],
-                ["p", target, "", "bot"],
-              ])
-            : e,
-        ),
-      );
-    if (failure === "target promoted") h.setRoles("member", "owner");
-    if (failure === "access lost") h.deny();
+    // A second profile read would fail; membership still has to be refreshed.
+    h.read.mockImplementation(async (filters, options) => {
+      if (filters.some((filter) => filter.kinds?.includes(0)))
+        throw new Error("Profile unavailable");
+      return read(filters, options);
+    });
     return finalizeEvent(template, key);
   });
   await h.owner.capability.run(id, removeAgent);
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.read).toHaveBeenCalledTimes(4);
+
+  // A later attempt must verify again, never inherit the first attempt's evidence.
+  h.setRoles("member", "bot");
+  await h.owner.capability.run(id, removeAgent);
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("failed");
   expect(h.sign).toHaveBeenCalledOnce();
-  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.publish).toHaveBeenCalledOnce();
 });
+it.each([true, false])(
+  "verifies ownership if administration authority is lost while signing (owned: %s)",
+  async (owned) => {
+    const h = ownedAgent("admin");
+    h.setProfiles([agentProfile(owned ? key : relayKey)]);
+    h.sign.mockImplementationOnce(async (template) => {
+      expect(h.read).toHaveBeenCalledOnce(); // No profile needed for initial admin.
+      h.setRoles("member", "bot");
+      return finalizeEvent(template, key);
+    });
+    await h.owner.capability.run(id, removeAgent);
+    expect(
+      h.read.mock.calls.filter(([filters]) =>
+        filters.some((filter) => filter.kinds?.includes(0)),
+      ),
+    ).toHaveLength(1);
+    expect(h.owner.capability.snapshot(id).operation?.status).toBe(
+      owned ? "confirmed" : "failed",
+    );
+    expect(h.publish).toHaveBeenCalledTimes(owned ? 1 : 0);
+  },
+);
 it("retains uncertain owned-agent removal for explicit readback, never replay", async () => {
   const h = ownedAgent();
   h.publish.mockRejectedValueOnce(new Error("connection lost"));

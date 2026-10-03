@@ -184,17 +184,17 @@ export function createMemberAdministration({
           error: undefined,
         });
         try {
-          let previousProfile: RelayEvent | undefined;
+          let owner: string | undefined;
           const authorize = async () => {
             const { authority } = await read(id, signal);
-            let owner: string | undefined;
             if (
               change.role === "remove" &&
+              owner === undefined &&
               !canManageMember(authority, viewer, change.pubkey) &&
               canRemoveMember(authority, viewer, change.pubkey, viewer)
             ) {
-              // Verify current profile provenance, not display/local-inventory hints.
-              // The relay still authorizes against its persisted ownership mapping.
+              // Verify provenance once per attempt, never from display/inventory hints.
+              // Both preflights read fresh membership; the relay owns the final ACL.
               const profiles = await reader.read(
                 [
                   {
@@ -218,14 +218,7 @@ export function createMemberAdministration({
                 newer,
                 undefined,
               );
-              if (
-                profile &&
-                (!previousProfile ||
-                  newer(previousProfile, profile).id === profile.id)
-              ) {
-                owner = await attestedOwner(profile);
-                previousProfile = profile;
-              }
+              if (profile) owner = await attestedOwner(profile);
               signal.throwIfAborted();
               assertAccess(id);
             }

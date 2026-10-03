@@ -895,8 +895,8 @@ Admin, or removed; they are never automatically converted. This is a menu-only
 restriction, not a change to relay semantics or the broker's supported commands.
 
 Current members may also remove their own verified non-owner agents, but cannot
-edit their roles or remove someone else's agent. Ownership is rechecked before
-signing and publication.
+edit their roles or remove someone else's agent. The service verifies signed
+ownership once per removal attempt, independently of display hints.
 
 DMs, archived channels and session channels have no administration actions.
 No ownership transfer, community-admin override or new invitation restriction is

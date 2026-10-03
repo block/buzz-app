@@ -779,36 +779,77 @@ test("an in-head DM keeps exact focus and Escape returns from an empty narrow li
   const list = inbox.getByRole("list", { name: "Inbox conversations" });
   const row = list.getByRole("listitem").first();
   await expect(list.getByRole("listitem")).toHaveCount(1);
-  await row.getByRole("button", { name: /^Open / }).click();
-  const detail = inbox.getByRole("region", { name: "Inbox detail" });
-  const target = detail
-    .locator("[data-message-id]")
-    .filter({ hasText: "Live Inbox DM" });
-  await expect(target).toBeInViewport();
-  await expect(target).toBeFocused();
-  await expect(detail.getByRole("form")).toHaveCount(1);
-  const mediaOpener = detail.getByRole("button", {
-    name: "Open video fullscreen",
+  let release;
+  const historyHeld = new Promise((resolve) => {
+    release = resolve;
   });
-  await detail.locator("[data-video-preview]").hover();
-  await expect(mediaOpener).toHaveCSS("pointer-events", "auto");
-  await mediaOpener.click();
-  const media = page.getByRole("dialog", { name: "Video attachment" });
-  await expect(media).toBeVisible();
-  await media.getByRole("button", { name: "Close fullscreen viewer" }).focus();
-  await page.keyboard.press("Escape");
-  await expect(media).toHaveCount(0);
-  await expect(detail).toBeVisible();
-  await expect(mediaOpener).toBeFocused();
-  await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
-  await expect(list).not.toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(detail).toHaveCount(0);
-  await expect(list).toBeVisible();
-  await expect(list.getByRole("listitem")).toHaveCount(0);
-  await expect(
-    inbox.getByRole("combobox", { name: "Activity type", exact: true }),
-  ).toBeFocused();
+  let historyRequested = false;
+  await page.route("**/api/relay/primary/query", async (route) => {
+    if (
+      !route
+        .request()
+        .postDataJSON()
+        .some(
+          (filter) =>
+            filter.top_level && filter["#h"]?.includes(ids["dm-peer"]),
+        )
+    )
+      return route.continue();
+    historyRequested = true;
+    await historyHeld;
+    await route.continue();
+  });
+  try {
+    await row.getByRole("button", { name: /^Open / }).click();
+    const detail = inbox.getByRole("region", { name: "Inbox detail" });
+    const target = detail
+      .locator("[data-message-id]")
+      .filter({ hasText: "Live Inbox DM" });
+    await expect(target).toBeInViewport();
+    await expect(target).toBeFocused();
+    await expect.poll(() => historyRequested).toBe(true);
+    // Let the existing reveal verify its first focused frame before history
+    // inserts both before and after this live row. No elapsed-time race.
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    release();
+    await expect(
+      detail.getByText("Inbox DM fixture reply", { exact: true }),
+    ).toBeVisible();
+    await expect(detail.locator("[data-video-preview]")).toBeVisible();
+    await expect(target).toBeFocused();
+    await expect(detail.getByRole("form")).toHaveCount(1);
+    const mediaOpener = detail.getByRole("button", {
+      name: "Open video fullscreen",
+    });
+    await detail.locator("[data-video-preview]").hover();
+    await expect(mediaOpener).toHaveCSS("pointer-events", "auto");
+    await mediaOpener.click();
+    const media = page.getByRole("dialog", { name: "Video attachment" });
+    await expect(media).toBeVisible();
+    await media
+      .getByRole("button", { name: "Close fullscreen viewer" })
+      .focus();
+    await page.keyboard.press("Escape");
+    await expect(media).toHaveCount(0);
+    await expect(detail).toBeVisible();
+    await expect(mediaOpener).toBeFocused();
+    await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
+    await expect(list).not.toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(detail).toHaveCount(0);
+    await expect(list).toBeVisible();
+    await expect(list.getByRole("listitem")).toHaveCount(0);
+    await expect(
+      inbox.getByRole("combobox", { name: "Activity type", exact: true }),
+    ).toBeFocused();
+  } finally {
+    release();
+  }
 });
 
 // Browser-only: native keyboard focus transfer after Escape; jsdom cannot

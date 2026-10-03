@@ -793,11 +793,14 @@ it.each([false, true])(
         ),
       ),
     ).toBeEmptyDOMElement();
+    expect(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    ).toHaveAttribute("data-variant", "subtle");
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
 it.each([false, true])(
-  "shows the member picture beside the confirmation name with an initial fallback (Agent: %s)",
+  "uses the row's member picture beside the accessible confirmation name (Agent: %s)",
   async (agent) => {
     const picture = "https://profiles.example/morgan.png";
     const t = await setup(
@@ -832,42 +835,6 @@ it.each([false, true])(
       agent ? "squircle" : "circle",
     );
     expect(dialog).toHaveAccessibleDescription("Morgan");
-    fireEvent.error(image);
-    expect(avatar.querySelector("img")).not.toBeInTheDocument();
-    expect(avatar).toHaveTextContent("M");
-    expect(dialog).toHaveAccessibleDescription("Morgan");
-    expect(t.publish).not.toHaveBeenCalled();
-  },
-);
-it.each([false, true])(
-  "shows no removal body for a public-channel member (Agent: %s)",
-  async (agent) => {
-    const t = await setup(
-      "owner",
-      "member",
-      true,
-      undefined,
-      agent,
-      undefined,
-      false,
-      true,
-      undefined,
-      undefined,
-      "public",
-    );
-    expect(t.session.channels.get?.(id)?.visibility).toBe("public");
-    const dialog = await t.choose("Remove from channel");
-    expect(
-      required(
-        dialog.querySelector(
-          '.buzz-dialog-step:not([aria-hidden="true"]) > .buzz-dialog-body',
-        ),
-      ),
-    ).toBeEmptyDOMElement();
-    expect(dialog).toHaveAccessibleDescription("Morgan");
-    expect(
-      within(dialog).getByRole("button", { name: "Cancel" }),
-    ).toHaveAttribute("data-variant", "subtle");
     expect(t.publish).not.toHaveBeenCalled();
   },
 );

@@ -1311,44 +1311,51 @@ for (const rejected of [false, true]) {
       await expect(confirmation.locator(".buzz-dialog-step")).toHaveCount(1);
       return confirmation;
     };
-    for (const dismiss of [
-      "Cancel",
-      "Back to channel members",
-      "Escape",
-      "outside",
-    ]) {
-      const confirmation = await choose();
-      if (dismiss === "Escape") await page.keyboard.press("Escape");
-      else if (dismiss === "outside") await page.mouse.click(4, 4);
-      else
-        await confirmation
-          .getByRole("button", { name: dismiss, exact: true })
-          .click();
-      await expect(search).toHaveValue("Morgan");
-      await expect(search).toBeFocused();
-      await expect(members).toHaveAttribute("id", popupId);
+    // Dismissal and confirmation layout are independent of the relay outcome.
+    if (!rejected) {
+      for (const dismiss of [
+        "Cancel",
+        "Back to channel members",
+        "Escape",
+        "outside",
+      ]) {
+        const confirmation = await choose();
+        if (dismiss === "Escape") await page.keyboard.press("Escape");
+        else if (dismiss === "outside") await page.mouse.click(4, 4);
+        else
+          await confirmation
+            .getByRole("button", { name: dismiss, exact: true })
+            .click();
+        await expect(search).toHaveValue("Morgan");
+        await expect(search).toBeFocused();
+        await expect(members).toHaveAttribute("id", popupId);
+      }
     }
     const confirmation = await choose();
-    for (const mode of ["light", "dark"]) {
-      await page.evaluate((mode) => {
-        document.documentElement.classList.toggle("dark", mode === "dark");
-        document.documentElement.setAttribute("data-color-mode", mode);
-      }, mode);
-      for (const width of [390, 800, 1280]) {
-        await page.setViewportSize({ width, height: 900 });
-        await expect(confirmation).toBeInViewport({ ratio: 1 });
-        // WebKit rounds an inner scrollport's IntersectionObserver ratio below
-        // one for fractional button widths. Check the actual viewport bounds.
-        const actionBounds = await confirmation
-          .getByRole("button", { name: "Remove member", exact: true })
-          .boundingBox();
-        expect(actionBounds.x).toBeGreaterThanOrEqual(0);
-        expect(actionBounds.x + actionBounds.width).toBeLessThanOrEqual(width);
-        expect(actionBounds.y).toBeGreaterThanOrEqual(0);
-        expect(actionBounds.y + actionBounds.height).toBeLessThanOrEqual(900);
-        await confirmation.screenshot({
-          path: testInfo.outputPath(`confirmation-${mode}-${width}.png`),
-        });
+    if (!rejected) {
+      for (const mode of ["light", "dark"]) {
+        await page.evaluate((mode) => {
+          document.documentElement.classList.toggle("dark", mode === "dark");
+          document.documentElement.setAttribute("data-color-mode", mode);
+        }, mode);
+        for (const width of [390, 800, 1280]) {
+          await page.setViewportSize({ width, height: 900 });
+          await expect(confirmation).toBeInViewport({ ratio: 1 });
+          // WebKit rounds an inner scrollport's IntersectionObserver ratio below
+          // one for fractional button widths. Check the actual viewport bounds.
+          const actionBounds = await confirmation
+            .getByRole("button", { name: "Remove member", exact: true })
+            .boundingBox();
+          expect(actionBounds.x).toBeGreaterThanOrEqual(0);
+          expect(actionBounds.x + actionBounds.width).toBeLessThanOrEqual(
+            width,
+          );
+          expect(actionBounds.y).toBeGreaterThanOrEqual(0);
+          expect(actionBounds.y + actionBounds.height).toBeLessThanOrEqual(900);
+          await confirmation.screenshot({
+            path: testInfo.outputPath(`confirmation-${mode}-${width}.png`),
+          });
+        }
       }
     }
     await confirmation

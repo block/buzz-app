@@ -126,8 +126,12 @@ Opening a row captures its channel, message and optional thread root and uses
 an existing channel window or exact shared thread reader to reveal the target.
 The captured visit survives removal from the unread projection; it does not add
 a list row. Back/Close ends the visit. The existing detail handles unavailable
-channel access and the shared readers handle deleted or unavailable targets,
-not the unread projection. Read retries are fenced by visit, access, membership,
+channel access. Exact readers repair the selected target's edit/deletion evidence;
+channel windows repair only the bounded current head, not every retained older
+message. A captured target outside that head can keep older content until another
+read or live delivery returns its edit/deletion evidence. Readers handle deleted
+or unavailable targets from the evidence they obtain, not from removal of an
+Inbox row. Read retries are fenced by visit, access, membership,
 generation and successful local intent
 revision. A DM retry reuses its prepared sidebar anchor and manual-clear keys,
 not the retry-time clock or later arrivals. Manual unread remains device-local
@@ -142,6 +146,15 @@ presentation boundary dismisses media/link previews, source actions and composer
 subdialogs while preserving the main editor, draft and uploads. Inline audio
 and video pause; recovery requires explicit Play rather than resuming playback.
 Access loss retires the reader. Focus recovery respects focus moved elsewhere.
+
+This edit/deletion closure covers addressed targets only. An unaddressed DM or
+conversation reply can enter Inbox through unread evidence without a closure
+obligation. Its row can show pre-edit text after a reconnect until another read
+or live delivery returns the edit. Sidebar context refresh settles unread
+eligibility, not body freshness;
+a deleted original leaves the unread projection on a successful verdict refresh.
+Removing a row does not close its captured detail or establish that detail's body
+is current. Reconnect does not add a client-side content scan for these rows.
 
 Detail uses the existing reader/composer and canonical origin. Close/Escape
 returns focus to the invoking or surviving row, or the persistent Activity type

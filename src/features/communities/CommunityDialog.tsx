@@ -162,7 +162,7 @@ export function CommunityDialog({
         const next = communityDestination(relayOrigin(url));
         setDestination(next);
         const value = await communityRequest<CommunityInfo>(next.id, "info");
-        if (!mounted.current) return;
+        if (!current()) return;
         const pending = journal?.get(next.id);
         // Restoring an existing admitted profile is not a new join or policy acceptance.
         let found: Awaited<ReturnType<typeof inspectProfile>> | undefined;
@@ -192,6 +192,7 @@ export function CommunityDialog({
         // before a journal entry, policy acceptance, or invite claim exists.
         if (nativeIdentityEnabled())
           await communities.connect(id, AbortSignal.timeout(12_000));
+        if (!current()) return;
         const pending = journal?.get(id);
         if (pending) {
           // A lost claim response may already have admitted this identity, even
@@ -247,6 +248,7 @@ export function CommunityDialog({
           if (!destination) throw new Error("Choose a community first");
           if (nativeIdentityEnabled())
             await communities.connect(id, AbortSignal.timeout(12_000));
+          if (!current()) return;
           const transaction = journal?.begin(id, profile);
           const found = journal ? await inspect(id) : original;
           if (!current(transaction)) return;

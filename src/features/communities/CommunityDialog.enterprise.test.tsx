@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   render,
   screen,
@@ -21,6 +22,13 @@ const api = vi.hoisted(() => ({
   inspectProfile: vi.fn(),
   publishProfile: vi.fn(),
 }));
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 vi.mock("../identity/service", async (actual) => ({
   ...(await actual<typeof import("../identity/service")>()),
   nativeIdentityEnabled: () => true,
@@ -140,6 +148,93 @@ it("offers a connection-check retry instead of browser login after discovery fai
   expect(
     screen.queryByRole("button", { name: "Sign in" }),
   ).not.toBeInTheDocument();
+  expect(
+    screen.queryByLabelText("Invite code (if required)"),
+  ).not.toBeInTheDocument();
+});
+
+it("does not inspect or admit after destination info resolves after unmount", async () => {
+  const community = "https://enterprise.example";
+  const info = deferred<{ name: string; policy: null }>();
+  api.communityRequest.mockReturnValue(info.promise);
+  const snapshot = {
+    status: "ready",
+    relayAvailable: true,
+    selected: null,
+    memberships: [],
+    profile: { name: "Local", picture: "" },
+  } as const;
+  const communities = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    connect: vi.fn(),
+    dismissEnterpriseLogin: vi.fn(),
+  } as unknown as Communities;
+  const user = userEvent.setup();
+  const view = render(
+    <CommunityDialog communities={communities} mode="join" close={() => {}} />,
+  );
+
+  await user.type(screen.getByLabelText("Relay URL"), community);
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await waitFor(() => expect(api.communityRequest).toHaveBeenCalledOnce());
+  view.unmount();
+  await act(async () => {
+    info.resolve({ name: "Enterprise", policy: null });
+    await info.promise;
+  });
+
+  expect(api.inspectProfile).not.toHaveBeenCalled();
+  expect(communities.connect).not.toHaveBeenCalled();
+});
+
+it("does not begin admission when an unmounted access gate resolves", async () => {
+  const community = "https://enterprise.example";
+  const gate = deferred<unknown>();
+  api.communityRequest.mockImplementation(
+    async (_id: string, route: string) => {
+      if (route === "info") return { name: "Enterprise", policy: null };
+      throw new Error(`unexpected admission route: ${route}`);
+    },
+  );
+  const connect = vi
+    .fn()
+    .mockRejectedValueOnce(new EnterpriseLoginRequired(community))
+    .mockReturnValueOnce(gate.promise);
+  const snapshot = {
+    status: "ready",
+    relayAvailable: true,
+    selected: null,
+    memberships: [],
+    profile: { name: "Local", picture: "" },
+    enterprise: { communityId: community, status: "required" as const },
+  } as const;
+  const communities = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    connect,
+    dismissEnterpriseLogin: vi.fn(),
+    joined: vi.fn(),
+  } as unknown as Communities;
+  const user = userEvent.setup();
+  const view = render(
+    <CommunityDialog communities={communities} mode="join" close={() => {}} />,
+  );
+  await user.type(screen.getByLabelText("Relay URL"), community);
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await screen.findByLabelText("Invite code (if required)");
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+
+  view.unmount();
+  await act(async () => {
+    gate.resolve({});
+    await gate.promise;
+  });
+
+  expect(api.inspectProfile).not.toHaveBeenCalled();
+  expect(api.publishProfile).not.toHaveBeenCalled();
+  expect(communities.joined).not.toHaveBeenCalled();
 });
 
 it("keeps admission side effects behind the gate after Not now", async () => {

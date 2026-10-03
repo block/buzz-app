@@ -25,7 +25,10 @@ import { useAvatarPreview } from "./use-avatar-preview";
 import { AvatarCustomColor } from "./AvatarCustomColor";
 import type { EmojiSearchSelection } from "../../bundled/emoji/emoji-mart";
 import type { ReadTransport } from "../relay/transport";
-import { EnterpriseLoginRequired } from "../communities/service";
+import {
+  EnterpriseDiscoveryError,
+  EnterpriseLoginRequired,
+} from "../communities/service";
 
 type Props = {
   value: string;
@@ -297,7 +300,10 @@ function AvatarDraft({
       }
     } catch (reason) {
       if (!request.signal.aborted) {
-        if (reason instanceof EnterpriseLoginRequired) {
+        if (
+          reason instanceof EnterpriseLoginRequired ||
+          reason instanceof EnterpriseDiscoveryError
+        ) {
           // This child owns the popup. Retire it before the app-owned prompt
           // takes focus, while AvatarEditor retains the local draft.
           onAuthRequired();

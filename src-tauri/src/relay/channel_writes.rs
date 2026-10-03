@@ -94,11 +94,22 @@ fn archive(event: &EventTemplate) -> bool {
             .bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
+fn member_administration(event: &EventTemplate) -> bool {
+    matches!(event.kind, 9000 | 9001)
+        && event.content.is_empty()
+        && event.created_at <= 9_007_199_254_740_991
+        && event.tags.len() == if event.kind == 9000 { 3 } else { 2 }
+        && tag(event, 0, "h").is_some_and(uuid)
+        && tag(event, 1, "p").is_some_and(super::hex_key)
+        && (event.kind == 9001
+            || matches!(tag(event, 2, "role"), Some("admin" | "member" | "guest")))
+}
 fn valid(route: &str, event: &EventTemplate) -> bool {
     match route {
         "channel-details" => details(event),
         "channel-lifecycle" => lifecycle(event),
         "identity-archive" => archive(event),
+        "member-administration" => member_administration(event),
         _ => false,
     }
 }
@@ -109,6 +120,8 @@ fn validate(route: &str, event: &Value, viewer: Option<&str>) -> Result<EventTem
     let parsed = template(event)?;
     if !valid(route, &parsed)
         || viewer.is_some_and(|v| event.get("pubkey").and_then(Value::as_str) != Some(v))
+        || (route == "member-administration"
+            && viewer.is_some_and(|v| tag(&parsed, 1, "p") == Some(v)))
     {
         return Err("Invalid channel lifecycle command".into());
     }
@@ -127,6 +140,11 @@ pub(crate) async fn relay_channel_sign(
 ) -> Result<Value> {
     origin(&community)?;
     let parsed = validate(&route, &event, None)?;
+    if route == "member-administration"
+        && tag(&parsed, 1, "p") == Some(host.viewer().await?.as_str())
+    {
+        return Err("Invalid member administration command".into());
+    }
     host.sign(parsed).await
 }
 
@@ -559,4 +577,83 @@ fn session_metadata(description: &str) -> bool {
         || description
             .strip_prefix(&format!("{PREFIX}\nparent:"))
             .is_some_and(uuid)
+}
+
+#[cfg(test)]
+mod member_administration_tests {
+    use super::*;
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+
+    #[test]
+    fn member_commands_match_js_and_sign_through_production_ipc_and_acl() {
+        let cases: Value = serde_json::from_str(include_str!(
+            "../../../src/features/channel-members/administration-contract.json"
+        ))
+        .unwrap();
+        let app = mock_builder()
+            .manage(IdentityHost::fixture())
+            .invoke_handler(crate::commands())
+            .build(crate::app_context())
+            .unwrap();
+        let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+            .build()
+            .unwrap();
+        let invoke = |command: &str, event: Value| {
+            get_ipc_response(
+                &view,
+                tauri::webview::InvokeRequest {
+                    cmd: command.into(),
+                    callback: tauri::ipc::CallbackFn(0),
+                    error: tauri::ipc::CallbackFn(1),
+                    url: view.url().unwrap(),
+                    body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                        "community": "https://relay.test", "route": "member-administration", "event": event
+                    })),
+                    headers: Default::default(),
+                    invoke_key: INVOKE_KEY.into(),
+                },
+            )
+        };
+        for case in cases["accepted"].as_array().unwrap() {
+            let template = case["event"].clone();
+            let event: Value = invoke("relay_channel_sign", template.clone())
+                .unwrap()
+                .deserialize()
+                .unwrap();
+            super::super::verify_signature(&event).unwrap();
+            assert_eq!(event["tags"], template["tags"]);
+            assert_eq!(event["kind"], template["kind"]);
+            assert_eq!(event["created_at"], template["created_at"]);
+            assert_eq!(event["content"], template["content"]);
+            let viewer = event["pubkey"].as_str().unwrap();
+            assert!(validate("member-administration", &event, Some(viewer)).is_ok());
+            for route in ["channel-details", "channel-lifecycle", "identity-archive"] {
+                assert!(validate(route, &event, Some(viewer)).is_err());
+            }
+            assert!(validate("member-administration", &event, Some(&"f".repeat(64))).is_err());
+            let mut tampered = event.clone();
+            tampered["tags"][1][1] = Value::String("d".repeat(64));
+            assert!(validate("member-administration", &tampered, Some(viewer)).is_err());
+            // Publish reaches the registered handler/ACL and rejects before networking.
+            let error = invoke("relay_channel_publish", tampered).unwrap_err();
+            assert!(error.to_string().contains("signature"), "{error}");
+            let mut self_target = template;
+            self_target["tags"][1][1] = Value::String(viewer.into());
+            let error = invoke("relay_channel_sign", self_target).unwrap_err();
+            assert!(
+                error.to_string().contains("Invalid member administration"),
+                "{error}"
+            );
+        }
+        for case in cases["rejected"].as_array().unwrap() {
+            let event = case["event"].clone();
+            assert!(
+                validate("member-administration", &event, None).is_err(),
+                "{}",
+                case["name"]
+            );
+            let error = invoke("relay_channel_sign", event).unwrap_err();
+            assert!(!error.to_string().contains("not allowed"), "{error}");
+        }
+    }
 }

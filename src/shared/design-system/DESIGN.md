@@ -475,8 +475,9 @@ and the actions; returning to the form restores the normal body-bottom padding.
 For a bounded dialog with fixed controls above a list, use `height="stable"`
 with `bodyLayout="flex"`. The body becomes a non-scrolling flex column; the
 feature supplies a `flex: 1; min-height: 0` composition with fixed controls and
-one flexing scrollport. Keep all results and recovery feedback reachable in that
-scrollport. Without footer actions, the flex body omits its bottom padding so
+one flexing scrollport. Keep results and their recovery feedback reachable; Members
+administration errors sit outside that scrollport, below its fixed search controls.
+Without footer actions, the flex body omits its bottom padding so
 only the popup supplies the outer bottom gutter. With actions, it retains the
 body-to-footer spacing. The default flow layout and other dialogs remain unchanged.
 The shared Dialog uses state opacity and settling transform tokens for a centered
@@ -484,16 +485,18 @@ The shared Dialog uses state opacity and settling transform tokens for a centere
 keep the controlled component mounted while setting `open={false}` for an exit.
 Reduced motion, keyboard navigation, and Escape dismissal are immediate. Pass
 `motion="none"` for frequently used surfaces such as the search palette.
-Channel Create/Edit privacy confirmation opts into a keyed `step` inside that same
-modal. The complete surface crossfades over 200ms with 4px blur: the form grows to
+Channel Create/Edit privacy and Members confirmations opt into a keyed `step`
+inside that same modal. The complete surface crossfades over 200ms with 4px blur: the form grows to
 1.05 while confirmation grows from 0.95 to 1; returning reverses those positions.
 This explicitly requested, bounded dialog transition is an exception to the
 no-blur rule below, not a new default for dialogs. One stable Base UI title and
 description label the modal; outgoing content is inert and hidden from assistive
 technology. Reduced motion, keyboard navigation and `motion="none"` swap steps
 immediately. The caller still owns draft state and focus between steps; no second
-modal, backdrop or write owner is introduced. This opt-in is for content-sized,
-centered dialogs; expanded, stable-height and side-sheet compositions are unchanged.
+modal, backdrop or write owner is introduced. Each centered step retains its own
+height and body layout while exiting, so a stable-height Members list can switch
+to a content-sized confirmation without collapsing its scrollport. Expanded and
+side-sheet compositions are unchanged.
 
 
 Use Accordion for collapsible sections. Form sections pass `keepMounted` so

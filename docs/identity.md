@@ -143,8 +143,33 @@ hashes and uploads only the converted bytes; JavaScript receives the descriptor,
 not the prepared file. ffmpeg must be installed on the computer.
 Community member changes (NIP-43 kinds 9030–9032) are signed in the host only
 in the exact add/remove/role shape; the relay decides authority. Repository HTTP
-and other broker-only helpers are not claimed by this adapter. NIP-FI assertion
-acquisition is not implemented, so deployments enforcing it are outside acceptance.
+and other broker-only helpers are not claimed by this adapter.
+
+Each relay's NIP-11 limitation decides whether it requires federated identity;
+there is no build-time relay allowlist. NIP-11 issuer metadata describes the
+requirement and never chooses where Buzz sends session credentials. Only the
+configured identity service receives them. Ordinary relays continue without
+badge issuance. Required sign-in opens the configured identity service in the
+external browser, returns through a nonce-bound loopback callback, and exchanges
+the code with a SHA-256 handoff verifier. The native host validates the returned
+session with that service. Restore checks also use the configured service;
+transient network failures preserve the saved credential, while invalid or
+inconsistent checks invalidate only the matching BuilderLab item when its
+configured store permits. JavaScript receives status and expiry only, never the
+session secret.
+
+For relays whose NIP-11 requires federated identity, the native host obtains a
+NIP-FI assertion from the configured identity service (session in
+`Authorization: Bearer`, a host-signed NIP-98 proof in `Nostr-Authorization`)
+and sends it as `Nostr-Federated-Identity` on protected relay HTTP, upload and
+media requests. The live socket is a native WebSocket that fetches a fresh
+assertion and sends the same header itself, so neither the assertion nor the
+session token reaches JavaScript. A relay requiring federated identity always
+needs the assertion. With no usable session, socket setup and protected HTTP
+require sign-in instead of falling back to an unbadged request. Only 401
+`session_required`/`session_expired` clear the session and reopen sign-in; 403
+`authorization_denied` keeps the session and stops that relay with access
+denied; other refusals keep the session and use the bounded reconnect backoff.
 Windows/Linux custody, credential migration and release-signing acceptance remain
 separate limitations.
 

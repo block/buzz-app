@@ -337,12 +337,45 @@ async fn policy_and_proof_denials_preserve_the_shared_session() {
     );
 }
 
+#[tokio::test]
+async fn relay_policy_denial_preserves_the_shared_session() {
+    let service = FixtureServer::spawn(FixtureReply::Status {
+        status: StatusCode::FORBIDDEN,
+        code: "authorization_denied",
+    })
+    .await;
+    let discovery = FixtureServer::spawn(FixtureReply::Discovery(required_document(
+        "https://ignored.example/v1/identity/assertions",
+    )))
+    .await;
+    let _environment = BuilderLabEnv::new(&service.base);
+    let home = TempDir::new().unwrap();
+    let owner = owner(&home);
+    save(&owner, "policy-denial", "fixture-cli-session").await;
+    let assertions = fixture_assertions(owner.clone(), &discovery);
+    let identity = IdentityHost::fixture();
+    let url = Url::parse("wss://relay.example/query").unwrap();
+
+    let error = assertions.get(&identity, &url, true).await.unwrap_err();
+
+    assert_eq!(error, ACCESS_DENIED);
+    assert_eq!(
+        owner
+            .session_snapshot()
+            .await
+            .unwrap()
+            .unwrap()
+            .credential(),
+        "fixture-cli-session"
+    );
+}
+
 #[test]
 fn only_contract_session_denials_prompt_for_sign_in() {
     for (status, code, denied) in [
         (401, "session_expired", true),
         (401, "session_required", true),
-        (403, "authorization_denied", true),
+        (403, "authorization_denied", false),
         (401, "invalid_proof", false),
         (403, "binding_mismatch", false),
         (403, "", false),

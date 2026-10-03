@@ -25,7 +25,6 @@ const nonIconDependencies = new Set([
   "@tauri-apps/api",
   "@tauri-apps/cli",
   "@tauri-apps/plugin-updater",
-  "@tauri-apps/plugin-websocket", // Relay transport bridge, not an icon catalog.
   "@testing-library/dom",
   "@testing-library/jest-dom",
   "@testing-library/react",

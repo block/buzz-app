@@ -1,6 +1,10 @@
 /** Native relay commands reject with this exact text when the enterprise
  * adapter says the session is gone (`nip_fi_assertion::SIGN_IN_REQUIRED`). */
 export const ENTERPRISE_SIGN_IN_REQUIRED = "Enterprise sign-in is required";
+/** The adapter refused this relay for a still-valid session
+ * (`nip_fi_assertion::ACCESS_DENIED`); signing in again cannot fix it. */
+export const ENTERPRISE_ACCESS_DENIED =
+  "Enterprise access to this relay was denied";
 
 const listeners = new Set<() => void>();
 

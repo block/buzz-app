@@ -890,6 +890,7 @@ export function ChannelMembersDialog({
     selection &&
     (known.has(selection.pubkey) || profiles.get(selection.pubkey)?.isAgent);
   const removalTarget = selectedAgent ? "agent" : "member";
+  const selectedPicture = selection && profiles.get(selection.pubkey)?.picture;
   return (
     <Dialog
       open
@@ -914,7 +915,28 @@ export function ChannelMembersDialog({
       }
       height={selection ? "content" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}
-      description={selection ? label(selection.pubkey) : channel?.name}
+      description={
+        selection ? (
+          <span className="flex min-w-0 items-center gap-2">
+            <Avatar
+              alt=""
+              fallback={label(selection.pubkey)}
+              src={
+                selectedPicture
+                  ? session.media(selectedPicture, "small")
+                  : undefined
+              }
+              size="small"
+              shape={selectedAgent ? "squircle" : "circle"}
+            />
+            <span className="min-w-0 break-words">
+              {label(selection.pubkey)}
+            </span>
+          </span>
+        ) : (
+          channel?.name
+        )
+      }
       closeLabel={
         selection ? "Back to channel members" : "Close channel members"
       }
@@ -990,7 +1012,7 @@ export function ChannelMembersDialog({
               ? channel?.visibility === "private"
                 ? "Removing the agent does not stop it from running, but it will no longer be able to read this private channel. It can be added back later."
                 : "Removing the agent does not stop it from running. It can be added back later."
-              : "This does not stop their agents. They may need an invitation to rejoin."
+              : "This does not stop or remove their agents. They may need an invitation to rejoin."
             : `Change this member’s role from ${selection.expectedRole} to ${selection.role}. ${selection.role === "admin" ? "Admins can manage this channel and its members." : "This changes their authority in this channel."}`}
         </p>
       ) : (

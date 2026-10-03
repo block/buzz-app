@@ -52,6 +52,7 @@ async function setup(
   initialReads?: { names?: Promise<void>; roster?: Promise<void> },
   ownership?: "own" | "other" | "invalid",
   visibility: "private" | "public" = "private",
+  targetPicture?: string,
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -61,10 +62,15 @@ async function setup(
   const digest = new Uint8Array(
     createHash("sha256").update(`nostr:agent-auth:${target.pubkey}:`).digest(),
   );
+  const profileBody = {
+    name: "Morgan",
+    is_agent: targetAgent,
+    picture: targetPicture,
+  };
   const targetProfile = ownership
     ? signed(target, {
         kind: 0,
-        content: JSON.stringify({ name: "Morgan", is_agent: targetAgent }),
+        content: JSON.stringify(profileBody),
         tags: [
           [
             "auth",
@@ -79,7 +85,7 @@ async function setup(
           ],
         ],
       })
-    : profile(target, { name: "Morgan", is_agent: targetAgent });
+    : profile(target, profileBody);
   let role: string | undefined = targetRole;
   let tick = 1700000000;
   let lag = false;
@@ -138,10 +144,14 @@ async function setup(
       filters.some((filter) => matchesEvent(event, filter)),
     );
   });
+  const media = vi.fn(
+    (url: string, size?: "small") =>
+      `https://media.example/${size ?? "original"}?url=${encodeURIComponent(url)}`,
+  );
   const sessionOwner = createRelaySession({
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
-    media: () => undefined,
+    media,
     query,
     ...(supported
       ? {
@@ -629,7 +639,7 @@ it("confirms removal and removes only the confirmed roster entry", async () => {
   expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
   expect(
     within(dialog).getByText(
-      "This does not stop their agents. They may need an invitation to rejoin.",
+      "This does not stop or remove their agents. They may need an invitation to rejoin.",
       { exact: true },
     ),
   ).toBeInTheDocument();
@@ -761,11 +771,64 @@ it.each([false, true])(
         name: `Remove ${agent ? "agent" : "member"}`,
       }),
     ).toBeVisible();
+    expect(dialog).toHaveAccessibleDescription("Morgan");
+    const avatar = required(
+      dialog.querySelector(".buzz-dialog-description .buzz-avatar"),
+    );
+    expect(avatar).toHaveAttribute(
+      "data-avatar-shape",
+      agent ? "squircle" : "circle",
+    );
+    expect(avatar).toHaveAttribute("data-size", "small");
+    expect(avatar).toHaveTextContent("M");
     expect(dialog).toHaveTextContent(
       agent
         ? "Removing the agent does not stop it from running, but it will no longer be able to read this private channel. It can be added back later."
-        : "This does not stop their agents. They may need an invitation to rejoin.",
+        : "This does not stop or remove their agents. They may need an invitation to rejoin.",
     );
+    expect(t.publish).not.toHaveBeenCalled();
+  },
+);
+it.each([false, true])(
+  "shows the member picture beside the confirmation name with an initial fallback (Agent: %s)",
+  async (agent) => {
+    const picture = "https://profiles.example/morgan.png";
+    const t = await setup(
+      "owner",
+      "member",
+      true,
+      undefined,
+      agent,
+      undefined,
+      false,
+      true,
+      undefined,
+      undefined,
+      "private",
+      picture,
+    );
+    const row = required(screen.getByText("Morgan").closest("li"));
+    const rowPicture = required(
+      row.querySelector(".buzz-avatar img"),
+    ).getAttribute("src");
+    expect(rowPicture).toBe(
+      `https://media.example/small?url=${encodeURIComponent(picture)}`,
+    );
+    const dialog = await t.choose("Remove from channel");
+    const avatar = required(
+      dialog.querySelector(".buzz-dialog-description .buzz-avatar"),
+    );
+    const image = required(avatar.querySelector("img"));
+    expect(image).toHaveAttribute("src", rowPicture);
+    expect(avatar).toHaveAttribute(
+      "data-avatar-shape",
+      agent ? "squircle" : "circle",
+    );
+    expect(dialog).toHaveAccessibleDescription("Morgan");
+    fireEvent.error(image);
+    expect(avatar.querySelector("img")).not.toBeInTheDocument();
+    expect(avatar).toHaveTextContent("M");
+    expect(dialog).toHaveAccessibleDescription("Morgan");
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
@@ -791,7 +854,7 @@ it.each([false, true])(
       within(dialog).getByText(
         agent
           ? "Removing the agent does not stop it from running. It can be added back later."
-          : "This does not stop their agents. They may need an invitation to rejoin.",
+          : "This does not stop or remove their agents. They may need an invitation to rejoin.",
         { exact: true },
       ),
     ).toBeInTheDocument();

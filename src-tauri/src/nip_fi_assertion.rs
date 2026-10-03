@@ -31,7 +31,7 @@ pub(crate) const ACCESS_DENIED: &str = "Enterprise access to this relay was deni
 pub(crate) const REFUSED: &str = "Relay badge was refused";
 pub(crate) const HEADER: &str = "Nostr-Federated-Identity";
 const ASSERTION_PATH: &str = "/v1/identity/assertions";
-/// NIP-FI caps assertion lifetime at five minutes.
+/// The enterprise adapter contract caps assertion lifetime at five minutes.
 const MAX_LIFETIME: u64 = 300;
 /// Refresh this long before expiry so a request or handshake never carries a
 /// badge that lapses in flight.

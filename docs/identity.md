@@ -173,7 +173,10 @@ connection releases its native stream. Only 401
 `session_required`/`session_expired` clear the session and reopen sign-in, and
 only while the refused token is still the current session: a refusal of a
 session already removed or replaced is retried, and never cancels or undoes a
-newer login, including one still in the browser. 403 `authorization_denied` keeps the session and stops that relay with
+newer login, including one still in the browser. Once native reports sign-in
+required, the app shows sign-in at once and treats the saved session as gone
+until a login completes, so the prompt never waits on a slow secure-storage
+removal or a network recheck of the refused session. 403 `authorization_denied` keeps the session and stops that relay with
 access denied. Every other refusal, and a malformed badge response, keeps the
 session, stops that relay and shows the error. Only 429, 503, network
 failures and a native connect that misses its 30 s bound (which covers secure

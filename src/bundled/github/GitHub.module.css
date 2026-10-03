@@ -1,4 +1,7 @@
 .root {
+  --github-checks-success: var(--text-success);
+  --github-checks-failure: var(--text-danger);
+  --github-checks-pending: var(--text-warning);
   padding: var(--space-5);
   overflow-y: auto;
   min-height: 0;
@@ -154,4 +157,118 @@
   margin-top: var(--space-6);
   padding-top: var(--space-3);
   border-top: 1px solid var(--border-standard);
+}
+
+.checksCard {
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+}
+.checkSummary {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-4);
+}
+.checkSummary > svg {
+  width: 2rem;
+  height: 2rem;
+  grid-row: 1 / span 2;
+  color: var(--text-subtle);
+}
+.checkSummaryLabel {
+  font-weight: var(--text-label--font-weight);
+  overflow-wrap: anywhere;
+}
+.checkSummary:where([data-check-state="success"]) > svg {
+  color: var(--github-checks-success);
+}
+.checkSummary:where([data-check-state="failure"]) > svg {
+  color: var(--github-checks-failure);
+}
+.checkSummary:where([data-check-state="pending"]) > svg {
+  color: var(--github-checks-pending);
+}
+:where(.checkSummary) .checksDescription {
+  margin: 0;
+}
+.checkSegment {
+  fill: none;
+  stroke: var(--check-color, var(--text-subtle));
+  stroke-width: 3;
+}
+
+.checksPanel {
+  margin-top: var(--space-5);
+}
+
+.checksDescription {
+  color: var(--text-subtle);
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+}
+.checksRetry {
+  padding: 0 var(--space-4) var(--space-3);
+}
+.checkGroups {
+  border-top: 1px solid var(--border-standard);
+  padding: var(--space-2) var(--space-4);
+}
+.checkList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.checkRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+}
+.checkRow + .checkRow {
+  border-top: 1px solid var(--border-standard);
+}
+.checkRow > svg {
+  flex-shrink: 0;
+  margin-top: var(--space-half);
+  color: var(--check-color, var(--text-subtle));
+}
+.checkContent {
+  flex: 1;
+  min-width: 0;
+}
+.checkHeading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  overflow-wrap: anywhere;
+}
+.checkHeading > :where(:first-child) {
+  min-width: 0;
+}
+.checkName {
+  --link-text: var(--text-standard);
+  --link-hover: transparent;
+  text-underline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .checkName:hover {
+    text-decoration: underline;
+  }
+}
+.checkResult {
+  color: var(--text-subtle);
+}
+:is(.checkRow, .checkSegment):is(
+  [data-check-category="failing"],
+  [data-check-category="cancelled"]
+) {
+  --check-color: var(--github-checks-failure);
+}
+:is(.checkRow, .checkSegment)[data-check-category="pending"] {
+  --check-color: var(--github-checks-pending);
+}
+:is(.checkRow, .checkSegment)[data-check-category="successful"] {
+  --check-color: var(--github-checks-success);
 }

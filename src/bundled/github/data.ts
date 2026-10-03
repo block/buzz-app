@@ -6,6 +6,7 @@ export type GitHubDetails = {
   bodyHtml?: string | undefined;
   state: string;
   author: string;
+  headSha?: string | undefined;
   facts: [string, string | number][];
 };
 type ResponseData = {
@@ -21,7 +22,7 @@ type ResponseData = {
   author?: { login: string };
   commit?: { message: string; author: { name: string } };
   base?: { label: string };
-  head?: { label: string };
+  head?: { label: string; sha?: string };
   additions?: number;
   deletions?: number;
   changed_files?: number;
@@ -80,6 +81,7 @@ export async function loadGitHubDetails(
     title: data.title ?? commitTitle ?? reference.repository,
     body: data.body ?? data.description ?? commitBody.join("\n").trim(),
     bodyHtml: data.body_html ?? undefined,
+    headSha: reference.kind === "pull" ? data.head?.sha : undefined,
     state: data.merged ? "Merged" : data.draft ? "Draft" : (data.state ?? ""),
     author:
       data.user?.login ??

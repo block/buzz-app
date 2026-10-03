@@ -357,3 +357,6 @@ export const HashArrowInIcon = defineIcon("custom", HashArrowInArtwork, {
   provenance: "Original Buzz HashArrowIn; retained by explicit design request",
   intendedSizes: [{ width: 16, height: 16 }],
 });
+
+import TablerCircleDashedIcon from "@tabler/icons-react/dist/esm/icons/IconCircleDashed.mjs";
+export const CircleDashedIcon = defineIcon("tabler", TablerCircleDashedIcon);

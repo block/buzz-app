@@ -304,6 +304,7 @@ fn slug(s: &str) -> bool {
 #[tauri::command]
 pub(crate) async fn relay_agent_memories_read(
     host: tauri::State<'_, IdentityHost>,
+    assertions: tauri::State<'_, crate::nip_fi_assertion::RelayAssertions>,
     community: String,
     agent: String,
 ) -> Result<Value> {
@@ -321,7 +322,15 @@ pub(crate) async fn relay_agent_memories_read(
         json!([{"kinds":[30174], "authors":[agent], "#p":[viewer], "limit":256}]).to_string();
     let response = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        send(host.inner(), url, "POST", Some(body), true, 2 * 1024 * 1024),
+        send(
+            host.inner(),
+            assertions.inner(),
+            url,
+            "POST",
+            Some(body),
+            true,
+            2 * 1024 * 1024,
+        ),
     )
     .await
     .map_err(|_| "Memory read failed")??;

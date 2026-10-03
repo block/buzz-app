@@ -133,6 +133,7 @@ pub(crate) async fn relay_channel_sign(
 #[tauri::command]
 pub(crate) async fn relay_channel_publish(
     host: tauri::State<'_, IdentityHost>,
+    assertions: tauri::State<'_, crate::nip_fi_assertion::RelayAssertions>,
     community: String,
     route: String,
     event: Value,
@@ -144,7 +145,16 @@ pub(crate) async fn relay_channel_publish(
     if body.len() > MAX_BODY {
         return Err("Invalid relay request body".into());
     }
-    send(host.inner(), url, "POST", Some(body), true, MAX_RESPONSE).await
+    send(
+        host.inner(),
+        assertions.inner(),
+        url,
+        "POST",
+        Some(body),
+        true,
+        MAX_RESPONSE,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -226,6 +236,7 @@ pub(crate) async fn relay_kit_decode(
 #[tauri::command]
 pub(crate) async fn relay_direct_message(
     host: tauri::State<'_, IdentityHost>,
+    assertions: tauri::State<'_, crate::nip_fi_assertion::RelayAssertions>,
     community: String,
     pubkeys: Vec<String>,
 ) -> Result<String> {
@@ -258,7 +269,16 @@ pub(crate) async fn relay_direct_message(
         })
         .await?;
     let body = serde_json::to_string(&event).map_err(|_| "Invalid channel lifecycle command")?;
-    let response = send(host.inner(), url, "POST", Some(body), true, MAX_RESPONSE).await?;
+    let response = send(
+        host.inner(),
+        assertions.inner(),
+        url,
+        "POST",
+        Some(body),
+        true,
+        MAX_RESPONSE,
+    )
+    .await?;
     if response.status != 200 {
         return Err("The direct message could not be opened. Try again.".into());
     }

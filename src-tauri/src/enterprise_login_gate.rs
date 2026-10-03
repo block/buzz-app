@@ -78,7 +78,7 @@ fn trusted_relay_matches(relay_url: &str, trusted: &[String]) -> Result<bool, St
     Ok(trusted.iter().any(|trusted| trusted == &relay))
 }
 
-fn configured_trusted_relays() -> Result<Vec<String>, String> {
+pub(crate) fn configured_trusted_relays() -> Result<Vec<String>, String> {
     option_env!("BUZZ_BUILD_ENTERPRISE_AUTH_RELAYS")
         .map(parse_enterprise_relay_allowlist)
         .transpose()

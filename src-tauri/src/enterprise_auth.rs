@@ -336,6 +336,20 @@ impl EnterpriseAuthHost {
         }
     }
 
+    /// The adapter base URL and saved session token for this identity, without
+    /// contacting the adapter. Relay badge issuance validates the session itself.
+    pub(crate) async fn saved_session(
+        &self,
+        identity: &IdentityHost,
+    ) -> Result<Option<(String, Zeroizing<String>)>> {
+        let scope = scope_for_identity(identity).await?;
+        let session = match self.cached(&scope) {
+            Some(session) => Some(session),
+            None => self.read(&scope).await?.map(|persisted| persisted.session),
+        };
+        Ok(session.map(|session| (scope.adapter, session.token)))
+    }
+
     fn cached_info(&self, scope: &Scope) -> Option<EnterpriseAuthInfo> {
         self.cached(scope).map(|session| EnterpriseAuthInfo {
             expires_at: session.expires_at,

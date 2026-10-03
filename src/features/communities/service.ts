@@ -8,6 +8,7 @@ import { connectBrokerTransport, type ReadTransport } from "../relay/transport";
 import { communityDestination, isCommunityAlias } from "./destination";
 import { purgeCommunityDeviceState, type PurgeFailure } from "./device-state";
 import type { EnterpriseAuthClient } from "./enterpriseAuthApi";
+import { onEnterpriseSignInRequired } from "../relay/enterprise-sign-in";
 
 export const PROFILE_ABOUT_MAX_LENGTH = 500;
 export type PersonalProfile = { name: string; picture: string; about?: string };
@@ -435,6 +436,15 @@ export function createCommunities(
         if (!disposed)
           update({ status: "unavailable", error: String(error) }, false);
       });
+  // The adapter refused the saved session: forget it so the prompt returns.
+  if (enterpriseAuth)
+    ctx.effect(() =>
+      onEnterpriseSignInRequired(() => {
+        clearEnterpriseAuth().catch((error) => {
+          console.warn("Couldn't clear enterprise sign-in", error);
+        });
+      }),
+    );
   ctx.effect(() => () => {
     disposed = true;
     controller.abort();

@@ -11,6 +11,8 @@
     "allow-start-enterprise-auth-login",
     "allow-cancel-enterprise-auth-login",
     "allow-clear-enterprise-auth",
+    "allow-relay-socket-badge",
+    "websocket:default",
     "allow-enterprise-login-gate",
     "allow-relay-sign",
     "allow-identity-prepare-remote-agent-authorization",

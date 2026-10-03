@@ -1018,6 +1018,7 @@ export async function connectSignedTransport(
   signer: Signer,
   httpOrigin: string,
   relayAuthor: string,
+  socketFactory?: (url: string) => WebSocket,
 ): Promise<ReadTransport> {
   const viewer = await signer.getPublicKey();
   httpOrigin = relayOrigin(httpOrigin);
@@ -1083,7 +1084,7 @@ export async function connectSignedTransport(
             ...callbacks,
             presence: presence.receive,
           }),
-          undefined,
+          socketFactory,
           owner.live,
         );
       } catch (error) {

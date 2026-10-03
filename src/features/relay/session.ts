@@ -88,6 +88,7 @@ import {
   type OutgoingEvent,
   type OutboxStorage,
 } from "./outbox";
+import { relayPartition, transportPartition } from "./partition";
 import { createMessages } from "./messages";
 import { createThreadView } from "./threads";
 import { ByteLru } from "./budget";
@@ -262,9 +263,7 @@ export function createRelaySession(
             },
           },
           options.outboxStorage ??
-            browserOutboxStorage(
-              `${transport.scope ?? transport.relayAuthor}:${transport.viewer}`,
-            ),
+            browserOutboxStorage(transportPartition(transport)),
           {
             ...(options.deliveryTimeoutMs
               ? { timeoutMs: options.deliveryTimeoutMs }
@@ -638,7 +637,8 @@ export function createRelaySession(
     notify,
   );
   const agentChoices = createAgentChoices({
-    scope: `${transport?.scope ?? transport?.relayAuthor}:${transport?.viewer}`,
+    // Offline sessions keep their historical, never-matching agent scope.
+    scope: transport ? transportPartition(transport) : "undefined:undefined",
     library: agentLibrary.queries,
     native: options.agentChoices,
     signal: lifetime.signal,
@@ -791,7 +791,9 @@ export function createRelaySession(
       };
     },
   });
-  const readScope = `${transport?.scope ?? transport?.relayAuthor ?? "offline"}:${transport?.viewer ?? ""}`;
+  const readScope = transport
+    ? transportPartition(transport)
+    : relayPartition("offline", "");
   const reads = createReadState({
     viewer: transport?.viewer ?? "",
     reader: requests.reader,
@@ -1218,7 +1220,7 @@ export function createRelaySession(
   const channelSetup =
     transport && writes && transport.channelKit
       ? createChannelSetup({
-          scope: `${transport.scope ?? transport.relayAuthor}:${transport.viewer}`,
+          scope: transportPartition(transport),
           outbox: writes.outbox,
           local: writes.local,
           signal: lifetime.signal,

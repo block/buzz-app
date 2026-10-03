@@ -1,5 +1,6 @@
 import type { ReadTransport } from "../relay/transport";
 import type { LiveSubscription } from "../relay/live";
+import { transportPartition } from "../relay/partition";
 import type { PresenceActivity } from "./activity";
 
 export type PresenceStatus = "online" | "away" | "offline" | "unknown";
@@ -239,7 +240,7 @@ export function createPresence(
       !closed && connected && publisher === owned && !owned.signal.aborted;
     void navigator.locks
       .request(
-        `buzz-presence:${transport.scope ?? transport.relayAuthor}:${transport.viewer}`,
+        `buzz-presence:${transportPartition(transport)}`,
         { signal: owned.signal },
         async () => {
           if (!valid()) return;

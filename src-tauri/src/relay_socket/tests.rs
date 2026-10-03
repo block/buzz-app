@@ -287,12 +287,72 @@ async fn a_connection_javascript_never_starts_is_closed() {
     .await;
     let (sockets, _, mut events) = open(request).await;
     tokio::time::pause();
-    released(&sockets, START_DEADLINE + CLOSE_GRACE + Duration::from_secs(1)).await;
+    released(
+        &sockets,
+        START_DEADLINE + CLOSE_GRACE + Duration::from_secs(1),
+    )
+    .await;
     tokio::time::resume();
     tokio::time::timeout(Duration::from_secs(3), saw_end)
         .await
         .expect("relay did not see the connection end")
         .unwrap();
-    assert_eq!(events.recv().await, None, "unstarted socket delivered a frame");
+    assert_eq!(
+        events.recv().await,
+        None,
+        "unstarted socket delivered a frame"
+    );
     relay.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_full_send_queue_refuses_the_next_send_at_once() {
+    let (request, _, relay) = relay(|ws| async move {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        drop(ws);
+    })
+    .await;
+    let (sockets, id, _events) = open(request).await;
+    sockets.command(id, Command::Start).unwrap();
+    // The relay never reads, so the first send blocks and the rest queue.
+    let mut pending = vec![send(&sockets, id, large())];
+    let error = loop {
+        let (sent, done) = oneshot::channel();
+        match sockets.command(id, Command::Send("queued".into(), sent)) {
+            Ok(()) => pending.push(done),
+            Err(error) => break error,
+        }
+    };
+    assert_eq!(error, "Relay socket send queue is full");
+    // Admission stops at the queue's capacity, give or take the `Start` and
+    // the send the task may already have taken off the queue.
+    let admitted = pending.len();
+    assert!(
+        (SEND_QUEUE - 1..=SEND_QUEUE + 1).contains(&admitted),
+        "{admitted} admitted"
+    );
+    sockets.close(id);
+    released(&sockets, CLOSE_GRACE + Duration::from_secs(1)).await;
+    relay.abort();
+}
+
+#[tokio::test]
+async fn a_send_after_close_begins_is_refused() {
+    let (request, _, relay) = relay(|mut ws| async move {
+        // Never echo Close, so the connection stays held for the grace period.
+        tokio::time::sleep(CLOSE_GRACE + Duration::from_secs(1)).await;
+        while let Some(Ok(_)) = ws.next().await {}
+    })
+    .await;
+    let (sockets, id, _events) = open(request).await;
+    sockets.command(id, Command::Start).unwrap();
+    sockets.close(id);
+    assert!(sockets.lock().contains_key(&id), "still closing");
+    let (sent, _) = oneshot::channel();
+    assert_eq!(
+        sockets.command(id, Command::Send("late".into(), sent)),
+        Err("Relay socket is closed".into())
+    );
+    released(&sockets, CLOSE_GRACE + Duration::from_secs(1)).await;
+    relay.abort();
 }

@@ -282,3 +282,86 @@ it("closes overload and network badge failures as ordinary failures", async () =
   expect(denied).not.toHaveBeenCalled();
   stop();
 });
+
+/** A live owner on the native socket whose badge request answers after
+ * `delay`, past the 10 s authentication timer but inside the setup limit. */
+function slowNative(delay: number, outcome: () => Promise<unknown>) {
+  vi.useFakeTimers();
+  native.connect = () =>
+    new Promise((resolve, reject) =>
+      setTimeout(() => outcome().then(resolve, reject), delay),
+    );
+  const key = keypair();
+  const state = vi.fn<LiveCallbacks["state"]>();
+  const owner = subscribeRelayTraffic(
+    "wss://relay.example",
+    async (event) => signed(key, event),
+    key.pubkey,
+    {
+      presence: vi.fn(),
+      receive: vi.fn(),
+      state,
+      established: vi.fn(),
+      denied: vi.fn(),
+    },
+    nativeRelaySocket,
+  );
+  return { key, state, owner };
+}
+
+it("shows a final badge refusal that arrives after ten seconds, without retrying", async () => {
+  const denied = vi.fn();
+  const stop = onEnterpriseSignInRequired(denied);
+  const reason = "Relay badge was refused (403 binding_mismatch)";
+  const h = slowNative(12_000, () => Promise.reject(reason));
+  await vi.advanceTimersByTimeAsync(12_000);
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(commands("relay_socket_connect")).toHaveLength(1);
+  expect(h.state.mock.lastCall?.[0]).toMatchObject({
+    status: "error",
+    error: reason,
+  });
+  expect(denied).not.toHaveBeenCalled();
+  h.owner.dispose();
+  stop();
+});
+
+it("keeps a slow but valid native connect and authenticates on it", async () => {
+  native.onStart = () =>
+    native.emit({ type: "text", data: '["AUTH","challenge"]' });
+  native.onSend = (data) => {
+    const [type, event] = JSON.parse(data) as [string, { id: string }];
+    if (type === "AUTH")
+      queueMicrotask(() =>
+        native.emit({
+          type: "text",
+          data: JSON.stringify(["OK", event.id, true]),
+        }),
+      );
+  };
+  const h = slowNative(25_000, () =>
+    Promise.resolve({ id: 7, expiresAt: Date.now() / 1000 + 300 }),
+  );
+  await vi.advanceTimersByTimeAsync(25_000);
+  expect(h.state.mock.lastCall?.[0]).toMatchObject({ status: "connected" });
+  expect(commands("relay_socket_connect")).toHaveLength(1);
+  expect(commands("relay_socket_close")).toHaveLength(0);
+  h.owner.dispose();
+});
+
+it("ignores a sign-in denial that arrives after the socket was retired", async () => {
+  const denied = vi.fn();
+  const stop = onEnterpriseSignInRequired(denied);
+  let reject = (_: unknown) => {};
+  native.connect = () => new Promise((_, fail) => (reject = fail));
+  const h = open();
+  await vi.waitFor(() =>
+    expect(commands("relay_socket_connect")).toHaveLength(1),
+  );
+  h.socket.close();
+  reject(ENTERPRISE_SIGN_IN_REQUIRED);
+  await new Promise((done) => setTimeout(done, 0));
+  expect(denied).not.toHaveBeenCalled();
+  expect(h.events.close).not.toHaveBeenCalled();
+  stop();
+});

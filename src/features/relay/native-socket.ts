@@ -136,6 +136,8 @@ export function nativeRelaySocket(
     // Frames flow only now, so the relay's AUTH finds an open socket.
     if (!ended) await native.start();
   })().catch((error: unknown) => {
+    // A retired socket's result belongs to a session that may be gone.
+    if (ended) return;
     noteEnterpriseDenial(error);
     const message = String(error instanceof Error ? error.message : error);
     if (message === ENTERPRISE_ACCESS_DENIED) end(BADGE_DENIED_CLOSE, true);

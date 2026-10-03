@@ -148,6 +148,24 @@ struct StoredSession {
     expires_at: String,
 }
 
+/// A saved session as read at one generation, so a refusal of it cannot
+/// clear a session that replaced it.
+pub(crate) struct SavedSession {
+    scope: Scope,
+    persisted: PersistedSession,
+    generation: u64,
+}
+
+impl SavedSession {
+    pub(crate) fn adapter(&self) -> &str {
+        &self.scope.adapter
+    }
+
+    pub(crate) fn token(&self) -> &str {
+        &self.persisted.session.token
+    }
+}
+
 struct PersistedSession {
     raw: Zeroizing<Vec<u8>>,
     session: StoredSession,
@@ -336,18 +354,45 @@ impl EnterpriseAuthHost {
         }
     }
 
-    /// The adapter base URL and saved session token for this identity, without
-    /// contacting the adapter. Relay badge issuance validates the session itself.
+    /// The saved session for this identity, without contacting the adapter.
+    /// Relay badge issuance validates the session itself and hands a refusal
+    /// back to `reject`.
     pub(crate) async fn saved_session(
         &self,
         identity: &IdentityHost,
-    ) -> Result<Option<(String, Zeroizing<String>)>> {
-        let scope = scope_for_identity(identity).await?;
-        let session = match self.cached(&scope) {
-            Some(session) => Some(session),
-            None => self.read(&scope).await?.map(|persisted| persisted.session),
+    ) -> Result<Option<SavedSession>> {
+        self.saved_scope(scope_for_identity(identity).await?).await
+    }
+
+    async fn saved_scope(&self, scope: Scope) -> Result<Option<SavedSession>> {
+        let generation = self.current_generation()?;
+        let persisted = match self.cached(&scope) {
+            Some(session) => Some(PersistedSession {
+                raw: encode_session(&session)?,
+                session,
+            }),
+            None => self.read(&scope).await?,
         };
-        Ok(session.map(|session| (scope.adapter, session.token)))
+        Ok(persisted.map(|persisted| SavedSession {
+            scope,
+            persisted,
+            generation,
+        }))
+    }
+
+    /// Forgets `saved` after the adapter said it is gone, unless a login,
+    /// clear or check has changed the session since it was read. True when no
+    /// session remains.
+    pub(crate) async fn reject(&self, saved: SavedSession) -> Result<bool> {
+        let SavedSession {
+            scope,
+            persisted,
+            generation,
+        } = saved;
+        Ok(self
+            .invalidate_session(&scope, persisted.raw, &persisted.session.token, generation)
+            .await?
+            .is_none())
     }
 
     fn cached_info(&self, scope: &Scope) -> Option<EnterpriseAuthInfo> {
@@ -1778,6 +1823,46 @@ mod tests {
                 .unwrap_err(),
             "Enterprise authentication was denied"
         );
+    }
+
+    #[tokio::test]
+    async fn a_late_refusal_of_an_old_session_keeps_the_newer_login() {
+        let scope = scope_for_adapter(
+            "https://adapter.example",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        let store = Arc::new(FixtureStore::default());
+        let session = |token: &str| StoredSession {
+            token: Zeroizing::new(token.into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        };
+        let raw = encode_session(&session("old")).unwrap();
+        store.replace(scope.service, &scope.account, &raw).unwrap();
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        // A badge request reads the old session; its refusal is held.
+        let held = host.saved_scope(scope.clone()).await.unwrap().unwrap();
+        // A new login is adopted the way `commit_session` adopts one.
+        let newer = encode_session(&session("new")).unwrap();
+        store
+            .replace(scope.service, &scope.account, &newer)
+            .unwrap();
+        EnterpriseAuthHost::bump_generation(&mut host.login.lock().unwrap());
+        host.remember(scope.clone(), session("new"));
+
+        assert!(!host.reject(held).await.unwrap(), "newer session cleared");
+        assert_eq!(
+            store
+                .read(scope.service, &scope.account)
+                .unwrap()
+                .as_slice(),
+            newer.as_slice()
+        );
+        let current = host.saved_scope(scope.clone()).await.unwrap().unwrap();
+        assert_eq!(current.token(), "new");
+        // A refusal of the current session does clear it.
+        assert!(host.reject(current).await.unwrap());
+        assert!(host.saved_scope(scope).await.unwrap().is_none());
     }
 
     #[test]

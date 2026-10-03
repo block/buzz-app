@@ -436,11 +436,16 @@ export function createCommunities(
         if (!disposed)
           update({ status: "unavailable", error: String(error) }, false);
       });
-  // The adapter refused the saved session: forget it so the prompt returns.
+  // The adapter refused the saved session and the native owner has already
+  // forgotten exactly that session. Prompt again only if no session remains:
+  // a denial that arrives after a newer login must not undo it.
   if (enterpriseAuth)
     ctx.effect(() =>
       onEnterpriseSignInRequired(() => {
-        clearEnterpriseAuth().catch((error) => {
+        void (async () => {
+          if (await enterpriseAuth.get()) return;
+          await clearEnterpriseAuth(true);
+        })().catch((error) => {
           console.warn("Couldn't clear enterprise sign-in", error);
         });
       }),
@@ -585,7 +590,9 @@ export function createCommunities(
     )
       update({ enterprise: undefined }, false);
   }
-  async function clearEnterpriseAuth() {
+  /** `forgotten`: native storage already dropped the session, so only the
+   * app's enterprise state is reset. */
+  async function clearEnterpriseAuth(forgotten = false) {
     if (!enterpriseAuth || disposed) return;
     if (enterpriseClearInFlight) {
       await enterpriseClearInFlight;
@@ -605,7 +612,7 @@ export function createCommunities(
       let clearError: unknown;
       let clearFailed = false;
       try {
-        await enterpriseAuth.clear();
+        if (!forgotten) await enterpriseAuth.clear();
       } catch (error) {
         clearError = error;
         clearFailed = true;

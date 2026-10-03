@@ -26,9 +26,12 @@ use crate::{
 /// Shown to JavaScript, which returns the person to enterprise sign-in.
 pub(crate) const SIGN_IN_REQUIRED: &str = "Enterprise sign-in is required";
 /// Shown to JavaScript, which keeps the session and stops retrying the relay.
+/// A refusal of a session that a newer login already replaced; retryable.
+const SESSION_REPLACED: &str = "Enterprise session changed during the relay badge request";
 pub(crate) const ACCESS_DENIED: &str = "Enterprise access to this relay was denied";
-/// Prefix of a refusal that retrying cannot fix (a bad proof, binding or
-/// request); JavaScript keeps the session, shows it and stops retrying.
+/// Prefix of a failure that retrying cannot fix (a bad proof, binding or
+/// request, or a malformed badge); JavaScript keeps the session, shows it and
+/// stops retrying. Only overload and network failures are retried.
 pub(crate) const REFUSED: &str = "Relay badge was refused";
 pub(crate) const HEADER: &str = "Nostr-Federated-Identity";
 const ASSERTION_PATH: &str = "/v1/identity/assertions";
@@ -100,10 +103,10 @@ impl RelayAssertions {
         let Some(relay) = trusted_relay(url)? else {
             return Ok(None);
         };
-        let Some((adapter, token)) = self.enterprise.saved_session(identity).await? else {
+        let Some(saved) = self.enterprise.saved_session(identity).await? else {
             return Ok(None);
         };
-        let session: [u8; 32] = Sha256::digest(token.as_bytes()).into();
+        let session: [u8; 32] = Sha256::digest(saved.token().as_bytes()).into();
         let now = now()?;
         if !fresh {
             if let Some(cached) = self.lock().get(&relay).filter(|cached| {
@@ -114,18 +117,23 @@ impl RelayAssertions {
         }
         let endpoint = Url::parse(&format!(
             "{}{ASSERTION_PATH}",
-            adapter.trim_end_matches('/')
+            saved.adapter().trim_end_matches('/')
         ))
         .map_err(|_| "Enterprise authentication adapter is invalid")?;
-        let issued = issue(client()?, &endpoint, &token, identity, &relay, now).await;
+        let issued = issue(client()?, &endpoint, saved.token(), identity, &relay, now).await;
         let assertion = match issued {
             Ok(assertion) => assertion,
-            Err(error) => {
-                if error == SIGN_IN_REQUIRED {
-                    self.lock().remove(&relay);
-                }
-                return Err(error);
+            Err(error) if error == SIGN_IN_REQUIRED => {
+                self.lock().remove(&relay);
+                // Only the refused session is forgotten. If a login replaced
+                // it meanwhile, the next attempt uses the new one.
+                return Err(if self.enterprise.reject(saved).await? {
+                    error
+                } else {
+                    SESSION_REPLACED.into()
+                });
             }
+            Err(error) => return Err(error),
         };
         self.lock().insert(
             relay,
@@ -239,7 +247,8 @@ async fn issue(
         .await
         .map_err(|_| "Relay badge request failed")?;
     let status = response.status().as_u16();
-    let bytes = read_bounded(response).await?;
+    // An oversized body carries no usable code, so the status alone decides.
+    let bytes = read_bounded(response).await?.unwrap_or_default();
     if status != 200 {
         let code = serde_json::from_slice::<Denial>(&bytes)
             .map(|denial| denial.error)
@@ -259,16 +268,20 @@ async fn issue(
             format!("{REFUSED} ({status} {code})")
         });
     }
-    let issued: IssueResponse =
-        serde_json::from_slice(&bytes).map_err(|_| "Relay badge response was invalid")?;
+    // The adapter issued the badge no later than its response arrived, so
+    // freshness and the lifetime cap are measured from arrival, not from
+    // `now` (when the request was signed).
+    let received = self::now()?;
+    let invalid = || format!("{REFUSED} (invalid adapter response)");
+    let issued: IssueResponse = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
     if issued.nostr_pubkey != pubkey
         || issued.assertion.is_empty()
         || issued.assertion.len() > MAX_ASSERTION
         || !issued.assertion.bytes().all(|b| b.is_ascii_graphic())
-        || issued.expires_at <= now
-        || issued.expires_at > now + MAX_LIFETIME
+        || issued.expires_at <= received
+        || issued.expires_at > received + MAX_LIFETIME
     {
-        return Err("Relay badge response was invalid".into());
+        return Err(invalid());
     }
     Ok(Assertion {
         header: Zeroizing::new(format!("Bearer {}", issued.assertion.as_str())),
@@ -276,7 +289,9 @@ async fn issue(
     })
 }
 
-async fn read_bounded(mut response: reqwest::Response) -> Result<Zeroizing<Vec<u8>>> {
+/// The body, or `None` when it exceeds `MAX_RESPONSE`. An interrupted read is
+/// a network failure and stays retryable.
+async fn read_bounded(mut response: reqwest::Response) -> Result<Option<Zeroizing<Vec<u8>>>> {
     let mut bytes = Zeroizing::new(Vec::new());
     while let Some(chunk) = response
         .chunk()
@@ -284,11 +299,11 @@ async fn read_bounded(mut response: reqwest::Response) -> Result<Zeroizing<Vec<u
         .map_err(|_| "Relay badge response was interrupted")?
     {
         if chunk.len() > MAX_RESPONSE - bytes.len() {
-            return Err("Relay badge response was too large".into());
+            return Ok(None);
         }
         bytes.extend_from_slice(&chunk);
     }
-    Ok(bytes)
+    Ok(Some(bytes))
 }
 
 fn now() -> Result<u64> {

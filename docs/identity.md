@@ -140,9 +140,12 @@ media requests. The live socket for those relays is a native WebSocket
 itself, so neither the assertion nor the session token reaches JavaScript.
 Frames are delivered only after JavaScript starts the socket, and every ended
 connection releases its native stream. Only 401
-`session_required`/`session_expired` clear the session and reopen sign-in; 403
-`authorization_denied` keeps the session and stops that relay with access
-denied; other refusals keep the session and use the bounded reconnect backoff.
+`session_required`/`session_expired` clear the session and reopen sign-in, and
+only for the session that was refused, so a late refusal cannot undo a newer
+login. 403 `authorization_denied` keeps the session and stops that relay with
+access denied. Every other refusal, and a malformed badge response, keeps the
+session, stops that relay and shows the error. Only 429, 503 and network
+failures use the bounded reconnect backoff.
 Windows/Linux custody, credential migration and release-signing acceptance remain
 separate limitations.
 

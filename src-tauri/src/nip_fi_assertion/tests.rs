@@ -163,8 +163,89 @@ async fn rejects_badge_for_another_key_or_overlong_lifetime() {
         serde_json::json!({"assertion": "a", "nostr_pubkey": pubkey, "expires_at": now + MAX_LIFETIME + 60}),
         serde_json::json!({"assertion": "a", "nostr_pubkey": pubkey, "expires_at": now}),
     ] {
-        assert!(run(200, body).await.is_err());
+        let error = run(200, body).await.unwrap_err();
+        assert_eq!(error, format!("{REFUSED} (invalid adapter response)"));
     }
+}
+
+/// Answers one request with raw HTTP bytes, then closes the connection.
+async fn issue_raw(response: Vec<u8>) -> Result<Assertion> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = Url::parse(&format!(
+        "http://{}{ASSERTION_PATH}",
+        listener.local_addr().unwrap()
+    ))
+    .unwrap();
+    tokio::spawn(async move {
+        let (mut tcp, _) = listener.accept().await.unwrap();
+        let _ = tcp.read(&mut [0; 16 * 1024]).await;
+        let _ = tcp.write_all(&response).await;
+    });
+    let identity = IdentityHost::fixture();
+    issue(
+        client().unwrap(),
+        &endpoint,
+        "session",
+        &identity,
+        RELAY,
+        now().unwrap(),
+    )
+    .await
+}
+
+fn http(status: &str, body: &[u8]) -> Vec<u8> {
+    let mut response = format!(
+        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .into_bytes();
+    response.extend_from_slice(body);
+    response
+}
+
+#[tokio::test]
+async fn malformed_successful_responses_stop_without_echoing_the_body() {
+    for body in [
+        b"not json".as_slice(),
+        br#"{"assertion": "a b", "nostr_pubkey": "x", "expires_at": 1}"#,
+        br#"{"error": "secret-token"}"#,
+    ] {
+        let error = issue_raw(http("200 OK", body)).await.unwrap_err();
+        assert_eq!(error, format!("{REFUSED} (invalid adapter response)"));
+    }
+    // Invalid assertion bytes for the right key and lifetime.
+    let pubkey = IdentityHost::fixture().viewer().await.unwrap();
+    let body = serde_json::json!({"assertion": "a\u{7f}b", "nostr_pubkey": pubkey, "expires_at": now().unwrap() + 60});
+    let error = run(200, body).await.unwrap_err();
+    assert_eq!(error, format!("{REFUSED} (invalid adapter response)"));
+}
+
+#[tokio::test]
+async fn an_oversized_refusal_is_classified_by_its_status() {
+    let large = vec![b'x'; MAX_RESPONSE + 1];
+    for (status, retryable) in [
+        ("400 Bad Request", false),
+        ("413 Payload Too Large", false),
+        ("429 Too Many Requests", true),
+        ("503 Service Unavailable", true),
+    ] {
+        let error = issue_raw(http(status, &large)).await.unwrap_err();
+        assert_eq!(error.starts_with(REFUSED), !retryable, "{status}: {error}");
+    }
+}
+
+#[tokio::test]
+async fn an_interrupted_response_stays_retryable() {
+    // Promises more body than it sends, then closes.
+    let mut response = http("200 OK", b"{}");
+    response.truncate(response.len() - 2);
+    let response = String::from_utf8(response)
+        .unwrap()
+        .replace("Content-Length: 2", "Content-Length: 100")
+        .into_bytes();
+    let error = issue_raw(response).await.unwrap_err();
+    assert_eq!(error, "Relay badge response was interrupted");
 }
 
 #[test]
@@ -172,4 +253,28 @@ fn non_enterprise_relays_get_no_badge() {
     // Test builds configure no trusted enterprise relays.
     let url = Url::parse("https://relay.example/query").unwrap();
     assert_eq!(trusted_relay(&url).unwrap(), None);
+}
+
+#[tokio::test]
+async fn a_full_lifetime_badge_issued_after_the_request_started_is_accepted() {
+    let identity = IdentityHost::fixture();
+    let pubkey = identity.viewer().await.unwrap();
+    let issued_at = now().unwrap();
+    let (endpoint, _) = adapter(
+        200,
+        serde_json::json!({"assertion": "abc", "nostr_pubkey": pubkey, "expires_at": issued_at + MAX_LIFETIME}),
+    )
+    .await;
+    // The request was signed five seconds before the adapter issued the badge.
+    let assertion = issue(
+        client().unwrap(),
+        &endpoint,
+        "session",
+        &identity,
+        RELAY,
+        issued_at - 5,
+    )
+    .await
+    .unwrap();
+    assert_eq!(assertion.expires_at, issued_at + MAX_LIFETIME);
 }

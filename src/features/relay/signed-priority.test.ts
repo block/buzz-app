@@ -3,22 +3,16 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { connectSignedTransport } from "./transport";
 import { createRelayReader } from "./reader";
-import { keypair, signed } from "./testing";
+import { hostSigner } from "./testing";
 afterEach(() => {
   vi.useRealTimers();
-  vi.unstubAllGlobals();
 });
 it("production reader prioritizes queued work at real capacity, not a clock interval", async () => {
   vi.useFakeTimers();
-  const key = keypair();
   const calls: number[] = [];
   const release: Array<() => void> = [];
-  const signer = {
-    getPublicKey: async () => key.pubkey,
-    signEvent: async (t: Parameters<typeof signed>[1]) => signed(key, t),
-  };
-  vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
-    calls.push(JSON.parse(init.body as string)[0].limit);
+  const signer = hostSigner(undefined, async (_url, body) => {
+    calls.push(JSON.parse(body)[0].limit);
     await new Promise<void>((resolve) => release.push(resolve));
     return Response.json([]);
   });

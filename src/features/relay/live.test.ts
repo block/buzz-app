@@ -2422,7 +2422,7 @@ it("relay badge rotation reconnects at once without spending the reconnect budge
   h.owner.dispose();
 });
 
-it("relay access denial stops reconnecting and reports access denied", async () => {
+it("relay access denial stops reconnecting until a manual retry connects", async () => {
   vi.useFakeTimers();
   const h = setup();
   const socket = h.sockets.at(-1);
@@ -2435,6 +2435,13 @@ it("relay access denial stops reconnecting and reports access denied", async () 
   expect(h.callbacks.state.mock.lastCall?.[0]).toMatchObject({
     status: "error",
     error: "Enterprise access to this relay was denied",
+  });
+  // Once access is granted, a manual retry connects with a fresh badge.
+  h.owner.retry();
+  expect(h.sockets).toHaveLength(2);
+  await h.sockets[1]?.auth();
+  expect(h.callbacks.state.mock.lastCall?.[0]).toMatchObject({
+    status: "connected",
   });
   h.owner.dispose();
 });

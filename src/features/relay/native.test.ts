@@ -19,6 +19,7 @@ import { createRelaySession } from "./session";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
+  Channel: class {},
   isTauri: () => true,
   convertFileSrc: (path: string, protocol: string) =>
     `${protocol}://localhost/${encodeURIComponent(path)}`,
@@ -72,7 +73,7 @@ beforeEach(() => {
   vi.mocked(invoke).mockImplementation(async (command, args, options) => {
     if (command === "identity_restore") return viewer.pubkey;
     // Ordinary relays carry no badge and keep the webview socket.
-    if (command === "relay_socket_badge") return null;
+    if (command === "relay_socket_connect") return null;
     if (command === "relay_sign") {
       expect(
         Object.keys((args as { event: EventTemplate }).event).sort(),
@@ -1227,6 +1228,7 @@ it.each([
     const sockets: Socket[] = [];
     class Socket {
       readyState = 1;
+      onopen?: (event: Event) => void;
       onmessage?: (event: { data: string }) => Promise<void>;
       onclose?: () => void;
       sent: unknown[][] = [];
@@ -1239,6 +1241,9 @@ it.each([
       close() {
         this.readyState = 3;
         this.onclose?.();
+      }
+      open() {
+        this.onopen?.(new Event("open"));
       }
       async receive(value: unknown) {
         await this.onmessage?.({ data: JSON.stringify(value) });
@@ -1281,6 +1286,7 @@ it.each([
       );
       const socket = sockets[0];
       assert.exists(socket);
+      socket.open();
       await socket.receive(["AUTH", "nonce"]);
       const proof = socket.sent.find(
         ([kind]) => kind === "AUTH",

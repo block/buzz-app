@@ -65,6 +65,7 @@ fn native_command_permissions_allow_only_main_webview() {
         "identity_create",
         "identity_export",
         "relay_sign",
+        "identity_prepare_remote_agent_authorization",
         "relay_decode_read_state",
         "relay_sign_read_state",
         "relay_publish_read_state",

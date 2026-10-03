@@ -388,9 +388,20 @@ test("a keyboard-focused identity preview survives the scroll that reveals its r
   // and Tab continues down the list instead of entering it.
   await page.keyboard.press("Shift+Tab");
   await expect(row(7)).toBeFocused();
-  await list.evaluate((element) => {
-    element.scrollTop = 0;
+  // Focus can be observable before WebKit finishes its native reveal scroll.
+  // Cross that rendering boundary before issuing the separate scroll-away.
+  await list.evaluate(async (element) => {
+    await new Promise(requestAnimationFrame);
+    if (element.scrollTop === 0) return;
+    await new Promise((resolve) => {
+      element.addEventListener("scroll", () => requestAnimationFrame(resolve), {
+        once: true,
+      });
+      element.scrollTop = 0;
+    });
   });
+  await expect.poll(offset).toBe(0);
+  await expect(row(7)).toBeFocused();
   const preview = page.locator('[data-open][aria-label="Agent 7 identity"]');
   await expect(preview).toBeHidden();
   await expect(preview).toHaveCount(1);

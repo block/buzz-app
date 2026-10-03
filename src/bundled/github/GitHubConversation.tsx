@@ -603,11 +603,7 @@ function History({ run, url }: { run: EventRun; url: string }) {
         onClick={(event) => setKeyboardToggle(event.detail === 0)}
       >
         <span className={styles.eventIcon} aria-hidden="true">
-          {open ? (
-            <CaretUpIcon size={20} />
-          ) : (
-            <DotsThreeIcon size={20} weight="bold" />
-          )}
+          {open ? <CaretUpIcon size={20} /> : <DotsThreeIcon size={20} />}
         </span>
         <span className={styles.commentRunSummary}>
           {open ? (

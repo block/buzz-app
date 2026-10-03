@@ -75,3 +75,44 @@ it("restores required Channels from saved disabled settings and rejects disablin
     catalog: { plugins: [{ enabled: true }, { enabled: true }] },
   });
 });
+
+it.each([true, false, undefined])(
+  "preserves saved Bestie=%s over a changed default without migrating storage",
+  async (saved) => {
+    const flags = saved === undefined ? {} : { "buzz.bestie": saved };
+    const raw = JSON.stringify({ version: 2, enabled: flags });
+    const values = new Map([["buzzodz.plugins.v1", raw]]);
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    });
+    const defaults = () => [
+      ...catalog(),
+      {
+        source: "bundled" as const,
+        revision: "bundled",
+        previous: null,
+        reloadable: false,
+        error: null,
+        manifest: { id: "buzz.bestie", name: "Bestie", apiVersion: 1 as const },
+        enabled: false,
+      },
+    ];
+    const expected = saved ?? false;
+    const storage = createPluginStorage(defaults);
+    expect(await storage.getCatalog()).toMatchObject({
+      status: "ready",
+      catalog: {
+        plugins: [{ enabled: true }, { enabled: true }, { enabled: expected }],
+      },
+    });
+    expect(values.get("buzzodz.plugins.v1")).toBe(raw);
+    await storage.changePlugin("disable", "buzz.github");
+    expect(await createPluginStorage(defaults).getCatalog()).toMatchObject({
+      status: "ready",
+      catalog: {
+        plugins: [{ enabled: true }, { enabled: false }, { enabled: expected }],
+      },
+    });
+  },
+);

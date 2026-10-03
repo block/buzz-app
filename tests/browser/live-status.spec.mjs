@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 test.use({
@@ -46,15 +47,13 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
   await expect(warning).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await openDiagnostics(page);
   await expect(
     page.getByText("Live updates: connecting", { exact: true }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "Channel settings", exact: true })
+    .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   expect(app.relay.rejected).toHaveLength(0);
   expect(app.report.wireFrames.filter((f) => f[0] === "CLOSED")).toHaveLength(
@@ -104,9 +103,7 @@ for (const target of ["alpha", "profiles"]) {
         hasText: "Only currently accessible messages remain readable.",
       });
     await expect(warning).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .click();
+    await openChannelDetails(page);
     await openDiagnostics(page);
     const recovery = page.getByText(
       "Live updates: recovering automatically after rate limiting; awaiting confirmation",
@@ -155,9 +152,7 @@ for (const target of ["alpha", "profiles"]) {
       await page.screenshot({
         path: testInfo.outputPath(`toast-app-${target}-${width}.png`),
       });
-      await page
-        .getByRole("button", { name: "Channel settings", exact: true })
-        .click();
+      await openChannelDetails(page);
       await openDiagnostics(page);
       await expect(warning).toHaveCount(1);
     }
@@ -168,9 +163,7 @@ for (const target of ["alpha", "profiles"]) {
     await page
       .getByRole("button", { name: "Retry live updates", exact: true })
       .click();
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .click();
+    await openChannelDetails(page);
     await openDiagnostics(page);
     await expect(recovery).toBeVisible();
     await expect(warning).toHaveCount(0);

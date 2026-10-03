@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import {
   openPage,
   pageChoices,
@@ -6,8 +7,21 @@ import {
   settleShellToggle,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
+
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { wheel, anchor, settle, upper, expectAnchor } from "./timeline.mjs";
+
+// These layout/navigation journeys exercise the opt-in Bestie surface.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    const key = "buzzodz.plugins.v1";
+    if (localStorage.getItem(key) === null)
+      localStorage.setItem(
+        key,
+        JSON.stringify({ version: 2, enabled: { "buzz.bestie": true } }),
+      );
+  });
+});
 
 const scroll = test.extend({ historyCounts: { alpha: 20, beta: 1 } });
 const companionTest = test.extend({ companionFixture: true });
@@ -65,6 +79,10 @@ async function open(page, app) {
   await expect(page.locator("[data-message-id]").first()).toBeVisible();
 }
 async function link(page, app, target) {
+  await page.route(
+    /https:\/\/api\.github\.com\/repos\/block\/buzz\/(?:issues\/\d+\/comments|pulls\/\d+\/reviews)\?/,
+    (route) => route.fulfill({ json: [] }),
+  );
   await page.route("https://api.github.com/repos/block/buzz/pulls/*", (route) =>
     route.fulfill({
       json: {
@@ -282,6 +300,14 @@ test("joined surface, sidebar pages, real link panel and compact community navig
     name: "Channel message history",
   });
   const offset = await timeline.evaluate((el) => el.scrollTop);
+  // This scroll-ownership journey needs overflowing content; descriptions now
+  // start collapsed, so open the real disclosure before sending wheel input.
+  const description = panel(page).getByRole("button", {
+    name: "Expand Description",
+    exact: true,
+  });
+  await description.click();
+  await expect(description).toHaveAttribute("aria-expanded", "true");
   await panel(page)
     .getByRole("heading", { name: "A useful change #1" })
     .hover();
@@ -875,7 +901,7 @@ todosOverlapTest(
     await link(page, app, "https://github.com/block/buzz/pull/7");
     await toggle.click();
     await stacked(linked);
-    await button(page, "Channel settings").click();
+    await openChannelDetails(page);
     await expect(settings).toBeVisible();
     await expect(todos).toHaveCount(0); // Settings intentionally retires the drawer.
     await button(page, "Close Channel settings tab").click();
@@ -930,9 +956,7 @@ companionReadingTest(
       await expect(
         button(page, "Close Companion fixture panel"),
       ).toBeInViewport();
-      await page
-        .getByRole("button", { name: "Channel settings", exact: true })
-        .evaluate((element) => element.click());
+      await openChannelDetails(page, { programmatic: true });
       const settings = page.getByRole("complementary", {
         name: "Channel settings",
         exact: true,

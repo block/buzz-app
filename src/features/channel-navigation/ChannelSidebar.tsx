@@ -75,7 +75,11 @@ import {
   type CreateChannelInput,
 } from "../../bundled/channels/CreateChannelDialog";
 import { writeView } from "../../shared/view-state";
-import { useChannelNavigation } from "./ChannelNavigationState";
+import { useChannelReadAction } from "../../bundled/channels/useChannelReadAction";
+import {
+  type ChannelMenuSurface,
+  useChannelNavigation,
+} from "./ChannelNavigationState";
 import { newSessionParent } from "./routes";
 import { ChannelSidebarResizeHandle } from "./ChannelSidebarResizeHandle";
 import styles from "../../bundled/channels/Channels.module.css";
@@ -108,7 +112,13 @@ export function ChannelSidebar(props: Props) {
         />
       ) : (
         <div className="shell-sidebar-default">
-          <Panel as="aside" aria-label="Channel sidebar">
+          <Panel
+            as="aside"
+            aria-label="Channel sidebar"
+            data-buzz-launch-pending={
+              connection.status === "connecting" ? "required" : undefined
+            }
+          >
             <div className={styles.sidebar}>
               <div className={styles.sidebarScroll}>
                 {navigation}
@@ -202,11 +212,8 @@ function ReadySidebar({
     if (list.activityStatus !== "error") setActivityErrorDismissed(false);
   }, [list.activityStatus]);
   const mute = useOptimisticMute(queries.sidebarPreferences.setMute);
-  const rowMenuGeneration = useRef(0);
-  const [readWrite, setReadWrite] = useState<{
-    pending: boolean;
-    error?: string;
-  }>();
+  const readAction = useChannelReadAction();
+  const readWrite = readAction.state;
   const [rowFocus, setRowFocus] = useState<string>();
   const kitState = useSyncExternalStore(
     queries.channelKit.subscribe,
@@ -322,7 +329,22 @@ function ReadySidebar({
     { channelId: string; target: HTMLElement } | undefined
   >(undefined);
   const pendingCreate = useRef<ChannelSummary | undefined>(undefined);
-  const [creatingFor, setCreatingFor] = useState<ChannelSummary>();
+  const [creatingFor, setCreatingFor] = useState<{
+    channel: ChannelSummary;
+    surface?: ChannelMenuSurface;
+  }>();
+
+  const createOrigin = creatingFor?.surface?.signal;
+  useLayoutEffect(() => {
+    if (!createOrigin) return;
+    const retire = () =>
+      setCreatingFor((previous) =>
+        previous?.surface?.signal === createOrigin ? undefined : previous,
+      );
+    if (createOrigin.aborted) retire();
+    else createOrigin.addEventListener("abort", retire, { once: true });
+    return () => createOrigin.removeEventListener("abort", retire);
+  }, [createOrigin]);
 
   const [initialGroup, setInitialGroup] = useState("");
   const pendingChannelCreation = useSyncExternalStore(
@@ -401,7 +423,7 @@ function ReadySidebar({
     [navigator, relay, queries, scope, viewer],
   );
   const startSession = useCallback(
-    (parentId: string) => {
+    (parentId: string, focusComposer = false) => {
       const parent = queries.channels
         .list()
         .channels.find((channel) => channel.id === parentId);
@@ -420,17 +442,36 @@ function ReadySidebar({
         previous.includes(parentId) ? previous : [...previous, parentId],
       );
       sidebar.toggle(`session-children:${parentId}`, true);
-      void navigator.open({
-        version: 1,
-        kind: "page",
-        pluginId: "buzz.channels",
-        pageId: "channels",
-        route: { version: 1, params: { kind: "new-session", parentId } },
-        scope: {
-          viewer,
-          communityOrigin: scope.slice(0, -(viewer.length + 1)),
-        },
-      });
+      void navigator
+        .open({
+          version: 1,
+          kind: "page",
+          pluginId: "buzz.channels",
+          pageId: "channels",
+          route: { version: 1, params: { kind: "new-session", parentId } },
+          scope: {
+            viewer,
+            communityOrigin: scope.slice(0, -(viewer.length + 1)),
+          },
+        })
+        .then((result) => {
+          if (!focusComposer || result.status !== "opened") return;
+          requestAnimationFrame(() => {
+            const destination = navigator.snapshot().attempt.entry.target;
+            if (
+              !mounted.current ||
+              relay.snapshot().session !== queries ||
+              destination.kind !== "page" ||
+              newSessionParent(destination.route?.params) !== parentId ||
+              document.activeElement !== document.body
+            )
+              return;
+            document
+              .getElementById("new-session-prompt")
+              ?.querySelector<HTMLElement>('[role="textbox"]')
+              ?.focus();
+          });
+        });
     },
     [
       viewer,
@@ -584,24 +625,47 @@ function ReadySidebar({
   const moveChannel = (
     channelId: string,
     operation: () => Promise<unknown>,
+    surface?: ChannelMenuSurface,
   ) => {
     const saving = operation(); // Publishes optimistic placement synchronously.
-    closeRowMenu();
-    focusChannelPlacement(channelId);
+    if (surface) {
+      surface.close();
+      surface.focus();
+    } else {
+      closeRowMenu();
+      focusChannelPlacement(channelId);
+    }
     void saving.catch(() => {
       // The session exposes retry even after page/menu unmount. Restore a row
       // focus lost to rollback, but never steal focus from another control.
       if (
+        !surface &&
         sidebar.list.current?.isConnected &&
         document.activeElement === document.body
       )
         focusChannelPlacement(channelId);
     });
   };
-  const assignGroup = (channelId: string, sectionId?: string) =>
-    moveChannel(channelId, () => preferences.assign(channelId, sectionId));
-  const setChannelStar = (channelId: string, starred: boolean) =>
-    moveChannel(channelId, () => preferences.setStar(channelId, starred));
+  const assignGroup = (
+    channelId: string,
+    sectionId?: string,
+    surface?: ChannelMenuSurface,
+  ) =>
+    moveChannel(
+      channelId,
+      () => preferences.assign(channelId, sectionId),
+      surface,
+    );
+  const setChannelStar = (
+    channelId: string,
+    starred: boolean,
+    surface?: ChannelMenuSurface,
+  ) =>
+    moveChannel(
+      channelId,
+      () => preferences.setStar(channelId, starred),
+      surface,
+    );
   const placementWritable =
     preferences.writable && preferences.starWritable && !!preferences.data;
   const setSectionSort = (key: string, mode: "alpha" | "recent") => {
@@ -615,20 +679,26 @@ function ReadySidebar({
   };
   // Compose actual items here; menu availability is their count, not the policy
   // of any one action. Sibling actions keep their own eligibility checks.
-  const rowActions = (channel: ChannelSummary, sectionKey: string) => {
+  const rowActions = (
+    channel: ChannelSummary,
+    sectionKey: string,
+    surface?: ChannelMenuSurface,
+  ) => {
     const actions: ReactNode[] = [];
     if (
       sessionsEnabled &&
       channel.channelType !== "dm" &&
       channel.channelType !== "session" &&
-      !channel.archived
+      !channel.archived &&
+      !channel.readOnly
     ) {
       actions.push(
         <MenuItem
           key="new-session"
           onClick={() => {
-            startingSession.current = true;
-            startSession(channel.id);
+            if (surface) surface.close(() => false);
+            else startingSession.current = true;
+            startSession(channel.id, !!surface);
           }}
         >
           <MenuIcon>
@@ -675,12 +745,13 @@ function ReadySidebar({
               }
               onValueChange={(destination) => {
                 if (destination === "starred")
-                  void setChannelStar(channel.id, !starred);
+                  void setChannelStar(channel.id, !starred, surface);
                 else {
                   const groupId = destination.slice("group:".length);
                   void assignGroup(
                     channel.id,
                     groupId === currentSectionId ? undefined : groupId,
+                    surface,
                   );
                 }
               }}
@@ -709,7 +780,17 @@ function ReadySidebar({
             <MenuSeparator />
             <MenuItem
               onClick={() => {
-                pendingCreate.current = channel;
+                if (surface) {
+                  surface.close(() => false);
+                  requestAnimationFrame(() => {
+                    if (
+                      mounted.current &&
+                      !surface.signal?.aborted &&
+                      relay.snapshot().session === queries
+                    )
+                      setCreatingFor({ channel, surface });
+                  });
+                } else pendingCreate.current = channel;
               }}
             >
               <MenuIcon>
@@ -721,8 +802,8 @@ function ReadySidebar({
               <MenuItem
                 closeOnClick={false}
                 onClick={() => {
-                  if (starred) void setChannelStar(channel.id, false);
-                  else void assignGroup(channel.id);
+                  if (starred) void setChannelStar(channel.id, false, surface);
+                  else void assignGroup(channel.id, undefined, surface);
                 }}
               >
                 <MenuIcon>
@@ -750,8 +831,8 @@ function ReadySidebar({
         <MenuItem
           key="mute"
           closeOnClick={false}
-          disabled={readWrite?.pending ?? false}
-          onClick={() => changeMute(channel.id, channel.name, !muted)}
+          disabled={surface?.pending ?? readWrite?.pending ?? false}
+          onClick={() => changeMute(channel.id, channel.name, !muted, surface)}
         >
           <MenuIcon>
             {muted ? <BellIcon size={14} /> : <BellSlashIcon size={14} />}
@@ -766,11 +847,15 @@ function ReadySidebar({
           key="read"
           unread={queries.unread}
           channelId={channel.id}
-          pending={readWrite?.pending ?? false}
-          run={(action) => runReadAction(channel.id, action)}
+          pending={surface?.pending ?? readWrite?.pending ?? false}
+          run={(action) =>
+            surface
+              ? surface.runRead(action)
+              : runReadAction(channel.id, action)
+          }
         />,
       );
-    if (channel.channelType !== "session" && !channel.archived) {
+    if (!surface && channel.channelType !== "session" && !channel.archived) {
       actions.push(
         <ChannelLifecycleMenu
           key="lifecycle"
@@ -787,6 +872,12 @@ function ReadySidebar({
         <MenuItem
           key="remove-message"
           onClick={() => {
+            if (surface) {
+              hiddenDms.hide(channel.id);
+              surface.close();
+              surface.focus();
+              return;
+            }
             const trigger = sidebar.list.current?.querySelector<HTMLElement>(
               `[data-channel-id="${CSS.escape(channel.id)}"]`,
             );
@@ -827,21 +918,19 @@ function ReadySidebar({
   const openRowMenu = useCallback(
     (channel: ChannelSummary, sectionKey: string, anchor?: HTMLElement) => {
       startingSession.current = false;
-      rowMenuGeneration.current++;
-      setReadWrite(undefined);
+      readAction.reset();
       removedDmFocus.current = undefined;
       openMenu(channel, sectionKey, anchor);
     },
-    [openMenu],
+    [openMenu, readAction.reset],
   );
   const closeRowMenu = useCallback(() => {
-    rowMenuGeneration.current++;
-    setReadWrite(undefined);
+    readAction.reset();
     closeMenu();
-  }, [closeMenu]);
+  }, [closeMenu, readAction.reset]);
   const rowMenuClosed = useCallback((channelId: string) => {
     if (pendingCreate.current?.id === channelId) {
-      setCreatingFor(pendingCreate.current);
+      setCreatingFor({ channel: pendingCreate.current });
       pendingCreate.current = undefined;
     }
   }, []);
@@ -877,34 +966,43 @@ function ReadySidebar({
     )?.focus({ preventScroll: true });
     setRowFocus(undefined);
   }, [rowFocus, sidebar.list]);
-  const runReadAction = async (
-    channelId: string,
-    action: () => Promise<unknown>,
-  ) => {
-    const generation = rowMenuGeneration.current;
-    setReadWrite({ pending: true });
-    try {
-      await action();
-      if (!mounted.current || generation !== rowMenuGeneration.current) return;
-      // Startup can move the row; resolve its current owner after the commit.
+  const runReadAction = (channelId: string, action: () => Promise<unknown>) =>
+    readAction.run(action, () => {
       setRowFocus(channelId);
       closeRowMenu();
-    } catch (error) {
-      if (!mounted.current || generation !== rowMenuGeneration.current) return;
-      setReadWrite({
-        pending: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    });
+  const changeMute = (
+    channelId: string,
+    name: string,
+    muted: boolean,
+    surface?: ChannelMenuSurface,
+  ) => {
+    mute.change(channelId, name, muted);
+    if (surface) {
+      surface.close();
+      surface.focus();
+    } else {
+      setRowFocus(channelId);
+      closeRowMenu();
     }
   };
-  const changeMute = (channelId: string, name: string, muted: boolean) => {
-    mute.change(channelId, name, muted);
-    setRowFocus(channelId);
-    closeRowMenu();
-  };
+  // Publish presentation callbacks, not a second mutation owner. Header renders
+  // these elements under its own MenuRoot; a portal here would lose that context.
+  const menuActions = handoff?.menuActions;
+  useLayoutEffect(() => {
+    menuActions?.publish((channel, surface) => {
+      if (cached || channel.cached || relay.snapshot().session !== queries)
+        return [];
+      const placement = sections.find((section) =>
+        section.rows.some((row) => row.id === channel.id),
+      );
+      return rowActions(channel, placement?.key ?? "channels", surface);
+    });
+  });
+  useLayoutEffect(() => () => menuActions?.publish(undefined), [menuActions]);
   return (
     <>
-      {lifecycleDialog && (
+      {lifecycleDialog && !lifecycleDialog.origin?.aborted && (
         <ChannelLifecycleDialog
           channelId={lifecycleDialog.channel.id}
           channelName={lifecycleDialog.channel.name}
@@ -955,9 +1053,9 @@ function ReadySidebar({
           }}
         />
       )}
-      {creatingFor && (
+      {creatingFor && !creatingFor.surface?.signal?.aborted && (
         <CreateSidebarSection
-          channelName={creatingFor.name}
+          channelName={creatingFor.channel.name}
           maxLength={preferences.data?.groupSource === "personal" ? 120 : 256}
           writable={preferences.writable}
           refreshing={preferences.status === "loading"}
@@ -965,15 +1063,23 @@ function ReadySidebar({
           create={(section) => {
             // The modal can outlive the snapshot that admitted its menu. Check
             // the live gate before handing its draft to the optimistic store.
-            if (!queries.sidebarPreferences.writable) return false;
-            moveChannel(creatingFor.id, () =>
-              preferences.createAndAssign(creatingFor.id, section),
+            if (
+              creatingFor.surface?.signal?.aborted ||
+              !queries.sidebarPreferences.writable
+            )
+              return false;
+            moveChannel(
+              creatingFor.channel.id,
+              () =>
+                preferences.createAndAssign(creatingFor.channel.id, section),
+              creatingFor.surface,
             );
             setCreatingFor(undefined);
             return true;
           }}
           close={() => {
-            focusChannelPlacement(creatingFor.id);
+            if (creatingFor.surface) creatingFor.surface.focus();
+            else focusChannelPlacement(creatingFor.channel.id);
             setCreatingFor(undefined);
           }}
         />
@@ -982,6 +1088,17 @@ function ReadySidebar({
         <Panel
           as="aside"
           aria-label="Channel sidebar"
+          data-buzz-launch-pending={
+            connectionError
+              ? undefined
+              : !startup.ready ||
+                  (!cached &&
+                    (list.status === "idle" || list.status === "loading"))
+                ? "required"
+                : cached || startup.updating
+                  ? "settling"
+                  : undefined
+          }
           aria-busy={
             preferences.status === "loading" || startup.updating || undefined
           }

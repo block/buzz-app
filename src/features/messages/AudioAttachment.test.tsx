@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -10,6 +11,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { AudioAttachment } from "./AudioAttachment";
 
 const source = "/api/relay/media?url=https%3A%2F%2Ffixture.test%2Faudio.mp3";
@@ -23,7 +25,7 @@ function setDuration(element: HTMLAudioElement, duration: number) {
   });
 }
 
-function setPaused(element: HTMLAudioElement, paused: boolean) {
+function setPaused(element: HTMLMediaElement, paused: boolean) {
   Object.defineProperty(element, "paused", {
     configurable: true,
     value: paused,
@@ -34,13 +36,15 @@ beforeEach(() => {
   play = vi
     .spyOn(HTMLMediaElement.prototype, "play")
     .mockImplementation(function (this: HTMLMediaElement) {
-      fireEvent.play(this);
+      setPaused(this, false);
+      this.dispatchEvent(new Event("play"));
       return Promise.resolve();
     });
   pause = vi
     .spyOn(HTMLMediaElement.prototype, "pause")
     .mockImplementation(function (this: HTMLMediaElement) {
-      fireEvent.pause(this);
+      setPaused(this, true);
+      this.dispatchEvent(new Event("pause"));
     });
 });
 
@@ -701,3 +705,73 @@ it("pauses another audio element when playback starts", () => {
   expect(pause.mock.instances[0]).toBe(first);
   expect(play).not.toHaveBeenCalled();
 });
+
+it.each([false, true])(
+  "pauses retained audio on withholding without autoplay on recovery (pending play: %s)",
+  async (pending) => {
+    const tree = (active: boolean) => (
+      <StrictMode>
+        <ConversationPresentation value={active}>
+          <AudioAttachment
+            attachment={{
+              url: "https://fixture.test/audio.mp3",
+              kind: "audio",
+              duration: 83,
+            }}
+            source={source}
+          />
+        </ConversationPresentation>
+      </StrictMode>
+    );
+    const view = render(tree(true));
+    const audio = view.container.querySelector("audio");
+    if (!audio) throw new Error("Missing audio");
+    let resolvePlay: () => void = () => {};
+    let rejectPlay: (error: Error) => void = () => {};
+    if (pending) {
+      const result = new Promise<void>((resolve, reject) => {
+        resolvePlay = resolve;
+        rejectPlay = reject;
+      });
+      play.mockImplementationOnce(function (this: HTMLMediaElement) {
+        setPaused(this, false);
+        this.dispatchEvent(new Event("play"));
+        return result;
+      });
+    }
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Play audio" }));
+      expect(play).toHaveBeenCalledTimes(1);
+      expect(audio.paused).toBe(false);
+      audio.currentTime = 24;
+      fireEvent.timeUpdate(audio);
+      view.rerender(tree(false));
+      expect(pause).toHaveBeenCalledTimes(1);
+      expect(audio.paused).toBe(true);
+      expect(audio.currentTime).toBe(24);
+      expect(view.container.querySelector("audio")).toBe(audio);
+      expect(audio).toHaveAttribute("src", source);
+      if (pending) {
+        // Native pause interrupts an unresolved play request with AbortError.
+        await act(async () =>
+          rejectPlay(new DOMException("Playback interrupted", "AbortError")),
+        );
+      }
+      setDuration(audio, 83);
+      fireEvent.loadedMetadata(audio);
+      expect(play).toHaveBeenCalledTimes(1);
+      view.rerender(tree(true));
+      expect(audio.paused).toBe(true);
+      expect(audio.currentTime).toBe(24);
+      expect(play).toHaveBeenCalledTimes(1);
+      expect(
+        screen.getByRole("button", { name: "Play audio" }),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Play audio" }));
+      expect(audio.paused).toBe(false);
+      expect(audio.currentTime).toBe(24);
+    } finally {
+      await act(async () => resolvePlay());
+    }
+  },
+);

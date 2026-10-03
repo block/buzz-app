@@ -1,3 +1,16 @@
+/* Temporary text-field policy: keep editable fields' perimeter borders and hide
+   rich textboxes' inner outline. Read-only controls keep their keyboard rings;
+   rich editors retain the visible-focus exception. Focus and caret behavior are
+   unchanged. Preserve the recipes for a future pass. */
+:is(
+  .buzz-input:not([readonly]),
+  .buzz-textarea:not([readonly]),
+  [contenteditable="true"][role="textbox"]
+):focus {
+  /* biome-ignore lint/complexity/noImportantStyles: Central text-field policy must override layered recipes and unlayered editor outlines without deleting them. */
+  outline: none !important;
+}
+
 @layer components {
   /* The action sits on the inset field, not the surrounding floating surface.
      Reset only the child action so the outer field keeps its surface boundary. */

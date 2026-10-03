@@ -206,10 +206,15 @@ BentoWorkspace still uses the viewer preference helper and is not ready for app
 adoption; no workspace experiment is imported by app startup.
 
 The host mounts and cleans up the shared input-modality hook once. Its keyboard-focus
-recipes remain visible while pointer focus stays quiet. The standalone viewer loads a
-separate global outline suppression; see [Temporary focus
-appearance](../src/shared/design-system/DESIGN.md#temporary-focus-appearance). Preserve
-this explicit distinction rather than adding local focus overrides.
+recipes remain visible for non-text controls while pointer focus stays quiet. The
+shared `forms.css` policy hides the second outline on editable Input, Textarea,
+and rich textboxes in both hosts; ordinary fields retain their focused/error
+perimeter borders. Read-only controls, including shortcut capture, keep their
+keyboard rings in the app. Rich editors retain the temporary visible-focus
+accessibility exception.
+The standalone viewer separately suppresses all outlines; see [Temporary focus
+appearance](../src/shared/design-system/DESIGN.md#temporary-focus-appearance).
+Preserve this distinction rather than adding local focus overrides.
 
 The actual-app Appearance/shortcuts journeys cover startup, preferences, focus,
 and the temporary font/color compatibility contracts. Remove compatibility checks
@@ -288,7 +293,7 @@ measures its rem-sized leading region for the virtualizer’s pixel start margin
 
 ## Preference rows
 
-`PreferenceRow` owns settings layout: an optional decorative Phosphor `icon`,
+`PreferenceRow` owns settings layout: an optional decorative Tabler `icon`,
 `title`, optional `subtitle`, and `trailing` content. Titles use `text-label-sm`;
 subtitles use `text-body-sm`. Text wraps and controls retain their own interaction,
 focus, disabled, and pending behavior. The row itself is not an action target.

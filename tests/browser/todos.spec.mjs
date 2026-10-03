@@ -7,6 +7,18 @@ import { npubEncode } from "nostr-tools/nip19";
 import { verifyEvent } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 
+// These layout/navigation journeys exercise the opt-in Bestie surface.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    const key = "buzzodz.plugins.v1";
+    if (localStorage.getItem(key) === null)
+      localStorage.setItem(
+        key,
+        JSON.stringify({ version: 2, enabled: { "buzz.bestie": true } }),
+      );
+  });
+});
+
 // Configure the modeled session at its HTTP owner instead of proxying it through
 // route.fetch(), so session setup needs only the browser's original request.
 test.use({ sessionWriteKinds: [9, 9007, 40100] });
@@ -288,8 +300,10 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await messages();
   await expect(launcher).toHaveCount(0);
   await expect(drawer).toHaveCount(0);
-  await button("Channel settings").click();
-  await button("Canvas").click();
+  await button("Channel actions").click();
+  await page
+    .getByRole("menuitem", { name: "View canvas", exact: true })
+    .click();
   const canvas = page.getByRole("textbox", {
     name: "Canvas Markdown",
     exact: true,

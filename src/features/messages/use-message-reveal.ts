@@ -37,12 +37,14 @@ export function useMessageReveal({
     const cancel = () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      inertObserver.disconnect();
     };
     const schedule = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(reveal);
     };
     const observer = new MutationObserver(schedule);
+    const inertObserver = new MutationObserver(schedule);
     function reveal() {
       if (signal?.aborted || !container?.isConnected) return;
       const row = [
@@ -84,6 +86,12 @@ export function useMessageReveal({
         attributes: true,
         attributeFilter: ["style"],
       });
+      const inertAncestor = container.closest("[inert]");
+      if (inertAncestor)
+        inertObserver.observe(inertAncestor, {
+          attributes: true,
+          attributeFilter: ["inert"],
+        });
       prepare?.();
       schedule();
     });

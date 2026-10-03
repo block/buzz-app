@@ -1,6 +1,20 @@
 import { settleShellToggle } from "./navigation.mjs";
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
+
 import { open, wheel } from "./timeline.mjs";
+
+// These layout/navigation journeys exercise the opt-in Bestie surface.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    const key = "buzzodz.plugins.v1";
+    if (localStorage.getItem(key) === null)
+      localStorage.setItem(
+        key,
+        JSON.stringify({ version: 2, enabled: { "buzz.bestie": true } }),
+      );
+  });
+});
 
 test.use({ savedSidebar: true });
 
@@ -737,9 +751,7 @@ test("channel name fades follow renames without resizing the sidebar", async ({
   const originalWidth = await label.evaluate((element) => element.clientWidth);
   const sidebarWidth = (await sidebar.boundingBox()).width;
   await expect(label).not.toHaveAttribute("data-overflowing");
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   const settings = page.getByRole("complementary", {
     name: "Channel settings",
     exact: true,

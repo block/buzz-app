@@ -131,8 +131,16 @@ preparation uses fixed demuxers and ffmpeg arguments in the native host, then
 hashes and uploads only the converted bytes; JavaScript receives the descriptor,
 not the prepared file. ffmpeg must be installed on the computer.
 Member changes, repository HTTP and other broker-only helpers are not claimed
-by this adapter. NIP-FI assertion
-acquisition is not implemented, so deployments enforcing it are outside acceptance.
+by this adapter. For relays on the build's trusted enterprise list, the native
+host obtains a NIP-FI assertion from the enterprise adapter (session in
+`Authorization: Bearer`, a host-signed NIP-98 proof in `Nostr-Authorization`)
+and sends it as `Nostr-Federated-Identity` on protected relay HTTP, upload and
+media requests. The live socket for those relays connects through the Tauri
+WebSocket plugin with the same header; the assertion crosses into JavaScript
+once per connect, while the session token stays native. Only 401
+`session_required`/`session_expired` clear the session and reopen sign-in; 403
+`authorization_denied` keeps the session and stops that relay with access
+denied; other refusals keep the session and use the bounded reconnect backoff.
 Windows/Linux custody, credential migration and release-signing acceptance remain
 separate limitations.
 

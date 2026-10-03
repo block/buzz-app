@@ -1,14 +1,55 @@
-import { invoke } from "@tauri-apps/api/core";
-import TauriWebSocket from "@tauri-apps/plugin-websocket";
-import { noteEnterpriseDenial } from "./enterprise-sign-in";
-import { BADGE_ROTATION_CLOSE } from "./live";
+import { Channel, invoke } from "@tauri-apps/api/core";
+import {
+  ENTERPRISE_ACCESS_DENIED,
+  noteEnterpriseDenial,
+} from "./enterprise-sign-in";
+import { BADGE_DENIED_CLOSE, BADGE_ROTATION_CLOSE } from "./live";
 
 /** Rotate this long before the badge expires; the relay ends the connection at
- * expiry and NIP-FI badges last at most five minutes. */
+ * expiry and NIP-FI badges last at most five minutes. A badge with less left
+ * than this is a failed connection, not a rotation. */
 const ROTATE_BEFORE_MS = 30_000;
 
 type SocketBadge = { header: string; expiresAt: number };
 type Wire = { send(data: string): void; close(): void };
+/** What the Tauri WebSocket plugin delivers: a tagged frame, or a bare string
+ * when the read fails (the plugin sends nothing else after that). */
+export type PluginFrame = { type: string; data?: unknown } | string;
+export type PluginConnect = (
+  url: string,
+  headers: Record<string, string>,
+  receive: (frame: PluginFrame) => void,
+) => Promise<{ send(data: string): Promise<unknown>; close(): void }>;
+
+/** Connects through the WebSocket plugin's commands directly so `receive` is
+ * attached before the plugin can deliver the relay's first frame (`AUTH`). */
+const pluginConnect: PluginConnect = async (url, headers, receive) => {
+  const channel = new Channel<PluginFrame>();
+  channel.onmessage = receive;
+  const detach = () => {
+    channel.onmessage = () => {};
+  };
+  const id = await invoke<number>("plugin:websocket|connect", {
+    url,
+    onMessage: channel,
+    config: { headers: Object.entries(headers) },
+  }).catch((error: unknown) => {
+    detach();
+    throw error;
+  });
+  const message = (message: { type: string; data: unknown }) =>
+    invoke("plugin:websocket|send", { id, message });
+  return {
+    send: (data) => message({ type: "Text", data }),
+    close() {
+      detach();
+      void message({
+        type: "Close",
+        data: { code: 1000, reason: "" },
+      }).catch(() => {});
+    },
+  };
+};
 
 /**
  * A relay socket for the native app. The webview WebSocket cannot set headers,
@@ -21,7 +62,7 @@ export function nativeRelaySocket(
   dependencies = {
     badge: (url: string) =>
       invoke<SocketBadge | null>("relay_socket_badge", { url }),
-    plugin: TauriWebSocket.connect,
+    plugin: pluginConnect,
     browser: (url: string) => new WebSocket(url),
     now: Date.now,
   },
@@ -44,6 +85,7 @@ export function nativeRelaySocket(
       end(1000, false);
     },
   };
+  // The one terminal path: releases the wire and notifies at most once.
   const end = (code: number, notify: boolean, error = false) => {
     if (ended) return;
     ended = true;
@@ -53,48 +95,56 @@ export function nativeRelaySocket(
     if (error) socket.onerror?.(new Event("error"));
     if (notify) socket.onclose?.({ code } as CloseEvent);
   };
-  const opened = (next: Wire) => {
-    if (ended) return next.close();
-    wire = next;
+  const opened = () => {
+    if (ended) return;
     socket.readyState = 1;
     socket.onopen?.(new Event("open"));
   };
   // Returns the handler's promise so callers that await delivery still can.
   const message = (data: string) =>
     ended ? undefined : socket.onmessage?.({ data } as MessageEvent);
+  const remaining = (badge: SocketBadge) =>
+    badge.expiresAt * 1000 - dependencies.now() - ROTATE_BEFORE_MS;
   void (async () => {
     const badge = await dependencies.badge(url);
     if (ended) return;
     if (!badge) {
       const browser = dependencies.browser(url);
-      browser.onopen = () => opened(browser);
+      wire = browser;
+      browser.onopen = opened;
       browser.onmessage = (event) => message(event.data);
       browser.onerror = () => end(1006, true, true);
       browser.onclose = (event) => end(event?.code ?? 1006, true);
       return;
     }
-    const plugin = await dependencies.plugin(url, {
-      headers: { "Nostr-Federated-Identity": badge.header },
-    });
-    plugin.addListener((event) => {
-      if (event.type === "Text") message(event.data);
-      else if (event.type === "Close") end(event.data?.code ?? 1005, true);
-    });
-    opened({
-      send: (data) => void plugin.send(data).catch(() => end(1006, true, true)),
-      close: () => void plugin.disconnect().catch(() => {}),
-    });
-    if (ended) return;
-    rotation = setTimeout(
-      () => end(BADGE_ROTATION_CLOSE, true),
-      Math.max(
-        0,
-        badge.expiresAt * 1000 - dependencies.now() - ROTATE_BEFORE_MS,
-      ),
+    if (remaining(badge) <= 0) throw new Error("Relay badge expires too soon");
+    const plugin = await dependencies.plugin(
+      url,
+      { "Nostr-Federated-Identity": badge.header },
+      (frame) => {
+        // A bare string is the plugin's read failure: the connection is over.
+        if (typeof frame === "string") end(1006, true, true);
+        else if (frame.type === "Text") void message(frame.data as string);
+        else if (frame.type === "Close")
+          end((frame.data as { code?: number } | null)?.code ?? 1005, true);
+        // Ping, Pong and Binary frames carry nothing for the relay protocol.
+      },
     );
+    wire = {
+      send: (data) => void plugin.send(data).catch(() => end(1006, true, true)),
+      close: () => plugin.close(),
+    };
+    if (ended) return plugin.close();
+    const due = remaining(badge);
+    if (due <= 0) throw new Error("Relay badge expired while connecting");
+    opened();
+    rotation = setTimeout(() => end(BADGE_ROTATION_CLOSE, true), due);
   })().catch((error: unknown) => {
     noteEnterpriseDenial(error);
-    end(1006, true, true);
+    const denied =
+      (error instanceof Error ? error.message : error) ===
+      ENTERPRISE_ACCESS_DENIED;
+    end(denied ? BADGE_DENIED_CLOSE : 1006, true, !denied);
   });
   return socket as unknown as WebSocket;
 }

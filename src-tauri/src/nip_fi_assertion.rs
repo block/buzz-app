@@ -25,6 +25,8 @@ use crate::{
 
 /// Shown to JavaScript, which returns the person to enterprise sign-in.
 pub(crate) const SIGN_IN_REQUIRED: &str = "Enterprise sign-in is required";
+/// Shown to JavaScript, which keeps the session and stops retrying the relay.
+pub(crate) const ACCESS_DENIED: &str = "Enterprise access to this relay was denied";
 pub(crate) const HEADER: &str = "Nostr-Federated-Identity";
 const ASSERTION_PATH: &str = "/v1/identity/assertions";
 /// NIP-FI caps assertion lifetime at five minutes.
@@ -180,14 +182,16 @@ fn authorize(
         .header("Nostr-Authorization", proof)
 }
 
-/// Only these contract denials mean the person must sign in again. Every other
-/// failure (proof, binding, overload, network) keeps the session so
-/// a client or configuration fault never signs the person out.
-fn session_denied(status: u16, code: &str) -> bool {
-    matches!(
-        (status, code),
-        (401, "session_required" | "session_expired") | (403, "authorization_denied")
-    )
+/// Only lost-session denials mean the person must sign in again; a policy
+/// denial keeps the session, since signing in cannot change the policy. Every
+/// other failure (proof, binding, overload, network) keeps the session so a
+/// client or configuration fault never signs the person out.
+fn denial(status: u16, code: &str) -> Option<&'static str> {
+    match (status, code) {
+        (401, "session_required" | "session_expired") => Some(SIGN_IN_REQUIRED),
+        (403, "authorization_denied") => Some(ACCESS_DENIED),
+        _ => None,
+    }
 }
 
 async fn issue(
@@ -237,8 +241,8 @@ async fn issue(
         let code = serde_json::from_slice::<Denial>(&bytes)
             .map(|denial| denial.error)
             .unwrap_or_default();
-        if session_denied(status, &code) {
-            return Err(SIGN_IN_REQUIRED.into());
+        if let Some(denial) = denial(status, &code) {
+            return Err(denial.into());
         }
         let code: String = code
             .chars()

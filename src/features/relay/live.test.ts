@@ -1,6 +1,7 @@
 import { getLogger, setLogLevel } from "../developer/logging";
 import { assert, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  BADGE_DENIED_CLOSE,
   BADGE_ROTATION_CLOSE,
   createLiveAdmission,
   liveChannels,
@@ -2233,5 +2234,22 @@ it("relay badge rotation reconnects at once without spending the reconnect budge
   expect(h.sockets).toHaveLength(9);
   await vi.advanceTimersByTimeAsync(500);
   expect(h.sockets).toHaveLength(10);
+  h.owner.dispose();
+});
+
+it("relay access denial stops reconnecting and reports access denied", async () => {
+  vi.useFakeTimers();
+  const h = setup();
+  const socket = h.sockets.at(-1);
+  assert.exists(socket);
+  (socket.onclose as (event: { code: number }) => void)({
+    code: BADGE_DENIED_CLOSE,
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(h.sockets).toHaveLength(1);
+  expect(h.callbacks.state.mock.lastCall?.[0]).toMatchObject({
+    status: "error",
+    error: "Enterprise access to this relay was denied",
+  });
   h.owner.dispose();
 });

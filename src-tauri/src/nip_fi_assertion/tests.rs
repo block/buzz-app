@@ -102,16 +102,20 @@ async fn issues_badge_for_signer_pubkey_with_contract_headers() {
 
 #[tokio::test]
 async fn session_denials_require_sign_in() {
-    for (status, code) in [
-        (401, "session_expired"),
-        (401, "session_required"),
-        (403, "authorization_denied"),
-    ] {
+    for (status, code) in [(401, "session_expired"), (401, "session_required")] {
         let error = run(status, serde_json::json!({"error": code}))
             .await
             .unwrap_err();
         assert_eq!(error, SIGN_IN_REQUIRED, "{status} {code}");
     }
+}
+
+#[tokio::test]
+async fn relay_policy_denial_keeps_the_session() {
+    let error = run(403, serde_json::json!({"error": "authorization_denied"}))
+        .await
+        .unwrap_err();
+    assert_eq!(error, ACCESS_DENIED);
 }
 
 #[tokio::test]
@@ -129,6 +133,7 @@ async fn proof_and_service_failures_keep_the_session() {
             .await
             .unwrap_err();
         assert_ne!(error, SIGN_IN_REQUIRED, "{status} {code}");
+        assert_ne!(error, ACCESS_DENIED, "{status} {code}");
     }
 }
 

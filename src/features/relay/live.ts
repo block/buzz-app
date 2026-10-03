@@ -200,6 +200,9 @@ export const CHANNEL_KINDS = [
 /** Close code a socket reports for a planned relay badge rotation; the live
  * connection reconnects at once, outside the failure count and backoff. */
 export const BADGE_ROTATION_CLOSE = 4900;
+/** Close code a socket reports when the enterprise adapter denies this relay;
+ * the live connection stops retrying and shows access denied. */
+export const BADGE_DENIED_CLOSE = 4901;
 
 /** One authenticated socket, bounded joined-channel batches, singleton previews and two globals.
  * Recent replay is opportunistic: finite reads own catch-up and history bounds. */
@@ -853,6 +856,8 @@ export function subscribeRelayTraffic(
     };
     ws.onerror = () => reconnect("Live connection interrupted");
     ws.onclose = (event) => {
+      if (event?.code === BADGE_DENIED_CLOSE)
+        return terminal("Enterprise access to this relay was denied");
       // A planned badge rotation is not a failure: reconnect now, uncounted.
       if (event?.code !== BADGE_ROTATION_CLOSE)
         return reconnect("Live connection closed");

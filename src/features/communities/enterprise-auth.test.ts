@@ -688,7 +688,7 @@ it("disconnects enterprise sessions after a failed clear but keeps ordinary sess
   expect(communities.relay.snapshot().status).toBe("ready");
 });
 
-it("a relay session denial clears enterprise sign-in and prompts again", async () => {
+it("only a lost relay session clears enterprise sign-in and prompts again", async () => {
   const auth = authFixture();
   auth.get.mockResolvedValue({ expiresAt: "2030-01-01T00:00:00Z" });
   const { communities, connect } = setup(auth);
@@ -703,6 +703,7 @@ it("a relay session denial clears enterprise sign-in and prompts again", async (
   noteEnterpriseDenial(
     new Error("Relay badge was refused (401 invalid_proof)"),
   );
+  noteEnterpriseDenial(new Error("Enterprise access to this relay was denied"));
   await flush();
   expect(auth.clear).not.toHaveBeenCalled();
   noteEnterpriseDenial(new Error("Enterprise sign-in is required"));

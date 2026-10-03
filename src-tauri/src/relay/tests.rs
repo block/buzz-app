@@ -260,7 +260,9 @@ fn isolated_agent_ipc_probe() {
     use tauri::Manager;
     let app = mock_builder()
         .manage(IdentityHost::fixture())
-        .manage(crate::nip_fi_assertion::RelayAssertions::new(Default::default()))
+        .manage(crate::nip_fi_assertion::RelayAssertions::new(
+            Default::default(),
+        ))
         .manage(Uploads::default())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
@@ -448,7 +450,9 @@ fn managed_agent_registration_signs_as_owner_through_existing_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
-        .manage(crate::nip_fi_assertion::RelayAssertions::new(Default::default()))
+        .manage(crate::nip_fi_assertion::RelayAssertions::new(
+            Default::default(),
+        ))
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -660,7 +664,9 @@ fn native_write_commands_reach_handlers_through_production_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
-        .manage(crate::nip_fi_assertion::RelayAssertions::new(Default::default()))
+        .manage(crate::nip_fi_assertion::RelayAssertions::new(
+            Default::default(),
+        ))
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -720,7 +726,9 @@ fn channel_commands_sign_archive_and_unarchive_and_reject_malformed_tags_through
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
-        .manage(crate::nip_fi_assertion::RelayAssertions::new(Default::default()))
+        .manage(crate::nip_fi_assertion::RelayAssertions::new(
+            Default::default(),
+        ))
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -778,7 +786,9 @@ fn creation_rejects_truncated_tags_through_existing_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
-        .manage(crate::nip_fi_assertion::RelayAssertions::new(Default::default()))
+        .manage(crate::nip_fi_assertion::RelayAssertions::new(
+            Default::default(),
+        ))
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();

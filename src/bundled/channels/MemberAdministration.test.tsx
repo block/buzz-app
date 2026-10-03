@@ -556,7 +556,7 @@ it("presents verified roles, protects owners/self, and confirms a separate delib
   );
   expect(
     within(dialog).getByRole("button", { name: "Cancel" }),
-  ).toHaveAttribute("data-variant", "outline");
+  ).toHaveAttribute("data-variant", "subtle");
   expect(
     within(dialog).getByRole("button", { name: "Make admin" }),
   ).toHaveAttribute("data-variant", "prominent");
@@ -638,11 +638,11 @@ it("confirms removal and removes only the confirmed roster entry", async () => {
   expect(screen.getAllByRole("dialog")).toHaveLength(1);
   expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
   expect(
-    within(dialog).getByText(
-      "This does not stop or remove their agents. They’ll need an invitation to rejoin.",
-      { exact: true },
-    ),
-  ).toBeInTheDocument();
+    required(dialog.querySelector(".buzz-dialog-body")),
+  ).toBeEmptyDOMElement();
+  expect(
+    within(dialog).getByRole("button", { name: "Cancel" }),
+  ).toHaveAttribute("data-variant", "subtle");
   expect(
     within(dialog).getByRole("button", { name: "Remove member" }),
   ).toHaveAttribute("data-variant", "destructive");
@@ -781,11 +781,9 @@ it.each([false, true])(
     );
     expect(avatar).toHaveAttribute("data-size", "small");
     expect(avatar).toHaveTextContent("M");
-    expect(dialog).toHaveTextContent(
-      agent
-        ? "Removing the agent does not stop it from running, but it will no longer be able to read this private channel. It can be added back later."
-        : "This does not stop or remove their agents. They’ll need an invitation to rejoin.",
-    );
+    expect(
+      required(dialog.querySelector(".buzz-dialog-body")),
+    ).toBeEmptyDOMElement();
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
@@ -833,7 +831,7 @@ it.each([false, true])(
   },
 );
 it.each([false, true])(
-  "omits private-access and invitation warnings when removing a public-channel member (Agent: %s)",
+  "shows no removal body for a public-channel member (Agent: %s)",
   async (agent) => {
     const t = await setup(
       "owner",
@@ -851,15 +849,12 @@ it.each([false, true])(
     expect(t.session.channels.get?.(id)?.visibility).toBe("public");
     const dialog = await t.choose("Remove from channel");
     expect(
-      within(dialog).getByText(
-        agent
-          ? "Removing the agent does not stop it from running. It can be added back later."
-          : "This does not stop or remove their agents.",
-        { exact: true },
-      ),
-    ).toBeInTheDocument();
-    expect(dialog).not.toHaveTextContent("private channel");
-    expect(dialog).not.toHaveTextContent("invitation");
+      required(dialog.querySelector(".buzz-dialog-body")),
+    ).toBeEmptyDOMElement();
+    expect(dialog).toHaveAccessibleDescription("Morgan");
+    expect(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    ).toHaveAttribute("data-variant", "subtle");
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
@@ -1715,10 +1710,10 @@ it.each(["bot", "member"])(
     const dialog = await screen.findByRole("dialog", {
       name: "Remove agent from channel",
     });
-    expect(dialog).toHaveTextContent(
-      "Removing the agent does not stop it from running, but it will no longer be able to read this private channel. It can be added back later.",
-    );
-    expect(dialog).not.toHaveTextContent("their agents");
+    expect(
+      required(dialog.querySelector(".buzz-dialog-body")),
+    ).toBeEmptyDOMElement();
+    expect(dialog).toHaveAccessibleDescription("Morgan");
     expect(
       within(dialog).getByRole("button", { name: "Remove agent" }),
     ).toHaveAttribute("data-variant", "destructive");

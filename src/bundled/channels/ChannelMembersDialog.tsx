@@ -915,6 +915,8 @@ export function ChannelMembersDialog({
       }
       height={selection ? "content" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}
+      headerGap={selection?.role === "remove" ? "compact" : "default"}
+      footerGap={selection?.role === "remove" ? "compact" : "default"}
       description={
         selection ? (
           <span className="flex min-w-0 items-center gap-2">
@@ -944,7 +946,7 @@ export function ChannelMembersDialog({
         selection && (
           <>
             <Button
-              variant="outline"
+              variant="subtle"
               ref={cancel}
               onClick={() => setIntent(undefined)}
             >
@@ -1006,17 +1008,11 @@ export function ChannelMembersDialog({
       finalFocus={() => (openingDestination.current ? false : trigger.current)}
     >
       {selection ? (
-        <p className="text-body-sm">
-          {selection.role === "remove"
-            ? selectedAgent
-              ? channel?.visibility === "private"
-                ? "Removing the agent does not stop it from running, but it will no longer be able to read this private channel. It can be added back later."
-                : "Removing the agent does not stop it from running. It can be added back later."
-              : channel?.visibility === "private"
-                ? "This does not stop or remove their agents. They’ll need an invitation to rejoin."
-                : "This does not stop or remove their agents."
-            : `Change this member’s role from ${selection.expectedRole} to ${selection.role}. ${selection.role === "admin" ? "Admins can manage this channel and its members." : "This changes their authority in this channel."}`}
-        </p>
+        selection.role !== "remove" && (
+          <p className="text-body-sm">
+            {`Change this member’s role from ${selection.expectedRole} to ${selection.role}. ${selection.role === "admin" ? "Admins can manage this channel and its members." : "This changes their authority in this channel."}`}
+          </p>
+        )
       ) : (
         <div className={styles.layout}>
           <div className="flex shrink-0 items-center">

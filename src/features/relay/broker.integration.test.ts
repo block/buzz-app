@@ -61,6 +61,7 @@ it("profiles a first slow publish through real local IPC, signing, authenticated
     handler?.(req, res);
   });
   const plugin = relayBrokerPlugin({
+    archiveFile: ":memory:",
     relayUrl: fixtureRelayUrl,
     communityAliases: fixtureAliases,
     identity: () => viewer.secret,

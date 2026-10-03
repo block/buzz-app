@@ -56,6 +56,7 @@ fn main() {
             "relay_agent_resolve",
             "relay_agent_log_proof",
             "relay_agent_observer",
+            "relay_archive",
             "relay_agent_memories_read",
             "relay_agent_library",
             "relay_upload",

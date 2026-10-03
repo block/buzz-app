@@ -114,6 +114,8 @@ export type LiveCallbacks = {
   receive(events: readonly VerifiedEvent[], provenance?: LiveProvenance): void;
   /** Host-only encrypted telemetry route; never ordinary history reconciliation. */
   telemetry?(event: VerifiedEvent, generation: number): void;
+  capture?(event: VerifiedEvent): void;
+  captureState?(state: "saving" | "off" | "error"): void;
   /** Decoded host DTO on the browser transport. */
   observer?(frame: ObserverFrame, generation: number): void;
   presence?(event: VerifiedEvent): void;
@@ -131,6 +133,7 @@ export type LiveSubscription = {
   /** Host demand only: reorder existing pending routes, never grant new interests. */
   prioritize?(channels: readonly string[]): void;
   observe?(generation: number | null): void;
+  archive?(kinds: readonly number[]): void;
   /** Ephemeral status: true = accepted, false = unconfirmed/refused, null = unsent.
    * Admission skips report their remaining delay; no durable queue is created. */
   publishPresence?(
@@ -229,6 +232,15 @@ export function subscribeRelayTraffic(
   let denying: Set<string> | undefined;
   let priority: string[] = [];
   let observer: number | null = null;
+  let observerSince = 0;
+  let archiveKinds: readonly number[] = [];
+  const telemetryKinds = () =>
+    [
+      ...new Set([
+        ...(observer !== null ? [OBSERVER_KIND] : []),
+        ...archiveKinds,
+      ]),
+    ].sort();
   let presenceAuthors: readonly string[] = [];
   let presenceReceipt:
     | { id: string; finish(accepted: boolean): void }
@@ -346,7 +358,7 @@ export function subscribeRelayTraffic(
       ranked.slice(
         0,
         LIVE_CHANNEL_CAPACITY -
-          (observer !== null ? 1 : 0) -
+          (observer !== null || archiveKinds.length ? 1 : 0) -
           (presenceAuthors.length ? 1 : 0),
       ),
     );
@@ -354,7 +366,7 @@ export function subscribeRelayTraffic(
     const globals = new Set([
       "profiles",
       "membership",
-      ...(observer !== null ? ["observer"] : []),
+      ...(observer !== null || archiveKinds.length ? ["observer"] : []),
       ...(presenceAuthors.length ? ["presence"] : []),
     ]);
     // Scope is immutable for a wire. Retirement rebuilds only the affected batch;
@@ -544,7 +556,10 @@ export function subscribeRelayTraffic(
               : route.id === "profiles"
                 ? { kinds: [0, 10100, 30177] }
                 : route.id === "observer"
-                  ? { kinds: [OBSERVER_KIND], "#p": [viewer] }
+                  ? {
+                      kinds: telemetryKinds(),
+                      "#p": [viewer],
+                    }
                   : { kinds: [44100, 44101], "#p": [viewer] },
           ];
       send([
@@ -805,12 +820,17 @@ export function subscribeRelayTraffic(
             callbacks.presence?.(incoming);
         } else if (route.id === "observer") {
           if (
-            observer !== null &&
-            incoming.kind === OBSERVER_KIND &&
+            archiveKinds.includes(incoming.kind) &&
             incoming.created_at >= route.since
           )
+            callbacks.capture?.(incoming);
+          if (
+            observer !== null &&
+            incoming.kind === OBSERVER_KIND &&
+            incoming.created_at >= Math.max(route.since, observerSince)
+          )
             callbacks.telemetry?.(incoming, observer);
-        } else if (incoming.kind !== OBSERVER_KIND)
+        } else if (![OBSERVER_KIND, 44200].includes(incoming.kind))
           callbacks.receive(
             [incoming],
             Object.freeze({
@@ -942,12 +962,34 @@ export function subscribeRelayTraffic(
         );
       return requests.publish(event, signal);
     },
+    archive(kinds) {
+      if (kinds.some((kind) => ![OBSERVER_KIND, 44200].includes(kind)))
+        throw new Error("Invalid archive capture kinds");
+      const next = [...new Set(kinds)].sort();
+      if (closed || JSON.stringify(next) === JSON.stringify(archiveKinds))
+        return;
+      const before = telemetryKinds();
+      archiveKinds = next;
+      const route = routes.get("observer");
+      if (route && JSON.stringify(before) !== JSON.stringify(telemetryKinds()))
+        remove(route);
+      sync();
+    },
     observe(value) {
       const next = observerGeneration(value);
       if (closed || observer === next) return;
+      const before = telemetryKinds();
       observer = next;
+      // Display generations must not interrupt an unchanged capture route. Keep
+      // its ingress floor, but admit only fresh telemetry to the new display.
+      observerSince = Math.floor(Date.now() / 1000);
       const route = routes.get("observer");
-      if (route) remove(route); // Fence the old wire before enabling a new generation.
+      if (
+        route &&
+        (!archiveKinds.length ||
+          JSON.stringify(before) !== JSON.stringify(telemetryKinds()))
+      )
+        remove(route);
       sync();
     },
     prioritize(input) {

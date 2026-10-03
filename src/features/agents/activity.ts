@@ -1,7 +1,12 @@
 import type { EventData } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
 import type { LiveSnapshot } from "../relay/live";
-import { observerFrame, type ObserverFrame } from "./observer";
+import {
+  ACTIVITY_HISTORY_AGE_MS,
+  observerFrame,
+  type ObserverFrame,
+} from "./observer";
+import type { ArchiveHost, ArchivePage } from "../archive/types";
 
 export const ACTIVITY_RECORD_LIMIT = 200;
 export const ACTIVITY_BYTE_LIMIT = 2 * 1024 * 1024;
@@ -10,6 +15,7 @@ export const ACTIVITY_FRESH_MS = 30_000;
 type RawRecord = ObserverFrame &
   Readonly<{
     receivedAt: number;
+    historical: boolean;
     kind: string;
     /** Recognized envelope/child channel metadata; plaintext stays unmodified. */
     channelIds: readonly string[];
@@ -43,6 +49,12 @@ type Snapshot = Readonly<{
   turns: readonly ActivityTurn[];
   typing: readonly Typing[];
   trimmed: number;
+  history: "unavailable" | "loading" | "ready" | "error";
+  hasOlder: boolean;
+  historyOlder: boolean;
+  historySkipped: number;
+  historyAgents: readonly string[];
+  capture: "unknown" | "saving" | "off" | "error";
 }>;
 type Turn = Omit<ActivityTurn, "state"> & { ended: boolean; epoch: number };
 const object = (value: unknown): Record<string, unknown> | undefined =>
@@ -60,17 +72,35 @@ const starts = new Set([
 ]);
 const ends = new Set(["turn_completed", "turn_error", "agent_panic"]);
 
-/** Session-owned RAM only. Plugin activation owns demand, not sockets or keys. */
+/** Session-owned live evidence and bounded local history. Plugin activation owns demand, not sockets or keys. */
 export function createAgentActivity(
   available: boolean,
   observe: (generation: number | null) => void,
   canAccess: (channel: string) => boolean,
   notify = (listener: () => void) => listener(),
+  history?: {
+    host: ArchiveHost;
+    canRestore: (channel: string) => boolean;
+  },
 ) {
   let closed = false,
     leases = 0,
     generation = 0,
     epoch = 0;
+  let historyStatus: Snapshot["history"] = history?.host
+    ? "loading"
+    : "unavailable";
+  let historyGeneration = 0;
+  let historyAbort = new AbortController();
+  let loaded = false;
+  let historyAgent: string | undefined;
+  let historyBefore: number | undefined;
+  let hasOlder = false;
+  let historyOlder = false;
+  let historyAgents: readonly string[] = [];
+  let captureStatus: Snapshot["capture"] = "unknown";
+  let historyPage: ArchivePage | undefined;
+  const liveAgents = new Set<string>();
   let status: Snapshot["status"] = available ? "disabled" : "unavailable";
   let records: RawRecord[] = [],
     bytes = 0,
@@ -88,10 +118,38 @@ export function createAgentActivity(
     turns: [],
     typing: [],
     trimmed,
+    history: historyStatus,
+    hasOlder,
+    historyOlder,
+    historySkipped: historyPage?.skipped ?? 0,
+    historyAgents,
+    capture: captureStatus,
   });
   function publish() {
     const now = Date.now();
-    const known = new Set(records.map((record) => record.agent));
+    const fresh = records.filter(
+      (record) => now - record.receivedAt < ACTIVITY_HISTORY_AGE_MS,
+    );
+    if (fresh.length !== records.length) {
+      trimmed += records.length - fresh.length;
+      records = fresh;
+      bytes = records.reduce(
+        (total, record) =>
+          total +
+          (record.historical
+            ? 0
+            : new TextEncoder().encode(record.plaintext).length),
+        0,
+      );
+    }
+    const retained = new Set(
+      records
+        .filter((record) => !record.historical)
+        .map((record) => record.agent),
+    );
+    for (const agent of liveAgents)
+      if (!retained.has(agent)) liveAgents.delete(agent);
+    const known = liveAgents;
     for (const [key, entry] of typing)
       if (now >= entry.expiresAt || !known.has(entry.agent)) typing.delete(key);
     const typers = [...typing.values()].filter((entry) => entry.working);
@@ -134,6 +192,12 @@ export function createAgentActivity(
       snapshot.status === status &&
       snapshot.records === records &&
       snapshot.trimmed === trimmed &&
+      snapshot.history === historyStatus &&
+      snapshot.hasOlder === hasOlder &&
+      snapshot.historyOlder === historyOlder &&
+      snapshot.historySkipped === (historyPage?.skipped ?? 0) &&
+      snapshot.historyAgents === historyAgents &&
+      snapshot.capture === captureStatus &&
       JSON.stringify(snapshot.turns) === JSON.stringify(visible) &&
       JSON.stringify(snapshot.typing) === JSON.stringify(typers)
     )
@@ -144,6 +208,12 @@ export function createAgentActivity(
       turns: Object.freeze(visible),
       typing: Object.freeze(typers),
       trimmed,
+      history: historyStatus,
+      hasOlder,
+      historyOlder,
+      historySkipped: historyPage?.skipped ?? 0,
+      historyAgents,
+      capture: captureStatus,
     });
     for (const listener of listeners) notify(listener);
     if (workingChanged)
@@ -156,13 +226,24 @@ export function createAgentActivity(
     evidenceFloor = 0;
     turns.clear();
     typing.clear();
+    liveAgents.clear();
     epoch++;
   }
   function restart() {
+    historyGeneration++;
+    historyAbort.abort();
+    historyAbort = new AbortController();
+    loaded = false;
+    historyBefore = undefined;
+    historyPage = undefined;
+    hasOlder = false;
+    historyOlder = false;
+    historyAgents = [];
     generation++;
     reset();
     if (available && !closed && leases) {
       status = "connecting";
+      void restore();
       observe(generation);
     } else status = closed || !available ? "unavailable" : "disabled";
     publish();
@@ -212,9 +293,175 @@ export function createAgentActivity(
       }
     }
   }
+  function channelsAllowed(
+    raw: unknown,
+    allowed: (channel: string) => boolean,
+  ) {
+    const envelope = object(raw);
+    const children =
+      envelope?.kind === "batch" ? object(envelope.payload)?.events : undefined;
+    return ![raw, ...(Array.isArray(children) ? children : [])].some(
+      (value) => {
+        const channel = object(value)?.channelId;
+        return text(channel) && !allowed(channel);
+      },
+    );
+  }
+  function admit(
+    input: ObserverFrame,
+    receivedAt: number,
+    historical: boolean,
+  ) {
+    let frame: ObserverFrame, raw: unknown;
+    try {
+      frame = observerFrame(input);
+      raw = JSON.parse(frame.plaintext);
+    } catch {
+      return;
+    }
+
+    const envelope = object(raw);
+    const children =
+      envelope?.kind === "batch" ? object(envelope.payload)?.events : undefined;
+    const items = Array.isArray(children) ? children : [raw];
+    // A denied child cannot leak through an otherwise visible raw batch.
+    if (
+      !channelsAllowed(
+        raw,
+        historical && history ? history.canRestore : canAccess,
+      )
+    )
+      return;
+    if (!historical) {
+      liveAgents.add(frame.agent);
+      for (const item of items) fold(frame.agent, item);
+    }
+    const duplicate = records.find((record) => record.id === frame.id);
+    if (duplicate && (historical || !duplicate.historical)) {
+      if (!historical) publish();
+      return;
+    }
+    if (duplicate) records = records.filter((record) => record.id !== frame.id);
+    const record = Object.freeze({
+      id: frame.id,
+      agent: frame.agent,
+      createdAt: frame.createdAt,
+      plaintext: frame.plaintext,
+      receivedAt,
+      historical,
+      kind: text(envelope?.kind) ? envelope.kind : "unknown",
+      channelIds: Object.freeze([
+        ...new Set(
+          [raw, ...items].flatMap((value) => {
+            const channelId = object(value)?.channelId;
+            return text(channelId) ? [channelId] : [];
+          }),
+        ),
+      ]),
+    });
+    records = [...records, record].sort((a, b) => a.receivedAt - b.receivedAt);
+    if (!historical) bytes += new TextEncoder().encode(frame.plaintext).length;
+    while (
+      records.filter((record) => !record.historical).length >
+        ACTIVITY_RECORD_LIMIT ||
+      bytes > ACTIVITY_BYTE_LIMIT
+    ) {
+      const index = records.findIndex((record) => !record.historical);
+      const [first] = records.splice(index, 1);
+      if (first) bytes -= new TextEncoder().encode(first.plaintext).length;
+      trimmed++;
+    }
+    if (!historical) publish();
+  }
+
+  async function restore() {
+    if (!history?.host || closed || !leases || loaded) return;
+    loaded = true;
+    const token = historyGeneration;
+    const signal = historyAbort.signal;
+    historyStatus = "loading";
+    publish();
+    try {
+      const page = await history.host.read(
+        {
+          kind: 24200,
+          ...(historyAgent ? { agent: historyAgent } : {}),
+          ...(historyBefore ? { before: historyBefore } : {}),
+        },
+        signal,
+      );
+      if (closed || token !== historyGeneration) return;
+      historyOlder = historyBefore !== undefined;
+      historyBefore = page.before ?? undefined;
+      hasOlder = page.before !== null;
+      historyAgents = page.agents;
+      historyPage = page;
+      showHistoryPage();
+      historyStatus = "ready";
+    } catch {
+      if (closed || token !== historyGeneration) return;
+      historyStatus = "error";
+    }
+    publish();
+  }
+  function showHistoryPage() {
+    // Paging replaces only the archived display window. Unsaved live records and
+    // live ownership survive hydration, selection, and access-grant notifications.
+    records = records.filter((record) => !record.historical);
+    for (const frame of [...(historyPage?.records ?? [])].reverse())
+      admit(frame, frame.receivedAt, true);
+    publish();
+  }
+  async function clearHistory() {
+    // A failed delete must leave the visible evidence intact.
+    const token = historyGeneration;
+    await history?.host.clear(24200);
+    if (closed || token !== historyGeneration) return;
+    historyGeneration++;
+    historyAbort.abort();
+    historyAbort = new AbortController();
+    reset();
+    generation++;
+    if (available && leases) observe(generation);
+    historyPage = undefined;
+    historyBefore = undefined;
+    hasOlder = false;
+    historyOlder = false;
+    historyAgents = [];
+    loaded = true;
+    historyStatus = history ? "ready" : "unavailable";
+    publish();
+  }
   return {
     queries: Object.freeze({
       snapshot: () => snapshot,
+      clearHistory,
+      archive: history?.host,
+      selectHistory(agent: string) {
+        if (historyAgent === agent) return;
+        historyAgent = agent || undefined;
+        historyBefore = undefined;
+        historyPage = undefined;
+        hasOlder = false;
+        historyOlder = false;
+        records = records.filter((record) => !record.historical);
+        historyGeneration++;
+        historyAbort.abort();
+        historyAbort = new AbortController();
+        loaded = false;
+        void restore();
+      },
+      latestHistory() {
+        if (historyStatus === "loading") return Promise.resolve();
+        historyBefore = undefined;
+        loaded = false;
+        return restore();
+      },
+      loadOlder() {
+        if (historyStatus === "loading" || !hasOlder) return Promise.resolve();
+        loaded = false;
+        return restore();
+      },
       workingSnapshot: () => workingChannels,
       subscribeWorking(listener: () => void) {
         if (closed) return () => {};
@@ -246,60 +493,18 @@ export function createAgentActivity(
         };
       },
     }),
+    captureState(state: "saving" | "off" | "error") {
+      captureStatus = state;
+      publish();
+    },
     receive(input: ObserverFrame, current: number) {
       if (closed || !available || !leases || current !== generation) return;
-      let frame: ObserverFrame, raw: unknown;
-      try {
-        frame = observerFrame(input);
-        raw = JSON.parse(frame.plaintext);
-      } catch {
-        return;
-      }
-      if (records.some((record) => record.id === frame.id)) return;
-      const envelope = object(raw);
-      const children =
-        envelope?.kind === "batch"
-          ? object(envelope.payload)?.events
-          : undefined;
-      const items = Array.isArray(children) ? children : [raw];
-      // A denied child cannot leak through an otherwise visible raw batch.
-      if (
-        [raw, ...items].some((value) => {
-          const item = object(value);
-          return text(item?.channelId) && !canAccess(item.channelId);
-        })
-      )
-        return;
-      for (const item of items) fold(frame.agent, item);
-      const record = Object.freeze({
-        ...frame,
-        receivedAt: Date.now(),
-        kind: text(envelope?.kind) ? envelope.kind : "unknown",
-        channelIds: Object.freeze([
-          ...new Set(
-            [raw, ...items].flatMap((value) => {
-              const channelId = object(value)?.channelId;
-              return text(channelId) ? [channelId] : [];
-            }),
-          ),
-        ]),
-      });
-      records = [...records, record];
-      bytes += new TextEncoder().encode(frame.plaintext).length;
-      while (
-        records.length > ACTIVITY_RECORD_LIMIT ||
-        bytes > ACTIVITY_BYTE_LIMIT
-      ) {
-        const first = records.shift();
-        if (first) bytes -= new TextEncoder().encode(first.plaintext).length;
-        trimmed++;
-      }
-      publish();
+      admit(input, Date.now(), false);
     },
     /** Public typing is scope/freshness evidence only, never ownership evidence. */
     channelEvents(events: readonly EventData[]) {
       if (closed || !leases || status !== "listening") return;
-      const known = new Set(records.map((record) => record.agent));
+      const known = liveAgents;
       const now = Date.now();
       for (const event of events) {
         if (![9, 20002].includes(event.kind) || !known.has(event.pubkey))
@@ -375,6 +580,14 @@ export function createAgentActivity(
         }
       status = next;
       publish();
+    },
+    restoreHistory() {
+      // Re-evaluate this page after access becomes known, without rereading or
+      // rewinding the user's cursor on unrelated channel-list notifications.
+      if (historyPage && !closed && leases) showHistoryPage();
+    },
+    accessChanged() {
+      restart();
     },
     clear: restart,
     dispose() {

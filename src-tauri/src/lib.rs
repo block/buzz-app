@@ -1,3 +1,5 @@
+mod archive;
+use archive::relay_archive;
 mod browser;
 #[cfg(test)]
 mod browser_permissions_tests;
@@ -409,6 +411,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_sign_sidebar,
         relay_agent_resolve,
         relay_agent_log_proof,
+        relay_archive,
         relay_agent_observer,
         relay_agent_memories_read,
         relay_agent_library,
@@ -531,6 +534,7 @@ pub fn run() {
     };
     builder
         .manage(IdentityHost::default())
+        .manage(archive::ArchiveHost::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())

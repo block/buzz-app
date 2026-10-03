@@ -153,6 +153,7 @@ it("reads legacy preferences through the production session, transport, and boun
   let handler: RequestListener = () => {};
   const server = createServer((req, res) => handler(req, res));
   const plugin = relayBrokerPlugin({
+    archiveFile: ":memory:",
     relayUrl: fixtureRelayUrl,
     communityAliases: fixtureAliases,
     identity: () => viewer.secret.slice(),

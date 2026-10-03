@@ -35,6 +35,7 @@ import type { ShortcutsService } from "../features/shortcuts/service";
 import type { ShortcutBindings } from "../features/shortcuts/preferences";
 import { ShortcutSettings } from "./ShortcutSettings";
 import { DeveloperSettings } from "./DeveloperSettings";
+import { ArchiveSettings } from "./ArchiveSettings";
 import { AgentSettings } from "./AgentSettings";
 import type { AgentControl } from "../features/agents/control";
 import type { SettingsCards } from "../features/settings/service";
@@ -327,6 +328,13 @@ export function Settings({
             <div hidden={selected !== "agents"}>
               <AgentSettings
                 control={agentControl}
+                archive={
+                  <ArchiveSettings
+                    relay={communities.relay}
+                    community={selectedCommunity?.name}
+                    active={selected === "agents"}
+                  />
+                }
                 active={selected === "agents"}
               />
             </div>

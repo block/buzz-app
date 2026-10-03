@@ -82,6 +82,7 @@ fn native_command_permissions_allow_only_main_webview() {
         "relay_agent_resolve",
         "relay_agent_log_proof",
         "relay_agent_observer",
+        "relay_archive",
         "relay_agent_memories_read",
         "relay_agent_library",
         "relay_upload",
@@ -148,6 +149,7 @@ fn native_command_permissions_allow_only_main_webview() {
     };
     // The removed owner attestation cannot acquire a main-webview grant.
     assert!(invoke(&main, "relay_agent_authorize", local_origin).is_err());
+    assert!(invoke(&main, "relay_agent_history_decode", local_origin).is_err());
     for command in application_commands {
         assert!(invoke(&main, command, local_origin).is_ok(), "{command}");
         for origin in [local_origin, "https://example.org", "http://localhost:1430"] {

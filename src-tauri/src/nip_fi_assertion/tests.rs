@@ -138,6 +138,23 @@ async fn proof_and_service_failures_keep_the_session() {
 }
 
 #[tokio::test]
+async fn only_overload_refusals_are_retryable() {
+    for (status, code, retryable) in [
+        (401, "invalid_proof", false),
+        (403, "binding_mismatch", false),
+        (400, "invalid_request", false),
+        (413, "request_too_large", false),
+        (429, "rate_limited", true),
+        (503, "issuance_unavailable", true),
+    ] {
+        let error = run(status, serde_json::json!({"error": code}))
+            .await
+            .unwrap_err();
+        assert_eq!(error.starts_with(REFUSED), !retryable, "{status} {code}");
+    }
+}
+
+#[tokio::test]
 async fn rejects_badge_for_another_key_or_overlong_lifetime() {
     let now = now().unwrap();
     let pubkey = IdentityHost::fixture().viewer().await.unwrap();

@@ -27,6 +27,9 @@ use crate::{
 pub(crate) const SIGN_IN_REQUIRED: &str = "Enterprise sign-in is required";
 /// Shown to JavaScript, which keeps the session and stops retrying the relay.
 pub(crate) const ACCESS_DENIED: &str = "Enterprise access to this relay was denied";
+/// Prefix of a refusal that retrying cannot fix (a bad proof, binding or
+/// request); JavaScript keeps the session, shows it and stops retrying.
+pub(crate) const REFUSED: &str = "Relay badge was refused";
 pub(crate) const HEADER: &str = "Nostr-Federated-Identity";
 const ASSERTION_PATH: &str = "/v1/identity/assertions";
 /// NIP-FI caps assertion lifetime at five minutes.
@@ -249,7 +252,12 @@ async fn issue(
             .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
             .take(64)
             .collect();
-        return Err(format!("Relay badge was refused ({status} {code})"));
+        // Only overload is worth retrying; network failures retry too.
+        return Err(if matches!(status, 429 | 503) {
+            format!("Relay badge is unavailable ({status} {code})")
+        } else {
+            format!("{REFUSED} ({status} {code})")
+        });
     }
     let issued: IssueResponse =
         serde_json::from_slice(&bytes).map_err(|_| "Relay badge response was invalid")?;

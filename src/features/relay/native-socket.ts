@@ -1,9 +1,14 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import {
   ENTERPRISE_ACCESS_DENIED,
+  ENTERPRISE_BADGE_REFUSED,
   noteEnterpriseDenial,
 } from "./enterprise-sign-in";
-import { BADGE_DENIED_CLOSE, BADGE_ROTATION_CLOSE } from "./live";
+import {
+  BADGE_DENIED_CLOSE,
+  BADGE_REFUSED_CLOSE,
+  BADGE_ROTATION_CLOSE,
+} from "./live";
 
 /** Rotate this long before the badge expires; the relay ends the connection at
  * expiry and NIP-FI badges last at most five minutes. A badge with less left
@@ -86,14 +91,15 @@ export function nativeRelaySocket(
     },
   };
   // The one terminal path: releases the wire and notifies at most once.
-  const end = (code: number, notify: boolean, error = false) => {
+  const end = (code: number, notify: boolean, error = false, reason = "") => {
     if (ended) return;
     ended = true;
     clearTimeout(rotation);
     socket.readyState = 3;
     wire?.close();
     if (error) socket.onerror?.(new Event("error"));
-    if (notify) socket.onclose?.({ code } as CloseEvent);
+    if (notify)
+      socket.onclose?.((reason ? { code, reason } : { code }) as CloseEvent);
   };
   const opened = () => {
     if (ended) return;
@@ -131,10 +137,11 @@ export function nativeRelaySocket(
     if (!ended) await native.start();
   })().catch((error: unknown) => {
     noteEnterpriseDenial(error);
-    const denied =
-      (error instanceof Error ? error.message : error) ===
-      ENTERPRISE_ACCESS_DENIED;
-    end(denied ? BADGE_DENIED_CLOSE : 1006, true, !denied);
+    const message = String(error instanceof Error ? error.message : error);
+    if (message === ENTERPRISE_ACCESS_DENIED) end(BADGE_DENIED_CLOSE, true);
+    else if (message.startsWith(ENTERPRISE_BADGE_REFUSED))
+      end(BADGE_REFUSED_CLOSE, true, false, message);
+    else end(1006, true, true);
   });
   return socket as unknown as WebSocket;
 }

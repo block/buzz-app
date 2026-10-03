@@ -6,6 +6,10 @@ export const ENTERPRISE_SIGN_IN_REQUIRED = "Enterprise sign-in is required";
 export const ENTERPRISE_ACCESS_DENIED =
   "Enterprise access to this relay was denied";
 
+/** Prefix of an adapter refusal that retrying cannot fix
+ * (`nip_fi_assertion::REFUSED`); the session stays and the error is shown. */
+export const ENTERPRISE_BADGE_REFUSED = "Relay badge was refused";
+
 const listeners = new Set<() => void>();
 
 /** Runs `listener` whenever a relay request is refused for a lost session. */

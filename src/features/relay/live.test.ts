@@ -2,6 +2,7 @@ import { getLogger, setLogLevel } from "../developer/logging";
 import { assert, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   BADGE_DENIED_CLOSE,
+  BADGE_REFUSED_CLOSE,
   BADGE_ROTATION_CLOSE,
   createLiveAdmission,
   liveChannels,
@@ -2257,6 +2258,24 @@ it("relay access denial stops reconnecting until a manual retry connects", async
   await h.sockets[1]?.auth();
   expect(h.callbacks.state.mock.lastCall?.[0]).toMatchObject({
     status: "connected",
+  });
+  h.owner.dispose();
+});
+
+it("a refused relay badge stops reconnecting and shows the refusal", async () => {
+  vi.useFakeTimers();
+  const h = setup();
+  const socket = h.sockets.at(-1);
+  assert.exists(socket);
+  (socket.onclose as (event: { code: number; reason: string }) => void)({
+    code: BADGE_REFUSED_CLOSE,
+    reason: "Relay badge was refused (401 invalid_proof)",
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(h.sockets).toHaveLength(1);
+  expect(h.callbacks.state.mock.lastCall?.[0]).toMatchObject({
+    status: "error",
+    error: "Relay badge was refused (401 invalid_proof)",
   });
   h.owner.dispose();
 });

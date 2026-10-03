@@ -11,16 +11,18 @@ use std::{
 };
 
 use futures_util::{SinkExt, StreamExt};
+use rustls_platform_verifier::BuilderVerifierExt;
 use serde::Serialize;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::{mpsc, oneshot},
+    net::TcpStream,
+    sync::{mpsc, oneshot, Notify},
 };
 use tokio_tungstenite::{
     tungstenite::{
         client::IntoClientRequest, handshake::client::Request, http::HeaderValue, Message,
     },
-    WebSocketStream,
+    Connector, MaybeTlsStream, WebSocketStream,
 };
 use url::Url;
 
@@ -29,6 +31,10 @@ use crate::{
     nip_fi_assertion::{RelayAssertions, HEADER},
 };
 
+/// Bounds the whole connect: DNS, TCP, TLS and the WebSocket upgrade.
+const CONNECT_DEADLINE: Duration = Duration::from_secs(15);
+/// A send the relay does not accept in this long fails the connection.
+const SEND_DEADLINE: Duration = Duration::from_secs(10);
 /// How long a closing socket waits for the relay to echo Close before the
 /// stream is dropped anyway.
 const CLOSE_GRACE: Duration = Duration::from_secs(3);
@@ -37,6 +43,7 @@ const CLOSE_GRACE: Duration = Duration::from_secs(3);
 const START_DEADLINE: Duration = Duration::from_secs(10);
 
 type Result<T> = std::result::Result<T, String>;
+type Stream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 /// What JavaScript receives. Exactly one `Close` or `Error` ends a connection,
 /// except an explicit close, which reports nothing.
@@ -51,76 +58,131 @@ pub(crate) enum SocketEvent {
 enum Command {
     Start,
     Send(String, oneshot::Sender<bool>),
-    Close,
+}
+
+/// One open connection's handles. Closing is a separate signal so it takes
+/// effect ahead of queued sends and during one in flight.
+struct Handle {
+    commands: mpsc::UnboundedSender<Command>,
+    closing: Arc<Notify>,
 }
 
 /// Open connections. An entry exists exactly while its task owns a stream.
 #[derive(Clone, Default)]
 pub(crate) struct RelaySockets {
     next: Arc<AtomicU64>,
-    open: Arc<Mutex<HashMap<u64, mpsc::UnboundedSender<Command>>>>,
+    open: Arc<Mutex<HashMap<u64, Handle>>>,
+}
+
+/// TLS for relay sockets: an explicit AWS-LC provider (as `reqwest` uses) and
+/// the platform verifier, so certificate trust matches relay HTTP and no
+/// process-default provider is needed.
+fn tls() -> Result<Connector> {
+    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .and_then(|builder| builder.with_platform_verifier())
+    .map_err(|_| "Relay TLS is unavailable")?
+    .with_no_client_auth();
+    Ok(Connector::Rustls(Arc::new(config)))
+}
+
+async fn connect(request: Request, deadline: Duration) -> Result<Stream> {
+    let connector = tls()?;
+    match tokio::time::timeout(
+        deadline,
+        tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector)),
+    )
+    .await
+    {
+        Ok(Ok((stream, _))) => Ok(stream),
+        _ => Err("Relay connection failed".into()),
+    }
 }
 
 impl RelaySockets {
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<u64, mpsc::UnboundedSender<Command>>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<u64, Handle>> {
         self.open
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    async fn open(
+    fn own<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
         &self,
-        request: Request,
+        stream: WebSocketStream<S>,
         emit: impl Fn(SocketEvent) + Send + 'static,
-    ) -> Result<u64> {
-        let (stream, _) = tokio_tungstenite::connect_async(request)
-            .await
-            .map_err(|_| "Relay connection failed")?;
+    ) -> u64 {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (commands, received) = mpsc::unbounded_channel();
-        self.lock().insert(id, commands);
+        let closing = Arc::new(Notify::new());
+        self.lock().insert(
+            id,
+            Handle {
+                commands,
+                closing: closing.clone(),
+            },
+        );
         let sockets = self.clone();
         tokio::spawn(async move {
-            run(stream, received, emit).await;
+            run(stream, received, &closing, emit).await;
             sockets.lock().remove(&id);
         });
-        Ok(id)
+        id
     }
 
     fn command(&self, id: u64, command: Command) -> Result<()> {
         self.lock()
             .get(&id)
-            .and_then(|commands| commands.send(command).ok())
+            .and_then(|handle| handle.commands.send(command).ok())
             .ok_or_else(|| "Relay socket is closed".into())
+    }
+
+    fn close(&self, id: u64) {
+        if let Some(handle) = self.lock().get(&id) {
+            handle.closing.notify_one();
+        }
     }
 }
 
-/// Owns one stream until it ends; returning drops it. Nothing is read until
-/// JavaScript sends `Start`, so no frame (such as the relay's immediate
-/// `AUTH`) can arrive before JavaScript is able to answer it.
+/// Owns one stream until it ends; returning drops it, and with it every
+/// queued send. Nothing is read until JavaScript sends `Start`, so no frame
+/// (such as the relay's immediate `AUTH`) can arrive before JavaScript is able
+/// to answer it.
 async fn run<S: AsyncRead + AsyncWrite + Unpin>(
     mut stream: WebSocketStream<S>,
     mut commands: mpsc::UnboundedReceiver<Command>,
+    closing: &Notify,
     emit: impl Fn(SocketEvent),
 ) {
-    if !matches!(
-        tokio::time::timeout(START_DEADLINE, commands.recv()).await,
-        Ok(Some(Command::Start))
-    ) {
+    let started = tokio::select! {
+        biased;
+        _ = closing.notified() => false,
+        command = tokio::time::timeout(START_DEADLINE, commands.recv()) =>
+            matches!(command, Ok(Some(Command::Start))),
+    };
+    if !started {
         return close(&mut stream).await;
     }
     loop {
         tokio::select! {
+            biased;
+            _ = closing.notified() => return close(&mut stream).await,
             command = commands.recv() => match command {
                 Some(Command::Send(data, sent)) => {
-                    let ok = stream.send(Message::text(data)).await.is_ok();
+                    let ok = tokio::select! {
+                        biased;
+                        _ = closing.notified() => return close(&mut stream).await,
+                        result = tokio::time::timeout(SEND_DEADLINE, stream.send(Message::text(data))) =>
+                            matches!(result, Ok(Ok(()))),
+                    };
                     let _ = sent.send(ok);
                     if !ok {
                         return emit(SocketEvent::Error);
                     }
                 }
                 Some(Command::Start) => {}
-                Some(Command::Close) | None => return close(&mut stream).await,
+                None => return close(&mut stream).await,
             },
             frame = stream.next() => match frame {
                 Some(Ok(Message::Text(data))) => emit(SocketEvent::Text { data: data.to_string() }),
@@ -137,7 +199,8 @@ async fn run<S: AsyncRead + AsyncWrite + Unpin>(
     }
 }
 
-/// Sends Close and waits a bounded time for the echo.
+/// Sends Close and waits a bounded time for the echo. The grace also bounds
+/// flushing a write that a close interrupted.
 async fn close<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut WebSocketStream<S>) {
     let _ = tokio::time::timeout(CLOSE_GRACE, async {
         let _ = stream.close(None).await;
@@ -186,11 +249,10 @@ pub(crate) async fn relay_socket_connect(
         HeaderValue::from_str(&assertion.header).map_err(|_| "Relay badge was invalid")?;
     badge.set_sensitive(true);
     request.headers_mut().insert(HEADER, badge);
-    let id = sockets
-        .open(request, move |event| {
-            let _ = on_event.send(event);
-        })
-        .await?;
+    let stream = connect(request, CONNECT_DEADLINE).await?;
+    let id = sockets.own(stream, move |event| {
+        let _ = on_event.send(event);
+    });
     Ok(Some(OpenSocket {
         id,
         expires_at: assertion.expires_at,
@@ -220,7 +282,7 @@ pub(crate) async fn relay_socket_send(
 /// Closes the connection; an already-ended connection is not an error.
 #[tauri::command]
 pub(crate) fn relay_socket_close(sockets: tauri::State<'_, RelaySockets>, id: u64) {
-    let _ = sockets.command(id, Command::Close);
+    sockets.close(id);
 }
 
 #[cfg(test)]

@@ -203,6 +203,9 @@ export const BADGE_ROTATION_CLOSE = 4900;
 /** Close code a socket reports when the enterprise adapter denies this relay;
  * the live connection stops retrying and shows access denied. */
 export const BADGE_DENIED_CLOSE = 4901;
+/** Close code a socket reports when the adapter refuses the badge request
+ * itself; the live connection stops retrying and shows the close reason. */
+export const BADGE_REFUSED_CLOSE = 4902;
 
 /** One authenticated socket, bounded joined-channel batches, singleton previews and two globals.
  * Recent replay is opportunistic: finite reads own catch-up and history bounds. */
@@ -858,6 +861,8 @@ export function subscribeRelayTraffic(
     ws.onclose = (event) => {
       if (event?.code === BADGE_DENIED_CLOSE)
         return terminal("Enterprise access to this relay was denied");
+      if (event?.code === BADGE_REFUSED_CLOSE)
+        return terminal(event.reason || "Relay badge was refused");
       // A planned badge rotation is not a failure: reconnect now, uncounted.
       if (event?.code !== BADGE_ROTATION_CLOSE)
         return reconnect("Live connection closed");

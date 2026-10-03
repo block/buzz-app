@@ -6,6 +6,7 @@
 //! so a revoked person is caught at the next reconnect.
 use std::{
     collections::HashMap,
+    future::Future,
     sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -13,11 +14,12 @@ use std::{
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tokio::time::{timeout_at, Instant};
 use url::Url;
 use zeroize::Zeroizing;
 
 use crate::{
-    enterprise_auth::EnterpriseAuthHost,
+    enterprise_auth::{EnterpriseAuthHost, Rejection, SavedSession},
     enterprise_login_gate::configured_trusted_relays,
     enterprise_relay_url::canonical_enterprise_relay_url,
     identity::{EventTemplate, IdentityHost},
@@ -25,9 +27,12 @@ use crate::{
 
 /// Shown to JavaScript, which returns the person to enterprise sign-in.
 pub(crate) const SIGN_IN_REQUIRED: &str = "Enterprise sign-in is required";
-/// Shown to JavaScript, which keeps the session and stops retrying the relay.
-/// A refusal of a session that a newer login already replaced; retryable.
+/// A refusal of a session that was already removed or replaced; retryable.
 const SESSION_REPLACED: &str = "Enterprise session changed during the relay badge request";
+/// Preparation (secure storage, signing) or the adapter did not answer in
+/// time; retryable.
+const TIMED_OUT: &str = "Relay badge request timed out";
+/// Shown to JavaScript, which keeps the session and stops retrying the relay.
 pub(crate) const ACCESS_DENIED: &str = "Enterprise access to this relay was denied";
 /// Prefix of a failure that retrying cannot fix (a bad proof, binding or
 /// request, or a malformed badge); JavaScript keeps the session, shows it and
@@ -42,6 +47,11 @@ const MAX_LIFETIME: u64 = 300;
 const REFRESH_MARGIN: u64 = 60;
 const MAX_ASSERTION: usize = 8192;
 const MAX_RESPONSE: usize = 16 * 1024;
+/// Bounds everything native does for one badge: reading the saved session,
+/// signing the proof, the adapter request and handling its refusal. A relay
+/// socket connect fits its handshake inside the same bound, which sits below
+/// JavaScript's 35 s setup deadline so native always answers first.
+pub(crate) const DEADLINE: Duration = Duration::from_secs(30);
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -93,17 +103,32 @@ impl RelayAssertions {
 
     /// The badge for the relay serving `url`, or `None` when the relay is not a
     /// trusted enterprise relay or no enterprise session is saved (the login
-    /// gate owns whether sign-in is required). `fresh` skips the cache.
+    /// gate owns whether sign-in is required). `fresh` skips the cache. The
+    /// answer, including a refusal's, arrives by `deadline`.
     pub(crate) async fn get(
         &self,
         identity: &IdentityHost,
         url: &Url,
         fresh: bool,
+        deadline: Instant,
     ) -> Result<Option<Assertion>> {
         let Some(relay) = trusted_relay(url)? else {
             return Ok(None);
         };
-        let Some(saved) = self.enterprise.saved_session(identity).await? else {
+        let saved = self.enterprise.saved_session(identity);
+        self.badge(identity, relay, saved, fresh, deadline).await
+    }
+
+    async fn badge(
+        &self,
+        identity: &IdentityHost,
+        relay: String,
+        saved: impl Future<Output = Result<Option<SavedSession>>>,
+        fresh: bool,
+        deadline: Instant,
+    ) -> Result<Option<Assertion>> {
+        let timed_out = |_| TIMED_OUT.to_owned();
+        let Some(saved) = timeout_at(deadline, saved).await.map_err(timed_out)?? else {
             return Ok(None);
         };
         let session: [u8; 32] = Sha256::digest(saved.token().as_bytes()).into();
@@ -120,18 +145,17 @@ impl RelayAssertions {
             saved.adapter().trim_end_matches('/')
         ))
         .map_err(|_| "Enterprise authentication adapter is invalid")?;
-        let issued = issue(client()?, &endpoint, saved.token(), identity, &relay, now).await;
+        let issued = timeout_at(
+            deadline,
+            issue(client()?, &endpoint, saved.token(), identity, &relay, now),
+        )
+        .await
+        .map_err(timed_out)?;
         let assertion = match issued {
             Ok(assertion) => assertion,
             Err(error) if error == SIGN_IN_REQUIRED => {
                 self.lock().remove(&relay);
-                // Only the refused session is forgotten. If a login replaced
-                // it meanwhile, the next attempt uses the new one.
-                return Err(if self.enterprise.reject(saved).await? {
-                    error
-                } else {
-                    SESSION_REPLACED.into()
-                });
+                return Err(self.refused(saved, deadline).await);
             }
             Err(error) => return Err(error),
         };
@@ -145,6 +169,26 @@ impl RelayAssertions {
         Ok(Some(assertion))
     }
 
+    /// The error for the adapter's refusal of `saved`. Only a refusal of the
+    /// current session asks for sign-in; one that a newer login replaced
+    /// meanwhile is retried with that login. Removal runs on its own task, so
+    /// secure storage still finishes it if it outlasts `deadline`; at the
+    /// deadline the refusal is reported as is, since no newer session had
+    /// been adopted when it arrived.
+    async fn refused(&self, saved: SavedSession, deadline: Instant) -> String {
+        if self.enterprise.superseded(&saved) {
+            return SESSION_REPLACED.into();
+        }
+        let enterprise = self.enterprise.clone();
+        let removal = tokio::spawn(async move { enterprise.reject(saved).await });
+        match timeout_at(deadline, removal).await {
+            Ok(Ok(Ok(Rejection::Superseded))) => SESSION_REPLACED.into(),
+            Ok(Ok(Err(error))) => error,
+            Ok(Err(_)) => "Enterprise secure storage could not be accessed".into(),
+            Ok(Ok(Ok(Rejection::Removed))) | Err(_) => SIGN_IN_REQUIRED.into(),
+        }
+    }
+
     /// Adds the relay badge to a protected relay HTTP request when the relay
     /// is a trusted enterprise relay and an enterprise session is saved.
     pub(crate) async fn attach(
@@ -153,10 +197,15 @@ impl RelayAssertions {
         url: &Url,
         request: reqwest::RequestBuilder,
     ) -> Result<reqwest::RequestBuilder> {
-        Ok(match self.get(identity, url, false).await? {
-            Some(assertion) => request.header(HEADER, assertion.header.as_str()),
-            None => request,
-        })
+        Ok(
+            match self
+                .get(identity, url, false, Instant::now() + DEADLINE)
+                .await?
+            {
+                Some(assertion) => request.header(HEADER, assertion.header.as_str()),
+                None => request,
+            },
+        )
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Cached>> {

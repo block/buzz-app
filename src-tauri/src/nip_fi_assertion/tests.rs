@@ -278,3 +278,86 @@ async fn a_full_lifetime_badge_issued_after_the_request_started_is_accepted() {
     .unwrap();
     assert_eq!(assertion.expires_at, issued_at + MAX_LIFETIME);
 }
+
+/// An assertion adapter that refuses every request as a lost session.
+async fn refusing_adapter() -> String {
+    let router = Router::new().route(
+        ASSERTION_PATH,
+        post(|| async {
+            (
+                axum::http::StatusCode::UNAUTHORIZED,
+                axum::Json(serde_json::json!({"error": "session_expired"})),
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await });
+    format!("http://{address}")
+}
+
+#[tokio::test]
+async fn a_stalled_session_read_answers_by_the_deadline() {
+    let identity = IdentityHost::fixture();
+    let assertions = RelayAssertions::new(EnterpriseAuthHost::default());
+    let started = Instant::now();
+    let deadline = started + Duration::from_millis(300);
+    // Secure storage never answers, as behind an unanswered keychain prompt.
+    let error = assertions
+        .badge(
+            &identity,
+            RELAY.into(),
+            std::future::pending(),
+            true,
+            deadline,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error, TIMED_OUT);
+    assert!(started.elapsed() < Duration::from_millis(800));
+}
+
+#[tokio::test]
+async fn a_held_refusal_cleanup_still_asks_for_sign_in_by_the_deadline() {
+    let identity = IdentityHost::fixture();
+    let viewer = identity.viewer().await.unwrap();
+    let adapter = refusing_adapter().await;
+    let enterprise = EnterpriseAuthHost::with_saved(&adapter, &viewer, "old");
+    let assertions = RelayAssertions::new(enterprise.clone());
+    // Two requests read the same session before either is refused.
+    let first = enterprise.saved_at(&adapter, &viewer).await;
+    let second = enterprise.saved_at(&adapter, &viewer).await;
+    // Removing the refused session waits on secure storage past the deadline.
+    let held = enterprise.hold_commit().await;
+    let started = Instant::now();
+    let deadline = started + Duration::from_millis(500);
+    let error = assertions
+        .badge(&identity, RELAY.into(), async { Ok(first) }, true, deadline)
+        .await
+        .unwrap_err();
+    assert_eq!(error, SIGN_IN_REQUIRED);
+    assert!(started.elapsed() < Duration::from_millis(1000));
+    // Once storage answers, the removal still completes.
+    drop(held);
+    let removed = async {
+        while enterprise.saved_at(&adapter, &viewer).await.is_some() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(2), removed)
+        .await
+        .expect("refused session was not removed");
+    // The second request's refusal of the already-removed session does not
+    // ask for sign-in again.
+    let error = assertions
+        .badge(
+            &identity,
+            RELAY.into(),
+            async { Ok(second) },
+            true,
+            Instant::now() + DEADLINE,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error, SESSION_REPLACED);
+}

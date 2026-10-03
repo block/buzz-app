@@ -148,12 +148,11 @@ struct StoredSession {
     expires_at: String,
 }
 
-/// A saved session as read at one generation, so a refusal of it cannot
-/// clear a session that replaced it.
+/// A saved session as a relay badge request read it, so a refusal of it can
+/// be matched against whatever session is current when the refusal arrives.
 pub(crate) struct SavedSession {
     scope: Scope,
     persisted: PersistedSession,
-    generation: u64,
 }
 
 impl SavedSession {
@@ -164,6 +163,16 @@ impl SavedSession {
     pub(crate) fn token(&self) -> &str {
         &self.persisted.session.token
     }
+}
+
+/// What a refusal of a saved session did.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Rejection {
+    /// The refused session was current and is now gone; sign-in is required.
+    Removed,
+    /// The refused session was no longer current (already removed, or
+    /// replaced by a newer login), so nothing was changed.
+    Superseded,
 }
 
 struct PersistedSession {
@@ -365,7 +374,6 @@ impl EnterpriseAuthHost {
     }
 
     async fn saved_scope(&self, scope: Scope) -> Result<Option<SavedSession>> {
-        let generation = self.current_generation()?;
         let persisted = match self.cached(&scope) {
             Some(session) => Some(PersistedSession {
                 raw: encode_session(&session)?,
@@ -373,26 +381,42 @@ impl EnterpriseAuthHost {
             }),
             None => self.read(&scope).await?,
         };
-        Ok(persisted.map(|persisted| SavedSession {
-            scope,
-            persisted,
-            generation,
-        }))
+        Ok(persisted.map(|persisted| SavedSession { scope, persisted }))
     }
 
-    /// Forgets `saved` after the adapter said it is gone, unless a login,
-    /// clear or check has changed the session since it was read. True when no
-    /// session remains.
-    pub(crate) async fn reject(&self, saved: SavedSession) -> Result<bool> {
-        let SavedSession {
-            scope,
-            persisted,
-            generation,
-        } = saved;
-        Ok(self
-            .invalidate_session(&scope, persisted.raw, &persisted.session.token, generation)
+    /// Whether a newer login has already been adopted in place of `saved`;
+    /// answers at once, without waiting on secure storage.
+    pub(crate) fn superseded(&self, saved: &SavedSession) -> bool {
+        self.cached(&saved.scope)
+            .is_some_and(|current| current.token.as_str() != saved.token())
+    }
+
+    /// Forgets `saved` after the adapter said it is gone, but only while it
+    /// is still the current session. The token itself is compared, not the
+    /// login generation, which starting or canceling a login also advances.
+    pub(crate) async fn reject(&self, saved: SavedSession) -> Result<Rejection> {
+        let SavedSession { scope, persisted } = saved;
+        let token = persisted.session.token;
+        // Commits and clears hold this owner, so the session cannot change
+        // between the comparison and the deletion.
+        let _commit = self.commit.lock().await;
+        let stored = self
+            .read(&scope)
             .await?
-            .is_none())
+            .filter(|current| current.session.token.as_str() == token.as_str());
+        let cached = self
+            .cached(&scope)
+            .is_some_and(|current| current.token.as_str() == token.as_str());
+        if stored.is_none() && !cached {
+            return Ok(Rejection::Superseded);
+        }
+        if let Some(stored) = stored {
+            self.delete_if_matches(&scope, stored.raw).await?;
+        }
+        self.clear_memory(&scope, Some(&token));
+        // Readers that read the refused session before now must not cache it.
+        self.fence_generation()?;
+        Ok(Rejection::Removed)
     }
 
     fn cached_info(&self, scope: &Scope) -> Option<EnterpriseAuthInfo> {
@@ -1210,6 +1234,34 @@ impl CredentialStore for FixtureStore {
     }
 }
 
+/// Lets relay badge tests drive this owner without reaching its internals.
+#[cfg(test)]
+impl EnterpriseAuthHost {
+    /// A host holding `token` as `viewer`'s saved session at `adapter`.
+    pub(crate) fn with_saved(adapter: &str, viewer: &str, token: &str) -> Self {
+        let scope = scope_for_adapter(adapter, viewer).unwrap();
+        let store = FixtureStore::default();
+        let raw = encode_session(&StoredSession {
+            token: Zeroizing::new(token.into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        })
+        .unwrap();
+        store.replace(scope.service, &scope.account, &raw).unwrap();
+        Self::with_store(Arc::new(store))
+    }
+
+    pub(crate) async fn saved_at(&self, adapter: &str, viewer: &str) -> Option<SavedSession> {
+        self.saved_scope(scope_for_adapter(adapter, viewer).unwrap())
+            .await
+            .unwrap()
+    }
+
+    /// Holds the commit owner, as a slow secure-storage commit would.
+    pub(crate) async fn hold_commit(&self) -> tokio::sync::OwnedMutexGuard<()> {
+        self.commit.clone().lock_owned().await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1850,7 +1902,8 @@ mod tests {
         EnterpriseAuthHost::bump_generation(&mut host.login.lock().unwrap());
         host.remember(scope.clone(), session("new"));
 
-        assert!(!host.reject(held).await.unwrap(), "newer session cleared");
+        assert!(host.superseded(&held));
+        assert_eq!(host.reject(held).await.unwrap(), Rejection::Superseded);
         assert_eq!(
             store
                 .read(scope.service, &scope.account)
@@ -1861,8 +1914,38 @@ mod tests {
         let current = host.saved_scope(scope.clone()).await.unwrap().unwrap();
         assert_eq!(current.token(), "new");
         // A refusal of the current session does clear it.
-        assert!(host.reject(current).await.unwrap());
+        assert_eq!(host.reject(current).await.unwrap(), Rejection::Removed);
         assert!(host.saved_scope(scope).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_refusal_is_judged_by_token_not_by_login_generation() {
+        let scope = scope_for_adapter(
+            "https://adapter.example",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        let store = Arc::new(FixtureStore::default());
+        let raw = encode_session(&StoredSession {
+            token: Zeroizing::new("old".into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        })
+        .unwrap();
+        store.replace(scope.service, &scope.account, &raw).unwrap();
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        let first = host.saved_scope(scope.clone()).await.unwrap().unwrap();
+        let second = host.saved_scope(scope.clone()).await.unwrap().unwrap();
+        // Starting a login advances the generation but keeps the old token,
+        // so its refusal still removes it.
+        let (cancel, _canceled) = oneshot::channel();
+        assert!(host.begin("login".into(), cancel).unwrap());
+        assert_eq!(host.reject(first).await.unwrap(), Rejection::Removed);
+        assert!(host.saved_scope(scope.clone()).await.unwrap().is_none());
+        // A second refusal of the same token, while that login is still
+        // open, changes nothing and does not ask for sign-in again.
+        assert!(!host.superseded(&second));
+        assert_eq!(host.reject(second).await.unwrap(), Rejection::Superseded);
+        assert!(host.is_active("login").unwrap());
     }
 
     #[test]

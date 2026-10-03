@@ -47,7 +47,9 @@ where
 async fn open(request: Request) -> (RelaySockets, u64, mpsc::UnboundedReceiver<SocketEvent>) {
     let sockets = RelaySockets::default();
     let (events, received) = mpsc::unbounded_channel();
-    let stream = connect(request, CONNECT_DEADLINE).await.unwrap();
+    let stream = connect(request, tokio::time::Instant::now() + CONNECT_DEADLINE)
+        .await
+        .unwrap();
     let id = sockets.own(stream, move |event| {
         let _ = events.send(event);
     });
@@ -196,7 +198,9 @@ async fn a_wss_connect_without_a_default_provider_fails_cleanly_on_an_untrusted_
     let request = format!("wss://localhost:{port}")
         .into_client_request()
         .unwrap();
-    let error = connect(request, CONNECT_DEADLINE).await.unwrap_err();
+    let error = connect(request, tokio::time::Instant::now() + CONNECT_DEADLINE)
+        .await
+        .unwrap_err();
     assert_eq!(error, "Relay connection failed");
     // The relay saw the handshake fail, so the client checked the certificate.
     assert!(relay.await.unwrap(), "untrusted certificate was accepted");
@@ -214,7 +218,11 @@ async fn a_stalled_connect_fails_within_the_deadline() {
     });
     let started = Instant::now();
     let deadline = Duration::from_millis(300);
-    let result = connect(url.into_client_request().unwrap(), deadline).await;
+    let result = connect(
+        url.into_client_request().unwrap(),
+        tokio::time::Instant::now() + deadline,
+    )
+    .await;
     assert!(result.is_err());
     assert!(started.elapsed() < deadline + Duration::from_millis(500));
     relay.abort();

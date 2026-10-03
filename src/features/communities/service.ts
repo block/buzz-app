@@ -8,7 +8,11 @@ import { connectBrokerTransport, type ReadTransport } from "../relay/transport";
 import { communityDestination, isCommunityAlias } from "./destination";
 import { purgeCommunityDeviceState, type PurgeFailure } from "./device-state";
 import type { EnterpriseAuthClient } from "./enterpriseAuthApi";
-import { onEnterpriseSignInRequired } from "../relay/enterprise-sign-in";
+import {
+  enterpriseLoginMark,
+  noteEnterpriseLogin,
+  onEnterpriseSignInRequired,
+} from "../relay/enterprise-sign-in";
 
 export const PROFILE_ABOUT_MAX_LENGTH = 500;
 export type PersonalProfile = { name: string; picture: string; about?: string };
@@ -436,14 +440,22 @@ export function createCommunities(
         if (!disposed)
           update({ status: "unavailable", error: String(error) }, false);
       });
-  // The adapter refused the saved session and the native owner has already
-  // forgotten exactly that session. Prompt again only if no session remains:
-  // a denial that arrives after a newer login must not undo it.
+  // The adapter refused the current session and the native owner has already
+  // forgotten it. A login that starts or finishes meanwhile is the recovery,
+  // so the prompt resets only if none did and no session remains.
   if (enterpriseAuth)
     ctx.effect(() =>
       onEnterpriseSignInRequired(() => {
+        const mark = enterpriseLoginMark();
+        const epoch = enterpriseAuthEpoch;
+        const current = () =>
+          !disposed &&
+          !enterpriseAttempt &&
+          mark === enterpriseLoginMark() &&
+          epoch === enterpriseAuthEpoch;
+        if (!current()) return;
         void (async () => {
-          if (await enterpriseAuth.get()) return;
+          if ((await enterpriseAuth.get()) || !current()) return;
           await clearEnterpriseAuth(true);
         })().catch((error) => {
           console.warn("Couldn't clear enterprise sign-in", error);
@@ -497,6 +509,7 @@ export function createCommunities(
       owner,
     };
     enterpriseAttempt = attempt;
+    noteEnterpriseLogin();
     nextEnterprisePrompt(attempt.communityId);
     update(
       {
@@ -508,7 +521,9 @@ export function createCommunities(
       false,
     );
     try {
-      await enterpriseAuth.start(attempt.attemptId);
+      await enterpriseAuth
+        .start(attempt.attemptId)
+        .finally(noteEnterpriseLogin);
       if (disposed || enterpriseAttempt?.attemptId !== attempt.attemptId)
         return;
       enterpriseAttempt = undefined;
@@ -591,7 +606,7 @@ export function createCommunities(
       update({ enterprise: undefined }, false);
   }
   /** `forgotten`: native storage already dropped the session, so only the
-   * app's enterprise state is reset. */
+   * app's enterprise state is reset and a login in progress is left alone. */
   async function clearEnterpriseAuth(forgotten = false) {
     if (!enterpriseAuth || disposed) return;
     if (enterpriseClearInFlight) {
@@ -602,7 +617,7 @@ export function createCommunities(
       enterpriseAuthEpoch++;
       const affectedCommunities = new Set(enterpriseCommunities);
       const attempt = enterpriseAttempt;
-      if (attempt)
+      if (attempt && !forgotten)
         await cancelEnterpriseLogin(attempt.communityId, attempt.owner);
       // Fence prompts already in flight before waiting on native storage. An
       // ordinary relay check may continue; auth-bearing checks are fenced by

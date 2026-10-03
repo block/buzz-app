@@ -11,6 +11,19 @@ export const ENTERPRISE_ACCESS_DENIED =
 export const ENTERPRISE_BADGE_REFUSED = "Relay badge was refused";
 
 const listeners = new Set<() => void>();
+let logins = 0;
+
+/** Marks a login starting or finishing. A denial of a request made before
+ * then refused a session that login has replaced, or is replacing. */
+export function noteEnterpriseLogin() {
+  logins++;
+}
+
+/** Captured when a relay request starts, then passed to
+ * `noteEnterpriseDenial` with its result. */
+export function enterpriseLoginMark() {
+  return logins;
+}
 
 /** Runs `listener` whenever a relay request is refused for a lost session. */
 export function onEnterpriseSignInRequired(listener: () => void) {
@@ -20,9 +33,10 @@ export function onEnterpriseSignInRequired(listener: () => void) {
   };
 }
 
-/** Reports `error` to sign-in listeners when it is a session denial. */
-export function noteEnterpriseDenial(error: unknown) {
+/** Reports `error` to sign-in listeners when it is a session denial of a
+ * request made since the last login started or finished. */
+export function noteEnterpriseDenial(error: unknown, mark: number) {
   const message = error instanceof Error ? error.message : error;
-  if (message === ENTERPRISE_SIGN_IN_REQUIRED)
+  if (message === ENTERPRISE_SIGN_IN_REQUIRED && mark === logins)
     for (const listener of listeners) listener();
 }

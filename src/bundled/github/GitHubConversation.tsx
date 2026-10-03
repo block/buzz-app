@@ -145,10 +145,12 @@ function Thumbnails({ images, label }: { images: string[]; label: string }) {
 function CommentActions({
   url,
   collapsed,
+  showCopyAction,
   children,
 }: {
   url: string | undefined;
   collapsed: boolean;
+  showCopyAction: boolean;
   children: ReactNode;
 }) {
   const [menu, setMenu] = useState<"button" | "context">();
@@ -167,7 +169,7 @@ function CommentActions({
       setNotice({ text: "Comment link copied", error: false });
     } catch {
       setNotice({
-        text: "Couldn’t copy the link. Try again from the comment menu.",
+        text: "Couldn’t copy the link. Try again from the comment actions.",
         error: true,
       });
     } finally {
@@ -224,28 +226,39 @@ function CommentActions({
           data-collapsed={collapsed || undefined}
           data-menu-open={!!menu || undefined}
         >
-          <MenuRoot
-            open={menu === "button"}
-            onOpenChange={(open) =>
-              setMenu((current) =>
-                open ? "button" : current === "button" ? undefined : current,
-              )
-            }
-          >
-            <MenuTrigger
-              render={
-                <IconButton
-                  aria-label="Comment actions"
-                  title="Comment actions"
-                  size="sm"
-                  icon={<DotsThreeIcon />}
-                />
+          {showCopyAction ? (
+            <Button
+              variant="ghost"
+              size="xs"
+              loading={copying}
+              onClick={() => void copy()}
+            >
+              <LinkIcon aria-hidden="true" />
+              Copy comment link
+            </Button>
+          ) : (
+            <MenuRoot
+              open={menu === "button"}
+              onOpenChange={(open) =>
+                setMenu((current) =>
+                  open ? "button" : current === "button" ? undefined : current,
+                )
               }
-            />
-            <MenuPopup align="end" size="compact">
-              {item}
-            </MenuPopup>
-          </MenuRoot>
+            >
+              <MenuTrigger
+                render={
+                  <IconButton
+                    aria-label="Comment actions"
+                    size="xs"
+                    icon={<DotsThreeIcon />}
+                  />
+                }
+              />
+              <MenuPopup align="end" size="compact">
+                {item}
+              </MenuPopup>
+            </MenuRoot>
+          )}
         </div>
       </ContextMenuTrigger>
       <MenuPopup
@@ -397,7 +410,11 @@ function Message({
           <span aria-hidden="true">{marker}</span>
         )}
       </div>
-      <CommentActions url={commentUrl} collapsed={expandable && !open}>
+      <CommentActions
+        url={commentUrl}
+        collapsed={expandable && !open}
+        showCopyAction={hasBody && (!expandable || open)}
+      >
         <div className={styles.messageHeader} ref={header}>
           {canFitOnOneLine && hasBody && (
             <div className={styles.messageMeasure} aria-hidden="true" inert>

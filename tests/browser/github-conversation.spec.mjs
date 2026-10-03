@@ -46,7 +46,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
               submitted_at: "2026-10-01T18:00:00Z",
               state: "CHANGES_REQUESTED",
               user: { login: "reviewer" },
-              body: "Keep the empty state useful.\n\n## Review details\n\nPlease preserve the retry action.",
+              body: `Keep the empty state useful. ${"A long review summary should stay within the pane while its actions remain separate from the disclosure. ".repeat(6)}\n\n## Review details\n\nPlease preserve the retry action.`,
             },
             {
               id: 11,
@@ -142,6 +142,26 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     conversation.getByText("inline-only", { exact: true }),
   ).toHaveCount(0);
   await expect(conversation.getByRole("group")).toHaveCount(5);
+  const longReview = conversation.getByRole("group", {
+    name: "Changes requested",
+    exact: true,
+  });
+  const expectReviewContained = async () => {
+    await expect
+      .poll(() =>
+        longReview.evaluate((event) => {
+          const header = event.querySelector('[class*="messageHeader"]');
+          return (
+            header.getBoundingClientRect().right <=
+            event.getBoundingClientRect().right + 1
+          );
+        }),
+      )
+      .toBe(true);
+  };
+  await expectReviewContained();
+  await longReview.hover();
+  await expectReviewContained();
   expect([...requests].sort()).toEqual([
     "/repos/sample/project/issues/1/comments",
     "/repos/sample/project/pulls/1",
@@ -247,6 +267,10 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await comment.focus();
   await expect(actionSlot).toHaveCSS("opacity", "1");
   await comment.hover();
+  await expect(commentActions).toHaveCSS("width", "20px");
+  await expect(commentActions).toHaveCSS("height", "20px");
+  await commentActions.hover();
+  await expect(commentActions).not.toHaveAttribute("aria-describedby");
   await commentActions.click();
   await expect(
     page.getByRole("menuitem", { name: "Copy comment link", exact: true }),
@@ -288,8 +312,12 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await expect(
     panel.getByRole("heading", { name: "Discussion details" }),
   ).toBeVisible();
-  await expect(actionSlot).not.toHaveAttribute("data-collapsed");
-  const actionsBox = await commentActions.boundingBox();
+  await expect(commentActions).toHaveCount(0);
+  const copyAction = commentEvent.getByRole("button", {
+    name: "Copy comment link",
+    exact: true,
+  });
+  const actionsBox = await copyAction.boundingBox();
   const bodyBox = await commentEvent
     .locator('[class*="messageBody"]')
     .boundingBox();
@@ -297,10 +325,8 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await panel.screenshot({
     path: testInfo.outputPath("comment-expanded-actions.png"),
   });
-  await commentActions.tap();
-  await page
-    .getByRole("menuitem", { name: "Copy comment link", exact: true })
-    .click();
+  await copyAction.tap();
+  await expect(page.getByRole("menu")).toHaveCount(0);
   await expect(comment).toHaveAttribute("aria-expanded", "true");
   await comment.click();
   const reviewEvent = conversation.getByRole("group", {
@@ -717,6 +743,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   });
   for (const width of [800, 480]) {
     await page.setViewportSize({ width, height: 950 });
+    await expectReviewContained();
     await description.scrollIntoViewIfNeeded();
     await expectThumbnailsBelowExcerpt();
     await expectLayoutBasedThumbnails();
@@ -774,6 +801,21 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     .screenshot({ path: testInfo.outputPath("description-narrow-200.png") });
   await panel.screenshot({
     path: testInfo.outputPath("conversation-narrow-200.png"),
+  });
+  await expectReviewContained();
+  await comment.click();
+  await copyAction.scrollIntoViewIfNeeded();
+  await expect(copyAction).toBeVisible();
+  await copyAction.tap();
+  await expect
+    .poll(() => page.evaluate(() => window.githubCopiedLinks))
+    .toEqual([`${target}#issuecomment-20`]);
+  await expect(comment).toHaveAttribute("aria-expanded", "true");
+  expect(
+    await conversation.evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
+  await commentEvent.screenshot({
+    path: testInfo.outputPath("expanded-actions-narrow-200.png"),
   });
 });
 

@@ -365,11 +365,13 @@
 .messageContent {
   position: relative;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
 }
 .messageHeader {
   position: relative;
   grid-area: 1 / 1;
+  min-width: 0;
 }
 .messageMeasure {
   position: absolute;
@@ -448,10 +450,6 @@
   z-index: 1;
   width: fit-content;
   margin-top: var(--space-2);
-}
-.messageContent:has(> .commentActions[data-collapsed]) .previewText {
-  min-height: 2rem;
-  padding-right: var(--space-8);
 }
 .commentActions[data-collapsed] {
   grid-area: 1 / 1;

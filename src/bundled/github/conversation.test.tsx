@@ -1213,6 +1213,9 @@ it("copies a discussion permalink without toggling the accordion or fetching", a
   });
   expect(disclosure).toHaveAttribute("aria-expanded", "false");
   expect(actions.closest("[data-collapsed]")).not.toBeNull();
+  expect(actions).toHaveAttribute("data-icon-size", "xs");
+  expect(actions).not.toHaveAttribute("title");
+  expect(actions).not.toHaveAttribute("aria-describedby");
   await user.click(actions);
   await user.click(
     await screen.findByRole("menuitem", { name: "Copy comment link" }),
@@ -1221,12 +1224,14 @@ it("copies a discussion permalink without toggling the accordion or fetching", a
   expect(write).toHaveBeenCalledWith(`${url}#issuecomment-43`);
   expect(disclosure).toHaveAttribute("aria-expanded", "false");
   await user.click(disclosure);
-  expect(actions.closest("[data-collapsed]")).toBeNull();
+  expect(
+    within(message).queryByRole("button", { name: "Comment actions" }),
+  ).toBeNull();
   expect(screen.getByRole("heading", { name: "Comment body" })).toBeVisible();
-  await user.click(actions);
   await user.click(
-    await screen.findByRole("menuitem", { name: "Copy comment link" }),
+    within(message).getByRole("button", { name: "Copy comment link" }),
   );
+  expect(screen.queryByRole("menu")).toBeNull();
   await waitFor(() => expect(write).toHaveBeenCalledTimes(2));
   expect(disclosure).toHaveAttribute("aria-expanded", "true");
   expect(fetch).toHaveBeenCalledTimes(2);
@@ -1259,7 +1264,7 @@ it("shares review copying and retry feedback between right-click and button menu
     await screen.findByRole("menuitem", { name: "Copy comment link" }),
   );
   await screen.findByText(
-    "Couldn’t copy the link. Try again from the comment menu.",
+    "Couldn’t copy the link. Try again from the comment actions.",
   );
   expect(disclosure).toHaveAttribute("aria-expanded", "false");
   await user.click(actions);
@@ -1271,9 +1276,36 @@ it("shares review copying and retry feedback between right-click and button menu
   expect(write).toHaveBeenLastCalledWith(`${url}#pullrequestreview-42`);
   expect(
     screen.queryByText(
-      "Couldn’t copy the link. Try again from the comment menu.",
+      "Couldn’t copy the link. Try again from the comment actions.",
     ),
   ).toBeNull();
+});
+
+it("retries failed direct copying from the expanded message", async () => {
+  const user = userEvent.setup();
+  const write = vi
+    .spyOn(navigator.clipboard, "writeText")
+    .mockRejectedValueOnce(new Error("denied"))
+    .mockResolvedValueOnce();
+  const fetch = copyFixture();
+  const message = await screen.findByRole("group", { name: "Comment" });
+  const disclosure = within(message).getByRole("button", {
+    name: "Expand Comment",
+  });
+  await user.click(disclosure);
+  const copy = within(message).getByRole("button", {
+    name: "Copy comment link",
+  });
+  await user.click(copy);
+  await screen.findByText(
+    "Couldn’t copy the link. Try again from the comment actions.",
+  );
+  await user.click(copy);
+  await screen.findByText("Comment link copied");
+  expect(write).toHaveBeenCalledTimes(2);
+  expect(write).toHaveBeenLastCalledWith(`${url}#issuecomment-43`);
+  expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  expect(fetch).toHaveBeenCalledTimes(2);
 });
 
 it("opens both menus by keyboard and restores focus without changing disclosure", async () => {
@@ -1331,6 +1363,16 @@ it("prevents duplicate writes across both menus while the clipboard is pending",
     });
     expect(item).toHaveAttribute("aria-disabled", "true");
     await user.click(item);
+    expect(write).toHaveBeenCalledTimes(1);
+    await user.keyboard("{Escape}");
+    await user.click(
+      within(message).getByRole("button", { name: "Expand Comment" }),
+    );
+    const directCopy = within(message).getByRole("button", {
+      name: "Copy comment link",
+    });
+    expect(directCopy).toHaveAttribute("aria-busy", "true");
+    await user.click(directCopy);
     expect(write).toHaveBeenCalledTimes(1);
   } finally {
     await act(async () => finish());

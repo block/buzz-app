@@ -400,9 +400,12 @@ closing the panel does not release that demand. Disabling the plugin clears its
 live evidence, but **does not control archive capture**. The shared live connection
 carries one dedicated owner (`#p=viewer`) route for demanded observer/metrics kinds,
 with no `#h`, history limit, or relay replay. Its `since` is stamped at actual
-dispatch and retry. Settings changes and plugin demand replace only that route,
-not the socket or chat globals. An uncertain control failure can reconnect the
-shared stream through its existing bounded recovery path.
+dispatch and retry. Settings changes and plugin demand replace that route only
+when its combined kind demand changes. While capture is enabled, display-generation
+changes keep the wire and capture floor but advance a separate display freshness
+floor. Without capture, display resets still renew the live-only route. Neither
+lifecycle replaces the socket or chat globals. An uncertain control failure can
+reconnect the shared stream through its existing bounded recovery path.
 
 The native identity host and development broker validate signatures, exact tags,
 recipient/key, freshness and size before ingest and host-only NIP-44 decryption.

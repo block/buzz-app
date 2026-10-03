@@ -232,7 +232,15 @@ export function subscribeRelayTraffic(
   let denying: Set<string> | undefined;
   let priority: string[] = [];
   let observer: number | null = null;
+  let observerSince = 0;
   let archiveKinds: readonly number[] = [];
+  const telemetryKinds = () =>
+    [
+      ...new Set([
+        ...(observer !== null ? [OBSERVER_KIND] : []),
+        ...archiveKinds,
+      ]),
+    ].sort();
   let presenceAuthors: readonly string[] = [];
   let presenceReceipt:
     | { id: string; finish(accepted: boolean): void }
@@ -549,12 +557,7 @@ export function subscribeRelayTraffic(
                 ? { kinds: [0, 10100, 30177] }
                 : route.id === "observer"
                   ? {
-                      kinds: [
-                        ...new Set([
-                          ...(observer !== null ? [OBSERVER_KIND] : []),
-                          ...archiveKinds,
-                        ]),
-                      ],
+                      kinds: telemetryKinds(),
                       "#p": [viewer],
                     }
                   : { kinds: [44100, 44101], "#p": [viewer] },
@@ -824,7 +827,7 @@ export function subscribeRelayTraffic(
           if (
             observer !== null &&
             incoming.kind === OBSERVER_KIND &&
-            incoming.created_at >= route.since
+            incoming.created_at >= Math.max(route.since, observerSince)
           )
             callbacks.telemetry?.(incoming, observer);
         } else if (![OBSERVER_KIND, 44200].includes(incoming.kind))
@@ -965,17 +968,28 @@ export function subscribeRelayTraffic(
       const next = [...new Set(kinds)].sort();
       if (closed || JSON.stringify(next) === JSON.stringify(archiveKinds))
         return;
+      const before = telemetryKinds();
       archiveKinds = next;
       const route = routes.get("observer");
-      if (route) remove(route);
+      if (route && JSON.stringify(before) !== JSON.stringify(telemetryKinds()))
+        remove(route);
       sync();
     },
     observe(value) {
       const next = observerGeneration(value);
       if (closed || observer === next) return;
+      const before = telemetryKinds();
       observer = next;
+      // Display generations must not interrupt an unchanged capture route. Keep
+      // its ingress floor, but admit only fresh telemetry to the new display.
+      observerSince = Math.floor(Date.now() / 1000);
       const route = routes.get("observer");
-      if (route) remove(route); // Fence the old wire before enabling a new generation.
+      if (
+        route &&
+        (!archiveKinds.length ||
+          JSON.stringify(before) !== JSON.stringify(telemetryKinds()))
+      )
+        remove(route);
       sync();
     },
     prioritize(input) {

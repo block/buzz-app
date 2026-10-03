@@ -278,7 +278,14 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     name: "Enable Agent Activity",
     exact: true,
   });
+  const disabled = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/stream-observer") &&
+      response.ok() &&
+      response.request().postDataJSON().observer === null,
+  );
   await toggle.click();
+  await disabled;
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true); // Archive capture is independent of the plugin.
   expect(app.relay.sockets).toHaveLength(sockets);
   await page
@@ -291,7 +298,16 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  // Capture keeps this wire alive while the display is disabled. Its existence
+  // no longer proves that the plugin's new display generation reached the host.
+  const enabled = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/stream-observer") &&
+      response.ok() &&
+      response.request().postDataJSON().observer !== null,
+  );
   await toggle.click();
+  await enabled;
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   app.observer(activity("turn_liveness", "alpha", "after-reset"), firstKey);
   await page

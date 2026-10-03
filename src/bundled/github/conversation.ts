@@ -217,9 +217,10 @@ export type EventRun = {
   key: string;
   kind: "history";
   events: ConversationEvent[];
+  afterMerge?: boolean;
 };
 
-/** Fold superseded decisions, not current verdicts; missing times or actors never imply supersession. */
+/** Keep milestones visible; fold conversation stretches without crossing the merge event. */
 export function groupConversationEvents(
   events: ConversationEvent[],
 ): (ConversationEvent | EventRun)[] {
@@ -249,20 +250,41 @@ export function groupConversationEvents(
   }
   const grouped: (ConversationEvent | EventRun)[] = [];
   let run: ConversationEvent[] = [];
+  let afterMerge = false;
   const flush = () => {
     const first = run[0];
-    if (first && (run.length > 1 || superseded.has(first.key)))
-      grouped.push({ key: first.key, kind: "history", events: run });
+    const approvalsOnly = run.every(
+      (event) =>
+        event.kind === "review" &&
+        event.message.state === "APPROVED" &&
+        Date.parse(event.message.createdAt ?? "") < mergedAt,
+    );
+    if (
+      first &&
+      !approvalsOnly &&
+      (run.length > 1 || superseded.has(first.key) || afterMerge)
+    )
+      grouped.push({
+        key: first.key,
+        kind: "history",
+        events: run,
+        ...(afterMerge ? { afterMerge: true } : {}),
+      });
     else grouped.push(...run);
     run = [];
   };
   events.forEach((event, index) => {
+    const comment =
+      event.kind === "discussion" ||
+      (event.kind === "review" && event.message.state === "COMMENTED");
+    const postMerge =
+      comment && Date.parse(event.message.createdAt ?? "") > mergedAt;
     if (
-      index < events.length - 1 &&
-      (event.kind === "discussion" ||
-        (event.kind === "review" && event.message.state === "COMMENTED") ||
-        superseded.has(event.key))
+      postMerge ||
+      (index < events.length - 1 && (comment || superseded.has(event.key)))
     ) {
+      if (run.length && afterMerge !== postMerge) flush();
+      afterMerge = postMerge;
       run.push(event);
     } else {
       flush();

@@ -418,6 +418,12 @@ function History({ run, url }: { run: EventRun; url: string }) {
     : run.events.length === 1
       ? "event"
       : "events";
+  const summary = run.afterMerge
+    ? `${run.events.length} ${run.events.length === 1 ? "event" : "events"} after merge`
+    : `${run.events.length} earlier ${label}`;
+  const hideLabel = run.afterMerge
+    ? "Hide events after merge"
+    : `Hide earlier ${label === "comments" ? "comments" : "events"}`;
   const authors = [
     ...new Set(
       run.events.map((event) => event.message.author || "Unknown author"),
@@ -432,7 +438,7 @@ function History({ run, url }: { run: EventRun; url: string }) {
     >
       <Collapsible.Trigger
         className={`buzz-accordion-trigger text-body-sm ${styles.commentRunTrigger}`}
-        aria-label={`${open ? "Hide" : "Show"} ${run.events.length} earlier ${label}`}
+        aria-label={`${open ? "Hide" : "Show"} ${summary}`}
         aria-controls={open ? id : undefined}
         onClick={(event) => setKeyboardToggle(event.detail === 0)}
       >
@@ -445,12 +451,10 @@ function History({ run, url }: { run: EventRun; url: string }) {
         </span>
         <span className={styles.commentRunSummary}>
           {open ? (
-            <span>
-              Hide earlier {label === "comments" ? "comments" : "events"}
-            </span>
+            <span>{hideLabel}</span>
           ) : (
             <>
-              {run.events.length} earlier {label} <span>· {authors}</span>
+              {summary} <span>· {authors}</span>
             </>
           )}
         </span>

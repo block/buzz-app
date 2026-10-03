@@ -669,7 +669,7 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
 
 // Browser-only: in-place group geometry, keyboard/touch disclosure, retained tab state and actual-app wiring.
 // Ordering, decision boundaries, source failures and paging remain covered in Vitest.
-test("superseded review history expands in place while merge and the newest event stay visible", async ({
+test("conversation history expands around merge without hiding approval-only milestones", async ({
   page,
   app,
 }, testInfo) => {
@@ -680,6 +680,21 @@ test("superseded review history expands in place while merge and the newest even
     (route) => {
       const path = new URL(route.request().url()).pathname;
       requests.push(path);
+      if (path.includes("/2/")) {
+        return route.fulfill({
+          json: path.endsWith("/reviews")
+            ? [
+                {
+                  id: 30,
+                  state: "APPROVED",
+                  body: "",
+                  submitted_at: time(16),
+                  user: { login: "reviewer" },
+                },
+              ]
+            : [],
+        });
+      }
       return route.fulfill({
         json: path.endsWith("/reviews")
           ? [
@@ -810,9 +825,14 @@ test("superseded review history expands in place while merge and the newest even
   });
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(trigger.locator("svg")).toHaveCount(1);
-  await expect(conversation.getByRole("group")).toHaveCount(3);
-  await expect(conversation.getByRole("group").last()).toContainText(
-    "Thanks for shipping this.",
+  await expect(conversation.getByRole("group")).toHaveCount(2);
+  const afterMerge = conversation.getByRole("button", {
+    name: /^(Show|Hide) 1 event after merge$/,
+  });
+  await expect(afterMerge).toHaveAttribute("aria-expanded", "false");
+  await expect(afterMerge).toContainText("1 event after merge");
+  await expect(conversation.getByText("Thanks for shipping this.")).toHaveCount(
+    0,
   );
   const approval = conversation.getByRole("group", {
     name: "Approved",
@@ -835,7 +855,7 @@ test("superseded review history expands in place while merge and the newest even
       (await merge.boundingBox()).y,
     );
     expect((await merge.boundingBox()).y).toBeLessThan(
-      (await conversation.getByRole("group").last().boundingBox()).y,
+      (await afterMerge.boundingBox()).y,
     );
   };
   await expectOrder();
@@ -854,7 +874,7 @@ test("superseded review history expands in place while merge and the newest even
   await expect(trigger).toHaveAccessibleName("Hide 5 earlier events");
   await expect(trigger).toHaveText("Hide earlier events");
   await expect(trigger).toBeFocused();
-  await expect(conversation.getByRole("group")).toHaveCount(8);
+  await expect(conversation.getByRole("group")).toHaveCount(7);
   const history = conversation.locator(
     `[id="${await trigger.getAttribute("aria-controls")}"]`,
   );
@@ -874,6 +894,19 @@ test("superseded review history expands in place while merge and the newest even
     (await merge.boundingBox()).y,
   );
   await expectOrder();
+  await afterMerge.focus();
+  await page.keyboard.press("Enter");
+  await expect(afterMerge).toHaveText("Hide events after merge");
+  await expect(conversation.getByRole("group")).toHaveCount(8);
+  await expect(conversation.getByRole("group").last()).toContainText(
+    "Thanks for shipping this.",
+  );
+  expect((await merge.boundingBox()).y).toBeLessThan(
+    (await conversation.getByRole("group").last().boundingBox()).y,
+  );
+  await page.keyboard.press("Space");
+  await expect(afterMerge).toHaveText(/1 event after merge/);
+  await expect(conversation.getByRole("group")).toHaveCount(7);
   await panel.getByRole("tab", { name: "Checks", exact: true }).click();
   const checks = panel.getByRole("tabpanel", { name: "Checks" });
   await expect(checks).toContainText("Successful");
@@ -913,7 +946,7 @@ test("superseded review history expands in place while merge and the newest even
   });
   await trigger.tap();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
-  await expect(conversation.getByRole("group")).toHaveCount(3);
+  await expect(conversation.getByRole("group")).toHaveCount(2);
   await expect(trigger).toHaveAccessibleName("Show 5 earlier events");
   await expect(trigger).toContainText("5 earlier events");
   // Normal pointer motion must expose intermediate heights and settle unclipped.
@@ -950,7 +983,7 @@ test("superseded review history expands in place while merge and the newest even
     button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
   });
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
-  await expect(conversation.getByRole("group")).toHaveCount(8);
+  await expect(conversation.getByRole("group")).toHaveCount(7);
   await expect
     .poll(() => history.evaluate((node) => node.style.height))
     .toBe("auto");
@@ -959,7 +992,7 @@ test("superseded review history expands in place while merge and the newest even
   await page.keyboard.press("Space");
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(trigger).toBeFocused();
-  await expect(conversation.getByRole("group")).toHaveCount(3);
+  await expect(conversation.getByRole("group")).toHaveCount(2);
   expect(requests).toHaveLength(5);
   await panel.getByRole("tab", { name: "Checks", exact: true }).click();
   await expect(checkRows).toHaveCount(5);
@@ -991,4 +1024,35 @@ test("superseded review history expands in place while merge and the newest even
     });
   }
   expect(requests).toHaveLength(5);
+  // Approval-only is an ordinary milestone row, not a one-event disclosure.
+  await page.evaluate(() => {
+    localStorage.setItem("buzz-font-scale.v1", "1");
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "buzz-font-scale.v1",
+        storageArea: localStorage,
+      }),
+    );
+  });
+  await page.setViewportSize({ width: 1440, height: 950 });
+  const approvalTarget = target.replace("/1", "/2");
+  app.append("primary", "alpha", approvalTarget);
+  const approvalReference = page.locator(`a[href="${approvalTarget}"]`);
+  await expect(approvalReference).toBeAttached();
+  await end(page);
+  await approvalReference.click();
+  await expect(
+    conversation.getByText("Conversation loaded · oldest first"),
+  ).toBeVisible();
+  await expect(approval).toBeVisible();
+  await expect(merge).toBeVisible();
+  await expect(
+    conversation.getByRole("button", { name: /earlier|after merge/ }),
+  ).toHaveCount(0);
+  expect((await approval.boundingBox()).y).toBeLessThan(
+    (await merge.boundingBox()).y,
+  );
+  await panel.screenshot({
+    path: testInfo.outputPath("approval-only-milestone.png"),
+  });
 });

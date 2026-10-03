@@ -799,11 +799,17 @@ it("retains an expanded run and source recovery while another page appends a new
   fireEvent.click(retry);
   await screen.findByText("Conversation loaded · oldest first");
   expect(trigger).toHaveAttribute("aria-expanded", "true");
+  const afterMerge = screen.getByRole("button", {
+    name: "Show 1 event after merge",
+  });
+  expect(afterMerge).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getAllByRole("group", { name: "Comment" })).toHaveLength(2);
+  fireEvent.click(afterMerge);
   expect(screen.getAllByRole("group").at(-1)).toHaveTextContent("Newest");
   expect(screen.getAllByRole("group", { name: "Comment" })).toHaveLength(3);
 });
 
-it("folds pre-merge verdicts with comments but preserves merge and post-merge events", () => {
+it("folds pre-merge conversation and post-merge comments separately, preserving post-merge decisions", () => {
   const events = conversationEvents(
     [entry(2, { createdAt: date(13) }), entry(5, { createdAt: date(19) })],
     [
@@ -816,9 +822,14 @@ it("folds pre-merge verdicts with comments but preserves merge and post-merge ev
   const grouped = groupConversationEvents(events);
   expect(grouped).toEqual([
     { key: events[0]?.key, kind: "history", events: events.slice(0, 3) },
-    ...events.slice(3),
+    ...events.slice(3, 5),
+    {
+      key: "discussion-5",
+      kind: "history",
+      events: [events[5]],
+      afterMerge: true,
+    },
   ]);
-  expect(grouped.at(-1)).toBe(events.at(-1));
   const mergeOnly = conversationEvents([], [], {
     ...details,
     mergedAt: date(17),
@@ -826,26 +837,95 @@ it("folds pre-merge verdicts with comments but preserves merge and post-merge ev
   expect(groupConversationEvents(mergeOnly)).toEqual(mergeOnly);
 });
 
-it("folds a lone superseded verdict but not a lone older comment", () => {
-  for (const state of ["APPROVED", "CHANGES_REQUESTED"]) {
-    const events = conversationEvents(
-      [],
-      [entry(1, { state, createdAt: date(13) })],
-      {
-        ...details,
-        mergedAt: date(17),
-      },
-    );
-    expect(groupConversationEvents(events)).toEqual([
-      { key: "review-1", kind: "history", events: [events[0]] },
-      events[1],
-    ]);
+it("keeps pre-merge approval-only stretches visible but still folds superseded change requests", () => {
+  for (const reviews of [
+    [entry(1, { state: "APPROVED", createdAt: date(13) })],
+    [
+      entry(1, { state: "APPROVED", createdAt: date(13) }),
+      entry(2, { author: "another", state: "APPROVED", createdAt: date(14) }),
+    ],
+  ]) {
+    const events = conversationEvents([], reviews, {
+      ...details,
+      mergedAt: date(17),
+    });
+    expect(groupConversationEvents(events)).toEqual(events);
   }
+  const request = conversationEvents(
+    [],
+    [entry(1, { state: "CHANGES_REQUESTED", createdAt: date(13) })],
+    { ...details, mergedAt: date(17) },
+  );
+  expect(groupConversationEvents(request)).toEqual([
+    { key: "review-1", kind: "history", events: [request[0]] },
+    request[1],
+  ]);
   const comments = conversationEvents([entry(1)], [], {
     ...details,
     mergedAt: date(17),
   });
   expect(groupConversationEvents(comments)).toEqual(comments);
+});
+
+it("keeps approval milestones on either side of folded conversation stretches", () => {
+  const events = conversationEvents(
+    [entry(2, { createdAt: date(13) }), entry(3, { createdAt: date(14) })],
+    [
+      entry(1, { state: "APPROVED", createdAt: date(12) }),
+      entry(4, { state: "APPROVED", createdAt: date(15) }),
+      entry(5, { state: "DISMISSED", createdAt: date(16) }),
+      entry(6, { state: "APPROVED", createdAt: date(17) }),
+    ],
+    { ...details, mergedAt: date(18) },
+  );
+  expect(groupConversationEvents(events)).toEqual([
+    { key: "review-1", kind: "history", events: events.slice(0, 4) },
+    ...events.slice(4),
+  ]);
+});
+
+it("folds even the newest post-merge comment, but not unknown-time comments or new verdicts", () => {
+  for (const kind of ["discussion", "review"]) {
+    const comment = entry(1, {
+      state: "COMMENTED",
+      body: "Follow-up",
+      createdAt: date(18),
+    });
+    const events = conversationEvents(
+      kind === "discussion" ? [comment] : [],
+      kind === "review" ? [comment] : [],
+      { ...details, mergedAt: date(17) },
+    );
+    expect(groupConversationEvents(events)).toEqual([
+      events[0],
+      {
+        key: events[1]?.key,
+        kind: "history",
+        events: [events[1]],
+        afterMerge: true,
+      },
+    ]);
+  }
+  const events = conversationEvents(
+    [
+      entry(1, { createdAt: date(18) }),
+      entry(2, { createdAt: date(19) }),
+      entry(4, { createdAt: undefined }),
+    ],
+    [entry(3, { state: "CHANGES_REQUESTED", createdAt: date(20) })],
+    { ...details, mergedAt: date(17) },
+  );
+  expect(groupConversationEvents(events)).toEqual([
+    events[0],
+    events[1],
+    {
+      key: "discussion-1",
+      kind: "history",
+      events: events.slice(2, 4),
+      afterMerge: true,
+    },
+    events[4],
+  ]);
 });
 
 it("keeps each reviewer's latest verdict and does not treat a comment as superseding it", () => {
@@ -967,5 +1047,63 @@ it("uses singular event copy and restores the original verdict body on expansion
     within(verdict).getByRole("button", { name: "Expand Changes requested" }),
   );
   expect(screen.getByRole("heading", { name: "Review detail" })).toBeVisible();
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it("renders a lone approval directly and expands post-merge follow-up without requests", async () => {
+  const fetch = vi.fn(async (target: string) =>
+    response(
+      target.includes("/reviews?")
+        ? [
+            {
+              id: 1,
+              state: "APPROVED",
+              submitted_at: date(13),
+              user: { login: "reviewer" },
+              body: "",
+            },
+          ]
+        : [
+            {
+              id: 2,
+              created_at: date(18),
+              user: { login: "reader" },
+              body: "After merge\n\n## Follow-up detail",
+            },
+          ],
+    ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  render(
+    <GitHubConversation
+      details={{ ...details, mergedAt: date(17), mergedBy: "maintainer" }}
+      url={url}
+    />,
+  );
+  await screen.findByText("Conversation loaded · oldest first");
+  expect(screen.getByRole("group", { name: "Approved" })).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: /earlier/ }),
+  ).not.toBeInTheDocument();
+  const trigger = screen.getByRole("button", {
+    name: "Show 1 event after merge",
+  });
+  expect(trigger).toHaveTextContent("1 event after merge");
+  expect(
+    screen.queryByRole("group", { name: "Comment" }),
+  ).not.toBeInTheDocument();
+  const user = userEvent.setup();
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  expect(trigger).toHaveAccessibleName("Hide 1 event after merge");
+  expect(trigger).toHaveTextContent("Hide events after merge");
+  const comment = screen.getByRole("group", { name: "Comment" });
+  expect(comment.querySelector("time")).toHaveAttribute("datetime", date(18));
+  await user.click(
+    within(comment).getByRole("button", { name: "Expand Comment" }),
+  );
+  expect(
+    screen.getByRole("heading", { name: "Follow-up detail" }),
+  ).toBeVisible();
   expect(fetch).toHaveBeenCalledTimes(2);
 });

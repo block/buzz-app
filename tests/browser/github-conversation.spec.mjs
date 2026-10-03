@@ -122,18 +122,42 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await expect(
     conversation.getByText("Conversation loaded · oldest first"),
   ).toBeVisible();
-  await expect(panel.getByText("No checks", { exact: true })).toBeVisible();
+  await expect(
+    panel.getByRole("tab", { name: "Discussion", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await expect(
     conversation.getByText("inline-only", { exact: true }),
   ).toHaveCount(0);
   await expect(conversation.getByRole("group")).toHaveCount(5);
-  expect(requests.sort()).toEqual([
+  expect([...requests].sort()).toEqual([
+    "/repos/sample/project/issues/1/comments",
+    "/repos/sample/project/pulls/1",
+    "/repos/sample/project/pulls/1/reviews",
+  ]);
+  await panel.getByRole("tab", { name: "Checks", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(panel.getByRole("tabpanel", { name: "Checks" })).toContainText(
+    "No checks",
+  );
+  expect([...requests].sort()).toEqual([
     "/repos/sample/project/commits/head-sha/check-runs",
     "/repos/sample/project/commits/head-sha/status",
     "/repos/sample/project/issues/1/comments",
     "/repos/sample/project/pulls/1",
     "/repos/sample/project/pulls/1/reviews",
   ]);
+  await page.keyboard.press("ArrowLeft");
+  await expect(
+    panel.getByRole("tab", { name: "Discussion", exact: true }),
+  ).toBeFocused();
+  await expect(conversation).toBeVisible();
+  await panel.getByRole("tab", { name: "Checks", exact: true }).click();
+  await expect(panel.getByRole("tabpanel", { name: "Checks" })).toContainText(
+    "No checks",
+  );
+  await panel.getByRole("tab", { name: "Discussion", exact: true }).click();
+  await expect(conversation).toBeVisible();
+  expect(requests).toHaveLength(5);
   await expect(
     panel.locator("dt").filter({ hasText: /^Comments$/ }),
   ).toHaveCount(0);

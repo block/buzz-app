@@ -545,3 +545,7 @@
     display: none;
   }
 }
+
+.checksPanel {
+  margin-top: var(--space-5);
+}

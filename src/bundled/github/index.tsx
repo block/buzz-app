@@ -1,5 +1,6 @@
 import { Button } from "../../shared/design-system/ui/Button";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
+import { Tabs } from "../../shared/design-system/ui/Tabs";
 import {
   ArrowSquareOutIcon,
   GitPullRequestIcon,
@@ -280,39 +281,26 @@ function ObjectPanel({
                 </div>
               ))}
               {reference.kind === "pull" && (
-                <>
-                  <div>
-                    <dt>Checks</dt>
-                    <dd>
-                      <GitHubChecks
-                        repository={reference.repository}
-                        sha={result.headSha}
-                      />
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Last updated</dt>
-                    <dd>
-                      {result.updatedAt ? (
-                        <time
-                          dateTime={result.updatedAt}
-                          title={new Date(result.updatedAt).toLocaleString()}
-                        >
-                          {relativeTimestamp(
-                            Date.parse(result.updatedAt) / 1000,
-                          )}
-                        </time>
-                      ) : (
-                        "Unavailable"
-                      )}
-                    </dd>
-                  </div>
-                </>
+                <div>
+                  <dt>Last updated</dt>
+                  <dd>
+                    {result.updatedAt ? (
+                      <time
+                        dateTime={result.updatedAt}
+                        title={new Date(result.updatedAt).toLocaleString()}
+                      >
+                        {relativeTimestamp(Date.parse(result.updatedAt) / 1000)}
+                      </time>
+                    ) : (
+                      "Unavailable"
+                    )}
+                  </dd>
+                </div>
               )}
             </dl>
           )}
           {reference.kind === "pull" ? (
-            <GitHubConversation details={result} url={reference.url} />
+            <PullContent details={result} reference={reference} />
           ) : (
             result.body && (
               <GitHubBody
@@ -329,5 +317,65 @@ function ObjectPanel({
         actions.
       </p>
     </div>
+  );
+}
+
+function PullContent({
+  details,
+  reference,
+}: {
+  details: GitHubDetails;
+  reference: GitHubReference;
+}) {
+  const id = useId();
+  const [tab, setTab] = useState<"discussion" | "checks">("discussion");
+  const [checksOpened, setChecksOpened] = useState(false);
+  return (
+    <>
+      <Tabs
+        variant="panel"
+        label="Pull request content"
+        value={tab}
+        items={[
+          {
+            value: "discussion",
+            label: "Discussion",
+            panelId: `${id}-discussion`,
+          },
+          { value: "checks", label: "Checks", panelId: `${id}-checks` },
+        ]}
+        onValueChange={(next) => {
+          setTab(next);
+          if (next === "checks") setChecksOpened(true);
+        }}
+      />
+      {/* Retain loaded content and disclosures across tab switches, but mount checks only on demand. */}
+      <div
+        role="tabpanel"
+        id={`${id}-discussion`}
+        aria-labelledby={`${id}-discussion-tab`}
+        hidden={tab !== "discussion"}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: tab panels are keyboard destinations linked by the shared tabs.
+        tabIndex={0}
+      >
+        <GitHubConversation details={details} url={reference.url} />
+      </div>
+      <div
+        role="tabpanel"
+        id={`${id}-checks`}
+        aria-labelledby={`${id}-checks-tab`}
+        hidden={tab !== "checks"}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: tab panels are keyboard destinations linked by the shared tabs.
+        tabIndex={0}
+        className={styles.checksPanel}
+      >
+        {checksOpened && (
+          <GitHubChecks
+            repository={reference.repository}
+            sha={details.headSha}
+          />
+        )}
+      </div>
+    </>
   );
 }

@@ -506,7 +506,7 @@ spans show elapsed time. **Export timings** downloads JSON for comparison.
 - `outbox.load`, `outbox.queue`, `outbox.persist`: hydration, queueing and durable transactions.
 - `send.sign`, `send.verify`: host signing and verification of the returned event.
 - `send.publish`: publication through receipt validation.
-- `http.auth`, `http.fetch`: signed host authentication and HTTP request latency.
+- `http.fetch`: host-authenticated HTTP request latency, including host signing.
 - `broker.sign`, `broker.auth`, `broker.connect`, `broker.ttfb`, `broker.relay`, `broker.upstream`:
   dev broker Server-Timing measurements. `connect` appears only when a request had to open a
   new upstream connection; `relay` is the relay's own reported service time, so

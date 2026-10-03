@@ -370,6 +370,51 @@ async fn relay_policy_denial_preserves_the_shared_session() {
     );
 }
 
+#[tokio::test]
+async fn only_overload_refusals_are_retryable() {
+    for (status, code, retryable) in [
+        (StatusCode::UNAUTHORIZED, "invalid_proof", false),
+        (StatusCode::FORBIDDEN, "binding_mismatch", false),
+        (StatusCode::BAD_REQUEST, "invalid_request", false),
+        (StatusCode::PAYLOAD_TOO_LARGE, "request_too_large", false),
+        (StatusCode::TOO_MANY_REQUESTS, "rate_limited", true),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "issuance_unavailable",
+            true,
+        ),
+    ] {
+        let service = FixtureServer::spawn(FixtureReply::Status { status, code }).await;
+        let discovery = FixtureServer::spawn(FixtureReply::Discovery(required_document(
+            "https://ignored.example/v1/identity/assertions",
+        )))
+        .await;
+        let _environment = BuilderLabEnv::new(&service.base);
+        let home = TempDir::new().unwrap();
+        let owner = owner(&home);
+        save(&owner, code, "fixture-cli-session").await;
+        let assertions = fixture_assertions(owner.clone(), &discovery);
+        let identity = IdentityHost::fixture();
+        let url = Url::parse("wss://relay.example/query").unwrap();
+
+        let error = assertions.get(&identity, &url, true).await.unwrap_err();
+        if retryable {
+            assert!(error.starts_with("Relay badge is unavailable"), "{error}");
+        } else {
+            assert!(error.starts_with(REFUSED), "{error}");
+        }
+        assert_eq!(
+            owner
+                .session_snapshot()
+                .await
+                .unwrap()
+                .unwrap()
+                .credential(),
+            "fixture-cli-session"
+        );
+    }
+}
+
 #[test]
 fn only_contract_session_denials_prompt_for_sign_in() {
     for (status, code, denied) in [

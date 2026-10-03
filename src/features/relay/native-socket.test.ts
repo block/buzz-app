@@ -1,6 +1,7 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
 import {
   BADGE_DENIED_CLOSE,
+  BADGE_REFUSED_CLOSE,
   BADGE_ROTATION_CLOSE,
   subscribeRelayTraffic,
   type LiveCallbacks,
@@ -244,14 +245,40 @@ it("closes as access denied without signing out when the relay is refused", asyn
   stop();
 });
 
-it("does not report transient badge failures as a denial", async () => {
+it("closes a refused badge request as final without signing out", async () => {
   const denied = vi.fn();
   const stop = onEnterpriseSignInRequired(denied);
-  native.connect = () =>
-    Promise.reject("Relay badge was refused (401 invalid_proof)");
-  const h = open();
-  await vi.waitFor(() => expect(h.events.close).toHaveBeenCalled());
-  assert.deepEqual(h.events.close.mock.lastCall, [{ code: 1006 }]);
+  for (const reason of [
+    "Relay badge was refused (401 invalid_proof)",
+    "Relay badge was refused (403 binding_mismatch)",
+    "Relay badge was refused (400 invalid_request)",
+    "Relay badge was refused (413 request_too_large)",
+  ]) {
+    native.connect = () => Promise.reject(reason);
+    const h = open();
+    await vi.waitFor(() => expect(h.events.close).toHaveBeenCalled());
+    assert.deepEqual(h.events.close.mock.lastCall, [
+      { code: BADGE_REFUSED_CLOSE, reason },
+    ]);
+    expect(h.events.error).not.toHaveBeenCalled();
+  }
+  expect(denied).not.toHaveBeenCalled();
+  stop();
+});
+
+it("closes overload and network badge failures as ordinary failures", async () => {
+  const denied = vi.fn();
+  const stop = onEnterpriseSignInRequired(denied);
+  for (const reason of [
+    "Relay badge is unavailable (429 rate_limited)",
+    "Relay badge is unavailable (503 issuance_unavailable)",
+    "Relay badge request failed",
+  ]) {
+    native.connect = () => Promise.reject(reason);
+    const h = open();
+    await vi.waitFor(() => expect(h.events.close).toHaveBeenCalled());
+    assert.deepEqual(h.events.close.mock.lastCall, [{ code: 1006 }]);
+  }
   expect(denied).not.toHaveBeenCalled();
   stop();
 });

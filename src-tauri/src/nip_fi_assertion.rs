@@ -27,6 +27,8 @@ use crate::{
 pub(crate) const SIGN_IN_REQUIRED: &str = "Enterprise sign-in is required";
 /// Shown to JavaScript when this relay denies access without invalidating the session.
 pub(crate) const ACCESS_DENIED: &str = "Enterprise access to this relay was denied";
+/// Prefix for adapter refusals that need a visible manual retry, not reconnects.
+pub(crate) const REFUSED: &str = "Relay badge was refused";
 pub(crate) const HEADER: &str = "Nostr-Federated-Identity";
 const ASSERTION_PATH: &str = "/v1/identity/assertions";
 /// NIP-FI caps assertion lifetime at five minutes.
@@ -460,9 +462,11 @@ async fn issue(
             .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
             .take(64)
             .collect();
-        return Err(IssueFailure::Failed(format!(
-            "Relay badge was refused ({status} {code})"
-        )));
+        return Err(IssueFailure::Failed(if matches!(status, 429 | 503) {
+            format!("Relay badge is unavailable ({status} {code})")
+        } else {
+            format!("{REFUSED} ({status} {code})")
+        }));
     }
     let issued: IssueResponse = serde_json::from_slice(&bytes)
         .map_err(|_| IssueFailure::Failed("Relay badge response was invalid".into()))?;

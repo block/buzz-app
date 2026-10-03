@@ -1,7 +1,7 @@
 import { InventoryView } from "./InventoryView";
 import type { ClientSnapshot } from "../../features/communities/service";
 import { useCommunityInventory } from "./use-community-inventory";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type {
   AgentControl,
   AgentControlState,
@@ -14,6 +14,7 @@ import type { RelaySnapshot } from "../../features/relay/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import { inventoryIdentities, localSetups } from "./inventory-model";
 import { identityTiles } from "./identity-tiles";
+import { removeRelayAgent } from "../../features/agents/relay-removal";
 
 /** Discovery, saved metadata and execution are facts of one exact public key. */
 export function UnifiedInventory({
@@ -54,11 +55,22 @@ export function UnifiedInventory({
     library.snapshot,
     library.snapshot,
   );
-  useSyncExternalStore(
+  const archive = useSyncExternalStore(
     archives.subscribe,
     archives.snapshot,
     archives.snapshot,
   );
+  // An archive re-read (Remove starts one) briefly reports every key as
+  // unknown. Keep hiding the last confirmed archived set until it answers,
+  // so archived agents do not flash back into the list.
+  const lastArchived = useRef<ReadonlySet<string>>(new Set());
+  if (archive.status === "ready")
+    lastArchived.current = new Set(archive.archived);
+  else if (archive.status !== "loading") lastArchived.current = new Set();
+  const archived = (pubkey: string) =>
+    archive.status === "loading"
+      ? lastArchived.current.has(pubkey)
+      : archives.state(pubkey) === "archived";
   const resolveName = useIdentityNames(connection.session.names);
   useEffect(() => {
     if (connection.status === "ready") {
@@ -71,6 +83,12 @@ export function UnifiedInventory({
       ? relayOrigin(connection.scope.slice(0, -(connection.viewer.length + 1)))
       : "";
   const [refresh, setRefresh] = useState(0);
+  // Hide confirmed removals at once and for as long as this view lives. A
+  // removal is per community, so the key includes the destination.
+  const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
+  // Archive is the first removal step and hides the row. Keep a started
+  // removal's card until it finishes, so its later steps and errors stay visible.
+  const [held, setHeld] = useState<ReadonlySet<string>>(new Set());
   const {
     communityIdentities,
     profiles: sourceProfiles,
@@ -115,9 +133,33 @@ export function UnifiedInventory({
   );
   // Apply archive evidence after all discovery sources join. Keep local controls.
   for (const row of rows.values()) {
-    if (archives.state(row.pubkey) === "archived" && !row.localIdentity)
+    const key = `${destination} ${row.pubkey}`;
+    if (
+      ((archived(row.pubkey) && !held.has(key)) || removed.has(key)) &&
+      !row.localIdentity
+    )
       rows.delete(row.pubkey);
   }
+  const viewer = connection.viewer;
+  const removeRelay =
+    connection.status === "ready" &&
+    selectedViewerMatches &&
+    viewer &&
+    connection.session.outbox?.supports(5)
+      ? async (pubkey: string, signal: AbortSignal) => {
+          const key = `${destination} ${pubkey}`;
+          setHeld((saved) => new Set([...saved, key]));
+          // A failed removal stays held: the card shows the error and Retry.
+          await removeRelayAgent(connection.session, viewer, pubkey, signal);
+          setRemoved((saved) => new Set([...saved, key]));
+          setHeld(
+            (saved) => new Set([...saved].filter((item) => item !== key)),
+          );
+          // The removed set already hides the card. A community recheck here
+          // would show its status lines above the list and shift the page.
+          void library.refresh();
+        }
+      : undefined;
   const candidates = [...rows.keys()];
   const displayFacts = [...rows.values()].map((row) => ({
     pubkey: row.pubkey,
@@ -153,6 +195,7 @@ export function UnifiedInventory({
       edit={edit}
       duplicate={duplicate}
       remove={remove}
+      removeRelay={removeRelay}
       importedId={importedId}
       onUseHere={onUseHere}
       onImport={onImport}

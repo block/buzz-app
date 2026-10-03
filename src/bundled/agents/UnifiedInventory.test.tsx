@@ -19,7 +19,7 @@ import * as destinations from "../../features/communities/destination";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 import { createRelaySession } from "../../features/relay/session";
-import { keypair, signed } from "../../features/relay/testing";
+import { archiveRelay, keypair, signed } from "../../features/relay/testing";
 import type { ReadTransport } from "../../features/relay/transport";
 import type { RelaySnapshot } from "../../features/relay/service";
 import { bindNames } from "../../features/identity-names/service";
@@ -39,6 +39,7 @@ function setup(
   client?: ClientSnapshot,
   transport: Partial<ReadTransport> = {},
   naming = false,
+  viewer = "de".repeat(32),
 ) {
   const f = controlFixture();
   configure(f);
@@ -52,24 +53,27 @@ function setup(
             ) ?? [])
           : { identities },
     );
-  const owned = createRelaySession({
-    viewer: "de".repeat(32),
-    relayAuthor: "ef".repeat(32),
-    scope: "wss://relay.example.test",
-    readAgentLibrary: async () => ({
-      definitions,
-      identities: [
-        {
-          pubkey: "cd".repeat(32),
-          name: "Not imported",
-          definitionId: "linked",
-        },
-      ],
-    }),
-    query: async () => [],
-    media: () => undefined,
-    ...transport,
-  });
+  const owned = createRelaySession(
+    {
+      viewer,
+      relayAuthor: "ef".repeat(32),
+      scope: "wss://relay.example.test",
+      readAgentLibrary: async () => ({
+        definitions,
+        identities: [
+          {
+            pubkey: "cd".repeat(32),
+            name: "Not imported",
+            definitionId: "linked",
+          },
+        ],
+      }),
+      query: async () => [],
+      media: () => undefined,
+      ...transport,
+    },
+    { outboxStorage: { load: () => [], save: () => {} } },
+  );
   const control = createAgentControl(f.host);
   disposals.push(() => {
     owned.dispose();
@@ -88,10 +92,10 @@ function setup(
   };
   let connection: RelaySnapshot = {
     status: mode === "disconnected" ? "disconnected" : "ready",
-    viewer: "de".repeat(32),
+    viewer,
     ...(mode === "disconnected"
       ? {}
-      : { scope: `wss://relay.example.test:${"de".repeat(32)}` }),
+      : { scope: `wss://relay.example.test:${viewer}` }),
     generation: 1,
     session:
       mode === "archived"
@@ -806,3 +810,177 @@ for (const duplicate of [false, true]) {
     }
   });
 }
+
+it("removes a relay-only agent after confirmation and keeps it on Cancel or failure", async () => {
+  const published: { kind: number; tags: string[][] }[] = [];
+  let refuse: Error | undefined = Error("restricted: not authorized");
+  const signer = keypair();
+  setup(
+    "connected",
+    (fixture) => {
+      fixture.data.parked = [];
+    },
+    ["cd".repeat(32)],
+    [],
+    undefined,
+    {
+      writer: {
+        kinds: [9001, 5],
+        sign: async (template) => signed(signer, { ...template }),
+        async publish(event) {
+          if (refuse) throw refuse;
+          published.push(event);
+        },
+      },
+    },
+    false,
+    signer.pubkey,
+  );
+  const group = await screen.findByRole("region", {
+    name: "Relay-only agents",
+  });
+  const card = within(group).getByRole("article", {
+    name: "Agent Not imported",
+  });
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  let dialog = await screen.findByRole("alertdialog", {
+    name: "Remove Not imported?",
+  });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(published).toEqual([]);
+
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  dialog = await screen.findByRole("alertdialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Remove agent" }));
+  expect(await within(card).findByRole("alert")).toHaveTextContent(
+    "restricted: not authorized",
+  );
+  expect(card).toBeInTheDocument();
+
+  refuse = undefined;
+  const inventoryReads = () =>
+    vi
+      .mocked(communityApi.communityRequest)
+      .mock.calls.filter(([, route]) => route === "agent-inventory").length;
+  const reads = inventoryReads();
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  dialog = await screen.findByRole("alertdialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Remove agent" }));
+  await waitFor(() => expect(card).not.toBeInTheDocument());
+  // The confirmed removal hides the card by itself. A community recheck would
+  // add status lines above the list and shift it while the user watches.
+  expect(inventoryReads()).toBe(reads);
+  expect(screen.queryByText("Checking community inventory…")).toBeNull();
+  expect(published.map(({ kind, tags }) => [kind, tags[0]])).toEqual([
+    [5, ["a", `30177:${signer.pubkey}:${"cd".repeat(32)}`]],
+  ]);
+});
+
+it("keeps an archived card until its record deletion succeeds", async () => {
+  const viewer = keypair();
+  const agent = "cd".repeat(32);
+  // Admin consent archives an agent with no live profile.
+  const relay = archiveRelay(viewer, keypair(), [], {
+    [viewer.pubkey]: "admin",
+  });
+  relay.removal.fail = Error("restricted: not authorized");
+  relay.removal.failKind = 5;
+  setup(
+    "connected",
+    (fixture) => {
+      fixture.data.parked = [];
+    },
+    [agent],
+    [],
+    undefined,
+    relay.transport,
+    false,
+    viewer.pubkey,
+  );
+  const group = await screen.findByRole("region", {
+    name: "Relay-only agents",
+  });
+  const card = within(group).getByRole("article", {
+    name: "Agent Not imported",
+  });
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  let dialog = await screen.findByRole("alertdialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Remove agent" }));
+  expect(await within(card).findByRole("alert")).toHaveTextContent(
+    "restricted: not authorized",
+  );
+  expect(relay.archived.has(agent)).toBe(true);
+  expect(card).toBeInTheDocument();
+
+  delete relay.removal.fail;
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  dialog = await screen.findByRole("alertdialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Remove agent" }));
+  await waitFor(() => expect(card).not.toBeInTheDocument());
+  expect(relay.published.map((event) => event.kind)).toEqual([9035, 5]);
+  expect(relay.deleted).toEqual(new Set([`30177:${viewer.pubkey}:${agent}`]));
+});
+
+it("keeps already archived agents hidden while Remove re-reads archives", async () => {
+  const viewer = keypair();
+  const agent = "cd".repeat(32);
+  const other = "a1".repeat(32);
+  const relay = archiveRelay(viewer, keypair(), [], {
+    [viewer.pubkey]: "admin",
+  });
+  relay.archived.add(other);
+  let release: (() => void) | undefined;
+  let reads = 0;
+  const query = relay.transport.query;
+  setup(
+    "connected",
+    (fixture) => {
+      fixture.data.parked = [];
+    },
+    [agent, other],
+    [],
+    undefined,
+    {
+      ...relay.transport,
+      readAgentLibrary: async () => ({
+        definitions: [],
+        identities: [
+          { pubkey: agent, name: "Not imported" },
+          { pubkey: other, name: "Archived earlier" },
+        ],
+      }),
+      async query(filters, signal) {
+        // Hold every archive read after the first, so the re-read is visible.
+        if (filters.some((filter) => filter.kinds?.includes(13535)) && reads++)
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        return query(filters, signal);
+      },
+    },
+    false,
+    viewer.pubkey,
+  );
+  const group = await screen.findByRole("region", {
+    name: "Relay-only agents",
+  });
+  await waitFor(() =>
+    expect(within(group).getAllByRole("article")).toHaveLength(1),
+  );
+  const card = within(group).getByRole("article", {
+    name: "Agent Not imported",
+  });
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  const dialog = await screen.findByRole("alertdialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Remove agent" }));
+  await waitFor(() => expect(release).toBeDefined());
+  expect(within(group).getAllByRole("article")).toEqual([card]);
+  release?.();
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("region", { name: "Relay-only agents" }),
+    ).toBeNull(),
+  );
+  expect(relay.deleted).toEqual(new Set([`30177:${viewer.pubkey}:${agent}`]));
+});

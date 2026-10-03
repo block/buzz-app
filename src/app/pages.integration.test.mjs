@@ -50,7 +50,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     const { bundledPlugins } = await vite.ssrLoadModule(
       "/src/bundled/index.ts",
     );
-    assert.equal(bundledPlugins.length, 21);
+    assert.equal(bundledPlugins.length, 22);
     for (const plugin of bundledPlugins) {
       assert.equal(
         typeof plugin.enabledByDefault,

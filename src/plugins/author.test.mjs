@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-test("generated author package in a path with spaces exposes agentControl, host, and identity names", async () => {
+test("generated author package in a path with spaces exposes agentControl, host, identity names, and page icons", async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   const dir = await mkdtemp(join(tmpdir(), "buzz-author-consumer-"));
   const env = {
@@ -40,7 +40,7 @@ export const manifest: PluginManifest = {
     networkOrigins: ["https://api.example.com"],
   },
 };
-export const inject = ["agentControl", "host", "identityNames"];
+export const inject = ["agentControl", "host", "identityNames", "pages"];
 export function apply(ctx: Context) {
   const policy: NamingPolicy = {
     id: "alternative",
@@ -58,6 +58,19 @@ export function apply(ctx: Context) {
     headers: { Authorization: "Bearer sample" },
     body: "{}",
   }).then((response) => void response.status);
+  ctx.pages.register({
+    id: "main",
+    title: "Example",
+    component: () => null,
+    icon: "data:image/png;base64,iVBOR",
+  });
+  ctx.pages.register({
+    id: "other",
+    title: "Other",
+    component: () => null,
+    // @ts-expect-error A page icon is a data URL string.
+    icon: 1,
+  });
   // @ts-expect-error Native process lifetime is not plugin-owned.
   control.dispose();
   // @ts-expect-error Programs must be declared in the manifest, not supplied at runtime.

@@ -682,6 +682,18 @@ test("conversation history expands around merge without hiding approval-only mil
     (route) => {
       const path = new URL(route.request().url()).pathname;
       requests.push(path);
+      if (path.includes("/3")) {
+        return route.fulfill({
+          json: /\/(?:comments|reviews)$/.test(path)
+            ? []
+            : {
+                title: "Description without activity",
+                body: "The proposal is ready to discuss.",
+                state: "open",
+                user: { login: "author" },
+              },
+        });
+      }
       if (path.includes("/2/")) {
         return route.fulfill({
           json: path.endsWith("/reviews")
@@ -824,16 +836,16 @@ test("conversation history expands around merge without hiding approval-only mil
     conversation.getByText(/some sources are incomplete/),
   ).toHaveCount(0);
   const trigger = conversation.getByRole("button", {
-    name: /^(Show|Hide) 5 earlier events$/,
+    name: /^(Show|Hide) 5 earlier messages$/,
   });
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(trigger.locator("svg")).toHaveCount(1);
   await expect(conversation.getByRole("group")).toHaveCount(2);
   const afterMerge = conversation.getByRole("button", {
-    name: /^(Show|Hide) 1 event after merge$/,
+    name: /^(Show|Hide) 1 message after merge$/,
   });
   await expect(afterMerge).toHaveAttribute("aria-expanded", "false");
-  await expect(afterMerge).toContainText("1 event after merge");
+  await expect(afterMerge).toContainText("1 message after merge");
   await expect(conversation.getByText("Thanks for shipping this.")).toHaveCount(
     0,
   );
@@ -850,6 +862,13 @@ test("conversation history expands around merge without hiding approval-only mil
     conversation.getByRole("group", { name: "Changes requested", exact: true }),
   ).toHaveCount(0);
   await expect(merge.locator("time")).toHaveAttribute("datetime", time(18));
+  await expect
+    .poll(() =>
+      merge
+        .locator("..")
+        .evaluate((node) => getComputedStyle(node, "::before").content),
+    )
+    .toBe('""');
   await expect(
     merge.getByRole("link", { name: "maintainer", exact: true }),
   ).toHaveAttribute("href", "https://github.com/maintainer");
@@ -874,8 +893,8 @@ test("conversation history expands around merge without hiding approval-only mil
   await trigger.focus();
   await page.keyboard.press("Enter");
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
-  await expect(trigger).toHaveAccessibleName("Hide 5 earlier events");
-  await expect(trigger).toHaveText("Hide earlier events");
+  await expect(trigger).toHaveAccessibleName("Hide 5 earlier messages");
+  await expect(trigger).toHaveText("Hide earlier messages");
   await expect(trigger).toBeFocused();
   await expect(conversation.getByRole("group")).toHaveCount(7);
   const history = conversation.locator(
@@ -899,7 +918,7 @@ test("conversation history expands around merge without hiding approval-only mil
   await expectOrder();
   await afterMerge.focus();
   await page.keyboard.press("Enter");
-  await expect(afterMerge).toHaveText("Hide events after merge");
+  await expect(afterMerge).toHaveText("Hide messages after merge");
   await expect(conversation.getByRole("group")).toHaveCount(8);
   await expect(conversation.getByRole("group").last()).toContainText(
     "Thanks for shipping this.",
@@ -908,7 +927,7 @@ test("conversation history expands around merge without hiding approval-only mil
     (await conversation.getByRole("group").last().boundingBox()).y,
   );
   await page.keyboard.press("Space");
-  await expect(afterMerge).toHaveText(/1 event after merge/);
+  await expect(afterMerge).toHaveText(/1 message after merge/);
   await expect(conversation.getByRole("group")).toHaveCount(7);
   await panel.getByRole("tab", { name: "Checks", exact: true }).click();
   const checks = panel.getByRole("tabpanel", { name: "Checks" });
@@ -950,8 +969,8 @@ test("conversation history expands around merge without hiding approval-only mil
   await trigger.tap();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(conversation.getByRole("group")).toHaveCount(2);
-  await expect(trigger).toHaveAccessibleName("Show 5 earlier events");
-  await expect(trigger).toContainText("5 earlier events");
+  await expect(trigger).toHaveAccessibleName("Show 5 earlier messages");
+  await expect(trigger).toContainText("5 earlier messages");
   // Normal pointer motion must expose intermediate heights and settle unclipped.
   await page.emulateMedia({ reducedMotion: "no-preference" });
   const motionFrames = await trigger.evaluate(async (button) => {
@@ -975,7 +994,7 @@ test("conversation history expands around merge without hiding approval-only mil
     motionFrames.some(({ height, target }) => height > 0 && height < target),
   ).toBe(true);
   await expect(history).toHaveCSS("overflow", "visible");
-  await expect(trigger).toHaveText("Hide earlier events");
+  await expect(trigger).toHaveText("Hide earlier messages");
   await panel.screenshot({
     path: testInfo.outputPath("history-motion-expanded.png"),
   });
@@ -1062,4 +1081,31 @@ test("conversation history expands around merge without hiding approval-only mil
   await panel.screenshot({
     path: testInfo.outputPath("approval-only-milestone.png"),
   });
+  const emptyTarget = target.replace("/1", "/3");
+  app.append("primary", "alpha", emptyTarget);
+  const emptyReference = page.locator(`a[href="${emptyTarget}"]`);
+  await expect(emptyReference).toBeAttached();
+  await end(page);
+  await emptyReference.click();
+  await expect(
+    panel.getByRole("heading", { name: "Description without activity #3" }),
+  ).toBeVisible();
+  await expect(conversation.getByRole("group")).toHaveCount(1);
+  await expect(
+    conversation.getByText(/some sources are incomplete/),
+  ).toHaveCount(0);
+  await expect(
+    conversation.getByText(
+      /That’s it|No discussion comments|Conversation loaded/,
+    ),
+  ).toHaveCount(0);
+  const timeline = conversation
+    .getByRole("group", { name: "Description" })
+    .locator("..");
+  await expect
+    .poll(() =>
+      timeline.evaluate((node) => getComputedStyle(node, "::before").content),
+    )
+    .toBe("none");
+  await panel.screenshot({ path: testInfo.outputPath("description-only.png") });
 });

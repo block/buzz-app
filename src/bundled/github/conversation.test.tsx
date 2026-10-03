@@ -223,7 +223,7 @@ it("keeps paging available when a page contains only omitted reviews", async () 
     fetch.mock.calls.some(([target]) => target.includes("/pulls/1/comments")),
   ).toBe(false);
 });
-it("shows honest empty copy when all submitted reviews are omitted", async () => {
+it("keeps description-only conversations quiet when all submitted reviews are omitted", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (target: string) =>
@@ -242,8 +242,11 @@ it("shows honest empty copy when all submitted reviews are omitted", async () =>
   );
   expect(screen.getAllByRole("group")).toHaveLength(1);
   expect(
-    screen.getByText("No discussion comments or review summaries to show."),
-  ).toBeVisible();
+    screen.queryByText(/No discussion comments|That’s it/),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("group", { name: "Description" }).parentElement,
+  ).not.toHaveAttribute("data-has-events");
 });
 it("keeps source failures independent, retains pages during retry and fetches more only on request", async () => {
   let failReviews = true,
@@ -284,6 +287,7 @@ it("keeps source failures independent, retains pages during retry and fetches mo
   await screen.findByRole("button", { name: "Retry reviews" });
   expect(fetch).toHaveBeenCalledTimes(2);
   expect(screen.getByText(/some sources are incomplete/)).toBeVisible();
+  expect(screen.queryByText("That’s it!")).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Expand Description" }));
   expect(
     screen.getByRole("heading", { name: "Full description" }),
@@ -428,7 +432,7 @@ it("aborts all old sources, ignores late results and resets pages and expansion 
     screen.queryByRole("heading", { name: "Full description" }),
   ).not.toBeInTheDocument();
 });
-it("keeps description usable while held sources load and gives neutral empty copy after completion", async () => {
+it("keeps description usable while held sources load and removes source notices after completion", async () => {
   const finish: ((response: Response) => void)[] = [];
   vi.stubGlobal(
     "fetch",
@@ -437,6 +441,7 @@ it("keeps description usable while held sources load and gives neutral empty cop
   render(<GitHubConversation details={{ ...details, body: "" }} url={url} />);
   await waitFor(() => expect(finish).toHaveLength(2));
   expect(screen.getAllByRole("status")).toHaveLength(2);
+  expect(screen.queryByText("That’s it!")).not.toBeInTheDocument();
   expect(
     screen
       .getAllByText("No description provided")
@@ -446,8 +451,11 @@ it("keeps description usable while held sources load and gives neutral empty cop
     for (const resolve of finish) resolve(response([]));
   });
   expect(
-    screen.getByText("No discussion comments or review summaries to show."),
-  ).toBeVisible();
+    screen.queryByText(/No discussion comments|That’s it/),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("group", { name: "Description" }).parentElement,
+  ).not.toHaveAttribute("data-has-events");
   expect(
     screen.queryByRole("region", { name: "Discussion" }),
   ).not.toBeInTheDocument();
@@ -719,7 +727,7 @@ it("expands mixed history in place without fetching and keeps merge at the highe
     ).not.toBeInTheDocument(),
   );
   const trigger = screen.getByRole("button", {
-    name: "Show 4 earlier events",
+    name: "Show 4 earlier messages",
   });
   expect(trigger).toHaveAttribute("aria-expanded", "false");
   expect(
@@ -735,9 +743,9 @@ it("expands mixed history in place without fetching and keeps merge at the highe
   trigger.focus();
   await user.keyboard("{Enter}");
   expect(trigger).toHaveAttribute("aria-expanded", "true");
-  expect(trigger).toHaveAccessibleName("Hide 4 earlier events");
-  expect(trigger).toHaveTextContent("Hide earlier events");
-  expect(trigger).not.toHaveTextContent("4 earlier events");
+  expect(trigger).toHaveAccessibleName("Hide 4 earlier messages");
+  expect(trigger).toHaveTextContent("Hide earlier messages");
+  expect(trigger).not.toHaveTextContent("4 earlier messages");
   expect(trigger).not.toHaveTextContent("contributor");
   expect(trigger).toHaveFocus();
   expect(
@@ -765,8 +773,8 @@ it("expands mixed history in place without fetching and keeps merge at the highe
   expect(fetch).toHaveBeenCalledTimes(2);
   await user.keyboard(" ");
   expect(trigger).toHaveAttribute("aria-expanded", "false");
-  expect(trigger).toHaveAccessibleName("Show 4 earlier events");
-  expect(trigger).toHaveTextContent("4 earlier events");
+  expect(trigger).toHaveAccessibleName("Show 4 earlier messages");
+  expect(trigger).toHaveTextContent("4 earlier messages");
   expect(trigger).toHaveFocus();
   expect(
     screen.queryByRole("group", { name: "Approved" }),
@@ -780,7 +788,7 @@ it("expands mixed history in place without fetching and keeps merge at the highe
     ).not.toBeInTheDocument(),
   );
   expect(
-    screen.getByRole("button", { name: "Show 3 earlier comments" }),
+    screen.getByRole("button", { name: "Show 3 earlier messages" }),
   ).toHaveAttribute("aria-expanded", "false");
   expect(
     screen.queryByRole("group", { name: "Merged" }),
@@ -818,7 +826,7 @@ it("retains an expanded run and source recovery while another page appends a new
     name: "Load more discussion",
   });
   const trigger = screen.getByRole("button", {
-    name: "Show 2 earlier comments",
+    name: "Show 2 earlier messages",
   });
   fireEvent.click(trigger);
   fireEvent.click(more);
@@ -834,7 +842,7 @@ it("retains an expanded run and source recovery while another page appends a new
   );
   expect(trigger).toHaveAttribute("aria-expanded", "true");
   const afterMerge = screen.getByRole("button", {
-    name: "Show 1 event after merge",
+    name: "Show 1 message after merge",
   });
   expect(afterMerge).toHaveAttribute("aria-expanded", "false");
   expect(screen.getAllByRole("group", { name: "Comment" })).toHaveLength(2);
@@ -1041,7 +1049,7 @@ it("keeps dismissed and unknown reviews visible even before merge", () => {
   expect(groupConversationEvents(events)).toEqual(events);
 });
 
-it("uses singular event copy and restores the original verdict body on expansion", async () => {
+it("uses singular message copy and restores the original verdict body on expansion", async () => {
   const fetch = vi.fn(async (target: string) =>
     response(
       target.includes("/reviews?")
@@ -1069,8 +1077,10 @@ it("uses singular event copy and restores the original verdict body on expansion
       screen.queryByText(/some sources are incomplete/),
     ).not.toBeInTheDocument(),
   );
-  const trigger = screen.getByRole("button", { name: "Show 1 earlier event" });
-  expect(trigger).toHaveTextContent("1 earlier event");
+  const trigger = screen.getByRole("button", {
+    name: "Show 1 earlier message",
+  });
+  expect(trigger).toHaveTextContent("1 earlier message");
   expect(
     screen.queryByRole("group", { name: "Changes requested" }),
   ).not.toBeInTheDocument();
@@ -1128,17 +1138,17 @@ it("renders a lone approval directly and expands post-merge follow-up without re
     screen.queryByRole("button", { name: /earlier/ }),
   ).not.toBeInTheDocument();
   const trigger = screen.getByRole("button", {
-    name: "Show 1 event after merge",
+    name: "Show 1 message after merge",
   });
-  expect(trigger).toHaveTextContent("1 event after merge");
+  expect(trigger).toHaveTextContent("1 message after merge");
   expect(
     screen.queryByRole("group", { name: "Comment" }),
   ).not.toBeInTheDocument();
   const user = userEvent.setup();
   trigger.focus();
   await user.keyboard("{Enter}");
-  expect(trigger).toHaveAccessibleName("Hide 1 event after merge");
-  expect(trigger).toHaveTextContent("Hide events after merge");
+  expect(trigger).toHaveAccessibleName("Hide 1 message after merge");
+  expect(trigger).toHaveTextContent("Hide messages after merge");
   const comment = screen.getByRole("group", { name: "Comment" });
   expect(comment.querySelector("time")).toHaveAttribute("datetime", date(18));
   await user.click(

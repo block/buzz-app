@@ -392,8 +392,11 @@ it("defers both checks requests until opened and retains pending checks and disc
       close={() => {}}
     />,
   );
-  await screen.findByText(
-    "No discussion comments or review summaries to show.",
+  await screen.findByRole("region", { name: "Pull request conversation" });
+  await waitFor(() =>
+    expect(
+      screen.queryByText(/some sources are incomplete/),
+    ).not.toBeInTheDocument(),
   );
   expect(fetch).toHaveBeenCalledTimes(3);
   expect(screen.getByRole("tab", { name: "Discussion" })).toHaveAttribute(
@@ -462,8 +465,11 @@ it("aborts old checks and resets lazy tabs when the PR changes", async () => {
       close={() => {}}
     />,
   );
-  await screen.findByText(
-    "No discussion comments or review summaries to show.",
+  await screen.findByRole("region", { name: "Pull request conversation" });
+  await waitFor(() =>
+    expect(
+      screen.queryByText(/some sources are incomplete/),
+    ).not.toBeInTheDocument(),
   );
   fireEvent.click(screen.getByRole("tab", { name: "Checks" }));
   await waitFor(() => expect(signals).toHaveLength(2));
@@ -474,8 +480,11 @@ it("aborts old checks and resets lazy tabs when the PR changes", async () => {
     />,
   );
   await screen.findByRole("heading", { name: "Second PR #2" });
-  await screen.findByText(
-    "No discussion comments or review summaries to show.",
+  await screen.findByRole("region", { name: "Pull request conversation" });
+  await waitFor(() =>
+    expect(
+      screen.queryByText(/some sources are incomplete/),
+    ).not.toBeInTheDocument(),
   );
   expect(signals.every((signal) => signal.aborted)).toBe(true);
   expect(screen.getByRole("tab", { name: "Discussion" })).toHaveAttribute(

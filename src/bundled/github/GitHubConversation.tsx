@@ -410,20 +410,13 @@ function History({ run, url }: { run: EventRun; url: string }) {
   const [keyboardToggle, setKeyboardToggle] = useState(false);
   const reduceMotion = useReducedMotion();
   const id = useId();
-  const label = run.events.every(
-    (event) =>
-      event.kind === "discussion" || event.message.state === "COMMENTED",
-  )
-    ? "comments"
-    : run.events.length === 1
-      ? "event"
-      : "events";
+  const label = run.events.length === 1 ? "message" : "messages";
   const summary = run.afterMerge
-    ? `${run.events.length} ${run.events.length === 1 ? "event" : "events"} after merge`
+    ? `${run.events.length} ${label} after merge`
     : `${run.events.length} earlier ${label}`;
   const hideLabel = run.afterMerge
-    ? "Hide events after merge"
-    : `Hide earlier ${label === "comments" ? "comments" : "events"}`;
+    ? "Hide messages after merge"
+    : "Hide earlier messages";
   const authors = [
     ...new Set(
       run.events.map((event) => event.message.author || "Unknown author"),
@@ -521,7 +514,10 @@ function Conversation({
       className={styles.conversation}
       aria-label="Pull request conversation"
     >
-      <div className={styles.conversationTimeline}>
+      <div
+        className={styles.conversationTimeline}
+        data-has-events={!!events.length || undefined}
+      >
         <Message
           message={details}
           url={url}
@@ -537,11 +533,6 @@ function Conversation({
           ),
         )}
       </div>
-      {!events.length && !incomplete && (
-        <p className={styles.conversationNotice}>
-          No discussion comments or review summaries to show.
-        </p>
-      )}
       {incomplete && (
         <div className={styles.conversationSources}>
           <p className={styles.conversationNotice}>

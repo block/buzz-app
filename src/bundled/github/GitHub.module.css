@@ -511,7 +511,7 @@
   gap: var(--space-3);
   position: relative;
 }
-.conversationTimeline::before {
+.conversationTimeline[data-has-events]::before {
   content: "";
   position: absolute;
   left: 1rem;
@@ -541,7 +541,7 @@
   .conversationMessage:not([data-bodyless]) .messageMarker {
     margin-bottom: var(--space-2);
   }
-  .conversationTimeline::before {
+  .conversationTimeline[data-has-events]::before {
     display: none;
   }
 }

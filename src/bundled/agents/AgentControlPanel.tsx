@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { Dialog } from "@base-ui/react/dialog";
 import type { useIdentityNames } from "../../features/identity-names/react";
 import {
@@ -37,7 +38,9 @@ export function AgentControlPanel({
   editRequest,
   onCloseTarget,
   onOpenHarnesses,
+  headerActions,
 }: {
+  headerActions?: HTMLElement | null;
   resolveName?: ReturnType<typeof useIdentityNames>;
   onOpenHarnesses?: (() => void) | undefined;
   control: AgentControl;
@@ -232,10 +235,12 @@ export function AgentControlPanel({
       aria-label="Local agent controls"
       className="agent-controls flex min-w-0 flex-col gap-section-gap text-body text-primary"
     >
-      {state.data && (
-        <div className="flex justify-end">
+      {state.data &&
+        headerActions &&
+        createPortal(
           <Button
-            variant="primary"
+            variant="prominent"
+            size="sm"
             aria-haspopup="dialog"
             disabled={localPending}
             onClick={() =>
@@ -246,10 +251,10 @@ export function AgentControlPanel({
             }
           >
             <PlusIcon size={16} aria-hidden="true" />
-            Add agent
-          </Button>
-        </div>
-      )}
+            Create Agent
+          </Button>,
+          headerActions,
+        )}
       {(state.status === "idle" || state.status === "loading") && (
         <p role="status">Reading local agent status…</p>
       )}

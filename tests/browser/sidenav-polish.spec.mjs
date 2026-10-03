@@ -32,6 +32,10 @@ test("sidebar scrollbar stays close to the divider without clipping its native t
       ),
     )
     .toBe(true);
+  // Without a saved position, startup reveals the current entry.
+  await expect(sidebar.locator('[aria-current="page"]').first()).toBeInViewport(
+    { ratio: 1 },
+  );
   const geometry = await sidebar.evaluate((viewport) => {
     const frame = viewport.parentElement;
     if (!(frame instanceof HTMLElement))
@@ -43,14 +47,12 @@ test("sidebar scrollbar stays close to the divider without clipping its native t
       rightInset: panelBounds.right - bounds.right,
       clipped: bounds.right > frame.getBoundingClientRect().right,
       paddingTop: Number.parseFloat(getComputedStyle(viewport).paddingTop),
-      scrollTop: viewport.scrollTop,
     };
   });
   expect(geometry).toEqual({
     rightInset: 2,
     clipped: false,
     paddingTop: 8,
-    scrollTop: 0,
   });
 });
 

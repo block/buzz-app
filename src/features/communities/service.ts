@@ -7,7 +7,10 @@ import { provideRelay, type RelayData } from "../relay/service";
 import { connectBrokerTransport, type ReadTransport } from "../relay/transport";
 import { communityDestination, isCommunityAlias } from "./destination";
 import { purgeCommunityDeviceState, type PurgeFailure } from "./device-state";
-import type { EnterpriseAuthClient } from "./enterpriseAuthApi";
+import type {
+  EnterpriseAuthClient,
+  EnterpriseCleanup,
+} from "./enterpriseAuthApi";
 import {
   enterpriseLoginMark,
   noteEnterpriseLogin,
@@ -35,6 +38,10 @@ export type EnterpriseLoginSnapshot = {
   status: "required" | "opening" | "error";
   errorKind?: "discovery" | "login";
   error?: string;
+  /** Removing the refused session did not fully succeed. */
+  cleanup?: EnterpriseCleanup;
+  /** A sign-out is still finishing; sign-in waits for it. */
+  waiting?: true;
 };
 type EnterpriseCheck = {
   authEpoch: number;
@@ -110,6 +117,7 @@ export function createCommunities(
   // waiting on secure storage and whose session check would revalidate the
   // refused token over the network.
   let enterpriseRefused = false;
+  let enterpriseCleanup: EnterpriseCleanup | undefined;
   // Each session owns a scope so leaving can dispose exactly that one.
   const sessionScopes = new Map<string, Context>();
   const scopes: Context[] = [];
@@ -219,10 +227,42 @@ export function createCommunities(
           status,
           ...(errorKind ? { errorKind } : {}),
           ...(error ? { error } : {}),
+          ...(status === "required" && enterpriseCleanup
+            ? { cleanup: enterpriseCleanup }
+            : {}),
+          ...(enterpriseClearInFlight ? { waiting: true as const } : {}),
         },
       },
       false,
     );
+  };
+  // Native answers once removal of a refused session settles, however late,
+  // and the prompt on screen shows it. A login since then owns the outcome.
+  const showEnterpriseCleanup = () => {
+    if (!enterpriseAuth) return;
+    const mark = enterpriseLoginMark();
+    enterpriseAuth
+      .cleanup()
+      .then((cleanup) => {
+        if (disposed || enterpriseAttempt || mark !== enterpriseLoginMark())
+          return;
+        enterpriseCleanup = cleanup ?? undefined;
+        const prompt = state.enterprise;
+        if (prompt?.status !== "required") return;
+        const { cleanup: _, ...rest } = prompt;
+        update(
+          {
+            enterprise: {
+              ...rest,
+              ...(enterpriseCleanup ? { cleanup: enterpriseCleanup } : {}),
+            },
+          },
+          false,
+        );
+      })
+      .catch((error) => {
+        console.warn("Couldn't read enterprise sign-in cleanup", error);
+      });
   };
   const retireEnterprisePrompt = (communityId: string) => {
     nextEnterprisePrompt(communityId);
@@ -256,8 +296,10 @@ export function createCommunities(
     enterpriseChecksInFlight.add(id);
     let required = false;
     try {
-      // A community already known to be enterprise needs sign-in once the
-      // session is refused; rediscovering the relay cannot change that.
+      // A community already known to be enterprise keeps showing sign-in
+      // while the session is refused, without rediscovering the relay, even
+      // if that relay has stopped advertising enterprise identity; the next
+      // check after a successful login rediscovers it.
       if (!(enterpriseRefused && enterpriseCommunities.has(id))) {
         if (!(await waitFor(enterpriseAuth.gate(id), signal))) {
           enterpriseCommunities.delete(id);
@@ -293,7 +335,10 @@ export function createCommunities(
       if (enterprisePromptVersions.get(id) === promptVersion)
         enterpriseChecksInFlight.delete(id);
     }
-    if (required) publishEnterprise(id, promptVersion, "required");
+    if (required) {
+      publishEnterprise(id, promptVersion, "required");
+      showEnterpriseCleanup();
+    }
     throw new EnterpriseLoginRequired(id);
   }
   const connect = baseConnect
@@ -489,6 +534,7 @@ export function createCommunities(
           })
           .finally(recover);
         recover();
+        showEnterpriseCleanup();
       }),
     );
   ctx.effect(() => () => {
@@ -557,6 +603,7 @@ export function createCommunities(
         return;
       enterpriseAttempt = undefined;
       enterpriseRefused = false;
+      enterpriseCleanup = undefined;
       // Retire every check that started before this login completed. A check
       // started while the browser was open must not republish required after
       // the successful attempt clears the prompt.

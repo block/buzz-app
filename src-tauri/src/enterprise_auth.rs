@@ -12,7 +12,9 @@ use axum::{
     Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use buzz_builderlab_session::{SessionAttempt, SessionCredential, SessionOwner, SessionSnapshot};
+use buzz_builderlab_session::{
+    SessionAttempt, SessionCleanup, SessionCredential, SessionOwner, SessionSnapshot,
+};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Runtime, State};
@@ -515,6 +517,13 @@ pub(crate) async fn cancel_enterprise_auth_login(
 #[tauri::command]
 pub(crate) async fn clear_enterprise_auth(owner: State<'_, SessionOwner>) -> Result<()> {
     owner.clear_shared_session().await
+}
+
+#[tauri::command]
+pub(crate) async fn enterprise_auth_cleanup(
+    owner: State<'_, SessionOwner>,
+) -> Result<Option<SessionCleanup>> {
+    owner.cleanup_status().await
 }
 
 #[cfg(test)]

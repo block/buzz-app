@@ -23,12 +23,19 @@ const RELAY: &str = "wss://relay.example";
 enum FixtureReply {
     IssueForRequest,
     IssueJson(serde_json::Value),
+    HeldIssue(Arc<BadgeResponseGate>),
     SessionReplacedDuringDenial(Arc<SessionReplacementGate>),
     Status {
         status: StatusCode,
         code: &'static str,
     },
     Discovery(serde_json::Value),
+}
+
+#[derive(Default)]
+struct BadgeResponseGate {
+    started: Notify,
+    release: Notify,
 }
 
 #[derive(Default)]
@@ -150,6 +157,17 @@ async fn handle_request(
                 }))
                 .into_response()
             }
+        }
+        FixtureReply::HeldIssue(ref gate) if path.ends_with(ASSERTION_PATH) => {
+            gate.started.notify_one();
+            gate.release.notified().await;
+            let request: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            Json(serde_json::json!({
+                "assertion": "fixture.assertion",
+                "nostr_pubkey": request["nostr_pubkey"],
+                "expires_at": now().unwrap() + 240,
+            }))
+            .into_response()
         }
         FixtureReply::IssueJson(ref document) if path.ends_with(ASSERTION_PATH) => {
             Json(document.clone()).into_response()
@@ -387,6 +405,38 @@ async fn session_denial_refuses_the_exact_shared_session() {
 }
 
 #[tokio::test]
+async fn a_refused_snapshot_cannot_construct_or_send_a_badge_request() {
+    let service = FixtureServer::spawn(FixtureReply::IssueForRequest).await;
+    let _environment = BuilderLabEnv::new(&service.base);
+    let home = TempDir::new().unwrap();
+    let owner = owner(&home);
+    save(&owner, "refused-before-signing", "fixture-cli-session").await;
+    let snapshot = owner.session_snapshot().await.unwrap().unwrap();
+    let endpoint = owner.endpoint(ASSERTION_PATH).unwrap();
+    assert_eq!(
+        owner.reject_shared_session(&snapshot).await.unwrap(),
+        SharedSessionRejection::Removed
+    );
+
+    let result = issue(
+        &owner,
+        &snapshot,
+        client().unwrap(),
+        &endpoint,
+        &IdentityHost::fixture(),
+        RELAY,
+        now().unwrap(),
+    )
+    .await;
+
+    assert!(matches!(
+        result,
+        Err(IssueFailure::Failed(error)) if error == SESSION_CHANGED
+    ));
+    assert!(service.records().is_empty());
+}
+
+#[tokio::test]
 async fn a_late_session_denial_retries_with_the_replacement_without_signing_out() {
     let gate = Arc::new(SessionReplacementGate::default());
     let service =
@@ -431,6 +481,76 @@ async fn a_late_session_denial_retries_with_the_replacement_without_signing_out(
             .credential(),
         "new-cli-session"
     );
+}
+
+#[tokio::test]
+async fn a_badge_that_arrives_after_its_session_is_refused_is_dropped() {
+    let gate = Arc::new(BadgeResponseGate::default());
+    let service = FixtureServer::spawn(FixtureReply::HeldIssue(gate.clone())).await;
+    let _environment = BuilderLabEnv::new(&service.base);
+    let home = TempDir::new().unwrap();
+    let owner = owner(&home);
+    save(&owner, "late-badge", "fixture-cli-session").await;
+    let assertions = RelayAssertions::new(owner.clone());
+    assertions
+        .cache_requirement("wss://relay.example/".into(), true, Instant::now())
+        .unwrap();
+    let identity = IdentityHost::fixture();
+    let url = Url::parse("wss://relay.example/query").unwrap();
+    let request = {
+        let (assertions, identity) = (assertions.clone(), identity.clone());
+        tokio::spawn(async move { assertions.get(&identity, &url, true).await })
+    };
+
+    gate.started.notified().await;
+    let snapshot = owner.session_snapshot().await.unwrap().unwrap();
+    assert_eq!(
+        owner.reject_shared_session(&snapshot).await.unwrap(),
+        SharedSessionRejection::Removed
+    );
+    gate.release.notify_one();
+
+    assert_eq!(request.await.unwrap().unwrap_err(), SIGN_IN_REQUIRED);
+    assert!(assertions.cache.lock().unwrap().is_empty());
+    assert_eq!(service.records().len(), 1);
+}
+
+#[tokio::test]
+async fn relay_http_does_not_reuse_a_cached_badge_after_refusal() {
+    let service = FixtureServer::spawn(FixtureReply::IssueForRequest).await;
+    let _environment = BuilderLabEnv::new(&service.base);
+    let home = TempDir::new().unwrap();
+    let owner = owner(&home);
+    save(&owner, "cached-badge", "fixture-cli-session").await;
+    let assertions = RelayAssertions::new(owner.clone());
+    assertions
+        .cache_requirement("wss://relay.example/".into(), true, Instant::now())
+        .unwrap();
+    let identity = IdentityHost::fixture();
+    let relay = Url::parse("wss://relay.example/query").unwrap();
+
+    assert!(assertions
+        .get(&identity, &relay, false)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(assertions
+        .get(&identity, &relay, false)
+        .await
+        .unwrap()
+        .is_some());
+    assert_eq!(service.records().len(), 1);
+    let snapshot = owner.session_snapshot().await.unwrap().unwrap();
+    assert_eq!(
+        owner.reject_shared_session(&snapshot).await.unwrap(),
+        SharedSessionRejection::Removed
+    );
+
+    let request = reqwest::Client::new().get("https://media.example/image");
+    let attached = assertions.attach(&identity, &relay, request).await;
+
+    assert!(matches!(attached, Err(ref error) if error == SIGN_IN_REQUIRED));
+    assert_eq!(service.records().len(), 1);
 }
 
 #[tokio::test]

@@ -64,8 +64,8 @@ use buzzodz_plugins::{
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use enterprise_auth::{
-    cancel_enterprise_auth_login, clear_enterprise_auth, get_enterprise_auth, refusal_service_name,
-    start_enterprise_auth_login,
+    cancel_enterprise_auth_login, clear_enterprise_auth, enterprise_auth_cleanup,
+    get_enterprise_auth, refusal_service_name, start_enterprise_auth_login,
 };
 use enterprise_login_gate::enterprise_login_gate;
 use harness_setup::{pi_install, HarnessSetup};
@@ -416,6 +416,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_socket_close,
         clear_enterprise_auth,
         identity_sign_builderlab_binding,
+        enterprise_auth_cleanup,
         enterprise_login_gate,
         relay_sign,
         relay_decode_read_state,

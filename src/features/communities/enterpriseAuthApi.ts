@@ -2,6 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { communityDestination } from "./destination";
 
 export type EnterpriseAuth = { expiresAt: string };
+/** Removing a refused session did not fully succeed: secure storage still
+ * holds it (`retained`), or its refusal could not be saved for after a
+ * restart (`unrecorded`). */
+export type EnterpriseCleanup = { retained: boolean; unrecorded: boolean };
 
 export type EnterpriseAuthClient = {
   gate(community: string): Promise<boolean>;
@@ -9,6 +13,9 @@ export type EnterpriseAuthClient = {
   start(attemptId: string): Promise<EnterpriseAuth>;
   cancel(attemptId: string): Promise<void>;
   clear(): Promise<void>;
+  /** Waits for removal of a refused session in progress, then reports what
+   * did not succeed, if anything. */
+  cleanup(): Promise<EnterpriseCleanup | null>;
 };
 
 function authInfo(value: unknown): EnterpriseAuth {
@@ -49,6 +56,17 @@ export function createEnterpriseAuthClient(): EnterpriseAuthClient {
     },
     async clear() {
       await invoke("clear_enterprise_auth");
+    },
+    async cleanup() {
+      const result = await invoke<unknown>("enterprise_auth_cleanup");
+      if (result === null) return null;
+      const { retained, unrecorded } = (result ?? {}) as Record<
+        string,
+        unknown
+      >;
+      if (typeof retained !== "boolean" || typeof unrecorded !== "boolean")
+        throw new Error("Enterprise authentication returned an invalid status");
+      return { retained, unrecorded };
     },
   };
 }

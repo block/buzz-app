@@ -173,13 +173,24 @@ connection releases its native stream. Only 401
 `session_required`/`session_expired` clear the session and reopen sign-in, and
 only while the refused token is still the current session: a refusal of a
 session already removed or replaced is retried, and never cancels or undoes a
-newer login, including one still in the browser. Native stops using the
-refused token before it asks secure storage to remove it, so badge and media
-requests no longer send it even if removal is slow or fails. If removal fails,
-the refusal is also recorded in the app data directory, so the stored session
-stays refused after a restart until a later session check removes it or a new
-login replaces it; if that record cannot be written either, a restart may send
-the token once more and the adapter's refusal is handled the same way. When
+newer login, including one still in the browser. Native refuses the token in
+one step with the login state (so a session check running at the same moment
+cannot adopt it again) before it asks secure storage to remove it. Later
+session reads skip it, and a badge request that already read it checks again
+after signing, before sending it, and drops a badge that arrives after the
+refusal. A request already on the wire when the refusal lands is not recalled.
+The refusal is written to `enterprise-refused-sessions` in the app data
+directory before removal starts and taken out once removal succeeds, so a
+restart while removal waits or after it fails keeps the stored session refused
+until a later session check removes it or a new login replaces it (which also
+prunes the file). If the app data directory cannot be resolved, or that file
+cannot be read or decoded at startup, the stored session is not used until a
+new login. One case is not covered: if writing the refusal and removing the
+session from secure storage both fail and Buzz then restarts, the stored
+session reads as saved again and can be sent to the adapter. A removal that
+fails, or a refusal that cannot be written, is shown in the sign-in prompt
+when it settles, without delaying the prompt. While a sign-out is still
+finishing, the prompt shows sign-in as waiting. When
 native reports sign-in required, the selected enterprise community shows
 sign-in without rechecking the refused session, rediscovering the relay or
 waiting for a sign-out already in progress, and a background community's

@@ -11,6 +11,7 @@
     "allow-start-enterprise-auth-login",
     "allow-cancel-enterprise-auth-login",
     "allow-clear-enterprise-auth",
+    "allow-enterprise-auth-cleanup",
     "allow-relay-socket-connect",
     "allow-relay-socket-start",
     "allow-relay-socket-send",

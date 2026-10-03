@@ -68,6 +68,7 @@ fn native_command_permissions_allow_only_main_webview() {
         "start_enterprise_auth_login",
         "cancel_enterprise_auth_login",
         "clear_enterprise_auth",
+        "enterprise_auth_cleanup",
         "enterprise_login_gate",
         "relay_sign",
         "identity_prepare_remote_agent_authorization",

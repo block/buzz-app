@@ -708,9 +708,34 @@ it("only a lost relay session clears enterprise sign-in and prompts again", asyn
   expect(auth.clear).not.toHaveBeenCalled();
   noteEnterpriseDenial(new Error("Enterprise sign-in is required"));
   await flush();
-  expect(auth.clear).toHaveBeenCalledOnce();
+  // The native owner already forgot exactly the refused session.
+  expect(auth.clear).not.toHaveBeenCalled();
   expect(communities.snapshot().enterprise).toMatchObject({
     communityId: "https://enterprise.test",
     status: "required",
   });
+});
+
+it("a sign-in denial released after a newer login leaves that login in place", async () => {
+  const auth = authFixture();
+  auth.get.mockResolvedValue({ expiresAt: "2030-01-01T00:00:00Z" });
+  const { communities, connect } = setup(auth);
+  await flush();
+  communities.joined(
+    { id: "https://enterprise.test", name: "Enterprise" },
+    { name: "Local", picture: "" },
+  );
+  await flush();
+  expect(connect).toHaveBeenCalledOnce();
+  // The old session's denial is held while the listener checks the session.
+  const check = deferred<{ expiresAt: string } | null>();
+  auth.get.mockReturnValueOnce(check.promise);
+  noteEnterpriseDenial(new Error("Enterprise sign-in is required"));
+  await flush();
+  // A new login succeeds before the held denial is released.
+  check.resolve({ expiresAt: "2030-02-01T00:00:00Z" });
+  await flush();
+  expect(auth.clear).not.toHaveBeenCalled();
+  expect(communities.snapshot().enterprise).toBeUndefined();
+  expect(communities.relay.snapshot().status).toBe("ready");
 });

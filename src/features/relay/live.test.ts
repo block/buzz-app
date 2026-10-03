@@ -26,6 +26,7 @@ const scopeOf = (request: WireRequest) =>
 class Socket {
   readyState = 1;
   onmessage?: (event: { data: string }) => Promise<void>;
+  onopen?: () => void;
   onclose?: () => void;
   onerror?: () => void;
   sent: unknown[][] = [];
@@ -69,6 +70,8 @@ function setup(channels = ["a", "b"], admission = createLiveAdmission()) {
     () => {
       const socket = new Socket();
       sockets.push(socket);
+      // Opens once the owner has attached its handlers, as a real socket does.
+      void Promise.resolve().then(() => socket.onopen?.());
       return socket as unknown as WebSocket;
     },
     admission,

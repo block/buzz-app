@@ -41,6 +41,9 @@ const CLOSE_GRACE: Duration = Duration::from_secs(3);
 /// A connection JavaScript never starts (for example, a reloaded webview) is
 /// closed after this long.
 const START_DEADLINE: Duration = Duration::from_secs(10);
+/// Sends that may wait behind the one in flight; beyond this a send fails at
+/// once rather than piling up behind a slow relay.
+const SEND_QUEUE: usize = 64;
 
 type Result<T> = std::result::Result<T, String>;
 type Stream = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -61,9 +64,10 @@ enum Command {
 }
 
 /// One open connection's handles. Closing is a separate signal so it takes
-/// effect ahead of queued sends and during one in flight.
+/// effect ahead of queued sends and during one in flight; it also drops
+/// `commands`, so nothing is admitted once closing begins.
 struct Handle {
-    commands: mpsc::UnboundedSender<Command>,
+    commands: Option<mpsc::Sender<Command>>,
     closing: Arc<Notify>,
 }
 
@@ -114,12 +118,12 @@ impl RelaySockets {
         emit: impl Fn(SocketEvent) + Send + 'static,
     ) -> u64 {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
-        let (commands, received) = mpsc::unbounded_channel();
+        let (commands, received) = mpsc::channel(SEND_QUEUE);
         let closing = Arc::new(Notify::new());
         self.lock().insert(
             id,
             Handle {
-                commands,
+                commands: Some(commands),
                 closing: closing.clone(),
             },
         );
@@ -132,14 +136,20 @@ impl RelaySockets {
     }
 
     fn command(&self, id: u64, command: Command) -> Result<()> {
-        self.lock()
+        let open = self.lock();
+        let commands = open
             .get(&id)
-            .and_then(|handle| handle.commands.send(command).ok())
-            .ok_or_else(|| "Relay socket is closed".into())
+            .and_then(|handle| handle.commands.as_ref())
+            .ok_or("Relay socket is closed")?;
+        commands.try_send(command).map_err(|error| match error {
+            mpsc::error::TrySendError::Full(_) => "Relay socket send queue is full".into(),
+            mpsc::error::TrySendError::Closed(_) => "Relay socket is closed".into(),
+        })
     }
 
     fn close(&self, id: u64) {
-        if let Some(handle) = self.lock().get(&id) {
+        if let Some(handle) = self.lock().get_mut(&id) {
+            handle.commands = None;
             handle.closing.notify_one();
         }
     }
@@ -151,7 +161,7 @@ impl RelaySockets {
 /// to answer it.
 async fn run<S: AsyncRead + AsyncWrite + Unpin>(
     mut stream: WebSocketStream<S>,
-    mut commands: mpsc::UnboundedReceiver<Command>,
+    mut commands: mpsc::Receiver<Command>,
     closing: &Notify,
     emit: impl Fn(SocketEvent),
 ) {

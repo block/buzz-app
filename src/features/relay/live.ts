@@ -210,6 +210,11 @@ export const BADGE_DENIED_CLOSE = 4901;
 /** Close code a socket reports when the adapter refuses the badge request
  * itself; the live connection stops retrying and shows the close reason. */
 export const BADGE_REFUSED_CLOSE = 4902;
+/** Bounds getting a socket open. The native socket may spend up to 15 s on the
+ * relay badge request and 15 s on the handshake (`relay_socket.rs`), plus
+ * signing the badge proof; NIP-42 authentication is timed from open. */
+export const LIVE_SETUP_TIMEOUT = 35_000;
+const LIVE_AUTH_TIMEOUT = 10_000;
 
 /** One authenticated socket, bounded joined-channel batches, singleton previews and two globals.
  * Recent replay is opportunistic: finite reads own catch-up and history bounds. */
@@ -699,11 +704,17 @@ export function subscribeRelayTraffic(
     let authId: string | undefined;
     let authenticating = false;
     deadline = setTimeout(
-      () => reconnect("Live authentication timed out"),
-      10000,
+      () => reconnect("Live connection timed out"),
+      LIVE_SETUP_TIMEOUT,
     );
     ws.onopen = () => {
-      if (valid()) log.info(`${peer} connected`);
+      if (!valid()) return;
+      log.info(`${peer} connected`);
+      clearTimeout(deadline);
+      deadline = setTimeout(
+        () => reconnect("Live authentication timed out"),
+        LIVE_AUTH_TIMEOUT,
+      );
     };
     ws.onmessage = async (event) => {
       if (!valid()) return;

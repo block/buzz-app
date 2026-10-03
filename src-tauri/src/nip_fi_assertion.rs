@@ -400,7 +400,7 @@ async fn issue(
     endpoint: &Url,
     identity: &IdentityHost,
     relay: &str,
-    now: u64,
+    signed_at: u64,
 ) -> std::result::Result<Assertion, IssueFailure> {
     // The signer, not local key storage, decides whose badge is requested.
     let pubkey = identity.viewer().await.map_err(IssueFailure::Failed)?;
@@ -412,7 +412,7 @@ async fn issue(
     let proof = identity
         .sign(EventTemplate {
             kind: 27235,
-            created_at: now,
+            created_at: signed_at,
             content: String::new(),
             tags: vec![
                 vec!["u".into(), endpoint.to_string()],
@@ -446,7 +446,10 @@ async fn issue(
         .await
         .map_err(|_| IssueFailure::Failed("Relay badge request failed".into()))?;
     let status = response.status().as_u16();
-    let bytes = read_bounded(response).await.map_err(IssueFailure::Failed)?;
+    let bytes = read_bounded(response)
+        .await
+        .map_err(IssueFailure::Failed)?
+        .unwrap_or_default();
     if status != 200 {
         let code = serde_json::from_slice::<Denial>(&bytes)
             .map(|denial| denial.error)
@@ -468,18 +471,19 @@ async fn issue(
             format!("{REFUSED} ({status} {code})")
         }));
     }
-    let issued: IssueResponse = serde_json::from_slice(&bytes)
-        .map_err(|_| IssueFailure::Failed("Relay badge response was invalid".into()))?;
+    // The adapter can issue the badge while this request is in flight; assess
+    // its lifetime from response arrival, not from when the proof was signed.
+    let received = now().map_err(IssueFailure::Failed)?;
+    let invalid = || IssueFailure::Failed(format!("{REFUSED} (invalid adapter response)"));
+    let issued: IssueResponse = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
     if issued.nostr_pubkey != pubkey
         || issued.assertion.is_empty()
         || issued.assertion.len() > MAX_ASSERTION
         || !issued.assertion.bytes().all(|b| b.is_ascii_graphic())
-        || issued.expires_at <= now
-        || issued.expires_at > now + MAX_LIFETIME
+        || issued.expires_at <= received
+        || issued.expires_at > received + MAX_LIFETIME
     {
-        return Err(IssueFailure::Failed(
-            "Relay badge response was invalid".into(),
-        ));
+        return Err(invalid());
     }
     Ok(Assertion {
         header: Zeroizing::new(format!("Bearer {}", issued.assertion.as_str())),
@@ -487,7 +491,9 @@ async fn issue(
     })
 }
 
-async fn read_bounded(mut response: reqwest::Response) -> Result<Zeroizing<Vec<u8>>> {
+/// Returns `None` when a body exceeds the cap so HTTP status can still decide
+/// whether an adapter refusal is transient. Interrupted reads remain retryable.
+async fn read_bounded(mut response: reqwest::Response) -> Result<Option<Zeroizing<Vec<u8>>>> {
     let mut bytes = Zeroizing::new(Vec::new());
     while let Some(chunk) = response
         .chunk()
@@ -495,11 +501,11 @@ async fn read_bounded(mut response: reqwest::Response) -> Result<Zeroizing<Vec<u
         .map_err(|_| "Relay badge response was interrupted")?
     {
         if chunk.len() > MAX_RESPONSE - bytes.len() {
-            return Err("Relay badge response was too large".into());
+            return Ok(None);
         }
         bytes.extend_from_slice(&chunk);
     }
-    Ok(bytes)
+    Ok(Some(bytes))
 }
 
 fn now() -> Result<u64> {

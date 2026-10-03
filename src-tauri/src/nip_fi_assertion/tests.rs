@@ -7,9 +7,15 @@ use axum::{
     routing::any,
     Json, Router,
 };
-use std::{ffi::OsString, sync::MutexGuard};
+use std::{
+    ffi::OsString,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        MutexGuard,
+    },
+};
 use tempfile::TempDir;
-use tokio::{net::TcpListener, task::JoinHandle};
+use tokio::{net::TcpListener, sync::Notify, task::JoinHandle};
 
 const RELAY: &str = "wss://relay.example";
 
@@ -17,11 +23,19 @@ const RELAY: &str = "wss://relay.example";
 enum FixtureReply {
     IssueForRequest,
     IssueJson(serde_json::Value),
+    SessionReplacedDuringDenial(Arc<SessionReplacementGate>),
     Status {
         status: StatusCode,
         code: &'static str,
     },
     Discovery(serde_json::Value),
+}
+
+#[derive(Default)]
+struct SessionReplacementGate {
+    requests: AtomicUsize,
+    first_request_started: Notify,
+    release_first_request: Notify,
 }
 
 #[derive(Clone)]
@@ -117,6 +131,25 @@ async fn handle_request(
                 "expires_at": now().unwrap() + 240,
             }))
             .into_response()
+        }
+        FixtureReply::SessionReplacedDuringDenial(ref gate) if path.ends_with(ASSERTION_PATH) => {
+            if gate.requests.fetch_add(1, Ordering::SeqCst) == 0 {
+                gate.first_request_started.notify_one();
+                gate.release_first_request.notified().await;
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({"error": "session_expired"})),
+                )
+                    .into_response()
+            } else {
+                let request: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                Json(serde_json::json!({
+                    "assertion": "fixture.assertion",
+                    "nostr_pubkey": request["nostr_pubkey"],
+                    "expires_at": now().unwrap() + 240,
+                }))
+                .into_response()
+            }
         }
         FixtureReply::IssueJson(ref document) if path.ends_with(ASSERTION_PATH) => {
             Json(document.clone()).into_response()
@@ -214,6 +247,55 @@ fn fixture_assertions(owner: SessionOwner, discovery: &FixtureServer) -> RelayAs
     RelayAssertions::new(owner).with_discovery_url(discovery.info_url())
 }
 
+async fn issue_raw(response: Vec<u8>, signed_at: u64) -> Result<Assertion> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = Url::parse(&format!(
+        "http://{}{ASSERTION_PATH}",
+        listener.local_addr().unwrap()
+    ))
+    .unwrap();
+    let server = tokio::spawn(async move {
+        let (mut tcp, _) = listener.accept().await.unwrap();
+        let mut request = [0; 16 * 1024];
+        let _ = tcp.read(&mut request).await;
+        tcp.write_all(&response).await.unwrap();
+    });
+
+    let home = TempDir::new().unwrap();
+    let owner = owner(&home);
+    save(&owner, "raw-response", "fixture-cli-session").await;
+    let snapshot = owner.session_snapshot().await.unwrap().unwrap();
+    let identity = IdentityHost::fixture();
+    let result = issue(
+        &owner,
+        &snapshot,
+        client()?,
+        &endpoint,
+        &identity,
+        RELAY,
+        signed_at,
+    )
+    .await
+    .map_err(|failure| match failure {
+        IssueFailure::SessionDenied => SIGN_IN_REQUIRED.to_owned(),
+        IssueFailure::Failed(error) => error,
+    });
+    server.await.unwrap();
+    result
+}
+
+fn raw_http(status: &str, body: &[u8]) -> Vec<u8> {
+    let mut response = format!(
+        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .into_bytes();
+    response.extend_from_slice(body);
+    response
+}
+
 #[tokio::test]
 async fn issues_badge_for_the_signer_and_sends_session_only_to_configured_service() {
     let service = FixtureServer::spawn(FixtureReply::IssueForRequest).await;
@@ -302,6 +384,53 @@ async fn session_denial_refuses_the_exact_shared_session() {
         .authorization
         .as_deref()
         .is_some_and(|header| header == "Bearer fixture-cli-session"));
+}
+
+#[tokio::test]
+async fn a_late_session_denial_retries_with_the_replacement_without_signing_out() {
+    let gate = Arc::new(SessionReplacementGate::default());
+    let service =
+        FixtureServer::spawn(FixtureReply::SessionReplacedDuringDenial(gate.clone())).await;
+    let discovery = FixtureServer::spawn(FixtureReply::Discovery(required_document(
+        "https://ignored.example/v1/identity/assertions",
+    )))
+    .await;
+    let _environment = BuilderLabEnv::new(&service.base);
+    let home = TempDir::new().unwrap();
+    let owner = owner(&home);
+    save(&owner, "old-login", "old-cli-session").await;
+    let assertions = fixture_assertions(owner.clone(), &discovery);
+    let identity = IdentityHost::fixture();
+    let url = Url::parse("wss://relay.example/query").unwrap();
+    let first_request_started = gate.first_request_started.notified();
+    tokio::pin!(first_request_started);
+    let request = tokio::spawn(async move { assertions.get(&identity, &url, true).await });
+
+    first_request_started.await;
+    save(&owner, "new-login", "new-cli-session").await;
+    gate.release_first_request.notify_one();
+
+    let assertion = request.await.unwrap().unwrap().unwrap();
+    assert_eq!(assertion.header.as_str(), "Bearer fixture.assertion");
+    let requests = service.records();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0].authorization.as_deref(),
+        Some("Bearer old-cli-session")
+    );
+    assert_eq!(
+        requests[1].authorization.as_deref(),
+        Some("Bearer new-cli-session")
+    );
+    assert_eq!(
+        owner
+            .session_snapshot()
+            .await
+            .unwrap()
+            .unwrap()
+            .credential(),
+        "new-cli-session"
+    );
 }
 
 #[tokio::test]
@@ -432,6 +561,109 @@ fn only_contract_session_denials_prompt_for_sign_in() {
 }
 
 #[tokio::test]
+async fn malformed_successful_responses_are_final_and_do_not_echo_the_body() {
+    for body in [
+        b"not json".as_slice(),
+        br#"{"assertion":"a b","nostr_pubkey":"x","expires_at":1}"#,
+        br#"{"error":"secret-token"}"#,
+    ] {
+        let error = issue_raw(raw_http("200 OK", body), now().unwrap())
+            .await
+            .unwrap_err();
+        assert_eq!(error, format!("{REFUSED} (invalid adapter response)"));
+        assert!(!error.contains("secret-token"));
+    }
+    let pubkey = IdentityHost::fixture().viewer().await.unwrap();
+    let body = serde_json::json!({
+        "assertion": "a\u{7f}b",
+        "nostr_pubkey": pubkey,
+        "expires_at": now().unwrap() + 60,
+    });
+    let error = issue_raw(
+        raw_http("200 OK", &serde_json::to_vec(&body).unwrap()),
+        now().unwrap(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error, format!("{REFUSED} (invalid adapter response)"));
+}
+
+#[tokio::test]
+async fn rejects_badge_for_another_key_or_invalid_lifetime() {
+    let pubkey = IdentityHost::fixture().viewer().await.unwrap();
+    let issued_at = now().unwrap();
+    for body in [
+        serde_json::json!({
+            "assertion": "fixture.assertion",
+            "nostr_pubkey": "0".repeat(64),
+            "expires_at": issued_at + 60,
+        }),
+        serde_json::json!({
+            "assertion": "fixture.assertion",
+            "nostr_pubkey": pubkey.clone(),
+            "expires_at": issued_at + MAX_LIFETIME + 60,
+        }),
+        serde_json::json!({
+            "assertion": "fixture.assertion",
+            "nostr_pubkey": pubkey,
+            "expires_at": issued_at,
+        }),
+    ] {
+        let response = raw_http("200 OK", &serde_json::to_vec(&body).unwrap());
+        let error = issue_raw(response, issued_at).await.unwrap_err();
+        assert_eq!(error, format!("{REFUSED} (invalid adapter response)"));
+    }
+}
+
+#[tokio::test]
+async fn an_oversized_body_still_uses_http_status_to_classify_refusals() {
+    let body = vec![b'x'; MAX_RESPONSE + 1];
+    for (status, final_refusal) in [
+        ("200 OK", true),
+        ("400 Bad Request", true),
+        ("413 Payload Too Large", true),
+        ("429 Too Many Requests", false),
+        ("503 Service Unavailable", false),
+    ] {
+        let response = raw_http(status, &body);
+        let error = issue_raw(response, now().unwrap()).await.unwrap_err();
+        assert_eq!(
+            error.starts_with(REFUSED),
+            final_refusal,
+            "{status}: {error}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn interrupted_responses_remain_retryable() {
+    let response =
+        b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{}".to_vec();
+    let error = issue_raw(response, now().unwrap()).await.unwrap_err();
+    assert_eq!(error, "Relay badge response was interrupted");
+}
+
+#[tokio::test]
+async fn a_full_lifetime_badge_is_validated_from_response_arrival() {
+    let received = now().unwrap();
+    let signed_at = received - 5;
+    let expires_at = received + MAX_LIFETIME;
+    let pubkey = IdentityHost::fixture().viewer().await.unwrap();
+    let body = serde_json::json!({
+        "assertion": "fixture.assertion",
+        "nostr_pubkey": pubkey,
+        "expires_at": expires_at,
+    });
+    let assertion = issue_raw(
+        raw_http("200 OK", &serde_json::to_vec(&body).unwrap()),
+        signed_at,
+    )
+    .await
+    .unwrap();
+    assert_eq!(assertion.expires_at, expires_at);
+}
+
+#[tokio::test]
 async fn ordinary_relays_bypass_badges_and_gate_uses_the_shared_requirement_cache() {
     let service = FixtureServer::spawn(FixtureReply::IssueForRequest).await;
     let discovery = FixtureServer::spawn(FixtureReply::Discovery(serde_json::json!({
@@ -508,7 +740,7 @@ async fn malformed_assertions_are_rejected_without_refusing_the_session() {
 
     let error = assertions.get(&identity, &url, false).await.unwrap_err();
 
-    assert_eq!(error, "Relay badge response was invalid");
+    assert_eq!(error, format!("{REFUSED} (invalid adapter response)"));
     assert_eq!(
         owner
             .session_snapshot()

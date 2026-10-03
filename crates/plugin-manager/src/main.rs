@@ -1,4 +1,6 @@
-use buzzodz_plugins::{valid_id, Catalog, Manager, Manifest, Result};
+use buzzodz_plugins::{
+    release_manifest, sign_release_saved, valid_id, Catalog, Manager, Manifest, Result,
+};
 use serde_json::json;
 use std::{
     path::{Path, PathBuf},
@@ -10,6 +12,7 @@ const HELP: &str = "buzzodz [--home ABSOLUTE_PATH] [--profile NAME] plugin COMMA
 Commands:
   init DIRECTORY ID NAME   Create a page-plugin source project
   build DIRECTORY          Run the project's pnpm build script
+  sign DIST_DIRECTORY       Sign with your saved Buzz human identity
   install DIRECTORY        Install a built artifact (new plugins start disabled)
   list                     List installed pages and their enabled state
   enable ID | disable ID | remove ID | rollback ID
@@ -66,21 +69,33 @@ fn run() -> Result<()> {
             println!("Built {}", Path::new(directory).join("dist").display());
             return Ok(());
         }
+        ("sign", [directory]) => {
+            let publisher = sign_release_saved(Path::new(directory))?;
+            println!("Signed release in {directory} by {publisher}");
+            return Ok(());
+        }
+        ("sign", _) => return Err("Usage: buzzodz plugin sign DIST_DIRECTORY".into()),
         _ => {}
     }
     let manager = Manager::open(home, &profile, false)?;
     match (action.as_str(), rest) {
         ("install", [directory]) => {
-            let manifest = read_manifest(Path::new(directory))?;
+            let manifest = release_manifest(Path::new(directory))?;
             let catalog = manager.install(Path::new(directory))?;
-            let enabled = catalog
+            let installed = catalog
                 .plugins
                 .iter()
-                .any(|p| p.manifest.id == manifest.id && p.enabled);
+                .find(|p| p.manifest.id == manifest.id)
+                .ok_or("Installed plugin missing from catalog")?;
             println!(
-                "Installed {} ({}) in profile {profile}.",
-                manifest.id,
-                if enabled { "enabled" } else { "disabled" }
+                "Installed {} ({}) in profile {profile}. Publisher: {}",
+                installed.manifest.id,
+                if installed.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
+                installed.publisher.as_deref().unwrap_or("unsigned")
             );
         }
         ("list", []) => print_catalog(&manager.catalog()?)?,
@@ -126,6 +141,19 @@ fn print_catalog(catalog: &Catalog) -> Result<()> {
         );
         if let Some(error) = &plugin.error {
             println!("  Problem: {error}");
+        }
+        if plugin.source == "external" {
+            println!(
+                "  Publisher: {}",
+                plugin
+                    .publisher
+                    .as_deref()
+                    .unwrap_or(if plugin.error.is_some() {
+                        "unverified"
+                    } else {
+                        "unsigned"
+                    })
+            );
         }
     }
     Ok(())

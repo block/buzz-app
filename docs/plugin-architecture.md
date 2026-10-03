@@ -52,7 +52,7 @@ features/projects/     entity route/data contracts and bounded Git read bridge
 bundled/agents/         local control UI and read-only current-Buzz library page
 features/agents/        app-owned control capability; separate session-owned library
 bundled/github/         builtin GitHub panel plugin
-bundled/bestie/         builtin Bestie page, companion panel and its snake launcher
+bundled/bestie/         builtin Bestie page
 bundled/inbox/          builtin Inbox page for unread conversations and mentions
 ```
 
@@ -352,10 +352,11 @@ while opening/closing to preserve page-local state. `PanelCard` and `PanelFrame`
 are ordinary shared components, not another registry.
 
 Only open intent crosses pages: the panel component can remount under a new page,
-so this mechanism does not promise persistent agent sessions or drafts. Bestie
-currently supplies art and truthful not-connected copy, with no send control or
-agent API. Both browser and Rust native/CLI catalogs keep it bundled but off by default;
-saved enabled or disabled flags still win. Enable it under Settings → Plugins.
+so this mechanism does not promise persistent agent sessions or drafts. The bundled
+Bestie page currently supplies art and truthful not-connected copy, with no send
+control, agent API or top-bar launcher. Both browser and Rust native/CLI catalogs
+keep it bundled but off by default; saved enabled or disabled flags still win.
+Enable it under Settings → Plugins.
 
 `main.tsx` creates the shared services once; `app/App.tsx` owns startup screens,
 navigation, and built-in Settings. `app/services.ts` composes the core services.

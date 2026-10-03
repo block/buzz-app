@@ -78,7 +78,7 @@ html[data-keyboard-navigation] .search-field:has(input:focus-visible),
   min-height: 0;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-icon-button);
   background: transparent;
   color: var(--text-metadata);
   cursor: pointer;

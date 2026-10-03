@@ -203,6 +203,7 @@ export function SidebarUnread({
               data-edge={edge}
               data-attention={edges[edge].some(({ attention }) => attention)}
               size="sm"
+              shape="control"
               type="button"
               title={`Reveal the nearest unread channel ${edge} without opening it`}
               onClick={() => reveal(edge)}

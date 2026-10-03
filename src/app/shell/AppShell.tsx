@@ -169,7 +169,6 @@ export function AppShell({
               data-highlight-expanded="false"
               type="button"
               variant="ghost"
-              shape="round"
               aria-label={toggleLabel}
               aria-expanded={visibleSidebar}
               aria-controls="shell-navigation"

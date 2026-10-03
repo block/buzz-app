@@ -203,10 +203,13 @@ export function createCommunities(
     // A gate check can finish while the browser attempt is open. Its result
     // must not replace the attempt's owned opening/error state.
     if (enterpriseAttempt?.communityId === communityId) return;
+    // Another community's opening attempt, or the prompt for the community
+    // on screen, is never replaced by a background community.
     if (
       state.enterprise &&
       state.enterprise.communityId !== communityId &&
-      state.enterprise.status === "opening"
+      (state.enterprise.status === "opening" ||
+        state.enterprise.communityId === state.selected)
     )
       return;
     update(
@@ -253,19 +256,26 @@ export function createCommunities(
     enterpriseChecksInFlight.add(id);
     let required = false;
     try {
-      if (!(await waitFor(enterpriseAuth.gate(id), signal))) {
-        enterpriseCommunities.delete(id);
-        clearEnterprisePrompt(id, promptVersion);
-        return { authEpoch, authRelevant: false };
-      }
-      if (authEpoch !== enterpriseAuthEpoch)
-        throw supersededEnterpriseCheckError();
-      enterpriseCommunities.add(id);
-      if (!enterpriseRefused && (await waitFor(enterpriseAuth.get(), signal))) {
+      // A community already known to be enterprise needs sign-in once the
+      // session is refused; rediscovering the relay cannot change that.
+      if (!(enterpriseRefused && enterpriseCommunities.has(id))) {
+        if (!(await waitFor(enterpriseAuth.gate(id), signal))) {
+          enterpriseCommunities.delete(id);
+          clearEnterprisePrompt(id, promptVersion);
+          return { authEpoch, authRelevant: false };
+        }
         if (authEpoch !== enterpriseAuthEpoch)
           throw supersededEnterpriseCheckError();
-        clearEnterprisePrompt(id, promptVersion);
-        return { authEpoch, authRelevant: true };
+        enterpriseCommunities.add(id);
+        if (
+          !enterpriseRefused &&
+          (await waitFor(enterpriseAuth.get(), signal))
+        ) {
+          if (authEpoch !== enterpriseAuthEpoch)
+            throw supersededEnterpriseCheckError();
+          clearEnterprisePrompt(id, promptVersion);
+          return { authEpoch, authRelevant: true };
+        }
       }
       required = true;
     } catch (reason) {
@@ -446,8 +456,10 @@ export function createCommunities(
           update({ status: "unavailable", error: String(error) }, false);
       });
   // The adapter refused the current session. A login that starts or finishes
-  // meanwhile is the recovery; otherwise the prompt resets at once, without
-  // rechecking the refused session.
+  // meanwhile is the recovery. Otherwise the selected enterprise community
+  // shows sign-in from the refusal itself, without rechecking the session or
+  // rediscovering the relay, and shows it again once a reset or a sign-out
+  // already in flight settles, since either clears prompts.
   if (enterpriseAuth)
     ctx.effect(() =>
       onEnterpriseSignInRequired(() => {
@@ -460,9 +472,23 @@ export function createCommunities(
           epoch === enterpriseAuthEpoch;
         if (!current()) return;
         enterpriseRefused = true;
-        clearEnterpriseAuth(true).catch((error) => {
-          console.warn("Couldn't clear enterprise sign-in", error);
-        });
+        const recover = () => {
+          const id = state.selected;
+          if (
+            !disposed &&
+            enterpriseRefused &&
+            !enterpriseAttempt &&
+            id &&
+            enterpriseCommunities.has(id)
+          )
+            publishEnterprise(id, nextEnterprisePrompt(id), "required");
+        };
+        clearEnterpriseAuth(true)
+          .catch((error) => {
+            console.warn("Couldn't clear enterprise sign-in", error);
+          })
+          .finally(recover);
+        recover();
       }),
     );
   ctx.effect(() => () => {
@@ -609,8 +635,9 @@ export function createCommunities(
     )
       update({ enterprise: undefined }, false);
   }
-  /** `forgotten`: native storage already dropped the session, so only the
-   * app's enterprise state is reset and a login in progress is left alone. */
+  /** `forgotten`: native already stopped using the session and owns removing
+   * it from secure storage, so only the app's enterprise state is reset and a
+   * login in progress is left alone. */
   async function clearEnterpriseAuth(forgotten = false) {
     if (!enterpriseAuth || disposed) return;
     if (enterpriseClearInFlight) {

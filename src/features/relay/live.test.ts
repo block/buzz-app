@@ -1,6 +1,7 @@
 import { getLogger, setLogLevel } from "../developer/logging";
 import { assert, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  BADGE_ROTATION_CLOSE,
   createLiveAdmission,
   liveChannels,
   subscribeRelayTraffic,
@@ -2395,4 +2396,27 @@ it("reports the remaining presence gate without extending it and honors cooldown
   vi.advanceTimersByTime(1);
   expect(admission.presenceDelay()).toBe(0);
   admission.tryPresence()?.();
+});
+
+it("relay badge rotation reconnects at once without spending the reconnect budget", async () => {
+  vi.useFakeTimers();
+  const h = setup();
+  // More rotations than the five-attempt failure cap.
+  for (let i = 0; i < 8; i++) {
+    const socket = h.sockets.at(-1);
+    assert.exists(socket);
+    (socket.onclose as (event: { code: number }) => void)({
+      code: BADGE_ROTATION_CLOSE,
+    });
+    expect(h.sockets).toHaveLength(i + 2);
+  }
+  expect(h.callbacks.state.mock.lastCall?.[0]).not.toMatchObject({
+    status: "error",
+  });
+  // An ordinary close still waits for backoff.
+  h.sockets.at(-1)?.onclose?.();
+  expect(h.sockets).toHaveLength(9);
+  await vi.advanceTimersByTimeAsync(500);
+  expect(h.sockets).toHaveLength(10);
+  h.owner.dispose();
 });

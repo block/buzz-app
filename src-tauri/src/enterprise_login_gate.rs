@@ -32,9 +32,10 @@ pub(crate) enum EnterpriseLoginGateStatus {
 
 #[tauri::command]
 pub(crate) async fn enterprise_login_gate(
+    assertions: tauri::State<'_, crate::nip_fi_assertion::RelayAssertions>,
     relay_url: String,
 ) -> Result<EnterpriseLoginGateStatus, String> {
-    discover_enterprise_login_gate(&relay_url, None).await
+    assertions.enterprise_login_gate(&relay_url).await
 }
 
 pub(crate) async fn discover_enterprise_login_gate(

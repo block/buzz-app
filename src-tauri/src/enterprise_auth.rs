@@ -39,6 +39,9 @@ const COMPLETE_HTML: &str =
 
 type Result<T> = std::result::Result<T, String>;
 
+#[cfg(test)]
+pub(crate) static BUILDERLAB_TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EnterpriseAuthInfo {

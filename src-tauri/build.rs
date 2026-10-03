@@ -35,6 +35,7 @@ fn main() {
             "cancel_enterprise_auth_login",
             "clear_enterprise_auth",
             "identity_sign_builderlab_binding",
+            "relay_socket_badge",
             "enterprise_login_gate",
             "relay_sign",
             "relay_decode_read_state",

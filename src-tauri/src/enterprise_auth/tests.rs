@@ -11,7 +11,7 @@ use std::{
     ffi::OsString,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        MutexGuard, OnceLock,
+        MutexGuard,
     },
 };
 use tempfile::TempDir;
@@ -263,8 +263,6 @@ async fn handle_request(
     }
 }
 
-static ENV_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
-
 struct BuilderLabEnv {
     _guard: MutexGuard<'static, ()>,
     previous: Vec<(&'static str, Option<OsString>)>,
@@ -281,7 +279,10 @@ impl BuilderLabEnv {
             "BL_AUTH_STORAGE",
             "BL_AUTH_STORAGE_FILE",
         ];
-        let guard = ENV_LOCK.get_or_init(Default::default).lock().unwrap();
+        let guard = BUILDERLAB_TEST_ENV_LOCK
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap();
         let previous = KEYS
             .into_iter()
             .map(|key| (key, std::env::var_os(key)))

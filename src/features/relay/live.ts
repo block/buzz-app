@@ -201,6 +201,10 @@ export const CHANNEL_KINDS = [
   9, 40002, 40008, 45001, 45003, 40099, 40100, 40003, 5, 9005, 7, 39000, 39002,
   39005, 20002,
 ];
+/** Close code a socket reports for a planned relay badge rotation; the live
+ * connection reconnects at once, outside the failure count and backoff. */
+export const BADGE_ROTATION_CLOSE = 4900;
+
 /** One authenticated socket, bounded joined-channel batches, singleton previews and two globals.
  * Recent replay is opportunistic: finite reads own catch-up and history bounds. */
 export function subscribeRelayTraffic(
@@ -896,7 +900,14 @@ export function subscribeRelayTraffic(
       }
     };
     ws.onerror = () => reconnect("Live connection interrupted");
-    ws.onclose = () => reconnect("Live connection closed");
+    ws.onclose = (event) => {
+      // A planned badge rotation is not a failure: reconnect now, uncounted.
+      if (event?.code !== BADGE_ROTATION_CLOSE)
+        return reconnect("Live connection closed");
+      if (!valid()) return;
+      log.info(`${peer} rotating relay badge`);
+      connect();
+    };
   }
   connect();
   return {

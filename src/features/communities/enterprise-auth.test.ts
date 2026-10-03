@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
 import { flush } from "../relay/testing";
+import { noteEnterpriseDenial } from "../relay/enterprise-sign-in";
 import type { ReadTransport } from "../relay/transport";
 import { createCommunities, EnterpriseLoginRequired } from "./service";
 import type { EnterpriseAuth, EnterpriseAuthClient } from "./enterpriseAuthApi";
@@ -685,4 +686,30 @@ it("disconnects enterprise sessions after a failed clear but keeps ordinary sess
 
   communities.select(ordinary);
   expect(communities.relay.snapshot().status).toBe("ready");
+});
+
+it("a relay session denial clears enterprise sign-in and prompts again", async () => {
+  const auth = authFixture();
+  auth.get.mockResolvedValue({ expiresAt: "2030-01-01T00:00:00Z" });
+  const { communities, connect } = setup(auth);
+  await flush();
+  communities.joined(
+    { id: "https://enterprise.test", name: "Enterprise" },
+    { name: "Local", picture: "" },
+  );
+  await flush();
+  expect(connect).toHaveBeenCalled();
+  auth.get.mockResolvedValue(null);
+  noteEnterpriseDenial(
+    new Error("Relay badge was refused (401 invalid_proof)"),
+  );
+  await flush();
+  expect(auth.clear).not.toHaveBeenCalled();
+  noteEnterpriseDenial(new Error("Enterprise sign-in is required"));
+  await flush();
+  expect(auth.clear).toHaveBeenCalledOnce();
+  expect(communities.snapshot().enterprise).toMatchObject({
+    communityId: "https://enterprise.test",
+    status: "required",
+  });
 });

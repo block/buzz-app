@@ -23,7 +23,7 @@ mod enterprise_relay_url;
 mod host_command;
 mod host_request;
 mod identity;
-
+mod nip_fi_assertion;
 mod notifications;
 mod os_idle;
 use os_idle::get_os_idle_seconds;
@@ -70,6 +70,7 @@ use enterprise_login_gate::enterprise_login_gate;
 use harness_setup::{pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
 use host_request::plugin_host_request;
+use nip_fi_assertion::{relay_socket_badge, RelayAssertions};
 use notifications::{notification_show, Notifications};
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
@@ -405,6 +406,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         get_enterprise_auth,
         start_enterprise_auth_login,
         cancel_enterprise_auth_login,
+        relay_socket_badge,
         clear_enterprise_auth,
         identity_sign_builderlab_binding,
         enterprise_login_gate,
@@ -511,6 +513,7 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_websocket::init())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             notifications::macos::init();
@@ -518,11 +521,13 @@ pub fn run() {
             let home = app.path().home_dir().map_err(|_| {
                 std::io::Error::other("Could not resolve the BuilderLab home directory")
             })?;
-            app.manage(SessionOwner::from_home(
+            let owner = SessionOwner::from_home(
                 home,
                 app.path().app_data_dir().ok(),
                 refusal_service_name(),
-            ));
+            );
+            app.manage(RelayAssertions::new(owner.clone()));
+            app.manage(owner);
             // Only app-owned storage is created. Preview uses the OS-resolved legacy
             // parent, never a browser-supplied path or a different environment source.
             let paths = (|| {

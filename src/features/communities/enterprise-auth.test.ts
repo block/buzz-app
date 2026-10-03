@@ -828,6 +828,91 @@ it("a refusal prompts at once while the refused session's check stalls", async (
   });
 });
 
+it("a refusal prompts at once while relay discovery is held", async () => {
+  const auth = authFixture();
+  auth.get.mockResolvedValue({ expiresAt: "2030-01-01T00:00:00Z" });
+  const { communities } = setup(auth);
+  await flush();
+  communities.joined(
+    { id: "https://enterprise.test", name: "Enterprise" },
+    { name: "Local", picture: "" },
+  );
+  await flush();
+  auth.gate.mockReturnValue(new Promise(() => {}));
+  noteEnterpriseDenial(signInRequired, enterpriseLoginMark());
+  await flush();
+  expect(communities.snapshot().enterprise).toMatchObject({
+    communityId: "https://enterprise.test",
+    status: "required",
+  });
+});
+
+it("a refusal prompts during a held sign-out and after it fails", async () => {
+  const auth = authFixture();
+  auth.get.mockResolvedValue({ expiresAt: "2030-01-01T00:00:00Z" });
+  const { communities } = setup(auth);
+  await flush();
+  communities.joined(
+    { id: "https://enterprise.test", name: "Enterprise" },
+    { name: "Local", picture: "" },
+  );
+  await flush();
+  let failClear!: (error: Error) => void;
+  auth.clear.mockReturnValueOnce(
+    new Promise((_, reject) => {
+      failClear = reject;
+    }),
+  );
+  const signOut = communities.clearEnterpriseAuth();
+  await flush();
+  noteEnterpriseDenial(signInRequired, enterpriseLoginMark());
+  await flush();
+  expect(communities.snapshot().enterprise).toMatchObject({
+    status: "required",
+  });
+  failClear(new Error("Enterprise secure storage is unavailable"));
+  await expect(signOut).rejects.toThrow("secure storage");
+  await flush();
+  expect(communities.snapshot().enterprise).toMatchObject({
+    communityId: "https://enterprise.test",
+    status: "required",
+  });
+});
+
+it("a refusal keeps the selected community's prompt over a background one", async () => {
+  const auth = authFixture();
+  auth.get.mockResolvedValue({ expiresAt: "2030-01-01T00:00:00Z" });
+  const { communities, connect } = setup(auth);
+  await flush();
+  communities.joined(
+    { id: "https://first.test", name: "First" },
+    { name: "Local", picture: "" },
+  );
+  await flush();
+  communities.joined(
+    { id: "https://second.test", name: "Second" },
+    { name: "Local", picture: "" },
+  );
+  await flush();
+  communities.select("https://first.test");
+  await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+  // The background community's discovery finishes after the selected one's.
+  const background = deferred<boolean>();
+  auth.gate.mockImplementation((community) =>
+    community === "https://second.test"
+      ? background.promise
+      : Promise.resolve(true),
+  );
+  noteEnterpriseDenial(signInRequired, enterpriseLoginMark());
+  await flush();
+  background.resolve(true);
+  await flush();
+  expect(communities.snapshot().enterprise).toMatchObject({
+    communityId: "https://first.test",
+    status: "required",
+  });
+});
+
 it("ignores a sign-in denial of a request made before a login started", async () => {
   const { onEnterpriseSignInRequired, noteEnterpriseLogin } = await import(
     "../relay/enterprise-sign-in"

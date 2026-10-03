@@ -361,3 +361,39 @@ async fn a_held_refusal_cleanup_still_asks_for_sign_in_by_the_deadline() {
         .unwrap_err();
     assert_eq!(error, SESSION_REPLACED);
 }
+
+#[tokio::test]
+async fn a_refused_session_that_storage_keeps_is_no_longer_used() {
+    let identity = IdentityHost::fixture();
+    let viewer = identity.viewer().await.unwrap();
+    let adapter = refusing_adapter().await;
+    let enterprise = EnterpriseAuthHost::with_saved_undeletable(&adapter, &viewer, "old");
+    let assertions = RelayAssertions::new(enterprise.clone());
+    let saved = enterprise.saved_at(&adapter, &viewer).await;
+    let error = assertions
+        .badge(
+            &identity,
+            RELAY.into(),
+            async { Ok(saved) },
+            true,
+            Instant::now() + DEADLINE,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error, SIGN_IN_REQUIRED);
+    // Badge requests, including the ones media loads make through `attach`,
+    // read the saved session the same way and no longer find the refused one.
+    assert!(enterprise.saved_at(&adapter, &viewer).await.is_none());
+    let saved = enterprise.saved_at(&adapter, &viewer).await;
+    assert!(assertions
+        .badge(
+            &identity,
+            RELAY.into(),
+            async { Ok(saved) },
+            true,
+            Instant::now() + DEADLINE
+        )
+        .await
+        .unwrap()
+        .is_none());
+}

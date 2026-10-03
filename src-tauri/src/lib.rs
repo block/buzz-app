@@ -504,6 +504,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             deep_links::setup(app.handle());
+            if let Ok(root) = app.path().app_data_dir() {
+                app.state::<EnterpriseAuthHost>()
+                    .keep_refusals_at(root.join("enterprise-refused-sessions"));
+            }
             // Only app-owned storage is created. Preview uses the OS-resolved legacy
             // parent, never a browser-supplied path or a different environment source.
             let paths = (|| {

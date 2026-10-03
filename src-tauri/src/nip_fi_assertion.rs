@@ -185,6 +185,10 @@ impl RelayAssertions {
             Ok(Ok(Ok(Rejection::Superseded))) => SESSION_REPLACED.into(),
             Ok(Ok(Err(error))) => error,
             Ok(Err(_)) => "Enterprise secure storage could not be accessed".into(),
+            Ok(Ok(Ok(Rejection::Retained(error)))) => {
+                eprintln!("Refused enterprise session is no longer used but stays in secure storage: {error}");
+                SIGN_IN_REQUIRED.into()
+            }
             Ok(Ok(Ok(Rejection::Removed))) | Err(_) => SIGN_IN_REQUIRED.into(),
         }
     }

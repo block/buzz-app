@@ -8,13 +8,63 @@ type CheckCounts = Record<
   | "successful",
   number
 >;
+export type CheckDetail = {
+  key: string;
+  name: string;
+  category: keyof CheckCounts;
+  label: string;
+  description?: string | undefined;
+  url?: string | undefined;
+};
 export type CheckSummary = {
   state: "failure" | "pending" | "success" | "neutral" | "unavailable";
   label: string;
   description: string;
+  checks?: CheckDetail[] | undefined;
 };
-type CheckRun = { status: string; conclusion: string | null };
-type CommitStatus = { state: string };
+type CheckRun = {
+  status: string;
+  conclusion: string | null;
+  name?: string;
+  details_url?: string;
+  html_url?: string;
+  output?: { title?: string | null } | null;
+};
+type CommitStatus = {
+  state: string;
+  context?: string;
+  description?: string | null;
+  target_url?: string | null;
+};
+
+const resultLabels: Record<string, string> = {
+  success: "Passed",
+  failure: "Failed",
+  error: "Failed",
+  timed_out: "Timed out",
+  action_required: "Action required",
+  stale: "Stale",
+  startup_failure: "Startup failed",
+  cancelled: "Cancelled",
+  skipped: "Skipped",
+  neutral: "Neutral",
+  queued: "Queued",
+  in_progress: "In progress",
+  waiting: "Waiting",
+  pending: "Pending",
+  requested: "Requested",
+};
+function safeCheckUrl(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password
+      ? url.href
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 const scope = "PR head commit · ";
 export const unavailableChecks: CheckSummary = {
@@ -78,6 +128,7 @@ export async function loadGitHubChecks(
       neutral: 0,
       successful: 0,
     };
+    const checks: CheckDetail[] = [];
     for (const item of [...runs.items, ...statuses.items]) {
       if (!item || typeof item !== "object") throw new Error("Invalid check");
       let category: keyof CheckCounts = "unknown";
@@ -111,6 +162,49 @@ export async function loadGitHubChecks(
           category = "failing";
       }
       counts[category]++;
+      const isRun = "status" in item;
+      const name = isRun
+        ? item.name
+        : "context" in item
+          ? item.context
+          : undefined;
+      const description = isRun
+        ? item.output?.title
+        : "description" in item
+          ? item.description
+          : undefined;
+      const outcome = isRun
+        ? item.status === "completed"
+          ? item.conclusion
+          : item.status
+        : "state" in item
+          ? item.state
+          : undefined;
+      checks.push({
+        key: `check-${checks.length}`,
+        name:
+          typeof name === "string" && name.trim()
+            ? name
+            : isRun
+              ? "Unnamed check"
+              : "Unnamed status",
+        category,
+        label:
+          category !== "unknown" &&
+          typeof outcome === "string" &&
+          Object.hasOwn(resultLabels, outcome)
+            ? (resultLabels[outcome] ?? "Unknown")
+            : "Unknown",
+        description:
+          typeof description === "string" && description.trim()
+            ? description
+            : undefined,
+        url: isRun
+          ? (safeCheckUrl(item.details_url) ?? safeCheckUrl(item.html_url))
+          : "target_url" in item
+            ? safeCheckUrl(item.target_url)
+            : undefined,
+      });
     }
     const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
     const complete = runs.complete && statuses.complete;
@@ -144,7 +238,20 @@ export async function loadGitHubChecks(
               : total
                 ? "No failures"
                 : "No checks";
+    const priority: (keyof CheckCounts)[] = [
+      "failing",
+      "cancelled",
+      "pending",
+      "unknown",
+      "successful",
+      "skipped",
+      "neutral",
+    ];
+    checks.sort(
+      (a, b) => priority.indexOf(a.category) - priority.indexOf(b.category),
+    );
     return {
+      checks,
       state,
       label,
       description: `${scope}${complete ? "" : "Partial counts (page limit reached): "}${description}.`,

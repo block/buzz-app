@@ -13,6 +13,7 @@ import {
   type CheckSummary,
 } from "./checks";
 import styles from "./GitHub.module.css";
+import inlineStyles from "../../shared/InlineReference.module.css";
 
 const loading: CheckSummary = {
   state: "neutral",
@@ -25,6 +26,16 @@ const icons = {
   success: CheckCircleIcon,
   neutral: CircleDashedIcon,
   unavailable: WarningCircleIcon,
+};
+
+const checkIcons = {
+  failing: XCircleIcon,
+  cancelled: XCircleIcon,
+  pending: WarningCircleIcon,
+  unknown: WarningCircleIcon,
+  successful: CheckCircleIcon,
+  skipped: CircleDashedIcon,
+  neutral: CircleDashedIcon,
 };
 
 export function GitHubChecks({
@@ -52,19 +63,22 @@ export function GitHubChecks({
   }, [repository, sha, attempt]);
   const Icon = icons[result.state];
   return (
-    <>
+    <div data-buzz-ui="">
       <Tooltip content={result.description} delay={300}>
         {/* Counts are supplementary text, made focusable for the requested keyboard tooltip. */}
         <span
           // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need access to the counts tooltip.
           tabIndex={0}
-          className={styles.checkSummary}
+          className={`text-body-lg ${styles.checkSummary}`}
           data-check-state={result.state}
         >
-          <Icon size={14} aria-hidden="true" />
+          <Icon size={18} aria-hidden="true" />
           {result.label}
         </span>
       </Tooltip>
+      <p className={`text-caption ${styles.checksDescription}`}>
+        {result.description}
+      </p>
       {result.state === "unavailable" && sha && (
         <Button
           variant="link"
@@ -75,6 +89,49 @@ export function GitHubChecks({
           Retry
         </Button>
       )}
-    </>
+      {!!result.checks?.length && (
+        <ul
+          className={styles.checkList}
+          aria-label="Checks on the PR head commit"
+        >
+          {result.checks.map((check) => {
+            const CheckIcon = checkIcons[check.category];
+            return (
+              <li
+                key={check.key}
+                className={styles.checkRow}
+                data-check-category={check.category}
+              >
+                <CheckIcon size={16} aria-hidden="true" />
+                <div className={styles.checkContent}>
+                  <div className={styles.checkHeading}>
+                    {check.url ? (
+                      <a
+                        className={inlineStyles.link}
+                        href={check.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {check.name}
+                      </a>
+                    ) : (
+                      <span>{check.name}</span>
+                    )}
+                    <span className={`text-caption ${styles.checkResult}`}>
+                      {check.label}
+                    </span>
+                  </div>
+                  {check.description && (
+                    <p className={`text-caption ${styles.checksDescription}`}>
+                      {check.description}
+                    </p>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }

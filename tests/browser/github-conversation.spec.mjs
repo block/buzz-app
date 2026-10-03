@@ -727,9 +727,48 @@ test("superseded review history expands in place while merge and the newest even
                 },
               ]
             : path.endsWith("/check-runs")
-              ? { total_count: 0, check_runs: [] }
+              ? {
+                  total_count: 4,
+                  check_runs: [
+                    {
+                      name: "Unit tests",
+                      status: "completed",
+                      conclusion: "success",
+                      details_url:
+                        "https://github.com/sample/project/actions/runs/1",
+                      output: { title: "All 420 tests passed" },
+                    },
+                    {
+                      name: "Typecheck",
+                      status: "completed",
+                      conclusion: "success",
+                      output: { title: "No type errors" },
+                    },
+                    {
+                      name: "Browser journeys / Chromium and WebKit at narrow and enlarged text sizes",
+                      status: "completed",
+                      conclusion: "success",
+                      output: { title: "Both browser engines passed" },
+                    },
+                    {
+                      name: "Optional deployment",
+                      status: "completed",
+                      conclusion: "skipped",
+                    },
+                  ],
+                }
               : path.endsWith("/status")
-                ? { total_count: 0, statuses: [] }
+                ? {
+                    total_count: 1,
+                    statuses: [
+                      {
+                        context: "DCO",
+                        state: "success",
+                        description: "All commits signed off",
+                        target_url: "https://ci.example.test/dco/1",
+                      },
+                    ],
+                  }
                 : {
                     title: "Make the conversation easier to follow",
                     body: "A quieter history with decisions in view.",
@@ -825,9 +864,34 @@ test("superseded review history expands in place while merge and the newest even
   );
   await expectOrder();
   await panel.getByRole("tab", { name: "Checks", exact: true }).click();
-  await expect(panel.getByRole("tabpanel", { name: "Checks" })).toContainText(
-    "No checks",
+  const checks = panel.getByRole("tabpanel", { name: "Checks" });
+  await expect(checks).toContainText("Successful");
+  const checkRows = checks.getByRole("listitem");
+  await expect(checkRows).toHaveCount(5);
+  await expect(checkRows.filter({ hasText: "Passed" })).toHaveCount(4);
+  await expect(checkRows.last()).toContainText("Skipped");
+  const unitLink = checks.getByRole("link", {
+    name: "Unit tests",
+    exact: true,
+  });
+  await expect(unitLink).toHaveAttribute(
+    "href",
+    "https://github.com/sample/project/actions/runs/1",
   );
+  await unitLink.focus();
+  await expect(unitLink).toBeFocused();
+  await unitLink.blur();
+  for (const mode of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: mode });
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+    await expect(checkRows.first().locator("svg")).toHaveCSS(
+      "color",
+      await checks
+        .locator('[data-check-state="success"]')
+        .evaluate((node) => getComputedStyle(node).color),
+    );
+    await panel.screenshot({ path: testInfo.outputPath(`checks-${mode}.png`) });
+  }
   await panel.getByRole("tab", { name: "Discussion", exact: true }).click();
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
   expect(requests).toHaveLength(5);
@@ -839,4 +903,34 @@ test("superseded review history expands in place while merge and the newest even
   await trigger.tap();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(conversation.getByRole("group")).toHaveCount(3);
+  await panel.getByRole("tab", { name: "Checks", exact: true }).click();
+  await expect(checkRows).toHaveCount(5);
+  await page.evaluate(() => {
+    localStorage.setItem("buzz-font-scale.v1", "2");
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "buzz-font-scale.v1",
+        storageArea: localStorage,
+      }),
+    );
+  });
+  await expect(checks.locator('[data-check-state="success"]')).toHaveCSS(
+    "font-size",
+    "40px",
+  );
+  for (const width of [800, 480]) {
+    await page.setViewportSize({ width, height: 950 });
+    expect(
+      await checks.evaluate((node) => node.scrollWidth <= node.clientWidth),
+    ).toBe(true);
+    expect(
+      await checkRows.evaluateAll((rows) =>
+        rows.every((node) => node.scrollWidth <= node.clientWidth),
+      ),
+    ).toBe(true);
+    await panel.screenshot({
+      path: testInfo.outputPath(`checks-${width}-200.png`),
+    });
+  }
+  expect(requests).toHaveLength(5);
 });

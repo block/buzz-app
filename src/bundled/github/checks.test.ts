@@ -29,7 +29,7 @@ it("combines actual runs and contexts, without treating empty combined pending a
     "head-sha",
     controller.signal,
   );
-  expect(summary).toEqual({
+  expect(summary).toMatchObject({
     state: "success",
     label: "Successful",
     description: "PR head commit · 1 skipped, 2 successful checks.",
@@ -59,7 +59,7 @@ it("keeps full categorized counts and prioritizes failure over pending", async (
   );
   expect(
     await loadGitHubChecks("sample/project", "head-sha", signal()),
-  ).toEqual({
+  ).toMatchObject({
     state: "failure",
     label: "Some not successful",
     description:
@@ -229,4 +229,102 @@ it("does not call successful runs a complete success when legacy statuses fail",
   expect(
     await loadGitHubChecks("sample/project", "sha", signal()),
   ).toMatchObject({ state: "unavailable", label: "Unavailable" });
+});
+
+it("retains useful row details from both existing sources and prioritizes actionable results", async () => {
+  const fetch = fixtures(
+    [
+      {
+        ...run("success"),
+        name: "Typecheck",
+        details_url: "https://github.com/sample/project/actions/runs/1",
+        output: { title: "No errors" },
+      },
+      { ...run(null, "in_progress"), name: "Browser tests" },
+      { ...run("cancelled"), name: "Cancelled build" },
+      { ...run("skipped"), name: "Optional deployment" },
+      { ...run("neutral"), name: "Advisory" },
+      { ...run("unexpected"), name: "Unrecognized result" },
+    ],
+    [
+      {
+        state: "failure",
+        context: "CI / build",
+        description: "Build needs attention",
+        target_url: "https://ci.example.test/build/1",
+      },
+      {
+        state: "success",
+        context: "DCO",
+        description: "All commits signed off",
+      },
+    ],
+  );
+  const result = await loadGitHubChecks("sample/project", "sha", signal());
+  expect(result.checks?.map((check) => [check.name, check.label])).toEqual([
+    ["CI / build", "Failed"],
+    ["Cancelled build", "Cancelled"],
+    ["Browser tests", "In progress"],
+    ["Unrecognized result", "Unknown"],
+    ["Typecheck", "Passed"],
+    ["DCO", "Passed"],
+    ["Optional deployment", "Skipped"],
+    ["Advisory", "Neutral"],
+  ]);
+  expect(
+    result.checks?.find((check) => check.name === "Typecheck"),
+  ).toMatchObject({
+    description: "No errors",
+    url: "https://github.com/sample/project/actions/runs/1",
+  });
+  expect(result.checks?.[0]).toMatchObject({
+    description: "Build needs attention",
+    url: "https://ci.example.test/build/1",
+  });
+  expect(new Set(result.checks?.map((check) => check.key)).size).toBe(8);
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it("keeps missing metadata readable and omits unsafe links without changing outcomes", async () => {
+  fixtures(
+    [
+      {
+        ...run("success"),
+        name: "",
+        details_url: "javascript:alert(1)",
+        html_url: "https://github.com/sample/project/actions/runs/1",
+      },
+      {
+        ...run("success"),
+        name: {},
+        output: { title: [] },
+        details_url: "https://name:password@example.test/",
+      },
+      { ...run("toString"), details_url: "/relative" },
+    ],
+    [
+      {
+        state: "success",
+        context: "Legacy",
+        description: 42,
+        target_url: "http://example.test/",
+      },
+      { state: "success", target_url: "data:text/html,test" },
+    ],
+  );
+  const result = await loadGitHubChecks("sample/project", "sha", signal());
+  expect(result.state).toBe("unavailable");
+  expect(result.checks?.map((check) => check.name)).toEqual([
+    "Unnamed check",
+    "Unnamed check",
+    "Unnamed check",
+    "Legacy",
+    "Unnamed status",
+  ]);
+  expect(result.checks?.filter((check) => check.url)).toHaveLength(1);
+  expect(result.checks?.find((check) => check.url)?.url).toBe(
+    "https://github.com/sample/project/actions/runs/1",
+  );
+  expect(result.checks?.every((check) => !check.description)).toBe(true);
+  expect(result.checks?.[0]?.label).toBe("Unknown");
 });

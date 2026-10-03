@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { GitHubPanel } from "./index";
@@ -177,4 +184,82 @@ it("shows honest missing-data rows without inventing a head check request", asyn
     screen.queryByRole("button", { name: "Retry checks" }),
   ).not.toBeInTheDocument();
   expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+it("shows named rows with honest outcomes, descriptions and links without extra requests", async () => {
+  const fetch = vi.fn(async (url: string) => {
+    if (/\/(?:comments|reviews)\?/.test(url)) return response([]);
+    if (/\/pulls\/\d+$/.test(url)) return response(pull);
+    if (url.includes("/check-runs?"))
+      return response({
+        total_count: 4,
+        check_runs: [
+          {
+            name: "Unit tests",
+            status: "completed",
+            conclusion: "success",
+            details_url: "https://github.com/sample/project/actions/runs/1",
+            output: { title: "All tests passed" },
+          },
+          { name: "Browser tests", status: "in_progress", conclusion: null },
+          {
+            name: "Optional deployment",
+            status: "completed",
+            conclusion: "skipped",
+            details_url: "javascript:alert(1)",
+          },
+          { name: "Advisory", status: "completed", conclusion: "neutral" },
+        ],
+      });
+    return response({
+      total_count: 1,
+      statuses: [
+        {
+          context: "Build",
+          state: "failure",
+          description: "Compilation failed",
+          target_url: "https://ci.example.test/build/1",
+        },
+      ],
+    });
+  });
+  vi.stubGlobal("fetch", fetch);
+  render(<GitHubPanel target={target} close={() => {}} />);
+  await screen.findByText("Conversation loaded · oldest first");
+  expect(fetch).toHaveBeenCalledTimes(3);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("tab", { name: "Checks" }));
+  const list = await screen.findByRole("list", {
+    name: "Checks on the PR head commit",
+  });
+  const rows = within(list).getAllByRole("listitem");
+  expect(rows.map((row) => row.getAttribute("data-check-category"))).toEqual([
+    "failing",
+    "pending",
+    "successful",
+    "skipped",
+    "neutral",
+  ]);
+  expect(rows[0]).toHaveTextContent("BuildFailedCompilation failed");
+  expect(rows[2]).toHaveTextContent("Unit testsPassedAll tests passed");
+  expect(rows[3]).toHaveTextContent("Skipped");
+  expect(rows[4]).toHaveTextContent("Neutral");
+  const link = within(list).getByRole("link", { name: "Unit tests" });
+  expect(link).toHaveAttribute(
+    "href",
+    "https://github.com/sample/project/actions/runs/1",
+  );
+  expect(link).toHaveAttribute("target", "_blank");
+  expect(link).toHaveAttribute("rel", "noreferrer");
+  expect(
+    within(list).queryByRole("link", { name: "Optional deployment" }),
+  ).not.toBeInTheDocument();
+  for (const row of rows)
+    expect(row.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+  await user.click(screen.getByRole("tab", { name: "Discussion" }));
+  await user.click(screen.getByRole("tab", { name: "Checks" }));
+  expect(
+    screen.getByRole("list", { name: "Checks on the PR head commit" }),
+  ).toBe(list);
+  expect(fetch).toHaveBeenCalledTimes(5);
 });

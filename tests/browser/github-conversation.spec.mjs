@@ -274,9 +274,14 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
     .toEqual([`${target}#issuecomment-20`, `${target}#issuecomment-20`]);
   await comment.focus();
   await page.keyboard.press("Shift+F10");
-  await expect(
-    page.getByRole("menuitem", { name: "Copy comment link", exact: true }),
-  ).toBeVisible();
+  const keyboardMenuItem = page.getByRole("menuitem", {
+    name: "Copy comment link",
+    exact: true,
+  });
+  await expect(keyboardMenuItem).toBeVisible();
+  // Base UI applies keyboard focus after the popup mounts. Escape must originate
+  // inside that popup, not race its initial focus handoff and close the host pane.
+  await expect(page.getByRole("menu")).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(comment).toBeFocused();
   await comment.click();
@@ -873,8 +878,8 @@ test("conversation history expands around merge without hiding approval-only mil
                     {
                       name: "Typecheck",
                       status: "completed",
-                      conclusion: "success",
-                      output: { title: "No type errors" },
+                      conclusion: "failure",
+                      output: { title: "A type needs updating" },
                     },
                     {
                       name: "Browser journeys / Chromium and WebKit at narrow and enlarged text sizes",
@@ -1034,11 +1039,23 @@ test("conversation history expands around merge without hiding approval-only mil
   await expect(conversation.getByRole("group")).toHaveCount(7);
   await panel.getByRole("tab", { name: "Checks", exact: true }).click();
   const checks = panel.getByRole("tabpanel", { name: "Checks" });
-  await expect(checks).toContainText("Successful");
+  await expect(checks).toContainText("Some checks were not successful");
   const checkRows = checks.getByRole("listitem");
   await expect(checkRows).toHaveCount(5);
-  await expect(checkRows.filter({ hasText: "Passed" })).toHaveCount(4);
-  await expect(checkRows.last()).toContainText("Skipped");
+  await expect(checkRows.filter({ hasText: "Passed" })).toHaveCount(3);
+  await expect(checkRows.first()).toContainText("Failed");
+  await expect(checkRows.nth(1)).toContainText("Skipped");
+  const successful = checks.getByRole("button", {
+    name: "3 successful checks",
+  });
+  await successful.focus();
+  await page.keyboard.press("Space");
+  await expect(successful).toHaveAttribute("aria-expanded", "false");
+  await expect(
+    checks.getByRole("link", { name: "Unit tests", exact: true }),
+  ).toBeHidden();
+  await page.keyboard.press("Enter");
+  await expect(successful).toHaveAttribute("aria-expanded", "true");
   const unitLink = checks.getByRole("link", {
     name: "Unit tests",
     exact: true,
@@ -1056,11 +1073,13 @@ test("conversation history expands around merge without hiding approval-only mil
     await expect(checkRows.first().locator("svg")).toHaveCSS(
       "color",
       await checks
-        .locator('[data-check-state="success"]')
-        .evaluate((node) => getComputedStyle(node).color),
+        .locator('circle[data-check-category="failing"]')
+        .evaluate((node) => getComputedStyle(node).stroke),
     );
     await panel.screenshot({ path: testInfo.outputPath(`checks-${mode}.png`) });
   }
+  await successful.tap();
+  await expect(successful).toHaveAttribute("aria-expanded", "false");
   await panel.getByRole("tab", { name: "Discussion", exact: true }).click();
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
   expect(requests).toHaveLength(5);
@@ -1120,6 +1139,8 @@ test("conversation history expands around merge without hiding approval-only mil
   await expect(conversation.getByRole("group")).toHaveCount(2);
   expect(requests).toHaveLength(5);
   await panel.getByRole("tab", { name: "Checks", exact: true }).click();
+  await expect(successful).toHaveAttribute("aria-expanded", "false");
+  await successful.tap();
   await expect(checkRows).toHaveCount(5);
   await page.evaluate(() => {
     localStorage.setItem("buzz-font-scale.v1", "2");
@@ -1130,7 +1151,7 @@ test("conversation history expands around merge without hiding approval-only mil
       }),
     );
   });
-  await expect(checks.locator('[data-check-state="success"]')).toHaveCSS(
+  await expect(checks.locator('[class*="checkSummaryLabel"]')).toHaveCSS(
     "font-size",
     "40px",
   );
@@ -1144,8 +1165,13 @@ test("conversation history expands around merge without hiding approval-only mil
         rows.every((node) => node.scrollWidth <= node.clientWidth),
       ),
     ).toBe(true);
+    await checks.locator("[data-check-state]").scrollIntoViewIfNeeded();
     await panel.screenshot({
       path: testInfo.outputPath(`checks-${width}-200.png`),
+    });
+    await checkRows.last().scrollIntoViewIfNeeded();
+    await panel.screenshot({
+      path: testInfo.outputPath(`checks-rows-${width}-200.png`),
     });
   }
   expect(requests).toHaveLength(5);

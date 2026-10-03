@@ -60,7 +60,9 @@ it("renders PR details while checks load, then exposes counts by pointer and key
       }),
     ),
   );
-  const summary = await screen.findByText("Some not successful");
+  const summary = (await screen.findByText("Some checks were not successful"))
+    .parentElement;
+  if (!summary) throw new Error("Missing check summary");
   expect(summary).toHaveAttribute("data-check-state", "failure");
   expect(summary.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
   expect(fetch.mock.calls.map(([url]) => url).sort()).toEqual([
@@ -111,7 +113,7 @@ it("keeps PR details after a checks failure and allows a read-only retry", async
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   fail = false;
   await userEvent.setup().click(retry);
-  expect(await screen.findByText("Successful")).toHaveAttribute(
+  expect((await screen.findByText("Successful")).parentElement).toHaveAttribute(
     "data-check-state",
     "success",
   );
@@ -161,7 +163,9 @@ it("aborts checks when the panel target changes and ignores the late old result"
       }),
     ),
   );
-  expect(screen.queryByText("Some not successful")).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("Some checks were not successful"),
+  ).not.toBeInTheDocument();
   expect(screen.queryByText("Checks")).not.toBeInTheDocument();
   expect(screen.queryByText("Last updated")).not.toBeInTheDocument();
 });
@@ -239,21 +243,22 @@ it("shows named rows with honest outcomes, descriptions and links without extra 
   expect(fetch).toHaveBeenCalledTimes(3);
   const user = userEvent.setup();
   await user.click(screen.getByRole("tab", { name: "Checks" }));
-  const list = await screen.findByRole("list", {
-    name: "Checks on the PR head commit",
+  const checks = screen.getByRole("tabpanel", { name: "Checks" });
+  const list = await within(checks).findByRole("list", {
+    name: "successful checks on the PR head commit",
   });
-  const rows = within(list).getAllByRole("listitem");
+  const rows = within(checks).getAllByRole("listitem");
   expect(rows.map((row) => row.getAttribute("data-check-category"))).toEqual([
     "failing",
     "pending",
-    "successful",
     "skipped",
     "neutral",
+    "successful",
   ]);
   expect(rows[0]).toHaveTextContent("BuildFailedCompilation failed");
-  expect(rows[2]).toHaveTextContent("Unit testsPassedAll tests passed");
-  expect(rows[3]).toHaveTextContent("Skipped");
-  expect(rows[4]).toHaveTextContent("Neutral");
+  expect(rows[4]).toHaveTextContent("Unit testsPassedAll tests passed");
+  expect(rows[2]).toHaveTextContent("Skipped");
+  expect(rows[3]).toHaveTextContent("Neutral");
   const link = within(list).getByRole("link", { name: "Unit tests" });
   expect(link).toHaveAttribute(
     "href",
@@ -262,14 +267,83 @@ it("shows named rows with honest outcomes, descriptions and links without extra 
   expect(link).toHaveAttribute("target", "_blank");
   expect(link).toHaveAttribute("rel", "noreferrer");
   expect(
-    within(list).queryByRole("link", { name: "Optional deployment" }),
+    within(checks).queryByRole("link", { name: "Optional deployment" }),
   ).not.toBeInTheDocument();
   for (const row of rows)
     expect(row.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+  expect(
+    within(checks)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual([
+    "1 failing check",
+    "1 pending check",
+    "1 skipped check",
+    "1 neutral check",
+    "1 successful check",
+  ]);
+  const successful = within(checks).getByRole("button", {
+    name: "1 successful check",
+  });
+  await user.click(successful);
+  expect(successful).toHaveAttribute("aria-expanded", "false");
+  expect(list).not.toBeVisible();
   await user.click(screen.getByRole("tab", { name: "Discussion" }));
   await user.click(screen.getByRole("tab", { name: "Checks" }));
+  expect(successful).toHaveAttribute("aria-expanded", "false");
+  await user.click(successful);
   expect(
-    screen.getByRole("list", { name: "Checks on the PR head commit" }),
+    screen.getByRole("list", {
+      name: "successful checks on the PR head commit",
+    }),
   ).toBe(list);
+  expect(list).toBeVisible();
   expect(fetch).toHaveBeenCalledTimes(5);
+});
+
+it("keeps unknown checks distinct from success instead of drawing a reassuring ring", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (/\/(?:comments|reviews)\?/.test(url)) return response([]);
+      if (/\/pulls\/\d+$/.test(url)) return response(pull);
+      return response(
+        url.includes("/check-runs?")
+          ? {
+              total_count: 2,
+              check_runs: [
+                {
+                  name: "Unit tests",
+                  status: "completed",
+                  conclusion: "success",
+                },
+                {
+                  name: "Unrecognized check",
+                  status: "completed",
+                  conclusion: "future-result",
+                },
+              ],
+            }
+          : { total_count: 0, statuses: [] },
+      );
+    }),
+  );
+  render(<GitHubPanel target={target} close={() => {}} />);
+  await userEvent
+    .setup()
+    .click(await screen.findByRole("tab", { name: "Checks" }));
+  const checks = screen.getByRole("tabpanel", { name: "Checks" });
+  const summary = (
+    await within(checks).findByText("Unknown", {
+      selector: "[class*=checkSummaryLabel]",
+    })
+  ).closest("[data-check-state]");
+  expect(summary).toHaveAttribute("data-check-state", "unavailable");
+  expect(summary?.querySelector("circle[data-check-category]")).toBeNull();
+  expect(
+    within(checks).getByRole("button", { name: "1 unknown check" }),
+  ).toHaveAttribute("aria-expanded", "true");
+  expect(
+    within(checks).getByRole("button", { name: "Retry checks" }),
+  ).toBeVisible();
 });

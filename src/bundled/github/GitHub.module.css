@@ -194,7 +194,7 @@
 }
 .checkSegment {
   fill: none;
-  stroke: var(--check-color, var(--text-subtle));
+  stroke: var(--check-color, var(--border-standard));
   stroke-width: 3;
 }
 

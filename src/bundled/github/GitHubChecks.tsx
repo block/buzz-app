@@ -120,7 +120,7 @@ export function GitHubChecks({
           ) : (
             <Icon size={32} aria-hidden="true" />
           )}
-          <span className={`text-body-lg ${styles.checkSummaryLabel}`}>
+          <span className={`text-label ${styles.checkSummaryLabel}`}>
             {result.state === "failure"
               ? "Some checks were not successful"
               : result.label}
@@ -147,7 +147,9 @@ export function GitHubChecks({
           <Accordion
             variant="activity"
             keepMounted
-            defaultValue={groups.map((group) => group.category)}
+            defaultValue={groups
+              .filter((group) => group.category !== "skipped")
+              .map((group) => group.category)}
             items={sections.map((group) => ({
               value: group.category,
               title: `${group.checks.length} ${group.label} ${group.checks.length === 1 ? "check" : "checks"}`,

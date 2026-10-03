@@ -213,6 +213,18 @@ it("shows named rows with honest outcomes, descriptions and links without extra 
   const list = await within(checks).findByRole("list", {
     name: "successful checks on the PR head commit",
   });
+  const skipped = within(checks).getByRole("button", {
+    name: "1 skipped check",
+  });
+  expect(skipped).toHaveAttribute("aria-expanded", "false");
+  const skippedList = within(checks).getByRole("list", {
+    name: "skipped checks on the PR head commit",
+    hidden: true,
+  });
+  expect(skippedList).not.toBeVisible();
+  await user.click(skipped);
+  expect(skipped).toHaveAttribute("aria-expanded", "true");
+  expect(skippedList).toBeVisible();
   const rows = within(checks).getAllByRole("listitem");
   expect(rows.map((row) => row.getAttribute("data-check-category"))).toEqual([
     "failing",
@@ -257,6 +269,8 @@ it("shows named rows with honest outcomes, descriptions and links without extra 
   await user.click(screen.getByRole("tab", { name: "Discussion" }));
   await user.click(screen.getByRole("tab", { name: "Checks" }));
   expect(successful).toHaveAttribute("aria-expanded", "false");
+  expect(skipped).toHaveAttribute("aria-expanded", "true");
+  expect(skippedList).toBeVisible();
   await user.click(successful);
   expect(
     screen.getByRole("list", {

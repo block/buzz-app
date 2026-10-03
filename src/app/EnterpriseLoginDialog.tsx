@@ -69,8 +69,10 @@ function cleanupMessage({
   unrecorded,
 }: NonNullable<EnterpriseLoginSnapshot["cleanup"]>) {
   if (retained && unrecorded)
-    return "Buzz couldn't remove your previous sign-in from secure storage or record that it was refused. It won't be used again while Buzz is open, but it may be sent again after Buzz restarts.";
+    return "Buzz couldn't remove your previous sign-in from secure storage or record that it was refused. Buzz starts no new requests with it while it stays open, but may send it again after a restart.";
   if (retained)
-    return "Buzz couldn't remove your previous sign-in from secure storage. It won't be used again, and Buzz will retry removing it.";
-  return "Buzz couldn't record that your previous sign-in was refused.";
+    return "Buzz couldn't remove your previous sign-in from secure storage. Buzz starts no new requests with it and will retry removing it.";
+  if (unrecorded)
+    return "Buzz couldn't record that your previous sign-in was refused.";
+  return "Buzz couldn't remove an outdated sign-in record from this device.";
 }

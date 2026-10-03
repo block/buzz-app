@@ -436,6 +436,49 @@ async fn a_refused_snapshot_cannot_construct_or_send_a_badge_request() {
     assert!(service.records().is_empty());
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_refused_during_identity_access_is_not_sent_to_the_adapter() {
+    let service = FixtureServer::spawn(FixtureReply::IssueForRequest).await;
+    let _environment = BuilderLabEnv::new(&service.base);
+    let home = TempDir::new().unwrap();
+    let owner = owner(&home);
+    save(&owner, "refused-during-signing", "fixture-cli-session").await;
+    let snapshot = owner.session_snapshot().await.unwrap().unwrap();
+    let endpoint = owner.endpoint(ASSERTION_PATH).unwrap();
+    let identity = IdentityHost::fixture();
+
+    // Keep identity access pending after issue has taken its session snapshot.
+    // The first poll reaches IdentityHost::viewer and cannot pass this lock.
+    let held_identity = identity.hold();
+    let request = issue(
+        &owner,
+        &snapshot,
+        client().unwrap(),
+        &endpoint,
+        &identity,
+        RELAY,
+        now().unwrap(),
+    );
+    tokio::pin!(request);
+    let initial_poll = std::future::poll_fn(|context| {
+        std::task::Poll::Ready(std::future::Future::poll(request.as_mut(), context))
+    })
+    .await;
+    assert!(initial_poll.is_pending());
+
+    assert_eq!(
+        owner.reject_shared_session(&snapshot).await.unwrap(),
+        SharedSessionRejection::Removed
+    );
+    drop(held_identity);
+
+    assert!(matches!(
+        request.await,
+        Err(IssueFailure::Failed(error)) if error == SESSION_CHANGED
+    ));
+    assert!(service.records().is_empty());
+}
+
 #[tokio::test]
 async fn a_late_session_denial_retries_with_the_replacement_without_signing_out() {
     let gate = Arc::new(SessionReplacementGate::default());

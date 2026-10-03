@@ -562,6 +562,22 @@ impl IdentityHost {
         })))
     }
 
+    /// Holds identity access, as an unanswered signer would, until the
+    /// returned sender is dropped.
+    #[cfg(test)]
+    pub(crate) fn hold(&self) -> std::sync::mpsc::Sender<()> {
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let (held, holding) = std::sync::mpsc::channel();
+        let identity = self.0.clone();
+        std::thread::spawn(move || {
+            let _identity = identity.lock().unwrap();
+            held.send(()).unwrap();
+            let _ = released.recv();
+        });
+        holding.recv().unwrap();
+        release
+    }
+
     pub(crate) async fn viewer(&self) -> Result<String> {
         with_identity(self.clone(), |identity| {
             identity

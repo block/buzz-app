@@ -5,10 +5,15 @@ import {
   setRememberAgentsPreference,
   useRememberAgentsPreference,
 } from "../features/messages/mention-preferences";
-import { QuestionIcon } from "../shared/design-system/icons";
+import {
+  ArrowsClockwiseIcon,
+  CopyIcon,
+  QuestionIcon,
+} from "../shared/design-system/icons";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { Button } from "../shared/design-system/ui/Button";
 import { IconButton } from "../shared/design-system/ui/IconButton";
+import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
@@ -26,8 +31,8 @@ const labels = {
   "adapter-needed": "Adapter needed",
 } as const;
 const commands = [
-  ["Pi", piCommand],
-  ["Adapter", adapterCommand],
+  ["Pi", "Install Pi", piCommand],
+  ["Adapter", "Install the ACP adapter", adapterCommand],
 ] as const;
 
 export function AgentSettings({
@@ -76,32 +81,37 @@ export function AgentSettings({
     <section aria-labelledby="agent-settings-title">
       <Header id="agent-settings-title" title="Agents" />
       <section aria-labelledby="harnesses-title">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <InlineHeader id="harnesses-title" title="Harnesses" />
-          <div className={styles.harnessActions}>
-            <Tooltip content={acpHint}>
-              <IconButton
-                size="sm"
-                aria-label="About ACP"
-                icon={<QuestionIcon size={16} aria-hidden="true" />}
-              />
-            </Tooltip>
-            <Button
-              size="sm"
-              type="button"
-              disabled={
-                state.status === "unavailable" || state.busy || installingPi
-              }
-              loading={checking}
-              onClick={() => {
-                setChecking(true);
-                void control.refresh().finally(() => setChecking(false));
-              }}
-            >
-              Check again
-            </Button>
-          </div>
-        </div>
+        <InlineHeader
+          id="harnesses-title"
+          title="Harnesses"
+          actions={
+            <>
+              <Tooltip content={acpHint}>
+                <IconButton
+                  size="sm"
+                  aria-label="About ACP"
+                  icon={<QuestionIcon size={16} aria-hidden="true" />}
+                />
+              </Tooltip>
+              <Tooltip content="Check again">
+                <IconButton
+                  size="sm"
+                  variant="ghost"
+                  aria-label="Check again"
+                  icon={<ArrowsClockwiseIcon aria-hidden="true" />}
+                  disabled={
+                    state.status === "unavailable" || state.busy || installingPi
+                  }
+                  loading={checking}
+                  onClick={() => {
+                    setChecking(true);
+                    void control.refresh().finally(() => setChecking(false));
+                  }}
+                />
+              </Tooltip>
+            </>
+          }
+        />
         <SettingsGroup layout="form">
           {state.status === "unavailable" ? (
             <p className="text-body-sm text-secondary">
@@ -128,7 +138,7 @@ export function AgentSettings({
                   again.
                 </p>
               )}
-              <ul className={styles.rows}>
+              <ul aria-labelledby="harnesses-title" className={styles.rows}>
                 {harnesses.map((option) => (
                   <li key={option?.label} className="py-3 text-body-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -219,30 +229,54 @@ export function AgentSettings({
                               <details>
                                 <summary>Manual setup</summary>
                                 <div className="space-y-3 mt-3">
-                                  <p className="m-0 text-secondary">
-                                    Install Node.js 22.19 or newer, then run
-                                    these commands in your terminal. Click Check
-                                    again after installing.
-                                  </p>
-                                  {commands.map(([name, command]) => (
-                                    <div
-                                      key={name}
-                                      className="flex min-w-0 flex-wrap items-center gap-2"
-                                    >
-                                      <code
-                                        className={`${styles.command} min-w-0 flex-1 text-mono`}
-                                      >
-                                        {command}
-                                      </code>
-                                      <Button
-                                        size="sm"
-                                        type="button"
-                                        onClick={() => void copy(name, command)}
-                                      >
-                                        Copy {name} command
-                                      </Button>
-                                    </div>
-                                  ))}
+                                  <ol
+                                    aria-label="Manual setup steps"
+                                    className={styles.rows}
+                                  >
+                                    <li>
+                                      <PreferenceRow
+                                        title="Install Node.js"
+                                        subtitle="Use version 22.19 or newer. Run the following commands in your terminal."
+                                      />
+                                    </li>
+                                    {commands.map(([name, title, command]) => (
+                                      <li key={name}>
+                                        <PreferenceRow
+                                          title={title}
+                                          subtitle={
+                                            <code
+                                              className={`${styles.command} text-mono`}
+                                            >
+                                              {command}
+                                            </code>
+                                          }
+                                          trailing={
+                                            <Tooltip
+                                              content={`Copy ${name} command`}
+                                            >
+                                              <IconButton
+                                                size="sm"
+                                                variant="ghost"
+                                                aria-label={`Copy ${name} command`}
+                                                icon={
+                                                  <CopyIcon aria-hidden="true" />
+                                                }
+                                                onClick={() =>
+                                                  void copy(name, command)
+                                                }
+                                              />
+                                            </Tooltip>
+                                          }
+                                        />
+                                      </li>
+                                    ))}
+                                    <li>
+                                      <PreferenceRow
+                                        title="Check the installation"
+                                        subtitle="Use Check again at the top of Harnesses to refresh the status."
+                                      />
+                                    </li>
+                                  </ol>
                                   {copyMessage && (
                                     <p role="status" className="m-0">
                                       {copyMessage}

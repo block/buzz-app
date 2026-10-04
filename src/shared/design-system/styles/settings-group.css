@@ -1,10 +1,23 @@
 @layer components {
   .buzz-settings-group,
-  .buzz-settings-page .buzz-content-header {
+  .buzz-settings-page .buzz-content-header,
+  .buzz-settings-page .buzz-tabs[data-variant="panel"] {
     --settings-group-inset: var(--space-4);
   }
   .buzz-settings-page .buzz-content-header:not(.buzz-settings-group *) {
     padding-inline: calc(var(--settings-group-inset) + 1px);
+  }
+  .buzz-settings-page .buzz-content-header {
+    flex-wrap: wrap;
+  }
+  .buzz-settings-page .buzz-content-header-actions {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    max-inline-size: 100%;
+  }
+  .buzz-settings-page .buzz-tabs[data-variant="panel"] .buzz-tabs-list {
+    padding-inline: calc(var(--settings-group-inset) + 1px);
+    scroll-padding-inline: calc(var(--settings-group-inset) + 1px);
   }
   .buzz-settings-page .buzz-content-header:not([data-inline]) {
     margin-block-end: var(--space-8);
@@ -44,13 +57,15 @@
   }
   @container (max-width: 24rem) {
     .buzz-settings-group,
-    .buzz-settings-page .buzz-content-header {
+    .buzz-settings-page .buzz-content-header,
+    .buzz-settings-page .buzz-tabs[data-variant="panel"] {
       --settings-group-inset: var(--space-3);
     }
   }
   @container (max-width: 8rem) {
     .buzz-settings-group,
-    .buzz-settings-page .buzz-content-header {
+    .buzz-settings-page .buzz-content-header,
+    .buzz-settings-page .buzz-tabs[data-variant="panel"] {
       --settings-group-inset: var(--space-1);
     }
   }

@@ -211,11 +211,17 @@ These are static guardrails, not a substitute for browser checks.
 Anchored emoji, mention, completion, account and diagnostics surfaces use
 `popover-surface` for their border, fill, elevation and layer. Their placement,
 scrolling and specialized keyboard/editor interactions remain feature-owned.
-Both `popover-surface` and `floating-surface` compose `elevated-material`: a
+`popover-surface` composes `floating-surface`, which owns `elevated-material`: a
 90% opaque mode-aware fill and the shared 8px backdrop blur. Both use the 16px
 `radius-card` role. Opaque fills remain
 the fallback without backdrop-filter support, with reduced transparency, or in
-forced colors. Panels and dialog backdrops retain their existing materials.
+forced colors. Dialogs and alert dialogs also use `elevated-material`, retaining
+their panel corners. Stepped dialogs paint each step without blurring the shared
+wrapper. Panels and dialog backdrops retain their existing materials.
+Default menus, selects, and list popovers share a 4px inset; menu items and
+select options share padding, corners, and hover styling. Compact action surfaces
+retain their denser layout. Use the shared Menu, Select, or Popover according to
+the interaction; their separate Base UI semantics sit on the same visual recipe.
 Completion highlights use `affordance-popover-selected` so they remain visible on the
 raised dark surface. The shared popover recipe maps selection to this same role. Compact
 completion/emoji layouts may select shared radius

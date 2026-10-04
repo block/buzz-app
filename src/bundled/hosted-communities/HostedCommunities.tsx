@@ -416,19 +416,21 @@ export function HostedCommunities({ active }: { active(): boolean }) {
               </div>
             )}
           </SettingsGroup>
-          <div className="mt-section-gap flex flex-wrap items-start justify-between gap-3">
+          <div className="mt-section-gap">
             <InlineHeader
               title="Your communities"
               subtitle={`${communities.length} of ${LIMIT} used`}
+              actions={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void run("refresh", load)}
+                >
+                  <ArrowsClockwiseIcon aria-hidden="true" /> Refresh
+                </Button>
+              }
             />
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={busy}
-              onClick={() => void run("refresh", load)}
-            >
-              <ArrowsClockwiseIcon aria-hidden="true" /> Refresh
-            </Button>
           </div>
           {communities.length === 0 ? (
             identity && !error && action !== "refresh" ? (

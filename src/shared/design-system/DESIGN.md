@@ -152,14 +152,25 @@ Use the surface that matches the content and its position in the interface.
 
 ### Floating surfaces
 
-Menus, Select, Popover, and PreviewCard share `floating-surface`: an opaque fill,
-primary boundary, panel radius, and lift. Each component owns its content spacing
-and interaction. Shared material does not make these controls interchangeable.
+Menus, Select, Popover, and PreviewCard share `floating-surface`: a 90% opaque
+mode-aware fill, 8px backdrop blur, standard border, 16px `radius-card` corners,
+and shared lift. `popover-surface` composes this same recipe for feature-owned
+anchored content. Reduced transparency, forced colors, and browsers without blur
+support use the opaque fill.
 
-Default and wide menus, content popovers, pickers, dialogs, and alert dialogs use
-24px `radius-panel` corners. Short action menus and compact account popovers opt
-into 10px `radius-row` corners, a 4px list inset, and 8px inner rows. Choose compact
-for the content, never automatically because the viewport is narrow.
+Default menus, selects, and list popovers share a 4px list inset. Content popovers
+use 12px padding. Menu items and
+select options share 8px vertical / 12px horizontal padding and `radius-control`
+corners. Their hover treatment also comes from the same rule. Use Menu for
+actions and nested submenus, Select for a value, and Popover for interactive
+content; Base UI retains each control's keyboard and focus semantics.
+
+Short action menus and compact account popovers retain 10px `radius-row`
+corners, a 2px list inset, and 8px inner rows. Choose compact for the content,
+never automatically because the viewport is narrow. Dialogs and alert dialogs
+use the same `elevated-material` fill, blur, and accessibility fallback while
+retaining their 24px `radius-panel` corners and modal backdrop. Stepped dialogs
+apply the material to each step; their shared wrapper stays transparent.
 
 Floating rows use `affordance-floating-hover` (neutral 2 light / neutral 5 dark).
 Supporting text becomes standard text on highlight. Keep persistent selection

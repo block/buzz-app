@@ -1,24 +1,10 @@
-.harnessActions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  max-width: 100%;
-}
-
-.harnessActions > button {
-  max-width: 100%;
-  white-space: normal;
-}
-
 .rows {
   margin: var(--space-3) 0;
   padding: 0;
   list-style: none;
 }
 
-.rows li + li {
+.rows > li + li {
   border-top: 1px solid var(--border-standard);
 }
 

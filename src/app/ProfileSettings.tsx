@@ -5,8 +5,11 @@ import { PrivateKey } from "../features/identity/PrivateKey";
 import { profileDefault } from "../features/communities/profile-default";
 import { AvatarEditor } from "../features/profiles/AvatarEditor";
 import { Button } from "../shared/design-system/ui/Button";
+import { IconButton } from "../shared/design-system/ui/IconButton";
+import { CopyIcon } from "../shared/design-system/icons";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
+import { Tooltip } from "../shared/design-system/ui/Tooltip";
 import { npubEncode } from "nostr-tools/nip19";
 import {
   useCallback,
@@ -374,12 +377,15 @@ export function ProfileSettings({
                     </code>
                   }
                   trailing={
-                    <Button
-                      type="button"
-                      onClick={() => void copyIdentity(value, copyLabel)}
-                    >
-                      Copy {copyLabel.toLowerCase()}
-                    </Button>
+                    <Tooltip content={`Copy ${copyLabel.toLowerCase()}`}>
+                      <IconButton
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Copy ${copyLabel.toLowerCase()}`}
+                        icon={<CopyIcon aria-hidden="true" />}
+                        onClick={() => void copyIdentity(value, copyLabel)}
+                      />
+                    </Tooltip>
                   }
                 />
               ))}

@@ -59,14 +59,29 @@ test("shared tokens reach app controls without history or chip overrides", async
     chip.dataset.state = "resolved";
     chip.textContent = "Reference";
     probes.append(chip);
-    for (const name of ["buzz-popover-popup", "popup"]) {
+    for (const name of [
+      "buzz-menu-popup",
+      "buzz-select-popup",
+      "buzz-popover-popup",
+      "popup",
+    ]) {
       const surface = document.createElement("div");
       surface.id = `probe-${name}`;
-      if (name === "buzz-popover-popup") {
+      if (name !== "popup") {
         surface.className = name;
         const positioner = document.createElement("div");
-        positioner.id = "probe-positioner";
-        positioner.className = "buzz-popover-positioner";
+        positioner.id = `probe-${name}-positioner`;
+        positioner.className = name.replace("-popup", "-positioner");
+        if (name !== "buzz-popover-popup") {
+          const item = document.createElement("div");
+          item.className =
+            name === "buzz-menu-popup"
+              ? "buzz-menu-item"
+              : "buzz-select-option";
+          item.dataset.highlighted = "";
+          item.textContent = "Shared popup row";
+          surface.append(item);
+        }
         positioner.append(surface);
         probes.append(positioner);
       } else {
@@ -95,6 +110,9 @@ test("shared tokens reach app controls without history or chip overrides", async
         --affordance-subtle: rgb(12, 34, 56);
         --text-standard: rgb(10, 20, 30);
         --text-label-sm: 19px;
+        --space-1: 3px;
+        --space-2: 7px;
+        --space-3: 11px;
         --space-4: 29px;
         --surface-popover: rgb(23, 45, 67);
         --surface-elevated-glass: rgba(23, 45, 67, 0.92);
@@ -121,7 +139,12 @@ test("shared tokens reach app controls without history or chip overrides", async
         "background-color",
         "rgb(12, 34, 56)",
       );
-      for (const name of ["buzz-popover-popup", "popup"]) {
+      for (const name of [
+        "buzz-menu-popup",
+        "buzz-select-popup",
+        "buzz-popover-popup",
+        "popup",
+      ]) {
         const surface = page.locator(`#probe-${name}`);
         await expect(surface).toHaveCSS(
           "background-color",
@@ -131,10 +154,23 @@ test("shared tokens reach app controls without history or chip overrides", async
         await expect(surface).toHaveCSS("border-top-color", "rgb(45, 67, 89)");
         await expect(surface).toHaveCSS("border-radius", "17px");
         await expect(
-          name === "buzz-popover-popup"
-            ? page.locator("#probe-positioner")
+          name !== "popup"
+            ? page.locator(`#probe-${name}-positioner`)
             : surface,
         ).toHaveCSS("z-index", "1234");
+      }
+      for (const name of ["buzz-menu-popup", "buzz-select-popup"]) {
+        const surface = page.locator(`#probe-${name}`);
+        await expect(surface).toHaveCSS("padding", "3px");
+        const row = surface.getByText("Shared popup row", { exact: true });
+        await expect(row).toHaveCSS("padding", "7px 11px");
+        await expect(row).toHaveCSS("border-radius", "13px");
+        await expect(row).toHaveCSS(
+          "background-color",
+          await page
+            .locator("#probe-buzz-select-popup .buzz-select-option")
+            .evaluate((element) => getComputedStyle(element).backgroundColor),
+        );
       }
     } finally {
       await override.evaluate((node) => node.remove());

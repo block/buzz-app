@@ -60,6 +60,11 @@ test("template dialogs keep headers and optional setup contained across layouts"
         library.getByText("No templates yet", { exact: true }),
       ).toBeVisible();
       await contained(library);
+      await expect(library).toHaveCSS("backdrop-filter", "blur(8px)");
+      await expect(library).toHaveCSS(
+        "background-color",
+        mode === "light" ? "rgba(255, 255, 255, 0.9)" : "rgba(40, 40, 40, 0.9)",
+      );
       if (width === 1440)
         await library.screenshot({
           path: info.outputPath(`library-${mode}.png`),

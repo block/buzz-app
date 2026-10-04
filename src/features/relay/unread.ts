@@ -1448,7 +1448,8 @@ export function createUnread({
             include_aux: true,
             limit: SWEEP_PAGE,
             until,
-            ...(after === undefined ? {} : { since: after + 1 }),
+            // Always bounded below: a range read, never an older-history page.
+            since: (after ?? -1) + 1,
           },
         ],
         { signal, priority: "background" },

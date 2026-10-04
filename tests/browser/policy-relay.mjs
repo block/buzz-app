@@ -438,7 +438,7 @@ export function policyRelay({
         // sidebar preview that happens to contain that channel.
         const quota = filter.kinds?.includes(39002)
           ? "roster"
-          : filter.kinds?.includes(9)
+          : filter.kinds?.includes(9) && filter.since === undefined
             ? filter.until === undefined
               ? filter["#h"]?.length === 1 && filter.top_level === true
                 ? channel
@@ -504,7 +504,13 @@ export function policyRelay({
               resolve(Response.json(result));
             });
           });
-        if (filter.until !== undefined && holdOlder)
+        // A read bounded below by `since` is a range read (the unread channel
+        // sweep), not an older-history page.
+        if (
+          filter.until !== undefined &&
+          filter.since === undefined &&
+          holdOlder
+        )
           return new Promise((resolve, reject) => {
             const abort = () => reject(init.signal.reason);
             init.signal.addEventListener("abort", abort, { once: true });

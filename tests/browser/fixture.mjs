@@ -1327,10 +1327,12 @@ export const test = base.extend({
           ])
           .filter(
             (event) =>
-              filter.until === undefined ||
-              event.created_at < filter.until ||
-              (event.created_at === filter.until &&
-                event.id > filter.before_id),
+              (filter.since === undefined ||
+                event.created_at >= filter.since) &&
+              (filter.until === undefined ||
+                event.created_at < filter.until ||
+                (event.created_at === filter.until &&
+                  event.id > filter.before_id)),
           )
           .toSorted(
             (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
@@ -1342,6 +1344,10 @@ export const test = base.extend({
         throw new Error(`Unexpected query: ${JSON.stringify(filter)}`);
       const candidates = history
         .filter((event) => !filter.kinds || filter.kinds.includes(event.kind))
+        .filter(
+          (event) =>
+            filter.since === undefined || event.created_at >= filter.since,
+        )
         .filter(
           (event) =>
             filter.until === undefined ||
@@ -1725,7 +1731,13 @@ export const test = base.extend({
               .map((event) => [event.id, event]),
           ).values(),
         ];
-        if (filter.until !== undefined && filter["#h"]?.length) {
+        // Older-history pages are held for the test to release. A read bounded
+        // below by `since` is a range read (the unread channel sweep), not a page.
+        if (
+          filter.until !== undefined &&
+          filter.since === undefined &&
+          filter["#h"]?.length
+        ) {
           pending.push({
             community,
             channel: filter["#h"][0],

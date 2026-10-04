@@ -2804,8 +2804,9 @@ it("a sweep folds read message marks into the channel mark, through the settle c
       [`msg:${recent.id}`]: NOW - 100,
     }),
   );
-  expect(ranges[0]).toMatchObject({ until: NOW - 1800 });
-  expect(ranges[0]?.since).toBeUndefined();
+  // Without a channel mark the range still has a lower bound, so the read
+  // is never mistaken for an older-history page.
+  expect(ranges[0]).toMatchObject({ since: 0, until: NOW - 1800 });
   // The sweep comes back once the recent read has settled too, and reads
   // only what follows the channel mark.
   clock(NOW + 2000);

@@ -401,3 +401,44 @@ it("retains every protected inherited floor at the exact serialized reserve cap"
   );
   expect(kept.reserve).toEqual(reserve);
 });
+it("refilling a full budget with covered marks scans each mark a bounded number of times", () => {
+  // Carl's shape: thread catch-up marks nearly fill the budget, and a merge
+  // brings many message marks that the kept channel mark already covers.
+  const hex = (prefix: string, n: number) =>
+    `${prefix}${n.toString(16).padStart(64, "0")}`;
+  // 1,115 of these leave room for one more message mark at the local limit.
+  const activity = Array.from({ length: 1115 }, (_, n) =>
+    hex("thread-activity:", n),
+  );
+  const messages = Array.from({ length: 480 }, (_, n) => hex("msg:", n));
+  const state = {
+    frontiers: {
+      room: 1000,
+      ...Object.fromEntries(activity.map((key, n) => [key, 2000 + n])),
+      ...Object.fromEntries(messages.map((key, n) => [key, 100 + n])),
+    },
+    overrides: {},
+  };
+  let calls = 0;
+  const covered = (
+    key: string,
+    frontier: (key: string) => number | undefined,
+  ) => {
+    calls++;
+    return key.startsWith("msg:") &&
+      (frontier("room") ?? -1) >= (frontier(key) ?? 0)
+      ? "room"
+      : undefined;
+  };
+  // The catch-up marks are local; the message marks arrive from a peer.
+  const recent = Object.fromEntries(activity.map((key, n) => [key, 5000 + n]));
+  const kept = retainRead([state], recent, "fixture", undefined, covered);
+  const marks = Object.keys(state.frontiers).length;
+  expect(calls).toBeLessThan(4 * marks);
+  expect(kept.state.frontiers.room).toBe(1000);
+  for (const key of messages) expect(kept.state.frontiers[key]).toBeUndefined();
+  // The freed space went to the catch-up marks.
+  expect(
+    activity.filter((key) => kept.state.frontiers[key] !== undefined).length,
+  ).toBeGreaterThan(1000);
+});

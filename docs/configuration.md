@@ -11,6 +11,7 @@ not in source. Build defaults are readable binary data, **never secret storage**
 | `BUZZ_BUILD_AGENT_ENV` | Native build: allowlisted multiline Databricks host/model/filter defaults. Runtime, OAuth/discovery and editor share one compiled floor. |
 | `BUZZ_BUILD_BUZZ_AGENT_PROVIDER` | Native build: lowest-precedence Buzz Agent provider, never a default for other harnesses. |
 | `BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY` | Native build: presence-only local listener policy clamp, including saved/imported agents. |
+| `BUZZ_BUILDERLAB_URL` | Vite build: public URL exposed as `import.meta.env.VITE_BUZZ_BUILDERLAB_URL` in web and packaged desktop frontend code; no runtime override. |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_DEV_OPEN_RELAY` | Development-specific override of that alias: only `1` enables; `0` explicitly opts out. Requires a relay URL and live viewer pin to have an effect. |
@@ -37,6 +38,28 @@ An unset provider build flag does not select Databricks on behalf of an existing
 blank agent. The Create form retains its existing Databricks suggestion when no
 provider floor exists. Supplying a provider floor leaves the saved selector blank
 so later build defaults can take effect. Saved explicit settings remain explicit.
+
+## Builderlab URL build input
+
+Set `BUZZ_BUILDERLAB_URL` in repository-root `.env.local` for development, or in
+the process running `bin/pnpm build` / `bin/pnpm tauri build` for packaging:
+
+```sh
+BUZZ_BUILDERLAB_URL=https://builderlab.example.com bin/pnpm tauri build
+```
+
+Vite loads this public input through its existing `BUZZ_` allowlist and exposes it
+as `import.meta.env.VITE_BUZZ_BUILDERLAB_URL`. Its standard mode-specific `.env`
+files also apply. The process environment takes precedence, including an explicit
+empty value. When unset, the value is an empty string; the repository supplies no
+deployment default. Never put credentials in it.
+
+Restart Vite after changing development inputs. Production web and desktop
+frontend builds substitute the value into compiled code: changing `.env.local`
+or the launched app's environment afterward cannot override it. Rebuild and
+redistribute to change a packaged value. This adds a configuration input for
+frontend consumers; the existing development Builderlab broker continues to use
+its own endpoint.
 
 ## Deliberate exclusions
 

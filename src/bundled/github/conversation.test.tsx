@@ -94,6 +94,79 @@ it("loads credential-free bounded sources and honors paging without following ex
   );
   expect(fetch).toHaveBeenCalledTimes(2);
 });
+it.each([
+  ["discussion", "issues/1/comments"],
+  ["reviews", "pulls/1/reviews"],
+] as const)(
+  "accepts repository-ID paging for %s and rebuilds the trusted request",
+  async (source, path) => {
+    const first = {
+      id: 1,
+      created_at: date(13),
+      submitted_at: date(13),
+      body: "First page",
+    };
+    const fetch = vi.fn(async (target: string) =>
+      target.includes("page=2")
+        ? response([{ ...first, id: 2, body: "Second page" }])
+        : response([first], {
+            link: `<https://api.github.com/repositories/123456/${path}?per_page=30&page=2>; rel="next", <https://api.github.com/repositories/123456/${path}?per_page=30&page=4>; rel="last"`,
+          }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const signal = new AbortController().signal;
+    const firstPage = await loadConversationPage(url, source, 1, signal);
+    expect(firstPage.entries).toHaveLength(1);
+    expect(firstPage.next).toBe(2);
+    if (firstPage.next === undefined) throw new Error("Expected another page");
+    const secondPage = await loadConversationPage(
+      url,
+      source,
+      firstPage.next,
+      signal,
+    );
+    expect(secondPage.entries[0]?.body).toBe("Second page");
+    expect(secondPage.next).toBeUndefined();
+    expect(fetch.mock.calls.map(([target]) => target)).toEqual([
+      `https://api.github.com/repos/sample/project/${path}?per_page=30&page=1`,
+      `https://api.github.com/repos/sample/project/${path}?per_page=30&page=2`,
+    ]);
+  },
+);
+it.each(["discussion", "reviews"] as const)(
+  "rejects unexpected %s pagination without fetching it",
+  async (source) => {
+    const path = source === "reviews" ? "pulls/1/reviews" : "issues/1/comments";
+    const valid = `https://api.github.com/repositories/123/${path}?page=2`;
+    const links = [
+      valid.replace("api.github.com", "other.test"),
+      valid.replace("https:", "http:"),
+      valid.replace("repositories/123", "repos/other/project"),
+      valid.replace("repositories/123", "repositories/abc"),
+      valid.replace("/1/", "/2/"),
+      valid.replace(
+        path,
+        source === "reviews" ? "issues/1/comments" : "pulls/1/reviews",
+      ),
+      valid.replace("page=2", "page=1"),
+      valid.replace("page=2", "page=3"),
+      `${valid}&page=3`,
+      `${valid}#fragment`,
+      valid.replace("api.github.com", "user@api.github.com"),
+    ];
+    const fetch = vi.fn(async () => response([]));
+    vi.stubGlobal("fetch", fetch);
+    for (const link of links) {
+      fetch.mockImplementation(async () =>
+        response([], { link: `<${link}>; rel="next"` }),
+      );
+      await expect(
+        loadConversationPage(url, source, 1, new AbortController().signal),
+      ).rejects.toThrow("unexpected next-page");
+    }
+    expect(fetch).toHaveBeenCalledTimes(links.length);
+  },
+);
 it("uses discussion creation time and omits unsafe avatars and unavailable dates", async () => {
   const fetch = vi.fn(async (_target: string) =>
     response([

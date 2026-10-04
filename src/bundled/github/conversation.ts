@@ -93,7 +93,21 @@ export async function loadConversationPage(
     if (!link) throw new Error("GitHub returned an unreadable next-page link.");
     const parsed = new URL(link);
     const candidate = Number(parsed.searchParams.get("page"));
-    if (`${parsed.origin}${parsed.pathname}` !== base || candidate !== page + 1)
+    // GitHub canonicalizes owner/name links to repository IDs. Read only the
+    // cursor; subsequent requests still use our trusted owner/name endpoint.
+    const canonicalPath = parsed.pathname.replace(
+      /^\/repositories\/[1-9]\d*(?=\/)/,
+      request.pathname.split("/").slice(0, 4).join("/"),
+    );
+    if (
+      parsed.origin !== request.origin ||
+      canonicalPath !== request.pathname ||
+      parsed.username ||
+      parsed.password ||
+      parsed.hash ||
+      parsed.searchParams.getAll("page").length !== 1 ||
+      candidate !== page + 1
+    )
       throw new Error("GitHub returned an unexpected next-page link.");
     next = candidate;
   }

@@ -510,18 +510,14 @@ test("historical single-day DMs and their threads expose dates without hover", a
   const event = app.append("primary", channel, "Historical message");
   const row = timeline.locator(`[data-message-id="${event.id}"]`);
   await expect(row).toBeVisible();
-  const date = await page.evaluate(
-    (seconds) =>
-      new Date(seconds * 1000).toLocaleDateString(undefined, {
-        year: "numeric",
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      }),
-    event.created_at,
-  );
+  const day = await page.evaluate((seconds) => {
+    const date = new Date(seconds * 1000);
+    return [date.getFullYear(), date.getMonth() + 1, date.getDate()]
+      .map((part) => String(part).padStart(2, "0"))
+      .join("-");
+  }, event.created_at);
   await page.mouse.move(0, 0);
-  await expect(timeline.getByText(date, { exact: true })).toBeVisible();
+  await expect(timeline.locator(`[data-day="${day}"]`)).toBeVisible();
   await expect(
     timeline.getByRole("button", { name: "Load older messages" }),
   ).toHaveCount(0);
@@ -534,5 +530,5 @@ test("historical single-day DMs and their threads expose dates without hover", a
     name: "Thread",
     exact: true,
   });
-  await expect(thread.getByText(date, { exact: true })).toBeVisible();
+  await expect(thread.locator(`[data-day="${day}"]`)).toBeVisible();
 });

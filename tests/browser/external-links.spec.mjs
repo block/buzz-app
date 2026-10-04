@@ -573,7 +573,8 @@ test("PR state, changes and branch links use shared roles in both themes", async
       await expect(branch).toHaveCSS("color", colors.link);
       await expect(branch).toHaveCSS("background-color", colors.linkFill);
       await expect(branch).toHaveCSS("font-size", "12px");
-      await expect(branch).toHaveCSS("border-radius", "6px");
+      // Main standardized the chip role to 4px; keep the token-owned shape.
+      await expect(branch).toHaveCSS("border-radius", "4px");
       await expect(branch).toHaveCSS("text-decoration-line", "none");
       expect(
         await branch.evaluate((node) => getComputedStyle(node).fontFamily),

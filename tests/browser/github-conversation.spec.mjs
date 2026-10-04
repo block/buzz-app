@@ -1473,6 +1473,7 @@ test("source recovery retains keyboard focus and respects moving away", async ({
 }) => {
   const pending = [];
   let commentCalls = 0;
+  let reviewCalls = 0;
   const commentUrl =
     "https://api.github.com/repos/sample/project/issues/1/comments?per_page=30&page=1";
   app.report.githubFailures = [commentUrl, commentUrl];
@@ -1490,10 +1491,24 @@ test("source recovery retains keyboard focus and respects moving away", async ({
           headers:
             commentCalls === 3
               ? {
+                  "access-control-expose-headers": "Link",
                   link: '<https://api.github.com/repositories/123/issues/1/comments?per_page=30&page=2>; rel="next"',
                 }
               : {},
         });
+      }
+      if (request.pathname.endsWith("/reviews")) {
+        reviewCalls++;
+        if (reviewCalls === 1)
+          return route.fulfill({
+            json: [],
+            headers: {
+              "access-control-expose-headers": "Link",
+              link: '<https://api.github.com/repositories/123/pulls/1/reviews?per_page=30&page=2>; rel="next"',
+            },
+          });
+        await new Promise((resolve) => pending.push(resolve));
+        return route.fulfill({ json: [] });
       }
       return route.fulfill({
         json: request.pathname.endsWith("/reviews")
@@ -1556,4 +1571,22 @@ test("source recovery retains keyboard focus and respects moving away", async ({
   await expect(more).toHaveCount(0);
   await expect(conversation).toBeFocused();
   expect(commentCalls).toBe(4);
+  const reviews = conversation.getByRole("button", {
+    name: "Load more reviews",
+  });
+  await reviews.focus();
+  await page.keyboard.press("Enter");
+  const title = page.getByRole("link", { name: "Keyboard recovery #1" });
+  try {
+    await expect.poll(() => pending.length).toBe(1);
+    await expect(reviews).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(reviews).not.toBeFocused();
+    await title.focus();
+  } finally {
+    pending.shift()?.();
+  }
+  await expect(reviews).toHaveCount(0);
+  await expect(title).toBeFocused();
+  expect(reviewCalls).toBe(2);
 });

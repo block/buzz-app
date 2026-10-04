@@ -4,6 +4,7 @@ import type { RelayEvent } from "./events";
 import {
   effectiveFrontier,
   overrideActive,
+  READ_STATE_KEYS,
   targetKey,
   type ReadTarget,
   type ReadState,
@@ -270,6 +271,23 @@ export function createUnread({
     mentioned: boolean;
     broadcast: boolean;
   };
+  const evidenceOf = (
+    event: RelayEvent,
+    channelId: string,
+    rootId = root(event),
+    parentId = threadReference(event)?.parentId,
+  ): Evidence => ({
+    event,
+    channelId,
+    rootId: parentId ? rootId : undefined,
+    parentId,
+    mentioned: event.tags.some(
+      ([name, value]) => name === "p" && value === viewer,
+    ),
+    broadcast: event.tags.some(
+      ([name, value]) => name === "broadcast" && value === "1",
+    ),
+  });
   let indexed = false;
   const byChannel = new Map<string, Evidence[]>();
   const byId = new Map<string, Evidence>();
@@ -334,6 +352,17 @@ export function createUnread({
   let failures = 0;
   let retry: ReturnType<typeof setTimeout> | undefined;
   const membershipListeners = new Set<() => void>();
+  // Channel sweep: message ids a complete range read placed in a channel the
+  // sweep then marked read, so coverage can drop their marks without
+  // retained evidence. Bounded like the read-state key budget.
+  const swept = new Map<string, { channelId: string; createdAt: number }>();
+  const sweepTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const sweepWanted = new Map<string, number>();
+  const sweepRetries = new Map<string, number>();
+  // Channel marks whose range could not be read completely. The range only
+  // grows until the mark moves, so asking again would repeat the same reads.
+  const sweepIncomplete = new Map<string, number | undefined>();
+  let sweeps: Promise<void> = Promise.resolve();
   function indexEvidence() {
     if (indexed) return;
     indexed = true;
@@ -364,18 +393,7 @@ export function createUnread({
         }
       }
       const rows = byChannel.get(channel) ?? [];
-      const entry: Evidence = {
-        event,
-        channelId: channel,
-        rootId: parentId ? rootId : undefined,
-        parentId,
-        mentioned: event.tags.some(
-          ([name, value]) => name === "p" && value === viewer,
-        ),
-        broadcast: event.tags.some(
-          ([name, value]) => name === "broadcast" && value === "1",
-        ),
-      };
+      const entry = evidenceOf(event, channel, rootId, parentId);
       rows.push(entry);
       byChannel.set(channel, rows);
       byId.set(event.id, entry);
@@ -475,7 +493,7 @@ export function createUnread({
    * from its own event, but finds its thread only while the root is loaded;
    * after a reload without the root, a thread mark no longer reads it.
    * Only retained evidence supplies a message's channel; marks without it are
-   * kept. */
+   * kept. A channel sweep's complete range read supplies it too. */
   reads.setCoverage((key, frontier) => {
     const value = frontier(key) ?? Number.POSITIVE_INFINITY;
     const separator = key.indexOf(":");
@@ -487,9 +505,12 @@ export function createUnread({
     if (kind === "activity") return by(id, value);
     if (closed) return undefined;
     indexEvidence();
-    const entry = byId.get(id);
+    const retained = byId.get(id);
+    const entry = retained
+      ? { channelId: retained.channelId, createdAt: retained.event.created_at }
+      : swept.get(id);
     if (!entry) return undefined;
-    if (kind === "msg") return by(entry.channelId, entry.event.created_at);
+    if (kind === "msg") return by(entry.channelId, entry.createdAt);
     if (kind === "thread") return by(entry.channelId, value);
     if (kind === "thread-activity")
       return by(entry.channelId, value) ?? by(`thread:${id}`, value);
@@ -978,6 +999,11 @@ export function createUnread({
       forcedMessages.delete(channel);
       entered.delete(channel);
     }
+    for (const channel of new Set([
+      ...sweepTimers.keys(),
+      ...[...swept.values()].map((entry) => entry.channelId),
+    ]))
+      if (!allowed(channel)) clearSweeps(channel);
     const retained = new Map(events);
     const owners = channelOwnership((targetId) => retained.get(targetId));
     for (const [id, event] of retained) {
@@ -1315,6 +1341,7 @@ export function createUnread({
         freshness = "observed";
         error = undefined;
         publish();
+        sweepRetained();
       } catch (cause) {
         if (closed || generation !== epoch) return;
         freshness = "stale";
@@ -1330,6 +1357,226 @@ export function createUnread({
     });
     publish();
     return refresh;
+  }
+  /** Channel sweep. Normal reading saves one mark per message; a sweep folds
+   * those into the channel mark once the channel is read through a point.
+   * The relay rejects events more than 15 minutes from its clock, so nothing
+   * can still arrive at or before `now - SWEEP_SETTLE`. A sweep reads every
+   * content event between the channel mark and that cut, and raises the mark
+   * only through events this client already treats as read. It never trusts
+   * the retained sample: a range it cannot read completely is not swept. */
+  const SWEEP_SETTLE = 30 * 60;
+  const SWEEP_DELAY = 10_000;
+  const SWEEP_PAGE = 500;
+  const SWEEP_PAGES = 10;
+  function scheduleSweep(channelId: string, through: number, delay = 0) {
+    if (closed || !allowed(channelId)) return;
+    sweepWanted.set(
+      channelId,
+      Math.max(sweepWanted.get(channelId) ?? 0, through),
+    );
+    if (sweepTimers.has(channelId) || sweepTimers.size >= 64) return;
+    const due = Math.max(
+      SWEEP_DELAY,
+      delay,
+      (through + SWEEP_SETTLE + 1) * 1000 - Date.now(),
+    );
+    sweepTimers.set(
+      channelId,
+      setTimeout(() => {
+        sweepTimers.delete(channelId);
+        sweeps = sweeps.then(() => sweepChannel(channelId)).catch(() => {});
+      }, due),
+    );
+  }
+  /** Marks saved before this session fold too: sweep each channel whose
+   * retained evidence has a message mark above its channel mark. */
+  function sweepRetained() {
+    indexEvidence();
+    const { frontiers } = reads.state();
+    for (const [channelId, rows] of byChannel) {
+      const mark = frontiers[channelId] ?? -1;
+      let newest: number | undefined;
+      for (const { event } of rows)
+        if (
+          event.created_at > mark &&
+          frontiers[`msg:${event.id}`] !== undefined
+        )
+          newest = Math.max(newest ?? 0, event.created_at);
+      if (newest !== undefined) scheduleSweep(channelId, newest);
+    }
+  }
+  function clearSweeps(channelId?: string) {
+    for (const [id, timer] of sweepTimers)
+      if (channelId === undefined || id === channelId) {
+        clearTimeout(timer);
+        sweepTimers.delete(id);
+        sweepWanted.delete(id);
+        sweepRetries.delete(id);
+      }
+    for (const id of sweepIncomplete.keys())
+      if (channelId === undefined || id === channelId)
+        sweepIncomplete.delete(id);
+    for (const [id, entry] of swept)
+      if (channelId === undefined || entry.channelId === channelId)
+        swept.delete(id);
+  }
+  /** Manual intent anywhere in the channel stops a sweep: it never clears
+   * intent, and overrides make every mark load-bearing (see retention). */
+  const sweepable = (channelId: string) =>
+    !Object.keys(reads.state().overrides).length &&
+    !reads.localUnread(channelId) &&
+    !reads.localUnread(messageForceKey(channelId)) &&
+    !forcedMessages.get(channelId)?.size;
+  /** Every content event in (`after`, `through`] with its deletions, or
+   * undefined when the relay cannot show the range is complete. A page with
+   * fewer content events than its limit is the end of the range. */
+  async function sweepRange(
+    channelId: string,
+    after: number | undefined,
+    through: number,
+    signal: AbortSignal,
+  ): Promise<RelayEvent[] | undefined> {
+    const found = new Map<string, RelayEvent>();
+    let until = through;
+    for (let page = 0; page < SWEEP_PAGES; page++) {
+      const rows = await reader.read(
+        [
+          {
+            kinds: contentKinds,
+            "#h": [channelId],
+            include_aux: true,
+            limit: SWEEP_PAGE,
+            until,
+            ...(after === undefined ? {} : { since: after + 1 }),
+          },
+        ],
+        { signal, priority: "background" },
+      );
+      for (const event of rows) found.set(event.id, event);
+      const content = rows.filter(contentKind);
+      if (content.length < SWEEP_PAGE) return [...found.values()];
+      // `until` is inclusive; a page that cannot move back in time is a
+      // single second holding a full page, which no cursor can split.
+      const oldest = Math.min(...content.map((event) => event.created_at));
+      if (oldest >= until) return undefined;
+      until = oldest;
+    }
+    return undefined;
+  }
+  async function sweepChannel(channelId: string) {
+    const generation = epoch;
+    const live = () =>
+      !closed &&
+      generation === epoch &&
+      allowed(channelId) &&
+      sweepable(channelId);
+    await reads.ready;
+    if (!live() || reads.snapshot().capability !== "frontier-sync") return;
+    const wanted = sweepWanted.get(channelId) ?? 0;
+    sweepWanted.delete(channelId);
+    const mark = reads.state().frontiers[channelId];
+    const cut = Math.floor(Date.now() / 1000) - SWEEP_SETTLE;
+    if (cut <= 0 || (mark ?? -1) >= cut) return;
+    if (
+      sweepIncomplete.has(channelId) &&
+      sweepIncomplete.get(channelId) === mark
+    )
+      return;
+    const signal = AbortSignal.any([
+      lifetime.signal,
+      AbortSignal.timeout(30_000),
+    ]);
+    const range = await sweepRange(channelId, mark, cut, signal);
+    if (!live()) return;
+    if (!range) {
+      sweepIncomplete.delete(channelId);
+      sweepIncomplete.set(channelId, mark);
+      for (const [oldest] of sweepIncomplete) {
+        if (sweepIncomplete.size <= 1024) break;
+        sweepIncomplete.delete(oldest);
+      }
+      return;
+    }
+    const removed = new Set<string>();
+    for (const event of range)
+      if (event.kind === 5 || event.kind === 9005)
+        for (const [name, id] of event.tags)
+          if (name === "e" && id) removed.add(`${event.pubkey}:${id}`);
+    indexEvidence();
+    const state = reads.state();
+    const dm = isDm(channelId);
+    let through = cut;
+    let waiting = false;
+    const content: RelayEvent[] = [];
+    // Oldest first: the first event still unread ends the sweep.
+    const ordered = range
+      .filter(
+        (event) =>
+          contentKind(event) &&
+          channelOf(event) === channelId &&
+          event.created_at > (mark ?? -1) &&
+          event.created_at <= cut &&
+          !removed.has(`${event.pubkey}:${event.id}`) &&
+          !deleted(event),
+      )
+      .sort((a, b) => a.created_at - b.created_at);
+    for (const event of ordered) {
+      const entry = byId.get(event.id) ?? evidenceOf(event, channelId);
+      // A reply the marks do not read may still be unread when its
+      // conversation is not decided; ask, and sweep again once it is.
+      const open = undecided(entry, dm) && afterFrontier(entry, state, dm);
+      if (
+        open ||
+        isUnread(entry, state, dm) ||
+        reads.localUnread(`thread:${event.id}`)
+      ) {
+        if (open) {
+          want(entry, dm);
+          waiting = true;
+        }
+        through = event.created_at - 1;
+        break;
+      }
+      content.push(event);
+    }
+    if (waiting && (sweepRetries.get(channelId) ?? 0) < 3) {
+      sweepRetries.set(channelId, (sweepRetries.get(channelId) ?? 0) + 1);
+      scheduleSweep(channelId, wanted, 60_000);
+    } else if (!waiting) sweepRetries.delete(channelId);
+    // Reading continues after the cut; sweep again once it settles.
+    if (!waiting && wanted > cut && through === cut)
+      scheduleSweep(channelId, wanted);
+    if (through <= (mark ?? -1)) return;
+    const keys = state.frontiers;
+    for (const event of content)
+      if (
+        event.created_at <= through &&
+        (keys[`msg:${event.id}`] !== undefined ||
+          keys[`thread:${event.id}`] !== undefined ||
+          keys[`thread-activity:${event.id}`] !== undefined)
+      ) {
+        swept.delete(event.id);
+        swept.set(event.id, { channelId, createdAt: event.created_at });
+      }
+    for (const [oldest] of swept) {
+      if (swept.size <= READ_STATE_KEYS) break;
+      swept.delete(oldest);
+    }
+    await serialize(channelId, () =>
+      reads.read(
+        channelId,
+        through,
+        () =>
+          live() &&
+          content.every(
+            (event) =>
+              event.created_at > through ||
+              (!reads.localUnread(`msg:${event.id}`) &&
+                !reads.localUnread(`thread:${event.id}`)),
+          ),
+      ),
+    );
   }
   /** The viewer's deletions end lookup memberships they were evidence for,
    * including ones decided before the deletion, and even when the deletion
@@ -1662,6 +1909,7 @@ export function createUnread({
               () => valid() && requireMessage(target, id) === event,
             );
             observed.add(id);
+            scheduleSweep(channelId, event.created_at);
           }
         },
       });
@@ -1669,7 +1917,7 @@ export function createUnread({
     async markThrough(target, id) {
       const event = requireMessage(target, id),
         generation = epoch;
-      return serialize(target.channelId, () =>
+      const result = await serialize(target.channelId, () =>
         reads.read(
           targetKey(target),
           event.created_at,
@@ -1680,6 +1928,8 @@ export function createUnread({
           true,
         ),
       );
+      scheduleSweep(target.channelId, event.created_at);
+      return result;
     },
     async markMessageUnread(channelId, messageId) {
       const visit = visits.get(channelId) ?? 0;
@@ -1740,6 +1990,10 @@ export function createUnread({
           for (const row of rows) forced?.delete(row.id);
           if (!forced?.size) forcedMessages.delete(channelId);
           publish(new Set([channelId]));
+          scheduleSweep(
+            channelId,
+            Math.max(...rows.map((row) => row.created_at)),
+          );
         }
         return result;
       });
@@ -1929,6 +2183,7 @@ export function createUnread({
       known.clear();
       forcedMessages.clear();
       entered.clear();
+      clearSweeps();
       bytes = 0;
       freshness = "unknown";
       error = undefined;
@@ -1956,6 +2211,7 @@ export function createUnread({
       inboxListeners.clear();
       forcedMessages.clear();
       entered.clear();
+      clearSweeps();
       reads.dispose();
     },
   };

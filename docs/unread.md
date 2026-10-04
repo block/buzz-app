@@ -293,10 +293,38 @@ channel mark, and a catch-up mark under its channel or thread mark. A thread mar
 replaces a message mark: a reply finds its channel from its own event, but finds its
 thread only while its root is loaded. Catch-up marks never make another mark redundant:
 older clients ignore them and read through the message, thread and channel marks.
-Marks without retained evidence are kept, and nothing is dropped while any override
-exists. Reading an already covered message saves nothing. Only frontier-only hints can
-be pruned; older messages may look unread again. No synthetic channel prefix is
-introduced to fit.
+Marks without retained evidence are kept, unless a channel sweep (below) placed them,
+and nothing is dropped while any override exists. Reading an already covered message
+saves nothing. Only frontier-only hints can be pruned; older messages may look unread
+again. Budget pressure never introduces a synthetic channel prefix to fit.
+
+**Channel sweep.** Normal reading saves one message mark per message, so the budget
+fills with marks that a channel mark could replace. After reading in a channel, and
+after unread repair for channels whose retained evidence has message marks above
+their channel mark, the app sweeps that channel in the background. A sweep raises the
+channel mark only to a point where the app can show that nothing at or before it is
+unread:
+
+- The cut is 30 minutes before the device clock. The relay rejects events more than
+  15 minutes from its own clock, so nothing new can arrive at or before the cut; the
+  other 15 minutes allow for device clock error.
+- It reads every content event in the channel between the current channel mark and
+  the cut, replies included, with their deletions. The read pages back in time; a page
+  with fewer content events than its limit ends the range. A range that does not end
+  within ten pages of 500, or a full page inside one second, is not swept. The retained
+  evidence sample is never trusted as complete.
+- Oldest first, the first event this client counts as unread ends the sweep, and the
+  mark stops one second before it. A reply whose conversation is not yet known also
+  ends it; the sweep asks about the conversation and tries again later.
+- Any override, channel or message-force manual intent, or forced message stops the
+  whole sweep. Manual intent on a message or thread in range stops it before that
+  event. A sweep never clears intent.
+- The new channel mark covers the events the sweep read, so their message, thread and
+  catch-up marks are dropped even when those events are no longer retained.
+
+Raising the channel mark also reads replies this client did not count, such as
+replies in other people's threads. If the viewer later joins one of those
+conversations, its older replies stay read.
 The automatic activity keys share these bounded-hint limits. Older clients can
 preserve/republish them but do not interpret their catch-up meaning; mixed-version
 sidebar behavior is not identical. No storage migration is required.

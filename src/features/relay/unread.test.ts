@@ -2725,3 +2725,286 @@ it("a read reply stays read after a reload that does not load its root", async (
     }),
   );
 });
+
+// Channel sweep: a device clock well past the fixture events, so the
+// 30-minute settle window has passed for the older ones.
+const NOW = 1_800_000_000;
+/** A relay that answers sweep range reads from `events`, newest first, with
+ * deletions of the rows it returns. Every other read is empty. */
+function sweepRelay(
+  h: ReturnType<typeof setup>,
+  events: () => readonly RelayEvent[],
+) {
+  const ranges: import("./events").ReadFilter[] = [];
+  h.query.mockImplementation(async (filters) =>
+    filters.flatMap((filter) => {
+      if (
+        filter.limit !== 500 ||
+        filter.until === undefined ||
+        filter.authors ||
+        filter.ids ||
+        !filter["#h"]
+      )
+        return [];
+      ranges.push(filter);
+      const channels = filter["#h"];
+      const rows = events()
+        .filter(
+          (event) =>
+            filter.kinds?.includes(event.kind) &&
+            event.tags.some(
+              ([name, id]) => name === "h" && channels.includes(id ?? ""),
+            ) &&
+            event.created_at <= (filter.until ?? Infinity) &&
+            event.created_at >= (filter.since ?? 0),
+        )
+        .sort((a, b) => b.created_at - a.created_at)
+        .slice(0, filter.limit);
+      const aux = events().filter(
+        (event) =>
+          event.kind === 5 &&
+          event.tags.some(
+            ([name, id]) => name === "e" && rows.some((row) => row.id === id),
+          ),
+      );
+      return [...rows, ...aux];
+    }),
+  );
+  return ranges;
+}
+function sweepTimers() {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  clock(NOW);
+}
+afterEach(() => {
+  vi.useRealTimers();
+});
+async function settle(ms = 11_000) {
+  await vi.advanceTimersByTimeAsync(ms);
+}
+
+it("a sweep folds read message marks into the channel mark, through the settle cut", async () => {
+  sweepTimers();
+  const h = setup();
+  h.grant("room");
+  const old = message(h.alice, "room", "old", NOW - 4000);
+  const older = message(h.alice, "room", "older", NOW - 5000);
+  const recent = message(h.alice, "room", "recent", NOW - 100);
+  const all = [older, old, recent];
+  const ranges = sweepRelay(h, () => all);
+  h.emit(all);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([older.id, old.id, recent.id]);
+  lease.dispose();
+  await settle();
+  // Only events older than 30 minutes fold; the recent mark stays.
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers).toEqual({
+      room: NOW - 1800,
+      [`msg:${recent.id}`]: NOW - 100,
+    }),
+  );
+  expect(ranges[0]).toMatchObject({ until: NOW - 1800 });
+  expect(ranges[0]?.since).toBeUndefined();
+  // The sweep comes back once the recent read has settled too, and reads
+  // only what follows the channel mark.
+  clock(NOW + 2000);
+  await settle(30 * 60 * 1000);
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers).toEqual({ room: NOW + 200 }),
+  );
+  expect(ranges.at(-1)).toMatchObject({
+    since: NOW - 1799,
+    until: NOW + 200,
+  });
+  for (const event of all)
+    expect(h.session.unread.attention("room", event.id).unread).toBe(false);
+});
+
+it("a sweep drops message marks whose events are no longer retained", async () => {
+  sweepTimers();
+  const h = setup();
+  h.grant("room");
+  const first = message(h.alice, "room", "first", NOW - 5000);
+  const second = message(h.alice, "room", "second", NOW - 4000);
+  const third = message(h.alice, "room", "third", NOW - 3000);
+  sweepRelay(h, () => [first, second, third]);
+  h.emit([first, second]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([first.id, second.id]);
+  lease.dispose();
+  // A reload loses the evidence before the sweep runs; the marks survive.
+  await h.clearCache();
+  h.grant("room");
+  h.emit([third]);
+  const again = h.session.unread.reading("room");
+  await again.observe([third.id]);
+  again.dispose();
+  expect(Object.keys(h.journal()?.state.frontiers ?? {})).toHaveLength(3);
+  await settle();
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers).toEqual({ room: NOW - 1800 }),
+  );
+});
+
+it("a sweep stops before the first unread message, including replies it never loaded", async () => {
+  sweepTimers();
+  const h = setup();
+  h.grant("room");
+  const read = message(h.alice, "room", "read", NOW - 5000);
+  const root = message(h.alice, "room", "root", NOW - 4500);
+  // The mention is in a thread this client never opened.
+  const mention = message(h.alice, "room", "mention", NOW - 4000, [
+    ["e", root.id, "", "root"],
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  const later = message(h.alice, "room", "later", NOW - 3000);
+  sweepRelay(h, () => [read, root, mention, later]);
+  h.emit([read, root, later]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([read.id, root.id, later.id]);
+  lease.dispose();
+  await settle();
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers).toEqual({
+      room: NOW - 4001,
+      [`msg:${later.id}`]: NOW - 3000,
+    }),
+  );
+  h.emit([mention]);
+  await vi.waitFor(() =>
+    expect(h.session.unread.attention("room", mention.id).unread).toBe(true),
+  );
+});
+
+it("an unread top-level message stops a sweep; a deleted one does not", async () => {
+  sweepTimers();
+  const h = setup();
+  h.grant("room");
+  const read = message(h.alice, "room", "read", NOW - 5000);
+  const removed = message(h.alice, "room", "removed", NOW - 4500);
+  const deletion = signed(h.alice, {
+    kind: 5,
+    content: "",
+    created_at: NOW - 4400,
+    tags: [
+      ["h", "room"],
+      ["e", removed.id],
+    ],
+  });
+  const unread = message(h.alice, "room", "unread", NOW - 4000);
+  const later = message(h.alice, "room", "later", NOW - 3000);
+  sweepRelay(h, () => [read, removed, deletion, unread, later]);
+  h.emit([read, unread, later]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([read.id, later.id]);
+  lease.dispose();
+  await settle();
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers).toEqual({
+      room: NOW - 4001,
+      [`msg:${later.id}`]: NOW - 3000,
+    }),
+  );
+  expect(h.session.unread.attention("room", unread.id).unread).toBe(true);
+});
+
+it("a range the relay cannot show complete is not swept", async () => {
+  sweepTimers();
+  const h = setup();
+  h.grant("room");
+  const read = message(h.alice, "room", "read", NOW - 5000);
+  // A full page inside one second: `until` cannot move past it.
+  const crowded = Array.from({ length: 500 }, () => read);
+  const ranges = sweepRelay(h, () => crowded);
+  h.emit([read]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([read.id]);
+  lease.dispose();
+  await settle();
+  await vi.waitFor(() => expect(ranges.length).toBe(2));
+  await settle();
+  expect(h.journal()?.state.frontiers).toEqual({
+    [`msg:${read.id}`]: NOW - 5000,
+  });
+  // The same channel mark is not tried again; the range only grows.
+  const again = h.session.unread.reading("room");
+  const next = message(h.alice, "room", "next", NOW - 4000);
+  h.emit([next]);
+  await again.observe([next.id]);
+  again.dispose();
+  await settle();
+  expect(ranges).toHaveLength(2);
+});
+
+it("manual unread stops a sweep", async () => {
+  sweepTimers();
+  const h = setup();
+  h.grant("room");
+  const first = message(h.alice, "room", "first", NOW - 5000);
+  const second = message(h.alice, "room", "second", NOW - 4000);
+  const ranges = sweepRelay(h, () => [first, second]);
+  h.emit([first, second]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([first.id, second.id]);
+  lease.dispose();
+  // Message intent: the sweep stops before it.
+  await h.session.unread.markUnreadLocal({
+    kind: "message",
+    channelId: "room",
+    messageId: second.id,
+  });
+  await settle();
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers).toMatchObject({ room: NOW - 4001 }),
+  );
+  expect(h.session.unread.attention("room", second.id).unread).toBe(true);
+  // Channel intent: no sweep at all.
+  const other = setup();
+  other.grant("room");
+  const otherRanges = sweepRelay(other, () => [first, second]);
+  other.emit([first, second]);
+  const otherLease = other.session.unread.reading("room");
+  await otherLease.observe([first.id, second.id]);
+  otherLease.dispose();
+  await other.session.unread.markUnreadLocal(other.target);
+  await settle();
+  expect(otherRanges).toHaveLength(0);
+  expect(other.journal()?.state.frontiers).not.toHaveProperty("room");
+  expect(ranges.length).toBeGreaterThan(0);
+});
+
+it("an undecided reply holds a sweep until its conversation is known", async () => {
+  sweepTimers();
+  const h = setup();
+  h.grant("room");
+  const bob = keypair();
+  const read = message(h.alice, "room", "read", NOW - 5000);
+  const parent = message(bob, "room", "parent", NOW - 4800);
+  // Alice answers Bob; the viewer is not part of that conversation.
+  const aside = message(h.alice, "room", "aside", NOW - 4500, [
+    ["e", parent.id, "", "root"],
+    ["e", parent.id, "", "reply"],
+  ]);
+  sweepRelay(h, () => [read, parent, aside]);
+  h.emit([read, parent]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([read.id, parent.id]);
+  lease.dispose();
+  await settle();
+  // The first sweep stops at the reply and asks about its conversation.
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers).toMatchObject({ room: NOW - 4501 }),
+  );
+  expect(
+    h.query.mock.calls.some(([filters]) =>
+      filters.some((filter) => filter.authors?.includes(h.viewer.pubkey)),
+    ),
+  ).toBe(true);
+  // Once the viewer is known to be outside it, the reply does not hold it.
+  await settle(61_000);
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers).toEqual({ room: NOW - 1800 }),
+  );
+});

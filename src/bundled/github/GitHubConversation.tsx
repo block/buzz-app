@@ -8,6 +8,8 @@ import {
 } from "motion/react";
 import {
   useId,
+  useCallback,
+  type RefObject,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -626,10 +628,26 @@ function History({ run, url }: { run: EventRun; url: string }) {
 function SourceStatus({
   label,
   source,
+  conversation,
 }: {
   label: string;
   source: ReturnType<typeof useConversationSource>;
+  conversation: RefObject<HTMLElement | null>;
 }) {
+  const actionRef = useCallback(
+    (action: HTMLElement | null) => {
+      if (!action) return;
+      // Ref cleanup runs before removal, while the focused control still exists.
+      return () => {
+        if (
+          document.activeElement === action &&
+          conversation.current?.isConnected
+        )
+          conversation.current.focus({ preventScroll: true });
+      };
+    },
+    [conversation],
+  );
   if (!source.loading && !source.error && !source.next) return null;
   return (
     <section className={styles.sourceStatus} aria-label={label}>
@@ -639,17 +657,18 @@ function SourceStatus({
       {source.loading ? (
         <span role="status">Loading {label.toLowerCase()}…</span>
       ) : source.error ? (
-        <>
-          <span role="alert">{source.error}</span>
-          <Button size="xs" onClick={source.retry}>
-            Retry {label.toLowerCase()}
-          </Button>
-        </>
-      ) : source.next ? (
-        <Button size="xs" onClick={source.loadMore}>
-          Load more {label.toLowerCase()}
-        </Button>
+        <span role="alert">{source.error}</span>
       ) : null}
+      {(source.error || source.next) && (
+        <Button
+          ref={actionRef}
+          size="xs"
+          loading={source.loading}
+          onClick={source.error ? source.retry : source.loadMore}
+        >
+          {source.error ? "Retry" : "Load more"} {label.toLowerCase()}
+        </Button>
+      )}
     </section>
   );
 }
@@ -661,6 +680,7 @@ function Conversation({
   details: GitHubDetails;
   url: string;
 }) {
+  const conversation = useRef<HTMLElement>(null);
   const discussion = useConversationSource(url, "discussion");
   const reviews = useConversationSource(url, "reviews");
   const events = useMemo(
@@ -674,6 +694,8 @@ function Conversation({
     <section
       className={styles.conversation}
       aria-label="Pull request conversation"
+      ref={conversation}
+      tabIndex={-1}
     >
       <div
         className={styles.conversationTimeline}
@@ -699,8 +721,16 @@ function Conversation({
           <p className={styles.conversationNotice}>
             Loaded conversation only · some sources are incomplete.
           </p>
-          <SourceStatus label="Discussion" source={discussion} />
-          <SourceStatus label="Reviews" source={reviews} />
+          <SourceStatus
+            label="Discussion"
+            source={discussion}
+            conversation={conversation}
+          />
+          <SourceStatus
+            label="Reviews"
+            source={reviews}
+            conversation={conversation}
+          />
         </div>
       )}
     </section>

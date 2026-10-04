@@ -127,7 +127,7 @@ export function useConversationSource(url: string, source: ConversationSource) {
   useEffect(() => {
     const controller = new AbortController();
     busy.current = true;
-    setResult((old) => ({ ...old, loading: true, error: undefined }));
+    setResult((old) => ({ ...old, loading: true }));
     void loadConversationPage(
       url,
       source,

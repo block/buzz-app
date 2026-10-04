@@ -1464,3 +1464,96 @@ test.describe("desktop comment actions", () => {
     await expect(shortAction).toBeFocused();
   });
 });
+
+// Browser-only: real keyboard focus survives the shared Button loading state and
+// DOM removal in the production pane. Source/state permutations stay in Vitest.
+test("source recovery retains keyboard focus and respects moving away", async ({
+  page,
+  app,
+}) => {
+  const pending = [];
+  let commentCalls = 0;
+  const commentUrl =
+    "https://api.github.com/repos/sample/project/issues/1/comments?per_page=30&page=1";
+  app.report.githubFailures = [commentUrl, commentUrl];
+  await page.route(
+    "https://api.github.com/repos/sample/project/**",
+    async (route) => {
+      const request = new URL(route.request().url());
+      if (request.pathname.endsWith("/comments")) {
+        commentCalls++;
+        if (commentCalls === 1) return route.fulfill({ status: 403, json: {} });
+        await new Promise((resolve) => pending.push(resolve));
+        if (commentCalls === 2) return route.fulfill({ status: 403, json: {} });
+        return route.fulfill({
+          json: [],
+          headers:
+            commentCalls === 3
+              ? {
+                  link: '<https://api.github.com/repositories/123/issues/1/comments?per_page=30&page=2>; rel="next"',
+                }
+              : {},
+        });
+      }
+      return route.fulfill({
+        json: request.pathname.endsWith("/reviews")
+          ? []
+          : {
+              title: "Keyboard recovery",
+              state: "open",
+              body: "Summary",
+              user: { login: "author" },
+            },
+      });
+    },
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Messages");
+  await page
+    .getByRole("textbox", { name: "Message #Alpha", exact: true })
+    .waitFor();
+  await settle(page);
+  app.append("primary", "alpha", target);
+  const link = page.locator(`a[href="${target}"]`);
+  await expect(link).toBeAttached();
+  await end(page);
+  await link.click();
+  const conversation = page.getByRole("region", {
+    name: "Pull request conversation",
+  });
+  const retry = conversation.getByRole("button", { name: "Retry discussion" });
+  await retry.focus();
+  await page.keyboard.press("Enter");
+  try {
+    await expect.poll(() => pending.length).toBe(1);
+    await expect(retry).toBeFocused();
+    await expect(retry).toHaveAttribute("aria-busy", "true");
+    await page.keyboard.press("Enter");
+    expect(commentCalls).toBe(2);
+  } finally {
+    pending.shift()?.();
+  }
+  await expect(retry).not.toHaveAttribute("aria-busy", "true");
+  await expect(retry).toBeFocused();
+  await page.keyboard.press("Enter");
+  try {
+    await expect.poll(() => pending.length).toBe(1);
+    await expect(retry).toBeFocused();
+  } finally {
+    pending.shift()?.();
+  }
+  const more = conversation.getByRole("button", {
+    name: "Load more discussion",
+  });
+  await expect(more).toBeFocused();
+  await page.keyboard.press("Enter");
+  try {
+    await expect.poll(() => pending.length).toBe(1);
+    await expect(more).toBeFocused();
+  } finally {
+    pending.shift()?.();
+  }
+  await expect(more).toHaveCount(0);
+  await expect(conversation).toBeFocused();
+  expect(commentCalls).toBe(4);
+});

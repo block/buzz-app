@@ -581,7 +581,9 @@ it("keeps more-page loading explicit and ignores late page results after switchi
   expect(within(source).getByRole("status")).toHaveTextContent(
     "Loading discussion",
   );
-  expect(within(source).queryByRole("button")).not.toBeInTheDocument();
+  expect(
+    within(source).getByRole("button", { name: "Load more discussion" }),
+  ).toHaveAttribute("aria-busy", "true");
   expect(
     screen
       .getAllByText("First page")
@@ -1597,3 +1599,124 @@ it("prevents duplicate writes across both menus while the clipboard is pending",
   }
   await screen.findByText("Comment link copied");
 });
+
+// Explicit gates expose focus during in-flight recovery rather than relying on timing.
+it.each(["discussion", "reviews"] as const)(
+  "retains %s Retry focus through deferred repeated failure",
+  async (source) => {
+    const user = userEvent.setup();
+    let finish: ((response: Response) => void) | undefined;
+    let calls = 0;
+    const fetch = vi.fn((target: string) => {
+      if (!target.includes(source === "reviews" ? "/reviews?" : "/comments?"))
+        return Promise.resolve(response([]));
+      calls++;
+      if (calls === 1)
+        return Promise.resolve(new Response("", { status: 500 }));
+      return new Promise<Response>((resolve) => {
+        finish = resolve;
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<GitHubConversation details={details} url={url} />);
+    const retry = await screen.findByRole("button", {
+      name: `Retry ${source}`,
+    });
+    retry.focus();
+    await user.keyboard("{Enter}");
+    try {
+      await waitFor(() => expect(finish).toBeDefined());
+      expect(retry).toHaveFocus();
+      expect(retry).toHaveAttribute("aria-busy", "true");
+      await user.keyboard("{Enter}");
+      expect(calls).toBe(2);
+    } finally {
+      await act(async () => finish?.(new Response("", { status: 500 })));
+    }
+    expect(await screen.findByRole("button", { name: `Retry ${source}` })).toBe(
+      retry,
+    );
+    expect(retry).toHaveFocus();
+    expect(retry).not.toHaveAttribute("aria-busy", "true");
+  },
+);
+it.each([
+  ["discussion", false],
+  ["discussion", true],
+  ["reviews", false],
+  ["reviews", true],
+] as const)(
+  "hands off %s focus only when the completed source action still owns it (moved=%s)",
+  async (source, moved) => {
+    const user = userEvent.setup();
+    let finish: ((response: Response) => void) | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((target: string) => {
+        if (!target.includes(source === "reviews" ? "/reviews?" : "/comments?"))
+          return Promise.resolve(response([]));
+        if (target.includes("page=2"))
+          return new Promise<Response>((resolve) => {
+            finish = resolve;
+          });
+        return Promise.resolve(
+          response(
+            [
+              {
+                id: 1,
+                created_at: date(13),
+                submitted_at: date(13),
+                body: "One",
+              },
+            ],
+            {
+              link: `<https://api.github.com/repositories/123/${source === "reviews" ? "pulls/1/reviews" : "issues/1/comments"}?per_page=30&page=2>; rel="next"`,
+            },
+          ),
+        );
+      }),
+    );
+    render(<GitHubConversation details={details} url={url} />);
+    const more = await screen.findByRole("button", {
+      name: `Load more ${source}`,
+    });
+    const description = screen.getByRole("button", {
+      name: "Expand Description",
+    });
+    more.focus();
+    await user.keyboard("{Enter}");
+    try {
+      await waitFor(() => expect(finish).toBeDefined());
+      expect(more).toHaveFocus();
+      expect(more).toHaveAttribute("aria-busy", "true");
+      if (moved) {
+        await user.tab({ shift: true });
+        expect(more).not.toHaveFocus();
+        description.focus();
+      }
+    } finally {
+      await act(async () =>
+        finish?.(
+          response([
+            {
+              id: 2,
+              created_at: date(14),
+              submitted_at: date(14),
+              body: "Two",
+            },
+          ]),
+        ),
+      );
+    }
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: `Load more ${source}` }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      moved
+        ? description
+        : screen.getByRole("region", { name: "Pull request conversation" }),
+    ).toHaveFocus();
+  },
+);

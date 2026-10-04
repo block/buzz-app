@@ -57,9 +57,7 @@ deployment default. Never put credentials in it.
 Restart Vite after changing development inputs. Production web and desktop
 frontend builds substitute the value into compiled code: changing `.env.local`
 or the launched app's environment afterward cannot override it. Rebuild and
-redistribute to change a packaged value. This adds a configuration input for
-frontend consumers; the existing development Builderlab broker continues to use
-its own endpoint.
+redistribute to change a packaged value.
 
 ## Deliberate exclusions
 

@@ -731,6 +731,41 @@ fn shared_kind_five_signer_accepts_message_and_reaction_deletion_only_in_broker_
 }
 
 #[test]
+fn shared_kind_five_signer_accepts_only_one_agent_record_deletion() {
+    let owner = "a".repeat(64);
+    let agent = "b".repeat(64);
+    let mut event = EventTemplate {
+        kind: 5,
+        created_at: 123,
+        content: String::new(),
+        tags: vec![
+            vec!["a".into(), format!("30177:{owner}:{agent}")],
+            vec!["client-id".into(), "intent".into()],
+        ],
+    };
+    assert!(validate_event("https://relay.test", &event).is_ok());
+    event.tags.pop();
+    assert!(validate_event("https://relay.test", &event).is_ok());
+    for coordinate in [
+        format!("30175:{owner}:{agent}"),
+        format!("30177:{owner}:{}", "B".repeat(64)),
+        format!("30177:{owner}:{agent}:extra"),
+        format!("30177:{owner}"),
+    ] {
+        event.tags[0][1] = coordinate;
+        assert!(validate_event("https://relay.test", &event).is_err());
+    }
+    event.tags[0][1] = format!("30177:{owner}:{agent}");
+    event.content = "reason".into();
+    assert!(validate_event("https://relay.test", &event).is_err());
+    event.content.clear();
+    event
+        .tags
+        .push(vec!["a".into(), format!("30177:{owner}:{owner}")]);
+    assert!(validate_event("https://relay.test", &event).is_err());
+}
+
+#[test]
 fn native_write_commands_reach_handlers_through_production_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()

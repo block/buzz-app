@@ -101,9 +101,11 @@ export function EnterpriseCleanupNotice({
     () => communities.snapshot().enterpriseNotice,
   );
   useEffect(() => {
-    if (!notice) return;
-    notify(UNPRUNED, "info");
+    // Consumed before it is shown, so a replayed effect (StrictMode) sees
+    // it gone and does not show it again.
+    if (!notice || !communities.snapshot().enterpriseNotice) return;
     communities.dismissEnterpriseNotice();
+    notify(UNPRUNED, "info");
   }, [notice, notify, communities]);
   return null;
 }

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
+import { Fragment, StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Communities } from "../features/communities/service";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
@@ -76,7 +77,10 @@ it("shows every cleanup failure that applies", () => {
   );
 });
 
-it("notes a failed prune after a login once, as a toast", async () => {
+it.each([
+  ["", Fragment],
+  [" under StrictMode", StrictMode],
+])("notes a failed prune after a login once, as a toast%s", async (_, Mode) => {
   let notice: "unpruned" | undefined = "unpruned";
   const listeners = new Set<() => void>();
   const noticing = {
@@ -91,16 +95,21 @@ it("notes a failed prune after a login once, as a toast", async () => {
     }),
   } as unknown as Communities;
   render(
-    <ToastProvider>
-      <EnterpriseCleanupNotice communities={noticing} />
-    </ToastProvider>,
+    <Mode>
+      <ToastProvider>
+        <EnterpriseCleanupNotice communities={noticing} />
+      </ToastProvider>
+    </Mode>,
   );
+  await screen.findByText(
+    "Buzz couldn't remove an outdated sign-in record from this device.",
+  );
+  await act(async () => {});
   expect(
-    await screen.findByText(
+    screen.getAllByText(
       "Buzz couldn't remove an outdated sign-in record from this device.",
     ),
-  ).toBeInTheDocument();
-  await act(async () => {});
+  ).toHaveLength(1);
   expect(noticing.dismissEnterpriseNotice).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("alertdialog")).toBeNull();
 });

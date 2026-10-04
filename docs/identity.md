@@ -188,8 +188,10 @@ token digest under the keychain service's directory, before removal starts. A
 record is taken out only once removal succeeds or a new login replaces that
 session, so a restart while removal waits or after it fails keeps the stored
 session refused, and other scopes and Buzz processes sharing the directory
-keep their records. If the app data directory cannot be resolved, or the
-records cannot be read at startup, stored sessions are not used until a new
+keep their records. Updates are not atomic across processes: a prune already
+under way may remove a same-digest record another process writes again, which
+still names the same credential. If the app data directory cannot be resolved
+or records cannot be read at startup, stored sessions are not used until a new
 login in that scope, which means signing in again after every restart while
 the records stay unreadable. Two cases are not covered after a restart: Buzz
 quits after the refusal arrives but before its record reaches disk (removal has

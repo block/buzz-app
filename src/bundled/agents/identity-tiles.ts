@@ -4,19 +4,14 @@ export function identityTiles(
   library: AgentLibrary,
   archived: (key: string) => boolean,
 ) {
-  const definitions = new Map(library.definitions.map((row) => [row.id, row]));
   const linked = new Set(library.identities.map((row) => row.definitionId));
   const identities = [
     ...new Map(
       library.identities.map((row) => [row.pubkey.toLowerCase(), row]),
     ).values(),
   ]
-    .filter((row) => !archived(row.pubkey))
-    .map((row) => {
-      const avatar =
-        row.avatar ?? definitions.get(row.definitionId ?? "")?.avatar;
-      return { ...row, ...(avatar ? { avatar } : {}) };
-    });
+    // Artwork inheritance already happened where the library snapshot was made.
+    .filter((row) => !archived(row.pubkey));
   return {
     identities,
     profiles: library.definitions.filter((row) => !linked.has(row.id)),

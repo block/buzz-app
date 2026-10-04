@@ -55,7 +55,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     "Mark as Read",
     "Retry channel permissions",
   ]);
-  await expect(menu.getByRole("separator")).toHaveCount(3);
+  await expect(menu.getByRole("separator")).toHaveCount(0);
   for (const name of ["Mute", "Mark as Read"]) {
     await expect(
       menu
@@ -277,8 +277,8 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   // dismisses. Open the next menu only after this one has closed.
   await expect(menu).toHaveCount(0);
   await expect(beta).toBeFocused();
-  // Removing session entry preserves attention and lifecycle groups; only the
-  // separator between those remaining groups survives.
+  // Removing the session entry preserves the remaining attention and lifecycle
+  // actions in the same divider-free menu.
   const toggleSessions = async (enabled) => {
     await page
       .getByRole("button", { name: "Your profile", exact: true })
@@ -304,7 +304,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     "Mark as Unread",
     "Retry channel permissions",
   ]);
-  await expect(menu.getByRole("separator")).toHaveCount(2);
+  await expect(menu.getByRole("separator")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
   await expect(beta).toBeFocused();

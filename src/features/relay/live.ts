@@ -190,6 +190,7 @@ type Route = {
   wire?: string;
   count: number;
   since: number;
+  metricsSince?: number;
   liveOnly?: boolean;
   previous?: Route;
   retryRenewal?: boolean;
@@ -297,6 +298,25 @@ export function subscribeRelayTraffic(
   function remove(route: Route) {
     closeWire(route);
     routes.delete(route.id);
+  }
+  function renewTelemetry(route: Route, keepMetrics: boolean) {
+    if (!keepMetrics) {
+      remove(route);
+      return;
+    }
+    // Stored 44200 can bridge admission delay; ephemeral activity cannot. Never
+    // replay beyond the host's five-minute ingest window or reset the display floor.
+    if (route.wire)
+      route.metricsSince ??= Math.max(
+        route.since,
+        Math.floor(Date.now() / 1000) - 60,
+      );
+    closeWire(route);
+    route.status = "pending";
+    route.count = 0;
+    route.quotaRetries = 0;
+    delete route.error;
+    delete route.retryRenewal;
   }
   const scope = (route: Route) =>
     route.channelIds ?? (route.channelId ? [route.channelId] : []);
@@ -544,7 +564,11 @@ export function subscribeRelayTraffic(
           );
       }, 10000);
       active++;
-      if (route.id === "observer") route.since = Math.floor(Date.now() / 1000);
+      if (route.id === "observer") {
+        route.since = Math.floor(Date.now() / 1000);
+        if (route.metricsSince !== undefined)
+          route.metricsSince = Math.max(route.metricsSince, route.since - 240);
+      }
       const filters = scope(route).length
         ? (route.liveOnly
             ? [scope(route)]
@@ -569,7 +593,7 @@ export function subscribeRelayTraffic(
           ...filter,
           // Each channel retains its original replay allowance. Replacements
           // are live-only on every actual dispatch, including cooldown retries.
-          since: route.since,
+          since: route.metricsSince ?? route.since,
           ...(route.id === "observer"
             ? {}
             : { limit: route.liveOnly ? 0 : LIVE_REPLAY_LIMIT }),
@@ -821,7 +845,10 @@ export function subscribeRelayTraffic(
         } else if (route.id === "observer") {
           if (
             archiveKinds.includes(incoming.kind) &&
-            incoming.created_at >= route.since
+            incoming.created_at >=
+              (incoming.kind === 44200
+                ? (route.metricsSince ?? route.since)
+                : route.since)
           )
             callbacks.capture?.(incoming);
           if (
@@ -848,6 +875,7 @@ export function subscribeRelayTraffic(
         if (route.previous) closeWire(route.previous);
         delete route.previous;
         route.status = "live";
+        delete route.metricsSince;
         delete route.error;
         route.replay = route.count >= LIVE_REPLAY_LIMIT ? "limited" : "unknown";
         notify();
@@ -969,10 +997,11 @@ export function subscribeRelayTraffic(
       if (closed || JSON.stringify(next) === JSON.stringify(archiveKinds))
         return;
       const before = telemetryKinds();
+      const keepMetrics = archiveKinds.includes(44200) && next.includes(44200);
       archiveKinds = next;
       const route = routes.get("observer");
       if (route && JSON.stringify(before) !== JSON.stringify(telemetryKinds()))
-        remove(route);
+        renewTelemetry(route, keepMetrics);
       sync();
     },
     observe(value) {
@@ -989,7 +1018,7 @@ export function subscribeRelayTraffic(
         (!archiveKinds.length ||
           JSON.stringify(before) !== JSON.stringify(telemetryKinds()))
       )
-        remove(route);
+        renewTelemetry(route, archiveKinds.includes(44200));
       sync();
     },
     prioritize(input) {

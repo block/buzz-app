@@ -4,8 +4,7 @@ CREATE TABLE IF NOT EXISTS archive_partitions (
 );
 CREATE TABLE IF NOT EXISTS archive_subscriptions (
   viewer TEXT NOT NULL, community TEXT NOT NULL, name TEXT NOT NULL,
-  scope TEXT NOT NULL CHECK(scope IN ('h','p','e')), value TEXT NOT NULL,
-  kinds TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+  enabled INTEGER NOT NULL DEFAULT 1,
   days INTEGER NOT NULL, budget INTEGER NOT NULL,
   PRIMARY KEY (viewer, community, name)
 );

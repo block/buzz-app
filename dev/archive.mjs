@@ -19,7 +19,7 @@ export function openArchive(path = archivePath()) {
   db.exec("BEGIN IMMEDIATE");
   try {
     const version = db.prepare("PRAGMA user_version").get().user_version;
-    if (version > 1) throw new Error("Archive was created by a newer app");
+    if (version > 2) throw new Error("Archive was created by a newer app");
     if (version === 0) {
       db.exec(
         readFileSync(
@@ -27,9 +27,15 @@ export function openArchive(path = archivePath()) {
           "utf8",
         ),
       );
-      db.exec("PRAGMA user_version=1");
+    } else if (version === 1) {
+      db.exec(
+        readFileSync(
+          new URL("../src/features/archive/migrate-v2.sql", import.meta.url),
+          "utf8",
+        ),
+      );
     }
-    db.exec("COMMIT");
+    db.exec("PRAGMA user_version=2; COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
     db.close();
@@ -55,17 +61,15 @@ export function openArchive(path = archivePath()) {
       viewer,
       community,
     );
-    for (const [name, kinds, days, budget] of [
-      ["observer", "[24200]", 30, 512 * 1024 * 1024],
-      ["metrics", "[44200]", 90, 64 * 1024 * 1024],
+    for (const [name, days, budget] of [
+      ["observer", 30, 512 * 1024 * 1024],
+      ["metrics", 90, 64 * 1024 * 1024],
     ])
       run(
-        "INSERT OR IGNORE INTO archive_subscriptions(viewer,community,name,scope,value,kinds,days,budget) VALUES (?,?,?,'p',?,?,?,?)",
+        "INSERT OR IGNORE INTO archive_subscriptions(viewer,community,name,days,budget) VALUES (?,?,?,?,?)",
         viewer,
         community,
         name,
-        viewer,
-        kinds,
         days,
         budget,
       );
@@ -91,23 +95,20 @@ export function openArchive(path = archivePath()) {
     lastPrune = Date.now();
   };
   const settings = (viewer, community) => {
-    const rows = db
-      .prepare(
-        "SELECT name,enabled,days FROM archive_subscriptions WHERE viewer=? AND community=?",
-      )
-      .all(viewer, community);
+    // One statement keeps the values and CAS revision on the same snapshot.
+    const row = get(
+      "SELECT o.enabled AS observer,o.days,m.enabled AS metrics,p.revision,(SELECT COALESCE(SUM(bytes),0) FROM archive_usage WHERE viewer=p.viewer AND community=p.community AND agent='') AS bytes FROM archive_partitions p JOIN archive_subscriptions o USING(viewer,community) JOIN archive_subscriptions m USING(viewer,community) WHERE p.viewer=? AND p.community=? AND o.name='observer' AND m.name='metrics'",
+      viewer,
+      community,
+    );
     return {
-      observer: !!rows.find((r) => r.name === "observer").enabled,
-      metrics: !!rows.find((r) => r.name === "metrics").enabled,
-      observerDays: rows.find((r) => r.name === "observer").days,
-      revision: revision(viewer, community),
+      observer: !!row.observer,
+      metrics: !!row.metrics,
+      observerDays: row.days,
+      revision: row.revision,
       location: "broker",
       path,
-      bytes: get(
-        "SELECT COALESCE(SUM(bytes),0) AS bytes FROM archive_events WHERE viewer=? AND community=?",
-        viewer,
-        community,
-      ).bytes,
+      bytes: row.bytes,
     };
   };
   const kindCheck = (kind) => {
@@ -283,14 +284,30 @@ export function openArchive(path = archivePath()) {
             agent ?? "",
           ).bytes;
           if (used <= cap) continue;
-          run(
-            "DELETE FROM archive_events WHERE seq IN (SELECT seq FROM (SELECT seq,SUM(bytes) OVER (ORDER BY seq DESC) AS used FROM archive_events WHERE viewer=? AND community=? AND subscription=? AND (? IS NULL OR agent=?)) WHERE used>?)",
+          const suffix = agent === null ? "" : " AND agent=?";
+          const args = [
             viewer,
             community,
-            subscription,
-            agent,
-            agent,
-            cap,
+            event.kind,
+            ...(agent === null ? [] : [agent]),
+          ];
+          const rows = db
+            .prepare(
+              `SELECT seq,bytes FROM archive_events WHERE viewer=? AND community=? AND kind=?${suffix} ORDER BY seq`,
+            )
+            .iterate(...args);
+          let overflow = used - cap,
+            cutoff;
+          for (const row of rows) {
+            cutoff = row.seq;
+            overflow -= row.bytes;
+            if (overflow <= 0) break;
+          }
+          if (overflow > 0) throw new Error("Archive usage mismatch");
+          run(
+            `DELETE FROM archive_events WHERE viewer=? AND community=? AND kind=?${suffix} AND seq<=?`,
+            ...args,
+            cutoff,
           );
         }
       });

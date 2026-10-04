@@ -399,8 +399,12 @@ The plugin's activation leases `session.agentActivity` for the live display;
 closing the panel does not release that demand. Disabling the plugin clears its
 live evidence, but **does not control archive capture**. The shared live connection
 carries one dedicated owner (`#p=viewer`) route for demanded observer/metrics kinds,
-with no `#h`, history limit, or relay replay. Its `since` is stamped at actual
-dispatch and retry. Settings changes and plugin demand replace that route only
+with no `#h` or history limit. Live activity starts at actual dispatch/retry.
+When a kind-demand change replaces a metrics capture route, stored 44200 replay
+bridges the admission delay with a 60-second in-flight overlap, capped at four
+minutes at dispatch to leave headroom inside the five-minute ingest window. This
+replay floor clears at EOSE; later retries are live-only. Ephemeral 24200 cannot
+be recovered this way. Settings changes and plugin demand replace that route only
 when its combined kind demand changes. While capture is enabled, display-generation
 changes keep the wire and capture floor but advance a separate display freshness
 floor. Without capture, display resets still renew the live-only route. Neither
@@ -411,8 +415,17 @@ The native identity host and development broker validate signatures, exact tags,
 recipient/key, freshness and size before ingest and host-only NIP-44 decryption.
 The renderer receives purpose-bound DTOs, not keys or a general decrypt API.
 Historical decoding accepts only rows owned by the host archive, not arbitrary
-renderer-supplied old envelopes. Relay admission establishes agent ownership;
-a name, local library entry, or successful decryption alone does not. These records
+renderer-supplied old envelopes. Native ingestion is **renderer-delivered,
+host-validated**, not host-captured: the main renderer owns the relay socket and
+supplies fresh envelopes through IPC. The native host does **not** independently
+prove relay delivery or that the signer belongs to the viewer. Buggy or malicious
+trusted renderer/plugin code can plant plausible history and evict genuine rows
+by filling the quota. This deliberately retains the existing
+[trusted main-WebView model](identity.md), not a hostile-plugin boundary; moving
+the relay connection or isolating plugins is outside this change. The development
+broker instead captures only from its own stream and rejects browser ingestion.
+Relay admission, not a name, local library entry or successful decryption, is the
+ownership authority on the normal delivery path. Saved rows are not ownership proof. These records
 never enter ordinary message history, unread reconciliation or channel caches.
 
 Live RAM is limited to 200 envelopes / 2 MiB plaintext and 512 turn states, with
@@ -430,8 +443,11 @@ app-data directory in `archive/events.sqlite3` (`archive-debug` for debug builds
 The development broker uses `~/.buzz-foundation/dev-archive/events.sqlite3` on the
 **broker's machine**, not browser-local storage. Settings show the actual path.
 
-The shared schema represents saved subscriptions with `h`, `p` or `e` scopes and
-kind lists. This slice exposes only two owner-scoped defaults, both enabled:
+The store implements exactly two owner-scoped policies, both enabled. Unused
+`scope`/`value`/`kinds` columns are removed by a transactional v1→v2 migration that
+preserves settings, revisions and ciphertext. General subscription matching and
+management wait for a caller beyond these two policies; the schema does not claim
+that capability:
 
 - **Activity (24200):** 30-day maximum age by default, configurable from 1–90 days
   (Settings offers 1, 7, 30 and 90); 512 MiB of serialized envelopes per
@@ -440,7 +456,8 @@ kind lists. This slice exposes only two owner-scoped defaults, both enabled:
   viewer/community and 16 MiB per agent. Metrics remain encrypted, unlike classic's
   plaintext metrics archive. No usage dashboard or arbitrary-subscription UI is added.
 
-Oldest records are evicted when byte limits are reached, so retention is a maximum
+Quota totals choose the overflow; indexed oldest-first scans stop after enough
+bytes are found, rather than rescanning retained history. Oldest records are evicted when byte limits are reached, so retention is a maximum
 age, not a promise of a complete 30-day transcript. Budgets are separate for each
 account/community and kind, not a physical device-wide disk cap. SQLite indexes,
 WAL and other overhead use additional space. Expiry across inactive partitions is
@@ -468,8 +485,16 @@ fence stale writes and pending hydration; new traffic can be captured afterward.
 Another window's already-decoded display is not synchronously reconciled; reload
 it after clearing elsewhere. Developer cache clear also deletes this community's
 activity partition and reports deletion failure rather than claiming success.
-Storage/decoding errors are visible and do not stop live telemetry. No old-app
-import, relay backfill, export or transcript redesign is included.
+Storage/decoding errors, including metrics-save failures, are visible and do not
+stop live telemetry. An initial native settings-read failure retries at 1/2/4
+seconds while settings remain unknown; disposal cancels retries and fences late
+responses. After exhaustion, open Settings or reconnect to retry. SQLite waits,
+maintenance and paging run off the async thread under only the archive mutex;
+the identity lock covers envelope validation/decryption, never storage. Viewer
+checks surround storage/decryption. The identity is immutable once ready today;
+a future in-process account switch needs a generation fence for admitted writes.
+Settings values and their CAS revision are read from one SQLite snapshot. No
+old-app import, general relay backfill, export or transcript redesign is included.
 
 Working is fresh per-turn evidence, not process status. Batch children fold
 individually; `session_resolved` is activity, while `turn_completed`, `turn_error`

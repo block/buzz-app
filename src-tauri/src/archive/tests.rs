@@ -229,7 +229,7 @@ fn newer_schema_is_never_modified_and_corruption_is_not_replaced() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("newer.sqlite3");
     let connection = rusqlite::Connection::open(&path).unwrap();
-    connection.execute_batch("PRAGMA user_version=2; CREATE TABLE future(data TEXT); INSERT INTO future VALUES('keep');").unwrap();
+    connection.execute_batch("PRAGMA user_version=3; CREATE TABLE future(data TEXT); INSERT INTO future VALUES('keep');").unwrap();
     drop(connection);
     let before = std::fs::read(&path).unwrap();
     assert!(store::Store::open(path.clone()).is_err());
@@ -241,8 +241,7 @@ fn newer_schema_is_never_modified_and_corruption_is_not_replaced() {
 }
 
 #[tokio::test]
-async fn host_rejects_untrusted_ingest_isolates_bad_rows_and_preserves_live_decode_on_disk_failure()
-{
+async fn host_rejects_invalid_ingest_isolates_bad_rows_and_preserves_live_decode_on_disk_failure() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("archive.sqlite3");
     let identity = IdentityHost::fixture();
@@ -455,5 +454,61 @@ fn community_quota_evicts_oldest_across_agents_with_individual_usage_below_cap()
     assert_eq!(
         store.settings(&viewer, community).unwrap()["bytes"],
         size * 4
+    );
+}
+
+#[test]
+fn v1_migration_preserves_ciphertext_settings_and_revisions() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("v1.sqlite3");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let schema = include_str!("../../../src/features/archive/schema.sql")
+        .replace("  enabled INTEGER", "  scope TEXT NOT NULL CHECK(scope IN ('h','p','e')), value TEXT NOT NULL, kinds TEXT NOT NULL, enabled INTEGER");
+    db.execute_batch(&schema).unwrap();
+    db.execute_batch("PRAGMA user_version=1").unwrap();
+    let viewer = viewer();
+    let event = envelope(&viewer, 24200, 42);
+    let raw = serde_json::to_string(&event).unwrap();
+    db.execute(
+        "INSERT INTO archive_partitions VALUES (?1,'https://a.test',7)",
+        [&viewer],
+    )
+    .unwrap();
+    for (name, kind) in [("observer", 24200), ("metrics", 44200)] {
+        db.execute(
+            "INSERT INTO archive_subscriptions VALUES (?1,'https://a.test',?2,'p',?1,?3,0,7,99999)",
+            rusqlite::params![viewer, name, format!("[{kind}]")],
+        )
+        .unwrap();
+    }
+    db.execute("INSERT INTO archive_events(viewer,community,subscription,id,agent,kind,created,received,bytes,envelope) VALUES (?1,'https://a.test','observer',?2,?3,24200,?4,?4,?5,?6)",rusqlite::params![viewer,event.id,event.pubkey,event.created_at as i64,raw.len() as i64,raw]).unwrap();
+    let store = store::Store::open(path).unwrap();
+    let settings = store.settings(&viewer, "https://a.test").unwrap();
+    assert_eq!(settings["observer"], false);
+    assert_eq!(settings["metrics"], false);
+    assert_eq!(settings["observerDays"], 7);
+    assert_eq!(settings["revision"], 7);
+    assert_eq!(settings["bytes"], raw.len());
+    assert_eq!(
+        store
+            .read(&viewer, "https://a.test", 24200, None, None)
+            .unwrap()
+            .0[0]
+            .2,
+        raw
+    );
+    assert_eq!(
+        db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        db.prepare("PRAGMA table_info(archive_subscriptions)")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(1))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap(),
+        vec!["viewer", "community", "name", "enabled", "days", "budget"]
     );
 }

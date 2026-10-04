@@ -48,7 +48,7 @@ class Socket {
   }
 }
 afterEach(() => vi.useRealTimers());
-function setup(channels = ["a", "b"]) {
+function setup(channels = ["a", "b"], admission = createLiveAdmission()) {
   const key = keypair(),
     sockets: Socket[] = [];
   const callbacks = {
@@ -68,6 +68,7 @@ function setup(channels = ["a", "b"]) {
       sockets.push(socket);
       return socket as unknown as WebSocket;
     },
+    admission,
   );
   owner.update(channels);
   const first = sockets[0];
@@ -1520,6 +1521,71 @@ it("changes the capture wire only when the combined kind demand changes", async 
     h.owner.dispose();
   }
 });
+
+it.each(["display", "capture"])(
+  "replays stored metrics across a delayed %s kind change without replaying activity",
+  async (change) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1800000000000);
+    const admission = createLiveAdmission(),
+      h = setup([], admission);
+    const capture = vi.fn(),
+      telemetry = vi.fn();
+    Object.assign(h.callbacks, { capture, telemetry });
+    try {
+      h.owner.archive?.([44200]);
+      await h.first.auth();
+      for (const [, id] of h.first.requests())
+        await h.first.receive(["EOSE", id]);
+      const first = h.first.requests().at(-1);
+      assert.exists(first);
+      // A long-lived route should replay only the handoff overlap, not its whole lifetime.
+      await vi.advanceTimersByTimeAsync(600_000);
+      admission.pause(3);
+      if (change === "display") h.owner.observe?.(1);
+      else h.owner.archive?.([24200, 44200]);
+      const count = h.first.requests().length;
+      await vi.advanceTimersByTimeAsync(1000);
+      const inGap = Math.floor(Date.now() / 1000);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(h.first.requests()).toHaveLength(count + 1);
+      const next = h.first.requests().at(-1);
+      assert.exists(next);
+      expect(next[2].since).toBe(inGap - 61);
+      expect(next[2].since).toBeLessThan(inGap);
+      const metric = signed(h.key, {
+        kind: 44200,
+        content: "gap",
+        tags: [],
+        created_at: inGap,
+      });
+      await h.first.receive(["EVENT", next[1], metric]);
+      expect(capture).toHaveBeenCalledExactlyOnceWith(metric);
+      await h.first.receive([
+        "EVENT",
+        next[1],
+        signed(h.key, {
+          kind: 24200,
+          content: "not replayable",
+          tags: [],
+          created_at: inGap,
+        }),
+      ]);
+      expect(capture).toHaveBeenCalledTimes(1);
+      expect(telemetry).not.toHaveBeenCalled();
+      expect(h.callbacks.receive).not.toHaveBeenCalled();
+      await h.first.receive(["EOSE", next[1]]);
+      await h.first.receive(["CLOSED", next[1], "temporary: unavailable"]);
+      await vi.advanceTimersByTimeAsync(1000);
+      h.owner.retry();
+      expect(h.first.requests().at(-1)?.[2].since).toBe(
+        Math.floor(Date.now() / 1000),
+      );
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
 
 it("presence holds its receipt without delaying ordinary setup and shares correlated cooldown", async () => {
   vi.useFakeTimers();

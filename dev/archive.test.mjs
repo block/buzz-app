@@ -191,7 +191,7 @@ test("newer-version database stays byte-identical and malformed databases are no
   const file = path();
   const db = new DatabaseSync(file);
   db.exec(
-    "PRAGMA user_version=2;CREATE TABLE future(data TEXT);INSERT INTO future VALUES('keep')",
+    "PRAGMA user_version=3;CREATE TABLE future(data TEXT);INSERT INTO future VALUES('keep')",
   );
   db.close();
   const before = readFileSync(file);
@@ -239,4 +239,61 @@ test("clear reclaims every free page from a multi-megabyte archive", () => {
   expect(h.settings().bytes).toBe(0);
   db.close();
   h.store.close();
+});
+
+test("v1 migration preserves encrypted rows, policy settings and CAS revisions", () => {
+  const file = path(),
+    db = new DatabaseSync(file);
+  const schema = readFileSync(
+    new URL("../src/features/archive/schema.sql", import.meta.url),
+    "utf8",
+  ).replace(
+    "  enabled INTEGER",
+    "  scope TEXT NOT NULL CHECK(scope IN ('h','p','e')), value TEXT NOT NULL, kinds TEXT NOT NULL, enabled INTEGER",
+  );
+  db.exec(schema);
+  db.exec("PRAGMA user_version=1");
+  db.prepare("INSERT INTO archive_partitions VALUES (?,?,7)").run(
+    viewer,
+    community,
+  );
+  for (const [name, kind] of [
+    ["observer", 24200],
+    ["metrics", 44200],
+  ])
+    db.prepare(
+      "INSERT INTO archive_subscriptions VALUES (?,?,?,'p',?,?,0,7,99999)",
+    ).run(viewer, community, name, viewer, JSON.stringify([kind]));
+  const row = event(),
+    raw = JSON.stringify(row);
+  db.prepare(
+    "INSERT INTO archive_events(viewer,community,subscription,id,agent,kind,created,received,bytes,envelope) VALUES (?,?,'observer',?,?,24200,?,?,?,?)",
+  ).run(
+    viewer,
+    community,
+    row.id,
+    row.pubkey,
+    row.created_at,
+    row.created_at,
+    Buffer.byteLength(raw),
+    raw,
+  );
+  const h = harness(file);
+  expect(h.settings()).toMatchObject({
+    observer: false,
+    metrics: false,
+    observerDays: 7,
+    revision: 7,
+    bytes: Buffer.byteLength(raw),
+  });
+  expect(h.read().records[0].id).toBe(row.id);
+  expect(db.prepare("PRAGMA user_version").get().user_version).toBe(2);
+  expect(
+    db
+      .prepare("PRAGMA table_info(archive_subscriptions)")
+      .all()
+      .map((r) => r.name),
+  ).toEqual(["viewer", "community", "name", "enabled", "days", "budget"]);
+  h.store.close();
+  db.close();
 });

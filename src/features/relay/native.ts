@@ -451,13 +451,36 @@ export async function connectNativeTransport(
     activityArchive: archive.host,
     subscribe(callbacks) {
       let active = true;
+      const archiveAbort = new AbortController();
       let archiveRefresh: Promise<unknown> | undefined;
-      let failedRevision: number | undefined;
+      let archiveRetry: ReturnType<typeof setTimeout> | undefined;
+      let archiveAttempts = 0;
+      const failedKinds = new Map<number, number>();
+      const reportCapture = () => {
+        const settings = archive.current();
+        if (!active || !settings) return;
+        for (const [kind, revision] of failedKinds)
+          if (revision !== settings.revision) failedKinds.delete(kind);
+        callbacks.captureState?.(
+          failedKinds.size ? "error" : settings.observer ? "saving" : "off",
+        );
+      };
       const refreshArchive = () =>
         (archiveRefresh ??= archive.host
-          .settings(new AbortController().signal)
+          .settings(archiveAbort.signal)
           .catch(() => {
-            if (active) callbacks.captureState?.("error");
+            if (!active) return;
+            callbacks.captureState?.("error");
+            // Initial failure has no ingest to trigger recovery. Retry only
+            // while settings are unknown, at most three times per subscription.
+            if (!archive.current() && archiveAttempts < 3)
+              archiveRetry = setTimeout(
+                () => {
+                  archiveRetry = undefined;
+                  if (active && !archive.current()) void refreshArchive();
+                },
+                1000 * 2 ** archiveAttempts++,
+              );
           })
           .finally(() => {
             archiveRefresh = undefined;
@@ -484,23 +507,16 @@ export async function connectNativeTransport(
             request: { action: "ingest", event, revision: settings.revision },
           })
             .then(() => {
-              if (
-                active &&
-                event.kind === 24200 &&
-                archive.current()?.revision === settings.revision
-              ) {
-                failedRevision = undefined;
-                callbacks.captureState?.(settings.observer ? "saving" : "off");
+              if (active && archive.current()?.revision === settings.revision) {
+                failedKinds.delete(event.kind);
+                reportCapture();
               }
             })
             .catch(() => {
               if (active) {
-                if (
-                  event.kind === 24200 &&
-                  archive.current()?.revision === settings.revision
-                ) {
-                  failedRevision = settings.revision;
-                  callbacks.captureState?.("error");
+                if (archive.current()?.revision === settings.revision) {
+                  failedKinds.set(event.kind, settings.revision);
+                  reportCapture();
                 }
                 void refreshArchive();
               }
@@ -527,12 +543,10 @@ export async function connectNativeTransport(
       if (!traffic) throw new Error("Native relay stream is unavailable");
       const stopArchive = archive.subscribe((settings) => {
         if (!active) return;
-        // Readable preferences are not proof a failed write recovered. Only a
-        // changed revision supersedes that failure (toggle/clear/other window).
-        if (failedRevision !== settings.revision) {
-          failedRevision = undefined;
-          callbacks.captureState?.(settings.observer ? "saving" : "off");
-        }
+        // Readable preferences alone cannot hide a write failure. Recovery
+        // requires success for that kind or a superseding settings revision.
+        clearTimeout(archiveRetry);
+        reportCapture();
         traffic.archive?.([
           ...(settings.observer ? [24200] : []),
           ...(settings.metrics ? [44200] : []),
@@ -548,6 +562,8 @@ export async function connectNativeTransport(
         },
         dispose() {
           active = false;
+          archiveAbort.abort();
+          clearTimeout(archiveRetry);
           stopArchive();
           observerEpoch++;
           traffic.dispose();

@@ -1025,7 +1025,7 @@ it("discards a pending observer decode after disconnect and reconnect", async ()
 it.each([
   { changed: false, kind: 24200, expected: "error" },
   { changed: true, kind: 24200, expected: "off" },
-  { changed: false, kind: 44200, expected: "saving" },
+  { changed: false, kind: 44200, expected: "error" },
 ])(
   "archive capture without a plugin reports $kind failure as $expected (revision changed: $changed)",
   async ({ changed, kind, expected }) => {
@@ -1113,13 +1113,80 @@ it.each([
       // not hide a persistent write failure on a full/locked disk.
       await transport.activityArchive?.settings(new AbortController().signal);
       expect(captureState).toHaveBeenLastCalledWith(expected);
-      if (kind === 24200) expect(captureState).toHaveBeenCalledWith("error");
-      else expect(captureState).not.toHaveBeenCalledWith("error");
+      expect(captureState).toHaveBeenCalledWith("error");
       expect(
         dispatch.mock.calls.some(
           ([command]) => command === "relay_agent_observer",
         ),
       ).toBe(false);
+    } finally {
+      traffic.dispose();
+    }
+  },
+);
+
+it.each(["recovers", "exhausts", "disposed", "late response"])(
+  "initial archive settings retry %s without plugin demand",
+  async (outcome) => {
+    vi.useFakeTimers();
+    const dispatch = vi.mocked(invoke),
+      original = dispatch.getMockImplementation();
+    const settings = {
+      observer: true,
+      metrics: true,
+      observerDays: 30,
+      revision: 0,
+      location: "device",
+      path: "/fixture.sqlite3",
+      bytes: 0,
+    };
+    const pending = deferred<typeof settings>();
+    let reads = 0;
+    dispatch.mockImplementation(async (command, args) => {
+      if (command === "relay_archive") {
+        reads++;
+        if (outcome === "late response") return pending.promise;
+        if (outcome !== "recovers" || reads === 1)
+          throw new Error("disk temporarily locked");
+        return settings;
+      }
+      return original?.(command, args);
+    });
+    const transport = await connectNativeTransport(community),
+      captureState = vi.fn();
+    const traffic = transport.subscribe?.({
+      receive: vi.fn(),
+      state: vi.fn(),
+      established: vi.fn(),
+      denied: vi.fn(),
+      captureState,
+    });
+    assert.exists(traffic);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reads).toBe(1);
+      if (outcome === "disposed" || outcome === "late response") {
+        traffic.dispose();
+        const states = captureState.mock.calls.slice();
+        pending.resolve(settings);
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(reads).toBe(1);
+        expect(captureState.mock.calls).toEqual(states);
+        expect(transport.activityArchive).toBeDefined();
+      } else {
+        expect(captureState).toHaveBeenLastCalledWith("error");
+        await vi.advanceTimersByTimeAsync(999);
+        expect(reads).toBe(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(reads).toBe(2);
+        await vi.advanceTimersByTimeAsync(6000);
+        expect(reads).toBe(outcome === "recovers" ? 2 : 4);
+        expect(captureState).toHaveBeenLastCalledWith(
+          outcome === "recovers" ? "saving" : "error",
+        );
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(reads).toBe(outcome === "recovers" ? 2 : 4);
+      }
     } finally {
       traffic.dispose();
     }

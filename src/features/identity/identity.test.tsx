@@ -94,7 +94,7 @@ it("keeps native titlebar actions available throughout identity setup without dr
 
 it.each([
   [true, "Win32"],
-  [true, "Linux x86_64"],
+  [false, "Linux x86_64"],
   [false, "MacIntel"],
 ])("does not add a macOS titlebar for native=%s on %s", (native, platform) => {
   vi.mocked(isTauri).mockReturnValue(native);
@@ -285,4 +285,15 @@ it("enables packaged identity on desktop platforms but never in the live broker 
   vi.mocked(isTauri).mockReturnValue(true);
   vi.spyOn(navigator, "platform", "get").mockReturnValue("iPhone");
   expect(nativeIdentityEnabled()).toBe(false);
+});
+
+it("keeps Linux window controls available before identity restoration completes", () => {
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  vi.mocked(invoke).mockReturnValue(new Promise(() => {}));
+  const identity = createIdentity();
+  render(<IdentitySetup identity={identity}>Signed in</IdentitySetup>);
+  expect(titleBar()).toHaveAttribute("data-tauri-drag-region", "true");
+  expect(screen.getByRole("button", { name: "Close window" })).toBeEnabled();
+  identity.dispose();
 });

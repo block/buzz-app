@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "linux-window",
+  "description": "Linux integrated window controls, restricted to the main local webview.",
+  "platforms": ["linux"],
+  "webviews": ["main"],
+  "permissions": [
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close"
+  ]
+}

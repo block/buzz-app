@@ -110,6 +110,110 @@ it("keeps PR details after a checks failure and allows a read-only retry", async
     fetch.mock.calls.filter(([url]) => /\/pulls\/\d+$/.test(url)),
   ).toHaveLength(1);
 });
+it.each([
+  ["pending", "Pending", "pending", null],
+  ["failure", "Some checks were not successful", "failing", "future-result"],
+] as const)(
+  "retries unknown + %s checks at the same SHA without replacing aggregate precedence",
+  async (state, label, category, unknownConclusion) => {
+    let recovered = false;
+    const fetch = vi.fn(async (url: string) => {
+      if (/\/pulls\/\d+$/.test(url)) return response(pull);
+      if (url.includes("/check-runs?"))
+        return response({
+          total_count: 1,
+          check_runs: [
+            {
+              name: "Review gate",
+              status: "completed",
+              conclusion: recovered ? "success" : unknownConclusion,
+            },
+          ],
+        });
+      return response({
+        total_count: 1,
+        statuses: [{ context: "Build", state }],
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<GitHubPanel target={target} close={() => {}} />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: "Checks" }));
+    const checks = screen.getByRole("tabpanel", { name: "Checks" });
+    const summary = (
+      await within(checks).findByText(label, {
+        selector: "[class*=checkSummaryLabel]",
+      })
+    ).closest("[data-check-state]");
+    expect(summary).toHaveAttribute("data-check-state", state);
+    const rows = () =>
+      within(checks)
+        .getAllByRole("listitem")
+        .map((row) => row.getAttribute("data-check-category"));
+    expect(rows()).toEqual([category, "unknown"]);
+    expect(summary).toHaveTextContent(
+      `PR head commit · 1 ${category}, 1 unknown checks.`,
+    );
+    const retry = within(checks).getByRole("button", { name: "Retry checks" });
+    expect(retry).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: "Discussion" }));
+    await user.click(screen.getByRole("tab", { name: "Checks" }));
+    expect(within(checks).getByRole("button", { name: "Retry checks" })).toBe(
+      retry,
+    );
+    expect(fetch).toHaveBeenCalledTimes(3);
+    recovered = true;
+    await user.click(retry);
+    await within(checks).findByText("Passed");
+    expect(summary).toHaveAttribute("data-check-state", state);
+    expect(summary).toHaveTextContent(label);
+    expect(summary).toHaveTextContent(
+      `PR head commit · 1 ${category}, 1 successful checks.`,
+    );
+    expect(rows()).toEqual([category, "successful"]);
+    expect(within(checks).queryByText("Unknown")).not.toBeInTheDocument();
+    expect(
+      within(checks).queryByRole("button", { name: "Retry checks" }),
+    ).not.toBeInTheDocument();
+    expect(fetch.mock.calls.map(([url]) => url).sort()).toEqual([
+      "https://api.github.com/repos/sample/project/commits/head-sha/check-runs?per_page=100&page=1&filter=latest",
+      "https://api.github.com/repos/sample/project/commits/head-sha/check-runs?per_page=100&page=1&filter=latest",
+      "https://api.github.com/repos/sample/project/commits/head-sha/status?per_page=100&page=1",
+      "https://api.github.com/repos/sample/project/commits/head-sha/status?per_page=100&page=1",
+      "https://api.github.com/repos/sample/project/pulls/1",
+    ]);
+  },
+);
+
+it.each([
+  ["pending", "Pending"],
+  ["failure", "Some checks were not successful"],
+  ["success", "Successful"],
+])("does not offer Retry for known-only %s results", async (state, label) => {
+  const fetch = vi.fn(async (url: string) =>
+    response(
+      /\/pulls\/\d+$/.test(url)
+        ? pull
+        : url.includes("/check-runs?")
+          ? { total_count: 0, check_runs: [] }
+          : { total_count: 1, statuses: [{ context: "Build", state }] },
+    ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  render(<GitHubPanel target={target} close={() => {}} />);
+  await userEvent
+    .setup()
+    .click(await screen.findByRole("tab", { name: "Checks" }));
+  const checks = screen.getByRole("tabpanel", { name: "Checks" });
+  await within(checks).findByText(label, {
+    selector: "[class*=checkSummaryLabel]",
+  });
+  expect(
+    within(checks).queryByRole("button", { name: "Retry checks" }),
+  ).not.toBeInTheDocument();
+  expect(fetch).toHaveBeenCalledTimes(3);
+});
+
 it("aborts checks when the panel target changes and ignores the late old result", async () => {
   let finish!: (response: Response) => void;
   const pending = new Promise<Response>((resolve) => {

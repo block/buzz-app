@@ -197,18 +197,20 @@ export function GitHubChecks({
           </span>
         </span>
       </Tooltip>
-      {result.state === "unavailable" && sha && (
-        <div className={styles.checksRetry}>
-          <Button
-            variant="link"
-            size="xs"
-            onClick={() => retry(attempt + 1)}
-            aria-label="Retry checks"
-          >
-            Retry
-          </Button>
-        </div>
-      )}
+      {sha &&
+        (result.state === "unavailable" ||
+          result.checks?.some((check) => check.category === "unknown")) && (
+          <div className={styles.checksRetry}>
+            <Button
+              variant="link"
+              size="xs"
+              onClick={() => retry(attempt + 1)}
+              aria-label="Retry checks"
+            >
+              Retry
+            </Button>
+          </div>
+        )}
       {!!total && (
         <div className={styles.checkGroups}>
           <Accordion

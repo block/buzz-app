@@ -105,25 +105,35 @@ test("profile avatar cutout shows the shell through hover, press and open menu",
       });
     }
     const sample = (png) =>
-      page.evaluate(async (base64) => {
-        const image = new Image();
-        image.src = `data:image/png;base64,${base64}`;
-        await image.decode();
-        const canvas = document.createElement("canvas");
-        canvas.width = image.width;
-        canvas.height = image.height;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(image, 0, 0);
-        const at = (x, y) => [...ctx.getImageData(x, y, 1, 1).data];
-        return {
-          // The screenshot includes 4px outside the 28px control. Its gap
-          // is at avatar-local (20,20); the other samples detect a focus ring.
-          gap: at(24, 24),
-          left: at(1, 18),
-          top: at(18, 1),
-          right: at(34, 18),
-        };
-      }, png.toString("base64"));
+      page.evaluate(
+        async ({ base64, width, height }) => {
+          const image = new Image();
+          image.src = `data:image/png;base64,${base64}`;
+          await image.decode();
+          const canvas = document.createElement("canvas");
+          canvas.width = image.width;
+          canvas.height = image.height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(image, 0, 0);
+          const at = (x, y) => [...ctx.getImageData(x, y, 1, 1).data];
+          return {
+            // The cutout and badge scale with the avatar. Sample the diagonal
+            // gap between them, plus the keyboard ring outside the control.
+            gap: at(
+              Math.round(4 + (width * 5) / 7),
+              Math.round(4 + (height * 5) / 7),
+            ),
+            left: at(1, 4 + height / 2),
+            top: at(4 + width / 2, 1),
+            right: at(width + 6, 4 + height / 2),
+          };
+        },
+        {
+          base64: png.toString("base64"),
+          width: bounds.width,
+          height: bounds.height,
+        },
+      );
     const expected = await sample(background);
     for (const state of ["rest", "hover", "pressed", "open"]) {
       if (state === "hover") await control.hover();

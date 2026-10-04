@@ -158,6 +158,11 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
     await expect(row(page, "dm-030").getByRole("img")).toHaveCount(1);
     await expect(row(page, "dm-090").getByRole("img")).toHaveCount(1);
     await expect(cue(page, "below")).toBeVisible();
+    await expect(cue(page, "below")).toHaveCSS("border-radius", "12px");
+    await expect(cue(page, "below").locator("..")).toHaveCSS(
+      "border-radius",
+      "12px",
+    );
     await expect.poll(() => evidence().length).toBe(2); // 130 IDs, not retries.
     expect(evidence().map(({ filter }) => filter["#h"].length)).toEqual([
       128, 2,
@@ -172,7 +177,7 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
   }
 });
 
-test("edge pills follow scroll and reveal the nearest unread without selection or reads; focus retains existing preparation", async ({
+test("edge controls follow scroll and reveal the nearest unread without selection or reads; focus retains existing preparation", async ({
   page,
   app,
 }, info) => {

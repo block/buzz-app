@@ -78,6 +78,7 @@ function InstanceDetails(
       {!props.context?.push && props.context?.canOpen(target) && (
         <Button
           size="compact"
+          shape="control"
           variant="ghost"
           onClick={() => props.context?.open(target)}
         >
@@ -101,6 +102,7 @@ function InstanceDetails(
           {!loading && (
             <Button
               size="compact"
+              shape="control"
               disabled={state.busy}
               onClick={() => {
                 void props.control.refresh();

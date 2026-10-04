@@ -118,6 +118,13 @@ function CheckActions({ url, name }: { url: string; name: string }) {
   );
 }
 
+function needsRetry(result: CheckSummary) {
+  return (
+    result.state === "unavailable" ||
+    result.checks?.some((check) => check.category === "unknown")
+  );
+}
+
 export function GitHubChecks({
   repository,
   sha,
@@ -127,6 +134,8 @@ export function GitHubChecks({
 }) {
   const [result, setResult] = useState(sha ? loading : unavailableChecks);
   const [attempt, retry] = useState(0);
+  const summaryRef = useRef<HTMLSpanElement>(null);
+  const retryRef = useRef<HTMLButtonElement>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the explicit user-requested retry trigger.
   useEffect(() => {
     if (!sha) return;
@@ -137,7 +146,12 @@ export function GitHubChecks({
       sha,
       AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
     ).then((summary) => {
-      if (!controller.signal.aborted) setResult(summary);
+      if (controller.signal.aborted) return;
+      // Only hand off when the focused action is about to disappear. A user who
+      // moved to another control (including Discussion) keeps their new focus.
+      if (!needsRetry(summary) && retryRef.current === document.activeElement)
+        summaryRef.current?.focus();
+      setResult(summary);
     });
     return () => controller.abort();
   }, [repository, sha, attempt]);
@@ -159,6 +173,7 @@ export function GitHubChecks({
         <span
           // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need access to the counts tooltip.
           tabIndex={0}
+          ref={summaryRef}
           className={styles.checkSummary}
           data-check-state={result.state}
         >
@@ -197,20 +212,20 @@ export function GitHubChecks({
           </span>
         </span>
       </Tooltip>
-      {sha &&
-        (result.state === "unavailable" ||
-          result.checks?.some((check) => check.category === "unknown")) && (
-          <div className={styles.checksRetry}>
-            <Button
-              variant="link"
-              size="xs"
-              onClick={() => retry(attempt + 1)}
-              aria-label="Retry checks"
-            >
-              Retry
-            </Button>
-          </div>
-        )}
+      {sha && (needsRetry(result) || (attempt > 0 && result === loading)) && (
+        <div className={styles.checksRetry}>
+          <Button
+            ref={retryRef}
+            loading={result === loading}
+            variant="link"
+            size="xs"
+            onClick={() => retry(attempt + 1)}
+            aria-label="Retry checks"
+          >
+            Retry
+          </Button>
+        </div>
+      )}
       {!!total && (
         <div className={styles.checkGroups}>
           <Accordion

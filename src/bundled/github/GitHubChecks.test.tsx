@@ -214,6 +214,80 @@ it.each([
   expect(fetch).toHaveBeenCalledTimes(3);
 });
 
+it.each([
+  ["success", false],
+  ["failure", false],
+  ["success", true],
+  ["failure", true],
+] as const)(
+  "preserves keyboard focus through deferred retry → %s (moved: %s)",
+  async (outcome, moved) => {
+    const pending: ((response: Response) => void)[] = [];
+    let retrying = false;
+    const fetch = vi.fn((url: string) => {
+      if (/\/pulls\/\d+$/.test(url)) return Promise.resolve(response(pull));
+      if (retrying)
+        return new Promise<Response>((resolve) => pending.push(resolve));
+      return Promise.resolve(
+        url.includes("/check-runs?")
+          ? new Response(null, { status: 503 })
+          : response({ total_count: 0, statuses: [] }),
+      );
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<GitHubPanel target={target} close={() => {}} />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: "Checks" }));
+    const checks = screen.getByRole("tabpanel", { name: "Checks" });
+    const retry = await within(checks).findByRole("button", {
+      name: "Retry checks",
+    });
+    await act(async () => retry.focus());
+    retrying = true;
+    try {
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(pending).toHaveLength(2));
+      expect(retry).toBeVisible();
+      expect(retry).toHaveFocus();
+      expect(retry).toHaveAttribute("aria-busy", "true");
+      expect(retry).toHaveAttribute("aria-disabled", "true");
+      await user.keyboard("{Enter}");
+      expect(fetch).toHaveBeenCalledTimes(5);
+      if (moved)
+        await user.click(screen.getByRole("tab", { name: "Discussion" }));
+    } finally {
+      await act(async () => {
+        pending[0]?.(
+          outcome === "failure"
+            ? new Response(null, { status: 503 })
+            : response({ total_count: 0, check_runs: [] }),
+        );
+        pending[1]?.(response({ total_count: 0, statuses: [] }));
+      });
+    }
+    const summary = checks.querySelector("[data-check-state]");
+    await waitFor(() =>
+      expect(summary).toHaveTextContent(
+        outcome === "failure" ? "Unavailable" : "No checks",
+      ),
+    );
+    if (moved)
+      expect(screen.getByRole("tab", { name: "Discussion" })).toHaveFocus();
+    else if (outcome === "failure") {
+      expect(within(checks).getByRole("button", { name: "Retry checks" })).toBe(
+        retry,
+      );
+      expect(retry).toHaveFocus();
+      expect(retry).not.toHaveAttribute("aria-busy", "true");
+      expect(retry).not.toHaveAttribute("aria-disabled", "true");
+    } else {
+      expect(retry).not.toBeInTheDocument();
+      expect(summary).toHaveFocus();
+    }
+    expect(fetch).toHaveBeenCalledTimes(5);
+  },
+);
+
 it("aborts checks when the panel target changes and ignores the late old result", async () => {
   let finish!: (response: Response) => void;
   const pending = new Promise<Response>((resolve) => {

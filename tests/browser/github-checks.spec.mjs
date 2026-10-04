@@ -250,3 +250,159 @@ test("standalone PR checks load on activation, retain disclosures, and reset wit
   await expect(panel.getByRole("tablist")).toHaveCount(0);
   await expect(panel.getByText("Comments", { exact: true })).toBeVisible();
 });
+
+// Browser-only contract: native focus stays on the same shared loading button,
+// then transfers to the summary only if that button still owns focus.
+test("keyboard Retry recovers mixed checks without losing or stealing focus", async ({
+  page,
+  app,
+}) => {
+  let phase = "mixed-pending";
+  let deferred = false;
+  let release;
+  let gate;
+  const requests = [];
+  await page.route(
+    "https://api.github.com/repos/sample/project/**",
+    async (route) => {
+      const url = new URL(route.request().url());
+      requests.push(url.pathname);
+      if (url.pathname.includes("/pulls/"))
+        return route.fulfill({
+          json: { title: "Recovery PR", head: { sha: "same-sha" } },
+        });
+      if (deferred) await gate;
+      // A malformed source response exercises the loader's real failure path
+      // without adding an HTTP-console exception to the shared fixture.
+      if (phase === "unavailable") return route.fulfill({ json: {} });
+      return route.fulfill({
+        json: url.pathname.endsWith("/check-runs")
+          ? {
+              total_count: 1,
+              check_runs: [
+                {
+                  name: "Review gate",
+                  status: "completed",
+                  conclusion: phase === "success" ? "success" : null,
+                },
+              ],
+            }
+          : {
+              total_count: 1,
+              statuses: [
+                {
+                  context: "Build",
+                  state: phase === "mixed-pending" ? "pending" : "failure",
+                },
+              ],
+            },
+      });
+    },
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Messages");
+  await page
+    .getByRole("textbox", { name: "Message #Alpha", exact: true })
+    .waitFor();
+  await settle(page);
+  app.append(
+    "primary",
+    "alpha",
+    "https://github.com/sample/project/pull/1 https://github.com/sample/project/pull/2",
+  );
+  const link = (id) =>
+    page.locator(`a[href="https://github.com/sample/project/pull/${id}"]`);
+  await expect(link(1)).toBeAttached();
+  await end(page);
+  await link(1).click();
+  const panel = page.getByRole("complementary", {
+    name: "GitHub",
+    exact: true,
+  });
+  const checksTab = panel.getByRole("tab", { name: "Checks", exact: true });
+  const discussion = panel.getByRole("tab", {
+    name: "Discussion",
+    exact: true,
+  });
+  await checksTab.click();
+  const checks = panel.getByRole("tabpanel", { name: "Checks", exact: true });
+  const summary = checks.locator("[data-check-state]");
+  const retry = checks.getByRole("button", {
+    name: "Retry checks",
+    exact: true,
+  });
+  await expect(summary).toHaveAttribute("data-check-state", "pending");
+  await expect(checks.getByRole("listitem")).toHaveCount(2);
+  expect(requests).toHaveLength(3);
+
+  // Failed retry keeps the action and its focus; successful retries remove it.
+  // Moving away during a request must win over any completion handoff.
+  for (const [outcome, moved] of [
+    ["unavailable", false],
+    ["success", true],
+    ["success", false],
+  ]) {
+    if (outcome === "success" && !moved) {
+      phase = "mixed-failure";
+      await link(2).click();
+      await expect(discussion).toHaveAttribute("aria-selected", "true");
+      await checksTab.click();
+      await expect(summary).toHaveAttribute("data-check-state", "failure");
+      await expect(retry).toBeVisible();
+    }
+    await retry.focus();
+    const sameButton = await retry.elementHandle();
+    const before = requests.length;
+    gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    deferred = true;
+    phase = outcome;
+    try {
+      await page.keyboard.press("Enter");
+      await expect.poll(() => requests.length).toBe(before + 2);
+      await expect(summary).toContainText("Loading…");
+      await expect(retry).toHaveAttribute("aria-busy", "true");
+      await expect(retry).toHaveAttribute("aria-disabled", "true");
+      await expect(retry).toBeFocused();
+      expect(
+        await sameButton.evaluate((node) => node === document.activeElement),
+      ).toBe(true);
+      await page.keyboard.press("Enter");
+      if (moved) {
+        await page.keyboard.press("Shift+Tab");
+        await page.keyboard.press("Shift+Tab");
+        await expect(checks).toBeFocused();
+      }
+    } finally {
+      release();
+      deferred = false;
+    }
+    await expect(summary).toContainText(
+      outcome === "unavailable"
+        ? "Unavailable"
+        : "Some checks were not successful",
+    );
+    expect(requests).toHaveLength(before + 2);
+    if (outcome === "unavailable") {
+      await expect(retry).toBeFocused();
+      await expect(retry).not.toHaveAttribute("aria-busy", "true");
+      expect(
+        await sameButton.evaluate((node) => node === document.activeElement),
+      ).toBe(true);
+    } else {
+      await expect(retry).toHaveCount(0);
+      await expect(checks.getByRole("listitem")).toHaveCount(2);
+      await expect(checks.getByText("Unknown", { exact: true })).toHaveCount(0);
+      await expect(summary).toHaveAttribute("data-check-state", "failure");
+      if (moved) await expect(checks).toBeFocused();
+      else await expect(summary).toBeFocused();
+    }
+  }
+  expect(requests.filter((path) => path.includes("/pulls/"))).toHaveLength(2);
+  expect(
+    requests
+      .filter((path) => path.includes("/commits/"))
+      .every((path) => path.includes("/same-sha/")),
+  ).toBe(true);
+});

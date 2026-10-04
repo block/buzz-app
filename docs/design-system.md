@@ -187,10 +187,15 @@ BentoWorkspace still uses the viewer preference helper and is not ready for app
 adoption; no workspace experiment is imported by app startup.
 
 The host mounts and cleans up the shared input-modality hook once. Its keyboard-focus
-recipes remain visible while pointer focus stays quiet. The standalone viewer loads a
-separate global outline suppression; see [Temporary focus
-appearance](../src/shared/design-system/DESIGN.md#temporary-focus-appearance). Preserve
-this explicit distinction rather than adding local focus overrides.
+recipes remain visible for non-text controls while pointer focus stays quiet. The
+shared `forms.css` policy hides the second outline on editable Input, Textarea,
+and rich textboxes in both hosts; ordinary fields retain their focused/error
+perimeter borders. Read-only controls, including shortcut capture, keep their
+keyboard rings in the app. Rich editors retain the temporary visible-focus
+accessibility exception.
+The standalone viewer separately suppresses all outlines; see [Temporary focus
+appearance](../src/shared/design-system/DESIGN.md#temporary-focus-appearance).
+Preserve this distinction rather than adding local focus overrides.
 
 The actual-app Appearance/shortcuts journeys cover startup, preferences, focus,
 and the temporary font/color compatibility contracts. Remove compatibility checks
@@ -213,7 +218,7 @@ Anchored emoji, mention, completion, account and diagnostics surfaces use
 scrolling and specialized keyboard/editor interactions remain feature-owned.
 `popover-surface` composes `floating-surface`, which owns `elevated-material`: a
 90% opaque mode-aware fill and the shared 8px backdrop blur. Both use the 16px
-`radius-card` role. Opaque fills remain
+`radius-container` role. Opaque fills remain
 the fallback without backdrop-filter support, with reduced transparency, or in
 forced colors. Dialogs and alert dialogs also use `elevated-material`, retaining
 their panel corners. Stepped dialogs paint each step without blurring the shared
@@ -223,9 +228,10 @@ select options share padding, corners, and hover styling. Compact action surface
 retain their denser layout. Use the shared Menu, Select, or Popover according to
 the interaction; their separate Base UI semantics sit on the same visual recipe.
 Completion highlights use `affordance-popover-selected` so they remain visible on the
-raised dark surface. The shared popover recipe maps selection to this same role. Compact
-completion/emoji layouts may select shared radius
-tokens to fit their inner geometry. Shared Button/IconButton `title` props render
+raised dark surface. The shared popover recipe maps selection to this same role.
+Completion and picker containers use the 16px container role. Nested fills follow
+the shared [corner scale and nesting rule](../src/shared/design-system/DESIGN.md#corner-scale-and-nesting),
+including the actual padding and border inset. Shared Button/IconButton `title` props render
 a shared Tooltip; content titles (full names, timestamps and media descriptions) remain native.
 
 Explicit exceptions: GIF and image tiles use native media buttons, image zoom
@@ -275,7 +281,7 @@ inset, including the border; headers inside a group need no extra inset. Keep th
 container full width and let the column shrink with the panel. Use the existing
 spacing tokens: 16px between fields and 32px (`space-section-gap`) between named groups. Place content
 on the panel surface. Use `SettingsGroup` to give related controls a subtle border
-and 16px `radius-card` corners, with no added fill or shadow. Keep the group heading outside
+and 16px `radius-container` corners, with no added fill or shadow. Keep the group heading outside
 the container. Do not nest it around an `EmptyState`, which already owns a border.
 
 Use the same lightweight container with three compositions:

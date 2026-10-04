@@ -6,7 +6,7 @@ import {
 import { test, expect } from "./fixture.mjs";
 import { open, anchor, expectAnchor } from "./timeline.mjs";
 
-test.use({ historyCounts: { alpha: 20, beta: 1 } });
+test.use({ historyCounts: { alpha: 20, beta: 1 }, launchAnimation: true });
 const key = "buzz-appearance.v1";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 async function settings(page) {
@@ -132,8 +132,9 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS(
       "background-color",
-      mode === "dark" ? "rgb(40, 40, 40)" : "rgb(255, 255, 255)",
+      mode === "dark" ? "rgba(40, 40, 40, 0.9)" : "rgba(255, 255, 255, 0.9)",
     );
+    await expect(dialog).toHaveCSS("backdrop-filter", "blur(8px)");
     await page.keyboard.press("Escape");
   }
   for (const [mode, colors] of Object.entries(palettes)) {
@@ -317,8 +318,8 @@ test("saved dark document paints before the application module is allowed to exe
       "background-color",
       "rgb(0, 0, 0)",
     );
-    await expect(page.locator("#root > .buzz-launch")).toBeVisible();
-    await expect(page.locator(".buzz-launch img")).toBeVisible();
+    await expect(page.locator("#buzz-launch")).toBeVisible();
+    await expect(page.locator("#buzz-launch img")).toBeVisible();
     // Observe the painted document for two frames with the entire React bundle still withheld.
     await page.evaluate(
       () =>

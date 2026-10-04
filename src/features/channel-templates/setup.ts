@@ -1,5 +1,6 @@
 import type { Outbox, LocalEvents } from "../relay/outbox";
 import type { KitEntry } from "./model";
+import { isDefinitiveCanvasConflict } from "./canvas-conflict";
 export type ChannelSetup = {
   canvas: string;
   agents: string[];
@@ -291,8 +292,23 @@ export function createChannelSetup({
                 );
               const canvas = await operation("canvas", 40100, setup.canvas, [
                 ["h", p.id],
+                ["expected-revision", "none"],
               ]);
-              await confirm(canvas);
+              try {
+                await confirm(canvas);
+              } catch (error) {
+                const failed = local
+                  .snapshot()
+                  .find((item) => item.event.id === canvas);
+                if (isDefinitiveCanvasConflict(failed)) {
+                  // A refused seed must not fence a later manual Canvas save.
+                  await outbox.dismiss(canvas);
+                  throw new Error(
+                    "Canvas changed before the seed was saved; no agents were added by this attempt.",
+                  );
+                }
+                throw error;
+              }
               if ((await canvasHead(p.id)) !== canvas)
                 throw new Error(
                   "The seed Canvas is not the selected document; no agents were added by this attempt.",

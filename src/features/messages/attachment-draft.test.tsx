@@ -135,3 +135,47 @@ it("accepts the 500 MiB source and 1,000 MiB shared retention boundaries, not ca
   expect(() => a.result.current.store.add([file()])).toThrow(/at most 10/);
   expect(a.result.current.items).toHaveLength(10);
 });
+
+it("confirmed scoped cleanup aborts pending uploads and removes only that destination's files", async () => {
+  const h = fixture();
+  const key = "scope:draft:one";
+  const a = renderHook(() => useAttachmentDraft(h.session, key, "one"));
+  const sibling = renderHook(() =>
+    useAttachmentDraft(h.session, "scope:draft:two", "two"),
+  );
+  act(() => {
+    a.result.current.store.add([file("pending.txt")]);
+    sibling.result.current.store.add([file("sibling.txt")]);
+  });
+  await waitFor(() => expect(h.calls).toHaveLength(2));
+  const first = h.calls.find((call) => call.channel === "one");
+  const second = h.calls.find((call) => call.channel === "two");
+  assert.exists(first);
+  assert.exists(second);
+  const { clearAttachmentDraft } = await import("./attachment-draft");
+  act(() => clearAttachmentDraft(h.session, key));
+  expect(first.signal.aborted).toBe(true);
+  expect(second.signal.aborted).toBe(false);
+  expect(a.result.current.items).toEqual([]);
+  expect(sibling.result.current.items).toHaveLength(1);
+  await act(async () => first.result.resolve(uploaded("late.txt")));
+  expect(a.result.current.items).toEqual([]);
+});
+
+it("confirmed cleanup forgets a ready file after unmount and a reopened scoped draft starts empty", async () => {
+  const h = fixture();
+  const key = "scope:draft:one";
+  const before = renderHook(() => useAttachmentDraft(h.session, key, "one"));
+  act(() => before.result.current.store.add([file("ready.txt")]));
+  await waitFor(() => expect(h.calls).toHaveLength(1));
+  const upload = h.calls[0];
+  assert.exists(upload);
+  await act(async () => upload.result.resolve(uploaded("ready.txt")));
+  expect(before.result.current.items[0]?.status).toBe("ready");
+  before.unmount();
+  const { clearAttachmentDraft } = await import("./attachment-draft");
+  clearAttachmentDraft(h.session, key);
+  const after = renderHook(() => useAttachmentDraft(h.session, key, "one"));
+  expect(after.result.current.items).toEqual([]);
+  expect(h.calls).toHaveLength(1);
+});

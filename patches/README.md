@@ -161,6 +161,28 @@ keeps the viewport start as before. Installed-store regressions cover the late
 batch, unrelated/partial batches before completion, the stock window and an
 unmounted prepend.
 
+## Viewport size is delivered in the observer callback
+
+Row resizes are delivered in the next animation frame, outside the native
+ResizeObserver callback. Rendering from that callback can mount rows at the
+same DOM depth and cause WebKit's "loop completed with undelivered
+notifications" cycle. The scroll viewport's own size is an exception: it is
+delivered in the callback. It can only mount rows that are deeper in the DOM,
+which the browser may observe in the same frame without that cycle. Their own
+sizes are still deferred.
+
+When the viewport size arrives, the driver also reads the native scroll offset
+first. A channel switch scrolls imperatively before its scroll event is
+dispatched; without that read, the first range is computed at the old offset
+and the correct rows render one frame later.
+
+Together these let the first rows of a warm channel switch paint one frame
+earlier (median three frames to two). On one Mac, the
+`channel-opening` warm-switch median went from 52–58 ms to 40–42 ms (24 samples
+per run, interleaved runs). Installed-driver regressions cover immediate
+viewport delivery with deferred rows, removal and remount, and the offset read
+in LTR and RTL.
+
 ## Automated checks
 
 ```sh

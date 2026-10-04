@@ -41,7 +41,7 @@
     overflow-wrap: anywhere;
     padding: 0 var(--settings-group-inset);
     border: 1px solid var(--border-standard);
-    border-radius: var(--radius-card);
+    border-radius: var(--radius-container);
   }
   .buzz-settings-group[data-layout="rows"] > * + * {
     border-block-start: 1px solid var(--border-standard);

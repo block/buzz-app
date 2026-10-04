@@ -17,6 +17,9 @@ import * as api from "../features/communities/api";
 import { ProfileSettings } from "./ProfileSettings";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { useSyncExternalStore } from "react";
+import { stubAvatarBrowserApis } from "../features/agents/avatar-testing";
+
+stubAvatarBrowserApis();
 
 vi.mock("../features/communities/api", () => ({
   inspectProfile: vi.fn(),
@@ -25,6 +28,7 @@ vi.mock("../features/communities/api", () => ({
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
+  vi.unstubAllGlobals();
 });
 const a = "https://a.example";
 const b = "https://b.example";
@@ -143,7 +147,9 @@ it("edits the existing selected community without another destination control an
     screen.queryByRole("combobox", { name: "Profile to edit" }),
   ).not.toBeInTheDocument();
   expect(
-    screen.getByText(/Set your profile details for this community/),
+    screen.getByText(
+      "Update this community’s profile. Other community profiles stay unchanged.",
+    ),
   ).toBeInTheDocument();
   vi.mocked(api.inspectProfile).mockResolvedValueOnce({
     ...original("Alpha human"),

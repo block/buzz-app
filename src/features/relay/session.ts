@@ -51,6 +51,7 @@ import {
 } from "./read-state-storage";
 import { createTyping } from "./typing";
 import { createUnread } from "./unread";
+import { createInboxFeed } from "./inbox-feed";
 import type { IncomingListener, IncomingMessage } from "./incoming";
 import { objectBody } from "./body";
 import type { ChannelList, ChannelSummary } from "./contracts";
@@ -389,6 +390,7 @@ export function createRelaySession(
       for (const purge of views.values()) purge();
       commit();
       unread.purge();
+      inboxFeed.purge();
     } finally {
       if (--revoking === 0) {
         const pending = [...notifications];
@@ -401,6 +403,10 @@ export function createRelaySession(
     filters: readonly ReadFilter[],
     settings?: ReadOptions,
     channelTraffic = true,
+    beforeInbox?: (
+      events: readonly RelayEvent[],
+      raw: readonly RelayEvent[],
+    ) => void,
   ) {
     if (
       options.cachedOnly ||
@@ -474,7 +480,12 @@ export function createRelaySession(
       if (closed || epoch !== accessEpoch)
         throw new DOMException("Stale relay search", "AbortError");
     }
-    const visible = accept(events, channelTraffic);
+    const visible = accept(
+      events,
+      channelTraffic,
+      beforeInbox,
+      settings?.signal,
+    );
     // Discovery must see signed grants/removals even when their channel is
     // currently denied; only the store interprets roster completeness.
     return channelTraffic
@@ -488,6 +499,11 @@ export function createRelaySession(
   function accept(
     events: readonly RelayEvent[],
     channelTraffic = true,
+    beforeInbox?: (
+      events: readonly RelayEvent[],
+      raw: readonly RelayEvent[],
+    ) => void,
+    signal?: AbortSignal,
   ): readonly RelayEvent[] {
     if (closed) return [];
     // Authority precedes every projection, even in a batch containing both a
@@ -508,6 +524,12 @@ export function createRelaySession(
       )
       .filter(visibility(events, true));
     const epoch = accessEpoch;
+    beforeInbox?.(visible, events);
+    if (
+      beforeInbox &&
+      (closed || epoch !== accessEpoch || signal?.aborted || cacheClearing)
+    )
+      throw new DOMException("Stale Inbox read", "AbortError");
     typing.accept(visible);
     if (closed || epoch !== accessEpoch) return [];
     profiling.measure(
@@ -659,8 +681,8 @@ export function createRelaySession(
           visible: (events) => events.filter(visibility(events)),
           restored: (events) => unread.accept(events),
           demand: (channelId) => demandChannel(channelId),
-          rosterChanged: () => {
-            settleHintConfirmations();
+          rosterChanged: (strong) => {
+            settleHintConfirmations(strong);
             publishLive();
           },
         }
@@ -789,6 +811,33 @@ export function createRelaySession(
     // Repair owns evidence only, not timeline/history ingestion. The shared
     // scheduler and verified transport stay shared; unread fences access epochs.
     reader: requests.reader,
+    viewer: transport?.viewer ?? "",
+    notify,
+  });
+  const inboxFeed = createInboxFeed({
+    // A withheld auxiliary event is not proof of an exhausted history page.
+    // Fail closed at raw/admitted admission; do not relax reference visibility.
+    reader: {
+      read: (filters, settings) =>
+        readVerified(filters, settings, true, (visible, raw) => {
+          const admitted = new Set(visible.map((event) => event.id));
+          if (
+            raw.some(
+              (event) =>
+                [40003, 5, 9005].includes(event.kind) &&
+                !admitted.has(event.id),
+            )
+          )
+            throw new Error(
+              "Inbox message updates could not be verified for current access. Retry inbox.",
+            );
+        }),
+    },
+    retainedEvent: unread.event,
+    retainedEditIds: unread.retainedEditIds,
+    addressedRead: (filter, signal, prepare) =>
+      readVerified([filter], { signal }, true, prepare),
+    channels: channels.queries,
     viewer: transport?.viewer ?? "",
     notify,
   });
@@ -947,6 +996,7 @@ export function createRelaySession(
       [
         {
           kinds: [39002],
+          consistency: "strong",
           authors: [transport.relayAuthor],
           "#d": [channelId],
           limit: 1,
@@ -1003,7 +1053,15 @@ export function createRelaySession(
       // Confirm only this viewer's exact creation receipt. Discovery may be
       // incomplete; this never admits the channel or grants content access.
       const events = await requests.reader.read(
-        [{ kinds: [9007], ids: [id], authors: [transport.viewer], limit: 1 }],
+        [
+          {
+            kinds: [9007],
+            ids: [id],
+            authors: [transport.viewer],
+            limit: 1,
+            consistency: "strong",
+          },
+        ],
         { signal: lifetime.signal, fresh: true },
       );
       return events.some(
@@ -1185,10 +1243,10 @@ export function createRelaySession(
             await workSessions.delivered(id, undefined, false, false);
             if (
               !(
-                await verified.read([{ ids: [id], limit: 1 }], {
-                  signal: lifetime.signal,
-                  fresh: true,
-                })
+                await verified.read(
+                  [{ ids: [id], limit: 1, consistency: "strong" }],
+                  { signal: lifetime.signal, fresh: true },
+                )
               ).some((event) => event.id === id)
             )
               throw new Error("Setup is awaiting exact relay confirmation");
@@ -1677,6 +1735,7 @@ export function createRelaySession(
     statuses: statuses.queries,
     agentLibrary: agentLibrary.queries,
     agentChoices,
+    inboxFeed,
     workflows: workflows.capability,
     projects,
     projectGit: transport?.projectGit
@@ -1861,8 +1920,10 @@ export function createRelaySession(
   let rosterOwesGrants = false;
   let hintTimer: ReturnType<typeof setTimeout> | undefined;
   let rosterTimer: ReturnType<typeof setTimeout> | undefined;
-  function refreshRoster() {
+  let strongRosterRefresh = false;
+  function refreshRoster(strong = false) {
     if (closed) return;
+    strongRosterRefresh ||= strong || hintQueue.size > 0 || hintReads.size > 0;
     // The full pass covers every grant still waiting for its exact read.
     rosterOwesGrants ||= hintQueue.size > 0;
     hintQueue.clear();
@@ -1870,7 +1931,11 @@ export function createRelaySession(
     const timer = setTimeout(() => {
       timers.delete(timer);
       rosterTimer = undefined;
-      if (!closed) channels.queries.refreshList?.();
+      const consistency = strongRosterRefresh
+        ? { consistency: "strong" as const }
+        : {};
+      strongRosterRefresh = false;
+      if (!closed) channels.queries.refreshList?.(consistency);
     }, 0);
     rosterTimer = timer;
     timers.add(timer);
@@ -1889,10 +1954,12 @@ export function createRelaySession(
   }
   /** A cache clear, a disconnect or a list that leaves ready drops hints with
    * the rest of the session's reader work, before a queued batch's timer can
-   * dispatch it into the new epoch, and releases any inherited grants: a ready
-   * commit must not hide a failed discovery, and the next establishment's full
-   * pass or Retry owns recovery. */
+   * dispatch it into the new epoch. Transfer their writer requirement to the
+   * store without scheduling work: a ready commit must not hide a failed
+   * discovery, and the next establishment's full pass or Retry owns recovery. */
   function dropHintConfirmations() {
+    if (hintQueue.size > 0 || hintReads.size > 0)
+      channels.requireStrongListRead();
     rosterOwesGrants = false;
     retireHintConfirmations();
   }
@@ -1903,12 +1970,14 @@ export function createRelaySession(
    * but a pass interrupted by a concurrent revocation ends deferred having
    * settled nothing, so it reruns instead of leaving those grants to Retry,
    * another hint or a reconnect. */
-  function settleHintConfirmations() {
+  function settleHintConfirmations(strong = false) {
     const { state } = channels.roster();
     if (state === "pending") {
       rosterOwesGrants ||= hintQueue.size > 0 || hintReads.size > 0;
       retireHintConfirmations();
-    } else if (state === "deferred" && rosterOwesGrants) refreshRoster();
+      // A replica pass cannot settle the writer-backed confirmations it retired.
+      if (rosterOwesGrants && !strong) refreshRoster(true);
+    } else if (state === "deferred" && rosterOwesGrants) refreshRoster(true);
     else rosterOwesGrants = false;
   }
   const stopHintGuard = channels.queries.subscribeList(() => {
@@ -1929,7 +1998,7 @@ export function createRelaySession(
         channels.queries.list().status !== "ready" ||
         held(id)
       ) {
-        refreshRoster();
+        refreshRoster(true);
         return;
       }
       hintQueue.add(id);
@@ -1948,7 +2017,7 @@ export function createRelaySession(
     hintQueue.clear();
     if (closed || !wanted.length) return;
     if (channels.queries.list().status !== "ready") {
-      refreshRoster();
+      refreshRoster(true);
       return;
     }
     const cleared = cacheClearEpoch;
@@ -1964,14 +2033,15 @@ export function createRelaySession(
       const intact = () => current() && !controller.signal.aborted;
       void (
         channels.queries.resolve?.(batch, {
+          consistency: "strong",
           signal: AbortSignal.any([lifetime.signal, controller.signal]),
         }) ?? Promise.resolve()
       )
         .then(() => {
-          if (intact() && !batch.every(held)) refreshRoster();
+          if (intact() && !batch.every(held)) refreshRoster(true);
         })
         .catch(() => {
-          if (intact()) refreshRoster();
+          if (intact()) refreshRoster(true);
         })
         .finally(() => {
           for (const id of batch)
@@ -2242,6 +2312,7 @@ export function createRelaySession(
         workflows.interrupt();
         channels.staleHeads();
         unread.stale();
+        inboxFeed.stale();
       }
       // Access-revoked CLOSED is a refresh hint, not signed archive/membership
       // authority. Aggregate snapshots repeat failures; only react to a new one.
@@ -2289,6 +2360,7 @@ export function createRelaySession(
               emoji.reconnect();
               statuses.reconnect();
               unread.reconnect();
+              inboxFeed.reconnect();
               for (const refresh of refreshers) void refresh();
             }
           }, 0);
@@ -2389,6 +2461,7 @@ export function createRelaySession(
         for (const clear of views.values()) clear(true);
         recent.clear();
         unread.clear();
+        inboxFeed.clear();
         requests.invalidate();
         profiles.clear();
         emoji.clear();
@@ -2427,6 +2500,7 @@ export function createRelaySession(
       for (const timer of timers) clearTimeout(timer);
       for (const dispose of [...views.keys()]) dispose();
       unread.dispose();
+      inboxFeed.dispose();
       writes?.dispose();
       requests.dispose();
       channels.dispose();

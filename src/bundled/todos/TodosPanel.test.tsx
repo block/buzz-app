@@ -50,6 +50,7 @@ function fixture() {
   let current = head;
   const canvas = {
     available: true,
+    history: session.canvas.history,
     read: vi.fn(async () => current),
     save: vi.fn(
       async (_channel: string, content: string, base: string | undefined) => {

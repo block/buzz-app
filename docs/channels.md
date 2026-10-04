@@ -24,6 +24,14 @@ arbitrary file paths or application commands. Web keeps ordinary browser link
 behavior. Adding the native opener requires rebuilding/restarting desktop;
 frontend hot reload alone is not enough.
 
+HTTP(S) links rendered in messages expose **Open in browser** and **Copy link**
+on right-click or long-press, or with Shift+F10 / the Context Menu key while focused.
+**Open in browser** uses the same `_blank` fallback above without consulting pane
+handlers; both actions retain the original URL, including query and fragment.
+Normal and modified clicks are unchanged. Internal `buzz://` links and links outside
+message content retain their existing behavior. Copy failures show a dismissible
+notice and can be retried from the link menu.
+
 Settings independently enables/disables Channels and GitHub. Disabling GitHub
 removes its link handler and open panel; shared channel data remains available.
 Channels is required by the current host; optional page removal does not dispose
@@ -195,9 +203,35 @@ conversation content and unmount when leaving Messages.
 
 Each sidebar section can independently select **A–Z** (the default) or **Recent**.
 The development broker and packaged native host save these choices in the desktop-compatible encrypted
-kind-30078 `channel-sort` record: `{ version: 1, groups: { ... } }`. A–Z removes
-that group's override. Saving preserves unrelated fields and choices present in
-the record read before publication.
+kind-30078 `channel-sort` record: `{ version: 1, groups: { ... }, meta: { v: 1, g: { ... } } }`.
+A–Z writes a null register and removes that group's legacy override. Sections use
+`meta: { v: 1, s: { ... }, a: { ... } }`: per-section name/icon/order/live registers
+and per-channel assignments. Upgraded readers project metadata as authoritative;
+writers regenerate the legacy fields and preserve unrelated registers, including
+section deletion (`live=false`) and assignment/sort reset (`null`) tombstones.
+Stars and mutes keep their existing `updatedAt` entries, not this register schema.
+
+A register is `[version, device, value]`, with a nonnegative safe-integer millisecond
+version and 16 lowercase hex device ID. Meta-less relay heads import at event
+seconds × 1,000 with the zero device ID. Edits exceed every observed register
+version and use a random in-memory device ID. Sections sort by canonical `(order,id)`
+and project dense display orders; new sections append after the canonical live
+maximum. Orphan assignments are omitted from the legacy projection, not deleted
+from metadata. Read projection accepts Desktop string values on retained section
+name/icon registers; only projected live text receives UI length limits. Already
+satisfied intents return without rewriting the head, including assignment removal
+when its register is absent, explicitly null, or points to a nonprojecting section.
+Actual rewrites still reject
+out-of-policy retained values rather than dropping or truncating them.
+Unsupported/malformed metadata fails closed, including unknown fields;
+this is not general forward-schema salvage. Live projection caps remain 100
+sections, 1,000 assignments and 104 sort overrides; retained tombstones are bounded
+by the existing 128 KiB plaintext budget, not live counts. Native signing/admission
+additionally requires legacy fields to equal the validated register projection.
+
+Saving preserves unrelated top-level fields and known register choices present in
+the strong head read before publication. This is wire-format compatibility, not
+the older Desktop's local-authoritative register cache or automatic reconciler.
 
 Persistence is **whole-record last-write-wins**, not conflict-safe per-section
 merging. Two devices can read the same record and save different sections; the
@@ -207,8 +241,8 @@ Read-back checks the requested section at that moment; it cannot detect an unsee
 choice overwritten in another section or guarantee preservation against later
 writes. “Independent” describes selecting a mode per section, not simultaneous
 cross-device save guarantees. Retaining the shared record preserves compatibility
-with existing desktop writers; per-section conflict resolution would require a
-coordinated persistence change.
+with existing desktop writers; convergence across unseen heads would require a
+separately designed reconciliation lifecycle or atomic relay support.
 
 `dev/sidebar-sort.test.mjs` deterministically exercises that accepted limitation
 through the real mutation helper: another section saves and confirms between a
@@ -293,6 +327,29 @@ Focused coverage lives in `NewMessage.test.tsx`, `direct-messages.test.ts`,
 `relay-broker-api.test.mjs`, and the Chromium/WebKit `new-message.spec.mjs` journey.
 The browser journey uses the production app and broker with ephemeral identities
 and modeled upstream I/O; it does not send messages to a live community.
+
+## Channel header actions
+
+The conversation header’s **Channel actions** ellipsis opens the shared, default-size
+(non-compact) menu. **View channel details** is first and opens or focuses the existing
+Channel Settings tab; selecting it again never closes the pane. Editing is available
+from that pane, not directly from the menu. **View canvas**, optional **Save as template…** and
+**New session**, **Move channel**, **Mute/Unmute**, and **Mark as Read/Unread**
+reuse the sidebar’s action composition and persistent mutation/recovery owners.
+Move replaces the redundant Personal group shortcut. Permission-gated lifecycle
+actions follow in **Leave → Archive → Delete** order, with Delete in the shared
+danger tone. DMs retain Hide conversation and the separate Remove from Messages
+action; their permissions are not inferred from stream channels. Members retains its adjacent button and Diagnostics remains inside Settings.
+Session headings are unchanged. Header moves and dialog cancellation return focus
+to the ellipsis, while session creation hands focus to its composer. Read-only, cached, archived and DM eligibility stays
+with the existing capabilities. Opening the menu reads permissions, never publishes
+a lifecycle command. Menu Escape/outside dismissal returns to the header; Canvas, template
+and lifecycle confirmation cancellation also return there. Dialog owners outlive menu dismissal,
+while channel/session navigation retires header-origin dialogs. Canvas is bound to
+its opening channel and visit, so navigation never mounts another channel’s editor.
+The sidebar’s own dialogs and session-owned writes/recovery keep their existing
+lifetime; retiring a header does not undo a command already sent. The redundant Canvas card and saved-content
+preview are omitted from Channel Settings; opening details does not read Canvas.
 
 ## Channel lifecycle
 
@@ -451,22 +508,38 @@ No dismissal saves, retries, replaces setup or confirms a destructive action.
 
 Channel Settings shows the signed name, description and explicit visibility for
 ordinary channels; missing visibility stays **Not available**, not implicitly
-Public. **Edit details** opens the shared Dialog with one Name/Description/Duration/Private
-draft. Duration uses Create's Ongoing/Temporary cards, and Private uses the same
+Public. The centered title opens the same editor, revealing a pencil with a short
+left-to-right fade on hover or keyboard focus (always visible on touch, no animation
+for reduced motion). The pencil follows the final text line;
+balanced side padding keeps the text centered and lets long titles wrap without clipping it.
+Description and Visibility have small pencils immediately after their labels,
+revealed with a short left-to-right fade on whole-row hover or keyboard focus
+(always visible on touch, no animation for reduced motion) without shifting layout;
+each whole row opens the shared Dialog with one Name/Description/Duration/Private draft.
+Opening Description focuses its textarea; the title and Visibility still focus Name.
+Only authorized editors get the interactive rows; other viewers retain plain metadata.
+Members has a right chevron and opens the existing member list. Channel ID has a
+small inline copy icon with the same hover/focus/touch behavior; selecting its row
+copies the exact ID. Only a successful copy opens a confirmation tooltip, without
+growing the row; hovering or focusing does not open a hint or replay old feedback.
+Clipboard failure shows an inline error and leaves the row available to retry. The redundant standalone
+Edit details button, header-menu Edit details entry and informational Channel type
+row are omitted.
+Duration uses Create's Ongoing/Temporary cards, and Private uses the same
 switch in the action row. These controls stage changes; neither publishes immediately.
 **Save changes** submits the draft together and is enabled only for valid, changed values.
 **Cancel** explicitly discards edits and closes without confirmation. Close, Escape
 and backdrop clicks close untouched forms immediately; changed drafts first show
 **Discard changes?** with **Keep editing** initially focused. Keep editing, Escape,
 Close or a backdrop click in that confirmation returns to the intact form.
-**Discard changes** drops the draft and returns focus to Edit details without
+**Discard changes** drops the draft and returns focus to its originating control without
 closing Settings, as does the form’s explicit **Cancel**. Pending saves and status
 checks block dialog dismissal and show a
-loading spinner on the disabled **Edit details** button without changing its label.
+loading spinner on the disabled edit control without changing its label.
 Saving and permission loading do not add text status rows or reserve empty space;
-viewers without editing authority see neither Edit details nor an explanatory hint.
+viewers without editing authority see neither edit controls nor an explanatory hint.
 Actionable errors and uncertain-save warnings remain visible.
-After an uncertain outcome, **Edit details** re-enables so the save may be closed
+After an uncertain outcome, the edit controls re-enable so the save may be closed
 and reopened for check-only recovery, never a blind resend. The panel retains its
 own Close/Escape focus return, conversation and collapsed Diagnostics.
 Names accept 1–120 code points and descriptions up to 1,000. Typing and paste
@@ -817,8 +890,10 @@ another non-owner member:
 | Target role | Change role | Remove from this channel |
 | --- | --- | --- |
 | Admin / Member / Guest | Admin / Member, excluding the current role | Yes |
-| Bot | No conversion | Yes |
+| Bot | Admin / Member, after explicit confirmation | Yes |
 | Owner, self, unknown or inconsistent | No | No |
+
+Agent identity is independent of channel role. Explicitly promoting a Bot to Admin grants authority to that agent’s own public key and preserves its verified agent identity; the human owner’s roles do not confer authority.
 
 The menu deliberately omits **Make guest** while Guest's permission contract is
 unsettled: the inspected relay message path does not enforce the role's documented
@@ -827,13 +902,20 @@ Existing Guest roles remain available to the permission/confirmation flow and ca
 Admin, or removed; they are never automatically converted. This is a menu-only
 restriction, not a change to relay semantics or the broker's supported commands.
 
-DMs and session channels have no administration actions. No ownership transfer,
-community-admin override, delegated agent-owner authority or new invitation
-restriction is introduced. Personal Leave remains a separate lifecycle operation;
-removing a member neither deletes their identity nor stops their agents.
+Current members may also remove their own verified non-owner agents, but cannot
+edit their roles or remove someone else's agent. The service verifies signed
+ownership once per removal attempt, independently of display hints.
 
-Role change and removal use separate deliberate confirmations, initially focused
-on Cancel. The service checks fresh actor/target state before signing and again
+DMs, archived channels and session channels have no administration actions.
+No ownership transfer, community-admin override or new invitation restriction is
+introduced. Personal Leave remains a separate lifecycle operation; removing a
+member neither deletes their identity nor stops their agents.
+
+Role change and removal use deliberate confirmation steps in the same dialog,
+initially focused on Cancel. Removal shows only the avatar/name and actions;
+Cancel returns to the list. Errors appear below Search, outside the scrolling
+list; pending and success banners are omitted.
+The service checks fresh actor/target state before signing and again
 before publication, rejects altered signer payloads, and confirms the requested
 role or roster absence with a fresh read. Relay acceptance alone is not success.
 Pending intent survives dialog close/reopen and suppresses duplicate actions.
@@ -845,12 +927,12 @@ unconfirmed intent for fresh readback only. They fence late completions, as does
 disposal, but cannot retract a request already sent. Unsent work is canceled;
 recovery is in-memory, not durable across session disposal or restart.
 
-The development broker advertises a separate `memberAdministration` capability
-and admits only exact `9000` Admin/Member/Guest changes or `9001` other-member
-removals through its purpose-bound routes. Generic invitation signing is unchanged;
-the relay still enforces the authoritative ACL. Hosts without this writer can
-read verified roles but expose no management controls. Native/direct-signer parity
-is deferred rather than silently falling back to an unrestricted writer.
+The development broker and native transport advertise a separate
+`memberAdministration` capability and admit only exact `9000` Admin/Member/Guest
+changes or `9001` other-member removals through purpose-bound routes. Generic
+invitation signing is unchanged; the relay still enforces the authoritative ACL.
+Hosts without this writer can read verified roles but expose no management controls.
+Native support requires a rebuilt binary; no unrestricted writer fallback is used.
 
 **Accepted protocol limitation:** role commands are existing relay upserts, not
 conditional updates. A departure after final preflight can be undone by the role
@@ -859,8 +941,8 @@ checks/readback reduce uncertainty but do not provide atomic conflict rejection.
 Preventing these races requires separately scoped relay support.
 
 Regression coverage lives in `administration.test.ts`,
-`MemberAdministration.test.tsx`, and `dev/relay-broker-api.test.mjs`; existing
-`ChannelMembersDialog.test.tsx` invitation coverage remains. Synthetic confirmed
+`MemberAdministration.test.tsx`, `native.test.ts`, and `dev/relay-broker-api.test.mjs`;
+existing `ChannelMembersDialog.test.tsx` invitation coverage remains. Synthetic confirmed
 writes/recovery and a real-app read/confirmation/cancel exercise do not establish
 native or deployed destructive-write acceptance. Those checks and human tryout
 remain separate delivery gates.

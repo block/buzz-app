@@ -119,7 +119,7 @@ test("shared tokens reach app controls without history or chip overrides", async
         --border-standard: rgb(45, 67, 89);
         --radius-control: 13px;
         --radius-panel: 19px;
-        --radius-card: 17px;
+        --radius-container: 17px;
         --layer-popover: 1234;
       }`,
     });

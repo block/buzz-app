@@ -4,7 +4,7 @@
     inline-size: 100%;
     min-inline-size: 0;
     border: 1px solid var(--border-standard);
-    border-radius: var(--radius-card);
+    border-radius: var(--radius-container);
     text-align: center;
     overflow-wrap: anywhere;
   }

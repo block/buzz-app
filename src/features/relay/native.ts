@@ -24,6 +24,7 @@ import {
 } from "../channel-templates/model";
 import type { RelayWriter } from "./transport";
 import { validateLifecycleTemplate } from "./channel-lifecycle-protocol";
+import { validateMemberAdministrationTemplate } from "../channel-members/administration-protocol";
 import { validateDetailsTemplate } from "./channel-details-protocol";
 import { validateArchiveRequestTemplate } from "./identity-archive-protocol";
 import { workflowHost, workflowRunsPath } from "../workflows/http";
@@ -77,6 +78,7 @@ export const nativeWriteKinds = [
   9000,
   9001,
   30030,
+  30177,
   30315,
   40003,
   40100,
@@ -291,7 +293,11 @@ export async function connectNativeTransport(
   const readCommunity = readSnapshotCommunity(info.read_state_snapshot);
   if (!writer) throw new Error("Native relay writer is unavailable");
   const commandWriter = (
-    route: "channel-details" | "channel-lifecycle" | "identity-archive",
+    route:
+      | "channel-details"
+      | "channel-lifecycle"
+      | "identity-archive"
+      | "member-administration",
     validate: (event: EventTemplate) => void,
   ): RelayWriter => ({
     async sign(event, signal) {
@@ -365,6 +371,9 @@ export async function connectNativeTransport(
       validateLifecycleTemplate,
     ),
     channelDetails: commandWriter("channel-details", validateDetailsTemplate),
+    memberAdministration: commandWriter("member-administration", (event) =>
+      validateMemberAdministrationTemplate(event, transport.viewer ?? ""),
+    ),
     identityArchive: commandWriter(
       "identity-archive",
       validateArchiveRequestTemplate,

@@ -92,10 +92,13 @@ it("notifies route readers when hidden visibility settles without changing visib
     value = next;
     changed();
     expect(cards.visibility("moderation/membership")).toBe(next);
+    expect(cards.has("moderation/membership")).toBe(true);
     if (next !== true) expect(cards.snapshot()).toBe(empty);
   }
   expect(notify).toHaveBeenCalledTimes(3);
   expect(cards.snapshot()).toHaveLength(1);
   stop();
+  await fiber.dispose();
+  expect(cards.has("moderation/membership")).toBe(false);
   await root.fiber.dispose();
 });

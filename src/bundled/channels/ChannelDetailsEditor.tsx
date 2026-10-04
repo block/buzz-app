@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
@@ -28,15 +29,26 @@ import { Switch } from "../../shared/design-system/ui/Switch";
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../../features/relay/work-sessions";
 import styles from "./Channels.module.css";
 
+export type ChannelDetailsAction = {
+  pending: boolean;
+  open(trigger: HTMLButtonElement, field?: "name" | "description"): void;
+};
+
 /** The capability owns writes; this view owns only a destination-bound editable draft. */
 export function ChannelDetailsEditor({
   capability,
   channel,
   scope,
+  renderSurface,
 }: {
   scope: string;
   capability: ChannelDetailsCapability;
   channel: ChannelSummary;
+  renderSurface?(
+    action: ChannelDetailsAction | undefined,
+    status: ReactNode,
+    loading: boolean,
+  ): ReactNode;
 }) {
   const id = channel.id;
   const attempt = useSyncExternalStore(capability.subscribe, () =>
@@ -49,6 +61,7 @@ export function ChannelDetailsEditor({
     skipWarning: false,
     loading: true,
     editing: false,
+    focusField: "name" as "name" | "description",
     confirmDiscard: false,
     pending: false,
     temporaryTtl: undefined as number | undefined,
@@ -68,6 +81,7 @@ export function ChannelDetailsEditor({
   const lifetime = useRef<AbortController | undefined>(undefined);
   const busy = useRef(false);
   const nameInput = useRef<HTMLInputElement>(null);
+  const descriptionInput = useRef<HTMLTextAreaElement>(null);
   const privacyCancel = useRef<HTMLButtonElement>(null);
   const keepEditing = useRef<HTMLButtonElement>(null);
   const confirmDiscard = view.confirmDiscard && !attempt;
@@ -181,10 +195,11 @@ export function ChannelDetailsEditor({
     canEdit &&
     dirty &&
     !Object.values(errors ?? {}).some(Boolean);
-  const edit = () => {
-    if (attempt || (!view.loading && canEdit))
+  const edit = (focusField: "name" | "description" = "name") => {
+    if (!pending && (attempt || (!view.loading && canEdit)))
       patch({
         editing: true,
+        focusField,
         confirmDiscard: false,
         draft: attempt?.draft ?? view.base,
         temporaryTtl: undefined,
@@ -286,7 +301,7 @@ export function ChannelDetailsEditor({
         )}
       </div>
     ) : null;
-  return (
+  const trigger = (
     <section
       className={styles.detailsEditor}
       aria-label="Edit channel details"
@@ -295,7 +310,7 @@ export function ChannelDetailsEditor({
       {(canEdit || attempt) && (
         <Button
           ref={editButton}
-          onClick={edit}
+          onClick={() => edit()}
           loading={pending}
           disabled={pending}
         >
@@ -303,6 +318,25 @@ export function ChannelDetailsEditor({
         </Button>
       )}
       {!view.editing && status}
+    </section>
+  );
+  return (
+    <>
+      {renderSurface
+        ? renderSurface(
+            canEdit || attempt
+              ? {
+                  pending,
+                  open: (origin, field) => {
+                    editButton.current = origin;
+                    edit(field);
+                  },
+                }
+              : undefined,
+            !view.editing && status,
+            view.loading,
+          )
+        : trigger}
       <Dialog
         open={view.editing}
         headerGap="compact"
@@ -338,7 +372,13 @@ export function ChannelDetailsEditor({
             : "Close edit channel details"
         }
         preventClose={pending}
-        initialFocus={attempt ? undefined : nameInput}
+        initialFocus={
+          attempt
+            ? undefined
+            : view.focusField === "description"
+              ? descriptionInput
+              : nameInput
+        }
         finalFocus={editButton}
         actions={
           confirmDiscard ? (
@@ -459,6 +499,7 @@ export function ChannelDetailsEditor({
                 />
                 <ChannelTextField
                   field="description"
+                  inputRef={descriptionInput}
                   value={draft.description}
                   error={errors?.description}
                   disabled={locked || !canEdit}
@@ -484,6 +525,6 @@ export function ChannelDetailsEditor({
           </form>
         )}
       </Dialog>
-    </section>
+    </>
   );
 }

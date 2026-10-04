@@ -43,7 +43,17 @@ fn fixture(script: &str) -> (tempfile::TempDir, PiContext) {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let command = dir.path().join("pi");
-    std::fs::write(&command, format!("#!/bin/sh\n{script}")).unwrap();
+    // Parallel tests fork. A fork that copies this process's write fd for the
+    // script makes executing it fail with ETXTBSY on Linux, so a
+    // single-threaded `cp` creates the executable instead.
+    let source = dir.path().join("pi.sh");
+    std::fs::write(&source, format!("#!/bin/sh\n{script}")).unwrap();
+    assert!(std::process::Command::new("/bin/cp")
+        .arg(&source)
+        .arg(&command)
+        .status()
+        .unwrap()
+        .success());
     std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o700)).unwrap();
     let context = PiContext {
         command,

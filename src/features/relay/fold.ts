@@ -283,6 +283,20 @@ export function foldMessages(
         channelId,
         threadRootId: threadReference(event)?.rootId,
         replyParentId: threadReference(event)?.parentId,
+        sentFromThread: (() => {
+          const tag = event.tags.find(
+            ([name, id]) =>
+              name === "buzz:sent-from-thread" && id && HEX64.test(id),
+          );
+          return tag?.[1]
+            ? {
+                rootId: tag[1],
+                excerpt: tag[2]
+                  ? Array.from(tag[2]).slice(0, 64).join("")
+                  : undefined,
+              }
+            : undefined;
+        })(),
         authorId: event.pubkey,
         createdAt: event.created_at,
         createdAtMs: eventMs(event),

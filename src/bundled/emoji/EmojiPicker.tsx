@@ -281,6 +281,7 @@ export function EmojiPicker({
   const button = (
     <IconButton
       size="toolbar"
+      shape={reaction ? "round" : "control"}
       ref={trigger}
       type="button"
       aria-label={reaction ? "Add reaction" : "Insert emoji"}

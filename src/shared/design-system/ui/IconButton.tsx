@@ -17,7 +17,7 @@ type IconButtonShape = "control" | "round" | "row-end";
 
 export type IconButtonProps = Omit<
   ComponentProps<typeof Button>,
-  "children" | "size" | "variant"
+  "children" | "size" | "variant" | "shape"
 > & {
   "aria-label": string;
   icon: ReactElement;
@@ -30,7 +30,7 @@ export function IconButton({
   icon,
   variant = "ghost",
   size = "md",
-  shape = "round",
+  shape = variant === "avatar" ? "round" : "control",
   ...props
 }: IconButtonProps) {
   return (

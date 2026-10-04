@@ -44,6 +44,9 @@
   }
   .buzz-dialog-step {
     grid-area: 1 / 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
     align-self: center;
     min-width: 0;
     max-height: inherit;
@@ -175,15 +178,32 @@
     gap: var(--space-3);
     overflow-x: auto;
   }
+  /* Each step retains its own sizing while it exits, including when the next
+     step is content-sized. The transparent popup only owns their shared grid. */
   /* Opt in for searches and switching views, not content-sized forms. */
-  :where(.buzz-dialog[data-height="stable"]) {
+  :where(
+    .buzz-dialog:not([data-stepped])[data-height="stable"],
+    .buzz-dialog-step[data-height="stable"]
+  ) {
     height: min(36rem, calc(100dvh - 2 * var(--space-6)));
   }
-  :where(.buzz-dialog[data-height="stable"]) > .buzz-dialog-header,
-  :where(.buzz-dialog[data-height="stable"]) > .buzz-dialog-actions {
+  :where(
+      .buzz-dialog:not([data-stepped])[data-height="stable"],
+      .buzz-dialog-step[data-height="stable"]
+    )
+    > .buzz-dialog-header,
+  :where(
+      .buzz-dialog:not([data-stepped])[data-height="stable"],
+      .buzz-dialog-step[data-height="stable"]
+    )
+    > .buzz-dialog-actions {
     flex-shrink: 0;
   }
-  :where(.buzz-dialog[data-height="stable"]) > .buzz-dialog-body {
+  :where(
+      .buzz-dialog:not([data-stepped])[data-height="stable"],
+      .buzz-dialog-step[data-height="stable"]
+    )
+    > .buzz-dialog-body {
     flex: 1;
     min-height: 0;
     overflow: auto;
@@ -198,14 +218,16 @@
     overflow: auto;
   }
   /* Opt in when fixed controls and one inner scrollport share the body. */
-  .buzz-dialog[data-body-layout="flex"] > .buzz-dialog-body {
+  :is(.buzz-dialog, .buzz-dialog-step)[data-body-layout="flex"]
+  > .buzz-dialog-body {
     display: flex;
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
   }
   /* Without footer actions, the popup already supplies the bottom gutter. */
-  .buzz-dialog[data-body-layout="flex"] > .buzz-dialog-body:last-child {
+  :is(.buzz-dialog, .buzz-dialog-step)[data-body-layout="flex"]
+  > .buzz-dialog-body:last-child {
     padding-bottom: 0;
   }
   .buzz-tooltip-positioner {

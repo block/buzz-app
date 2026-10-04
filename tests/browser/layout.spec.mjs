@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import {
   openPage,
   pageChoices,
@@ -6,8 +7,21 @@ import {
   settleShellToggle,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
+
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { wheel, anchor, settle, upper, expectAnchor } from "./timeline.mjs";
+
+// These layout/navigation journeys exercise the opt-in Bestie surface.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    const key = "buzzodz.plugins.v1";
+    if (localStorage.getItem(key) === null)
+      localStorage.setItem(
+        key,
+        JSON.stringify({ version: 2, enabled: { "buzz.bestie": true } }),
+      );
+  });
+});
 
 const scroll = test.extend({ historyCounts: { alpha: 20, beta: 1 } });
 const companionTest = test.extend({ companionFixture: true });
@@ -871,7 +885,7 @@ todosOverlapTest(
     await link(page, app, "https://github.com/block/buzz/pull/7");
     await toggle.click();
     await stacked(linked);
-    await button(page, "Channel settings").click();
+    await openChannelDetails(page);
     await expect(settings).toBeVisible();
     await expect(todos).toHaveCount(0); // Settings intentionally retires the drawer.
     await button(page, "Close Channel settings tab").click();
@@ -926,9 +940,7 @@ companionReadingTest(
       await expect(
         button(page, "Close Companion fixture panel"),
       ).toBeInViewport();
-      await page
-        .getByRole("button", { name: "Channel settings", exact: true })
-        .evaluate((element) => element.click());
+      await openChannelDetails(page, { programmatic: true });
       const settings = page.getByRole("complementary", {
         name: "Channel settings",
         exact: true,

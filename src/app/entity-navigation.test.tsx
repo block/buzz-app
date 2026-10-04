@@ -34,6 +34,10 @@ vi.mock("../features/agents/control-native", () => ({
 vi.mock("../bundled", async () => ({
   bundledPlugins: [
     {
+      manifest: { id: "buzz.channels", name: "Channels", apiVersion: 1 },
+      module: await import("../bundled/channels"),
+    },
+    {
       manifest: { id: "buzz.projects", name: "Projects", apiVersion: 1 },
       module: await import("../bundled/projects"),
     },
@@ -492,4 +496,36 @@ it("restores legacy placeholder history but does not normalize unknown versions 
     expect(current.navigation.snapshot().status).toBe("failed"),
   );
   expect(await result).toEqual({ status: "failed", reason: "unavailable" });
+});
+
+it("cold Settings Back uses required Messages when Inbox is disabled", async () => {
+  window.history.replaceState(
+    null,
+    "",
+    `/#buzz=${encodeURIComponent(
+      JSON.stringify({
+        version: 1,
+        kind: "settings",
+        section: "appearance",
+      }),
+    )}`,
+  );
+  const current = legacyPageFixture();
+  const back = await screen.findByRole("button", { name: "Back" });
+  await act(() => current.plugins.change("disable", "buzz.inbox"));
+  expect(
+    current.pages.snapshot().some((page) => page.key === "buzz.inbox/inbox"),
+  ).toBe(false);
+  await userEvent.click(back);
+  await waitFor(() =>
+    expect(current.navigation.snapshot()).toMatchObject({
+      status: "opened",
+      entry: {
+        target: { kind: "page", pluginId: "buzz.channels", pageId: "channels" },
+      },
+    }),
+  );
+  expect(
+    screen.queryByText("This destination couldn’t open"),
+  ).not.toBeInTheDocument();
 });

@@ -168,6 +168,16 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
           for (const label of root.querySelectorAll(
             ".buzz-choice-label, .buzz-field-label, .buzz-content-header-title",
           )) {
+            // Theme choices have intentionally clipped spoken labels; measure
+            // their visible thumbnails instead of the unclipped text range.
+            const thumbnail = label.querySelector(".buzz-theme-thumbnail");
+            if (thumbnail) {
+              const box = thumbnail.getBoundingClientRect();
+              if (box.left < bounds.left || box.right > bounds.right)
+                failures.push("Theme preview overflows section");
+              continue;
+            }
+            if (label.classList.contains("sr-only")) continue;
             const text = document.createRange();
             text.selectNodeContents(label);
             for (const line of text.getClientRects()) {

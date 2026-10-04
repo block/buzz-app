@@ -536,6 +536,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "--affordance-backdrop-hover",
+        variable: "--affordance-backdrop-hover",
+        pointsAt: "black 6% light / white 10% dark",
+        use: "Translucent top-bar hover fills over the shell gradient.",
+        status: "core",
+      },
+      {
+        token: "--affordance-backdrop-pressed",
+        variable: "--affordance-backdrop-pressed",
+        pointsAt: "black 10% light / white 16% dark",
+        use: "Translucent top-bar pressed and selected fills over the shell gradient.",
+        status: "core",
+      },
+      {
         token: "bg-affordance-subtle-pressed",
         variable: "--affordance-subtle-pressed",
         pointsAt: "neutral-4 light / neutral-5 dark",
@@ -1275,34 +1289,40 @@ export const SPACE_ROLES = [
 
 export const RADII = [
   {
-    token: "corner-control",
-    variable: "--corner-control",
-    value: "16px",
-    use: "Legacy control corners. New fields use radius-control (12px); panels use radius-panel (24px).",
+    token: "radius-chip",
+    variable: "--radius-chip",
+    value: "4px",
+    use: "Small chips and tight details.",
   },
   {
     token: "radius-row",
     variable: "--radius-row",
+    value: "8px",
+    use: "Dense navigator rows, compact selected regions and compact floating surfaces.",
+  },
+  {
+    token: "radius-icon-button",
+    variable: "--radius-icon-button",
     value: "10px",
-    use: "Dense navigator rows and compact selected regions.",
+    use: "Independent icon controls, including top-bar and content-toolbar actions, with the same radius on every corner.",
   },
   {
     token: "radius-control",
     variable: "--radius-control",
     value: "12px",
-    use: "Inputs and compact icon controls. Text buttons use radius-capsule.",
+    use: "Inputs, rounded cue buttons and the message action toolbar. Icon controls use radius-icon-button; text buttons default to radius-capsule.",
   },
   {
-    token: "radius-card",
-    variable: "--radius-card",
+    token: "radius-container",
+    variable: "--radius-container",
     value: "16px",
-    use: "Settings groups, empty states, and elevated menus or popovers.",
+    use: "Medium containers, including menus, content popovers, pickers and the media review frame.",
   },
   {
     token: "radius-panel",
     variable: "--radius-panel",
-    value: "24px",
-    use: "Every major workspace panel.",
+    value: "20px",
+    use: "Major workspace panels and dialogs. Maximum standalone container radius.",
   },
   {
     token: "radius-capsule",
